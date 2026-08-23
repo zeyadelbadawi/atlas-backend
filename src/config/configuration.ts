@@ -20,11 +20,27 @@ export interface AppConfig {
 }
 
 export interface DatabaseConfig {
+  /** Superuser connection — Prisma CLI (migrations) only. Never used for application queries; see `appUrl`. */
   readonly url: string;
+  /** Non-superuser, non-BYPASSRLS connection — what `PrismaService` actually connects with at runtime, so RLS applies to every application query (Phase P2). */
+  readonly appUrl: string;
 }
 
 export interface RedisConfig {
   readonly url: string;
+}
+
+/** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
+export interface IdentityConfig {
+  readonly jwtAccessSecret: string;
+  readonly jwtAccessTtlSeconds: number;
+  readonly refreshTokenTtlDays: number;
+  readonly passwordResetTokenTtlMinutes: number;
+  readonly signInRateLimit: { readonly max: number; readonly windowSeconds: number };
+  readonly passwordResetRateLimit: {
+    readonly max: number;
+    readonly windowSeconds: number;
+  };
 }
 
 /**
@@ -64,11 +80,27 @@ export default () => {
 
   const database: DatabaseConfig = {
     url: env.DATABASE_URL,
+    appUrl: env.APP_DATABASE_URL,
   };
 
   const redis: RedisConfig = {
     url: env.REDIS_URL,
   };
 
-  return { app, database, redis };
+  const identity: IdentityConfig = {
+    jwtAccessSecret: env.JWT_ACCESS_SECRET,
+    jwtAccessTtlSeconds: Number(env.JWT_ACCESS_TTL_SECONDS ?? 900),
+    refreshTokenTtlDays: Number(env.REFRESH_TOKEN_TTL_DAYS ?? 30),
+    passwordResetTokenTtlMinutes: Number(env.PASSWORD_RESET_TOKEN_TTL_MINUTES ?? 45),
+    signInRateLimit: {
+      max: Number(env.AUTH_SIGNIN_RATE_LIMIT_MAX ?? 10),
+      windowSeconds: Number(env.AUTH_SIGNIN_RATE_LIMIT_WINDOW_SECONDS ?? 900),
+    },
+    passwordResetRateLimit: {
+      max: Number(env.AUTH_PASSWORD_RESET_RATE_LIMIT_MAX ?? 5),
+      windowSeconds: Number(env.AUTH_PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS ?? 3600),
+    },
+  };
+
+  return { app, database, redis, identity };
 };

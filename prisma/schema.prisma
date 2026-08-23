@@ -37,3 +37,161 @@ model SchemaMeta {
 
   @@map("schema_meta")
 }
+
+// ---------------------------------------------------------------------------
+// Phase P1 — Identity, Auth & Sessions (master plan §5.1, §21 Phase P1).
+//
+// Platform-scoped, not tenant-scoped: a user is not owned by one
+// organization (that relationship — `organization_memberships` — is Phase
+// P2's job). No RLS policy applies here for the same reason §7 exempts
+// `schema_meta`: these tables carry no `organization_id`/`academy_id`.
+// ---------------------------------------------------------------------------
+
+/// Matches `PlatformUserAccountStatus`/`CurrentUser` exactly. Deliberately
+/// only these three values — do not add `locked`/`pending_verification`
+/// states; both email verification and account lockout are explicitly
+/// `SPECIFICATION-UNDEFINED` per master plan §8/§24 and must not be built
+/// into the schema ahead of a product decision.
+enum UserAccountStatus {
+  active
+  invited
+  suspended
+
+  @@map("user_account_status")
+}
+
+/// One account per human — mirrors `CurrentUser` (master plan §5.1).
+///
+/// Email case-insensitivity note: the master plan suggests Postgres
+/// `citext`, but Prisma has no first-class `citext` column type (it can
+/// only be modeled via `Unsupported("citext")`, which the Prisma Client
+/// cannot use in ordinary `where`/`create` calls — every lookup would need
+/// hand-written raw SQL, which is inconsistent with every other table in
+/// this codebase using the Client normally). Case-insensitivity is instead
+/// enforced at the application layer: every write and lookup normalizes
+/// email via `.trim().toLowerCase()` before it ever reaches Prisma
+/// (`identity/utils/email.util.ts`), so the plain `@unique` constraint below
+/// still guarantees one account per email regardless of the case a user
+/// types it in.
+model User {
+  id              String            @id @default(uuid())
+  email           String            @unique
+  passwordHash    String            @map("password_hash")
+  name            String
+  avatarUrl       String?           @map("avatar_url")
+  isPlatformOwner Boolean           @default(false) @map("is_platform_owner")
+  /// Mirrors `UserPreferences` (`theme?`, `language?`, `notifications?`).
+  /// Validated server-side (not schema-enforced) — see `PreferencesService`.
+  preferences     Json              @default("{}")
+  status          UserAccountStatus @default(active)
+  lastSignInAt    DateTime?         @map("last_sign_in_at")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  ownedOrganizations       Organization[]           @relation("OrganizationOwner")
+  organizationMemberships OrganizationMembership[]
+
+  @@index([status])
+  @@map("users")
+}
+
+/// Rotating session tokens backing `TokenMetadata.refreshToken`. Only the
+/// SHA-256 hash of the raw token is ever persisted — a database leak alone
+/// never yields a usable token (master plan §5.1, §8, §16).
+model RefreshToken {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique @map("token_hash")
+  deviceLabel String?   @map("device_label")
+  expiresAt   DateTime  @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, revokedAt])
+  @@map("refresh_tokens")
+}
+
+/// Backs `PasswordResetRequest`/`PasswordResetConfirmation`. Single-use,
+/// short-lived, hashed at rest — same rationale as `RefreshToken`.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P2 — Organizations, Membership & Multi-Tenancy Core (master plan
+// §5.2, §7, §21 Phase P2).
+//
+// `organizations` is the tenant root. Every tenant-scoped table from this
+// phase forward carries `organization_id` as a real FK column (§5's
+// universal convention) and gets an RLS policy created in the SAME
+// migration that creates it (§17) — see migration.sql for the
+// `ENABLE ROW LEVEL SECURITY` / `FORCE ROW LEVEL SECURITY` / `CREATE
+// POLICY` statements; Prisma's schema language has no RLS syntax, so those
+// are appended by hand to the generated migration, not expressed here.
+// ---------------------------------------------------------------------------
+
+/// Matches `Organization`'s status union (mirrored from
+/// `PlatformOrganizationSummary`/`Detail` — there is no standalone bare
+/// `Organization` type in the frontend today; this enum's values are taken
+/// directly from the master plan §5.2 definition, which all
+/// organization-shaped frontend types agree with).
+enum OrganizationStatus {
+  active
+  suspended
+  archived
+
+  @@map("organization_status")
+}
+
+/// The SaaS tenant boundary — the root of the tenant hierarchy (master plan
+/// §7). Soft-delete only: no delete endpoint exists or is planned for this
+/// table; `status` is the only lifecycle mechanism.
+model Organization {
+  id          String             @id @default(uuid())
+  name        String
+  slug        String             @unique
+  status      OrganizationStatus @default(active)
+  ownerUserId String             @map("owner_user_id")
+  owner       User               @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+
+  memberships OrganizationMembership[]
+
+  @@index([status])
+  @@map("organizations")
+}
+
+/// Join table between `users` and `organizations` — mirrors
+/// `OrganizationMembership` (`identity.types.ts`) field-for-field. `role`
+/// stays a flat string and `permissions` a flat string array by deliberate
+/// design (master plan §9): there is no Role/Permission catalog table, and
+/// P2 must not introduce one.
+model OrganizationMembership {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String   @map("user_id")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           String
+  permissions    String[] @default([])
+  isPrimary      Boolean  @default(false) @map("is_primary")
+  joinedAt       DateTime @default(now()) @map("joined_at")
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@index([organizationId])
+  @@map("organization_memberships")
+}

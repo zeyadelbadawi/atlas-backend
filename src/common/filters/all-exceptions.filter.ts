@@ -86,6 +86,25 @@ export class AllExceptionsFilter implements ExceptionFilter {
         return { status, messageKey: this.toMessageKey(status, payload) };
       }
 
+      // A handler-supplied `{ messageKey, code?, violations? }` payload
+      // (e.g. `new UnauthorizedException({ messageKey:
+      // 'errors.auth.invalidCredentials' })`, first needed by Phase P1 to
+      // distinguish business-error cases that share one HTTP status —
+      // invalid credentials vs. a suspended account are both 401/403 but
+      // must not collapse to the same generic message) always wins over
+      // the generic per-status default. Exceptions that don't supply one
+      // (e.g. a plain `new NotFoundException()`) fall through unchanged to
+      // the existing generic lookup below — this is additive, not a
+      // behavior change for P0's own usage.
+      if (this.hasCustomMessageKey(payload)) {
+        return {
+          status,
+          messageKey: payload.messageKey,
+          code: payload.code,
+          violations: payload.violations,
+        };
+      }
+
       return { status, messageKey: this.toMessageKey(status, exception.message) };
     }
 
@@ -96,6 +115,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       messageKey: 'errors.server.unexpected',
     };
+  }
+
+  private hasCustomMessageKey(payload: unknown): payload is {
+    messageKey: string;
+    code?: string;
+    violations?: readonly FieldViolation[];
+  } {
+    return (
+      typeof payload === 'object' &&
+      payload !== null &&
+      'messageKey' in payload &&
+      typeof (payload as { messageKey: unknown }).messageKey === 'string'
+    );
   }
 
   private isValidationResponse(payload: unknown): payload is ValidationExceptionResponse {

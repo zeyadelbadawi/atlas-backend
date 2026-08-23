@@ -3,6 +3,12 @@ import { validateEnv } from './env.validation';
 const VALID_BASE = {
   DATABASE_URL: 'postgresql://atlas:pw@localhost:5432/atlas_dev',
   REDIS_URL: 'redis://localhost:6379',
+  // Phase P1 — required, no default (see this file's own header comment
+  // and env.validation.ts's JWT_ACCESS_SECRET definition).
+  JWT_ACCESS_SECRET: 'unit-test-secret-at-least-32-characters-long',
+  // Phase P2 — required, no default (RLS is inert against DATABASE_URL's
+  // superuser connection; see env.validation.ts's APP_DATABASE_URL definition).
+  APP_DATABASE_URL: 'postgresql://atlas_app:pw@localhost:5432/atlas_dev',
 };
 
 describe('validateEnv', () => {
@@ -59,5 +65,36 @@ describe('validateEnv', () => {
 
   it('rejects an unrecognized LOG_LEVEL rather than silently accepting it', () => {
     expect(() => validateEnv({ ...VALID_BASE, LOG_LEVEL: 'verbose' })).toThrow();
+  });
+
+  it('throws when JWT_ACCESS_SECRET is missing', () => {
+    expect(() =>
+      validateEnv({
+        DATABASE_URL: VALID_BASE.DATABASE_URL,
+        REDIS_URL: VALID_BASE.REDIS_URL,
+      }),
+    ).toThrow(/JWT_ACCESS_SECRET/);
+  });
+
+  it('rejects a JWT_ACCESS_SECRET shorter than 32 characters', () => {
+    expect(() => validateEnv({ ...VALID_BASE, JWT_ACCESS_SECRET: 'too-short' })).toThrow(
+      /JWT_ACCESS_SECRET/,
+    );
+  });
+
+  it('throws when APP_DATABASE_URL is missing', () => {
+    expect(() =>
+      validateEnv({
+        DATABASE_URL: VALID_BASE.DATABASE_URL,
+        REDIS_URL: VALID_BASE.REDIS_URL,
+        JWT_ACCESS_SECRET: VALID_BASE.JWT_ACCESS_SECRET,
+      }),
+    ).toThrow(/APP_DATABASE_URL/);
+  });
+
+  it('rejects an APP_DATABASE_URL that is not a postgresql:// connection string', () => {
+    expect(() =>
+      validateEnv({ ...VALID_BASE, APP_DATABASE_URL: 'mysql://localhost/atlas' }),
+    ).toThrow(/APP_DATABASE_URL/);
   });
 });
