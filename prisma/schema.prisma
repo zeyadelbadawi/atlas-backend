@@ -1,0 +1,39 @@
+// Atlas Backend — Prisma schema.
+//
+// Phase P0 (Foundation) scope only. Per Reports/ATLAS_BACKEND_MASTER_PLAN.md
+// §21's Phase P0 entry: "Database changes: none domain-specific — migration
+// tooling proven with one trivial migration (e.g. a `schema_meta` table) to
+// confirm the pipeline works."
+//
+// No business/domain tables (users, organizations, academies, courses, ...)
+// are defined here. They begin in Phase P1 onward, each phase extending this
+// file with its own models — see the master plan's §5 for the full,
+// eventual schema this file grows into. Do not add a table here that a
+// later phase owns; this file's only job right now is to prove the
+// migration pipeline is real, not to anticipate future schema.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Proves the migration pipeline end-to-end (create, apply, and read back a
+/// real table) without modeling any business domain. Intentionally the only
+/// model in this phase. Not tenant-scoped — this is platform-infrastructure
+/// metadata (e.g. a schema version marker), not tenant data, so it
+/// deliberately carries no `organization_id`/`academy_id` and needs no RLS
+/// policy (see the master plan §7's tenant-scoping rule, which applies to
+/// domain tables, not this one).
+model SchemaMeta {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("schema_meta")
+}

@@ -1,0 +1,44 @@
+# Atlas Backend — local development infrastructure.
+#
+# Provides the two stateful dependencies Phase P0 requires: PostgreSQL
+# (primary database, ADR-002) and Redis (cache/queue broker foundation,
+# ADR-004). Nothing here represents production infrastructure — see
+# Reports/ATLAS_BACKEND_MASTER_PLAN.md §20 for the real deployment
+# architecture (managed Postgres/Redis, no self-hosted containers in
+# staging/production).
+name: atlas-backend
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: atlas_dev_password
+      POSTGRES_DB: atlas_dev
+    ports:
+      - '5432:5432'
+    volumes:
+      - atlas_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U atlas -d atlas_dev']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - atlas_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  atlas_postgres_data:
+  atlas_redis_data:
