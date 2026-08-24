@@ -47,6 +47,8 @@ import { PrismaClient } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PasswordHasherService } from '../src/identity/services/password-hasher.service';
 import { TenantUsageRecomputeService } from '../src/plans/services/tenant-usage-recompute.service';
+import { EnrollmentsService } from '../src/learning/services/enrollments.service';
+import { CourseProgressService } from '../src/learning/services/course-progress.service';
 
 const DEV_PASSWORD = 'DevPassword123!';
 
@@ -82,6 +84,11 @@ async function main(): Promise<void> {
     console.log('Seeding course categories, courses, sections, lessons (P5)...');
     await seedCourses(adminPrisma, academies, users);
 
+    console.log('Seeding a student, a quiz, an assignment, and a real enrollment (P6)...');
+    const student = await seedStudent(adminPrisma, passwordHash);
+    await seedLearningContent(adminPrisma);
+    await seedStudentEnrollment(app, student.id);
+
     console.log('Recomputing tenant usage from real seeded data (real worker logic, not fabricated)...');
     await recomputeService.recomputeOne(orgs.orgA.id);
     await recomputeService.recomputeOne(orgs.orgB.id);
@@ -94,6 +101,7 @@ async function main(): Promise<void> {
     console.log('  jane.doe@acme-academy.dev  — instructor in Academy A1');
     console.log('  mike.wilson@acme-academy.dev — staff in Academy A1');
     console.log('  lisa.park@acme-academy.dev — Org A member, NO academy role (read-only on Academy A1/courses)');
+    console.log('  alex.morgan@student.dev    — a pure student, no organization/academy role anywhere; enrolled in "Spanish for Beginners" with its first lesson already completed');
   } finally {
     await adminPrisma.$disconnect();
     await app.close();
@@ -656,6 +664,149 @@ async function upsertLesson(
     await prisma.courseLesson.update({ where: { id: existing.id }, data });
   } else {
     await prisma.courseLesson.create({ data: { sectionId, courseId, order, ...data } });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// P6 — Student Learning & Assessment
+//
+// A real student persona — deliberately NOT a member of any organization
+// or academy anywhere (the genuine P6 access pattern: every table here is
+// student-id-scoped via `app.current_user_id`, never organization/academy
+// membership, per the P6 migration's own header comment). Enrolled in
+// "Spanish for Beginners" — the one seeded course that is simultaneously
+// free/published/public (the only pricing shape P6 enrollment accepts —
+// "React Fundamentals" is paid, out of scope until Phase 13) — with its
+// first lesson completed for real, through the actual `EnrollmentsService`/
+// `CourseProgressService` (the same real-`AppModule`-context pattern
+// `TenantUsageRecomputeService.recomputeOne` already uses above), never
+// hand-typed progress numbers. The quiz and assignment themselves are
+// seeded directly via the admin connection — no write endpoint exists for
+// either (confirmed against the actual frontend `QuizService`/
+// `AssignmentService`, both read-only for these two — see
+// `schema.prisma`'s P6 header comment), mirroring the exact
+// `course_categories`/`course_instructors` precedent from P5.
+// ---------------------------------------------------------------------------
+
+async function seedStudent(prisma: PrismaClient, passwordHash: string): Promise<{ id: string }> {
+  return prisma.user.upsert({
+    where: { email: 'alex.morgan@student.dev' },
+    create: { email: 'alex.morgan@student.dev', name: 'Alex Morgan', passwordHash, status: 'active' },
+    update: { name: 'Alex Morgan' },
+  });
+}
+
+/** `quiz`/`assignment`/`quiz_question` have no natural unique key (matches `course_sections`' own precedent) — find-then-create-or-update by `(courseId, title)`/`(quizId, order)`, never a hardcoded id. */
+async function upsertQuiz(
+  prisma: PrismaClient,
+  courseId: string,
+  title: string,
+  data: { passingScore?: number; maxAttempts?: number },
+): Promise<{ id: string }> {
+  const existing = await prisma.quiz.findFirst({ where: { courseId, title }, select: { id: true } });
+  if (existing) {
+    return prisma.quiz.update({ where: { id: existing.id }, data: { status: 'published', ...data } });
+  }
+  return prisma.quiz.create({ data: { courseId, title, status: 'published', ...data } });
+}
+
+async function upsertQuizQuestion(
+  prisma: PrismaClient,
+  quizId: string,
+  order: number,
+  data: { prompt: string; type: 'single_choice' | 'multiple_choice' | 'true_false' },
+): Promise<{ id: string }> {
+  const existing = await prisma.quizQuestion.findFirst({ where: { quizId, order }, select: { id: true } });
+  if (existing) {
+    return prisma.quizQuestion.update({ where: { id: existing.id }, data });
+  }
+  return prisma.quizQuestion.create({ data: { quizId, order, ...data } });
+}
+
+async function upsertQuizQuestionOption(
+  prisma: PrismaClient,
+  questionId: string,
+  label: string,
+  isCorrect: boolean,
+): Promise<void> {
+  const existing = await prisma.quizQuestionOption.findFirst({
+    where: { questionId, label },
+    select: { id: true },
+  });
+  if (existing) {
+    await prisma.quizQuestionOption.update({ where: { id: existing.id }, data: { isCorrect } });
+  } else {
+    await prisma.quizQuestionOption.create({ data: { questionId, label, isCorrect } });
+  }
+}
+
+async function upsertAssignment(
+  prisma: PrismaClient,
+  courseId: string,
+  title: string,
+): Promise<{ id: string }> {
+  const existing = await prisma.assignment.findFirst({ where: { courseId, title }, select: { id: true } });
+  if (existing) {
+    return prisma.assignment.update({ where: { id: existing.id }, data: { status: 'published' } });
+  }
+  return prisma.assignment.create({
+    data: {
+      courseId,
+      title,
+      status: 'published',
+      description: 'Write three sentences introducing yourself in Spanish.',
+      instructions: 'Use at least two of the greetings from this section.',
+    },
+  });
+}
+
+async function seedLearningContent(prisma: PrismaClient): Promise<void> {
+  const spanishCourse = await prisma.course.findFirstOrThrow({
+    where: { slug: 'spanish-for-beginners' },
+    select: { id: true },
+  });
+
+  const quiz = await upsertQuiz(prisma, spanishCourse.id, 'Spanish Basics Quiz', {
+    passingScore: 50,
+    maxAttempts: 3,
+  });
+  const question = await upsertQuizQuestion(prisma, quiz.id, 0, {
+    prompt: 'How do you say "hello" in Spanish?',
+    type: 'single_choice',
+  });
+  await upsertQuizQuestionOption(prisma, question.id, 'Hola', true);
+  await upsertQuizQuestionOption(prisma, question.id, 'Adiós', false);
+  await upsertQuizQuestionOption(prisma, question.id, 'Gracias', false);
+
+  await upsertAssignment(prisma, spanishCourse.id, 'Introduce Yourself');
+}
+
+/** Real enrollment + real lesson completion, through the actual application services — never hand-written progress rows. */
+async function seedStudentEnrollment(
+  app: import('@nestjs/common').INestApplicationContext,
+  studentId: string,
+): Promise<void> {
+  const enrollmentsService = app.get(EnrollmentsService);
+  const courseProgressService = app.get(CourseProgressService);
+  const admin = new PrismaClient({ datasources: { db: { url: requireAdminDatabaseUrl() } } });
+
+  try {
+    const spanishCourse = await admin.course.findFirstOrThrow({
+      where: { slug: 'spanish-for-beginners' },
+      select: { id: true },
+    });
+    const firstLesson = await admin.courseLesson.findFirstOrThrow({
+      where: { courseId: spanishCourse.id, status: 'published' },
+      orderBy: [{ section: { order: 'asc' } }, { order: 'asc' }],
+      select: { id: true },
+    });
+
+    await enrollmentsService.createEnrollment(studentId, { courseId: spanishCourse.id });
+    await courseProgressService.completeLesson(studentId, spanishCourse.id, {
+      lessonId: firstLesson.id,
+    });
+  } finally {
+    await admin.$disconnect();
   }
 }
 

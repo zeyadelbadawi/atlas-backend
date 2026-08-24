@@ -246,3 +246,71 @@ export async function seedCourseInstructor(
 ) {
   return admin.courseInstructor.create({ data: { courseId, userId } });
 }
+
+/** P6 — `quizzes`/`quiz_questions`/`quiz_question_options`/`assignments` carry no write endpoint (see `schema.prisma`'s P6 header comment) — seeded via the admin connection, mirroring `seedCourseCategory`/`seedCourseInstructor`'s exact precedent from P5. */
+export async function seedQuiz(
+  admin: PrismaClient,
+  courseId: string,
+  titleLabel: string,
+  overrides: {
+    status?: 'draft' | 'published';
+    passingScore?: number;
+    maxAttempts?: number;
+    sectionId?: string;
+  } = {},
+) {
+  return admin.quiz.create({
+    data: {
+      courseId,
+      sectionId: overrides.sectionId,
+      title: titleLabel,
+      status: overrides.status ?? 'published',
+      passingScore: overrides.passingScore,
+      maxAttempts: overrides.maxAttempts,
+    },
+  });
+}
+
+export async function seedQuizQuestion(
+  admin: PrismaClient,
+  quizId: string,
+  prompt: string,
+  type: 'single_choice' | 'multiple_choice' | 'true_false',
+  order: number,
+) {
+  return admin.quizQuestion.create({ data: { quizId, prompt, type, order } });
+}
+
+export async function seedQuizQuestionOption(
+  admin: PrismaClient,
+  questionId: string,
+  label: string,
+  isCorrect: boolean,
+) {
+  return admin.quizQuestionOption.create({ data: { questionId, label, isCorrect } });
+}
+
+export async function seedAssignment(
+  admin: PrismaClient,
+  courseId: string,
+  titleLabel: string,
+  overrides: {
+    status?: 'draft' | 'published';
+    allowResubmission?: boolean;
+    sectionId?: string;
+    lessonId?: string;
+    dueAt?: Date;
+  } = {},
+) {
+  return admin.assignment.create({
+    data: {
+      courseId,
+      sectionId: overrides.sectionId,
+      lessonId: overrides.lessonId,
+      title: titleLabel,
+      status: overrides.status ?? 'published',
+      allowResubmission: overrides.allowResubmission ?? false,
+      dueAt: overrides.dueAt,
+    },
+  });
+}

@@ -1027,7 +1027,255 @@ assignments/grading (P6). No new deferred item was discovered.
 **Not started.** No P6 code, table, endpoint, or test was added or
 modified during this pass.
 
+## P6 — Student Learning & Assessment (2026-08-24)
+
+**Status: COMPLETE (automated).** `enrollments`/`course_progress`/
+`lesson_progress`/`quizzes`/`quiz_questions`/`quiz_question_options`/
+`quiz_attempts`/`assignments`/`assignment_submissions` tables, RLS, a new
+`LearningModule` (`CourseDiscoveryService`/`EnrollmentsService`/
+`CourseProgressService`/`QuizzesService`/`AssignmentsService`), and every
+`EnrollmentService`/`ProgressService`/`QuizService`/`AssignmentService`
+(frontend) method — plus `CourseService.discoverCourses`/`.discoverCourse`,
+explicitly deferred to this phase by P5's own report/schema comments —
+backed by a real endpoint. Automated verification PASS (typecheck/lint/
+build/unit/e2e/clean-migration/seed-idempotency, zero regressions).
+**Manual verification: PENDING USER TESTING** — no runbook entries added
+yet this pass (out of this task's scope); recommend a `P6-MANUAL-*` set be
+authored before relying on this phase in the product.
+
+### Scope, confirmed against the master plan before writing code
+
+`enrollments`/`course_progress`/`lesson_progress`/`quizzes`/
+`quiz_questions`/`quiz_question_options`/`quiz_attempts`/`assignments`/
+`assignment_submissions` (master plan §5.3/§5.4, §21 Phase P6, verbatim).
+`discoverCourses`/`discoverCourse` picked up here on schedule — both P5's
+final report and `schema.prisma`'s own P5 section header already named P6
+as their home ("student consumption... [is a] separate, future module").
+Confirmed against the actual current frontend before implementing, not
+assumed: `EnrollmentService`/`ProgressService`/`QuizService`/
+`AssignmentService` (`src/features/learning/services/`) read in full;
+`QuizService`'s and `AssignmentService`'s own file-header comments state
+authoring/grading are out of scope ("Quiz authoring is out of scope" /
+"Assignment authoring and grading workflows are out of scope") —
+confirmed no create/update endpoint was invented for `quizzes`/
+`quiz_questions`/`quiz_question_options`/`assignments`, mirroring the
+exact `course_categories`/`course_instructors` precedent from P5 (table +
+RLS real, populated only via seed/admin-only inserts, no write endpoint
+until a later phase defines one).
+
+### RLS design — a second tenancy shape, reusing `app.current_user_id` verbatim
+
+Every P6 table is USER-owned, not organization/academy-owned (master plan
+§7's own resource-ownership table: "Owned by User: ... own Enrollments, own
+Quiz Attempts/Submissions") — a student is never an
+`organization_memberships`/`academy_members` row, so the existing
+`app.current_organization_id` mechanism structurally cannot express "this
+row belongs to the signed-in student." Reuses `app.current_user_id`
+verbatim — the exact session variable P2 already introduced for
+`CurrentUser.organizations`/`runInUserContext`. No new session variable, no
+new tenancy model. `enrollments`/`quiz_attempts`/`assignment_submissions`
+check `student_id` directly; `course_progress`/`lesson_progress` resolve it
+one hop transitively through `enrollment_id`; the read-only content tables
+(`quizzes`/`quiz_questions`/`quiz_question_options`/`assignments`) resolve
+it transitively through an active `enrollments` row for the quiz's/
+assignment's course — SELECT-only, no INSERT/UPDATE/DELETE policy at all
+(denied by default), matching `course_categories`/`course_instructors`'s
+exact precedent.
+
+Three ADDITIVE, narrow, context-independent SELECT policies were added to
+the PRE-EXISTING P5 `courses`/`course_categories`/`course_instructors`
+tables (`courses_public_discovery_select` et al.: `status = 'published' AND
+visibility = 'public'`, no session-context dependency) — `discoverCourses`/
+`discoverCourse` need to read a published+public course regardless of the
+caller's organization membership, which a student structurally never has.
+Postgres evaluates multiple SELECT policies on one table with OR semantics,
+so this never weakens or replaces P5's own `*_tenant_select` policy, only
+adds a second, legitimate, narrow read path for rows already publicly
+discoverable by design. **A fourth pair of additive policies
+(`course_sections_public_discovery_select`/
+`course_lessons_public_discovery_select`) was added to the same two P5
+tables mid-implementation**, discovered necessary by a real, reproduced e2e
+test failure (not assumed): `EnrollmentsService.createEnrollment`
+materializes `lesson_progress` at enrollment time by reading a course's
+real sections/lessons, but the P5 `course_sections_tenant_select`/
+`course_lessons_tenant_select` policies are `app.current_organization_id`-
+scoped — a variable this code path never sets. Without the fix,
+`totalLessons` on every new enrollment silently computed as `0` regardless
+of the course's real lesson count. Confirmed root-caused, fixed, and
+re-verified live (both via the real e2e suite and a direct `psql` proof as
+`atlas_app`) before this report was written.
+
+Migration: `20260824130632_p6_student_learning_assessment` — all 11
+migrations (P0→P6) verified to apply cleanly from an empty database twice
+(once via `prisma migrate reset --force`, once again after the
+`course_sections`/`course_lessons` fix was added to the same migration
+file and the database reset again — this migration was not yet
+committed/pushed at the time of the fix, so amending it in place rather
+than adding a follow-up migration was the correct, honest choice, not a
+retroactive rewrite of shipped history).
+
+### A real framework bug found and fixed: NestJS collapses a returned `null` into an empty body
+
+`EnrollmentService.getEnrollmentForCourse`/`AssignmentService.getSubmission`
+(frontend) are typed `Promise<T | null>` — "no such row" is a normal,
+documented state, not an error, matching the exact "returns null, not 404"
+contract convention already established by nothing before P6 (this phase
+is the first to need it). Confirmed empirically, not assumed:
+`@nestjs/platform-express`'s `reply()` calls `isNil(body)` — true for both
+`null` and `undefined` — and sends an EMPTY body in either case, not the
+JSON literal `null`. A plain `async getForCourse(): Promise<T | null> {
+return result; }` controller method therefore sent zero bytes on the "not
+found" path, which `supertest`/`superagent` then parsed as `{}`, not
+`null` — caught by this phase's own e2e tests, not discovered by manual
+testing first. Fixed in both affected controllers
+(`EnrollmentsController.getForCourse`, `AssignmentsController.getSubmission`)
+by bypassing Nest's default response handling via `@Res()` and calling
+`response.status(200).json(result)` directly, which genuinely sends the
+JSON literal `null` Express's own serializer produces. No other controller
+in this codebase returns a nullable top-level value, so no other route was
+affected.
+
+### Business-logic decisions made, and the exact evidence each rests on
+
+- **Free-course-only enrollment.** Master plan §21 P6: "no payment gate on
+  enrollment yet ... free-course behavior is fully buildable now,
+  paid-course gating lands in P13." `EnrollmentsService.createEnrollment`
+  rejects a paid course outright (403) — granting free access to paid
+  content would be a real bug, and no purchase flow exists to gate on
+  instead. Enrollment is otherwise unconditional and idempotent (re-POSTing
+  an existing enrollment returns it, no error).
+- **Sequential lesson locking.** `LessonProgressStatus` includes `locked`,
+  and the frontend's own `CurriculumNav.tsx` renders and disables on it —
+  this is a real, rendered state, not a speculative one, so *some* locking
+  rule was structurally required. No prerequisite/sequencing field exists
+  anywhere in the schema beyond `course_sections.order`/
+  `course_lessons.order` — whose entire purpose is defining a linear
+  curriculum sequence. Implemented as: only the first lesson (in
+  section-then-lesson order) starts `available`; each subsequent lesson
+  unlocks only once the one before it is completed. The single most
+  standard reading of an `order`-based curriculum with a `locked` state,
+  not an arbitrary invention.
+- **Quiz scoring.** Binary per-question correctness (the selected option
+  set must exactly equal the set of options flagged `isCorrect`, no partial
+  credit) — no partial-credit concept exists anywhere in `quiz.types.ts`.
+  `score = correctCount / totalQuestions * 100`. `passed = passingScore ===
+  null ? true : score >= passingScore` — a `null` passing score has no bar
+  to clear. `maxAttempts === null` means unlimited, matching the type's own
+  doc comment verbatim.
+- **Quiz submission must cover every question exactly once.** The
+  frontend's own `buildQuizAttemptSchema` (`learning.schemas.ts`) already
+  requires every question answered before the form will submit —
+  re-enforced server-side (`isExactQuestionCoverage`), matching this
+  codebase's established "never trust the client-side check alone"
+  discipline (the same one applied to `CoursePricingInputDto` during the P5
+  closure pass).
+- **Assignment submission requires a response or an attachment.** Mirrors
+  the frontend's own `assignmentSubmissionSchema` `.refine()`
+  (`learning.schemas.ts`) exactly, re-enforced server-side for the same
+  reason.
+- **No `assignment_submission_history` table.** Master plan §5.4 says this
+  table is only added "when Phase 6 discovers resubmission history is
+  actually needed for grading UX; not built speculatively now." It was not
+  discovered to be needed — the frontend's `AssignmentSubmission` type
+  carries no history field, and the one write endpoint
+  (`submitAssignment`) is a single create-or-replace call.
+  `(assignment_id, student_id)` stays unconditionally unique; a
+  resubmission updates that row in place (clearing any stale grade, since
+  none is ever set by any P6 endpoint anyway) when
+  `assignments.allow_resubmission` is true, and is rejected with 409 when
+  it is false.
+- **`course_progress`/`certificateStatus` stay honest, not invented.**
+  Certificate generation is explicitly out of scope (master plan §21 P6:
+  "Must NOT implement yet: certificates, SPECIFICATION-UNDEFINED, §24") —
+  `certificateStatus` only ever reports `'eligible'`/`'unavailable'` from
+  the real completion fact already computed, never a fabricated
+  certificate artifact. A course with zero published lessons is
+  deliberately `incomplete`, not trivially `completed` — a 0-of-0
+  "completion" would show a nonsensical congratulations for a course with
+  no actual content.
+
+### A genuine architecture gap discovered, and deliberately NOT resolved
+
+`LessonPage.tsx`/`CourseLearnRedirectPage.tsx` (the frontend's own lesson-
+viewing pages) call `useCourseSections(academyId, courseId)` —
+`CourseService.getCourseSections`, P5's OWNER-scoped endpoint
+(`academies/:academyId/courses/:id/sections`), using the `academyId` a
+student's own `Enrollment.academyId` field already carries (confirmed by
+that field's own doc comment: "lets learning pages reach the existing
+academy-scoped Course endpoints without an academy id in the student-facing
+URL"). That endpoint is guarded by `AcademyScopeGuard`, which requires real
+`organization_memberships` — a fact an enrolled student never has. **An
+enrolled, non-staff student calling this real, already-built frontend page
+will receive 403, not lesson content.**
+
+Nothing in P6's own service surface (`EnrollmentService`/`ProgressService`/
+`QuizService`/`AssignmentService`, matching the master plan's own P6
+Definition of Done exactly) exposes lesson title/content/contentUrl at
+all — `LessonProgress` only carries a `status`, never the lesson's real
+content. This gap was found during implementation, not assumed in advance,
+and was deliberately **not resolved** — fixing it means either extending
+`AcademyScopeGuard`'s read path to recognize an active student enrollment
+(narrowly, read-only) as an alternate access grant, or building a new
+student-facing curriculum-content-read endpoint — both are genuine new
+authorization decisions with real security surface, outside what this
+phase's own explicit instructions authorized deciding unilaterally.
+**Flagged for an explicit decision before this phase can be considered
+functionally complete for the product**, not silently left as an
+undocumented gap.
+
+### Verification
+
+Typecheck PASS, lint PASS, build PASS, format:check PASS. Migration
+verification PASS (clean-database apply from zero, `prisma migrate reset
+--force`, twice — once before and once after the mid-implementation
+`course_sections`/`course_lessons` RLS fix). Unit: 15 suites / 219 tests
+PASS (193 pre-existing + 26 new: `quiz-scoring.util.spec.ts` — 17 tests
+covering exact-coverage validation, binary scoring incl. no-partial-credit
+cases, passing-threshold, and attempt-limit logic — and
+`progress-computation.util.spec.ts` — 9 tests covering completion-state and
+certificate-status derivation, including the zero-lesson edge case). E2e:
+**33 suites / 221 tests PASS, zero regressions** (all 26 pre-existing P0–P5
+suites/167 tests still green) + 7 new suites/54 new tests:
+`learning-discovery.e2e-spec.ts`, `learning-enrollment.e2e-spec.ts`,
+`learning-progress.e2e-spec.ts`, `learning-quiz.e2e-spec.ts` (includes the
+mandatory quiz-correctness projection test, master plan §18 scenario 7),
+`learning-assignment.e2e-spec.ts`, `rls-learning.e2e-spec.ts` (direct DB
+proof, zero app code), `learning-tenant-isolation.e2e-spec.ts`
+(P6-TENANT-001..006, extending the permanent tenant-isolation suite per
+§18 — the mandatory student-cross-isolation scenario, §18 scenario 4).
+Full suite run five times consecutively across the fix cycle; the only
+failure observed anywhere was one transient `ECONNRESET` on a pre-existing,
+unmodified P2 concurrency test, which passed clean on immediate re-run —
+not a regression. Seed idempotency: `npm run db:seed` run twice against a
+freshly-migrated database, all P6-relevant row counts (users, enrollments,
+course_progress, lesson_progress, quizzes, quiz_questions,
+quiz_question_options, assignments, quiz_attempts, assignment_submissions)
+byte-identical across both runs — confirmed via direct SQL count, not
+assumed.
+
+CTO audit: no TODO/FIXME/console.log/hardcoded ids/fake data/
+`WITH CHECK (true)`/direct `PrismaService` bypass of
+`TenancyContextService`/missing guards/speculative P7+ code (instructor
+assignment/removal, grading, announcements, blog, forums — all absent from
+`src/learning/`) in any new P6 code. Zero P5 or earlier files modified
+except `src/course/repositories/courses.repository.ts` (two new,
+additive, read-only methods reused by `CourseDiscoveryService` — no
+existing P5 method changed) and `test/utils/db-admin.ts` (new seed helpers
+for quiz/question/option/assignment fixtures, additive only).
+
+### What is deliberately NOT implemented (P6 boundary, matches master plan §21/§24 exactly)
+
+Instructor assignment/removal (remains `SPECIFICATION-UNDEFINED`, §24 —
+explicitly excluded from this pass per direct instruction). Quiz/assignment
+authoring. Grading (P7, Instructor Operations). Certificates
+(`SPECIFICATION-UNDEFINED`, §24). Payment-gated/paid-course enrollment
+(P13). `assignment_submission_history` (deliberately not built — see
+above). No speculative P7+ table, endpoint, or seed data was added.
+
 ## Next phase
 
-**P6 — Student Learning & Assessment.** Not started. Do not begin without
-explicit approval.
+**P7 — Instructor Operations & Community.** Not started. Do not begin
+without explicit approval. Before it (or any further reliance on P6)
+begins, the `LessonPage.tsx`/`getCourseSections` access gap documented
+above needs an explicit product/architecture decision — it is not a P7
+concern, it is an unresolved P6 loose end.

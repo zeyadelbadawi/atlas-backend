@@ -425,3 +425,76 @@ idempotency) was confirmed already correct by direct code/catalog
 inspection — no other change was made. See `Reports/PROGRESS.md`'s P5
 Closure entry for the full audit trail, what could and could not be
 verified live in this session's environment, and why.
+
+## P6 — Student Learning & Assessment (2026-08-24)
+
+`LearningModule` (`src/learning/`) is the first module in this codebase
+scoped by USER rather than by organization/academy — every table is
+resolved through `TenancyContextService.runInUserContext` (P2's own
+mechanism, reused verbatim, never a new session variable), because a
+student is never an `organization_memberships`/`academy_members` row.
+`JwtAuthGuard` alone guards every route; there is no academy-scoping guard
+here at all, matching `PlansModule`'s catalog controllers' identical
+reasoning (the real scoping happens inside each service, not a route
+guard).
+
+Five controllers share two base paths: `CourseDiscoveryController`
+(`courses`, flat — `discoverCourses`/`discoverCourse`, deferred out of P5
+by that phase's own schema comment), `EnrollmentsController`
+(`enrollments`, flat), and `CourseProgressController`/`QuizzesController`/
+`AssignmentsController` (all `courses/:id/*` — `:id` is always the COURSE
+id, a student reaches a course by id alone via their own enrollment, never
+an academy id in the URL). Five services, four repositories
+(`EnrollmentsRepository`, `CourseProgressRepository` — owns both
+`course_progress` and `lesson_progress`, `QuizzesRepository`,
+`AssignmentsRepository`), reusing `CoursesRepository`/
+`CourseSectionsRepository` from `CourseModule` (P5) rather than
+duplicating course-table query logic — `CoursesRepository` gained two new,
+additive, read-only methods (`findManyPublished`/`findPublishedById`) for
+exactly this reuse.
+
+### RLS — a second shape alongside P2–P5's org-scoped model, not a replacement
+
+`enrollments`/`quiz_attempts`/`assignment_submissions` check `student_id`
+directly against `app.current_user_id`; `course_progress`/
+`lesson_progress` resolve it transitively through `enrollment_id`; the
+read-only content tables (`quizzes`/`quiz_questions`/
+`quiz_question_options`/`assignments`) resolve it transitively through an
+active enrollment in the owning course — SELECT-only, no write policy at
+all, matching `course_categories`/`course_instructors`'s exact P5
+precedent (no write endpoint exists for any of the four). Four ADDITIVE,
+context-independent SELECT policies were added to the pre-existing P5
+`courses`/`course_categories`/`course_instructors`/`course_sections`/
+`course_lessons` tables (`*_public_discovery_select`: readable whenever
+`courses.status = 'published' AND courses.visibility = 'public'`, resolved
+transitively where needed) — Postgres OR's multiple SELECT policies on one
+table together, so these never weaken or replace the P5 org-scoped
+policies, they only add a second, narrow, legitimate read path for content
+that's already publicly discoverable by design. See
+`Reports/PROGRESS.md`'s P6 entry for the real e2e failure that surfaced the
+`course_sections`/`course_lessons` pair's necessity mid-implementation.
+
+### A real NestJS response-serialization gap, fixed
+
+`EnrollmentsController.getForCourse`/`AssignmentsController.getSubmission`
+bypass Nest's default response handling via `@Res()` — `@nestjs/
+platform-express`'s `reply()` treats a returned `null` exactly like
+`undefined` (`isNil` check) and sends an empty body, not the JSON literal
+`null` both frontend types (`Enrollment | null`, `AssignmentSubmission |
+null`) require. Manually calling `response.status(200).json(result)` sends
+the real `null`. No other controller in this codebase returns a nullable
+top-level value, so this is the first place this had to be solved.
+
+### Known, deliberately unresolved gap
+
+`LessonPage.tsx`/`CourseLearnRedirectPage.tsx` call the P5 owner-scoped
+`CourseService.getCourseSections` (`academies/:id/courses/:id/sections`,
+guarded by `AcademyScopeGuard`'s organization-membership check) using the
+`academyId` a student's `Enrollment` record carries — but an enrolled
+student is never an organization member, so this real, already-built
+frontend call 403s today. Not fixed in this pass — resolving it means a
+genuinely new authorization decision (extend `AcademyScopeGuard`'s read
+path for enrolled students, or add a new student-facing curriculum-read
+endpoint), deliberately left for explicit product/architecture sign-off
+rather than decided unilaterally. See `Reports/PROGRESS.md`'s P6 entry for
+the full reasoning.

@@ -103,4 +103,56 @@ export class CoursesRepository {
   countLessons(tx: Prisma.TransactionClient, courseId: string): Promise<number> {
     return tx.courseLesson.count({ where: { courseId } });
   }
+
+  /**
+   * `discoverCourses` (P6, Student Learning) — the flat, cross-academy,
+   * published-only catalog. Deliberately hardcodes `status: 'published'`/
+   * `visibility: 'public'` in the `where` clause rather than accepting them
+   * as caller-supplied filter values (even though `CourseListFilter`
+   * declares both) — a discovery caller must never be able to widen this
+   * to see a draft/private course cross-academy by passing a crafted query
+   * param. Relies on the additive, context-independent
+   * `courses_public_discovery_select` RLS policy (P6 migration) to be
+   * readable at all without an `app.current_organization_id` context — a
+   * student is never an organization member of the academy that owns the
+   * course.
+   */
+  async findManyPublished(
+    tx: Prisma.TransactionClient,
+    filter: Omit<CourseListFilter, 'status' | 'visibility'>,
+  ): Promise<{ items: CourseWithRelations[]; totalItems: number }> {
+    const where: Prisma.CourseWhereInput = {
+      status: 'published',
+      visibility: 'public',
+      ...(filter.categoryId ? { categoryId: filter.categoryId } : {}),
+      ...(filter.pricingType ? { pricingType: filter.pricingType } : {}),
+      ...(filter.search
+        ? { title: { contains: filter.search, mode: 'insensitive' as const } }
+        : {}),
+    };
+
+    const [items, totalItems] = await Promise.all([
+      tx.course.findMany({
+        where,
+        include: { category: true, instructors: INSTRUCTOR_INCLUDE },
+        orderBy: { [filter.sortBy ?? 'createdAt']: filter.sortDirection ?? 'desc' },
+        skip: filter.skip,
+        take: filter.take,
+      }),
+      tx.course.count({ where }),
+    ]);
+
+    return { items, totalItems };
+  }
+
+  /** `discoverCourse` (P6) — single published+public course by id, regardless of academy. Same RLS reliance as `findManyPublished`. */
+  findPublishedById(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<CourseWithRelations | null> {
+    return tx.course.findFirst({
+      where: { id, status: 'published', visibility: 'public' },
+      include: { category: true, instructors: INSTRUCTOR_INCLUDE },
+    });
+  }
 }

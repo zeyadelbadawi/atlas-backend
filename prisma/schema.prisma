@@ -94,6 +94,10 @@ model User {
   organizationMemberships OrganizationMembership[]
   academyMemberships      AcademyMember[]
   courseInstructorships   CourseInstructor[]
+  enrollments             Enrollment[]
+  quizAttempts            QuizAttempt[]
+  assignmentSubmissions   AssignmentSubmission[]   @relation("SubmissionStudent")
+  gradedSubmissions       AssignmentSubmission[]   @relation("SubmissionGrader")
 
   @@index([status])
   @@map("users")
@@ -619,6 +623,9 @@ model Course {
 
   sections    CourseSection[]
   instructors CourseInstructor[]
+  enrollments Enrollment[]
+  quizzes     Quiz[]
+  assignments Assignment[]
 
   @@unique([academyId, slug])
   @@index([academyId, status, visibility])
@@ -686,6 +693,360 @@ model CourseLesson {
   createdAt   DateTime                @default(now()) @map("created_at")
   updatedAt   DateTime                @updatedAt @map("updated_at")
 
+  lessonProgress LessonProgress[]
+
   @@index([sectionId, order])
   @@map("course_lessons")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P6 — Student Learning & Assessment (master plan §5.3/§5.4, §21
+// Phase P6).
+//
+// Every table here is USER-owned, not organization/academy-owned (master
+// plan §7's resource-ownership table: "Owned by User: ... own Enrollments,
+// own Quiz Attempts/Submissions"). Tenant resolution reuses
+// `TenancyContextService.runInUserContext` verbatim — the exact
+// `app.current_user_id` session variable P2 already introduced for
+// `CurrentUser.organizations`, extended here to a second legitimate
+// use: a student is never an `organization_memberships`/`academy_members`
+// row, so the existing `app.current_organization_id` mechanism structurally
+// cannot express "this row belongs to the signed-in student." No new
+// session variable, no new tenancy model — see migration.sql for the RLS
+// policies built on this.
+//
+// `quizzes`/`quiz_questions`/`quiz_question_options`/`assignments` carry NO
+// write endpoint in P6 — confirmed against the actual frontend contract
+// before writing this schema: `QuizService`/`AssignmentService` (atlas
+// frontend) are read-only for these four, by their own file-header comments
+// ("Quiz authoring is out of scope" / "Assignment authoring and grading
+// workflows are out of scope"). Mirrors the exact precedent already
+// established for `course_categories`/`course_instructors` in P5: table +
+// RLS real, populated only via seed/admin-only inserts, no write endpoint
+// until a later phase defines one (Instructor Operations, P7, for grading;
+// no phase yet owns authoring).
+//
+// `discoverCourses`/`discoverCourse` (the flat, cross-academy, published-
+// only course catalog) is P6 scope — see this file's own P5 section header,
+// which already deferred it here. Reading a published+public `courses` row
+// (plus its `course_categories`/`course_instructors` projections) does not
+// fit the existing academy-membership-scoped `courses_tenant_select`
+// policy — a student is never an organization member of the academy that
+// owns the course. Migration.sql adds narrow, ADDITIVE SELECT policies
+// (`courses.status = 'published' AND courses.visibility = 'public'`, no
+// session-context dependency) alongside the existing academy-staff
+// policies — Postgres OR's multiple SELECT policies together, so this
+// never weakens or replaces P5's own tenant-scoped policy, it only adds a
+// second, legitimate, narrow read path. The `(status, visibility)` index on
+// `courses` (P5) was already declared "for the flat cross-academy
+// discoverCourses endpoint" — this is that endpoint, arriving on schedule.
+//
+// Enrollment is free-course-only in P6, by explicit master plan instruction
+// ("no payment gate on enrollment yet ... free-course behavior is fully
+// buildable now, paid-course gating lands in P13"). `EnrollmentsService`
+// rejects a paid course's enrollment attempt outright (403) rather than
+// granting free access to paid content or inventing a partial payment gate
+// — no course-purchase flow exists to gate on yet.
+//
+// `assignment_submissions` deliberately has NO `assignment_submission_
+// history` table — master plan §5.4 itself says this table is only added
+// "when Phase 6 discovers resubmission history is actually needed for
+// grading UX; not built speculatively now." It wasn't discovered to be
+// needed: `AssignmentSubmission` (frontend) carries no history field, and
+// the one write endpoint (`submitAssignment`) is a single create-or-replace
+// call. `(assignment_id, student_id)` stays unconditionally unique; a
+// resubmission updates that same row in place when
+// `assignments.allow_resubmission` is true, and is rejected with 409 when
+// it is false — "keep the latest row" exactly as instructed, no history
+// table invented.
+// ---------------------------------------------------------------------------
+
+/// Mirrors `Enrollment` (`enrollment.types.ts`) exactly. `academyId` is
+/// denormalized from `course.academy_id` at creation time — same "no join
+/// needed on the student-facing path" reasoning as `CourseLesson.courseId`
+/// (P5) — never updated afterward, never a real FK relation object (matches
+/// that precedent's plain-column shape).
+model Enrollment {
+  id          String           @id @default(uuid())
+  studentId   String           @map("student_id")
+  student     User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  courseId    String           @map("course_id")
+  course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  academyId   String           @map("academy_id")
+  status      EnrollmentStatus
+  enrolledAt  DateTime?        @map("enrolled_at")
+  completedAt DateTime?        @map("completed_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  progress       CourseProgress?
+  LessonProgress LessonProgress[]
+
+  @@unique([studentId, courseId])
+  @@index([studentId, status])
+  @@map("enrollments")
+}
+
+enum EnrollmentStatus {
+  available
+  pending
+  enrolled
+  completed
+  unavailable
+
+  @@map("enrollment_status")
+}
+
+/// Mirrors `CourseProgress` (`progress.types.ts`) — a materialized summary
+/// row per enrollment, updated transactionally within the same request that
+/// changes it (lesson completed), never lazily derived on read (master plan
+/// §5.3's explicit instruction for this table).
+model CourseProgress {
+  enrollmentId      String                @id @map("enrollment_id")
+  enrollment        Enrollment            @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  totalLessons      Int                   @map("total_lessons")
+  completedLessons  Int                   @default(0) @map("completed_lessons")
+  percentage        Decimal               @default(0) @db.Decimal(5, 2)
+  currentLessonId   String?               @map("current_lesson_id")
+  completionState   CourseCompletionState @default(incomplete) @map("completion_state")
+  certificateStatus CertificateStatus     @default(unavailable) @map("certificate_status")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  @@map("course_progress")
+}
+
+enum CourseCompletionState {
+  incomplete
+  in_progress
+  completed
+
+  @@map("course_completion_state")
+}
+
+enum CertificateStatus {
+  unavailable
+  eligible
+
+  @@map("certificate_status")
+}
+
+/// Mirrors `LessonProgress` (`progress.types.ts`), one row per (enrollment,
+/// lesson) — materialized at enrollment time for every published lesson in
+/// the course, not created lazily on first access, so the curriculum
+/// sidebar (`CurriculumNav.tsx`) always has a complete status list to
+/// render, including locked lessons the student hasn't reached yet.
+model LessonProgress {
+  id           String               @id @default(uuid())
+  enrollmentId String               @map("enrollment_id")
+  enrollment   Enrollment           @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  lessonId     String               @map("lesson_id")
+  lesson       CourseLesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  sectionId    String               @map("section_id")
+  courseId     String               @map("course_id")
+  status       LessonProgressStatus @default(locked)
+  completedAt  DateTime?            @map("completed_at")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+
+  @@unique([enrollmentId, lessonId])
+  @@index([enrollmentId, status])
+  @@map("lesson_progress")
+}
+
+enum LessonProgressStatus {
+  locked
+  available
+  in_progress
+  completed
+
+  @@map("lesson_progress_status")
+}
+
+/// Mirrors `Quiz` (`quiz.types.ts`). No write endpoint in P6 — see this
+/// section's header comment. `sectionId` is an optional plain categorization
+/// column (not a `@relation`), matching how `Course.instructors` etc. keep
+/// denormalized/optional pointers plain rather than adding a reverse
+/// relation array to `CourseSection` for a field nothing cascades on.
+model Quiz {
+  id           String     @id @default(uuid())
+  courseId     String     @map("course_id")
+  course       Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  sectionId    String?    @map("section_id")
+  title        String
+  description  String?
+  status       QuizStatus @default(draft)
+  passingScore Int?       @map("passing_score")
+  maxAttempts  Int?       @map("max_attempts")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+
+  @@index([courseId, status])
+  @@map("quizzes")
+}
+
+enum QuizStatus {
+  draft
+  published
+
+  @@map("quiz_status")
+}
+
+/// Mirrors `QuizQuestion` (`quiz.types.ts`). No write endpoint in P6.
+model QuizQuestion {
+  id        String           @id @default(uuid())
+  quizId    String           @map("quiz_id")
+  quiz      Quiz             @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  prompt    String
+  type      QuizQuestionType
+  order     Int
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  options QuizQuestionOption[]
+
+  @@index([quizId, order])
+  @@map("quiz_questions")
+}
+
+enum QuizQuestionType {
+  single_choice
+  multiple_choice
+  true_false
+
+  @@map("quiz_question_type")
+}
+
+/// Mirrors `QuizQuestionOption` (`quiz.types.ts`) **plus** `isCorrect` — the
+/// one field the frontend structurally never receives. Security-critical:
+/// any response returned to a student before they submit an attempt MUST
+/// be projected through a dedicated response DTO that omits this column —
+/// enforced in `quiz-question.contract.ts`, never a field-level "just don't
+/// render it" convention (master plan §5.4/§16/§18 scenario 7, the
+/// mandatory quiz-correctness projection test).
+model QuizQuestionOption {
+  id         String       @id @default(uuid())
+  questionId String       @map("question_id")
+  question   QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  label      String
+  isCorrect  Boolean      @default(false) @map("is_correct")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  @@map("quiz_question_options")
+}
+
+/// Mirrors `QuizAttempt` (`quiz.types.ts`). `answers` is kept as JSONB
+/// (master plan §5.4: "write-once-then-read-only per attempt, never queried
+/// by individual answer") rather than a normalized table — matches
+/// `SubmitQuizAttemptPayload`'s own "no per-answer autosave contract"
+/// shape exactly: one mutation fires on final submit.
+model QuizAttempt {
+  id            String            @id @default(uuid())
+  quizId        String            @map("quiz_id")
+  quiz          Quiz              @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  studentId     String            @map("student_id")
+  student       User              @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status        QuizAttemptStatus
+  answers       Json              @default("[]")
+  score         Decimal?          @db.Decimal(5, 2)
+  passed        Boolean?
+  submittedAt   DateTime?         @map("submitted_at")
+  attemptNumber Int               @map("attempt_number")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  @@index([studentId, quizId, attemptNumber])
+  @@map("quiz_attempts")
+}
+
+enum QuizAttemptStatus {
+  not_started
+  in_progress
+  submitted
+  passed
+  failed
+
+  @@map("quiz_attempt_status")
+}
+
+/// Mirrors `Assignment` (`assignment.types.ts`). No write endpoint in P6.
+/// `sectionId`/`lessonId` are optional plain categorization columns, same
+/// "no reverse relation array for a field nothing cascades on" reasoning as
+/// `Quiz.sectionId`.
+model Assignment {
+  id                String           @id @default(uuid())
+  courseId          String           @map("course_id")
+  course            Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  sectionId         String?          @map("section_id")
+  lessonId          String?          @map("lesson_id")
+  title             String
+  description       String?
+  instructions      String?
+  status            AssignmentStatus @default(draft)
+  dueAt             DateTime?        @map("due_at")
+  allowResubmission Boolean          @default(false) @map("allow_resubmission")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  submissions AssignmentSubmission[]
+
+  @@index([courseId, status])
+  @@map("assignments")
+}
+
+enum AssignmentStatus {
+  draft
+  published
+
+  @@map("assignment_status")
+}
+
+/// Mirrors `AssignmentSubmission` (`assignment.types.ts`) + the grading
+/// columns master plan §5.4 specifies (`Grade`, kept as one entity from the
+/// instructor's view — `AssignmentSubmissionReview`, P7 scope; none of the
+/// grading fields are part of P6's own response contract, since the
+/// student-facing `AssignmentSubmission` type has no score/feedback field).
+/// `(assignment_id, student_id)` stays unconditionally unique — see this
+/// section's header comment for why no history table exists.
+model AssignmentSubmission {
+  id            String                     @id @default(uuid())
+  assignmentId  String                     @map("assignment_id")
+  assignment    Assignment                 @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  studentId     String                     @map("student_id")
+  student       User                       @relation("SubmissionStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  status        AssignmentSubmissionStatus
+  response      String?
+  attachmentUrl String?                    @map("attachment_url")
+  submittedAt   DateTime?                  @map("submitted_at")
+  gradingStatus SubmissionGradingStatus    @default(ungraded) @map("grading_status")
+  score         Decimal?                   @db.Decimal(5, 2)
+  feedback      String?
+  gradedAt      DateTime?                  @map("graded_at")
+  gradedBy      String?                    @map("graded_by")
+  grader        User?                      @relation("SubmissionGrader", fields: [gradedBy], references: [id], onDelete: SetNull)
+  createdAt     DateTime                   @default(now()) @map("created_at")
+  updatedAt     DateTime                   @updatedAt @map("updated_at")
+
+  @@unique([assignmentId, studentId])
+  @@map("assignment_submissions")
+}
+
+enum AssignmentSubmissionStatus {
+  draft
+  submitting
+  submitted
+  failed
+
+  @@map("assignment_submission_status")
+}
+
+enum SubmissionGradingStatus {
+  ungraded
+  graded
+
+  @@map("submission_grading_status")
 }

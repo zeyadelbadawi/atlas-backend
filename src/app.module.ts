@@ -34,6 +34,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
 import { AcademyModule } from './academy/academy.module';
 import { PlansModule } from './plans/plans.module';
 import { CourseModule } from './course/course.module';
+import { LearningModule } from './learning/learning.module';
 
 @Module({
   imports: [
@@ -86,6 +87,7 @@ import { CourseModule } from './course/course.module';
     AcademyModule,
     PlansModule,
     CourseModule,
+    LearningModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
