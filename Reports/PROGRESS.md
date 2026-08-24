@@ -815,6 +815,218 @@ CMS, domains, Atlas/course payment, provisioning, Platform Owner Control
 Plane, analytics, notifications/search, or production-hardening work. No
 speculative future-phase table or endpoint was added "in preparation."
 
+## P5 Closure / Gap-Fix Pass (2026-08-24)
+
+Not a new phase — an exhaustive re-audit of P5 against the *current* real
+frontend/backend contract before P6 starts, per explicit instruction not to
+assume "COMPLETE" (the prior P5 entry above) means fully closed. Every
+claim below was independently re-derived from the actual repositories, not
+copied from the prior entry.
+
+### Scope reconstruction (re-confirmed, unchanged)
+
+Re-traced `CourseService.ts` (frontend) method-for-method against
+`CoursesController`/`CourseCurriculumController`/`CoursesService`/
+`CourseCurriculumService`, the P5 Prisma models, and the P5 migration's own
+RLS policies. Every method (courses CRUD, publish/unpublish, categories
+read, sections/lessons CRUD, both reorder endpoints) is real, wired, and
+tenant-scoped exactly as the original P5 entry describes.
+`discoverCourses`/`discoverCourse` re-confirmed out of scope (`course.types.ts`'s
+own doc comment, `courseDiscoveryKeys`'s structural separation from
+`courseKeys`, and — new this pass — a repo-wide grep of `src/` confirming
+no flat `/courses` controller exists anywhere in the backend).
+
+### Instructor assignment / category management — re-verified, decision unchanged
+
+Fresh, full-repository greps (not a re-read of the prior finding) for
+`assignInstructor|removeInstructor` and
+`createCategory|updateCategory|deleteCategory|createCourseCategory|...`
+across the entire `atlas-front/src` tree, plus a direct read of
+`CourseBuilderPage.tsx`/`CourseSettingsPage.tsx` (neither even mentions the
+word "instructor"): zero matches, exactly as before. The frontend genuinely
+still has no write contract for either capability. Decision stands
+unchanged: DB + RLS real, no write endpoint, consistent with the
+`organizations` (P2) / `tenant_subscriptions` (P4) precedent. No new
+product decision was needed or made.
+
+### Real gap found and fixed: paid-pricing validation was not enforced server-side
+
+**Problem.** The frontend's `createCourseSchema`/`updateCourseSchema`
+(`course.schemas.ts`) both `.refine()` that `pricingAmount` must be a
+positive number whenever `pricingType === 'paid'` — a real, already-decided
+business rule the current frontend contract enforces client-side. The
+backend's `CoursePricingInputDto` (`src/course/dto/course-pricing-input.dto.ts`)
+had no equivalent check: `amount` was `@IsOptional()` regardless of `type`.
+A direct API call (bypassing the frontend form) could persist a `paid`
+course with `pricingAmountMinorUnits = NULL` — a course that claims to cost
+money but has no price. No existing test (unit or e2e) covered this; a full
+read of `test/courses.e2e-spec.ts`'s pricing tests confirmed only the
+happy-path round-trip (`29.99` → `2999n` → `29.99`) and the
+free-clears-stale-price case were covered, never "paid with no amount."
+
+**Fix.** `src/course/dto/course-pricing-input.dto.ts` — replaced the
+unconditional `@IsOptional() @IsNumber() @Min(0)` on `amount` with
+`@ValidateIf((o) => o.type === 'paid') @IsNumber() @IsPositive()`: `amount`
+is now required and must be `> 0` exactly when `type === 'paid'`, and is
+skipped entirely (still fully optional) when `type === 'free'` — matching
+the frontend `.refine()` exactly, no broader rule invented (no currency
+requirement was added, since the frontend's own Zod schema does not
+validate `pricingCurrency` either — it only defaults it client-side).
+
+**Regression test.** `src/course/dto/course-pricing-input.dto.spec.ts`
+(new) — a real, infra-free unit test using `class-validator`'s own
+`validate()` directly against the DTO (no NestJS DI, no database — matches
+this codebase's "unit = infra-free" definition, and is genuinely
+executable in an environment without a live database, unlike this module's
+existing e2e-only pattern). 6 cases: free-with-no-amount accepted,
+paid-with-positive-amount accepted, paid-with-no-amount rejected,
+paid-with-amount=0 rejected, paid-with-negative-amount rejected,
+free-with-explicit-`undefined`-amount accepted. **Run and confirmed
+passing: 6/6.**
+
+**Verification after the fix.** Backend typecheck: 0 errors. Lint: 0
+errors (one Prettier import-wrap issue caught and fixed with
+`prettier --write`, re-verified clean). Build: clean. Full unit suite:
+**193/193 passing** (187 pre-existing + 6 new), zero regressions. Format
+check: clean.
+
+This is the only concrete, existing-contract-backed implementation gap
+found during this pass. It was fixed directly, per the standing instruction
+not to ask permission for completing an already-defined P5 contract.
+
+### Everything else re-audited this pass, found already correct
+
+- **DTO validation** (`create-course.dto.ts`, `update-course.dto.ts`,
+  `course-section.dto.ts`, `course-lesson.dto.ts`,
+  `course-list-query.dto.ts`, `reorder-items.dto.ts`) — read in full,
+  field-for-field against `course.types.ts`/`course.schemas.ts`. One
+  suspected second gap (`contentUrl`'s `@IsUrl()` rejecting an empty
+  string, since `@IsOptional()` only skips `undefined`/`null`) was
+  investigated to the actual call site and ruled out: `LessonFormDialog`
+  defaults the form field to `''`, but `CourseBuilderPage`'s submit handler
+  (`contentUrl: data.contentUrl || undefined`) already normalizes it to
+  `undefined` before the request is ever sent — the wire contract never
+  actually carries an empty string. No fix needed; documented here so the
+  investigation isn't silently lost.
+- **Repositories** (`courses.repository.ts` et al.) — confirmed
+  `findById`/`findManyForAcademy` both correctly `include: { category:
+  true, instructors: INSTRUCTOR_INCLUDE }`, so the instructor/category
+  read-side genuinely returns real joined data, not just a DTO shape that
+  happens to compile.
+- **Response contracts** (`course.contract.ts`) — pricing bridge
+  (minor-units ↔ decimal) and `CourseInstructorSummaryResponse.id` (the
+  user's id, not the join row) re-confirmed correct by direct code read.
+- **RLS** — every one of the 15 policies on the 5 P5 tables
+  (`course_categories`, `courses`, `course_instructors`, `course_sections`,
+  `course_lessons`) read directly from `pg_policies` against a real,
+  freshly-migrated database (see "Automated verification" below):  every
+  `USING`/`WITH CHECK` clause is a narrow, transitive `EXISTS` resolving
+  through `academies.organization_id = current_setting('app.current_organization_id')`
+  — never `WITH CHECK (true)`, exactly as claimed. `courses` has no DELETE
+  policy (soft-archive only); `course_sections`/`course_lessons` have real
+  DELETE policies; `course_categories`/`course_instructors` have SELECT+INSERT
+  only (no UPDATE/DELETE at the database level either — reinforcing that the
+  "no write endpoint" decision is structurally consistent all the way down,
+  not just an API-layer omission).
+- **Frontend pages** (`CourseListPage.tsx`, `CourseBuilderPage.tsx`) — real
+  loading (`Skeleton`), error (`ErrorState` with `onRetry`), and empty
+  states confirmed present by direct code read, including the
+  distinct-empty-state detail (`course:empty.noCourses` vs.
+  `course:empty.noResults`, depending on whether a filter is active) that
+  `P5-MANUAL-016` expects.
+- **Seed data** (`prisma/seed.ts`) — read in full. 3 categories, 4 courses
+  (2 published/2 draft, 1 paid/3 free, 1 fully Arabic-content), 5 sections,
+  9 lessons, 1 `course_instructors` row, all via idempotent
+  `upsert`/find-then-update-or-create keyed by natural keys
+  (academy+slug, section/lesson `(parentId, order)`) — re-confirmed
+  structurally idempotent by code inspection (a second run would find
+  every row and `update` in place, never duplicate). Genuinely covers every
+  P5-MANUAL scenario's stated preconditions.
+
+### Automated verification (this pass)
+
+No Docker and no reachable Postgres/Redis service existed in this session's
+environment. Rather than skip database-level verification, PostgreSQL 16
+and Redis were installed locally (Homebrew) and Redis started successfully;
+however the local Postgres's normal multi-process postmaster fails to
+start in this specific sandboxed environment with `FATAL: postmaster
+became multithreaded during startup` — root-caused to something in this
+environment specifically (confirmed NOT locale, NOT IPv6, NOT inherited
+shell environment, via `env -i` full-strip; the same krb5-linked Homebrew
+bottle is the leading suspect but was not conclusively isolated), reported
+honestly rather than worked around by fabricating results. What
+Postgres's **single-user (`--single`) standalone mode** — a real backend
+process, not a mock — could still prove directly against a freshly
+initialized, empty database:
+
+- All 10 P0→P5 migrations apply **cleanly, in order, zero errors**, from
+  an empty database (each migration file's SQL flattened to strip comments
+  only, content byte-identical otherwise).
+- `relrowsecurity`/`relforcerowsecurity` are both `true` on all 5 P5
+  tables (`pg_class` catalog read).
+- All 15 RLS policy definitions on those tables, read directly from
+  `pg_policies.qual`/`.with_check`, exactly match what's claimed above.
+- `atlas_app` is confirmed `rolsuper = false`, `rolbypassrls = false` in
+  `pg_roles`.
+
+**What could not be proven live, and why:** row-level RLS *enforcement*
+(does a cross-tenant `SELECT` actually return zero rows) could not be
+measured through single-user mode — a control test against `organizations`
+(a table whose RLS was already exhaustively proven correct by the real P2
+e2e suite) showed the identical false-open behavior under single-user mode
+regardless of role or session context, conclusively identifying this as a
+limitation of standalone-mode's execution path, not a real regression.
+Genuine enforcement proof, plus the full HTTP/guard/controller integration
+(`courses.e2e-spec.ts`, `course-curriculum.e2e-spec.ts`,
+`courses-tenant-isolation.e2e-spec.ts`, `rls-courses.e2e-spec.ts` — 38
+tests total, all read in full this pass and confirmed to test what they
+claim, none weakened or skipped), requires the real `npm run test:e2e`
+against a real networked Postgres+Redis (e.g. via `docker-compose up`),
+which the user should run to get the final green confirmation — the same
+standing gap between "automated PASS" and "closed" that already applied to
+every prior phase's manual verification.
+
+What **was** run live and is a genuine, unmodified result:
+
+| Check | Result |
+|---|---|
+| Backend typecheck | PASS, 0 errors |
+| Backend lint | PASS, 0 errors |
+| Backend build | PASS |
+| Backend format:check | PASS |
+| Backend unit tests | **193/193 PASS** (187 pre-existing + 6 new, zero regressions) |
+| Frontend typecheck | PASS — 18 pre-existing, unrelated errors (`PortableTextRenderer.tsx`/`SectionTitle.tsx`), 0 new, exact match to the documented baseline |
+| Frontend lint | PASS, 0 errors |
+| Frontend build | PASS — Course pages confirmed still shipping as separate lazy chunks |
+| Migration apply (clean DB, P0→P5, single-user mode) | PASS, 0 errors |
+| RLS policy existence/correctness (catalog-level) | PASS, 15/15 policies narrow and correct |
+| RLS enforcement (live, cross-tenant) | **NOT RUN — requires real Postgres, see above** |
+| Backend e2e (167 tests incl. 38 P5-specific) | **NOT RUN — requires real Postgres+Redis, see above** |
+| Seed idempotency (real second run) | **NOT RUN — requires real Postgres+Redis; verified idempotent by code inspection instead** |
+
+### Manual test runbook
+
+Reviewed `Reports/MANUAL_TEST_RUNBOOK.md`'s P5 section
+(`P5-MANUAL-001..019`) in full. Every case already has prerequisite, exact
+account, exact steps, expected result, and PASS criteria; the two SECURITY
+cases (`P5-MANUAL-014`, `P5-MANUAL-015`) already state the DevTools/network
+check needed. No structural gap found — no changes made. **Still 0/19 run
+by a human** (unchanged from context recovery); this pass did not and
+could not change that, since it requires a human tester against a live
+running app.
+
+### Deferred items — unchanged, re-confirmed
+
+`discoverCourses`/`discoverCourse` (P6), course instructor
+assignment/removal (no frontend contract), course category
+create/update/delete (no frontend contract), enrollments/progress/quizzes/
+assignments/grading (P6). No new deferred item was discovered.
+
+### P6 status
+
+**Not started.** No P6 code, table, endpoint, or test was added or
+modified during this pass.
+
 ## Next phase
 
 **P6 — Student Learning & Assessment.** Not started. Do not begin without

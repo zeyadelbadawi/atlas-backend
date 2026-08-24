@@ -409,3 +409,19 @@ tenant-scoped row writes, and a real `AppModule` context (mirrors
 `scripts/recompute-tenant-usage.ts`) for the two things that must run
 through real application code — password hashing and `tenant_usage`
 computation.
+
+## P5 Closure / Gap-Fix Pass (2026-08-24)
+
+One real fix landed during the closure audit: `CoursePricingInputDto`
+(`src/course/dto/course-pricing-input.dto.ts`) now enforces, server-side,
+the same rule the frontend's `createCourseSchema`/`updateCourseSchema`
+already enforce client-side — `amount` must be a positive number whenever
+`type === 'paid'`, via `@ValidateIf((o) => o.type === 'paid') @IsNumber()
+@IsPositive()` in place of an unconditional `@IsOptional()`. Everything
+else audited this pass (full DTO set, repositories' relation includes,
+response contract mapping, all 15 RLS policy definitions read directly
+from `pg_policies`, frontend page loading/empty/error states, seed
+idempotency) was confirmed already correct by direct code/catalog
+inspection — no other change was made. See `Reports/PROGRESS.md`'s P5
+Closure entry for the full audit trail, what could and could not be
+verified live in this session's environment, and why.
