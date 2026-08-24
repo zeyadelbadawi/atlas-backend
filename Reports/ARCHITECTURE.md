@@ -329,3 +329,83 @@ other request.
 matching `TenantUsage`'s (frontend) actual field names exactly, the same
 "confirm the frontend type directly, don't assume from DB naming"
 discipline `AcademyResponse` established in P3.
+
+## P5 — Course Management (2026-08-24)
+
+`CourseModule` (`src/course/`) is Academy-scoped content authoring — every
+route nests under `academies/:academyId/courses/...`. Two services:
+`CoursesService` (course CRUD, publish/unpublish, read-only category
+projection) and `CourseCurriculumService` (sections/lessons: CRUD +
+explicit-order reorder).
+
+### No new guard — `AcademyScopeGuard` reused verbatim
+
+Every prior phase module needed to reason about tenancy resolution
+(Academy's own transitive bootstrap in P3, `OrganizationMembershipGuard`
+reuse in P4). P5 needed neither: because every Course route's `:id` URL
+segment is always the ACADEMY id — never a course id — `AcademyScopeGuard`
+(imported from `AcademyModule`, unmodified, now exported specifically for
+this reuse) already does the entire job: bootstrap-resolve the owning
+organization, re-verify membership, attach `request.academyContext`.
+Course/section/lesson ids are always secondary path segments, verified
+purely by ownership-chain lookups inside the service layer (`assert
+CourseInAcademy`/`assertSectionInCourse`/`assertLessonInSection` in
+`CourseCurriculumService`, `assertBelongsToAcademy` in `CoursesService`)
+— ordinary application-layer checks, not a new authorization mechanism.
+
+### Write authorization — identical shape to Academy, one level down
+
+`CoursesService.assertCanManage`/`CourseCurriculumService.assertCanManage`
+are byte-identical in logic to `AcademiesService.assertCanManage`
+(`academy_members` role `owner`/`administrator` required) — READ stays
+governed by organization membership alone via the shared guard. This is
+what keeps "organization owner ≠ automatic Course-write access" true
+end-to-end for the same reason P3 established it for Academy writes.
+
+### Two tables with no write endpoint, by confirmed design
+
+`course_categories` and `course_instructors` exist (master plan §5.3
+requires both; `Course.instructors`/`.category` need a real source), carry
+full RLS, but have NO create/update/delete HTTP endpoint — confirmed
+against the actual `CourseService` (frontend), which defines none for
+either. Mirrors the exact `organizations`(P2)/`tenant_subscriptions`(P4)
+precedent: table + RLS real now, the write capability is a later,
+separately-specified phase's job. Seed/test fixtures populate both via the
+admin superuser connection, same as those two precedents.
+
+### Ordering model
+
+`course_sections.order`/`course_lessons.order` are plain integers, no
+special constraint. Reordering (`PATCH .../order`, `{orderedIds:
+string[]}`) is a full-list replace: the service verifies `orderedIds` is
+an EXACT permutation of the item's current children (not a superset,
+subset, or foreign id — `assertExactPermutation`), then rewrites every
+`order` field to match array position, in one transaction. New items are
+always appended (`maxOrder + 1`) — never accept a client-supplied `order`
+on create.
+
+### Response contract mapping
+
+`CourseResponse.pricing.amount` — see `schema.prisma`'s doc comment on the
+`Course` model for the full reasoning: `courses.pricing_amount_minor_units`
+is an integer (cents) at rest, matching master plan §5.3's explicit column
+type and this codebase's "money is a minor-unit integer, never a float"
+convention, while the frontend's actual `CoursePricing.amount` is a plain
+decimal — converted in `toCourseResponse`/`CoursesService` only, in both
+directions, never exposed as the raw integer.
+
+`CourseInstructorSummaryResponse.id` is the USER's id (not a
+`course_instructors` join-row id, which doesn't have its own surrogate key
+— the table's PK is the composite `(course_id, user_id)`) — matches the
+frontend `CourseInstructorSummary`'s own framing as "a reference to the
+instructor," i.e. the person, not the assignment record.
+
+### Seed/fixture system
+
+`prisma/seed.ts` — see `Reports/PROGRESS.md`'s P5 entry for the full
+fixture graph and safety discussion. Two connections deliberately:
+`DATABASE_URL` (superuser, mirrors `test/utils/db-admin.ts`) for
+tenant-scoped row writes, and a real `AppModule` context (mirrors
+`scripts/recompute-tenant-usage.ts`) for the two things that must run
+through real application code — password hashing and `tenant_usage`
+computation.

@@ -165,3 +165,84 @@ export async function seedTenantAddOn(
 ) {
   return admin.tenantAddOn.create({ data: { organizationId, addOnId } });
 }
+
+/** P5 — `courses`/`course_categories`/etc. are Academy-scoped and RLS-protected; seeded via the admin connection, mirroring `seedAcademy`'s own precedent. */
+export async function seedCourseCategory(
+  admin: PrismaClient,
+  academyId: string,
+  nameLabel: string,
+) {
+  const slug = `${nameLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return admin.courseCategory.create({
+    data: { academyId, name: nameLabel, slug },
+  });
+}
+
+export async function seedCourse(
+  admin: PrismaClient,
+  academyId: string,
+  titleLabel: string,
+  overrides: {
+    status?: 'draft' | 'published' | 'archived';
+    visibility?: 'public' | 'private';
+    categoryId?: string;
+    pricingType?: 'free' | 'paid';
+    pricingAmountMinorUnits?: bigint;
+    pricingCurrency?: string;
+  } = {},
+) {
+  const slug = `${titleLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return admin.course.create({
+    data: {
+      academyId,
+      categoryId: overrides.categoryId,
+      title: titleLabel,
+      slug,
+      status: overrides.status ?? 'draft',
+      visibility: overrides.visibility ?? 'private',
+      pricingType: overrides.pricingType ?? 'free',
+      pricingAmountMinorUnits: overrides.pricingAmountMinorUnits,
+      pricingCurrency: overrides.pricingCurrency,
+    },
+  });
+}
+
+export async function seedCourseSection(
+  admin: PrismaClient,
+  courseId: string,
+  titleLabel: string,
+  order: number,
+) {
+  return admin.courseSection.create({ data: { courseId, title: titleLabel, order } });
+}
+
+export async function seedCourseLesson(
+  admin: PrismaClient,
+  sectionId: string,
+  courseId: string,
+  titleLabel: string,
+  order: number,
+  overrides: {
+    contentType?: 'text' | 'video' | 'file';
+    status?: 'draft' | 'published';
+  } = {},
+) {
+  return admin.courseLesson.create({
+    data: {
+      sectionId,
+      courseId,
+      title: titleLabel,
+      order,
+      contentType: overrides.contentType ?? 'text',
+      status: overrides.status ?? 'draft',
+    },
+  });
+}
+
+export async function seedCourseInstructor(
+  admin: PrismaClient,
+  courseId: string,
+  userId: string,
+) {
+  return admin.courseInstructor.create({ data: { courseId, userId } });
+}

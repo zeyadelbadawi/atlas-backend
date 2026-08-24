@@ -35,7 +35,7 @@ import type { AcademyResponse } from '../dto/academy.contract';
 import type { AcademyMemberResponse } from '../dto/academy-member.contract';
 import type { AcademyStatsResponse } from '../dto/academy-stats.contract';
 import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
-import type { PaginatedResult } from '../dto/pagination.contract';
+import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('academies')
 @UseGuards(JwtAuthGuard)

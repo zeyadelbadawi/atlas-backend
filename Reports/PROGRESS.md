@@ -596,7 +596,226 @@ quizzes, assignments, media, website, CMS, domains, Platform Owner Control
 Plane, analytics, notifications/search, or a generic RBAC catalog. No
 speculative future-phase table or endpoint was added "in preparation."
 
+## P5 — Course Management (2026-08-24)
+
+**Status: COMPLETE (automated).** `course_categories`/`courses`/
+`course_instructors`/`course_sections`/`course_lessons` tables, RLS,
+`CoursesService`/`CourseCurriculumService`, and every `CourseService`
+(frontend) authoring method backed by a real endpoint. Automated
+verification PASS (typecheck/lint/build/unit/e2e/clean-migration, zero
+regressions). Real, deterministic P0–P5 seed data created.
+**Manual verification: PENDING USER TESTING** — see
+`MANUAL_TEST_RUNBOOK.md`'s P5-MANUAL-001..018.
+
+### Two confirmed frontend-contract gaps, resolved before writing code (not silently invented)
+
+Backend Prompt 6 §1's "inspect first, STOP if the frontend contract
+differs" rule caught two real gaps:
+
+1. **Course instructor assignment.** `CourseService.ts` has zero
+   assignment/removal methods; `Course.instructors` is a read-only
+   projection nothing in the frontend ever writes to (confirmed by a
+   full repo-wide grep, not assumed). The prompt asked for a write
+   endpoint plus assignment tests — surfaced to the user directly rather
+   than inventing one. **Decision (2026-08-24): DB + read-side only, no
+   write endpoint** — mirrors the exact precedent already established
+   twice in this codebase (`organizations` in P2, `tenant_subscriptions`
+   in P4: table + RLS real, creation happens outside the request cycle
+   until a later phase defines it). `course_instructors` exists, is
+   RLS-protected, and is projected into `Course.instructors` correctly;
+   seed data populates it directly via the admin connection.
+2. **Course categories are read-only too** — same shape of gap
+   (`getCourseCategories`/`getCourseCategory` are `CourseService`'s only
+   category methods, no create/update/delete anywhere), found during
+   implementation and resolved the identical way without re-asking,
+   since it's the same already-decided pattern.
+
+### Scope-boundary decision (not silently invented, strongly evidenced)
+
+`discoverCourses`/`discoverCourse` (the flat, cross-academy, session-
+scoped catalog) are OUT of P5 — `course.types.ts`'s own doc comment
+("student consumption... [is a] separate, future module") and the
+frontend's own separate `courseDiscoveryKeys` query-key tree (distinct
+from owner-facing `courseKeys`) both independently confirm this is
+Student Learning (P6) scope, not authoring. P5's own DoD wording
+("`CourseService`'s full **authoring** surface") supports the same
+reading.
+
+### RLS design — reuses AcademyScopeGuard verbatim, no new guard
+
+Every Course route nests under `academies/:academyId/courses/...` — the
+academy id is always the URL's own `:id`, already resolved and
+re-verified by the existing, unmodified `AcademyScopeGuard`. Unlike
+Academy's own transitive-bootstrap problem (P3), **no new bootstrap
+policy or guard was needed**: course/section/lesson ids are always
+secondary path segments, verified by ordinary application-layer
+ownership-chain queries (Lesson → Section → Course → Academy →
+Organization, master plan P5 §14) inside the tenant context the guard
+already established. Two migrations: `20260824044819_p5_course_management`
+(tables + narrow SELECT/INSERT policies, transitively resolving through
+`academy_id`/`organization_id`, one or two `EXISTS` hops depending on the
+table) and no follow-up migration was needed for UPDATE/DELETE — both
+land in the SAME initial migration this time, since P5's write capability
+ships in the same phase as the tables (unlike P3/P4, where UPDATE
+capability came in a deliberate follow-up). `courses` gets no DELETE
+policy (soft-archive only, matching `Academy`'s precedent); `course_
+sections`/`course_lessons` DO get DELETE policies — real SQL DELETE,
+since neither has a soft-delete state machine (`CourseLessonStatus` has
+no `archived` value, `CourseSection` has no status column at all).
+
+Clean-database migration verified twice (throwaway `atlas_migration_
+test_p5` database, all 10 migrations P0→P5 apply cleanly from zero, then
+the real dev database). Empirical RLS proof run by hand via
+`docker exec ... psql` as the real `atlas_app` role **before any
+application code was written** (fail-closed, tenant isolation — including
+the two-hop transitive case for sections/lessons, all attack vectors
+blocked, all legitimate paths allowed), then made permanent as
+`rls-courses.e2e-spec.ts`.
+
+### Authorization — identical split to Academy (P3), applied one level down
+
+READ (list/detail/sections/categories) is governed by ORGANIZATION
+membership alone (via `AcademyScopeGuard`, unmodified). WRITE
+(create/update/archive/publish/unpublish/sections/lessons/reorder)
+additionally requires an `academy_members` row with role `owner`/
+`administrator` for the owning academy — `CoursesService`/
+`CourseCurriculumService.assertCanManage`, byte-identical rule to
+`AcademiesService.assertCanManage`. An org member with no academy role
+can read but not write, proven end-to-end (both automated and via the
+real manual smoke test, `mike.wilson@acme-academy.dev` reading OK,
+writing 403).
+
+### Course ordering — explicit integer, never drag-and-drop
+
+`ReorderItemsPayload` (`{orderedIds: string[]}`) is the frontend's own
+contract — the client computes the full new order via `moveItem`
+(move-up/move-down) and sends the complete list; the backend's only job
+is validating it's an EXACT permutation of the current children (no
+missing/extra/foreign id — `BadRequestException` otherwise) and
+persisting each item's new `order` index in one transaction. New
+sections/lessons are always appended last (`maxOrder + 1`); no `order`
+field is ever accepted on create.
+
+### Publish/unpublish — no invented prerequisite, no invented state machine
+
+Neither endpoint enforces a publication prerequisite (e.g. "must have at
+least one section") — none is specified anywhere in the frontend, and the
+prompt explicitly warned against inventing one. Both are unconditional
+status setters: `publish` always sets `publishedAt = now()` (an event
+each time, including a republish); `unpublish` reverts `status` to
+`draft` and deliberately leaves `publishedAt` untouched (a course still
+honestly remembers when it was last published — common CMS behavior,
+nothing in the frontend asks for it to be cleared). Proven in both the
+automated suite and the real manual smoke test.
+
+### Pricing bridge (a real, resolved discrepancy between master plan and frontend)
+
+Master plan §5.3 specifies `pricing_amount_minor_units bigint` (the
+established "money is a minor-unit integer at rest" convention); the
+frontend's actual `CoursePricing.amount` is a plain decimal number
+(`29.99`), not the `Money`/`amountMinorUnits` shape `money.types.ts`
+defines for the real Prompt 7/P12-13 commercial contract. Resolved by
+storing integer cents at rest and converting in the response/request DTOs
+only — `toCourseResponse`/`CoursesService` — never exposing the raw
+integer, never storing a float. Verified end-to-end (`29.99` in →
+`2999n` in Postgres → `29.99` back out, both automated and via the real
+manual smoke test) including the "switching to free must clear the stale
+minor-units value" edge case (a real bug caught by the automated test
+suite and fixed before this report — `undefined` means "don't touch" to
+Prisma's update semantics, `null` means "clear"; the fix uses `?? null`
+explicitly).
+
+### `courses` usage metric — P4's own documented gap, now closed
+
+`TenantUsageRecomputeService` (P4) left `courses` hardcoded at `0` with an
+explicit comment: "this function is structured so a later phase adds its
+own real COUNT here." P5 is that later phase — `courses` now counts real,
+non-archived courses within non-archived academies per organization, the
+exact continuation P4 anticipated. Verified via the seed script's real
+recompute call (Org A: 2 real courses → `courses: 2`) and the existing P4
+test suite re-run to confirm no regression (fresh test orgs with no
+courses still correctly show `0`).
+
+### Seed/fixture system — real, deterministic, idempotent, spans P0–P5
+
+`prisma/seed.ts` (`npm run db:seed`), `package.json`'s `prisma.seed`
+config. Every row written through real Prisma `upsert`/find-then-create
+calls keyed by a stable NATURAL key (email/slug/compound unique) — never
+a hardcoded id — so re-running updates rows in place, proven idempotent
+(ran twice, identical row counts both times, confirmed by direct SQL
+count). Two connections, deliberately: the admin superuser connection for
+tenant-scoped rows (mirrors `test/utils/db-admin.ts`'s established
+pattern), and a real, full `AppModule` context for the two things that
+must go through real application code — `PasswordHasherService` (real
+Argon2id hashing, no placeholder) and `TenantUsageRecomputeService.
+recomputeOne` (real computed usage, not hand-typed numbers).
+
+Fixture graph: 6 users (1 platform owner, 2 org owners, 1 instructor, 1
+staff, 1 org-member-with-no-academy-role — deliberately covering every
+authorization tier this and prior phases test), 2 organizations (with a
+real multi-org membership — Sarah Chen belongs to both), 3 academies (2
+active, 1 draft), 3 plans + 2 add-ons + 2 subscriptions (one `active`
++add-on, one `trialing`) from P4, 3 categories, 4 courses (2 published, 2
+draft/one of which is fully Arabic-content — `أساسيات اللغة العربية` —
+proving the plain-string columns round-trip non-Latin UTF-8 correctly;
+the schema has no separate translation columns to populate, confirmed
+against `course.types.ts`), 5 sections, 9 lessons, 1 course_instructor
+assignment. Real `tenant_usage` rows computed via the real worker, not
+fabricated. Documented in the script's own header comment: safety
+(obviously-fake `@*.dev` emails, one printed dev password, manual-only
+invocation, no production guard needed beyond that), exact run command,
+exact fixture contents.
+
+### Verification
+
+Typecheck PASS, lint PASS (0 errors after `--fix` for formatting only —
+plus a real bug caught and fixed: `POST .../publish`/`.../unpublish`
+returned NestJS's default `201` instead of `200`, caught by the
+automated contract test, not discovered by manual smoke testing first).
+Build PASS, format:check PASS. Migration verification PASS (clean-
+database apply from zero, twice). Unit: 12 suites / 187 tests PASS
+(unchanged from P4 — P5 added no new unit-testable pure-logic service;
+`CoursesService`/`CourseCurriculumService` are integration-tested against
+real Postgres instead, matching the prompt's own "no mocked database for
+RLS verification" requirement). E2e: **26 suites / 167 tests PASS, zero
+regressions** (all 22 pre-existing P0–P4 suites/129 tests still green) +
+4 new suites/38 new tests: `rls-courses.e2e-spec.ts` (direct DB proof,
+zero app code), `courses.e2e-spec.ts` (CRUD/publish/pricing/categories/
+validation contract), `course-curriculum.e2e-spec.ts` (sections/lessons/
+reorder/ownership-chain), `courses-tenant-isolation.e2e-spec.ts`
+(P5-TENANT-001..010, extending the permanent suite, same one-file-per-
+phase pattern P3/P4 established). Full manual smoke test (all 18 items
+from the prompt's own list) run against real Docker Postgres/Redis via
+`curl`, using the real seeded data end-to-end — every response matched
+the frontend's exact contract shape; the one initially-surprising result
+(step 16, a seeded multi-org member successfully reading a second
+organization's academy) was correctly diagnosed as legitimate behavior,
+not a bug, and re-verified with a genuinely unrelated user to confirm the
+negative case (403).
+
+Also extended the shared pagination/collection-query DTOs
+(`src/common/dto/pagination.contract.ts`, `src/common/dto/
+collection-query.dto.ts`) out of `src/academy/` — the third module
+(`academy`/`plans`/`course`) that would have needed a near-identical copy;
+consolidated instead, `AcademyModule`'s own behavior unchanged (its 8
+existing tests still pass).
+
+CTO audit: no TODO/FIXME/console.log/hardcoded ids/fake data/
+`WITH CHECK (true)`/direct `PrismaService` bypass of
+`TenancyContextService`/missing guards/speculative P6+ code (quiz,
+enrollment, assignment, grading — all absent from `src/course/`) in any
+new P5 code.
+
+### What is deliberately NOT implemented (P5 boundary, matches master plan §21/§24 and Backend Prompt 6 §21 exactly)
+
+No enrollments, student progress, lesson progress, quizzes, quiz
+questions/attempts, assignments/submissions, grading, instructor
+dashboard, announcements/blog/forums, media library, website builder,
+CMS, domains, Atlas/course payment, provisioning, Platform Owner Control
+Plane, analytics, notifications/search, or production-hardening work. No
+speculative future-phase table or endpoint was added "in preparation."
+
 ## Next phase
 
-**P5 — Course Management.** Not started. Do not begin without explicit
-approval.
+**P6 — Student Learning & Assessment.** Not started. Do not begin without
+explicit approval.

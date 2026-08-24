@@ -1,8 +1,14 @@
 /**
  * `PaginatedResult<T>` — matches `atlas frontend/src/types/api.types.ts`
  * exactly: `{ items, pagination: { page, pageSize, totalItems, totalPages } }`.
- * This is the first backend module to paginate anything (P0/P1/P2 have no
- * list endpoints), so this helper is new, not a reuse of an existing one.
+ *
+ * Originally introduced in `src/academy/` (P3, the first backend module to
+ * paginate anything — P0/P1/P2 have no list endpoints), and moved here in
+ * P5 when `src/course/` needed the identical helper: three near-identical
+ * copies across `academy`/`plans`/`course` would have been the exact
+ * "duplicated" drift the CTO audit checklist flags, for a pure,
+ * behaviorless utility type with zero reason to differ per module. Every
+ * paginated response in this codebase now shares this one definition.
  */
 export interface PaginationMeta {
   readonly page: number;

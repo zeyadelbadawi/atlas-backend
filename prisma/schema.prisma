@@ -93,6 +93,7 @@ model User {
   ownedOrganizations      Organization[]           @relation("OrganizationOwner")
   organizationMemberships OrganizationMembership[]
   academyMemberships      AcademyMember[]
+  courseInstructorships   CourseInstructor[]
 
   @@index([status])
   @@map("users")
@@ -273,7 +274,9 @@ model Academy {
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
 
-  members AcademyMember[]
+  members          AcademyMember[]
+  courseCategories CourseCategory[]
+  courses          Course[]
 
   @@index([organizationId, status])
   @@map("academies")
@@ -477,4 +480,212 @@ model TrialPolicy {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   @@map("trial_policy")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P5 — Course Management (master plan §5.3, §21 Phase P5).
+//
+// Course is Academy-scoped — tenant ownership resolves transitively
+// (`course → academy_id → academies.organization_id`), reusing the exact
+// P3 mechanism (`academies_org_member_select`-style bootstrap +
+// `runInTenantContext`). No `app.current_academy_id`, no second tenant
+// mechanism. See migration.sql for the RLS policies.
+//
+// Scope boundary confirmed against the actual frontend contract before
+// writing this schema (Backend Prompt 6 §1's "inspect first" rule):
+// `CourseService` (atlas frontend) has NO write method for either course
+// categories or course instructors — `getCourseCategories`/
+// `getCourseCategory` are its only category methods, and
+// `Course.instructors` (`CourseInstructorSummary[]`) is a read-only
+// projection with no assignment/removal endpoint anywhere in the
+// frontend (confirmed by a full repo-wide grep, not assumed). Both tables
+// below exist (master plan §5.3 requires them, and `Course.instructors`
+// needs a real source), but carry NO write endpoint in P5 — mirrors the
+// exact precedent already established twice in this codebase
+// (`organizations` in P2, `tenant_subscriptions` in P4: table exists, RLS
+// is real, but creation happens outside the request/response cycle until
+// a later phase adds the real capability). Product-confirmed 2026-08-24.
+// `discoverCourses`/`discoverCourse` (the flat, cross-academy, session-
+// scoped course catalog) are also out of P5's scope — `course.types.ts`'s
+// own doc comment ("student consumption... [is a] separate, future
+// module") and the frontend's own separate `courseDiscoveryKeys` query-key
+// tree both confirm this is Student Learning (P6) scope, not authoring.
+// ---------------------------------------------------------------------------
+
+/// Matches `CourseStatus` (`course.types.ts`) exactly. `archived` is the
+/// soft-delete terminal state — `DELETE /academies/:id/courses/:id`
+/// (the frontend's real, defined contract) is implemented as a status
+/// transition, never a SQL `DELETE`, matching `Academy`'s own precedent;
+/// there is no DELETE RLS policy on `courses` at all.
+enum CourseStatus {
+  draft
+  published
+  archived
+
+  @@map("course_status")
+}
+
+/// Matches `CourseVisibility` (`course.types.ts`) exactly.
+enum CourseVisibility {
+  public
+  private
+
+  @@map("course_visibility")
+}
+
+/// Matches `CoursePricingType` (`course.types.ts`) exactly.
+enum CoursePricingType {
+  free
+  paid
+
+  @@map("course_pricing_type")
+}
+
+/// Matches `CourseLessonContentType` (`course.types.ts`) exactly.
+enum CourseLessonContentType {
+  text
+  video
+  file
+
+  @@map("course_lesson_content_type")
+}
+
+/// Matches `CourseLessonStatus` (`course.types.ts`) exactly — deliberately
+/// only `draft`/`published`, no `archived` (the frontend type has none):
+/// unlike `Course`, a lesson has no soft-delete state machine, so
+/// `DELETE .../lessons/:id` is a real SQL DELETE (see migration.sql).
+/// Same reasoning applies to `CourseSection`, which carries no `status`
+/// column at all.
+enum CourseLessonStatus {
+  draft
+  published
+
+  @@map("course_lesson_status")
+}
+
+/// Mirrors `CourseCategory` (`course.types.ts`) field-for-field.
+/// Academy-scoped (master plan §5.3's explicit FK). Read-only in P5 — see
+/// this section's header comment.
+model CourseCategory {
+  id          String   @id @default(uuid())
+  academyId   String   @map("academy_id")
+  academy     Academy  @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  name        String
+  slug        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  courses Course[]
+
+  @@unique([academyId, slug])
+  @@index([academyId])
+  @@map("course_categories")
+}
+
+/// Mirrors `Course` (`course.types.ts`) field-for-field.
+///
+/// Pricing bridge: the frontend's `CoursePricing.amount` is a plain
+/// decimal number (e.g. `29.99`, matching what the create/edit form
+/// collects via `pricingAmount: z.coerce.number()`) — NOT the `Money`/
+/// `amountMinorUnits` shape `money.types.ts` defines for the real
+/// Checkout/Payment/Invoice commercial contract (Prompt 7/P12-13).
+/// Master plan §5.3 still specifies `pricing_amount_minor_units bigint`
+/// for this table — the established "money is always a minor-unit
+/// integer at rest, never a float" convention — so the DB column stores
+/// integer cents and the response/request DTOs (`course.contract.ts`)
+/// convert to/from the frontend's plain decimal number. This avoids
+/// floating-point money bugs at rest while exposing exactly the shape
+/// `CoursePricing` already defines; no new field or endpoint invented.
+model Course {
+  id                      String            @id @default(uuid())
+  academyId               String            @map("academy_id")
+  academy                 Academy           @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  categoryId              String?           @map("category_id")
+  category                CourseCategory?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  title                   String
+  slug                    String
+  description             String?
+  shortDescription        String?           @map("short_description")
+  thumbnailUrl            String?           @map("thumbnail_url")
+  status                  CourseStatus      @default(draft)
+  visibility              CourseVisibility  @default(private)
+  pricingType             CoursePricingType @default(free) @map("pricing_type")
+  pricingAmountMinorUnits BigInt?           @map("pricing_amount_minor_units")
+  pricingCurrency         String?           @map("pricing_currency")
+  publishedAt             DateTime?         @map("published_at")
+  createdAt               DateTime          @default(now()) @map("created_at")
+  updatedAt               DateTime          @updatedAt @map("updated_at")
+
+  sections    CourseSection[]
+  instructors CourseInstructor[]
+
+  @@unique([academyId, slug])
+  @@index([academyId, status, visibility])
+  @@index([status, visibility])
+  @@map("courses")
+}
+
+/// Join table — mirrors master plan §5.3's `course_instructors` exactly
+/// ("the server-side source of truth for 'which courses can this
+/// instructor teach,' resolved fresh on every request, never client-
+/// trusted"). Read-only in P5 (projected into `Course.instructors`) — see
+/// this section's header comment; real assignment is a future phase
+/// (InstructorService, P7) once the frontend defines one.
+model CourseInstructor {
+  courseId   String   @map("course_id")
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  @@id([courseId, userId])
+  @@index([userId])
+  @@map("course_instructors")
+}
+
+/// Mirrors `CourseSection` (`course.types.ts`) — `lessons` are returned
+/// nested (the frontend type embeds them directly), never paginated
+/// separately. No `status` column — sections have no soft-delete state
+/// machine, so `DELETE .../sections/:id` is a real SQL DELETE, cascading
+/// to its lessons (matches `CourseService.deleteCourseSection`'s own doc
+/// comment: "Deletes a course section and its lessons").
+model CourseSection {
+  id          String   @id @default(uuid())
+  courseId    String   @map("course_id")
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  order       Int
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  lessons CourseLesson[]
+
+  @@index([courseId, order])
+  @@map("course_sections")
+}
+
+/// Mirrors `CourseLesson` (`course.types.ts`). `courseId` is denormalized
+/// (master plan §5.3: "for direct scoping without a join") — kept in sync
+/// with the parent section's `courseId` at creation time, never updated
+/// afterward (a lesson never moves to a different course). No `archived`
+/// status (see `CourseLessonStatus`'s doc comment) — `DELETE
+/// .../lessons/:id` is a real SQL DELETE.
+model CourseLesson {
+  id          String                  @id @default(uuid())
+  sectionId   String                  @map("section_id")
+  section     CourseSection           @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  courseId    String                  @map("course_id")
+  title       String
+  description String?
+  order       Int
+  contentType CourseLessonContentType @map("content_type")
+  contentUrl  String?                 @map("content_url")
+  status      CourseLessonStatus      @default(draft)
+  createdAt   DateTime                @default(now()) @map("created_at")
+  updatedAt   DateTime                @updatedAt @map("updated_at")
+
+  @@index([sectionId, order])
+  @@map("course_lessons")
 }

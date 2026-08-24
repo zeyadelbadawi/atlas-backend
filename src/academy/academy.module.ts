@@ -9,6 +9,11 @@
  * reuses P2's tenancy backbone rather than duplicating any part of it, per
  * the explicit P3 constraint against a second tenant/membership/session
  * mechanism.
+ *
+ * `AcademyScopeGuard` is exported (added in P5) so `CourseModule` can
+ * reuse it verbatim for every `academies/:id/courses/*` route — Course
+ * routes always resolve `:id` as the ACADEMY id, the exact case this guard
+ * already handles, so no new guard was written for P5 at all.
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
@@ -30,6 +35,6 @@ import { AcademyScopeGuard } from './guards/academy-scope.guard';
     AcademyOrganizationScopeGuard,
     AcademyScopeGuard,
   ],
-  exports: [AcademiesRepository, AcademyMembersRepository],
+  exports: [AcademiesRepository, AcademyMembersRepository, AcademyScopeGuard],
 })
 export class AcademyModule {}

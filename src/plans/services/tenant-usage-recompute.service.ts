@@ -79,19 +79,29 @@ export class TenantUsageRecomputeService {
         }),
       ]);
 
-      // `students`/`courses`/`generalStorageGb`/`videoStorageGb` — no
-      // source table exists yet at this point in the project (enrollments/
-      // students: Phase P6; courses: Phase P5; media/storage: Phase P8).
-      // Honestly `0`, not fabricated, not left stale from a prior phase
-      // that doesn't exist — matches master plan §12's explicit
-      // instruction: "if courses do not exist because P5 has not been
-      // implemented, do not fabricate course counts... document any
-      // temporarily-zero/unavailable metric explicitly." This function is
-      // structured so a later phase adds its own real COUNT here, in the
-      // same place, once its table exists — nothing else in this service
-      // needs to change.
+      // `courses` — real, wired in P5 (this is exactly the "later phase
+      // adds its own real COUNT here, in the same place" continuation
+      // this doc comment originally anticipated). Non-archived courses
+      // within non-archived academies in this organization — the
+      // authoring-capacity reading of the metric (how many courses exist,
+      // not how many are published), mirroring `academies`' own
+      // "non-archived only" rule exactly.
+      const courses = await tx.course.count({
+        where: {
+          status: { not: 'archived' },
+          academy: { organizationId, status: { not: 'archived' } },
+        },
+      });
+
+      // `students`/`generalStorageGb`/`videoStorageGb` — still no source
+      // table at this point in the project (enrollments/students: Phase
+      // P6; media/storage: Phase P8). Honestly `0`, not fabricated —
+      // matches master plan §12's explicit instruction: "if courses do
+      // not exist because P5 has not been implemented, do not fabricate
+      // course counts... document any temporarily-zero/unavailable metric
+      // explicitly." Structured so P6/P8 each add their own real COUNT
+      // here, in the same place, once their tables exist.
       const students = 0;
-      const courses = 0;
       const generalStorageGb = 0;
       const videoStorageGb = 0;
 

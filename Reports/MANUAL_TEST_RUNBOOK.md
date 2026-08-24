@@ -4,10 +4,14 @@ Living QA document. Currently covers: **Organization Management Completion**
 (organization switcher, organization overview page, cross-tenant isolation
 as experienced through the actual product), **P3 — Academy Management**
 (academy creation/settings/branding/members/stats, cross-tenant isolation,
-write-authorization), and **P4 — Plans, Subscription & Entitlements**
+write-authorization), **P4 — Plans, Subscription & Entitlements**
 (plan/add-on catalog, tenant subscription/usage/add-ons display,
 entitlement/limit-gap behavior, trial policy read/write, cross-tenant
-isolation). Update this file — don't replace it — as later phases add
+isolation), and **P5 — Course Management** (course/section/lesson
+authoring, publish/unpublish, reorder, category/instructor read surfaces,
+Academy isolation, write-authorization — now testable against real,
+deterministic seed data via `npm run db:seed`). Update this file — don't
+replace it — as later phases add
 their own manual test sections.
 
 ---
@@ -289,6 +293,53 @@ UPDATE users SET is_platform_owner = true WHERE id = '<USER_A_ID>';
 Only grant this on a throwaway/dedicated test account, or remember to
 revert it afterward — `is_platform_owner` is global and affects every
 Platform-Owner-gated surface, not just Trial Policy.
+
+### Step F — P5 addendum: use the real seed script instead of manual SQL
+
+As of P5, Steps A–E's manual psql seeding is no longer the only option.
+From `atlas-backend`, run:
+
+```bash
+npm run db:seed
+```
+
+This creates real, deterministic P0–P5 fixture data in one command —
+6 users (all password `DevPassword123!`), 2 organizations, 3 academies, 3
+plans + 2 add-ons + 2 subscriptions, 3 course categories, 4 courses (2
+published, 2 draft, one fully Arabic-content), 5 sections, 9 lessons — and
+prints the account list at the end. Safe to re-run (idempotent — updates
+the same rows, never duplicates). See `Reports/PROGRESS.md`'s P5 entry for
+the full fixture graph and `prisma/seed.ts`'s own header comment for
+details.
+
+Grant the Course permission strings to the seeded accounts you'll test
+with (same "frontend route guard, independent of backend authorization"
+caveat as Steps C/D):
+
+```sql
+UPDATE organization_memberships
+SET permissions = ARRAY[
+  'academy.view', 'academy.configure', 'academy.branding.update',
+  'academy.members.view', 'academy.provisioning.view', 'academy.provisioning.create',
+  'tenant.dashboard.view', 'tenant.subscription.view', 'tenant.usage.view', 'tenant.addon.view',
+  'course.view', 'course.create', 'course.update', 'course.manage', 'course.configure'
+]
+WHERE user_id = (SELECT id FROM users WHERE email = 'sarah.chen@acme-academy.dev');
+
+UPDATE organization_memberships
+SET permissions = ARRAY[
+  'academy.view', 'academy.configure', 'academy.branding.update',
+  'academy.members.view', 'academy.provisioning.view', 'academy.provisioning.create',
+  'tenant.dashboard.view', 'tenant.subscription.view', 'tenant.usage.view', 'tenant.addon.view',
+  'course.view', 'course.create', 'course.update', 'course.manage', 'course.configure'
+]
+WHERE user_id = (SELECT id FROM users WHERE email = 'omar.hassan@nextgen-learning.dev');
+```
+
+If you'd rather keep using Steps A–E's manually-seeded `org-manual-*`
+accounts for the P5 cases below instead of the new seeded accounts, that
+also works — the P5 cases don't depend on the specific seeded names, only
+on having an Academy with at least one published and one draft course.
 
 ---
 
@@ -1429,6 +1480,411 @@ ________________________________
 
 ---
 
+## P5 — Course Management Test Cases
+
+Preconditions common to all of the below: `npm run db:seed` has been run
+(Step F), and `sarah.chen@acme-academy.dev` has been granted the Course
+permission strings. Academy A1 (`web-development-academy`) has two real
+seeded courses: "React Fundamentals" (published, paid $49.99, 2
+sections/4 lessons, instructor Jane Doe) and "Node.js Backend Development"
+(draft, free, 1 section/2 lessons).
+
+### P5-MANUAL-001
+
+**Feature:** Course list
+
+**Test Account:** Sarah Chen (`sarah.chen@acme-academy.dev` / `DevPassword123!`)
+
+**Exact Steps:**
+1. Sign in and navigate to `/dashboard/academy/<ACADEMY_A1_ID>/courses`.
+
+**Expected Result:** Both seeded courses appear — "React Fundamentals" (published) and "Node.js Backend Development" (draft) — with real titles, statuses, and thumbnails/pricing, not placeholder data.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-002
+
+**Feature:** Course details
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Open "React Fundamentals" from the course list.
+
+**Expected Result:** Shows real title/description, status `published`, price `$49.99`, category "Web Development", and instructor "Jane Doe" — all matching the seeded data exactly.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-003
+
+**Feature:** Category display (read-only)
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Look for a category selector/filter on the course list or course create/edit form.
+
+**Expected Result:** "Web Development" and "Programming" (the seeded categories) appear as real, selectable options. There is no "create new category" control anywhere — this is confirmed, deliberate P5 scope (categories are read-only; see `Reports/PROGRESS.md`'s P5 entry), not a missing feature.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-004
+
+**Feature:** Course creation
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Navigate to `/dashboard/academy/<ACADEMY_A1_ID>/courses/create`.
+2. Fill in Title: `Manual Test Course`, Slug: `manual-test-course`, Visibility: private, Pricing: free.
+3. Submit.
+
+**Expected Result:** The course is created and you're taken to its detail/builder page. It now appears in the course list from P5-MANUAL-001.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-005
+
+**Feature:** Course editing
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. On the course created in P5-MANUAL-004, change the title to `Manual Test Course (Edited)`.
+2. Save.
+3. Refresh the page.
+
+**Expected Result:** The new title persists after refresh — proving the change reached the backend.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-006
+
+**Feature:** Instructor assignment — confirmed not available
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Look for an "assign instructor" control anywhere on the course detail/builder/settings pages.
+
+**Expected Result:** No such control exists anywhere in the product — confirmed, deliberate scope decision (no `CourseService` method, no form, no UI defines this capability anywhere in the frontend). "React Fundamentals" still correctly shows Jane Doe as its instructor (seeded directly), proving the READ side works even though there's no write UI.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-007
+
+**Feature:** Section creation
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Open the course builder for the course created in P5-MANUAL-004.
+2. Add a new section titled `Getting Started`.
+
+**Expected Result:** The section appears in the curriculum immediately, persists after refresh.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-008
+
+**Feature:** Lesson creation
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Within the section from P5-MANUAL-007, add a lesson titled `Welcome`, content type Text.
+
+**Expected Result:** The lesson appears nested under its section, persists after refresh.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-009
+
+**Feature:** Section reorder
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. On "React Fundamentals" (2 seeded sections: "Introduction", "React Basics"), use the move-down/move-up control to reverse their order.
+2. Refresh the page.
+
+**Expected Result:** The new order persists after refresh — proving it reached the backend, not just local UI state.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-010
+
+**Feature:** Lesson reorder
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Within "Introduction" (2 seeded lessons: "Welcome", "Environment Setup"), reverse their order using move-down/move-up.
+2. Refresh the page.
+
+**Expected Result:** The new order persists after refresh.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-011
+
+**Feature:** Publish
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. On "Node.js Backend Development" (seeded as draft), use the Publish action.
+
+**Expected Result:** Status changes to `published` immediately in the UI, persists after refresh.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-012
+
+**Feature:** Unpublish
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. On the course just published in P5-MANUAL-011, use the Unpublish action.
+
+**Expected Result:** Status reverts to `draft`, persists after refresh.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-013
+
+**Feature:** Validation / error states
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. On the course create form, attempt to submit with the slug `react-fundamentals` (already taken in this academy).
+2. Attempt to submit with an invalid slug like `Not A Valid Slug!`.
+
+**Expected Result:** Both attempts show a clear validation/conflict error, not a generic "Unexpected error" and not a silent failure.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-014 — SECURITY
+
+**Feature:** Academy isolation
+
+**Test Account:** Omar Hassan (`omar.hassan@nextgen-learning.dev`)
+
+**Exact Steps:**
+1. Sign in as Omar Hassan (owner of Academy B1 only).
+2. Attempt to navigate directly to `/dashboard/academy/<ACADEMY_A1_ID>/courses` (Academy A1's real id, copied while signed in as Sarah).
+
+**Expected Result:** Access is denied — an error/forbidden state, never Academy A1's real course data. Confirm via DevTools Network tab that the underlying API call returns `403`.
+
+**Security Verification:** This is the primary check — confirm no cross-academy course data leaks into a user with no relationship to that academy's organization.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-015 — SECURITY
+
+**Feature:** Unauthorized mutation
+
+**Test Account:** Lisa Park (`lisa.park@acme-academy.dev` — Org A member, no Academy A1 role)
+
+**Exact Steps:**
+1. Sign in as Lisa Park and grant her the Course permission strings (Step F) if not already done.
+2. Navigate to "React Fundamentals"'s detail page — should load (read is org-membership-scoped).
+3. Attempt to edit the title and save.
+
+**Expected Result:** Step 2 succeeds. Step 3 fails with a permission error — confirm via DevTools that the underlying `PATCH` call returns `403`, and the title is unchanged after a refresh.
+
+**Security Verification:** Confirms organization membership alone never implies Course write access (matches the equivalent Academy-level finding from P3).
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-016
+
+**Feature:** Empty state
+
+**Test Account:** Omar Hassan
+
+**Exact Steps:**
+1. Sign in as Omar Hassan and navigate to Academy B1's course list (Academy B1 has 2 seeded courses — "Spanish for Beginners" and the Arabic course, so this will show real data; to see a genuine empty state, use a freshly-created Academy with zero courses instead, e.g. create one first).
+
+**Expected Result:** A course-free academy shows a clear "No courses yet" empty state — not a blank page, not a stuck spinner.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-017
+
+**Feature:** Loading and error states
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Navigate to the course list and observe it within ~1 second (before data arrives).
+2. Once loaded, stop the backend (`Ctrl+C`).
+3. Refresh the page.
+4. Restart the backend and use the retry control.
+
+**Expected Result:** Step 1: a skeleton/loading state, not a blank page. Step 3: a styled error state with retry, not a raw stack trace. Step 4: retry succeeds once the backend is back.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-018
+
+**Feature:** Arabic content / RTL rendering
+
+**Test Account:** Omar Hassan
+
+**Exact Steps:**
+1. Sign in as Omar Hassan and open the seeded Arabic course ("أساسيات اللغة العربية") under Academy B1.
+2. Switch the app's UI language to Arabic, if not already.
+
+**Expected Result:** The course's own Arabic title/description render correctly (proving the plain-string DB columns round-trip non-Latin UTF-8 content, not just that the UI chrome translates) — this is different from and in addition to the UI chrome's own i18n, which prior phases' test cases (e.g. `ORG-MANUAL-009`) already cover. The page layout mirrors correctly to right-to-left.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P5-MANUAL-019
+
+**Feature:** Responsive layout
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Open DevTools, switch to a mobile viewport (e.g. 375×667).
+2. Navigate through the course list, course detail, and course builder (sections/lessons) pages.
+
+**Expected Result:** No horizontal scroll, no overlapping/clipped controls, the curriculum editor (sections/lessons/reorder controls) remains usable at mobile width.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
 ## Known Findings — Observed, Not Yet Investigated (logged, not fixed)
 
 Reported by the human tester during exploratory navigation *after*
@@ -1509,16 +1965,37 @@ features and should be picked up as their own investigation when in scope.
 | P4-MANUAL-014 | Trial Policy unauthorized access | Frontend + backend both deny non-owner |
 | P4-MANUAL-015 | Trial Policy invalid payload | Validation error surfaced |
 | P4-MANUAL-016 | Loading/error/retry | Network failure handling |
+| P5-MANUAL-001 | Course list | Real seeded courses displayed |
+| P5-MANUAL-002 | Course details | Real title/price/category/instructor |
+| P5-MANUAL-003 | Category display | Read-only, confirmed no create UI |
+| P5-MANUAL-004 | Course creation | Real UI form → real backend call |
+| P5-MANUAL-005 | Course editing | Persists after refresh |
+| P5-MANUAL-006 | Instructor assignment | Confirmed not available; read side works |
+| P5-MANUAL-007 | Section creation | Persists after refresh |
+| P5-MANUAL-008 | Lesson creation | Nested under section, persists |
+| P5-MANUAL-009 | Section reorder | Persists after refresh |
+| P5-MANUAL-010 | Lesson reorder | Persists after refresh |
+| P5-MANUAL-011 | Publish | Real status transition |
+| P5-MANUAL-012 | Unpublish | Real status transition |
+| P5-MANUAL-013 | Validation/error states | Duplicate/invalid slug surfaced |
+| P5-MANUAL-014 | Academy isolation | Cross-academy access denied |
+| P5-MANUAL-015 | Unauthorized mutation | Org membership alone ≠ Course write access |
+| P5-MANUAL-016 | Empty state | Zero-course academy UX |
+| P5-MANUAL-017 | Loading/error/retry | Network failure handling |
+| P5-MANUAL-018 | Arabic content rendering | Non-Latin UTF-8 round-trips correctly |
+| P5-MANUAL-019 | Responsive | Mobile viewport, incl. curriculum editor |
 
 **Not covered (features not implemented this phase — see
 `atlas-backend/Reports/PROGRESS.md`'s Organization Management Completion,
-P3, and P4 entries for why):** organization settings/rename, membership
-invite/remove, role assignment (P2, still `SPECIFICATION-UNDEFINED`);
-Academy member invite/remove/role-change, Academy activity's real event
-sourcing, Course Management (P3 scope); checkout, payment, plan
+P3, P4, and P5 entries for why):** organization settings/rename,
+membership invite/remove, role assignment (P2, still
+`SPECIFICATION-UNDEFINED`); Academy member invite/remove/role-change,
+Academy activity's real event sourcing (P3 scope); checkout, payment, plan
 upgrade/downgrade mutation, add-on purchase, platform-wide scheduled usage
-recomputation (all explicitly out of P4 scope — see `PROGRESS.md`'s P4
-entry for the RLS-boundary reasoning behind the last one specifically).
+recomputation (P4 scope); course category create/update/delete, course
+instructor assignment/removal (P5 scope — both confirmed, deliberate: no
+frontend contract defines either), enrollments, student progress, quizzes,
+assignments, grading (all explicitly out of P5 scope).
 
 ---
 
@@ -1572,6 +2049,25 @@ P4-MANUAL-013    [ ]   ____________   ________________________________
 P4-MANUAL-014    [ ]   ____________   ________________________________
 P4-MANUAL-015    [ ]   ____________   ________________________________
 P4-MANUAL-016    [ ]   ____________   ________________________________
+P5-MANUAL-001    [ ]   ____________   ________________________________
+P5-MANUAL-002    [ ]   ____________   ________________________________
+P5-MANUAL-003    [ ]   ____________   ________________________________
+P5-MANUAL-004    [ ]   ____________   ________________________________
+P5-MANUAL-005    [ ]   ____________   ________________________________
+P5-MANUAL-006    [ ]   ____________   ________________________________
+P5-MANUAL-007    [ ]   ____________   ________________________________
+P5-MANUAL-008    [ ]   ____________   ________________________________
+P5-MANUAL-009    [ ]   ____________   ________________________________
+P5-MANUAL-010    [ ]   ____________   ________________________________
+P5-MANUAL-011    [ ]   ____________   ________________________________
+P5-MANUAL-012    [ ]   ____________   ________________________________
+P5-MANUAL-013    [ ]   ____________   ________________________________
+P5-MANUAL-014    [ ]   ____________   ________________________________
+P5-MANUAL-015    [ ]   ____________   ________________________________
+P5-MANUAL-016    [ ]   ____________   ________________________________
+P5-MANUAL-017    [ ]   ____________   ________________________________
+P5-MANUAL-018    [ ]   ____________   ________________________________
+P5-MANUAL-019    [ ]   ____________   ________________________________
 ```
 
 If any test FAILS: report it back with the exact Test ID and what you

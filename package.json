@@ -26,7 +26,11 @@
     "prisma:studio": "prisma studio",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "worker:recompute-usage": "ts-node -r tsconfig-paths/register scripts/recompute-tenant-usage.ts"
+    "worker:recompute-usage": "ts-node -r tsconfig-paths/register scripts/recompute-tenant-usage.ts",
+    "db:seed": "ts-node -r tsconfig-paths/register prisma/seed.ts"
+  },
+  "prisma": {
+    "seed": "ts-node -r tsconfig-paths/register prisma/seed.ts"
   },
   "dependencies": {
     "@nestjs/bullmq": "^10.2.1",
