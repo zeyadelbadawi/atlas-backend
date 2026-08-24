@@ -31,6 +31,8 @@ import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './identity/identity.module';
 import { TenancyModule } from './tenancy/tenancy.module';
+import { AcademyModule } from './academy/academy.module';
+import { PlansModule } from './plans/plans.module';
 
 @Module({
   imports: [
@@ -55,11 +57,23 @@ import { TenancyModule } from './tenancy/tenancy.module';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
         const redis = configService.getOrThrow<RedisConfig>('redis');
+        const app = configService.getOrThrow<AppConfig>('app');
         return {
           // BullMQ requires its own connection with `maxRetriesPerRequest:
           // null` — deliberately separate from `RedisService`'s
           // connectivity-check client, not a shared instance.
           connection: { url: redis.url, maxRetriesPerRequest: null },
+          // Test runs get their own Redis key namespace (`bull:` vs.
+          // `bull-test:`), never the default shared with a real dev/prod
+          // instance. Discovered during the Organization Management
+          // Completion fix pass: a locally running `npm run dev` server
+          // and the e2e test suite both point at the same local Redis by
+          // default — without this, their BullMQ workers race to consume
+          // the same job, and whichever process's worker "wins" determines
+          // whether the *other* process's in-memory `StubEmailProvider`
+          // ever sees the result. That looked like flaky test timing; it
+          // was actually two unrelated processes fighting over one queue.
+          prefix: app.isTest ? 'bull-test' : 'bull',
         };
       },
     }),
@@ -68,6 +82,8 @@ import { TenancyModule } from './tenancy/tenancy.module';
     HealthModule,
     TenancyModule,
     IdentityModule,
+    AcademyModule,
+    PlansModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

@@ -11,7 +11,7 @@
  * is for; the SYSTEM UNDER TEST in every e2e spec remains the app's own
  * `PrismaService`, still connected as the restricted role throughout.
  */
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 
 export function createAdminPrisma(): PrismaClient {
   const url = process.env.DATABASE_URL;
@@ -49,4 +49,119 @@ export async function seedMembership(
   return admin.organizationMembership.create({
     data: { organizationId, userId, role, isPrimary },
   });
+}
+
+/** P3 — mirrors `seedOrganizationWithOwner`'s rationale exactly, one level down. */
+export async function seedAcademy(
+  admin: PrismaClient,
+  organizationId: string,
+  slugLabel: string,
+) {
+  return admin.academy.create({
+    data: {
+      organizationId,
+      name: slugLabel,
+      slug: `${slugLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    },
+  });
+}
+
+export async function seedAcademyMember(
+  admin: PrismaClient,
+  academyId: string,
+  userId: string,
+  role: 'owner' | 'administrator' | 'manager' | 'instructor' | 'staff' = 'owner',
+) {
+  return admin.academyMember.create({
+    data: { academyId, userId, role },
+  });
+}
+
+/** P4 — `plans`/`add_ons` are platform-owned (no RLS), but still seeded via the admin connection for consistency: there is no write endpoint for either in P4. */
+export async function seedPlan(
+  admin: PrismaClient,
+  keyLabel: string,
+  overrides: {
+    limits?: Record<string, number | 'unlimited'>;
+    features?: Record<string, boolean>;
+    status?: 'active' | 'archived';
+  } = {},
+) {
+  const key = `${keyLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return admin.plan.create({
+    data: {
+      key,
+      name: keyLabel,
+      status: overrides.status ?? 'active',
+      limits: overrides.limits ?? {
+        academies: 2,
+        students: 50,
+        instructors: 5,
+        staff: 5,
+        courses: 20,
+        generalStorage: 10,
+        videoStorage: 10,
+      },
+      features: overrides.features ?? {
+        cms: true,
+        seo: true,
+        seoAdvanced: false,
+        marketing: false,
+        marketingAdvanced: false,
+        analytics: false,
+        analyticsAdvanced: false,
+        customDomain: false,
+        themes: true,
+        multipleThemes: false,
+        backup: false,
+      },
+    },
+  });
+}
+
+export async function seedAddOn(
+  admin: PrismaClient,
+  keyLabel: string,
+  effect: Prisma.InputJsonValue,
+  compatiblePlanKeys: readonly string[],
+) {
+  const key = `${keyLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return admin.addOn.create({
+    data: { key, name: keyLabel, effect, compatiblePlanKeys: [...compatiblePlanKeys] },
+  });
+}
+
+/** P4 — `tenant_subscriptions` is organization-scoped and RLS-protected; seeded via the admin connection because no creation endpoint exists (same precedent as `seedOrganizationWithOwner`). */
+export async function seedTenantSubscription(
+  admin: PrismaClient,
+  organizationId: string,
+  planId: string,
+  overrides: {
+    status?:
+      | 'trialing'
+      | 'active'
+      | 'past_due'
+      | 'paused'
+      | 'grace_period'
+      | 'cancelled'
+      | 'expired';
+    trialEndsAt?: Date;
+  } = {},
+) {
+  return admin.tenantSubscription.create({
+    data: {
+      organizationId,
+      planId,
+      status: overrides.status ?? 'trialing',
+      trialEndsAt: overrides.trialEndsAt,
+    },
+  });
+}
+
+export async function seedTenantAddOn(
+  admin: PrismaClient,
+  organizationId: string,
+  addOnId: string,
+) {
+  return admin.tenantAddOn.create({ data: { organizationId, addOnId } });
 }

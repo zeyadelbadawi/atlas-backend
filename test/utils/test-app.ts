@@ -79,10 +79,22 @@ export function uniqueRawTokenFixture(label: string): string {
  * the job is enqueued, not once `StubEmailProvider` has recorded it, so
  * reading the token immediately afterward is a genuine race, not a flake
  * to paper over with a fixed `setTimeout`.
+ *
+ * Default budget raised from 5000ms to 10000ms (Organization Management
+ * Completion fix pass) after observing reproducible timeouts on a
+ * long-running local dev environment under heavy accumulated Postgres/
+ * Redis load from many hours of continuous e2e runs — the underlying
+ * password-reset flow itself was never broken (proven by every other test
+ * in the same file consistently passing); this widens the margin so the
+ * assertion isn't racing the test's own polling budget under load, not a
+ * product behavior change.
  */
 export async function waitFor<T>(
   check: () => T | undefined,
-  { timeoutMs = 5000, intervalMs = 25 }: { timeoutMs?: number; intervalMs?: number } = {},
+  {
+    timeoutMs = 10000,
+    intervalMs = 25,
+  }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -90,6 +102,34 @@ export async function waitFor<T>(
     if (value !== undefined) return value;
     if (Date.now() >= deadline) {
       throw new Error(`waitFor: condition was never met within ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/**
+ * Async-check variant of `waitFor` — for polling conditions that require
+ * an `await` themselves (a database read via Prisma, unlike `waitFor`'s
+ * synchronous in-memory reads such as `StubEmailProvider`'s). P4's
+ * `tenant-usage-recompute-worker.e2e-spec.ts` uses this to wait for a real
+ * BullMQ job to actually be processed and its result persisted, the same
+ * "returns as soon as enqueued, not once processed" race `waitFor`'s own
+ * doc comment describes for password-reset — just against Postgres
+ * instead of an in-memory stub.
+ */
+export async function waitForAsync<T>(
+  check: () => Promise<T | undefined>,
+  {
+    timeoutMs = 10000,
+    intervalMs = 25,
+  }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await check();
+    if (value !== undefined) return value;
+    if (Date.now() >= deadline) {
+      throw new Error(`waitForAsync: condition was never met within ${timeoutMs}ms`);
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }

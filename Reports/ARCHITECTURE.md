@@ -146,3 +146,186 @@ apply it directly rather than rebuilding it.
 | `DATABASE_URL`, `REDIS_URL`, `CORS_ALLOWED_ORIGINS`, `LOG_LEVEL`, `PORT`, `NODE_ENV` | P0 | Foundation |
 | `JWT_ACCESS_SECRET`, `JWT_ACCESS_TTL_SECONDS`, `REFRESH_TOKEN_TTL_DAYS`, `PASSWORD_RESET_TOKEN_TTL_MINUTES`, `AUTH_SIGNIN_RATE_LIMIT_*`, `AUTH_PASSWORD_RESET_RATE_LIMIT_*` | P1 | Identity/Auth/Sessions |
 | `APP_DATABASE_URL` | P2 | RLS-enforcing runtime DB connection |
+
+---
+
+## Organization Management Completion (full-stack, post-P2)
+
+A follow-up closure pass, not a new backend phase — no new migration, no
+new endpoint, no backend code change at all. P2 built the tenant-isolation
+backbone (`organizations`/`organization_memberships`, RLS,
+`GET /organizations/:id`, real `CurrentUser.organizations` data) but
+nothing in the frontend ever exercised it: no UI called
+`switchOrganization`, and no page displayed an organization's own identity
+beyond a read-only membership list. This pass closed that gap on the
+**frontend only**.
+
+### What was found already built and reused, not duplicated
+
+- `IdentityProvider.switchOrganization` — validates against real memberships, updates session, dispatches `atlas:organization-switched`, persists to `localStorage`.
+- `PlatformProvider` — listens for that event and invalidates organization-scoped TanStack Query cache.
+- `organizationKeys.detail(orgId)` — a query-key factory that existed, unused, anticipating exactly this.
+- Session restoration (`IdentityProvider`'s mount effect) — re-validates a stored active-organization id against the signed-in user's real memberships before restoring it.
+
+None of this was rebuilt. The only genuinely new frontend code: an
+`OrganizationService` (thin `GET /organizations/:id` client, mirrors
+`TenantService`'s pattern), a `useOrganization` hook, an
+`OrganizationSwitcher` control (in `shared/components/controls/`, alongside
+`LanguageSwitcher`/`ThemeSwitcher` — not inside a feature folder, per the
+codebase's own `no-restricted-imports` rule barring the dashboard shell
+from reaching into feature internals), and a read-only
+`OrganizationOverviewPage` at `/dashboard/organization`.
+
+### Manual verification fix pass (ORG-MANUAL-001)
+
+Human manual testing (not covered by any automated suite — the frontend
+has no test framework) caught a real, pre-existing bug this pass's own
+automated verification could never have found: `src/shared/hooks/
+useSignIn.ts` called the raw `authenticationService.signIn()` directly
+instead of `useAuth().signIn()`, so a successful backend sign-in never
+persisted tokens or updated `IdentityContext`'s session state — the user
+stayed stuck on the sign-in page. Fixed by delegating to the existing,
+already-correct `IdentityProvider.signIn`. One frontend file changed.
+
+A separately reported `/api/config` proxy error was investigated and
+confirmed **independent** — a legacy, unrelated runtime-config loader
+(`src/lib/config.ts`, from the original template scaffold) whose failure
+is caught internally and never touches the real API client or the auth
+flow. Not touched.
+
+Re-running backend regression verification for this fix surfaced a second,
+genuinely unrelated issue: a locally running `npm run dev` instance and
+the e2e test suite share one Redis, so their BullMQ workers raced to
+consume the same job. Fixed with an environment-scoped queue prefix
+(`bull-test` vs `bull`) in `app.module.ts`'s `BullModule.forRootAsync`, so
+test and dev processes never collide on a queue again regardless of what
+else is running locally.
+
+### Scope explicitly not built (SPECIFICATION-UNDEFINED, unchanged from P2's own finding)
+
+Organization settings/rename, membership invite/remove/change-role, role
+assignment UI. No frontend form, backend endpoint, or authorization rule
+exists for any of them; building them would mean inventing a business
+decision (e.g. "who is allowed to rename an organization?") rather than
+implementing a specified one. See `PROGRESS.md`'s entry for this pass for
+the full reasoning, and `Reports/MANUAL_TEST_RUNBOOK.md` for how the
+shipped surface (switcher + overview) is manually verified.
+
+## P3 — Academy Management (2026-08-24)
+
+`Academy` is the second-level tenant scope: every Academy belongs to
+exactly one `Organization` (`academy.organization_id`), and RLS resolves
+tenant ownership through that FK — no `app.current_academy_id`, no second
+tenant/session mechanism. `AcademyModule` (`src/academy/`) imports
+`AuthCoreModule` (for `JwtAuthGuard`) and `TenancyModule` (for
+`TenancyContextService`/`OrganizationMembershipsRepository`), reusing P2's
+tenancy backbone rather than duplicating any part of it.
+
+### Two guard shapes, matching two tenancy-resolution paths
+
+- `AcademyOrganizationScopeGuard` — guards the flat `GET /academies` /
+  `POST /academies` routes. These carry a caller-supplied `organizationId`
+  directly (query param / body field — see `PROGRESS.md`'s P3 entry for
+  why this field exists at all), so this guard mirrors
+  `OrganizationMembershipGuard` almost exactly: verify a real
+  `organization_memberships` row inside the RLS context it establishes.
+- `AcademyScopeGuard` — guards every `/academies/:id/*` route. The caller
+  supplies only an academy id, so this guard bootstraps the owning
+  `organization_id` via `runInUserContext` + the additive
+  `academies_org_member_select` RLS policy, then independently
+  re-verifies organization membership via `runInTenantContext` before
+  attaching `request.academyContext`. See `PROGRESS.md`'s P3 entry for the
+  full RLS design and the migration files' own doc comments for the SQL.
+
+Both guards attach context to the request (`tenantContext`/
+`academyContext`) exactly like `OrganizationMembershipGuard` does — the
+controller and service never re-derive tenancy facts already proven by a
+guard.
+
+### Layering, unchanged from P0–P2
+
+Controller (`AcademiesController`) → Guard → Service
+(`AcademiesService`) → Repository (`AcademiesRepository`,
+`AcademyMembersRepository`) → PostgreSQL (RLS). Every repository method
+takes a `Prisma.TransactionClient` obtained through
+`TenancyContextService`, never the raw `PrismaService` — forgetting this
+fails closed, not open, exactly as documented on
+`OrganizationMembershipsRepository`.
+
+### Authorization: read is organization-scoped, write is academy-role-scoped
+
+`AcademyScopeGuard` only proves organization membership (sufficient for
+every READ endpoint, matching the frontend's own "for the active
+organization" framing). WRITE endpoints
+(create/update/branding/archive) additionally require an `owner`/
+`administrator` role in `academy_members` for that specific academy,
+checked in `AcademiesService.assertCanManage` — deliberately NOT folded
+into the guard, since it is a per-academy role fact only resolvable once
+inside the real tenant context, not a tenancy-boundary fact the guard
+layer owns. This is what keeps "organization owner ≠ automatic Academy
+Owner" true end-to-end, not just documented.
+
+### Response contract mapping
+
+`AcademyResponse` renames DB columns to match the frontend's `Academy`
+type exactly: `logo_url`/`favicon_url`/`website_url` → `logo`/`favicon`/
+`website` (`src/academy/dto/academy.contract.ts`) — confirmed against
+`academy.types.ts` directly, not assumed from the DB naming.
+
+## P4 — Plans, Subscription & Entitlements (2026-08-24)
+
+`PlansModule` (`src/plans/`) holds two structurally distinct halves,
+matching the frontend's own `PlanService`/`TenantService` split:
+
+- **Catalog** (`plans`/`add_ons`/`trial_policy`) — platform-owned, no
+  tenant dimension, no RLS at all (distinct from every tenant-scoped table
+  in this codebase — see the P4 migration's own doc comment for why this
+  is a correct design choice, not an oversight). `PlansController`/
+  `AddOnsController`/`TrialPolicyController` guard with `JwtAuthGuard`
+  alone (`PlatformOwnerGuard` additionally on `PATCH /trial-policy`, reused
+  verbatim from P1/P2).
+- **Tenant subscription/usage/add-ons** — organization-scoped, RLS-
+  protected, reusing P2's `app.current_organization_id` mechanism exactly.
+  `TenantSubscriptionController` mounts at `organizations/:id/*`
+  (`@Controller('organizations')`, a second controller class sharing the
+  base path `OrganizationsController` already declares — Nest resolves by
+  full path+method, not by which class declares the base string) and
+  reuses `OrganizationMembershipGuard` **verbatim, unmodified** — `:id`
+  here already IS the organization id directly, unlike Academy's
+  transitive-bootstrap problem, so no new guard was needed at all.
+
+### EntitlementService
+
+`computeEffectiveEntitlements`/`hasFeature`/`getResourceLimitStatus`/
+`getLimitGapAction`/`getFeatureGapAction` — a direct, function-for-function
+port of `entitlement.utils.ts` (atlas frontend). Pure computation, no I/O,
+not itself an HTTP endpoint — used by `TenantSubscriptionService.getUsage`
+to compute each `UsageMetric.limit` at read time from the org's Plan +
+active Add-ons, never persisted alongside the raw `used` count (so a plan
+upgrade is reflected immediately, not after the next recompute cycle). See
+`Reports/PROGRESS.md`'s P4 entry for the exhaustive (128-test) unit
+coverage this drives.
+
+### tenant-usage-recompute
+
+`TenantUsageRecomputeService.recomputeOne(organizationId)` is the real
+logic (idempotent, full-recompute-never-increment, real Postgres queries
+inside `runInTenantContext`); `TenantUsageRecomputeProducer`/`Processor`
+are the thin BullMQ transport wrapping it, mirroring
+`PasswordResetEmailProducer`/`Processor`'s established shape exactly. A
+platform-wide scheduled sweep across every organization was deliberately
+NOT built this phase — see `Reports/PROGRESS.md`'s P4 entry for the full
+RLS-boundary reasoning (in short: `organizations` has no RLS policy
+admitting "every row," and the only sanctioned fix is an audited Platform
+Owner bypass that doesn't exist until P15). `scripts/recompute-tenant-usage.ts`
+is the real per-organization trigger this phase ships instead, booting a
+genuine `AppModule` context on the same `atlas_app` runtime role as every
+other request.
+
+### Response contract mapping
+
+`TenantUsageResponse.generalStorage`/`.videoStorage` rename DB columns
+`general_storage_gb`/`video_storage_gb` (`src/plans/dto/tenant-usage.contract.ts`),
+matching `TenantUsage`'s (frontend) actual field names exactly, the same
+"confirm the frontend type directly, don't assume from DB naming"
+discipline `AcademyResponse` established in P3.

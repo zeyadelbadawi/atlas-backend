@@ -88,10 +88,11 @@ model User {
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 
-  refreshTokens       RefreshToken[]
-  passwordResetTokens PasswordResetToken[]
-  ownedOrganizations       Organization[]           @relation("OrganizationOwner")
+  refreshTokens           RefreshToken[]
+  passwordResetTokens     PasswordResetToken[]
+  ownedOrganizations      Organization[]           @relation("OrganizationOwner")
   organizationMemberships OrganizationMembership[]
+  academyMemberships      AcademyMember[]
 
   @@index([status])
   @@map("users")
@@ -168,7 +169,11 @@ model Organization {
   createdAt   DateTime           @default(now()) @map("created_at")
   updatedAt   DateTime           @updatedAt @map("updated_at")
 
-  memberships OrganizationMembership[]
+  memberships  OrganizationMembership[]
+  academies    Academy[]
+  subscription TenantSubscription?
+  addOns       TenantAddOn[]
+  usage        TenantUsage?
 
   @@index([status])
   @@map("organizations")
@@ -180,18 +185,296 @@ model Organization {
 /// design (master plan §9): there is no Role/Permission catalog table, and
 /// P2 must not introduce one.
 model OrganizationMembership {
-  id             String   @id @default(uuid())
-  organizationId String   @map("organization_id")
+  id             String       @id @default(uuid())
+  organizationId String       @map("organization_id")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  userId         String   @map("user_id")
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String       @map("user_id")
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   role           String
-  permissions    String[] @default([])
-  isPrimary      Boolean  @default(false) @map("is_primary")
-  joinedAt       DateTime @default(now()) @map("joined_at")
+  permissions    String[]     @default([])
+  isPrimary      Boolean      @default(false) @map("is_primary")
+  joinedAt       DateTime     @default(now()) @map("joined_at")
 
   @@unique([organizationId, userId])
   @@index([userId])
   @@index([organizationId])
   @@map("organization_memberships")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P3 — Academy Management (master plan §5.2, §21 Phase P3).
+//
+// Academy is the second-level tenant scope, belonging to exactly one
+// Organization. RLS resolves tenant ownership transitively through
+// `organization_id`/`academy_id` — no new session variable, no parallel
+// tenant mechanism; the same `app.current_organization_id`/
+// `app.current_user_id` variables P2 established are reused. See
+// migration.sql for the policies (Prisma's schema language has no RLS
+// syntax).
+// ---------------------------------------------------------------------------
+
+/// Matches `AcademyStatus` (`academy.types.ts`) exactly.
+enum AcademyStatus {
+  draft
+  active
+  suspended
+  archived
+
+  @@map("academy_status")
+}
+
+/// Matches `AcademyMemberRole` (`academy.types.ts`) exactly — flat string
+/// values, not a catalog table (master plan §9: no Role/Permission catalog).
+enum AcademyMemberRole {
+  owner
+  administrator
+  manager
+  instructor
+  staff
+
+  @@map("academy_member_role")
+}
+
+/// Matches `AcademyMemberStatus` (`academy.types.ts`) exactly.
+enum AcademyMemberStatus {
+  active
+  inactive
+  pending
+
+  @@map("academy_member_status")
+}
+
+/// Mirrors `Academy` (`academy.types.ts`) field-for-field. Soft-delete
+/// only, matching `Organization`'s own precedent and master plan §5's
+/// "no hard delete" convention for this domain — `DELETE
+/// /academies/:id` (the frontend's real, defined contract) is implemented
+/// as a status transition to `archived`, never a SQL `DELETE`; there is no
+/// DELETE RLS policy on this table at all (see migration.sql).
+model Academy {
+  id             String        @id @default(uuid())
+  organizationId String        @map("organization_id")
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  slug           String        @unique
+  description    String?
+  logoUrl        String?       @map("logo_url")
+  faviconUrl     String?       @map("favicon_url")
+  status         AcademyStatus @default(draft)
+  timezone       String        @default("UTC")
+  language       String        @default("en")
+  currency       String        @default("USD")
+  contactEmail   String?       @map("contact_email")
+  contactPhone   String?       @map("contact_phone")
+  websiteUrl     String?       @map("website_url")
+  /// Mirrors `AcademyAddress` (`street?`, `city?`, `state?`, `postalCode?`,
+  /// `country`). Validated server-side (DTO), not schema-enforced —
+  /// consistent with `users.preferences`' existing precedent in this file.
+  address        Json?
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  members AcademyMember[]
+
+  @@index([organizationId, status])
+  @@map("academies")
+}
+
+/// Mirrors `AcademyMember` (`academy.types.ts`) — `name`/`email` are not
+/// stored here (the frontend type's own fields for those are resolved via
+/// a join to `users` at query time, never duplicated).
+model AcademyMember {
+  id        String              @id @default(uuid())
+  academyId String              @map("academy_id")
+  academy   Academy             @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  userId    String              @map("user_id")
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      AcademyMemberRole
+  status    AcademyMemberStatus @default(active)
+  joinedAt  DateTime            @default(now()) @map("joined_at")
+
+  @@unique([academyId, userId])
+  @@index([academyId])
+  @@index([userId])
+  @@map("academy_members")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P4 — Plans, Subscription & Entitlements (master plan §5.6, §21
+// Phase P4).
+//
+// `plans`/`add_ons`/`trial_policy` are PLATFORM-owned catalog/config —
+// exactly like `schema_meta` (§0) and `users` (§P1), they carry no
+// `organization_id`/`academy_id` and get NO RLS policy: every authenticated
+// caller reads the same catalog, matching `PlanService`'s own doc comment
+// ("unlike `TenantService` nothing here takes an `organizationId`").
+//
+// `tenant_subscriptions`/`tenant_add_ons`/`tenant_usage` ARE organization-
+// scoped and get RLS in the same migration that creates them, reusing the
+// exact P2/P3 `app.current_organization_id` mechanism — no new session
+// variable, no second tenant mechanism. See migration.sql for the policies.
+// ---------------------------------------------------------------------------
+
+/// Matches `PlanStatus` (`plan.types.ts`) exactly.
+enum PlanStatus {
+  active
+  archived
+
+  @@map("plan_status")
+}
+
+/// Matches `TenantSubscriptionStatus` (`tenant.types.ts`) exactly — 7 states.
+enum TenantSubscriptionStatus {
+  trialing
+  active
+  past_due
+  paused
+  grace_period
+  cancelled
+  expired
+
+  @@map("tenant_subscription_status")
+}
+
+/// Matches `SubscriptionBillingCycle` (`money.types.ts`) exactly.
+enum SubscriptionBillingCycle {
+  monthly
+  yearly
+
+  @@map("subscription_billing_cycle")
+}
+
+/// Platform-owned catalog entity — mirrors `Plan` (`plan.types.ts`)
+/// field-for-field. Not tenant-scoped (see this section's header comment).
+model Plan {
+  id           String     @id @default(uuid())
+  key          String     @unique
+  name         String
+  description  String?
+  status       PlanStatus @default(active)
+  displayOrder Int        @default(0) @map("display_order")
+  /// Mirrors `PlanResourceLimits` — validated server-side (DTO), not
+  /// schema-enforced, matching `users.preferences`'s established precedent
+  /// in this file. Each of the 7 `PlanLimitKey` fields is either an `int`
+  /// or the literal string `"unlimited"` (`LimitValue`).
+  limits       Json
+  /// Mirrors `PlanFeatures` — 11 booleans, one per `PlanFeatureKey`.
+  features     Json
+  /// Mirrors `PlanPricingMetadata`. Display-only — never read by a
+  /// checkout/payment flow in this phase (`PlanPricingMetadata`'s own doc
+  /// comment: "Prompt 7... owns the real pricing strategy").
+  pricing      Json?
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  subscriptions TenantSubscription[]
+
+  @@index([status, displayOrder])
+  @@map("plans")
+}
+
+/// Platform-owned catalog entity — mirrors `AddOn` (`plan.types.ts`).
+model AddOn {
+  id                 String   @id @default(uuid())
+  key                String   @unique
+  name               String
+  description        String?
+  /// Mirrors the `AddOnLimitEffect`/`AddOnFeatureEffect` discriminated
+  /// union (`{type: 'limit', limitKey, amount}` or `{type: 'feature',
+  /// featureKey}`) — validated server-side, not schema-enforced.
+  effect             Json
+  compatiblePlanKeys String[] @default([]) @map("compatible_plan_keys")
+  pricing            Json?
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  tenantAddOns TenantAddOn[]
+
+  @@map("add_ons")
+}
+
+/// Organization-scoped, one subscription per organization (PK = FK) —
+/// mirrors `TenantSubscription` (`tenant.types.ts`). No creation endpoint
+/// exists in P4 (matches `organizations` itself — real creation is Phase
+/// P14 provisioning); test fixtures seed this table via the admin
+/// superuser connection, exactly like `organizations`/`academies`.
+model TenantSubscription {
+  organizationId     String                    @id @map("organization_id")
+  organization       Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  planId             String                    @map("plan_id")
+  plan               Plan                      @relation(fields: [planId], references: [id])
+  status             TenantSubscriptionStatus  @default(trialing)
+  /// Present only while `status` is `'trialing'` — not schema-enforced
+  /// (mirrors the frontend type's own comment), validated at the service
+  /// layer where meaningful.
+  trialEndsAt        DateTime?                 @map("trial_ends_at")
+  /// Present only while `status` is `'grace_period'`.
+  graceEndsAt        DateTime?                 @map("grace_ends_at")
+  currentPeriodStart DateTime?                 @map("current_period_start")
+  currentPeriodEnd   DateTime?                 @map("current_period_end")
+  cancelAtPeriodEnd  Boolean                   @default(false) @map("cancel_at_period_end")
+  /// Nullable — "a subscription can exist before any real Checkout ever
+  /// set one" (`TenantSubscription.billingCycle`'s own doc comment).
+  billingCycle       SubscriptionBillingCycle? @map("billing_cycle")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  updatedAt          DateTime                  @updatedAt @map("updated_at")
+
+  @@index([planId])
+  @@map("tenant_subscriptions")
+}
+
+/// Organization-scoped — mirrors `TenantAddOn` (`tenant.types.ts`). No
+/// activation endpoint exists in P4 (no payment provider) — same
+/// no-creation-endpoint precedent as `TenantSubscription` above.
+model TenantAddOn {
+  id             String       @id @default(uuid())
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  addOnId        String       @map("add_on_id")
+  addOn          AddOn        @relation(fields: [addOnId], references: [id])
+  activatedAt    DateTime     @default(now()) @map("activated_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@unique([organizationId, addOnId])
+  @@index([organizationId])
+  @@map("tenant_add_ons")
+}
+
+/// Organization-scoped, one row per organization (PK = FK) — a computed/
+/// cached representation, refreshed by the `tenant-usage-recompute` worker
+/// (§12), never computed live on a dashboard read (master plan §5.6).
+/// Stores only raw `used` counts per `UsageMetric` — the paired `limit`
+/// each `UsageMetric` also carries in the API response is derived at read
+/// time from the organization's effective entitlements
+/// (`EntitlementService`), never persisted here (it would immediately go
+/// stale the moment a plan/add-on changed).
+model TenantUsage {
+  organizationId   String       @id @map("organization_id")
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  academies        Int          @default(0)
+  students         Int          @default(0)
+  instructors      Int          @default(0)
+  staff            Int          @default(0)
+  courses          Int          @default(0)
+  /// GB.
+  generalStorageGb Int          @default(0) @map("general_storage_gb")
+  /// GB — tracked separately from general storage.
+  videoStorageGb   Int          @default(0) @map("video_storage_gb")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  @@map("tenant_usage")
+}
+
+/// Platform-owned singleton — mirrors `TrialPolicy` (`plan.types.ts`).
+/// Exactly one logical row ever exists; enforced at the service layer
+/// (there is no natural single-row DB constraint for a Prisma model with a
+/// generated `id`, so `TrialPolicyRepository` always reads/writes the one
+/// earliest-created row rather than trusting a hardcoded id).
+model TrialPolicy {
+  id           String   @id @default(uuid())
+  enabled      Boolean  @default(true)
+  durationDays Int      @default(7) @map("duration_days")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("trial_policy")
 }
