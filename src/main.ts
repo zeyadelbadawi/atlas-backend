@@ -10,6 +10,7 @@
  */
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { Logger, LoggerErrorInterceptor } from 'nestjs-pino';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
@@ -17,9 +18,12 @@ import helmet from 'helmet';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import type { AppConfig } from './config/configuration';
+import type { MediaStorageConfig } from './config/configuration';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
 
   const logger = app.get(Logger);
   app.useLogger(logger);
@@ -27,6 +31,22 @@ async function bootstrap(): Promise<void> {
 
   const configService = app.get(ConfigService);
   const config = configService.getOrThrow<AppConfig>('app');
+
+  // Phase P8 — the default Express JSON body limit (100kb) rejects any
+  // real base64-encoded image/document before it ever reaches
+  // `MediaController` (base64 inflates binary size by ~4/3). Sized with
+  // generous headroom above `MEDIA_MAX_UPLOAD_BYTES` — deliberately NOT
+  // the tight ~1.33x base64-inflation factor alone: a payload just
+  // moderately over the real ceiling must still reach
+  // `MediaService`'s own real byte-length check (the actual enforced
+  // limit, master plan §13: "server-side explicitly, per asset type")
+  // and get a proper 413, rather than tripping this outer, cruder limit
+  // first and surfacing as an opaque 500 (confirmed as a real failure
+  // mode during implementation with an 11MB-over-a-10MB-ceiling test
+  // payload landing within a few percent of a tightly-margined limit).
+  const mediaConfig = configService.getOrThrow<MediaStorageConfig>('media');
+  const bodyLimitBytes = mediaConfig.maxUploadBytes * 3;
+  app.useBodyParser('json', { limit: bodyLimitBytes });
 
   app.use(helmet());
 

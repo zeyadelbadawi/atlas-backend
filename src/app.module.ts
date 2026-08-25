@@ -37,6 +37,7 @@ import { CourseModule } from './course/course.module';
 import { LearningModule } from './learning/learning.module';
 import { InstructorModule } from './instructor/instructor.module';
 import { CommunityModule } from './community/community.module';
+import { MediaModule } from './media/media.module';
 
 @Module({
   imports: [
@@ -92,6 +93,7 @@ import { CommunityModule } from './community/community.module';
     LearningModule,
     InstructorModule,
     CommunityModule,
+    MediaModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

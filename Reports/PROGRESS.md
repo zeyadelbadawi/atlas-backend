@@ -1421,3 +1421,178 @@ already known.
 
 **P8 — Media Library & Object Storage.** Not started. Do not begin without
 explicit approval.
+
+## P8 — Media Library & Object Storage (2026-08-25)
+
+**Status: COMPLETE (automated).** Authorized explicitly; implements
+Backend Prompt 9 exactly.
+
+### What was built
+
+`MediaModule` (`src/media/`) — `MediaController`/Service/Repository,
+`R2StorageProvider` (the one real `MediaStorageProvider` implementation,
+ADR-005), and the `media-processing` worker (producer + processor).
+`MediaService` matches the frontend service's full surface exactly:
+`getAssets`/`getAsset`/`uploadAsset`/`updateAsset`/`archiveAsset` — no
+more, no fewer. Read is org-membership-sufficient (`AcademyScopeGuard`,
+reused verbatim — the same guard `CoursesController` already uses, since
+`academies/:id/media*` is the identical `:id`-is-the-academy-id shape);
+write (upload/update/archive) requires academy `owner`/`administrator`,
+mirroring `CoursesService.assertCanManage` byte-for-byte. No new
+permission entity, no invented role.
+
+**Database:** `media_assets` (master plan §5.9) — academy-scoped, RLS in
+the same migration as the table, reusing the exact P5 `courses` shape
+(`app.current_organization_id`, `AcademyScopeGuard`) — the first P8 table
+to NOT need the P6/P7 user-context shape, since the Media Library is an
+academy-staff-only surface. No DELETE policy (archive-only lifecycle,
+matching `courses`' own precedent).
+
+**Upload pipeline:** base64-bridge V1 exactly as specified — decode,
+verify the real file kind from actual magic bytes (never the claimed
+`mimeType`), enforce the real size ceiling against the real decoded
+buffer (never the claimed `sizeBytes`), generate a backend-only storage
+key (`academies/{academyId}/{uuid}.{ext}`, no client-supplied path
+component anywhere), upload to R2, persist metadata, enqueue async
+dimension extraction, return the exact frontend contract. Authorization
+is checked *before* any storage I/O — an unauthorized caller can never
+trigger a real R2 upload even for a request whose DB write would
+ultimately be rejected.
+
+**File validation** (`media/utils/file-validation.util.ts`): a small,
+hand-rolled magic-byte allowlist (JPEG/PNG/GIF/WEBP/PDF — five real
+signatures, not a new dependency for a case this narrow) — a client
+claiming `image/png` for non-image bytes is rejected outright, regardless
+of the claimed MIME type. Video is absent from the allowlist entirely, by
+design — no video upload pipeline exists in this phase (§13 V2,
+`SPECIFICATION-UNDEFINED`).
+
+**Object storage:** Cloudflare R2 in production; a real local MinIO
+container (`docker-compose.yml`, new service) in development/test —
+`R2StorageProvider` is the exact same S3-protocol client code against
+either, matching how `DATABASE_URL` already points local vs. managed
+Postgres through the identical Prisma client. `onModuleInit` ensures the
+bucket exists and carries a public-read policy (module-scoped, not
+per-instance — runs once per bucket per process, not once per
+`INestApplication`; see below for why this matters).
+
+**Worker:** `media-processing` (BullMQ, mirrors
+`tenant-usage-recompute`'s exact producer/processor shape) extracts real
+image dimensions via `sharp`, asynchronously, never inline in the upload
+response. Idempotent (overwrites only `width`/`height`), retry-safe
+(BullMQ backoff on real failure), never destroys the original asset on
+failure (documents/`other` types are skipped, not retried; a missing
+storage object fails the job without ever touching the DB row). No
+thumbnail file is generated — `MediaAssetSummary` has no thumbnail-url
+field for one to ever be returned through (master plan's "do not invent a
+new public response shape" instruction), so only real dimensions are
+extracted.
+
+### Four real engineering problems found and fixed during
+implementation, not designed up front
+
+1. **Region mismatch.** `S3Client({ region: 'auto' })` — R2's own
+   documented convention — malformed `CreateBucketCommand` specifically
+   against MinIO (routed to `/` instead of `/{bucket}`, confirmed by
+   direct reproduction). Fixed with a new `R2_REGION` env var
+   (`'auto'` default for real R2, `'us-east-1'` for local MinIO) — one
+   environment-specific value, never a second client implementation.
+2. **A silent config-coercion gap.** `configuration.ts`'s factory reads
+   raw `process.env` under an unsafe cast (its own established pattern) —
+   `env.validation.ts`'s zod `.transform()` for `R2_FORCE_PATH_STYLE`
+   (string → boolean) never actually reaches it, so the S3 client
+   received the literal string `"true"` instead of `true`. Fixed by
+   coercing explicitly in `configuration.ts`, matching `Number(env.PORT
+   ?? ...)`'s identical existing precedent for numeric fields.
+3. **Bucket-check latency compounding into an unrelated regression.**
+   `onModuleInit`'s real network round-trip (ensure bucket + policy),
+   paid on every fresh `INestApplication` boot, pushed an already
+   timing-sensitive, pre-existing BullMQ warm-up test
+   (`auth-password-reset.e2e-spec.ts`'s own documented "first job after
+   fresh boot" margin note) past its polling budget across the ~40-file
+   e2e suite (`maxWorkers: 1`, one process). Fixed at the root cause: the
+   ensure-check is now module-scoped (runs once per bucket per process),
+   not per-`INestApplication`.
+4. **The real bug**: `MediaProcessingProcessor`/`Producer` used
+   `academyId` where `TenancyContextService.runInTenantContext` requires
+   an *organization* id — the worker runs outside any request (no
+   `AcademyScopeGuard` to resolve one), so `app.current_organization_id`
+   was silently set to an academy id, and the P8 RLS policies (correctly
+   checking real organization membership) filtered out every row,
+   permanently starving the worker of the asset it was enqueued to
+   process. Fixed by adding `organizationId` to the job payload
+   (`MediaService.upload` already has it in scope) alongside `academyId`
+   (still needed for the repository's own lookup). Caught by direct
+   reproduction, not assumed — `rls-media.e2e-spec.ts`'s own direct DB
+   proofs passed throughout, since they never exercised the worker path;
+   this is exactly why `media-processing-worker.e2e-spec.ts` exists as
+   its own file.
+
+None of these four touch P0–P7 — all four fixes are either new P8 files
+or narrow, explained additions to shared infrastructure
+(`configuration.ts`/`env.validation.ts`'s R2 section, `main.ts`/
+`test-app.ts`'s body-parser limit) that no earlier phase depends on.
+
+### Body size limit
+
+Express's default JSON body limit (100kb) rejects any real base64
+payload before it ever reaches `MediaController`. `main.ts`/`test-app.ts`
+both now call `useBodyParser('json', { limit })`, sized at
+`MEDIA_MAX_UPLOAD_BYTES * 3` — deliberately generous headroom above the
+real ceiling (not the tight ~1.33x base64-inflation factor alone), so a
+payload moderately over the real limit still reaches `MediaService`'s own
+byte-length check and gets a proper 413, rather than tripping this outer,
+cruder limit first and surfacing as an opaque 500 (confirmed as a real
+failure mode during implementation).
+
+### Seed / fixtures
+
+No seed changes — P8 has no dedicated frontend page of its own yet (the
+Media Library is embedded only inside website-builder image fields,
+`WebsiteImageField.tsx`, which has no backend counterpart until P9). Real
+upload/list/archive behavior is proven entirely through the automated
+test suite instead.
+
+### Verification
+
+Typecheck PASS, lint PASS, format:check PASS, build PASS. Migration
+verification PASS (`prisma migrate reset --force` from zero, applied
+clean). Unit: 16 suites / 237 tests PASS (215 pre-existing + a new
+`file-validation.util.spec.ts`, 16 real cases — real PNG/PDF magic-byte
+detection, a client lying about `mimeType` rejected, path-traversal-safe
+storage-key generation, filename sanitization). E2e: **43 suites / 270
+tests PASS, zero regressions** (all 39 pre-existing P0–P7 suites/251 tests
+still green) + 4 new suites/19 new tests: `media.e2e-spec.ts` (upload/
+list/detail/update/archive, real durable-object proof via a direct HTTP
+GET against the returned URL, invalid-MIME rejection, oversized-payload
+rejection, authorization), `rls-media.e2e-spec.ts` (direct DB RLS proof,
+zero app code), `media-tenant-isolation.e2e-spec.ts` (P8-TENANT-001..005,
+extending the permanent tenant-isolation suite per §18),
+`media-processing-worker.e2e-spec.ts` (real BullMQ round trip, redelivery
+idempotency, document-type skip, failure-never-destroys-the-asset).
+
+CTO audit: no TODO/FIXME/console.log/hardcoded ids/fake data/
+`WITH CHECK (true)`/direct `PrismaService` bypass/missing guards in any
+new P8 code (`src/media/`) — confirmed by direct grep, not assumed.
+
+### What is deliberately NOT implemented (P8 boundary, matches master plan §13/§21/§24 exactly)
+
+Multipart/resumable upload, presigned-URL upload (`POST /media/upload-
+url`, V1.5), video upload/transcoding (V2) — all still
+`SPECIFICATION-UNDEFINED`/explicitly deferred, none built. Malware
+scanning — "a reasonable addition once V1.5 direct uploads exist," not
+V1's job. Orphaned-file cleanup/retention — a future scheduled concern
+per §13, not built. Storage-quota enforcement against
+`tenant_usage.general_storage_gb`/`plans.limits` — P4's `tenant_usage`
+infrastructure exists, but no frontend contract defines media-quota
+enforcement behavior yet (no error shape, no quota-exceeded UI state
+anywhere in `media.types.ts` or `MediaService`); building enforcement
+without one would be inventing a product decision. Flagged as a real
+dependency for whenever that contract is defined, not silently resolved
+here. No new `SPECIFICATION-UNDEFINED` was discovered beyond what §24
+already lists.
+
+## Next phase
+
+**P9 — Website Builder & Theme Engine.** Not started. Do not begin
+without explicit approval.

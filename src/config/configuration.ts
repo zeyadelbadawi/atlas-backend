@@ -30,6 +30,18 @@ export interface RedisConfig {
   readonly url: string;
 }
 
+/** Phase P8 — Media Library & Object Storage configuration (master plan §13, ADR-005). */
+export interface MediaStorageConfig {
+  readonly endpoint: string;
+  readonly region: string;
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly bucket: string;
+  readonly publicUrlBase: string;
+  readonly forcePathStyle: boolean;
+  readonly maxUploadBytes: number;
+}
+
 /** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
 export interface IdentityConfig {
   readonly jwtAccessSecret: string;
@@ -102,5 +114,22 @@ export default () => {
     },
   };
 
-  return { app, database, redis, identity };
+  const media: MediaStorageConfig = {
+    endpoint: env.R2_ENDPOINT,
+    region: env.R2_REGION,
+    accessKeyId: env.R2_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+    bucket: env.R2_BUCKET,
+    publicUrlBase: env.R2_PUBLIC_URL_BASE,
+    // `env` here is `process.env` under an unsafe cast (this factory's own
+    // established pattern, see its header comment) — `validateEnv`'s zod
+    // `.transform()` only affects the object zod itself returns, which
+    // this factory never receives, so the raw string must be coerced here
+    // too, matching `Number(env.PORT ?? ...)`'s identical precedent for
+    // numeric fields.
+    forcePathStyle: (env.R2_FORCE_PATH_STYLE as unknown as string) !== 'false',
+    maxUploadBytes: Number(env.MEDIA_MAX_UPLOAD_BYTES ?? 10 * 1024 * 1024),
+  };
+
+  return { app, database, redis, identity, media };
 };

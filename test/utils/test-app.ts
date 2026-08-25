@@ -13,13 +13,21 @@
  * how `health.e2e-spec.ts` already targets bare `/health`; the real
  * deployed `/api/v1` path is a separate, already-reported concern (see the
  * P1 final report's contract-matrix note on the frontend's `apiBaseUrl`).
+ *
+ * P8 addition: `main.ts`'s increased JSON body-parser limit (the default
+ * 100kb rejects a real base64-encoded upload before it ever reaches
+ * `MediaController`) — same computation as `main.ts`, so media e2e specs
+ * can actually send a real payload.
  */
+import { ConfigService } from '@nestjs/config';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RedisService } from '../../src/redis/redis.service';
 import { StubEmailProvider } from '../../src/identity/services/stub-email.provider';
+import type { MediaStorageConfig } from '../../src/config/configuration';
 
 export interface TestApp {
   readonly app: INestApplication;
@@ -30,7 +38,15 @@ export interface TestApp {
 
 export async function createTestApp(): Promise<TestApp> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication<NestExpressApplication>();
+
+  const mediaConfig = moduleRef
+    .get(ConfigService)
+    .getOrThrow<MediaStorageConfig>('media');
+  // Generous headroom above the real ceiling — same reasoning as
+  // `main.ts`'s identical computation (see its own doc comment).
+  app.useBodyParser('json', { limit: mediaConfig.maxUploadBytes * 3 });
+
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );

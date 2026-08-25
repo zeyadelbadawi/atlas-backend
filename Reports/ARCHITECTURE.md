@@ -598,3 +598,102 @@ application services throughout (`AssignmentsService`/`InstructorService`/
 `AnnouncementsService`/`BlogPostsService`/`ForumsService`), same pattern
 as every prior phase's seed additions — see `Reports/PROGRESS.md`'s P7
 entry for the full fixture graph.
+
+## P8 — Media Library & Object Storage (2026-08-25)
+
+`MediaModule` (`src/media/`) reuses `AcademyScopeGuard` verbatim — the
+identical `academies/:id/*` shape `CourseModule` already established, so
+no new guard was written. Unlike P6/P7, every P8 route runs under
+`TenancyContextService.runInTenantContext` (org-context), not
+`runInUserContext` — the Media Library is an academy-staff-only surface
+(no student- or instructor-facing consumer exists in the real frontend
+contract today), so `courses`' exact P5 RLS shape was reused rather than
+P6/P7's user-scoped one.
+
+### Storage abstraction
+
+`MediaStorageProvider` (`media/storage/media-storage.interface.ts`) — a
+three-method interface (`putObject`/`getObject`, plus the `onModuleInit`
+bucket-ensure lifecycle) `MediaService` and `MediaProcessingProcessor`
+depend on, never `@aws-sdk/client-s3` directly. `R2StorageProvider` is the
+one real implementation, bound via a DI token
+(`MEDIA_STORAGE_PROVIDER`) — used in every environment, including tests,
+against a real local MinIO container (`docker-compose.yml`, new service)
+rather than a mock/stub. This was a deliberate choice over the
+alternative (a fake in-memory storage double): master plan §21 P8's own
+instruction requires proving real "durable object" behavior end-to-end
+(a direct HTTP GET against the returned URL must return the real bytes),
+which only a real S3-protocol server can prove. `R2StorageProvider`
+itself never branches on environment — only the injected
+`MediaStorageConfig` (endpoint/region/credentials) differs, mirroring
+exactly how `PrismaService` already points at local vs. managed Postgres
+through one connection string.
+
+### Four real problems found and fixed during implementation
+
+See `Reports/PROGRESS.md`'s P8 entry for the full detail on all four
+(region mismatch with MinIO, a silent env-coercion gap between
+`env.validation.ts` and `configuration.ts`, boot-time latency compounding
+into a pre-existing test's timing margin, and a real `academyId`/
+`organizationId` mix-up that permanently starved the worker). The fourth
+is the one worth restating here architecturally: `TenancyContextService.
+runInTenantContext` takes an ORGANIZATION id, never an academy id — every
+prior phase's guards resolve this correctly because a real HTTP request
+always carries `AcademyScopeGuard`'s resolved `academyContext.
+organizationId`; a BullMQ worker runs with no request and no guard, so
+any future async worker needing tenant context must carry
+`organizationId` explicitly in its own job payload, exactly like
+`ProcessMediaAssetJobPayload` now does — there is no guard to fall back
+on to resolve it after the fact.
+
+### Upload authorization ordering
+
+`MediaService.upload` checks `assertCanManage` (academy `owner`/
+`administrator`) in its own transaction *before* any storage I/O runs —
+an unauthorized caller's request never reaches R2/MinIO at all, not even
+a request whose eventual DB write would be rejected. This is a
+deliberate ordering choice, not incidental: validating after upload would
+let an unauthorized caller trigger real storage cost/writes for a request
+that was always going to fail.
+
+### File validation
+
+`media/utils/file-validation.util.ts` — a hand-rolled, fixed five-entry
+magic-byte allowlist (JPEG/PNG/GIF/WEBP/PDF), never the client-declared
+`mimeType`/`sizeBytes`. Storage keys are entirely backend-generated
+(`academies/{academyId}/{uuid}.{ext}` — the academy id from the
+already-verified guard context, the extension from the sniffed real file
+kind, never a client string) — master plan §13's path-traversal
+requirement is satisfied structurally, not by sanitizing a client-
+supplied path.
+
+### Public bucket access
+
+`R2StorageProvider.onModuleInit` sets a public-read `PutBucketPolicy`
+alongside the bucket-ensure check — master plan §13: "Public assets...
+served directly via CDN, cacheable indefinitely." Without this, both
+MinIO and real R2 default a new bucket to private, and every
+`media_assets.url` this service returns would 403 for anyone but the
+storage credential holder. One idempotent call, real R2's own S3 API
+surface includes the same `PutBucketPolicy` operation — not an
+environment-specific branch.
+
+### Worker
+
+`media-processing` (`media/queue/`) mirrors `tenant-usage-recompute`'s
+exact producer/processor shape (master plan §12). Only `image`-type
+assets are processed; `document`/`other` are skipped without error (there
+is nothing to extract). No thumbnail file is generated — `MediaAssetSummary`
+(frontend) has no thumbnail-url field for one to ever be returned through,
+so generating one would be dead storage with no response shape to reach
+it (master plan's "do not invent a new public response shape"
+instruction) — only real `width`/`height` are extracted via `sharp`.
+
+### Body size limit
+
+`main.ts`/`test-app.ts` both raise Express's default JSON body limit
+(100kb) to `MEDIA_MAX_UPLOAD_BYTES * 3` — generous headroom, not the
+tight ~1.33x base64-inflation factor alone, so a payload moderately over
+the real application-level ceiling still reaches `MediaService`'s own
+byte-length check (the actual enforced limit) and gets a proper 413
+rather than tripping this outer, cruder limit first.

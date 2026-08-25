@@ -287,6 +287,7 @@ model Academy {
   courses          Course[]
   announcements    Announcement[]
   blogPosts        BlogPost[]
+  mediaAssets      MediaAsset[]
 
   @@index([organizationId, status])
   @@map("academies")
@@ -1267,4 +1268,89 @@ model ForumReply {
 
   @@index([threadId, createdAt])
   @@map("forum_replies")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P8 — Media Library & Object Storage (master plan §5.9, §13, §21
+// Phase P8, ADR-005).
+//
+// Academy-scoped, org-context RLS — the exact same shape as `courses`
+// (P5): `media_assets.academy_id → academies.organization_id`, resolved
+// under `app.current_organization_id` via `AcademyScopeGuard`
+// (`AcademyModule`, reused verbatim — `academies/:id/media*` is the same
+// `:id`-is-the-academy-id route shape `CoursesController` already
+// established). No new guard, no new session variable, no new tenancy
+// model. Unlike P6/P7, nothing here needs to be reachable by a student or
+// under `app.current_user_id` — the Media Library (per the real frontend
+// contract, `MediaLibraryDialog`) is an academy-staff-only surface,
+// embedded only inside website-builder form fields today.
+//
+// PostgreSQL stores metadata + `storage_key`/`url` only, never binary
+// content (master plan §13's explicit justification). `storage_key`
+// always looks like `academies/{academyId}/{uuid}.{ext}` — backend-
+// generated only (`MediaService`), never a client-supplied path, so a
+// leaked/guessed key from one academy is structurally unreachable for
+// another even before RLS/auth is checked (§13's "Authorization" row).
+// ---------------------------------------------------------------------------
+
+/// Matches `MediaAssetType` (`media.types.ts`) exactly. `video` is a real,
+/// representable value (the frontend type needs it to exist), but P8's
+/// own upload path never produces one — no video upload pipeline exists
+/// yet (master plan §13 V2, `SPECIFICATION-UNDEFINED`, §24) and the V1
+/// MIME allowlist (`file-validation.util.ts`) deliberately excludes every
+/// video MIME type. `other` is likewise representable but never produced
+/// by this phase's classifier — reserved for a future upload path this
+/// phase does not build.
+enum MediaAssetType {
+  image
+  video
+  document
+  other
+
+  @@map("media_asset_type")
+}
+
+/// Matches `MediaAssetStatus` (`media.types.ts`) exactly. Archive-only
+/// lifecycle — no hard delete, matching `Course`/`Academy`'s own
+/// precedent (master plan §13: "no hard delete, matching the frontend's
+/// CMS rule extended to media").
+enum MediaAssetStatus {
+  active
+  archived
+
+  @@map("media_asset_status")
+}
+
+/// Mirrors `MediaAssetSummary`/`MediaAssetDetail` (`media.types.ts`)
+/// field-for-field — the frontend has no separate detail shape (`type
+/// MediaAssetDetail = MediaAssetSummary`), so this one model backs both
+/// `GET .../media` and `GET .../media/:id`. `width`/`height` are
+/// deliberately nullable, populated asynchronously by `media-worker`
+/// after upload (master plan §13: "Image handling: dimension/thumbnail
+/// extraction async, never inline in the upload request") — never
+/// guessed or computed synchronously in the request/response cycle.
+model MediaAsset {
+  id         String           @id @default(uuid())
+  academyId  String           @map("academy_id")
+  academy    Academy          @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  type       MediaAssetType
+  status     MediaAssetStatus @default(active)
+  fileName   String           @map("file_name")
+  /// The object-storage key (`academies/{academyId}/{uuid}.{ext}`) — kept
+  /// separate from `url` so the CDN/domain can change without a data
+  /// migration (master plan §5.9's own explicit reasoning).
+  storageKey String           @map("storage_key")
+  url        String
+  altText    String?          @map("alt_text")
+  mimeType   String           @map("mime_type")
+  /// `bigint` at rest (master plan §5.9) — a real file size, never
+  /// meaningfully bounded by a 32-bit int.
+  sizeBytes  BigInt           @map("size_bytes")
+  width      Int?
+  height     Int?
+  createdAt  DateTime         @default(now()) @map("created_at")
+  updatedAt  DateTime         @updatedAt @map("updated_at")
+
+  @@index([academyId, status, type])
+  @@map("media_assets")
 }

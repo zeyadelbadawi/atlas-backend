@@ -106,6 +106,65 @@ const EnvSchema = z.object({
     .int()
     .positive()
     .default(3600),
+
+  // --- Phase P8 — Media Library & Object Storage (master plan §13, §21 P8, ADR-005) ---
+  // Cloudflare R2, S3-compatible — same client/protocol against a local
+  // MinIO endpoint in development/test (docker-compose.yml) and the real
+  // R2 endpoint in production; only these values differ per environment.
+  // All required, no silent default — a missing storage credential is
+  // exactly the class of connectivity/security-critical value this file's
+  // header comment refuses to default (matches DATABASE_URL/REDIS_URL's
+  // own precedent).
+  R2_ENDPOINT: z
+    .string()
+    .min(
+      1,
+      'R2_ENDPOINT is required — the backend cannot start without an object-storage endpoint.',
+    ),
+  R2_ACCESS_KEY_ID: z
+    .string()
+    .min(1, 'R2_ACCESS_KEY_ID is required for object-storage authentication.'),
+  R2_SECRET_ACCESS_KEY: z
+    .string()
+    .min(1, 'R2_SECRET_ACCESS_KEY is required for object-storage authentication.'),
+  R2_BUCKET: z
+    .string()
+    .min(1, 'R2_BUCKET is required — the bucket media assets are stored in.'),
+  // R2 itself documents `'auto'` as its recommended region value; MinIO
+  // (and most other non-R2 S3-compatible stores) expect a real AWS-style
+  // region string instead — `CreateBucketCommand` specifically was
+  // confirmed to malform against MinIO with `'auto'` during
+  // implementation (routed to `/` instead of `/{bucket}`). One
+  // environment-specific value, never a second client implementation.
+  R2_REGION: z.string().min(1).default('auto'),
+  // The durable, public base URL `media_assets.url` is built from
+  // (`{R2_PUBLIC_URL_BASE}/{storage_key}`) — R2's own public bucket URL or
+  // custom domain in production; MinIO's local API endpoint in
+  // development/test, matching how MinIO also serves objects over HTTP.
+  R2_PUBLIC_URL_BASE: z
+    .string()
+    .min(1, 'R2_PUBLIC_URL_BASE is required to build durable public asset URLs.'),
+  // MinIO (and some non-AWS S3-compatible stores) require path-style
+  // requests (`endpoint/bucket/key`) instead of AWS's default
+  // virtual-hosted style (`bucket.endpoint/key`) — real R2 also documents
+  // path-style as its own recommended mode. One flag, defaulted true
+  // (the mode every environment this app actually targets uses), never a
+  // second storage-provider implementation.
+  R2_FORCE_PATH_STYLE: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+  // Per-file upload ceiling for the V1 base64-bridge path (master plan
+  // §13: "Max file size... enforced server-side explicitly"). No number
+  // is specified anywhere in the master plan or frontend contract — 10MB
+  // is a reasonable, narrow V1 default for the image/document allowlist
+  // this phase supports (video is out of scope entirely, §13 V2), not a
+  // tuned production value.
+  MEDIA_MAX_UPLOAD_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(10 * 1024 * 1024),
 });
 
 export type EnvVariables = z.infer<typeof EnvSchema>;

@@ -33,6 +33,7 @@
     "seed": "ts-node -r tsconfig-paths/register prisma/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1117.0",
     "@nestjs/bullmq": "^10.2.1",
     "@nestjs/common": "^10.4.4",
     "@nestjs/config": "^3.3.0",
@@ -53,6 +54,7 @@
     "pino-http": "^10.3.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "sharp": "^0.33.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

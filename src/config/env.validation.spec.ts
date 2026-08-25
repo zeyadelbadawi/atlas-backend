@@ -9,6 +9,12 @@ const VALID_BASE = {
   // Phase P2 — required, no default (RLS is inert against DATABASE_URL's
   // superuser connection; see env.validation.ts's APP_DATABASE_URL definition).
   APP_DATABASE_URL: 'postgresql://atlas_app:pw@localhost:5432/atlas_dev',
+  // Phase P8 — required, no default (see env.validation.ts's R2_* definitions).
+  R2_ENDPOINT: 'http://localhost:9000',
+  R2_ACCESS_KEY_ID: 'unit-test-access-key',
+  R2_SECRET_ACCESS_KEY: 'unit-test-secret-key',
+  R2_BUCKET: 'atlas-media-test',
+  R2_PUBLIC_URL_BASE: 'http://localhost:9000/atlas-media-test',
 };
 
 describe('validateEnv', () => {
@@ -96,5 +102,17 @@ describe('validateEnv', () => {
     expect(() =>
       validateEnv({ ...VALID_BASE, APP_DATABASE_URL: 'mysql://localhost/atlas' }),
     ).toThrow(/APP_DATABASE_URL/);
+  });
+
+  it('throws when R2_BUCKET is missing', () => {
+    const withoutBucket: Record<string, string> = { ...VALID_BASE };
+    delete withoutBucket.R2_BUCKET;
+    expect(() => validateEnv(withoutBucket)).toThrow(/R2_BUCKET/);
+  });
+
+  it('defaults R2_FORCE_PATH_STYLE to true and MEDIA_MAX_UPLOAD_BYTES to 10MB', () => {
+    const result = validateEnv(VALID_BASE);
+    expect(result.R2_FORCE_PATH_STYLE).toBe(true);
+    expect(result.MEDIA_MAX_UPLOAD_BYTES).toBe(10 * 1024 * 1024);
   });
 });

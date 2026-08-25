@@ -1,11 +1,17 @@
 # Atlas Backend — local development infrastructure.
 #
-# Provides the two stateful dependencies Phase P0 requires: PostgreSQL
-# (primary database, ADR-002) and Redis (cache/queue broker foundation,
-# ADR-004). Nothing here represents production infrastructure — see
+# Provides the stateful dependencies the backend needs locally: PostgreSQL
+# (primary database, ADR-002), Redis (cache/queue broker foundation,
+# ADR-004), and MinIO (Phase P8 — a real, local, S3-compatible object
+# store standing in for Cloudflare R2, ADR-005; R2 is S3-compatible, so
+# `R2StorageProvider` speaks the exact same protocol against either —
+# only the endpoint/credentials differ between environments, matching how
+# `DATABASE_URL` already points at local Postgres here and a managed
+# instance in production, same Prisma client code either way). Nothing
+# here represents production infrastructure — see
 # Reports/ATLAS_BACKEND_MASTER_PLAN.md §20 for the real deployment
-# architecture (managed Postgres/Redis, no self-hosted containers in
-# staging/production).
+# architecture (managed Postgres/Redis, real Cloudflare R2, no self-hosted
+# containers in staging/production).
 name: atlas-backend
 
 services:
@@ -39,6 +45,25 @@ services:
       timeout: 5s
       retries: 10
 
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: atlas_media_dev
+      MINIO_ROOT_PASSWORD: atlas_media_dev_password
+    ports:
+      - '9000:9000' # S3 API
+      - '9001:9001' # Web console
+    volumes:
+      - atlas_minio_data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   atlas_postgres_data:
   atlas_redis_data:
+  atlas_minio_data:
