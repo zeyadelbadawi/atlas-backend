@@ -20,6 +20,7 @@ import {
 } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
+import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 import { QuizzesRepository } from '../repositories/quizzes.repository';
 import { toQuizResponse } from '../dto/quiz.contract';
 import type { QuizResponse } from '../dto/quiz.contract';
@@ -28,7 +29,7 @@ import type { QuizAttemptResponse } from '../dto/quiz-attempt.contract';
 import type { SubmitQuizAttemptDto } from '../dto/submit-quiz-attempt.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
-import { assertActiveEnrollment } from './learning-access.util';
+import { assertActiveEnrollment, assertCourseReadAccess } from './learning-access.util';
 import {
   canStartAnotherAttempt,
   isAttemptPassing,
@@ -41,6 +42,7 @@ export class QuizzesService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly enrollmentsRepository: EnrollmentsRepository,
+    private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly quizzesRepository: QuizzesRepository,
   ) {}
 
@@ -49,7 +51,13 @@ export class QuizzesService {
     courseId: string,
   ): Promise<PaginatedResult<QuizResponse>> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(tx, this.enrollmentsRepository, userId, courseId);
+      await assertCourseReadAccess(
+        tx,
+        this.enrollmentsRepository,
+        this.courseInstructorsRepository,
+        userId,
+        courseId,
+      );
       const quizzes = await this.quizzesRepository.findManyPublishedForCourse(
         tx,
         courseId,
@@ -64,7 +72,13 @@ export class QuizzesService {
 
   async getQuiz(userId: string, courseId: string, quizId: string): Promise<QuizResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(tx, this.enrollmentsRepository, userId, courseId);
+      await assertCourseReadAccess(
+        tx,
+        this.enrollmentsRepository,
+        this.courseInstructorsRepository,
+        userId,
+        courseId,
+      );
       const quiz = await this.quizzesRepository.findPublishedByIdWithQuestions(
         tx,
         courseId,

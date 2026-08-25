@@ -341,6 +341,77 @@ accounts for the P5 cases below instead of the new seeded accounts, that
 also works — the P5 cases don't depend on the specific seeded names, only
 on having an Academy with at least one published and one draft course.
 
+### Step G — P6/P7 addendum: use the real seed script's own fixtures; grant the Learning/Instructor/Community permission strings
+
+`npm run db:seed` (Step F) already creates everything the P6/P7 cases
+below need — no additional psql seeding required:
+
+- `alex.morgan@student.dev` — a pure student, enrolled (real
+  `EnrollmentsService` call) in "Spanish for Beginners" (free, published),
+  first lesson already completed, a real submitted-and-graded Assignment
+  submission ("Introduce Yourself"), a Quiz ("Spanish Basics Quiz")
+  available to attempt.
+- `jane.doe@acme-academy.dev` — real `course_instructors` row on BOTH
+  "React Fundamentals" (Academy A1) and "Spanish for Beginners" (Academy
+  B1) — teaches across two different academies/organizations, useful for
+  P7-MANUAL cross-tenant cases. Already graded Alex's assignment
+  submission (score 92) during seeding — `P7-MANUAL-008` re-grades a
+  *different* fresh submission rather than re-grading this one.
+- `sarah.chen@acme-academy.dev` — owner of Academy A1 (React
+  Fundamentals's academy) — the real `owner`/`administrator` shape
+  `AnnouncementsService`'s write authorization requires. Already authored
+  a published announcement and a forum thread reply on React
+  Fundamentals during seeding.
+
+Grant the Learning/Instructor/Community permission strings (same
+"frontend route guard, independent of backend authorization" caveat as
+Steps C/D/F — confirmed by direct inspection of `AppRouter.tsx`):
+
+```sql
+UPDATE organization_memberships
+SET permissions = ARRAY[
+  'academy.view', 'academy.configure', 'academy.branding.update',
+  'academy.members.view', 'academy.provisioning.view', 'academy.provisioning.create',
+  'tenant.dashboard.view', 'tenant.subscription.view', 'tenant.usage.view', 'tenant.addon.view',
+  'course.view', 'course.create', 'course.update', 'course.manage', 'course.configure',
+  'student.learning.view', 'student.course.view', 'student.quiz.view', 'student.assignment.view',
+  'instructor.dashboard.view', 'instructor.course.view', 'instructor.student.view',
+  'instructor.assessment.view', 'instructor.submission.view',
+  'announcement.manage', 'announcement.view', 'forum.view', 'blog.view', 'blog.create'
+]
+WHERE user_id = (SELECT id FROM users WHERE email = 'sarah.chen@acme-academy.dev');
+
+UPDATE organization_memberships
+SET permissions = ARRAY[
+  'student.learning.view', 'student.course.view', 'student.quiz.view', 'student.assignment.view',
+  'forum.view', 'announcement.view', 'blog.view'
+]
+WHERE user_id = (SELECT id FROM users WHERE email = 'alex.morgan@student.dev');
+```
+
+`jane.doe@acme-academy.dev` is Academy A1 staff only (`organization_memberships`
+row belongs to Sarah's Org A) — Jane has no `organization_memberships` row
+of her own (she's an `academy_members` row, not an org member), so the
+`instructor.*`/`forum.view` permission strings that gate her real
+Instructor pages must instead be granted directly via psql, since there is
+no organization-membership row to attach them to:
+
+```sql
+-- Jane has no organization_memberships row (academy staff only) — the
+-- instructor permission strings are frontend-only route guards regardless
+-- (same caveat as above); this INSERT exists purely so her dashboard nav
+-- shows the Instructor pages during manual testing. Skip this if you are
+-- comfortable navigating to instructor URLs directly without the nav link.
+INSERT INTO organization_memberships (id, organization_id, user_id, role, permissions, is_primary, joined_at)
+SELECT gen_random_uuid(), o.id, u.id, 'member', ARRAY[
+  'instructor.dashboard.view', 'instructor.course.view', 'instructor.student.view',
+  'instructor.assessment.view', 'instructor.submission.view', 'forum.view'
+], false, now()
+FROM organizations o, users u
+WHERE o.slug = 'acme-academy-group' AND u.email = 'jane.doe@acme-academy.dev'
+ON CONFLICT (organization_id, user_id) DO UPDATE SET permissions = EXCLUDED.permissions;
+```
+
 ---
 
 ## Manual Test Cases
@@ -1885,6 +1956,527 @@ ________________________________
 
 ---
 
+## P6 — Student Learning & Assessment Test Cases
+
+**Written retroactively** (P6 shipped without a manual runbook addendum —
+a real documentation gap, not a deliberate omission; see
+`Reports/PROGRESS.md`'s P7 entry). Every account below is real, seeded by
+`npm run db:seed` (Step F/G) — no manual psql seeding needed beyond Step
+G's permission grants.
+
+**Known blocker, read before testing:** `P6-MANUAL-005` (lesson content
+viewing) is expected to **FAIL** — `LessonPage.tsx` calls a P5
+owner-scoped endpoint an enrolled student cannot pass. This is a real,
+already-documented, deliberately-unresolved gap (`Reports/PROGRESS.md`/
+`Reports/ARCHITECTURE.md`'s P6 entries), not a new bug to report. Mark it
+`BLOCKED`, not `FAIL` — its cause is already known and requires an
+explicit product/architecture decision before it can be fixed.
+
+### P6-MANUAL-001
+
+**Feature:** Course discovery (flat, cross-academy, published+public catalog)
+
+**Test Account:** Alex Morgan (`alex.morgan@student.dev`)
+
+**Exact Steps:**
+1. Sign in as Alex Morgan.
+2. Navigate to `/dashboard/learning/discover` (or the course discovery entry point in the dashboard nav).
+
+**Expected Result:** A list of published, public courses is shown, including "Spanish for Beginners" and "React Fundamentals" — never a draft or private course ("Node.js Backend Development" must not appear).
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P6-MANUAL-002
+
+**Feature:** Enrollment (free course)
+
+**Test Account:** Register a new user (any email/password) — deliberately NOT Alex Morgan, who is already enrolled in Spanish for Beginners.
+
+**Exact Steps:**
+1. Sign in as the new user.
+2. Navigate to the "Spanish for Beginners" course detail page from discovery.
+3. Click Enroll.
+
+**Expected Result:** Enrollment succeeds; the course now shows as enrolled/in-progress for this user.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P6-MANUAL-003
+
+**Feature:** Enrollment is rejected for a paid course (no payment gate exists yet — P13)
+
+**Test Account:** Any authenticated, non-enrolled user.
+
+**Exact Steps:**
+1. Navigate to the "React Fundamentals" course detail page (paid, $49.99).
+2. Attempt to enroll.
+
+**Expected Result:** The enrollment attempt is rejected (403) — never silently grants free access to paid content.
+
+**Security Verification:** Confirm via DevTools Network tab that `POST /enrollments` returns 403, not 201.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P6-MANUAL-004
+
+**Feature:** Progress dashboard shows real, non-fabricated completion data
+
+**Test Account:** Alex Morgan
+
+**Exact Steps:**
+1. Sign in as Alex Morgan.
+2. Navigate to the "Spanish for Beginners" progress/learning page.
+
+**Expected Result:** Shows 1 of 2 lessons completed (the "Greetings" lesson, completed during seeding), a real percentage (50%), and `completionState: in_progress` — never `completed` for a partially-finished course.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P6-MANUAL-005 — KNOWN BLOCKED, DO NOT REPORT AS A NEW BUG
+
+**Feature:** Lesson content viewing
+
+**Test Account:** Alex Morgan
+
+**Exact Steps:**
+1. Sign in as Alex Morgan.
+2. From the "Spanish for Beginners" progress page, click into a lesson (e.g. "Greetings").
+
+**Expected Result (documented, real gap):** 403 Forbidden — `LessonPage.tsx` calls the P5 owner-scoped `academies/:id/courses/:id/sections` endpoint, which requires real organization membership Alex does not have. See `Reports/ARCHITECTURE.md`'s P6 "Known, deliberately unresolved gap" entry for the full reasoning. This is not this test's job to fix — only to confirm the documented behavior matches reality.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] BLOCKED (expected) [ ] Unexpected behavior — report exactly what you saw instead
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P6-MANUAL-006
+
+**Feature:** Taking a quiz — never sees the correct answer before submitting
+
+**Test Account:** Alex Morgan
+
+**Exact Steps:**
+1. Sign in as Alex Morgan.
+2. Navigate to the "Spanish Basics Quiz" (Spanish for Beginners course).
+3. Open DevTools Network tab before answering.
+4. Answer "How do you say 'hello' in Spanish?" with "Hola" and submit.
+
+**Expected Result:** Inspect every `GET` response for the quiz/questions in the Network tab before submitting — none contains `isCorrect` or any field it could be derived from. After submitting, the result screen shows PASS (score ≥ 50, the seeded passing score) and the correct answer.
+
+**Security Verification:** Confirm no pre-submission API response contains `isCorrect` anywhere in its JSON body (master plan §18 scenario 7).
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P6-MANUAL-007
+
+**Feature:** Assignment submission
+
+**Test Account:** Register a new user, enroll in "Spanish for Beginners" (P6-MANUAL-002).
+
+**Exact Steps:**
+1. Navigate to the "Introduce Yourself" assignment.
+2. Enter a response and submit.
+
+**Expected Result:** Submission succeeds, status shows `submitted`, no score/feedback field is shown anywhere on this student-facing page (grading is P7 scope).
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P6-MANUAL-008
+
+**Feature:** Cross-student isolation (UI + API)
+
+**Test Account:** Two different registered/enrolled students in the same course.
+
+**Exact Steps:**
+1. As Student A, note your enrollment/progress/quiz-attempt state.
+2. Sign in as Student B (same course).
+3. Attempt to view Student A's progress by editing the URL/id if one is visible, or by inspecting Student B's own API responses for any Student-A data.
+
+**Expected Result:** Student B never sees Student A's enrollment, progress, quiz attempts, or assignment submission — every endpoint resolves the student from the session, never a URL parameter.
+
+**Security Verification:** Confirm via DevTools that no response payload for Student B contains Student A's id or data.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P6-MANUAL-009
+
+**Feature:** Empty state — no enrollments yet
+
+**Test Account:** A freshly registered user with no enrollments.
+
+**Exact Steps:**
+1. Sign in, navigate to the learning/progress dashboard.
+
+**Expected Result:** An honest "you're not enrolled in anything yet" empty state, not an error or infinite spinner.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P6-MANUAL-010
+
+**Feature:** Loading/error/retry
+
+**Test Account:** Alex Morgan
+
+**Exact Steps:**
+1. Sign in, open the progress dashboard.
+2. In DevTools, throttle/block the network briefly and refresh.
+
+**Expected Result:** A loading state, then a real error state with a retry action — never a silent blank page.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+## P7 — Instructor Operations & Community Test Cases
+
+All accounts below are real, seeded by `npm run db:seed` — see Step G for
+the exact fixture graph and permission grants.
+
+### P7-MANUAL-001
+
+**Feature:** Instructor dashboard — real, non-fabricated metrics
+
+**Test Account:** Jane Doe (`jane.doe@acme-academy.dev`)
+
+**Exact Steps:**
+1. Sign in as Jane Doe.
+2. Navigate to `/dashboard/instructor`.
+
+**Expected Result:** Shows `assignedCoursesCount: 2` (React Fundamentals + Spanish for Beginners), real enrolled-student totals, and the seeded activity (Alex's graded submission) in the recent-activity feed.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-002
+
+**Feature:** Teaching courses list and course overview
+
+**Test Account:** Jane Doe
+
+**Exact Steps:**
+1. Navigate to `/dashboard/instructor/courses`.
+2. Click into "Spanish for Beginners".
+
+**Expected Result:** Both courses listed with real enrolled counts; the overview page for Spanish for Beginners shows 1 enrolled student, real section/lesson totals, and a pending-grading count reflecting any ungraded submission.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-003
+
+**Feature:** Course roster and student progress detail
+
+**Test Account:** Jane Doe
+
+**Exact Steps:**
+1. From the Spanish for Beginners overview, open the Students roster.
+2. Click into Alex Morgan's row.
+
+**Expected Result:** Roster shows Alex Morgan with real progress percentage. The detail page shows Alex's real `CourseProgress`, quiz attempts, and the already-graded assignment submission (score 92).
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-004
+
+**Feature:** Grading a submission
+
+**Test Account:** Jane Doe, plus a second student enrolled in Spanish for Beginners with a fresh (ungraded) submission — enroll a new user and submit the "Introduce Yourself" assignment first (P6-MANUAL-007) to create one.
+
+**Exact Steps:**
+1. As Jane Doe, navigate to the assignment's submissions list, open the fresh ungraded submission.
+2. Enter a score and feedback, submit the grade.
+
+**Expected Result:** Submission's `gradingStatus` flips to `graded`, score/feedback persist and are shown on reload. The student's own submission-status page still never shows the grade fields (P6 contract, unchanged).
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-005
+
+**Feature:** An instructor NOT assigned to a course cannot grade its submissions (master plan §18 scenario 5, in the browser)
+
+**Test Account:** Mike Wilson (`mike.wilson@acme-academy.dev`, staff at Academy A1 but not a course instructor anywhere).
+
+**Exact Steps:**
+1. Sign in as Mike Wilson.
+2. Attempt to navigate directly to `/dashboard/instructor/courses/<a real course id>/assignments/<real assignment id>/submissions` (copy the real ids from Jane Doe's session, or the API directly).
+
+**Expected Result:** Denied — either redirected/blocked by the frontend route guard (no `instructor.*` permission granted to Mike) or, if reached, a 404 from the API. Never real submission data.
+
+**Security Verification:** Confirm via DevTools Network tab that any direct API call returns 404, never 200 with real data.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-006
+
+**Feature:** Course announcement — create, publish, archive; visible to enrolled students once published
+
+**Test Account:** Sarah Chen (author), Alex Morgan is NOT enrolled in React Fundamentals — enroll a fresh user in a free course you manage, or use "Spanish for Beginners" with Omar Hassan as author instead if testing the student-visibility half.
+
+**Exact Steps:**
+1. Sign in as Sarah Chen, navigate to `/dashboard/instructor/courses/<React Fundamentals id>/announcements`.
+2. Create a new announcement, confirm it starts as `draft`.
+3. Publish it.
+4. Archive it.
+
+**Expected Result:** Each transition persists after refresh. A plain org member with no academy role cannot reach the create form (redirected/blocked).
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-007
+
+**Feature:** Announcement feed — published-only visibility
+
+**Test Account:** A user enrolled in a course with a published announcement.
+
+**Exact Steps:**
+1. Sign in, navigate to `/dashboard/announcements`.
+
+**Expected Result:** Published announcements for courses/academies you belong to appear; draft announcements never do.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-008
+
+**Feature:** Blog post — create, edit, publish, delete; author-only writes
+
+**Test Account:** Jane Doe.
+
+**Exact Steps:**
+1. Navigate to `/dashboard/blog/create`.
+2. Create a post, save as draft.
+3. Publish it.
+4. Sign in as a different Academy A1 staff member (Sarah Chen or Mike Wilson) and attempt to edit Jane's post via `/dashboard/blog/<postId>/edit`.
+
+**Expected Result:** Jane's create/publish/edit/delete all succeed. The other staff member can VIEW the published post but cannot save an edit (403) — visible ≠ owned.
+
+**Security Verification:** Confirm the other staff member's edit attempt returns 403 in the Network tab.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-009
+
+**Feature:** Course forum — thread creation, replies, moderation
+
+**Test Account:** Jane Doe (instructor, moderator) and Sarah Chen (academy owner, participant).
+
+**Exact Steps:**
+1. As Sarah Chen, navigate to `/dashboard/instructor/courses/<React Fundamentals id>/discussions` (or the equivalent participant-facing forum page) and open the seeded "Welcome — introduce yourself!" thread.
+2. Post a reply.
+3. As Jane Doe, pin the thread, then lock it.
+4. As Sarah Chen, attempt to reply again after it's locked.
+
+**Expected Result:** Reply succeeds before locking. Pin/lock succeed for Jane (instructor). The post-lock reply attempt is rejected (403).
+
+**Security Verification:** Confirm the post-lock reply returns 403 in the Network tab.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-010
+
+**Feature:** Cross-tenant isolation (UI + API) — Instructor Operations & Community
+
+**Test Account:** Two instructors in different organizations, each teaching their own course.
+
+**Exact Steps:**
+1. As Instructor A (Org A), note a real course id.
+2. Sign in as Instructor B (Org B, unrelated).
+3. Attempt to reach Instructor A's course roster/announcements/forum by editing the URL to Instructor A's course id.
+
+**Expected Result:** Denied at every surface — roster, announcements management, and forum all 404/403, never real cross-tenant data.
+
+**Security Verification:** Confirm via DevTools that every such request returns 403/404, never 200 with real data.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-011
+
+**Feature:** Empty states — Instructor Operations & Community
+
+**Test Account:** A freshly registered user with no teaching assignments, no posts, no forum activity.
+
+**Exact Steps:**
+1. Sign in, attempt to reach the Instructor dashboard and Blog list.
+
+**Expected Result:** Instructor dashboard route is unreachable (no `instructor.*` permission) or shows an honest zero-state if reached directly; Blog list shows an honest empty/no-posts state if none are visible.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-012
+
+**Feature:** Loading/error/retry — Instructor Operations & Community
+
+**Test Account:** Jane Doe.
+
+**Exact Steps:**
+1. Sign in, open the Instructor dashboard.
+2. Throttle/block the network briefly in DevTools and refresh.
+
+**Expected Result:** A loading state, then a real error state with a retry action — never a silent blank page.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P7-MANUAL-013
+
+**Feature:** Responsive layout — Instructor Operations & Community
+
+**Test Account:** Jane Doe.
+
+**Exact Steps:**
+1. Open DevTools, switch to a mobile viewport (375×667).
+2. Navigate through the Instructor dashboard, course overview, roster, submission review, and course forum pages.
+
+**Expected Result:** No horizontal scroll, no overlapping/clipped controls anywhere in this flow.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+**Not covered (P6/P7, features not implemented in these phases):** quiz/
+assignment authoring and editing (no phase owns it yet); course instructor
+assignment/removal (still `SPECIFICATION-UNDEFINED`, §24, unchanged since
+P5); certificates (`SPECIFICATION-UNDEFINED`); academy- or platform-level
+announcement authoring (no frontend contract requests it — only
+course-scoped authoring exists); paid-course enrollment (P13).
+
+---
+
 ## Known Findings — Observed, Not Yet Investigated (logged, not fixed)
 
 Reported by the human tester during exploratory navigation *after*
@@ -1984,6 +2576,29 @@ features and should be picked up as their own investigation when in scope.
 | P5-MANUAL-017 | Loading/error/retry | Network failure handling |
 | P5-MANUAL-018 | Arabic content rendering | Non-Latin UTF-8 round-trips correctly |
 | P5-MANUAL-019 | Responsive | Mobile viewport, incl. curriculum editor |
+| P6-MANUAL-001 | Course discovery | Flat, cross-academy, published+public catalog |
+| P6-MANUAL-002 | Enrollment (free) | Real UI action → real backend call |
+| P6-MANUAL-003 | Enrollment (paid) rejected | No payment gate exists yet — 403 |
+| P6-MANUAL-004 | Progress dashboard | Real, non-fabricated completion data |
+| P6-MANUAL-005 | Lesson content viewing | KNOWN BLOCKED — documented P6/P7 gap |
+| P6-MANUAL-006 | Quiz taking | Never leaks `isCorrect` pre-submission |
+| P6-MANUAL-007 | Assignment submission | No grade fields on student view |
+| P6-MANUAL-008 | Cross-student isolation | Never leaks another student's data |
+| P6-MANUAL-009 | Empty state | Zero-enrollment UX |
+| P6-MANUAL-010 | Loading/error/retry | Network failure handling |
+| P7-MANUAL-001 | Instructor dashboard | Real, non-fabricated metrics |
+| P7-MANUAL-002 | Teaching courses/overview | Real enrolled counts, real stats |
+| P7-MANUAL-003 | Roster/student progress | Real per-student data |
+| P7-MANUAL-004 | Grading | Persists, student view unchanged |
+| P7-MANUAL-005 | Unassigned-instructor denial | Master plan §18 scenario 5, in browser |
+| P7-MANUAL-006 | Announcement CRUD | Draft → publish → archive |
+| P7-MANUAL-007 | Announcement feed | Published-only visibility |
+| P7-MANUAL-008 | Blog post CRUD | Author-only writes, visible ≠ owned |
+| P7-MANUAL-009 | Forum thread/reply/moderation | Locked-thread reply rejected |
+| P7-MANUAL-010 | Cross-tenant isolation | Instructor Ops & Community |
+| P7-MANUAL-011 | Empty states | Instructor Ops & Community |
+| P7-MANUAL-012 | Loading/error/retry | Instructor Ops & Community |
+| P7-MANUAL-013 | Responsive | Instructor Ops & Community |
 
 **Not covered (features not implemented this phase — see
 `atlas-backend/Reports/PROGRESS.md`'s Organization Management Completion,
@@ -2068,6 +2683,29 @@ P5-MANUAL-016    [ ]   ____________   ________________________________
 P5-MANUAL-017    [ ]   ____________   ________________________________
 P5-MANUAL-018    [ ]   ____________   ________________________________
 P5-MANUAL-019    [ ]   ____________   ________________________________
+P6-MANUAL-001    [ ]   ____________   ________________________________
+P6-MANUAL-002    [ ]   ____________   ________________________________
+P6-MANUAL-003    [ ]   ____________   ________________________________
+P6-MANUAL-004    [ ]   ____________   ________________________________
+P6-MANUAL-005    [ ]   ____________   ________________________________  (expected: BLOCKED — known gap)
+P6-MANUAL-006    [ ]   ____________   ________________________________
+P6-MANUAL-007    [ ]   ____________   ________________________________
+P6-MANUAL-008    [ ]   ____________   ________________________________
+P6-MANUAL-009    [ ]   ____________   ________________________________
+P6-MANUAL-010    [ ]   ____________   ________________________________
+P7-MANUAL-001    [ ]   ____________   ________________________________
+P7-MANUAL-002    [ ]   ____________   ________________________________
+P7-MANUAL-003    [ ]   ____________   ________________________________
+P7-MANUAL-004    [ ]   ____________   ________________________________
+P7-MANUAL-005    [ ]   ____________   ________________________________
+P7-MANUAL-006    [ ]   ____________   ________________________________
+P7-MANUAL-007    [ ]   ____________   ________________________________
+P7-MANUAL-008    [ ]   ____________   ________________________________
+P7-MANUAL-009    [ ]   ____________   ________________________________
+P7-MANUAL-010    [ ]   ____________   ________________________________
+P7-MANUAL-011    [ ]   ____________   ________________________________
+P7-MANUAL-012    [ ]   ____________   ________________________________
+P7-MANUAL-013    [ ]   ____________   ________________________________
 ```
 
 If any test FAILS: report it back with the exact Test ID and what you

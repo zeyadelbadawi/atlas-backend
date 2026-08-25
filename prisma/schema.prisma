@@ -98,6 +98,10 @@ model User {
   quizAttempts            QuizAttempt[]
   assignmentSubmissions   AssignmentSubmission[]   @relation("SubmissionStudent")
   gradedSubmissions       AssignmentSubmission[]   @relation("SubmissionGrader")
+  announcements           Announcement[]
+  blogPosts               BlogPost[]
+  forumThreads            ForumThread[]
+  forumReplies            ForumReply[]
 
   @@index([status])
   @@map("users")
@@ -281,6 +285,8 @@ model Academy {
   members          AcademyMember[]
   courseCategories CourseCategory[]
   courses          Course[]
+  announcements    Announcement[]
+  blogPosts        BlogPost[]
 
   @@index([organizationId, status])
   @@map("academies")
@@ -621,11 +627,13 @@ model Course {
   createdAt               DateTime          @default(now()) @map("created_at")
   updatedAt               DateTime          @updatedAt @map("updated_at")
 
-  sections    CourseSection[]
-  instructors CourseInstructor[]
-  enrollments Enrollment[]
-  quizzes     Quiz[]
-  assignments Assignment[]
+  sections      CourseSection[]
+  instructors   CourseInstructor[]
+  enrollments   Enrollment[]
+  quizzes       Quiz[]
+  assignments   Assignment[]
+  announcements Announcement[]
+  forum         Forum?
 
   @@unique([academyId, slug])
   @@index([academyId, status, visibility])
@@ -1049,4 +1057,214 @@ enum SubmissionGradingStatus {
   graded
 
   @@map("submission_grading_status")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P7 — Instructor Operations & Community (master plan §5.5, §21
+// Phase P7).
+//
+// "Instructor Operations" itself adds NO new table — `InstructorService`
+// (roster/grading/submission-review) resolves teaching scope from the
+// existing `course_instructors` (P5) and reads/writes the existing
+// `enrollments`/`course_progress`/`quiz_attempts`/`assignment_submissions`
+// (P6) tables; `assignment_submissions.grading_status`/`score`/`feedback`/
+// `graded_at`/`graded_by` already exist (P6 schema, unused by any P6
+// endpoint) — P7 is the first phase to write them, through a narrow
+// `POST .../submissions/:id/grade` endpoint. See this migration's RLS
+// block for the additive, `course_instructors`-keyed SELECT/UPDATE
+// policies this requires on every one of those pre-existing tables — never
+// writing to `course_instructors` itself, matching master plan §24's
+// explicit, audited "resolves teaching scope from it, never writes it"
+// rule.
+//
+// "Community" (`announcements`, `blog_posts`, `forums`/`forum_threads`/
+// `forum_replies`) is the real new schema surface, per §5.5. All four are
+// User-scoped like P6 (`TenancyContextService.runInUserContext`,
+// `app.current_user_id`), NEVER `app.current_organization_id` — every one
+// of these resources is reached through a flat (`blog-posts`) or
+// course-nested (`announcements`, `forum`) route with no `:academyId`/
+// `:organizationId` URL segment for an `AcademyScopeGuard`-style bootstrap
+// to resolve org membership from (confirmed against the real frontend
+// `AnnouncementService`/`BlogService`/`ForumService` — none of their
+// methods takes an organization or academy id), and because a course's
+// forum/announcements must be reachable by an enrolled STUDENT too, who is
+// structurally never an `organization_memberships` row (the exact P6
+// reasoning, reapplied). RLS below resolves every real ownership/
+// visibility fact — academy staff membership, course-teaching scope, active
+// enrollment, post authorship — via `EXISTS` subqueries keyed on
+// `current_setting('app.current_user_id')`, never a second session
+// variable.
+// ---------------------------------------------------------------------------
+
+/// Matches `AnnouncementAudience` (`announcement.types.ts`) exactly.
+enum AnnouncementAudience {
+  platform
+  academy
+  course
+
+  @@map("announcement_audience")
+}
+
+/// Matches `AnnouncementStatus` (`announcement.types.ts`) exactly.
+enum AnnouncementStatus {
+  draft
+  scheduled
+  published
+  archived
+
+  @@map("announcement_status")
+}
+
+/// Mirrors `Announcement` (`announcement.types.ts`) field-for-field.
+/// `academyId` is set for BOTH `audience: 'academy'` AND `audience:
+/// 'course'` (denormalized from `course.academy_id` at creation time for
+/// course-scoped rows — same "no join needed, no session-context
+/// ambiguity" convention as `Enrollment.academyId`/`CourseLesson.courseId`)
+/// — confirmed against the frontend `Announcement.academyId` field's own
+/// doc comment ("Present only when audience is 'academy' or 'course'"),
+/// which is the literal ground truth this schema matches, not master plan
+/// §5.5's own shorthand ("exactly one of the two, or neither"). `courseId`
+/// is set only for `audience: 'course'`. Both null only for `audience:
+/// 'platform'`.
+///
+/// Authoring is course-scoped only in P7 — matches `AnnouncementService`'s
+/// real frontend contract exactly (no academy- or platform-level create/
+/// update endpoint exists there at all). The `academy`/`platform` audience
+/// values and their columns are real, RLS-protected, and readable (a
+/// platform-wide or academy-wide announcement could exist), but nothing in
+/// this phase inserts one — mirrors the exact `course_categories`/
+/// `course_instructors` "table real, write capability is a later phase's
+/// job" precedent from P5.
+model Announcement {
+  id          String               @id @default(uuid())
+  audience    AnnouncementAudience
+  academyId   String?              @map("academy_id")
+  academy     Academy?             @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  courseId    String?              @map("course_id")
+  course      Course?              @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  authorId    String               @map("author_id")
+  author      User                 @relation(fields: [authorId], references: [id])
+  title       String
+  body        String
+  status      AnnouncementStatus   @default(draft)
+  scheduledAt DateTime?            @map("scheduled_at")
+  publishedAt DateTime?            @map("published_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  @@index([courseId, status])
+  @@index([academyId, status])
+  @@map("announcements")
+}
+
+/// Matches `BlogPostStatus` (`blog.types.ts`) exactly.
+enum BlogPostStatus {
+  draft
+  published
+  archived
+
+  @@map("blog_post_status")
+}
+
+/// Mirrors `BlogPost` (`blog.types.ts`) field-for-field — the dynamic,
+/// permission-gated Knowledge Blog (`@features/blog`), distinct from the
+/// pre-existing static, prerendered marketing blog (master plan §5.5's own
+/// naming note). `academyId` absent = platform-level, matching the
+/// frontend field's own doc comment. `CreateBlogPostPayload` carries no
+/// `academyId` field at all — the owning academy is resolved server-side
+/// from the author's own single staff `academy_members` row (`AuthorId`'s
+/// own doc comment on `BlogService`: "Ownership... resolved server-side
+/// from the authenticated session"); see `BlogPostsService` for the exact,
+/// narrow rule this schema does not itself encode.
+model BlogPost {
+  id            String         @id @default(uuid())
+  academyId     String?        @map("academy_id")
+  academy       Academy?       @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  authorId      String         @map("author_id")
+  author        User           @relation(fields: [authorId], references: [id])
+  title         String
+  slug          String
+  excerpt       String?
+  content       String
+  featuredImage String?        @map("featured_image_url")
+  category      String?
+  tags          String[]       @default([])
+  status        BlogPostStatus @default(draft)
+  publishedAt   DateTime?      @map("published_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  @@unique([academyId, slug])
+  @@map("blog_posts")
+}
+
+/// Matches `Forum['status']` (`forum.types.ts`) exactly.
+enum ForumStatus {
+  open
+  locked
+  archived
+
+  @@map("forum_status")
+}
+
+/// Mirrors `Forum` (`forum.types.ts`) — one per course (`courseId` unique).
+/// `academyId` is denormalized from `course.academy_id` at creation time —
+/// same convention as `Announcement.academyId`/`Enrollment.academyId` —
+/// used only to satisfy the frontend `Forum.academyId` field, never queried
+/// for RLS (forum visibility resolves through `courseId` alone). No create
+/// endpoint exists in `ForumService` — a course's forum row is created
+/// lazily (get-or-create) the first time anyone with real course access
+/// requests it, mirroring how `course_progress`/`lesson_progress` (P6) are
+/// materialized on first legitimate access rather than pre-seeded.
+model Forum {
+  id          String        @id @default(uuid())
+  courseId    String        @unique @map("course_id")
+  course      Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  academyId   String        @map("academy_id")
+  title       String
+  description String?
+  status      ForumStatus   @default(open)
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  threads ForumThread[]
+
+  @@map("forums")
+}
+
+/// Mirrors `ForumThread` (`forum.types.ts`) field-for-field. `courseId` is
+/// denormalized from `forum.course_id` — same "no extra join on the hot
+/// read path" convention as every other course-nested table in this schema.
+model ForumThread {
+  id        String   @id @default(uuid())
+  forumId   String   @map("forum_id")
+  forum     Forum    @relation(fields: [forumId], references: [id], onDelete: Cascade)
+  courseId  String   @map("course_id")
+  authorId  String   @map("author_id")
+  author    User     @relation(fields: [authorId], references: [id])
+  title     String
+  body      String
+  pinned    Boolean  @default(false)
+  locked    Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  replies ForumReply[]
+
+  @@index([forumId, pinned, createdAt])
+  @@map("forum_threads")
+}
+
+/// Mirrors `ForumReply` (`forum.types.ts`) field-for-field.
+model ForumReply {
+  id        String      @id @default(uuid())
+  threadId  String      @map("thread_id")
+  thread    ForumThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  authorId  String      @map("author_id")
+  author    User        @relation(fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  @@index([threadId, createdAt])
+  @@map("forum_replies")
 }

@@ -20,6 +20,7 @@ import { NotFoundException } from '@nestjs/common';
 import type { Enrollment, Prisma } from '@prisma/client';
 import { ACTIVE_ENROLLMENT_STATUSES } from '../dto/learning.constants';
 import type { EnrollmentsRepository } from '../repositories/enrollments.repository';
+import type { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 
 export async function assertActiveEnrollment(
   tx: Prisma.TransactionClient,
@@ -39,4 +40,43 @@ export async function assertActiveEnrollment(
     throw new NotFoundException({ messageKey: 'errors.notFound' });
   }
   return enrollment;
+}
+
+/**
+ * Read-access check for the two quiz/assignment *definition* read paths
+ * (`getQuizzes`/`getQuiz`, `getAssignments`/`getAssignment`) — deliberately
+ * broader than `assertActiveEnrollment`: an authorized instructor reads
+ * these through the exact same P6 endpoints a student does (confirmed
+ * against the real frontend — `InstructorAssessmentsPage`/
+ * `InstructorQuizResultsPage` call `useQuizzes`/`useQuiz`/`useAssignments`
+ * from `@features/learning`, the P6 hooks, not a duplicate P7 endpoint;
+ * `instructor.types.ts`'s own doc comment: "quiz/assignment definitions
+ * are identical regardless of viewer role"). Attempt/submission actions
+ * (`startAttempt`/`submitAttempt`/`submitAssignment`) stay on
+ * `assertActiveEnrollment` alone, unchanged — only a real student ever
+ * takes a quiz or submits an assignment, never an instructor.
+ *
+ * Backed by the additive `*_instructor_select` RLS policies (P7
+ * migration) — this check and those policies must agree, or an instructor
+ * would pass this check and still get an RLS-empty result (or vice versa,
+ * which RLS would silently prevent from ever mattering).
+ */
+export async function assertCourseReadAccess(
+  tx: Prisma.TransactionClient,
+  enrollmentsRepository: EnrollmentsRepository,
+  courseInstructorsRepository: CourseInstructorsRepository,
+  userId: string,
+  courseId: string,
+): Promise<void> {
+  const [enrollment, isInstructor] = await Promise.all([
+    enrollmentsRepository.findByStudentAndCourse(tx, userId, courseId),
+    courseInstructorsRepository.isInstructor(tx, courseId, userId),
+  ]);
+  const hasActiveEnrollment =
+    !!enrollment &&
+    (ACTIVE_ENROLLMENT_STATUSES as readonly string[]).includes(enrollment.status);
+
+  if (!hasActiveEnrollment && !isInstructor) {
+    throw new NotFoundException({ messageKey: 'errors.notFound' });
+  }
 }

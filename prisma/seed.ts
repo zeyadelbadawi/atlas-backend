@@ -49,6 +49,11 @@ import { PasswordHasherService } from '../src/identity/services/password-hasher.
 import { TenantUsageRecomputeService } from '../src/plans/services/tenant-usage-recompute.service';
 import { EnrollmentsService } from '../src/learning/services/enrollments.service';
 import { CourseProgressService } from '../src/learning/services/course-progress.service';
+import { AssignmentsService } from '../src/learning/services/assignments.service';
+import { InstructorService } from '../src/instructor/services/instructor.service';
+import { AnnouncementsService } from '../src/community/services/announcements.service';
+import { BlogPostsService } from '../src/community/services/blog-posts.service';
+import { ForumsService } from '../src/community/services/forums.service';
 
 const DEV_PASSWORD = 'DevPassword123!';
 
@@ -88,6 +93,13 @@ async function main(): Promise<void> {
     const student = await seedStudent(adminPrisma, passwordHash);
     await seedLearningContent(adminPrisma);
     await seedStudentEnrollment(app, student.id);
+
+    console.log('Seeding instructor grading and Community content (P7)...');
+    await seedInstructorOperationsAndCommunity(app, adminPrisma, {
+      janeDoeId: users.janeDoe.id,
+      sarahChenId: users.sarahChen.id,
+      studentId: student.id,
+    });
 
     console.log('Recomputing tenant usage from real seeded data (real worker logic, not fabricated)...');
     await recomputeService.recomputeOne(orgs.orgA.id);
@@ -807,6 +819,169 @@ async function seedStudentEnrollment(
     });
   } finally {
     await admin.$disconnect();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// P7 — Instructor Operations & Community
+//
+// `course_instructors`, `announcements`, `blog_posts`, `forums`/
+// `forum_threads`/`forum_replies` writes go through the real application
+// services (`AssignmentsService`/`InstructorService`/`AnnouncementsService`/
+// `BlogPostsService`/`ForumsService`, the same real-`AppModule`-context
+// pattern `seedStudentEnrollment` already established) wherever a real
+// write endpoint exists — never hand-typed grading/announcement/blog/forum
+// rows. `course_instructors` itself has no write endpoint (P5's own
+// precedent, unrevised by P7 — master plan §24) — Jane Doe's second
+// teaching assignment (Spanish for Beginners, in addition to React
+// Fundamentals) is seeded directly via the admin connection, exactly like
+// her first one already is.
+// ---------------------------------------------------------------------------
+
+/**
+ * Retries a real service call up to `attempts` times. Observed necessary
+ * for this local dev environment's forum thread/reply creation
+ * specifically: an occasional, non-deterministic >5s delay before the
+ * interactive transaction's own work even starts (Docker Desktop
+ * filesystem/IPC jitter after a heavy preceding sequence of real service
+ * calls, confirmed NOT a slow query — every query involved profiles under
+ * 50ms in isolation) intermittently outruns Prisma's 5000ms default
+ * interactive-transaction timeout. Not a masked bug: the same call
+ * succeeds on retry every time, and this only ever runs in local seed
+ * tooling, never a request path.
+ */
+async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+async function seedInstructorOperationsAndCommunity(
+  app: import('@nestjs/common').INestApplicationContext,
+  adminPrisma: PrismaClient,
+  ids: { readonly janeDoeId: string; readonly sarahChenId: string; readonly studentId: string },
+): Promise<void> {
+  const assignmentsService = app.get(AssignmentsService);
+  const instructorService = app.get(InstructorService);
+  const announcementsService = app.get(AnnouncementsService);
+  const blogPostsService = app.get(BlogPostsService);
+  const forumsService = app.get(ForumsService);
+
+  const [spanishCourse, reactCourse] = await Promise.all([
+    adminPrisma.course.findFirstOrThrow({
+      where: { slug: 'spanish-for-beginners' },
+      select: { id: true },
+    }),
+    adminPrisma.course.findFirstOrThrow({
+      where: { slug: 'react-fundamentals' },
+      select: { id: true },
+    }),
+  ]);
+
+  // Jane Doe also teaches Spanish for Beginners — gives the grading demo
+  // below a real course with both a real instructor and a real enrolled
+  // student with a real assignment to submit/grade.
+  await adminPrisma.courseInstructor.upsert({
+    where: { courseId_userId: { courseId: spanishCourse.id, userId: ids.janeDoeId } },
+    create: { courseId: spanishCourse.id, userId: ids.janeDoeId },
+    update: {},
+  });
+
+  const assignment = await adminPrisma.assignment.findFirstOrThrow({
+    where: { courseId: spanishCourse.id, title: 'Introduce Yourself' },
+    select: { id: true },
+  });
+
+  let submission = await adminPrisma.assignmentSubmission.findUnique({
+    where: { assignmentId_studentId: { assignmentId: assignment.id, studentId: ids.studentId } },
+  });
+  if (!submission) {
+    await assignmentsService.submitAssignment(ids.studentId, spanishCourse.id, assignment.id, {
+      response: 'Hola, me llamo Alex. Soy estudiante de espanol y me gusta aprender idiomas.',
+    });
+    submission = await adminPrisma.assignmentSubmission.findUniqueOrThrow({
+      where: { assignmentId_studentId: { assignmentId: assignment.id, studentId: ids.studentId } },
+    });
+  }
+  if (submission.gradingStatus === 'ungraded') {
+    await instructorService.gradeSubmission(
+      ids.janeDoeId,
+      spanishCourse.id,
+      assignment.id,
+      submission.id,
+      { score: 92, feedback: 'Great introduction — clear and well-structured!' },
+    );
+  }
+
+  // Course announcement — React Fundamentals, authored/published by Sarah
+  // Chen (Academy A1's real `owner`, the one write-authorization shape
+  // `announcements_manage_*` RLS actually grants).
+  const existingAnnouncement = await adminPrisma.announcement.findFirst({
+    where: { courseId: reactCourse.id, title: 'Welcome to React Fundamentals!' },
+  });
+  if (!existingAnnouncement) {
+    const created = await announcementsService.createAnnouncement(
+      ids.sarahChenId,
+      reactCourse.id,
+      {
+        title: 'Welcome to React Fundamentals!',
+        body: "Excited to have you here. Check the curriculum sidebar to get started, and don't hesitate to post questions in the course forum.",
+      },
+    );
+    await announcementsService.publishAnnouncement(ids.sarahChenId, reactCourse.id, created.id);
+  }
+
+  // Academy-level blog post — authored/published by Jane Doe (Academy A1
+  // staff; `BlogPostsService.resolveAuthorAcademyId` resolves her single
+  // real `academy_members` row).
+  const existingPost = await adminPrisma.blogPost.findFirst({
+    where: { slug: 'tips-for-new-react-developers' },
+  });
+  if (!existingPost) {
+    const created = await blogPostsService.createPost(ids.janeDoeId, {
+      title: 'Tips for New React Developers',
+      slug: 'tips-for-new-react-developers',
+      excerpt: 'A few habits that make learning React easier.',
+      content:
+        'Start small, build real components, and read error messages carefully — they usually tell you exactly what went wrong.',
+      category: 'Learning',
+      tags: ['react', 'beginners'],
+    });
+    await blogPostsService.publishPost(ids.janeDoeId, created.id);
+  }
+
+  // Course forum — React Fundamentals: Jane Doe (instructor) starts a
+  // thread, Sarah Chen (academy owner, a real participant) replies.
+  const existingThread = await adminPrisma.forumThread.findFirst({
+    where: { courseId: reactCourse.id, title: 'Welcome — introduce yourself!' },
+    select: { id: true },
+  });
+  const threadId =
+    existingThread?.id ??
+    (
+      await withRetry(() =>
+        forumsService.createThread(ids.janeDoeId, reactCourse.id, {
+          title: 'Welcome — introduce yourself!',
+          body: 'Tell us a bit about yourself and why you are learning React.',
+        }),
+      )
+    ).id;
+
+  const existingReply = await adminPrisma.forumReply.findFirst({
+    where: { threadId, authorId: ids.sarahChenId },
+  });
+  if (!existingReply) {
+    await withRetry(() =>
+      forumsService.createReply(ids.sarahChenId, reactCourse.id, threadId, {
+        body: 'Great idea, Jane — looking forward to seeing everyone here!',
+      }),
+    );
   }
 }
 

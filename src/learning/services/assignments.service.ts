@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
+import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 import { AssignmentsRepository } from '../repositories/assignments.repository';
 import { toAssignmentResponse } from '../dto/assignment.contract';
 import type { AssignmentResponse } from '../dto/assignment.contract';
@@ -21,13 +22,14 @@ import type { AssignmentSubmissionResponse } from '../dto/assignment-submission.
 import type { CreateAssignmentSubmissionDto } from '../dto/create-assignment-submission.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
-import { assertActiveEnrollment } from './learning-access.util';
+import { assertActiveEnrollment, assertCourseReadAccess } from './learning-access.util';
 
 @Injectable()
 export class AssignmentsService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly enrollmentsRepository: EnrollmentsRepository,
+    private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly assignmentsRepository: AssignmentsRepository,
   ) {}
 
@@ -36,7 +38,13 @@ export class AssignmentsService {
     courseId: string,
   ): Promise<PaginatedResult<AssignmentResponse>> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(tx, this.enrollmentsRepository, userId, courseId);
+      await assertCourseReadAccess(
+        tx,
+        this.enrollmentsRepository,
+        this.courseInstructorsRepository,
+        userId,
+        courseId,
+      );
       const assignments = await this.assignmentsRepository.findManyPublishedForCourse(
         tx,
         courseId,
@@ -55,7 +63,13 @@ export class AssignmentsService {
     assignmentId: string,
   ): Promise<AssignmentResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(tx, this.enrollmentsRepository, userId, courseId);
+      await assertCourseReadAccess(
+        tx,
+        this.enrollmentsRepository,
+        this.courseInstructorsRepository,
+        userId,
+        courseId,
+      );
       const assignment = await this.assignmentsRepository.findPublishedById(
         tx,
         courseId,

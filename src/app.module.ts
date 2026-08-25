@@ -35,6 +35,8 @@ import { AcademyModule } from './academy/academy.module';
 import { PlansModule } from './plans/plans.module';
 import { CourseModule } from './course/course.module';
 import { LearningModule } from './learning/learning.module';
+import { InstructorModule } from './instructor/instructor.module';
+import { CommunityModule } from './community/community.module';
 
 @Module({
   imports: [
@@ -88,6 +90,8 @@ import { LearningModule } from './learning/learning.module';
     PlansModule,
     CourseModule,
     LearningModule,
+    InstructorModule,
+    CommunityModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

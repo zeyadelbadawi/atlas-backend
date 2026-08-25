@@ -24,6 +24,7 @@ import { CoursesRepository } from './repositories/courses.repository';
 import { CourseCategoriesRepository } from './repositories/course-categories.repository';
 import { CourseSectionsRepository } from './repositories/course-sections.repository';
 import { CourseLessonsRepository } from './repositories/course-lessons.repository';
+import { CourseInstructorsRepository } from './repositories/course-instructors.repository';
 
 @Module({
   imports: [AuthCoreModule, TenancyModule, AcademyModule],
@@ -35,7 +36,13 @@ import { CourseLessonsRepository } from './repositories/course-lessons.repositor
     CourseCategoriesRepository,
     CourseSectionsRepository,
     CourseLessonsRepository,
+    CourseInstructorsRepository,
   ],
-  exports: [CoursesRepository, CourseSectionsRepository, CourseLessonsRepository],
+  exports: [
+    CoursesRepository,
+    CourseSectionsRepository,
+    CourseLessonsRepository,
+    CourseInstructorsRepository,
+  ],
 })
 export class CourseModule {}

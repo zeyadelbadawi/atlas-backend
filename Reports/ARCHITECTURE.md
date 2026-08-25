@@ -497,4 +497,104 @@ genuinely new authorization decision (extend `AcademyScopeGuard`'s read
 path for enrolled students, or add a new student-facing curriculum-read
 endpoint), deliberately left for explicit product/architecture sign-off
 rather than decided unilaterally. See `Reports/PROGRESS.md`'s P6 entry for
-the full reasoning.
+the full reasoning. Left untouched during P7 too, by direct instruction —
+not this phase's concern, and P7's own scope doesn't depend on it.
+
+## P7 — Instructor Operations & Community (2026-08-25)
+
+Two new modules, both running entirely under
+`TenancyContextService.runInUserContext` (never `runInTenantContext`) —
+`JwtAuthGuard` alone on every controller, matching `LearningModule`'s (P6)
+identical reasoning: several P7 resources (course forum, course-scoped
+announcements) must be reachable by an enrolled student, structurally
+never an organization member.
+
+`InstructorModule` (`src/instructor/`) — `InstructorController`/Service/
+Repository. Every method resolves teaching scope via
+`CourseInstructorsRepository.isInstructor` (new, added to `CourseModule`
+since `course_instructors` is a Course-owned P5 table — the first
+repository to query it as a primary lookup rather than an embed) before
+touching any real data; a non-instructor gets 404, matching the
+established "unreachable content looks like it doesn't exist" precedent.
+
+`CommunityModule` (`src/community/`) — three services (Announcement/Blog/
+Forum) in one module, the same "one cohesive module, several services"
+shape `LearningModule` established for five. Each has its own real,
+narrow write-authorization rule, none invented: announcements mirror
+`CoursesService.assertCanManage` (academy `owner`/`administrator`) one
+level down, applied only to the one write surface `AnnouncementService`
+(frontend) actually defines — course-scoped only, no academy/platform
+authoring endpoint exists there; blog posts are author-only (`BlogService`'s
+own doc comments, verbatim); forum moderation (pin/lock) is the real course
+instructor OR the owning academy's `owner`/`administrator` — the same two
+mechanisms this codebase already had, never a third. `BlogPostsService.
+resolveAuthorAcademyId` is the one real business rule this phase adds
+where the frontend contract itself is silent: `CreateBlogPostPayload`
+carries no `academyId` field at all, so the owning academy is resolved
+from the author's own single real `academy_members` staff row (platform
+owner → platform-level, `academyId: null`; zero or multiple staff rows →
+rejected rather than guessed).
+
+### RLS: two problems discovered and fixed, not designed up front
+
+1. **Circular policy reference.** An instructor-scoped `courses` SELECT
+   policy referencing `course_instructors` made `courses`'s and
+   `course_instructors`'s policy sets mutually referential (P5's own
+   `course_instructors_tenant_select`/`_public_discovery_select` already
+   reference `courses`) — Postgres refused with "infinite recursion
+   detected in policy for relation courses" for every query against
+   `courses`, reproduced directly during implementation. Fixed with a
+   `SECURITY DEFINER` helper function (`is_course_instructor`, owned by
+   the migration role, bypassing RLS internally for this one narrow
+   existence check) — the standard resolution for this exact class of
+   problem, applied a second time (`is_academy_member`) for the identical
+   `academies ↔ academy_members` shape, triggered by Prisma's nested
+   `academy: { connect }` on `Announcement`/`BlogPost`.
+2. **Compounding nested-policy cost, not a cycle.** The Community tables
+   nest three deep (`forum_replies` → `forum_threads` →
+   `forums`/`courses`); a naive nested-`EXISTS` policy chain forced
+   Postgres to re-evaluate a full OR'd policy set at every join level,
+   measured at ~5.5s against single-digit row counts (isolated per-query
+   timing ruled out any one slow query — everything profiled under 50ms
+   individually). Fixed by collapsing the whole "is this user a real
+   participant/moderator of this course" check into two more `SECURITY
+   DEFINER` functions (`is_course_participant`, `is_course_moderator`),
+   reused uniformly across every Community table's policies.
+
+All four functions are read-only helpers, owned by the migration role
+(never a blanket RLS bypass), used exclusively from other tables' policy
+definitions — every table they read keeps its own pre-existing policies
+completely unrevised. `course_instructors` itself gained only one additive
+self-select policy; still zero INSERT/UPDATE/DELETE policy anywhere
+(master plan §24, unrevised) — P7 only ever reads it.
+
+### Extending P6's quiz/assignment read access
+
+`instructor.types.ts`'s own doc comment: instructor pages read quiz/
+assignment *definitions* through the real P6 `QuizService`/
+`AssignmentService`, confirmed by direct inspection
+(`InstructorAssessmentsPage`/`InstructorQuizResultsPage` call
+`useQuizzes`/`useQuiz`/`useAssignments` from `@features/learning`, not a
+duplicate P7 endpoint). Those four read methods (list/detail only —
+attempt/submission actions untouched) now call a new
+`assertCourseReadAccess` (`learning-access.util.ts`, additive alongside
+the unmodified `assertActiveEnrollment`) accepting active enrollment OR
+real teaching scope, so a real instructor's own frontend pages actually
+work instead of 404ing against `assertActiveEnrollment` alone.
+
+### Response contract mapping
+
+`AssignmentSubmissionReviewResponse` (`instructor/dto/instructor.contract.ts`)
+is the first place `assignment_submissions.grading_status`/`score`/
+`feedback`/`graded_at`/`graded_by` — real columns since the P6 schema,
+written by no P6 endpoint — are ever read into a response DTO. The
+student-facing `AssignmentSubmissionResponse` (P6) is untouched, still
+omits every one of those fields by construction.
+
+### Seed/fixture system
+
+`prisma/seed.ts`'s new `seedInstructorOperationsAndCommunity` reuses real
+application services throughout (`AssignmentsService`/`InstructorService`/
+`AnnouncementsService`/`BlogPostsService`/`ForumsService`), same pattern
+as every prior phase's seed additions — see `Reports/PROGRESS.md`'s P7
+entry for the full fixture graph.

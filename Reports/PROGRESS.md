@@ -1279,3 +1279,145 @@ without explicit approval. Before it (or any further reliance on P6)
 begins, the `LessonPage.tsx`/`getCourseSections` access gap documented
 above needs an explicit product/architecture decision — it is not a P7
 concern, it is an unresolved P6 loose end.
+
+## P7 — Instructor Operations & Community (2026-08-25)
+
+**Status: COMPLETE (automated).** Authorized explicitly after a full
+project handover/discovery pass (this session); the `LessonPage.tsx`
+access gap flagged above was explicitly left untouched, per direct
+instruction — not resolved as part of this phase, not blocking it either
+(P7's own scope doesn't depend on it).
+
+### What was built
+
+Two new modules: `InstructorModule` (`src/instructor/`) and
+`CommunityModule` (`src/community/`, bundling Announcements/Blog/Forum —
+same "one module, several services" shape `LearningModule` established for
+P6). `InstructorService` matches the frontend service's full surface:
+dashboard, teaching-course list, course overview, student roster, one
+student's detailed progress, a quiz's cross-student attempt roster, an
+assignment's cross-student submission list/detail, and grading
+(`POST .../submissions/:id/grade`) — every method resolves teaching scope
+from a real `course_instructors` row, never a client-supplied id.
+`AnnouncementService`/`BlogService`/`ForumService` match their real
+frontend contracts field-for-field, including each one's real narrow
+authorization shape (course-scoped academy `owner`/`administrator` for
+announcements; author-only for blog; course-instructor-or-academy-`owner`/
+`administrator` for forum moderation).
+
+**Database:** five new tables (`announcements`, `blog_posts`, `forums`,
+`forum_threads`, `forum_replies`, master plan §5.5) plus additive RLS on
+nine pre-existing P5/P6 tables so `InstructorService` can resolve teaching
+scope and read/grade real student data — `assignment_submissions` gains
+its first-ever write policy (the grading columns P6 left unused). Every
+new/additive policy runs under `app.current_user_id` exclusively, reusing
+P2's session variable — never `app.current_organization_id`, since several
+of these resources (forum, course-scoped announcements) must be reachable
+by an enrolled student, structurally never an organization member (same
+reasoning P6 already established, reapplied). `course_instructors` itself
+is untouched beyond one additive self-select policy — still no
+INSERT/UPDATE/DELETE policy anywhere (master plan §24's audited decision,
+unrevised): P7 only ever reads it.
+
+**Two real engineering problems discovered and fixed during
+implementation, not designed up front:**
+
+1. A `courses ↔ course_instructors` mutually-referential RLS policy pair
+   (an instructor-scoped `courses` SELECT policy referencing
+   `course_instructors`, whose own pre-existing P5 policies reference
+   `courses` back) — Postgres refused this outright with "infinite
+   recursion detected in policy for relation courses" for every query
+   against `courses`, reproduced during implementation. Fixed the standard
+   way: a `SECURITY DEFINER` helper function (`is_course_instructor`,
+   owned by the migration role) that bypasses RLS internally for this one
+   narrow existence check, breaking the cycle without touching
+   `course_instructors`'s own unrevised policies. The same fix pattern
+   applied a second time for `academies ↔ academy_members`
+   (`is_academy_member`), triggered by Prisma's nested `academy: {
+   connect }` on `Announcement`/`BlogPost`.
+2. A genuine, measured performance problem, not a cycle: the Community
+   tables nest three deep (`forum_replies` → `forum_threads` →
+   `forums`/`courses`), and naive nested `EXISTS` policies compounded into
+   multi-second query times against single-digit row counts (~5.5s,
+   confirmed via per-step timing that ruled out any individual slow query
+   — every query in isolation profiled under 50ms). Fixed by collapsing
+   each participant/moderator check into its own `SECURITY DEFINER`
+   function (`is_course_participant`, `is_course_moderator`), used
+   uniformly across `announcements`/`forums`/`forum_threads`/
+   `forum_replies` — after the fix, a full seed run (including two forum
+   writes) completes in ~12s total, down from timing out.
+
+### Extending P6 to make the frontend's own reuse pattern work
+
+`instructor.types.ts`'s own doc comment says instructor pages read quiz/
+assignment *definitions* through the existing P6 `QuizService`/
+`AssignmentService`, not a duplicate P7 endpoint — confirmed true by
+direct inspection (`InstructorAssessmentsPage`/`InstructorQuizResultsPage`
+call `useQuizzes`/`useQuiz`/`useAssignments` from `@features/learning`).
+Those P6 read paths (`getQuizzes`/`getQuiz`/`getAssignments`/
+`getAssignment` only — attempt/submission actions untouched) previously
+gated on `assertActiveEnrollment` alone, which would 404 a real instructor
+calling their own frontend's real pages. Extended with a new
+`assertCourseReadAccess` (`learning-access.util.ts`, additive, alongside
+the unmodified `assertActiveEnrollment`) accepting active enrollment OR
+real teaching scope. A live, deliberate, documented extension of P6 code —
+not a silent rewrite — with a real, demonstrated reason (master plan §22's
+"no scope from a later phase... without a documented reason" rule).
+
+### Seed / fixtures
+
+`prisma/seed.ts` gained `seedInstructorOperationsAndCommunity`: Jane Doe
+(P5's seeded React Fundamentals instructor) also teaches Spanish for
+Beginners; Alex Morgan's (P6's seeded student) real assignment submission
+there is graded through the real `InstructorService`; a real course
+announcement, academy blog post, and forum thread+reply are created
+through the real `AnnouncementsService`/`BlogPostsService`/`ForumsService`
+— never hand-typed rows, matching every prior phase's seed precedent.
+`test/utils/db-admin.ts` needed no new fixture helpers — `seedCourseInstructor` already existed from P5.
+
+### Verification
+
+Typecheck PASS, lint PASS, format:check PASS, build PASS. Migration
+verification PASS (`prisma migrate reset --force` from zero, applied
+clean, repeated several times across the fix cycle described above).
+Unit: 15 suites / 219 tests PASS (all pre-existing, zero regressions — P7
+added no new pure-logic unit beyond what integration/e2e already covers).
+E2e: **39 suites / 251 tests PASS, zero regressions** (all 33 pre-existing
+P0–P6 suites/221 tests still green) + 6 new suites/30 new tests:
+`instructor.e2e-spec.ts` (dashboard/roster/overview/grading, including the
+mandatory master plan §18 scenario 5 test — an instructor not assigned to
+a course cannot grade its submissions, regardless of the course id
+supplied, verified both by course-id substitution and by confirming the
+submission's `gradingStatus` never changed), `announcements.e2e-spec.ts`,
+`blog-posts.e2e-spec.ts`, `forum.e2e-spec.ts`,
+`rls-instructor-community.e2e-spec.ts` (direct DB RLS proof, zero app
+code), `p7-tenant-isolation.e2e-spec.ts` (P7-TENANT-001..005, extending
+the permanent tenant-isolation suite per §18, cross-organization shape).
+Seed idempotency: `npm run db:seed` run twice against a freshly-migrated
+database, all P7-relevant row counts (`course_instructors`,
+`assignment_submissions`, `announcements`, `blog_posts`, `forums`,
+`forum_threads`, `forum_replies`) byte-identical across both runs —
+confirmed via direct SQL count, not assumed.
+
+CTO audit: no TODO/FIXME/console.log/hardcoded ids/fake data/
+`WITH CHECK (true)`/direct `PrismaService` bypass of
+`TenancyContextService`/missing guards in any new P7 code
+(`src/instructor/`, `src/community/`) — confirmed by direct grep, not
+assumed.
+
+### What is deliberately NOT implemented (P7 boundary, matches master plan §21/§24 exactly)
+
+Course instructor assignment/removal — still `SPECIFICATION-UNDEFINED`
+(§24), still not built; P7 only ever *reads* `course_instructors`, exactly
+as the master plan's own audited entry requires. Quiz/assignment
+authoring — still out of scope (no phase owns it yet). Academy- or
+platform-level announcement authoring — no frontend contract requests it
+(confirmed: `AnnouncementService` defines only course-scoped write
+methods), so none was built even though the schema/RLS support it. No new
+`SPECIFICATION-UNDEFINED` was discovered during this phase beyond what was
+already known.
+
+## Next phase
+
+**P8 — Media Library & Object Storage.** Not started. Do not begin without
+explicit approval.
