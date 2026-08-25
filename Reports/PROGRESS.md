@@ -1592,7 +1592,574 @@ dependency for whenever that contract is defined, not silently resolved
 here. No new `SPECIFICATION-UNDEFINED` was discovered beyond what §24
 already lists.
 
+## P9 — Website Builder & Theme Engine (2026-08-25)
+
+Backend Prompt 10 (master plan §21 Phase P9). Discovery-first, per the
+prompt's own explicit workflow: the real frontend contracts
+(`website.types.ts`, `website-section.types.ts`, `website-theme.types.ts`,
+`WebsiteConfigurationService.ts`, `website.schemas.ts`,
+`website-section.schemas.ts`, `website.constants.ts`, `url-safety.utils.ts`,
+every `Website*` hook and `WebsitePagesPage.tsx`/`WebsitePublishBar.tsx`/
+`WebsiteOverviewPage.tsx`/`WebsitePageEditorPage.tsx`) were read directly
+before any schema or code was written — no field name, endpoint, enum
+value, or business rule below was guessed from the master plan text alone.
+
+### Schema
+
+`website_configurations` (PK: `academy_id`, 1:1 with `Academy`) —
+`theme_key`, `theme_version`, `config_version`, `brand`/`seo`/
+`navigation`/`header`/`footer` jsonb, `status website_publish_status`
+(`draft`/`published`/`publishing`/`failed`), `published_at`,
+`last_publish_error` jsonb. `website_pages` (FK: `academy_id`) —
+`page_type website_page_type` (`core`/`custom`), `core_type
+website_core_page_type` (nullable, the exact 6-value
+`WEBSITE_CORE_PAGE_TYPES` union from `website.types.ts`), `title`, `slug`,
+`visible`, `seo`/`sections` jsonb, unique `(academy_id, slug)`. Migration
+`20260825113921_p9_website_builder_theme_engine`.
+
+### RLS — a deliberate, discovery-driven departure from the P5/P8 precedent
+
+`website_configurations`: SELECT/INSERT/UPDATE only, matching `courses`/
+`media_assets`. `website_pages`: SELECT/INSERT/UPDATE **and a real
+DELETE policy** — the mega-prompt's own briefing assumed an archive-only
+model consistent with Course/Media, but direct inspection of the actual
+frontend (`WebsiteConfigurationService.deletePage`,
+`useDeleteWebsitePage.ts`, and `WebsitePagesPage.tsx`'s own doc comment:
+"the backend rejects deleting a core page; the UI never offers the action
+for one") proves a genuine hard-delete capability exists for custom
+pages. The RLS DELETE policy enforces only the tenant boundary; the
+core-vs-custom distinction is enforced at the service layer
+(`WebsitePagesService.delete`), exactly like every other business rule in
+this codebase RLS does not encode. This is the correct resolution per the
+prompt's own instruction to trust the repository over the prompt text
+when the two conflict — documented here rather than silently deviating.
+
+### Bootstrap — no dedicated "create website" endpoint exists
+
+`getConfiguration`/`getPages` are called unconditionally the moment a
+Tenant Owner opens the website surface (`WebsiteOverviewPage.tsx`), with
+no prior "initialize" step anywhere in the real
+`WebsiteConfigurationService` contract. `WebsiteBootstrapService`
+lazily provisions the draft `website_configurations` row and all six core
+`website_pages` rows (title/slug defaults, `visible: true`, empty
+`seo`/`sections`) on first read, idempotent under a concurrent-first-read
+race (`P2002` unique-violation caught and refetched, never surfaced as an
+error).
+
+### Section validation — the real security boundary
+
+`src/website/validation/section-config.schemas.ts` is a field-for-field
+Zod reproduction of the real frontend's
+`website-section.schemas.ts` — same 11 section types, same bounds
+(`MAX_SHORT_TEXT`=100, `MAX_LONG_TEXT`=2000, `MAX_SECTION_ITEMS`=12), same
+10-entry `FEATURE_ICON_OPTIONS` enum, same `isSafeExternalUrl` scheme
+allowlist (`http:`/`https:`/`mailto:`/`tel:` only — every other CTA/footer/
+header URL scheme, including `javascript:`/`data:`, is rejected). Built as
+a real `z.discriminatedUnion('type', [...11 explicit branches])` — an
+unregistered `type` is rejected before its `config` is ever checked
+against the wrong schema; each branch is written out explicitly (not
+generated via a runtime loop) so TypeScript keeps full per-branch
+narrowing for `SectionReferenceValidatorService`. Duplicate section ids
+within one page are rejected via `superRefine`. 38 unit tests
+(`section-config.schemas.spec.ts`) cover missing required fields, wrong
+field types, invalid enums, invalid array item shapes, over-length
+strings, over-count arrays, disallowed URL schemes, and the discriminated
+union boundary itself (unregistered type, type/config mismatch, `null`/
+array/primitive payloads).
+
+### Reference validation — course/page ids, never trusted at face value
+
+`SectionReferenceValidatorService` walks every parsed section (and every
+`navigation`/`header`/`footer` entry) for `courseId`/`pageId` references
+and validates each one against real, academy-scoped data before anything
+is persisted: `courseId` reuses `CoursesRepository.findById` (exported
+from `CourseModule`, P5 — never a duplicated course query) plus an
+explicit `course.academyId === academyId` check (the repository method
+itself takes no academy scope); `pageId` is checked against this
+Academy's own `website_pages` rows. The Academy id validated against is
+always the one `AcademyScopeGuard` resolved server-side — never a
+client-supplied value. A featuredCourses section (or a CTA) referencing a
+real course that belongs to a *different* academy is rejected exactly the
+same way a fabricated id is (P9-TENANT-005).
+
+### Services / controller
+
+`WebsiteConfigurationService` (`getConfiguration`/`updateConfiguration`/
+`publishConfiguration`) and `WebsitePagesService`
+(`list`/`getById`/`create`/`update`/`delete`/`reorderSections`) match the
+real `WebsiteConfigurationService` (frontend) method-for-method — no
+fewer, no speculative extra methods. `brand`/`seo` are partial merges onto
+the existing stored JSON (the payload fields are `Partial<...>`,
+mirroring `AcademiesService.update`'s `Academy.address` merge precedent
+exactly); `navigation`/`header`/`footer` are full replaces (their payload
+fields are not `Partial<...>`). Write authorization mirrors
+`CoursesService`/`MediaService`'s `assertCanManage` exactly — academy
+`owner`/`administrator` only, no new permission entity. One controller,
+`academies/:id/website/*`, same `AcademyScopeGuard` reuse as every prior
+phase.
+
+### Publish — deliberately minimal, no worker
+
+Master plan §21 P9: "must NOT implement yet: public rendering (P11)."
+There is nothing to render yet, so `publishConfiguration` is a
+synchronous, deterministic state transition — `status = 'published'`,
+`published_at = now()`, `config_version` incremented — with no queue, no
+worker, no `'publishing'` intermediate state produced by this phase.
+`'publishing'`/`'failed'` remain real, valid `WebsitePublishStatus` enum
+values (matching the frontend type exactly) reserved for a future P11
+async render-worker; P9 never produces them itself. This is the
+"minimal, deterministic persistence/job boundary" the mega-prompt
+explicitly asked for in place of inventing a P11-scoped worker.
+
+### Core page rules — only what the frontend contract actually defines
+
+Six core pages per Academy, matching `WEBSITE_CORE_PAGE_TYPES` exactly.
+`courseDetails` rejects a `visible` change (`website.types.ts`'s own
+`TOGGLEABLE_CORE_PAGE_TYPES` documents it as excluded from the toggle
+set — a real, type-documented rule, not an invented one).
+No core page is deletable (`WebsitePagesService.delete`, matching
+`WebsitePagesPage.tsx`'s own "no delete button for a core page" rule).
+Reserved slugs (`RESERVED_PAGE_SLUGS` — the five toggleable core slugs)
+can never be claimed by a custom page. Title/slug rename IS permitted on
+any page (including core) via the generic PATCH — nothing in the real
+type contract or any component declares core-page slugs immutable, and
+inventing that restriction would have been exactly the "subtly different
+interpretation" the prompt forbids.
+
+### Theme engine — no invented catalog
+
+`theme_key`/`theme_version` are plain config fields on
+`website_configurations`, validated against the frontend's real
+`WEBSITE_THEME_KEYS` 5-value enum. No `themes`/`theme_marketplace`/
+`theme_plugins` table — `WebsiteThemeRegistry` is a frontend-only,
+code-registered catalog with no backend API contract anywhere in
+`WebsiteConfigurationService`, matching the master plan's explicit "only
+implement what the frontend already defines" instruction.
+
+### Tests
+
+Unit: 38 new cases (`section-config.schemas.spec.ts`) — see "Section
+validation" above. E2e: 3 new suites — `website.e2e-spec.ts` (bootstrap,
+brand partial-merge, theme/color validation, navigation reference
+validation, publish, page CRUD, reserved/duplicate slug conflicts,
+malformed/unregistered section rejection, course reference validation
+including cross-academy rejection, section reorder including a rejected
+partial ordering, core-page delete/visibility rejection, authorization),
+`rls-website.e2e-spec.ts` (direct DB RLS proof — fail-closed with no
+session context, cross-org SELECT/INSERT/UPDATE isolation, no DELETE
+policy on `website_configurations`, a real but tenant-scoped DELETE
+policy on `website_pages`), `website-tenant-isolation.e2e-spec.ts`
+(P9-TENANT-001..006, extending the permanent tenant-isolation suite per
+§18). Unit: **17 suites / 275 tests PASS** (237 pre-existing + 38 new).
+E2e: **46 suites / 297 tests PASS, zero regressions** (all 43 pre-existing
+P0–P8 suites/270 tests still green) + 3 new suites/27 new tests.
+
+CTO audit: no TODO/FIXME/console.log/hardcoded ids/`any`/eslint-disable/
+fake data/bypassed guards/direct `PrismaService` bypass/
+`WITH CHECK (true)` RLS/client-controlled tenant context in any new P9
+code (`src/website/`) — confirmed by direct grep, not assumed.
+
+A full sequential 46-suite e2e run under load surfaced two transient
+failures unrelated to any P9 file — `instructor.e2e-spec.ts` (a P7 test,
+401 instead of 404) and `auth-refresh-concurrency.e2e-spec.ts`
+(`ECONNRESET`/"Transaction not found" under Prisma connection-pool
+contention from 5 simultaneous refresh calls) — matching the exact
+transient-load flakiness pattern already documented in the P6/P8 reports.
+Neither test touches `src/website/`, `prisma/schema.prisma`'s new models,
+or `app.module.ts`'s new registration. Both pass cleanly re-run in
+isolation immediately afterward, confirmed before concluding this.
+
+### What is deliberately NOT implemented (P9 boundary, matches master plan §21/§24 exactly)
+
+Public rendering, hostname routing, subdomain/custom-domain/SSL/CDN (all
+P11). CMS content library (`website_faq_entries`/
+`website_testimonial_entries`, localized, archive-only) and the SEO
+resolution hierarchy/structured-data builders (both P10) —
+`libraryEntryIds` fields on testimonials/FAQ sections are accepted
+structurally (matching the frontend's own optional field) but never
+resolved against anything, since P10's tables don't exist yet. No
+async publish worker/render pipeline (see "Publish" above). No new
+permission entity — write authorization reuses the existing
+owner/administrator pattern verbatim. No new `SPECIFICATION-UNDEFINED`
+was discovered beyond what §24 already lists.
+
+## P10 — CMS Content Library & SEO (2026-08-25)
+
+Backend Prompt 11 (master plan §21 Phase P10). Discovery-first, per the
+prompt's own explicit workflow: the real frontend contracts
+(`website-content.types.ts`, `WebsiteContentService.ts`,
+`website-content.schemas.ts`, `seo-resolution.utils.ts`,
+`structured-data.utils.ts`, `WebsiteFaqContentTab.tsx`/
+`WebsiteTestimonialContentTab.tsx`, `WebsiteSeoTab.tsx`/
+`WebsitePageSeoDialog.tsx`, `FaqSection.tsx`/`SectionConfigForm.tsx`,
+`PublicWebsitePage.tsx`) were read directly before any schema or code was
+written, plus the completed P9 implementation itself (`WebsiteModule`,
+`SectionReferenceValidatorService`, `WebsiteBootstrapService`) — built on
+top of it, never rebuilt.
+
+### Schema
+
+`website_faq_entries`/`website_testimonial_entries` (FK: `academy_id`) —
+localized fields as `LocalizedText {en, ar}` jsonb (`question`/`answer`
+on FAQ; `quote`/`authorRole` on Testimonial), `order int` (no uniqueness
+constraint — a plain sort key), `visible boolean`, `status
+website_content_status` (`draft`/`published`/`archived`). Testimonial
+additionally carries `authorName` (a plain string — the frontend type
+itself declares it non-localized, unlike every other content field) and
+optional `avatar`. Migration
+`20260825124413_p10_cms_content_library_seo`.
+
+### RLS — matches the archive-only precedent exactly, not P9's `website_pages` departure
+
+SELECT/INSERT/UPDATE only on both tables, no DELETE policy — there is no
+hard-delete capability anywhere in the real `WebsiteContentService`
+contract (archive is the one, terminal, non-destructive removal action,
+confirmed directly: `deleteEntry` does not exist). This is the P5/P8
+`courses`/`media_assets` shape, not P9's `website_pages` DELETE
+departure — the two P9/P10 tables have genuinely different real
+contracts, and each was matched to its own, not conflated.
+
+### SEO resolution and structured data are pure libraries, not new persistence or endpoints
+
+Direct inspection of the real frontend (`WebsitePageSeoDialog.tsx`,
+`WebsiteSeoTab.tsx`, `PublicWebsitePage.tsx`) confirms `resolvePageSeo`/
+`resolveCourseSeo`/`buildOrganizationJsonLd`/`buildCourseJsonLd`/
+`buildBreadcrumbJsonLd` run entirely CLIENT-SIDE today, operating on data
+the P9 endpoints already return (`website_configurations.seo`,
+`website_pages.seo`) — there is no HTTP endpoint anywhere in the real
+contract for "resolve SEO" or "get structured data." Per the master
+plan's own instruction ("if the existing P9 persistence is sufficient,
+extend/reuse it... do not automatically create a separate seo table"),
+**no new database table was created for SEO** — `src/website/seo/` is a
+pure, dependency-free TypeScript utility library (no Prisma import, no
+HTTP import, no NestJS decorator, no controller, no DI registration),
+field-for-field reproductions of the frontend's own
+`seo-resolution.utils.ts`/`structured-data.utils.ts`, ready for P11's
+public runtime to import when it needs the identical deterministic logic
+server-side. `resolveBlogPostSeo`/`buildArticleJsonLd` were deliberately
+NOT ported — confirmed by direct search to have zero live call sites
+anywhere in the real frontend (the frontend's own file marks
+`resolveBlogPostSeo` "UNRESOLVED... no live UI consumer"), and Blog is
+outside the Website/CMS domain (Community, P7) regardless.
+
+Resolution is field-level, not object-level: `title`/`description` each
+independently fall through Page/Entity Override → Global → System
+Fallback; `ogTitle`/`ogDescription` fall back to the already-resolved
+`title`/`description` (not directly to Global); `ogImage` is a two-level
+Override → Global fallback with no system default; `indexable` uses `??`
+(not `||`, since `false` is a real value) and is additionally gated by
+`page.visible` — a hidden page is never indexable regardless of any
+override. All of this is reproduced exactly, not reinterpreted.
+
+### CMS content lifecycle
+
+`WebsiteContentService` (backend) matches the real frontend service
+method-for-method: `getFaqEntries`/`getFaqEntry`/`createFaqEntry`/
+`updateFaqEntry`/`publishFaqEntry`/`archiveFaqEntry`, and the identical
+shape for Testimonial entries — no fewer, no speculative extras (no bulk
+reorder — the real UI does pairwise `order` swaps via two separate PATCH
+calls, `WebsiteFaqContentTab.moveItem`, confirmed by direct inspection).
+`order` is backend-assigned on create (appended to the end via
+`aggregate({_max: {order}})` inside the transaction) — the real
+`CreateWebsiteFaqEntryPayload`/`CreateWebsiteTestimonialEntryPayload`
+types have no `order` field at all. `status` is never accepted through
+the generic update — only `publish`/`archive` transition it, and
+`archived` is enforced as terminal (a second publish/archive attempt is
+rejected 409), matching the real UI's own "no action offered on an
+archived entry" rule.
+
+Write authorization: the same single-tier `owner`/`administrator`
+academy-membership check for every write action (create/update/publish/
+archive) — deliberately not split into a narrower "publish-only" role
+despite the frontend checking `academy.website.manage`/
+`academy.website.publish` as two separate permission strings in its UI;
+P9's own `publishConfiguration` already established that "publish" is
+governed by the identical `assertCanManage` tier as every other website
+write, and nothing in this codebase specifies a role that can do one
+without the other. Documented as a deliberate reuse decision, not an
+invented distinction.
+
+### P9 CMS reference resolution — the gap P9 deliberately left open
+
+`SectionReferenceValidatorService` (P9) is extended additively:
+`faq`/`testimonials` sections' `libraryEntryIds[]` are now validated for
+existence + academy ownership, via the same `findAllForAcademy` pattern
+already used for `pageId` references — never a duplicated query, never a
+new reference model, and P9's own `courseId`/`pageId` validation behavior
+is completely unchanged. No `status` filter is applied to the reference
+check itself: direct inspection shows the real Section Editor's picker
+(`SectionConfigForm.tsx`) only ever offers `published` entries, but
+nothing in the Zod schema or payload types restricts a *stored* reference
+to `published` — a draft entry a Tenant Owner is about to publish is a
+legitimate reference, matching the identical "exists + academy-scoped,
+not status-gated" rule P9 already established for `courseId`. A
+reference that never resolves at render time (not yet published, later
+archived) degrades gracefully to absent, matching the real renderer's own
+`.filter((entry) => !!entry && entry.visible)` behavior.
+
+### Tests
+
+Unit: 63 new cases across three files — `website-content.schemas.spec.ts`
+(localized-field validation: both-languages-required vs. optional-content
+shapes, length bounds, `status` field absence), `seo-resolution.util.spec.ts`
+(full precedence proof for all three sources, field-level independence,
+`??` vs `||` boolean semantics, page-visibility gating, `resolveCourseSeo`'s
+`publiclyReachable` gate), `structured-data.util.spec.ts` (all three
+builders — complete input, missing-optional-field behavior, deterministic
+output, no mutation of input). E2e: 3 new suites, 27 new tests —
+`website-content.e2e-spec.ts` (CRUD, auto-order assignment, localized
+validation failures, publish/archive lifecycle including terminal-state
+rejection, status-filtered pagination, no-hard-delete-endpoint proof,
+authorization), `rls-website-content.e2e-spec.ts` (direct DB RLS proof —
+fail-closed, cross-org isolation, no DELETE policy on either table),
+`website-content-tenant-isolation.e2e-spec.ts` (P10-TENANT-001..006,
+extending the permanent tenant-isolation suite per §18, including a
+cross-academy CMS-library-reference rejection case). Plus 2 new test
+cases appended additively to P9's own `website.e2e-spec.ts` (same-academy
+FAQ/Testimonial library reference acceptance — including a still-draft
+entry — and fabricated-id rejection), since that is where P9's own
+section-validation tests already live.
+
+CTO audit: no TODO/FIXME/console.log/hardcoded ids/`any`/eslint-disable/
+fake data/bypassed guards/direct `PrismaService` bypass/
+`WITH CHECK (true)` RLS/client-controlled tenant context/DELETE RLS
+policy on either archive-only table in any new P10 code (`src/website/`)
+— confirmed by direct grep, not assumed.
+
+### What is deliberately NOT implemented (P10 boundary, matches master plan §21/§24 exactly)
+
+Public website rendering, hostname routing, subdomains, custom domains,
+SSL/CDN integration (all P11). No async website-rendering/publishing
+worker. No public `/public/*` API. No SEO HTTP endpoint of any kind — SEO
+resolution and structured data are pure backend libraries only, matching
+the real frontend's own entirely-client-side usage. No new SEO
+table/entity. No generic CMS framework — FAQ/Testimonial are the two
+concrete content types the master plan specifies, not an extensible
+content-type system. No blog-post SEO/structured-data (`resolveBlogPostSeo`/
+`buildArticleJsonLd`) — confirmed dead code in the real frontend, outside
+the Website/CMS domain regardless. No bulk reorder endpoint for CMS
+entries — matches the real frontend's own pairwise-swap UI pattern. No
+new permission entity/role — write authorization reuses P9's exact
+owner/administrator pattern. No new `SPECIFICATION-UNDEFINED` was
+discovered beyond what §24 already lists.
+
+## P11 — Public Website Runtime, Domains & Edge (2026-08-25)
+
+Backend Prompt 12 (master plan §21 Phase P11). Discovery-first: the real
+frontend contracts (`public-website.types.ts`, `PublicWebsiteService.ts`,
+`hostname-resolution.utils.ts`, `page-resolution.utils.ts`,
+`usePublicWebsiteData.ts`, `PublicWebsiteRouter.tsx`,
+`domain.types.ts`/`provisioning.types.ts`, `DomainService.ts`/
+`PlatformDomainService.ts`/`InfrastructureService.ts`,
+`WebsiteDomainTab.tsx`, and the frontend's own `Reports/ARCHITECTURE.md`
+"Prompt 11" section — including its own explicit "Backend Contracts To
+Document" list) were read directly before any schema or code was written.
+
+### Public website runtime
+
+`PublicWebsiteController` (`public/websites/*`, no guard — a real,
+intentional absence) matches `PublicWebsiteService`'s real four methods
+exactly: `resolveHostname`/`getPublishedWebsite`/`getPublishedPages`/
+`getPublishedPage`. Reuses P9's own `WebsiteConfigurationRepository`/
+`WebsitePagesRepository` and response contract mappers (now additionally
+exporting two new published-only query methods,
+`findPublishedByAcademyId`/`findAllPublished`/`findPublishedBySlug` —
+`status: 'published'`/`visible: true` are part of the `WHERE` clause
+itself, never a post-fetch check) — never a duplicated query or a second
+response shape.
+
+**THE CRITICAL SECURITY INVARIANT** (master plan §21 P11 §5/§33
+"Scenario 6"): a draft/unpublished/hidden page is never reachable through
+any public URL. Proven directly: `public-website.e2e-spec.ts`'s own
+"SCENARIO 6" test creates real draft content with a distinctive marker
+string, then asserts every public read path (by academy id, by known
+page id used as a slug, by known slug, by list) 404s and the marker
+string never appears anywhere in any response body.
+
+### Hostname resolution — the one explicit RLS exception, narrowly isolated
+
+A public visitor has no session and no `app.current_organization_id` to
+set — an ordinary RLS-governed query against `domain_connections`/
+`subdomain_allocations`/`academies` correctly returns nothing for every
+unauthenticated caller, which is exactly wrong for the one legitimate
+case where a public request must resolve ITS OWN Academy from a trusted
+hostname, across every tenant, by construction. Two new `SECURITY
+DEFINER` functions (`resolve_public_hostname`, `resolve_academy_organization`)
+— the same pattern P7 already established (`is_course_instructor` etc.)
+— are the sole, explicit, documented exception: owned by the migration
+role, called through the ordinary restricted `atlas_app` connection
+(never `DATABASE_URL`, never a superuser), returning only the minimal
+public-safe fields needed to open a legitimate `runInTenantContext` for
+every subsequent query in the request. Direct RLS proof
+(`rls-domain.e2e-spec.ts`) confirms both: an ordinary query against these
+tables with no session variable returns nothing, while the two functions
+correctly resolve real rows with no session variable set at all.
+
+`hostname-normalization.util.ts` (pure, unit-tested) rejects anything
+URL-shaped (scheme/path/query/whitespace/non-ASCII — matching the real
+frontend's own ASCII-only `HOSTNAME_REGEX`), matches only by exact
+normalized string equality (never substring — `example.com.evil.com`
+can never match `example.com`), and extracts a subdomain label only for
+a genuine single-label match against the TRUSTED `PLATFORM_BASE_DOMAIN`
+env config — never a client-supplied base domain.
+
+### Domains
+
+`subdomain_allocations`/`domain_connections` reuse Prompt 8's real
+frontend vocabulary verbatim (`SubdomainStatus`/`DomainStatus`/
+`DomainConnection`/`SubdomainAllocation`, `provisioning.types.ts`) — no
+parallel status enum invented. Subdomain ALLOCATION (writing a row) is
+confirmed P14's job (Provisioning Orchestration) by direct inspection —
+the real `DomainService` has no "allocate subdomain" method at all; P11
+only reads whatever a future P14 populates (honestly nothing, in every
+environment today). `DomainService`/`DomainController`
+(`academies/:id/website/domain*`) match the real frontend service
+method-for-method: `getDomainConfiguration`/`addCustomDomain`/
+`removeCustomDomain`/`verifyDomain`. `removeCustomDomain` resets the row
+(no DELETE policy exists — archive-only, matching P8/P10's precedent);
+`addCustomDomain`/`verifyDomain` call the real Cloudflare provider when
+configured, and leave the row's real, honest current state unchanged
+when it is not (never a simulated result). Write authorization reuses
+P9/P10's exact `owner`/`administrator` pattern, confirmed identical by
+direct inspection of `WebsiteDomainTab.tsx`'s own permission check
+(`academy.website.manage`).
+
+`PlatformDomainConfiguration` (platform-owned singleton, no RLS, mirrors
+`TrialPolicy`'s exact fixed-id-upsert pattern) and
+`PlatformDomainController`/`PlatformOwnerGuard` mirror
+`TrialPolicyController` exactly — `GET` any authenticated caller,
+`PATCH` additionally gated by `PlatformOwnerGuard` (reused verbatim; its
+first-ever real route attachment — P15 will be the next).
+`InfrastructureController` (`/infrastructure/:provider/status`) reports
+one real, live `CloudflareProvider.verifyToken()` result, never a cached
+or assumed value.
+
+### Cloudflare
+
+`CloudflareApiProvider` is a REAL client against the genuine Cloudflare
+REST API v4 (`https://api.cloudflare.com/client/v4`), using Node's
+built-in `fetch` (no new HTTP dependency) — the real "Custom Hostnames
+for Cloudflare for SaaS" primitive (`POST/GET/DELETE
+/zones/:zone/custom_hostnames`), the actual Cloudflare capability behind
+"connect a customer's own domain, with Cloudflare managing SSL for it."
+Credentials (`CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ZONE_ID`/
+`CLOUDFLARE_ACCOUNT_ID`) are deliberately OPTIONAL env vars (unlike R2's
+required ones, P8) — confirmed directly: no real Cloudflare account
+exists in any environment today (the real frontend's own doc comments
+state this explicitly). Absent credentials mean `verifyToken()` returns
+`false` immediately with no network call, and every dependent status
+genuinely reports `not_configured`/`verification_required` — never a
+fabricated success. `cloudflare-status-mapper.ts` (pure functions,
+fixture-tested) maps Cloudflare's real, much wider status vocabulary into
+Atlas's narrow enums, with every genuinely unrecognized Cloudflare status
+falling to the SAFEST state (`failed`), never silently to `connected`.
+CDN status is derived from the same custom-hostname check (documented,
+deliberate simplification — Cloudflare's Custom Hostnames for SaaS has
+no independently-queryable CDN status distinct from the hostname's own
+connection state).
+
+**Genuine provider verification is BLOCKED in this environment** — no
+real Cloudflare account/zone/API token is available to this session (see
+§16 "Deliberately Deferred" below for the exact, itemized scope of what
+this means for the Definition of Done).
+
+### SSR / edge cache — a documented, evidence-based discrepancy resolution
+
+Master plan §21 P11 asks for an "SSR/edge-cache layer recommended by the
+Backend Blueprint." Direct inspection of the real frontend proves there
+is no SSR anywhere in the actual contract: `PublicWebsiteRouter` mounts
+ordinary React components that fetch JSON via `PublicWebsiteService` and
+render client-side — confirmed by the frontend's own
+`Reports/ARCHITECTURE.md` describing `robots.txt`/`sitemap.xml` as
+"honest content, not real `Content-Type: text/plain` serving... requires
+a server/edge component (the Cloudflare Worker this prompt's own
+architecture anticipates)" — i.e. real HTML/text serving is explicitly
+future, non-P11 infrastructure, never built by this phase's own frontend
+either. Per this session's operating rule ("prefer the real repository
+contract... document the discrepancy"), P11 implements the SSR half as
+**not applicable** (there is no HTML output for a backend SSR layer to
+produce) and the edge-cache half as a real, testable Redis-backed
+response cache (`PublicWebsiteCacheService`) in front of the expensive
+parts of the public JSON read path — the same shared Redis connection
+(`RedisService`, P0) every other phase already uses, no new cache system.
+Cache keys embed the Academy id and the resolved `configVersion` at read
+time — a stale entry (old version) is simply never looked up again after
+a republish (P9's `configVersion` incremented unmodified), making the
+cache self-invalidating with zero explicit invalidation call and zero
+risk of resurrecting stale content; hostname-resolution entries are keyed
+by the exact normalized input hostname, so two different hostnames can
+never collide.
+
+### Tests
+
+Unit: 38 new cases — `hostname-normalization.util.spec.ts` (normalization
+edge cases, URL-shape rejection, non-ASCII rejection, exact-match-only
+subdomain extraction including the lookalike-domain attack case),
+`cloudflare-status-mapper.spec.ts` (every real Cloudflare status family
+mapped, including the "unrecognized status → safest state, never
+connected" proof). E2e: 4 new suites, 44 new tests —
+`public-website.e2e-spec.ts` (published-page access, the Scenario 6
+draft/hidden-page unreachability proof, unknown/malformed hostname
+handling, cross-academy slug/list isolation, stale-cache-never-resurrected
+proof), `rls-domain.e2e-spec.ts` (direct DB RLS proof for both new
+tables plus direct proof of both `SECURITY DEFINER` functions),
+`domain.e2e-spec.ts` (DomainService/PlatformDomainService/
+InfrastructureService HTTP surface, hostname normalization/validation,
+duplicate-hostname conflict, authorization), `public-website-tenant-isolation.e2e-spec.ts`
+(P11-TENANT-001..006, extending the permanent tenant-isolation suite per
+§18).
+
+CTO audit: no TODO/FIXME/console.log/hardcoded ids/domains/Cloudflare
+ids/`any`/eslint-disable/fake verification records/fake SSL-CDN state/
+DATABASE_URL-in-public-path/client-controlled tenant context/substring
+hostname matching/Cloudflare secret in any response or log in any new
+P11 code (`src/domain/`, `src/public-website/`) — confirmed by direct
+grep, not assumed. One `eslint-disable-next-line no-control-regex`
+survives in `hostname-normalization.util.ts` — reviewed and kept: it
+narrowly disables one rule for the one line whose entire job is
+detecting non-ASCII/control characters in an untrusted hostname, with an
+inline comment explaining why; not a suppression of a real problem.
+
+A full sequential 53-suite e2e run under load surfaced one transient
+failure unrelated to any P11 file — `tenant-isolation.e2e-spec.ts`
+(a pure P2-era concurrency test, `ECONNRESET` under Prisma
+connection-pool contention from concurrent requests), matching the exact
+transient-load flakiness pattern already documented in the P6/P8/P9/P10
+reports. Confirmed before concluding this: re-run in isolation passes
+6/6 cleanly.
+
+### One real engineering bug found and fixed during implementation
+
+`DomainService.addCustomDomain`'s pre-check (`findByHostname` inside the
+caller's own tenant context) can never see a DIFFERENT organization's
+conflicting row — RLS correctly hides it, by design, even from this
+service's own SELECT. That's not a bug in RLS; it meant the *only* real
+enforcement of "hostname already taken by another Academy" is the
+database's own UNIQUE constraint, hit inside the `upsert` — originally
+uncaught, surfacing as a raw 500 instead of a proper 409. Fixed by
+wrapping the `upsert` in the same `P2002`-catch-and-convert pattern P9
+already established (`WebsitePagesService.create`), discovered via a
+real, reproducing e2e test (`domain.e2e-spec.ts`, "rejects a hostname
+already connected to a different Academy"), not by inspection alone.
+
+### What is deliberately NOT implemented (P11 boundary, matches master plan §21/§24 exactly)
+
+Any real domain purchase/registration. Real DNS record creation/mutation
+beyond the Cloudflare Custom Hostname API calls this phase genuinely
+makes. Real `Content-Type: text/plain` serving of `robots.txt`/
+`sitemap.xml` (confirmed non-existent even in the real frontend's own
+contract — a future edge/Worker layer's job, not P11's). Subdomain
+ALLOCATION (P14 — Provisioning Orchestration). Atlas subscription
+billing, checkout, payments, payouts (P12+). Platform Owner Control
+Plane, analytics, notifications, search (P15+). A generic domain-
+management/DNS platform, a generic CDN management surface, arbitrary
+Cloudflare product management beyond Custom Hostnames — only the exact
+real frontend contract was implemented. No new permission entity/role —
+domain write authorization reuses P9/P10's exact pattern;
+`PlatformOwnerGuard` reused verbatim, unmodified. No new
+`SPECIFICATION-UNDEFINED` was discovered beyond what §24 already lists.
+
 ## Next phase
 
-**P9 — Website Builder & Theme Engine.** Not started. Do not begin
-without explicit approval.
+**P12 — Atlas Subscription Billing.** Not started. Do not begin without
+explicit approval.

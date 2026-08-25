@@ -38,6 +38,9 @@ import { LearningModule } from './learning/learning.module';
 import { InstructorModule } from './instructor/instructor.module';
 import { CommunityModule } from './community/community.module';
 import { MediaModule } from './media/media.module';
+import { WebsiteModule } from './website/website.module';
+import { DomainModule } from './domain/domain.module';
+import { PublicWebsiteModule } from './public-website/public-website.module';
 
 @Module({
   imports: [
@@ -94,6 +97,9 @@ import { MediaModule } from './media/media.module';
     InstructorModule,
     CommunityModule,
     MediaModule,
+    WebsiteModule,
+    DomainModule,
+    PublicWebsiteModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

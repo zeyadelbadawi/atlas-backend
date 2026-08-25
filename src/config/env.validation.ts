@@ -165,6 +165,30 @@ const EnvSchema = z.object({
     .int()
     .positive()
     .default(10 * 1024 * 1024),
+
+  // --- Phase P11 — Public Website Runtime, Domains & Edge (master plan
+  // §5.11, §21 P11) ---
+  // The trusted root domain Atlas subdomains are allocated under (e.g.
+  // `atlas.dev` → `harvard.atlas.dev`). Deliberately OPTIONAL with no
+  // fake default — matches the real frontend's own `ENV.platformBaseDomain`
+  // (`VITE_PLATFORM_BASE_DOMAIN`), which is also optional and never given
+  // a fallback value: "no environment today sets this variable" is the
+  // frontend's own documented, honest starting state, and the backend
+  // mirrors it exactly rather than inventing a domain that doesn't exist.
+  PLATFORM_BASE_DOMAIN: z.string().min(1).optional(),
+
+  // Real Cloudflare API credentials (master plan §21 P11: "real
+  // Cloudflare API integration"). Deliberately OPTIONAL, unlike R2 above —
+  // R2/MinIO always has a real, running endpoint even in local
+  // development (docker-compose.yml); no Cloudflare account exists in any
+  // environment today (confirmed directly: the real frontend's own
+  // `InfrastructureProviderStatus.connected` documents `false` as "the
+  // correct, honest value in every environment today"). Absent credentials
+  // mean every Cloudflare-backed status genuinely reports
+  // `not_configured`/`connected: false` — never a fabricated success.
+  CLOUDFLARE_API_TOKEN: z.string().min(1).optional(),
+  CLOUDFLARE_ZONE_ID: z.string().min(1).optional(),
+  CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
 });
 
 export type EnvVariables = z.infer<typeof EnvSchema>;

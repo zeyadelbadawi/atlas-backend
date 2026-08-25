@@ -42,6 +42,17 @@ export interface MediaStorageConfig {
   readonly maxUploadBytes: number;
 }
 
+/** Phase P11 — Public Website Runtime, Domains & Edge configuration (master plan §5.11, §21 P11). `baseDomain` and every Cloudflare field are deliberately optional — no real platform domain or Cloudflare account exists in any environment today (see `env.validation.ts`'s doc comment on `PLATFORM_BASE_DOMAIN`/`CLOUDFLARE_*`). */
+export interface PlatformDomainRuntimeConfig {
+  readonly baseDomain?: string;
+}
+
+export interface CloudflareConfig {
+  readonly apiToken?: string;
+  readonly zoneId?: string;
+  readonly accountId?: string;
+}
+
 /** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
 export interface IdentityConfig {
   readonly jwtAccessSecret: string;
@@ -131,5 +142,15 @@ export default () => {
     maxUploadBytes: Number(env.MEDIA_MAX_UPLOAD_BYTES ?? 10 * 1024 * 1024),
   };
 
-  return { app, database, redis, identity, media };
+  const platformDomain: PlatformDomainRuntimeConfig = {
+    baseDomain: env.PLATFORM_BASE_DOMAIN || undefined,
+  };
+
+  const cloudflare: CloudflareConfig = {
+    apiToken: env.CLOUDFLARE_API_TOKEN || undefined,
+    zoneId: env.CLOUDFLARE_ZONE_ID || undefined,
+    accountId: env.CLOUDFLARE_ACCOUNT_ID || undefined,
+  };
+
+  return { app, database, redis, identity, media, platformDomain, cloudflare };
 };

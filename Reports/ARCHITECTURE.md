@@ -697,3 +697,353 @@ tight ~1.33x base64-inflation factor alone, so a payload moderately over
 the real application-level ceiling still reaches `MediaService`'s own
 byte-length check (the actual enforced limit) and gets a proper 413
 rather than tripping this outer, cruder limit first.
+
+## P9 — Website Builder & Theme Engine (2026-08-25)
+
+### Tenant isolation
+
+`website_configurations`/`website_pages` are Academy-scoped, resolved
+transitively through `academy_id → academies.organization_id` — the
+identical shape and session variable (`app.current_organization_id`) P5's
+`courses` and P8's `media_assets` already established. No new tenancy
+mechanism, no new guard: `AcademyScopeGuard` is reused verbatim.
+`WebsiteConfiguration` is NOT Organization-scoped even though a Tenant may
+own several Academies — each Academy's website is configured
+independently, matching `WebsiteConfiguration.academyId`'s own type
+(never `organizationId`).
+
+### Sections stored as validated JSONB, not normalized
+
+A `SectionInstance[]` is read/written atomically as one page save
+(`updatePage`'s `sections` field replaces the whole array) — never queried
+per-section, so normalizing into a `website_sections` table would add
+join/transaction complexity with no real access-pattern benefit. The
+tradeoff this accepts: the database itself cannot enforce a section's
+internal shape (Postgres has no JSON-schema constraint mechanism used
+here) — that enforcement is entirely the application layer's job, done
+once, at the single write path (`WebsitePagesService.update`), via
+`sectionInstanceArraySchema`. This is the real
+stored-content-injection boundary (master plan §5.10) — every other
+security property downstream (the renderer never receiving an
+unregistered type, a CTA never carrying a `javascript:`/`data:` URL)
+depends on this one boundary actually holding.
+
+### Why RLS DELETE exists on `website_pages` but not `website_configurations`
+
+This is the one place P9 deliberately breaks from the P5/P8 "no hard
+delete on tenant content" convention, and it is a discovery-driven
+decision, not an oversight: `WebsiteConfigurationService.deletePage`
+(frontend) is a real `DELETE` call with no soft-delete/archive
+counterpart anywhere in the type contract (`WebsitePage` has no `status`
+field at all, unlike `Course`/`MediaAsset`). A custom page really is
+meant to be permanently removable. `website_configurations` has no
+delete capability in the frontend contract at all (there is no "delete my
+website" action anywhere), so it keeps the SELECT/INSERT/UPDATE-only
+shape. The RLS DELETE policy on `website_pages` is tenant-scoped only,
+identical in shape to every other policy in this file — it does not, and
+structurally cannot, know about `page_type`; the core-page protection is
+a separate, explicit service-layer check
+(`WebsitePagesService.delete` throws before the repository is ever
+called for a `core` row).
+
+### Reference validation is defense-in-depth, not the only boundary
+
+A `courseId`/`pageId` embedded in a section or in `navigation`/`header`/
+`footer` is validated for existence AND academy ownership at write time
+(`SectionReferenceValidatorService`) — but this is deliberately
+belt-and-suspenders, not the sole protection: even if a stale/dangling
+reference somehow persisted, nothing downstream in this phase resolves it
+into anything privileged (there is no rendering surface yet — P11's job).
+The real reason this validation exists now, in P9, is data integrity and
+matching the frontend's own implicit assumption that a `pageId`/
+`courseId` a Section Editor lets you pick always resolves to something
+real (`SectionConfigForm`'s course/page pickers are populated from real
+API responses, never free text).
+
+### Image fields are plain strings, not media-asset references
+
+`HeroSectionConfig.image`, `GalleryImage.image`, `TestimonialItem.avatar`,
+etc. are all `string` — never a `mediaAssetId` foreign key. Direct
+inspection of `WebsiteImageField.tsx` confirms why: the value is either a
+base64 data URL (direct upload, no backend endpoint involved at all) or a
+previously-uploaded `MediaAsset.url` chosen via `MediaLibraryDialog` (P8)
+— both cases resolve to a plain URL string by the time the section config
+reaches the backend. There is structurally no "media reference" for this
+phase to validate against P8's `media_assets` table beyond what the
+section schema already does (`z.string().optional()`, matching the
+frontend's own lack of a stricter check on this field) — inventing a
+`mediaAssetId`-based reference model here would have been building a
+capability the real contract does not have. This is a deliberate,
+discovery-driven scope call, documented rather than silently assumed.
+
+### Bootstrap idempotency
+
+`WebsiteBootstrapService` is the only place in this phase that creates
+rows without an explicit user action triggering it — every other write
+requires a real `owner`/`administrator` PATCH/POST. Because it runs on
+every unauthenticated-in-the-sense-of-"no explicit create action" first
+read, it must survive a genuine concurrent-first-read race (two tabs
+opening the website surface for a brand-new Academy at once): both the
+configuration create and each of the six core-page creates catch `P2002`
+and refetch rather than erroring, so two concurrent bootstraps converge
+on the same one real row set, never a duplicate or a 500.
+
+### Theme engine boundary
+
+`theme_key` is validated against the frontend's real 5-value
+`WEBSITE_THEME_KEYS` enum; `theme_version` is a plain integer the backend
+never interprets (it has no visibility into what a version bump in
+`WebsiteThemeDefinition.version` would mean — that remains entirely a
+frontend/client-registry concern). No theme *definition* (tokens, variant
+enums, default colors) is ever read from, or served by, this backend —
+`WebsiteThemeRegistry` has no API contract in `WebsiteConfigurationService`
+today. Building a `themes` table or a theme-serving endpoint would be
+inventing a capability with zero frontend caller.
+
+## P10 — CMS Content Library & SEO (2026-08-25)
+
+### Why SEO/structured-data are a pure library, not a service or endpoint
+
+This is the single biggest architectural decision of this phase, so it's
+worth stating the evidence plainly: `resolvePageSeo`, `resolveCourseSeo`,
+`buildOrganizationJsonLd`, `buildCourseJsonLd`, and `buildBreadcrumbJsonLd`
+are called from exactly two real components in the entire frontend —
+`WebsitePageSeoDialog.tsx` (a live resolution preview inside the Page SEO
+editor) and `PublicWebsitePage.tsx` (the P11 public runtime page,
+computing meta tags and JSON-LD client-side at render time). Both call
+sites already have the data they need (`WebsiteConfiguration`,
+`WebsitePage`, `Course`, `Academy`) from ordinary TanStack Query fetches
+that P9 (and earlier phases) already serve — neither ever calls, or needs,
+a dedicated backend "resolve SEO" endpoint.
+
+Given that, `src/website/seo/` is deliberately architected as a
+standalone directory with ZERO NestJS presence: no `@Injectable()`, no
+module registration, no controller, no DI token. It is imported the way
+any other pure TypeScript utility module is imported — directly, by file
+path — which is exactly how P11's future SSR/edge-rendering layer will
+need to consume it (a request-scoped renderer calling a plain function
+with already-fetched data, not making an internal HTTP round-trip to
+itself). Building a controller for this now would have meant inventing a
+consumer that doesn't exist, purely to satisfy an assumption that "SEO
+must be an API" — the real contract says otherwise.
+
+### CMS content vs. Website Page Composer — two content models, not one
+
+`website_faq_entries`/`website_testimonial_entries` (P10) and a
+`WebsitePage`'s own inline `FaqSectionConfig.items`/
+`TestimonialsSectionConfig.items` (P9, unchanged) are deliberately two
+separate, coexisting content models, not a migration from one to the
+other. Inline items remain single-locale (whatever language the editor
+happened to type), page-scoped, and simple — appropriate for one-off page
+content. Library entries are bilingual, reusable across every page via
+`libraryEntryIds`, and independently lifecycle-managed. `FaqSection.tsx`'s
+renderer concatenates both sources additively (`[...libraryItems,
+...config.items]`) — a page saved before P10 shipped has no
+`libraryEntryIds` and renders exactly as it always did, a real backward-
+compatibility property this phase's reference-validation extension had to
+preserve (an absent/empty `libraryEntryIds` array is always valid,
+never a validation failure).
+
+### Reference validation reuses P9's exact shape, not a parallel one
+
+`SectionReferenceValidatorService.validateSectionReferences` now collects
+four reference kinds (`courseIds`/`pageIds`/`faqEntryIds`/
+`testimonialEntryIds`) instead of two, but the validation shape itself —
+collect referenced ids from the parsed section array, fetch the
+Academy's own full row set once, diff against a `Set`, accumulate
+`FieldViolation`s, throw one `BadRequestException` if any exist — is
+byte-for-byte the same code path P9 established for `courseId`/`pageId`.
+This was a deliberate refactor-to-extend rather than a bolt-on: the
+private `validateReferences` method's signature changed from four
+positional `Set` parameters to one `CollectedReferences` object so a
+future 5th reference kind (a hypothetical P12 content type) is a
+one-field addition, not a signature-breaking change to every call site.
+
+### Why "publish" has one authorization tier, not two
+
+The real frontend UI gates FAQ/Testimonial actions behind two distinct
+permission strings — `academy.website.manage` for create/edit/reorder/
+visibility, `academy.website.publish` for the publish/archive buttons
+(`WebsiteFaqContentTab.tsx`). This looks, at first read, like it implies
+two backend authorization tiers. It doesn't, and building two would have
+been a real, unjustified product-decision invention: master plan §9
+already establishes that the backend computes flat permission strings
+from real domain facts (organization role, academy membership row, etc.),
+never the other way around — nothing in this codebase's history has ever
+defined a role that grants `academy.website.publish` without
+`academy.website.manage` or vice versa, and P9's own `publishConfiguration`
+already treats "publish the whole website" as governed by the identical
+`owner`/`administrator` check as every other website write. The frontend
+showing two permission checks most plausibly reflects one role computing
+both strings together; inventing a narrower "publisher" role now, with no
+specification for who holds it, would be exactly the kind of new CMS
+permission system §21 P10 explicitly forbids. If a real product
+specification for a narrower publishing role ever arrives, this is a
+one-place, additive change (a second `MANAGING_ROLES`-shaped constant
+gating only the four publish/archive methods).
+
+### Order is backend-owned at creation, client-owned thereafter
+
+`CreateWebsiteFaqEntryPayload`/`CreateWebsiteTestimonialEntryPayload` have
+no `order` field — confirmed directly from the type contract — so the
+backend computes it (`MAX(order) + 1` for the Academy, scoped inside the
+same transaction as the insert) rather than trusting a client-supplied
+placement for a brand-new row. Once created, `order` becomes a fully
+client-owned field again via the generic `PATCH` (`UpdateWebsiteFaqEntryPayload.order?`)
+— the real UI's `moveItem` reorders by swapping two entries' `order`
+values with two separate PATCH calls, never a bulk reorder endpoint like
+`WebsitePagesService.reorderSections` (P9). This asymmetry — backend-owned
+at birth, client-owned afterward — exists because only the CREATE payload
+lacks the field; it is not a general rule invented for this phase.
+
+## P11 — Public Website Runtime, Domains & Edge (2026-08-25)
+
+### Why This Is Not SSR
+
+Master plan §21 P11 asks for an "SSR/edge-cache layer recommended by the
+Backend Blueprint." Direct inspection of the real frontend proves this
+literally: `PublicWebsiteRouter` is an ordinary React Router tree,
+`PublicWebsitePage` fetches JSON via `usePublicWebsiteData` and renders
+client-side, and `useDocumentSeo` manages `document.title`/`<meta>` tags
+via plain DOM APIs after the fact — there is no server-rendered HTML
+anywhere in the contract. The frontend's own `robots.txt`/`sitemap.xml`
+routes make the boundary explicit in their own doc comments: they render
+real, correct CONTENT as a client-side `<pre>` element, while stating
+outright that genuine `Content-Type: text/plain` HTTP serving "requires a
+server/edge component (the Cloudflare Worker this prompt's own
+architecture anticipates)" — future infrastructure, not something the
+frontend itself built even in its own P11 turn.
+
+This is a real, evidence-based case of the prompt's aspirational framing
+diverging from the actual shipped contract, resolved per this project's
+standing rule: inspect the real repository, prefer it, document the
+discrepancy rather than inventing a rendering architecture nothing
+downstream expects. Building a server-rendering layer would mean
+inventing an HTML output shape and a template system with zero real
+consumer — the frontend would still fetch and render its own JSON exactly
+as it does today, oblivious to whether an SSR layer existed. What the
+"edge-cache" half of that same requirement translates to, honestly, given
+this repo's real infrastructure: a Redis-backed response cache in front
+of the expensive parts of the public JSON read path (see
+`PublicWebsiteCacheService`'s own doc comment for the full cache-key/
+self-invalidation design) — genuinely useful, genuinely testable, built
+from infrastructure that already exists (`RedisService`, P0), rather than
+a new system invented to satisfy a line item literally.
+
+### The one explicit RLS exception, and why it cannot be avoided
+
+Every prior phase's tenant isolation rests on one invariant: RLS is keyed
+to a session variable populated from a REAL, already-authenticated
+request. The public runtime breaks that premise on purpose — a visitor
+has no session, no JWT, no `app.current_organization_id` to set, and
+critically, WHICH tenant they even belong to is the very question being
+answered. An ordinary RLS-governed `SELECT` against `domain_connections`/
+`subdomain_allocations` with no session variable set correctly returns
+nothing for every tenant, which is fail-closed-correct for literally
+every other access pattern in this codebase but is exactly the wrong
+answer for "resolve the one Academy this trusted hostname belongs to,"
+since a legitimate public visitor could be looking for any Academy's
+site, across every tenant, by construction.
+
+`resolve_public_hostname`/`resolve_academy_organization` are the sole,
+explicit answer — the identical `SECURITY DEFINER` pattern P7 already
+established for a structurally similar problem (a narrow read that
+ordinary nested RLS policies cannot perform), reused rather than
+reinvented. Both are narrow in every dimension that matters: they read
+only the specific rows a real hostname/academy id actually matches
+(never a broad scan), they return only the minimal public-safe fields a
+subsequent `runInTenantContext` call needs (id/organization id/name/
+slug/logo — never anything else), and every query AFTER the function
+call runs through the completely ordinary, unmodified tenant-context
+mechanism every other phase uses. The connection itself never changes
+privilege — `PrismaService` stays the restricted `atlas_app` role
+throughout; only the function body, owned by the migration role, sees
+elevated privilege, for exactly the two SQL statements its `AS $$ ... $$`
+body contains.
+
+### Why reading a published website "by academyId" is not a leak
+
+`getPublishedWebsite`/`getPublishedPages`/`getPublishedPage` accept an
+`academyId` directly (matching the real frontend contract exactly —
+`PublicWebsiteService.getPublishedWebsite(academyId)`), which looks, at
+first glance, like exactly the "client academyId as tenant boundary"
+anti-pattern master plan §21 P11 explicitly warns against. It isn't, and
+the distinction matters: PUBLISHED content is, by the product's own
+definition, content its owner deliberately made public. Any visitor who
+already knows or guesses a real academy id can, at most, read exactly
+what they could also reach by visiting that Academy's real public
+hostname — nothing more. The actual, real tenant-isolation invariant this
+phase must protect — draft/hidden content never reachable by ANY means —
+is enforced by a completely separate, unconditional mechanism (`status:
+'published'`/`visible: true` baked into the query itself), which holds
+regardless of how the `academyId` in the URL was obtained. `resolveHostname`
+remains the one path that turns an untrusted hostname into a trusted
+academy id from nothing; the other three endpoints simply don't need that
+same protection, because their downstream data is, by construction,
+already meant for anyone.
+
+### Cloudflare provider architecture
+
+`CloudflareProvider` (interface) / `CloudflareApiProvider` (real
+implementation) / `cloudflare-status-mapper.ts` (pure mapping) are three
+deliberately separate layers, mirroring `MediaStorageProvider`/
+`R2StorageProvider`'s exact P8 precedent: an interface + DI token
+(`CLOUDFLARE_PROVIDER`) so `DomainService`/`InfrastructureService` never
+import the concrete class directly, a real network-calling implementation
+isolated to one file, and pure, deterministic status-mapping functions
+with zero HTTP/DI dependency of their own — fixture-testable
+independently of whether real credentials exist anywhere. No controller
+or service outside `src/domain/providers/` issues a Cloudflare HTTP call
+directly (confirmed by grep).
+
+The status-mapping functions are deliberately conservative: Cloudflare's
+real custom-hostname/SSL status vocabularies are each far wider than
+Atlas's own narrow enums (documented exhaustively in the mapper's own doc
+comment), and every `default` case in every `switch` maps to the safest
+available Atlas state (`failed`, never `connected`/`active`) — a
+genuinely new Cloudflare status introduced after this code was written
+degrades to "something is wrong, go check" rather than a silent false
+positive.
+
+### Genuine Cloudflare verification could not be proven in this environment
+
+No real Cloudflare account, zone, or API token was available to this
+implementation session — confirmed by the complete absence of
+`CLOUDFLARE_*` values anywhere in `.env`/`.env.example`/the shell
+environment, matching the real frontend's own repeatedly-documented "no
+real Cloudflare account exists in any environment today" state. Per this
+phase's own explicit instruction ("do NOT invent a successful result...
+do not mark P11 COMPLETE if the Definition of Done requires genuine
+provider verification that has not been proven"), this implementation:
+ran the full `cloudflare-status-mapper.spec.ts` unit suite against real
+Cloudflare API response SHAPES (the exact real status vocabulary
+Cloudflare's own API documentation defines, not fabricated values); wrote
+`CloudflareApiProvider` against the real, documented Cloudflare REST API
+v4 request/response contract (real endpoint paths, real auth header
+shape, real request bodies); and verified, in `domain.e2e-spec.ts`, that
+the ABSENCE of credentials produces the correct, honest degraded
+behavior end-to-end through real HTTP requests to this backend. What
+could NOT be verified: a real, live round trip against Cloudflare's
+actual servers — `verifyToken()` actually returning `true` for a real
+token, `createCustomHostname` actually creating a real resource, a real
+webhook/verification record actually resolving. This gap is explicit,
+itemized, and does not block the rest of P11's Definition of Done, which
+does not depend on it — but it does mean "real Cloudflare integration"
+is proven at the code-and-contract level, not at the live-account level,
+in this environment.
+
+### Domain vocabulary reuse, not reinvention
+
+`SubdomainStatus`/`DomainStatus`/`DomainConnection`/`SubdomainAllocation`
+are imported by name from the real frontend's `provisioning.types.ts`
+(Prompt 8's original vocabulary) into this phase's Prisma enums/models
+verbatim — matching the real frontend's own explicit design note ("this
+file does NOT redeclare a parallel domain-status state machine"). Only
+what Prompt 8 genuinely didn't need is new: `SslStatus`/`CdnStatus`/
+`InfrastructureProviderName`. `subdomain_allocations` exists as a real,
+migrated, RLS-protected table in this phase specifically because the real
+`AcademyDomainConfiguration.subdomain?` field already has a live
+consumer (`WebsiteDomainTab.tsx`) expecting to read it — but P11 writes
+nothing into it; that remains explicitly P14's job, confirmed by the
+complete absence of any "allocate subdomain" method anywhere in the real
+`DomainService` contract.

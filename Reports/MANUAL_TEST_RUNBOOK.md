@@ -2614,6 +2614,557 @@ assignments, grading (all explicitly out of P5 scope).
 
 ---
 
+## P9 — Website Builder & Theme Engine Test Cases
+
+All accounts below are real, seeded by `npm run db:seed`. P9 has no seed
+fixture of its own — `website_configurations`/`website_pages` are
+lazily bootstrapped by the backend the first time the website surface is
+opened for an Academy, so any seeded academy owner exercises this from a
+clean slate.
+
+### P9-MANUAL-001
+
+**Feature:** Website Overview — lazy bootstrap on first visit
+
+**Test Account:** Sarah Chen (`sarah.chen@acme-academy.dev`)
+
+**Exact Steps:**
+1. Sign in as Sarah Chen.
+2. Navigate to Academy A1 ("Web Development Academy")'s Website Overview page.
+
+**Expected Result:** Loads with no error, status badge shows "Draft," and the Pages/Content/Settings/Preview quick-link cards render. Navigating to the Pages list shows exactly six pages (Home, About, Courses, FAQs, Contact, Course Details), five with a visibility toggle and Course Details showing a lock icon instead.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P9-MANUAL-002
+
+**Feature:** Website Settings — brand color update persists as a partial merge
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Open Website Settings → Brand tab.
+2. Change only the Primary color and save.
+3. Reload the page.
+
+**Expected Result:** The new primary color persists; secondary/accent colors remain whatever they were before (never reset to a default) — a partial update never clobbers unrelated fields.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P9-MANUAL-003
+
+**Feature:** Custom page creation, section composition, and save
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. From the Pages list, create a custom page titled "Pricing" with slug `pricing`.
+2. Open the page editor, add a Hero section, fill in a title, save.
+3. Attempt to create a second custom page with slug `home`.
+
+**Expected Result:** Step 2 saves successfully and the Hero section persists on reload. Step 3 is rejected — `home` is a reserved core-page slug.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P9-MANUAL-004
+
+**Feature:** Publish
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. From the Website Overview or Page Editor, click Publish and confirm.
+
+**Expected Result:** Status badge flips to "Published" only after the request resolves (never optimistically before the backend confirms).
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P9-MANUAL-005
+
+**Feature:** Core page protection and cross-tenant isolation
+
+**Test Account:** Sarah Chen, then Omar Hassan (`omar.hassan@nextgen-learning.dev`)
+
+**Exact Steps:**
+1. As Sarah Chen, confirm no delete button appears for any of the six core pages, and delete the "Pricing" custom page created in P9-MANUAL-003.
+2. Sign in as Omar Hassan (owner of a different Academy, Org B) and attempt to open Academy A1's Website Overview by editing the URL's academy id directly.
+
+**Expected Result:** Step 1: custom page deletes cleanly; no core page ever exposes a delete action. Step 2: the request is rejected (403) — Omar is redirected to an error/not-found state, never Academy A1's real website data.
+
+**Security Verification:** Confirm Academy A1's website configuration/pages never appear in Omar Hassan's session, by any means.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+**Coverage summary:**
+
+| Test ID | Feature | Key edge case |
+|---|---|---|
+| P9-MANUAL-001 | Website Overview bootstrap | Six core pages auto-provisioned |
+| P9-MANUAL-002 | Brand settings | Partial merge, not full overwrite |
+| P9-MANUAL-003 | Page creation & sections | Reserved slug rejected |
+| P9-MANUAL-004 | Publish | Never optimistic |
+| P9-MANUAL-005 | Core-page protection & isolation | Cross-tenant 403 |
+
+**Not covered (features not implemented this phase):** CMS content
+library (FAQ/testimonial entries, P10), SEO resolution hierarchy and
+structured-data preview (P10), public website preview against a real
+published render (P11 — the `/preview` surface in this phase renders
+client-side from the draft only, no backend rendering exists yet).
+
+---
+
+## P10 — CMS Content Library & SEO Test Cases
+
+All accounts below are real, seeded by `npm run db:seed`. P10 has no seed
+fixture of its own — FAQ/Testimonial library content is created fresh
+through the real UI, the same "no dedicated fixture needed" pattern P9
+established.
+
+### P10-MANUAL-001
+
+**Feature:** FAQ entry create, order, and reorder
+
+**Test Account:** Sarah Chen (`sarah.chen@acme-academy.dev`)
+
+**Exact Steps:**
+1. Open Academy A1's Website Content page → FAQs tab.
+2. Create two FAQ entries with both English and Arabic filled in.
+3. Use the move-up/move-down arrows to reorder them.
+
+**Expected Result:** Both entries save successfully, appear in creation order, and reorder correctly after using the arrows — each entry defaults to Draft status and visible.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P10-MANUAL-002
+
+**Feature:** FAQ localized-field validation
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Open the FAQ create dialog.
+2. Fill in only the English question, leaving Arabic blank, and submit.
+
+**Expected Result:** The form is rejected with a validation error on the Arabic field — both languages are required, matching the server's own enforcement.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P10-MANUAL-003
+
+**Feature:** Publish / archive lifecycle
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Publish one of the FAQ entries created in P10-MANUAL-001.
+2. Archive it.
+3. Confirm no publish/archive action is offered for it afterward.
+
+**Expected Result:** Status badge transitions Draft → Published → Archived; once archived, neither the Publish nor Archive button appears again for that entry.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P10-MANUAL-004
+
+**Feature:** Testimonial entry with optional fields
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Open the Testimonials tab, create one entry with only quote + author name.
+2. Create a second entry with author role and an avatar image also filled in.
+
+**Expected Result:** Both save successfully; the first entry shows no role/avatar, the second shows both.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P10-MANUAL-005
+
+**Feature:** FAQ/Testimonial library references inside a page section, and cross-tenant isolation
+
+**Test Account:** Sarah Chen, then Omar Hassan (`omar.hassan@nextgen-learning.dev`)
+
+**Exact Steps:**
+1. As Sarah Chen, publish the FAQ entry from P10-MANUAL-003 (or a fresh one), then add a FAQ section to a page and select that entry from the library picker.
+2. Save the page and confirm the FAQ section shows the referenced entry alongside any inline items.
+3. Sign in as Omar Hassan and confirm Academy A1's FAQ/Testimonial entries never appear in his own Academy's Content page or library pickers.
+
+**Expected Result:** Step 2 renders the referenced entry correctly. Step 3: Omar sees only his own Academy's (empty) CMS content — never Academy A1's.
+
+**Security Verification:** Confirm no FAQ/Testimonial entry id from Academy A1 is ever selectable or visible from Omar Hassan's session.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+**Coverage summary:**
+
+| Test ID | Feature | Key edge case |
+|---|---|---|
+| P10-MANUAL-001 | FAQ create & reorder | Order persists correctly |
+| P10-MANUAL-002 | Localized validation | Both languages required |
+| P10-MANUAL-003 | Publish/archive lifecycle | Terminal archived state |
+| P10-MANUAL-004 | Testimonial optional fields | authorRole/avatar both optional |
+| P10-MANUAL-005 | Library references & isolation | Cross-tenant never visible |
+
+**Not covered (features not implemented this phase):** public website
+rendering, hostname/subdomain/custom-domain resolution, SSL/CDN status
+(all P11) — the SEO resolution hierarchy and structured-data builders
+this phase implements have no dedicated UI surface beyond the existing
+read-only previews already covered by P9's manual tests
+(`WebsiteSeoTab`'s structured-data JSON preview,
+`WebsitePageSeoDialog`'s resolved-fallback hint) — both already exercise
+this phase's logic even though the logic itself moved server-side; no
+new frontend surface was added for it.
+
+---
+
+## P11 — Public Website Runtime, Domains & Edge Test Cases
+
+There is no real Atlas platform domain configured in this environment
+(`PLATFORM_BASE_DOMAIN` unset) — matching every environment today, per
+the real frontend's own documented state. Every test below uses the
+frontend's dev-only `?__atlas_academy_preview=<slug>` query override
+(`hostname-resolution.utils.ts`) to exercise the public runtime without a
+real domain, exactly as the frontend itself is built to be tested. No
+seed fixture is needed beyond a normal seeded Academy — website content
+is created fresh through the real UI, the same pattern P9/P10 established.
+
+### P11-MANUAL-001
+
+**Feature:** Published public page rendering
+
+**Test Account:** Sarah Chen (`sarah.chen@acme-academy.dev`)
+
+**Exact Steps:**
+1. As Sarah Chen, publish Academy A1's website (Website Overview → Publish) with at least the Home page visible and containing a Hero section.
+2. In a new browser tab, visit `http://localhost:5173/?__atlas_academy_preview=web-development-academy` (the seeded Academy A1 slug).
+
+**Expected Result:** The public site renders the real published Home page content — no dashboard chrome, no sign-in prompt.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-002
+
+**Feature:** Draft page cannot be reached publicly
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Create a new custom page with real content, leave the website itself in Draft (never click Publish), or create the page and note it is Visible but the website status shown on the Publish Bar is Draft.
+2. Visit the public preview URL with the page's slug appended (e.g. `.../?__atlas_academy_preview=web-development-academy` then navigate within the public shell to the new page's path).
+
+**Expected Result:** The public runtime shows an "unpublished" state, never the draft content.
+
+**Security Verification:** Confirm via browser dev tools' Network tab that the `GET public/websites/:academyId` response is a 404, and no draft title/section text appears anywhere in any response body.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-003
+
+**Feature:** Unpublished/hidden page cannot be reached publicly
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. With the website published, create a new custom page and immediately toggle it to hidden (Website Pages → visibility switch off) with real content.
+2. Visit the public site and attempt to navigate to that page's path directly.
+
+**Expected Result:** The page is absent from public navigation and its direct path shows the public "not found" state — never the hidden content.
+
+**Security Verification:** Confirm the hidden page's slug is absent from the `GET public/websites/:academyId/pages` response body.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-004
+
+**Feature:** Subdomain resolution
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Confirm no subdomain is configured for Academy A1 (Website Settings → Domain tab → Atlas subdomain shows "not configured" — expected, since no Platform base domain and no P14 allocation exist yet).
+
+**Expected Result:** The subdomain section honestly shows "not configured," never a fabricated address.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-005
+
+**Feature:** Custom domain connection
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. In the Domain tab, add a custom domain (e.g. `www.example-academy-test.com`).
+
+**Expected Result:** The domain appears with status "Verification Required" and real DNS instruction rows (or none, if Cloudflare is unconfigured in this environment) — never "Connected."
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-006
+
+**Feature:** Domain verification
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. With the custom domain from P11-MANUAL-005 still pending, click "Verify."
+
+**Expected Result:** The status remains honestly unchanged (no real Cloudflare account exists in this environment) — never flips to "Connected" on its own.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-007
+
+**Feature:** SSL status
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. In the Domain tab's Infrastructure card, observe the SSL status.
+
+**Expected Result:** Shows "Not Configured" — never "Active" without a real, verified Cloudflare certificate.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-008
+
+**Feature:** CDN status
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. In the same Infrastructure card, observe the CDN status and Cloudflare provider connection line.
+
+**Expected Result:** Shows "Not Configured" / "Provider Not Connected" — matching `InfrastructureProviderStatus.connected: false` genuinely reported by the backend.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-009
+
+**Feature:** Cross-Academy hostname isolation
+
+**Test Account:** Sarah Chen, then Omar Hassan (`omar.hassan@nextgen-learning.dev`)
+
+**Exact Steps:**
+1. Publish Academy A1's website (Sarah Chen) and Academy B1's website (Omar Hassan) with clearly distinct Home page content.
+2. Visit the public preview for Academy A1's slug, then separately for Academy B1's slug.
+
+**Expected Result:** Each preview shows only its own Academy's real published content — never the other's.
+
+**Security Verification:** Confirm the `academyId` in each public response matches only the Academy whose slug was requested.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-010
+
+**Feature:** Public SEO + structured data
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. With Academy A1 published, visit the public Home page and inspect the browser tab title and page source `<meta>`/JSON-LD tags (dev tools → Elements → `<head>`).
+
+**Expected Result:** Title/meta reflect the resolved SEO hierarchy (Page Override → Global → Fallback); a `<script type="application/ld+json">` Organization entry is present, generated client-side, never via `dangerouslySetInnerHTML`.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-011
+
+**Feature:** Cache isolation
+
+**Test Account:** Sarah Chen, then Omar Hassan
+
+**Exact Steps:**
+1. Load Academy A1's public site (populates the backend's response cache for Academy A1), then immediately load Academy B1's public site.
+
+**Expected Result:** Academy B1's site shows only its own real content — no trace of Academy A1's cached response.
+
+**Security Verification:** N/A for this test (proven directly at the API level by `public-website.e2e-spec.ts`'s cross-academy tests).
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P11-MANUAL-012
+
+**Feature:** Draft content never leaks through cache/public URLs
+
+**Test Account:** Sarah Chen
+
+**Exact Steps:**
+1. Publish Academy A1's website, load the public site once (populates the cache).
+2. Edit a section's content and republish.
+3. Reload the public site.
+
+**Expected Result:** The reloaded public site shows the NEW published content, never the stale cached version from before the republish (the cache is keyed by `configVersion`, which changes on every publish).
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+**Coverage summary:**
+
+| Test ID | Feature | Key edge case |
+|---|---|---|
+| P11-MANUAL-001 | Published page rendering | Real published content |
+| P11-MANUAL-002 | Draft page protection | 404, no draft leakage |
+| P11-MANUAL-003 | Hidden page protection | Absent from public list |
+| P11-MANUAL-004 | Subdomain resolution | Honest "not configured" |
+| P11-MANUAL-005 | Custom domain connection | Never fake "Connected" |
+| P11-MANUAL-006 | Domain verification | Never simulated success |
+| P11-MANUAL-007 | SSL status | Honest "Not Configured" |
+| P11-MANUAL-008 | CDN status | Honest "Not Configured" |
+| P11-MANUAL-009 | Cross-Academy isolation | Never crosses |
+| P11-MANUAL-010 | SEO + structured data | Resolved hierarchy, real JSON-LD |
+| P11-MANUAL-011 | Cache isolation | Never crosses |
+| P11-MANUAL-012 | Cache never serves stale drafts | configVersion-keyed |
+
+**Not covered (features not implemented this phase):** real DNS record
+creation/mutation, real SSL certificate issuance, real CDN configuration,
+real `Content-Type: text/plain` serving of `robots.txt`/`sitemap.xml`
+(future edge/Worker layer — not built by the real frontend either),
+subdomain allocation (P14), Atlas subscription billing (P12+).
+
+---
+
 ## Human Feedback Log
 
 Record results here as they come back. Format: `TEST-ID  RESULT  DATE  NOTES`.
@@ -2706,6 +3257,28 @@ P7-MANUAL-010    [ ]   ____________   ________________________________
 P7-MANUAL-011    [ ]   ____________   ________________________________
 P7-MANUAL-012    [ ]   ____________   ________________________________
 P7-MANUAL-013    [ ]   ____________   ________________________________
+P9-MANUAL-001    [ ]   ____________   ________________________________
+P9-MANUAL-002    [ ]   ____________   ________________________________
+P9-MANUAL-003    [ ]   ____________   ________________________________
+P9-MANUAL-004    [ ]   ____________   ________________________________
+P9-MANUAL-005    [ ]   ____________   ________________________________
+P10-MANUAL-001   [ ]   ____________   ________________________________
+P10-MANUAL-002   [ ]   ____________   ________________________________
+P10-MANUAL-003   [ ]   ____________   ________________________________
+P10-MANUAL-004   [ ]   ____________   ________________________________
+P10-MANUAL-005   [ ]   ____________   ________________________________
+P11-MANUAL-001   [ ]   ____________   ________________________________
+P11-MANUAL-002   [ ]   ____________   ________________________________
+P11-MANUAL-003   [ ]   ____________   ________________________________
+P11-MANUAL-004   [ ]   ____________   ________________________________
+P11-MANUAL-005   [ ]   ____________   ________________________________
+P11-MANUAL-006   [ ]   ____________   ________________________________
+P11-MANUAL-007   [ ]   ____________   ________________________________
+P11-MANUAL-008   [ ]   ____________   ________________________________
+P11-MANUAL-009   [ ]   ____________   ________________________________
+P11-MANUAL-010   [ ]   ____________   ________________________________
+P11-MANUAL-011   [ ]   ____________   ________________________________
+P11-MANUAL-012   [ ]   ____________   ________________________________
 ```
 
 If any test FAILS: report it back with the exact Test ID and what you

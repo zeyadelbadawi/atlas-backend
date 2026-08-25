@@ -282,12 +282,18 @@ model Academy {
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
 
-  members          AcademyMember[]
-  courseCategories CourseCategory[]
-  courses          Course[]
-  announcements    Announcement[]
-  blogPosts        BlogPost[]
-  mediaAssets      MediaAsset[]
+  members              AcademyMember[]
+  courseCategories     CourseCategory[]
+  courses              Course[]
+  announcements        Announcement[]
+  blogPosts            BlogPost[]
+  mediaAssets          MediaAsset[]
+  websiteConfiguration WebsiteConfiguration?
+  websitePages         WebsitePage[]
+  websiteFaqEntries    WebsiteFaqEntry[]
+  websiteTestimonials  WebsiteTestimonialEntry[]
+  subdomainAllocation  SubdomainAllocation?
+  domainConnection     DomainConnection?
 
   @@index([organizationId, status])
   @@map("academies")
@@ -1218,14 +1224,14 @@ enum ForumStatus {
 /// requests it, mirroring how `course_progress`/`lesson_progress` (P6) are
 /// materialized on first legitimate access rather than pre-seeded.
 model Forum {
-  id          String        @id @default(uuid())
-  courseId    String        @unique @map("course_id")
-  course      Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  academyId   String        @map("academy_id")
+  id          String      @id @default(uuid())
+  courseId    String      @unique @map("course_id")
+  course      Course      @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  academyId   String      @map("academy_id")
   title       String
   description String?
-  status      ForumStatus   @default(open)
-  createdAt   DateTime      @default(now()) @map("created_at")
+  status      ForumStatus @default(open)
+  createdAt   DateTime    @default(now()) @map("created_at")
 
   threads ForumThread[]
 
@@ -1353,4 +1359,361 @@ model MediaAsset {
 
   @@index([academyId, status, type])
   @@map("media_assets")
+}
+
+// ---------------------------------------------------------------------------
+// P9 — Website Builder & Theme Engine (master plan §5.10, §21 Phase P9).
+//
+// `website_configurations` (PK: `academy_id`, 1:1 with `Academy` — matches
+// `WebsiteConfiguration.academyId`, `academy.types.ts`'s "one Academy = one
+// website" design). `theme_key`/`theme_version` are plain config fields, not
+// a theme catalog table — the frontend's five built-in themes
+// (`WEBSITE_THEME_KEYS`, `website-theme.types.ts`) are a client-side,
+// code-registered catalog (`WebsiteThemeRegistry`); the backend never
+// re-derives or serves theme *definitions*, only records which one this
+// Academy picked (master plan §21 P9: "only implement what the frontend
+// already defines").
+//
+// `website_pages` stores `sections` as validated JSONB
+// (`SectionInstance[]`), never normalized into per-section-type tables —
+// sections are read/written atomically as one page save (`updatePage`
+// PATCHes the whole array), matching §5.10's explicit "kept as validated
+// JSONB, not normalized" instruction. Every write is validated server-side
+// against the exact discriminated-union shape
+// (`SectionType` → `SectionConfigMap[type]`) the frontend's own
+// `website-section.schemas.ts` enforces — see
+// `src/website/validation/section-config.schemas.ts`, a field-for-field
+// backend reproduction of that file, never a looser reinterpretation.
+//
+// Six core page types (`WEBSITE_CORE_PAGE_TYPES`, `website.types.ts`) exist
+// per Academy, auto-provisioned the first time either the configuration or
+// the page list is read for an Academy that has none yet (no dedicated
+// "create website" endpoint exists anywhere in the real
+// `WebsiteConfigurationService` contract) — see `WebsiteBootstrapService`.
+// `courseDetails` is the one core type with no `visible` toggle in the real
+// UI (`WebsitePagesPage.tsx` renders a lock icon, not a `Switch`, for it) —
+// enforced here by simply never accepting a visibility change for it at the
+// service layer, not a separate schema constraint.
+//
+// Custom pages support a REAL hard delete (`DELETE
+// academies/:id/website/pages/:pageId`, `useDeleteWebsitePage.ts`) — this is
+// a deliberate, discovery-driven departure from the Course/Media
+// "archive-only, no DELETE policy" convention: direct inspection of the
+// actual frontend service proves a genuine hard-delete capability exists
+// for custom pages (core pages are rejected at the service layer, matching
+// the UI's own "no delete button for a core page" rule). The DELETE RLS
+// policy below exists for exactly this reason.
+// ---------------------------------------------------------------------------
+
+/// Matches `WebsitePublishStatus` (`website.types.ts`) exactly.
+enum WebsitePublishStatus {
+  draft
+  published
+  publishing
+  failed
+
+  @@map("website_publish_status")
+}
+
+/// Matches `WebsitePageType` (`website.types.ts`) exactly.
+enum WebsitePageType {
+  core
+  custom
+
+  @@map("website_page_type")
+}
+
+/// Matches `WEBSITE_CORE_PAGE_TYPES` (`website.types.ts`) exactly — the six
+/// core page contracts every theme supports.
+enum WebsiteCorePageType {
+  home
+  about
+  courses
+  faqs
+  contact
+  courseDetails
+
+  @@map("website_core_page_type")
+}
+
+/// Mirrors `WebsiteConfiguration` (`website.types.ts`) field-for-field —
+/// always the current DRAFT working copy (never what is published).
+/// `brand`/`seo`/`navigation`/`header`/`footer` are validated JSONB
+/// (`WebsiteBrandConfig`/`WebsiteSeoConfig`/`WebsiteNavigationItem[]`/
+/// `WebsiteHeaderConfig`/`WebsiteFooterConfig`), validated server-side
+/// against the same Zod shapes the frontend's `website.schemas.ts` already
+/// enforces before being persisted.
+model WebsiteConfiguration {
+  academyId        String               @id @map("academy_id")
+  academy          Academy              @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  themeKey         String               @map("theme_key")
+  themeVersion     Int                  @map("theme_version")
+  configVersion    Int                  @default(1) @map("config_version")
+  brand            Json
+  seo              Json
+  navigation       Json
+  header           Json
+  footer           Json
+  status           WebsitePublishStatus @default(draft)
+  publishedAt      DateTime?            @map("published_at")
+  /// Mirrors `WebsitePublishError` (`{messageKey, detail?}`) — only ever
+  /// set when `status = 'failed'`.
+  lastPublishError Json?                @map("last_publish_error")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  @@map("website_configurations")
+}
+
+/// Mirrors `WebsitePage` (`website.types.ts`) field-for-field. `sections`
+/// is the full `SectionInstance[]` array, validated server-side (see this
+/// file's own doc comment above) before every write.
+model WebsitePage {
+  id        String               @id @default(uuid())
+  academyId String               @map("academy_id")
+  academy   Academy              @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  pageType  WebsitePageType      @map("page_type")
+  /// Present only when `pageType = 'core'` — matches `WebsitePage.coreType`
+  /// (`readonly coreType?: WebsiteCorePageType`) exactly.
+  coreType  WebsiteCorePageType? @map("core_type")
+  title     String
+  slug      String
+  visible   Boolean              @default(true)
+  seo       Json
+  sections  Json
+  createdAt DateTime             @default(now()) @map("created_at")
+  updatedAt DateTime             @updatedAt @map("updated_at")
+
+  @@unique([academyId, slug])
+  @@index([academyId, pageType])
+  @@map("website_pages")
+}
+
+// ---------------------------------------------------------------------------
+// P10 — CMS Content Library & SEO (master plan §5.10, §21 Phase P10).
+//
+// `website_faq_entries`/`website_testimonial_entries` are Academy-scoped
+// reusable CMS library content — distinct from a `WebsitePage`'s own
+// inline `FaqItem`/`TestimonialItem` section content (P9, unchanged),
+// which stays single-locale and page-authored. A library entry is
+// authored once, independently localized in English and Arabic
+// (`LocalizedText { en, ar }`, matching `website-content.types.ts`
+// exactly), and referenced by id from any number of `faq`/`testimonials`
+// sections across a website via `libraryEntryIds`
+// (`FaqSectionConfig`/`TestimonialsSectionConfig`, §5.10) — resolved live
+// at render time, never duplicated into the section's own stored data.
+//
+// SEO resolution (Page/Entity Override → Global → System Fallback) and
+// structured-data (JSON-LD) builders are deliberately NOT new database
+// structures — direct inspection of the real frontend confirms
+// `resolvePageSeo`/`resolveCourseSeo`/`buildOrganizationJsonLd`/
+// `buildCourseJsonLd`/`buildBreadcrumbJsonLd` are pure, client-side
+// functions operating entirely on data the P9 endpoints already return
+// (`website_configurations.seo`, `website_pages.seo`, the existing
+// `Course`/`Academy` domains) — there is no backend "resolve SEO" or
+// "structured data" HTTP endpoint anywhere in the real contract. P10's
+// backend equivalent (`src/website/seo/`) is therefore a pure,
+// dependency-free utility library only, ready for P11's public runtime to
+// import — never persisted, never exposed through a new controller.
+// ---------------------------------------------------------------------------
+
+/// Matches `WebsiteContentStatus` (`website-content.types.ts`) exactly.
+/// `archived` is terminal and non-destructive — there is no hard-delete
+/// endpoint anywhere in the real `WebsiteContentService` contract.
+enum WebsiteContentStatus {
+  draft
+  published
+  archived
+
+  @@map("website_content_status")
+}
+
+/// Mirrors `WebsiteFaqEntry` (`website-content.types.ts`) field-for-field.
+/// `order` has no uniqueness constraint — it is a plain sort key, resorted
+/// by the real UI via pairwise swaps (`WebsiteFaqContentTab.moveItem`),
+/// never a bulk-reorder endpoint (unlike `WebsitePage.sections`, P9).
+model WebsiteFaqEntry {
+  id        String               @id @default(uuid())
+  academyId String               @map("academy_id")
+  academy   Academy              @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  /// `LocalizedText { en, ar }` — both languages always present.
+  question  Json
+  answer    Json
+  order     Int                  @default(0)
+  visible   Boolean              @default(true)
+  status    WebsiteContentStatus @default(draft)
+  createdAt DateTime             @default(now()) @map("created_at")
+  updatedAt DateTime             @updatedAt @map("updated_at")
+
+  @@index([academyId, status])
+  @@index([academyId, order])
+  @@map("website_faq_entries")
+}
+
+/// Mirrors `WebsiteTestimonialEntry` (`website-content.types.ts`)
+/// field-for-field. `authorName` is a plain string (NOT localized — the
+/// frontend type itself declares it `readonly authorName: string`, not
+/// `LocalizedText`, unlike every other content field here); `authorRole`
+/// and `avatar` are optional, matching the frontend type's own `?`.
+model WebsiteTestimonialEntry {
+  id         String               @id @default(uuid())
+  academyId  String               @map("academy_id")
+  academy    Academy              @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  quote      Json
+  authorName String               @map("author_name")
+  /// `LocalizedText { en, ar }`, nullable — only when omitted entirely.
+  authorRole Json?                @map("author_role")
+  /// Reuses the existing website image-asset convention (base64/`MediaAsset.url`) — never a second upload pipeline.
+  avatar     String?
+  order      Int                  @default(0)
+  visible    Boolean              @default(true)
+  status     WebsiteContentStatus @default(draft)
+  createdAt  DateTime             @default(now()) @map("created_at")
+  updatedAt  DateTime             @updatedAt @map("updated_at")
+
+  @@index([academyId, status])
+  @@index([academyId, order])
+  @@map("website_testimonial_entries")
+}
+
+// ---------------------------------------------------------------------------
+// P11 — Public Website Runtime, Domains & Edge (master plan §5.11, §7,
+// §21 Phase P11).
+//
+// `subdomain_allocations`/`domain_connections` reuse the exact vocabulary
+// the real frontend already defines (`domain.types.ts`, reusing
+// `DomainStatus`/`DomainVerificationRecord`/`DomainConnection`/
+// `SubdomainAllocation` from `provisioning.types.ts` verbatim — this
+// schema does the same: one status enum, not a parallel one). Subdomain
+// ALLOCATION (writing a `subdomain_allocations` row) is P14's job
+// (Provisioning Orchestration) — confirmed by direct inspection: the real
+// `DomainService` (frontend) has no "allocate subdomain" method at all,
+// only `getDomainConfiguration`/`addCustomDomain`/`removeCustomDomain`/
+// `verifyDomain`. P11 only reads whatever a future P14 populates here
+// (honestly nothing, in every environment today) — the table exists now
+// because the master plan's schema requires it and
+// `AcademyDomainConfiguration.subdomain` already has a real, live
+// frontend consumer expecting to read it.
+//
+// `domain_connections` IS written by P11 — `addCustomDomain`/
+// `removeCustomDomain`/`verifyDomain` are real, shipped frontend methods.
+// "Remove" resets the row to its `not_configured` state rather than a
+// hard delete (no DELETE RLS policy exists on this table, consistent
+// with the archive-only convention P8/P10 already established, and the
+// row's `academy_id` uniqueness makes an actual delete pointless — the
+// Academy will only ever have zero-or-one domain_connections row for its
+// entire lifetime).
+// ---------------------------------------------------------------------------
+
+/// Matches `SubdomainStatus` (`provisioning.types.ts`) exactly.
+enum SubdomainStatus {
+  suggested
+  available
+  unavailable
+  reserved
+  assigned
+
+  @@map("subdomain_status")
+}
+
+/// Matches `DomainStatus` (`provisioning.types.ts`) exactly — the real
+/// 7-value enum, reused verbatim, never redeclared.
+enum DomainStatus {
+  not_configured
+  pending
+  verification_required
+  verifying
+  connected
+  failed
+  disconnected
+
+  @@map("domain_status")
+}
+
+/// Matches `SslStatus` (`domain.types.ts`) exactly. `not_configured` is
+/// the only honest value while no real Cloudflare/CA integration is
+/// connected — nothing in this phase can move a domain past it without a
+/// genuine provider check.
+enum SslStatus {
+  not_configured
+  pending
+  provisioning
+  active
+  failed
+  expired
+
+  @@map("ssl_status")
+}
+
+/// Matches `CdnStatus` (`domain.types.ts`) exactly.
+enum CdnStatus {
+  not_configured
+  active
+  degraded
+  error
+
+  @@map("cdn_status")
+}
+
+/// Matches `InfrastructureProviderName` (`domain.types.ts`) exactly — a
+/// single-entry union today, extensible without touching existing rows.
+enum InfrastructureProviderName {
+  cloudflare
+
+  @@map("infrastructure_provider_name")
+}
+
+/// Mirrors `SubdomainAllocation` (`provisioning.types.ts`) field-for-field.
+/// Written by a future P14, read by P11's `DomainService.
+/// getDomainConfiguration` — see this section's doc comment above.
+model SubdomainAllocation {
+  id        String          @id @default(uuid())
+  academyId String          @unique @map("academy_id")
+  academy   Academy         @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  subdomain String          @unique
+  status    SubdomainStatus
+  /// Full backend-resolved host (e.g. `harvard.atlas.dev`) — never
+  /// constructed on the frontend from a guessed root domain.
+  fullHost  String?         @map("full_host")
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  @@map("subdomain_allocations")
+}
+
+/// Mirrors `DomainConnection` (`provisioning.types.ts`) plus the SSL/CDN
+/// fields `AcademyDomainConfiguration` (`domain.types.ts`) layers on top
+/// — the master plan's own §5.11 schema keeps these on the same row
+/// (`ssl_status`, `cdn_status`, `cdn_provider`), never a separate table.
+model DomainConnection {
+  id                  String                      @id @default(uuid())
+  academyId           String                      @unique @map("academy_id")
+  academy             Academy                     @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  hostname            String?                     @unique
+  status              DomainStatus                @default(not_configured)
+  /// `DomainVerificationRecord[]` (`{type, name, value}`) — display data
+  /// only, generated from the real Cloudflare custom-hostname response,
+  /// never fabricated locally.
+  verificationRecords Json?                       @map("verification_records")
+  sslStatus           SslStatus                   @default(not_configured) @map("ssl_status")
+  cdnStatus           CdnStatus                   @default(not_configured) @map("cdn_status")
+  cdnProvider         InfrastructureProviderName? @map("cdn_provider")
+  connectedAt         DateTime?                   @map("connected_at")
+  createdAt           DateTime                    @default(now()) @map("created_at")
+  updatedAt           DateTime                    @updatedAt @map("updated_at")
+
+  @@map("domain_connections")
+}
+
+/// Platform-owned singleton — mirrors `TrialPolicy` (P4) exactly: a fixed,
+/// well-known id read/written via `upsert`, never a find-then-create race.
+/// Not tenant-scoped, no RLS — matches `TrialPolicy`/`SchemaMeta`'s own
+/// identical "platform-infrastructure metadata, not tenant data" rule.
+model PlatformDomainConfiguration {
+  id         String   @id @default(uuid())
+  baseDomain String?  @map("base_domain")
+  configured Boolean  @default(false)
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_domain_configuration")
 }
