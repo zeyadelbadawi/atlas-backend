@@ -49,7 +49,7 @@ import {
   pageSeoSchema,
 } from '../validation/website-config.schemas';
 import { sectionInstanceArraySchema } from '../validation/section-config.schemas';
-import { parseOrThrow } from '../validation/zod-violations.util';
+import { parseOrThrow } from '../../common/validation/zod-violations.util';
 import { RESERVED_PAGE_SLUGS } from '../constants/website.constants';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';

@@ -290,6 +290,48 @@ export async function seedQuizQuestionOption(
   return admin.quizQuestionOption.create({ data: { questionId, label, isCorrect } });
 }
 
+/** P12 — `payment_methods` is a platform-owned catalog table (mirrors `seedPlan`/`seedAddOn`'s exact precedent) — no write endpoint exists. */
+export async function seedPaymentMethod(
+  admin: PrismaClient,
+  keyLabel: string,
+  overrides: {
+    type?: 'manual_bank_transfer' | 'manual_wallet_transfer' | 'gateway';
+    enabled?: boolean;
+    capabilities?: Record<string, boolean>;
+    manualInstructions?: Prisma.InputJsonValue;
+  } = {},
+) {
+  const key = `${keyLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return admin.paymentMethod.create({
+    data: {
+      key,
+      type: overrides.type ?? 'manual_bank_transfer',
+      displayName: keyLabel,
+      enabled: overrides.enabled ?? true,
+      provider: 'atlas_manual',
+      capabilities: overrides.capabilities ?? {
+        supportsManualReview: true,
+        supportsProof: true,
+        supportsRedirect: false,
+        supportsEmbeddedCheckout: false,
+        supportsAdditionalAuthentication: false,
+        supportsWebhooks: false,
+        supportsRefunds: false,
+        supportsRecurring: false,
+        supportsCancellation: true,
+      },
+      manualInstructions: overrides.manualInstructions ?? {
+        type: 'manual_bank_transfer',
+        bankName: 'Test Bank',
+        accountName: 'Test Account',
+        accountNumber: '0000000000',
+        instructions: 'Transfer the exact amount.',
+        referenceInstructions: 'Use the Checkout id as reference.',
+      },
+    },
+  });
+}
+
 export async function seedAssignment(
   admin: PrismaClient,
   courseId: string,

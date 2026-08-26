@@ -15,6 +15,15 @@ const VALID_BASE = {
   R2_SECRET_ACCESS_KEY: 'unit-test-secret-key',
   R2_BUCKET: 'atlas-media-test',
   R2_PUBLIC_URL_BASE: 'http://localhost:9000/atlas-media-test',
+  // Phase P12 — required, no default (see env.validation.ts's
+  // PAYMENT_WEBHOOK_SECRET definition — same "Atlas controls both ends of
+  // this contract" reasoning as JWT_ACCESS_SECRET above).
+  PAYMENT_WEBHOOK_SECRET: 'unit-test-webhook-secret-at-least-32-chars',
+  // Organization Payment Configuration foundation — required, no default
+  // (see env.validation.ts's PAYMENT_CREDENTIALS_ENCRYPTION_KEY
+  // definition). Exactly 64 hex characters (32 raw bytes).
+  PAYMENT_CREDENTIALS_ENCRYPTION_KEY:
+    'fdd0676972987fc315cf21cfbc8b1e030a082597f61fcd9073174ddb92b472b1',
 };
 
 describe('validateEnv', () => {

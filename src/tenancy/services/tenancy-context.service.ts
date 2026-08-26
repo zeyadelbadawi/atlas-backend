@@ -57,4 +57,32 @@ export class TenancyContextService {
       return work(tx);
     });
   }
+
+  /**
+   * Sets BOTH session variables in the same transaction — added in Phase
+   * P12 for `PlatformPaymentService.approvePayment`/`rejectPayment`, the
+   * first case in this codebase where one atomic transaction genuinely
+   * needs both an organization-scoped write (`checkouts`/`payments`/
+   * `tenant_subscriptions`/`tenant_add_ons`, all keyed off
+   * `app.current_organization_id`) AND a platform-owner-scoped write
+   * (`payment_reviews`, keyed off `app.current_user_id` via the
+   * `is_platform_owner` `SECURITY DEFINER` function — see the P12
+   * migration's own RLS header comment) inside ONE transaction, so a
+   * failure partway through (e.g. no `tenant_subscriptions` row to update)
+   * rolls back the review record too, never leaving a `payment_reviews`
+   * row with no matching state change. Neither `runInTenantContext` nor
+   * `runInUserContext` alone can express this — each opens its own
+   * separate `$transaction`.
+   */
+  async runInTenantAndUserContext<T>(
+    organizationId: string,
+    userId: string,
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_organization_id', ${organizationId}, true)`;
+      await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+      return work(tx);
+    });
+  }
 }

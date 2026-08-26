@@ -88,20 +88,24 @@ model User {
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 
-  refreshTokens           RefreshToken[]
-  passwordResetTokens     PasswordResetToken[]
-  ownedOrganizations      Organization[]           @relation("OrganizationOwner")
-  organizationMemberships OrganizationMembership[]
-  academyMemberships      AcademyMember[]
-  courseInstructorships   CourseInstructor[]
-  enrollments             Enrollment[]
-  quizAttempts            QuizAttempt[]
-  assignmentSubmissions   AssignmentSubmission[]   @relation("SubmissionStudent")
-  gradedSubmissions       AssignmentSubmission[]   @relation("SubmissionGrader")
-  announcements           Announcement[]
-  blogPosts               BlogPost[]
-  forumThreads            ForumThread[]
-  forumReplies            ForumReply[]
+  refreshTokens                                 RefreshToken[]
+  passwordResetTokens                           PasswordResetToken[]
+  ownedOrganizations                            Organization[]                           @relation("OrganizationOwner")
+  organizationMemberships                       OrganizationMembership[]
+  academyMemberships                            AcademyMember[]
+  courseInstructorships                         CourseInstructor[]
+  enrollments                                   Enrollment[]
+  quizAttempts                                  QuizAttempt[]
+  assignmentSubmissions                         AssignmentSubmission[]                   @relation("SubmissionStudent")
+  gradedSubmissions                             AssignmentSubmission[]                   @relation("SubmissionGrader")
+  announcements                                 Announcement[]
+  blogPosts                                     BlogPost[]
+  forumThreads                                  ForumThread[]
+  forumReplies                                  ForumReply[]
+  paymentReviews                                PaymentReview[]                          @relation("PaymentReviewer")
+  organizationCommissionSettingsUpdates         OrganizationCommissionSettings[]         @relation("OrganizationCommissionSettingsUpdatedBy")
+  atlasCommissionConfigUpdates                  AtlasCommissionConfig[]                  @relation("AtlasCommissionConfigUpdatedBy")
+  atlasSubscriptionPaymentProviderConfigUpdates AtlasSubscriptionPaymentProviderConfig[] @relation("AtlasSubscriptionPaymentProviderConfigUpdatedBy")
 
   @@index([status])
   @@map("users")
@@ -178,11 +182,19 @@ model Organization {
   createdAt   DateTime           @default(now()) @map("created_at")
   updatedAt   DateTime           @updatedAt @map("updated_at")
 
-  memberships  OrganizationMembership[]
-  academies    Academy[]
-  subscription TenantSubscription?
-  addOns       TenantAddOn[]
-  usage        TenantUsage?
+  memberships        OrganizationMembership[]
+  academies          Academy[]
+  subscription       TenantSubscription?
+  addOns             TenantAddOn[]
+  usage              TenantUsage?
+  checkouts          Checkout[]
+  payments           Payment[]
+  invoices           TenantInvoice[]
+  webhookEvents      PaymentWebhookEvent[]
+  paymentSettings    OrganizationPaymentSettings?
+  gatewayCredential  OrganizationGatewayCredential?
+  connectedAccount   OrganizationConnectedAccount?
+  commissionSettings OrganizationCommissionSettings?
 
   @@index([status])
   @@map("organizations")
@@ -1716,4 +1728,510 @@ model PlatformDomainConfiguration {
   updatedAt  DateTime @updatedAt @map("updated_at")
 
   @@map("platform_domain_configuration")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P12 — Atlas Subscription Billing (master plan §5.7, §21 Phase P12).
+//
+// The money flow that already has a complete frontend contract: an
+// Organization buys Atlas (a plan subscription or catalog add-on), via
+// manual bank/wallet transfer, reviewed by a Platform Owner. Deliberately
+// NOT Course Commerce (§23/P13) — `payments.organization_id` stays
+// required/non-null in this phase; the `payer_user_id`/`payee_academy_id`
+// extension §5.7 documents is P13's job, not this one's.
+//
+// `payment_methods` is additive beyond §5.7's own table list, required by
+// the real, callable `GET /payment-methods` contract (`PaymentService.
+// getPaymentMethods`) — mirrors the `plans`/`add_ons` catalog-table
+// precedent exactly (platform-owned, no RLS), since `manualInstructions`
+// must be real backend-supplied configuration, never hardcoded in the
+// frontend (`BankTransferInstructions`'s own doc comment).
+//
+// `payment_webhook_events` is additive beyond §5.7 too, required by §12's
+// own "Payment webhook processing" row ("Unique constraint on (provider,
+// event_id)") and §18 scenario 8 ("a webhook received twice must never
+// double-apply"). See migration.sql's own header comment for the RLS
+// design, including the one new `SECURITY DEFINER` function this phase
+// introduces (`resolve_payment_organization`) and the reused `app.current_
+// user_id` + new `is_platform_owner` function pairing for
+// `PlatformPaymentService`'s cross-tenant review surface.
+// ---------------------------------------------------------------------------
+
+/// What a Checkout is paying for — matches `CheckoutTargetType` (`checkout.types.ts`) exactly.
+enum CheckoutTargetType {
+  plan_subscription
+  add_on
+
+  @@map("checkout_target_type")
+}
+
+/// Matches `CheckoutStatus` (`checkout.types.ts`) exactly.
+enum CheckoutStatus {
+  draft
+  pending_payment
+  completed
+  expired
+  cancelled
+
+  @@map("checkout_status")
+}
+
+/// Matches `PaymentMethodType` (`payment.types.ts`) exactly. Only the two
+/// `manual_*` values are ever produced by this phase — `gateway` exists so
+/// the schema/DTOs are ready before a real gateway is connected (master
+/// plan §21 P12: "not yet connected").
+enum PaymentMethodType {
+  manual_bank_transfer
+  manual_wallet_transfer
+  gateway
+
+  @@map("payment_method_type")
+}
+
+/// Matches `PaymentLifecycleStatus` (`payment.types.ts`) exactly — 9 states.
+enum PaymentLifecycleStatus {
+  created
+  pending
+  processing
+  requires_action
+  requires_confirmation
+  succeeded
+  failed
+  cancelled
+  expired
+
+  @@map("payment_lifecycle_status")
+}
+
+/// Matches `ManualReviewStatus` (`payment.types.ts`) exactly.
+enum ManualReviewStatus {
+  not_required
+  pending
+  approved
+  rejected
+
+  @@map("manual_review_status")
+}
+
+/// Matches `PaymentAttemptStatus` (`payment.types.ts`) exactly.
+enum PaymentAttemptStatus {
+  initiated
+  processing
+  failed
+  succeeded
+  cancelled
+  expired
+
+  @@map("payment_attempt_status")
+}
+
+/// Matches `InvoiceStatus` (`payment.types.ts`) exactly.
+enum InvoiceStatus {
+  draft
+  issued
+  paid
+  void
+
+  @@map("invoice_status")
+}
+
+/// Platform-owned catalog entity — mirrors `plans`/`add_ons`'s precedent
+/// exactly (no RLS; every authenticated caller reads the same catalog).
+/// Backs `GET /payment-methods` (`CheckoutPaymentMethod`, `payment.types.ts`).
+/// Not named in master plan §5.7's own table list, but required by the real
+/// frontend contract — see this section's header comment above.
+model PaymentMethod {
+  id                 String            @id @default(uuid())
+  key                String            @unique
+  type               PaymentMethodType
+  displayName        String            @map("display_name")
+  description        String?
+  enabled            Boolean           @default(true)
+  /// Matches `Payment.provider`/`CheckoutPaymentMethod.provider` — `'atlas_manual'` for both manual methods today.
+  provider           String
+  /// Mirrors `PaymentMethodCapabilities` — 9 booleans, validated server-side, not schema-enforced (matches `plans.limits`'s established precedent).
+  capabilities       Json
+  /// Mirrors `ManualPaymentInstructions` (bank or wallet variant) — present only for the two `manual_*` types, never for `gateway`.
+  manualInstructions Json?             @map("manual_instructions")
+  displayOrder       Int               @default(0) @map("display_order")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  @@map("payment_methods")
+}
+
+/// Organization-scoped — mirrors `Checkout` (`checkout.types.ts`) field-for-field (master plan §5.7). No update endpoint exists for the frontend to call directly — `status` transitions happen server-side as a Payment against it progresses.
+model Checkout {
+  id             String                    @id @default(uuid())
+  organizationId String                    @map("organization_id")
+  organization   Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  targetType     CheckoutTargetType        @map("target_type")
+  targetKey      String                    @map("target_key")
+  billingCycle   SubscriptionBillingCycle? @map("billing_cycle")
+  /// Frozen `CheckoutSnapshot` — written once at creation, never recomputed from live catalog data afterward (master plan §5.7).
+  snapshot       Json
+  status         CheckoutStatus            @default(draft)
+  expiresAt      DateTime                  @map("expires_at")
+  idempotencyKey String                    @map("idempotency_key")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+
+  payments Payment[]
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId])
+  @@map("checkouts")
+}
+
+/// Mirrors `Payment` (`payment.types.ts`) — the provider-agnostic core, one
+/// shape for manual and gateway payments. `checkoutId` nullable and
+/// `organizationId` required/non-null — the exact §5.7 "extension point for
+/// §23" shape, left unmodified by this phase (Course Commerce is P13's job).
+model Payment {
+  id                String                 @id @default(uuid())
+  checkoutId        String?                @map("checkout_id")
+  checkout          Checkout?              @relation(fields: [checkoutId], references: [id])
+  organizationId    String                 @map("organization_id")
+  organization      Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  methodKey         String                 @map("method_key")
+  methodType        PaymentMethodType      @map("method_type")
+  provider          String
+  amountMinorUnits  BigInt                 @map("amount_minor_units")
+  currency          String                 @map("currency")
+  status            PaymentLifecycleStatus @default(created)
+  reviewStatus      ManualReviewStatus     @default(not_required) @map("review_status")
+  failureReason     String?                @map("failure_reason")
+  /// The latest manual review's notes, denormalized here for `Payment.reviewNotes` (frontend doc comment: "the Tenant needs to see why a rejection happened without a second fetch").
+  reviewNotes       String?                @map("review_notes")
+  /// Mirrors `PaymentNextAction` — a discriminated union, validated server-side, not schema-enforced.
+  nextAction        Json?                  @map("next_action")
+  providerReference String?                @map("provider_reference")
+  expiresAt         DateTime?              @map("expires_at")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+
+  attempts      PaymentAttempt[]
+  proofs        PaymentProof[]
+  reviews       PaymentReview[]
+  invoices      TenantInvoice[]
+  webhookEvents PaymentWebhookEvent[]
+
+  @@index([organizationId])
+  @@index([checkoutId])
+  @@map("payments")
+}
+
+/// Mirrors `PaymentAttempt` (`payment.types.ts`) — one provider interaction attempt toward completing a Payment.
+model PaymentAttempt {
+  id                String               @id @default(uuid())
+  paymentId         String               @map("payment_id")
+  payment           Payment              @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  status            PaymentAttemptStatus
+  providerReference String?              @map("provider_reference")
+  failureReason     String?              @map("failure_reason")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+
+  @@index([paymentId])
+  @@map("payment_attempts")
+}
+
+/// Mirrors `PaymentProof` (`payment.types.ts`) — a manual-transfer proof of payment.
+model PaymentProof {
+  id         String   @id @default(uuid())
+  paymentId  String   @map("payment_id")
+  payment    Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  fileName   String   @map("file_name")
+  /// Private object-storage key — never a public asset path (master plan §5.7/§13: "private, signed-URL access only"). Served only through the authenticated `.../proof/file` download endpoint (`PaymentProofsController`), never returned as a raw storage URL.
+  storageKey String   @map("storage_key")
+  mimeType   String   @map("mime_type")
+  note       String?
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
+
+  @@index([paymentId])
+  @@map("payment_proofs")
+}
+
+/// Mirrors `PaymentReview` (`payment.types.ts`) — an admin's manual-review decision on a Payment.
+model PaymentReview {
+  id         String             @id @default(uuid())
+  paymentId  String             @map("payment_id")
+  payment    Payment            @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  status     ManualReviewStatus
+  reviewedBy String             @map("reviewed_by")
+  reviewer   User               @relation("PaymentReviewer", fields: [reviewedBy], references: [id])
+  notes      String?
+  reviewedAt DateTime           @default(now()) @map("reviewed_at")
+
+  @@index([paymentId])
+  @@map("payment_reviews")
+}
+
+/// Mirrors `TenantInvoice` (`payment.types.ts`) — read-only, invoice-ready
+/// contract. No invoice-generation endpoint/trigger is specified anywhere
+/// (frontend's own `Reports/ARCHITECTURE.md` Backend Contract #7: "Read-
+/// only; no invoice-generation endpoint defined here") — this table ships
+/// real and RLS-protected, genuinely empty until a future phase defines
+/// when/how a row gets created (same "no creation endpoint yet" precedent
+/// as P4's `TenantSubscription`).
+model TenantInvoice {
+  id               String        @id @default(uuid())
+  organizationId   String        @map("organization_id")
+  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  paymentId        String?       @map("payment_id")
+  payment          Payment?      @relation(fields: [paymentId], references: [id])
+  number           String        @unique
+  status           InvoiceStatus @default(draft)
+  amountMinorUnits BigInt        @map("amount_minor_units")
+  currency         String        @map("currency")
+  issuedAt         DateTime?     @map("issued_at")
+  dueAt            DateTime?     @map("due_at")
+  paidAt           DateTime?     @map("paid_at")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@map("tenant_invoices")
+}
+
+/// Processed-webhook-event idempotency ledger (master plan §12 "Payment
+/// webhook processing": "Unique constraint on (provider, event_id)"; §18
+/// scenario 8). `organizationId` is denormalized from the referenced
+/// Payment purely so this table can reuse the exact same tenant-scoped RLS
+/// idiom as every other table in this section — never read/written by
+/// anything except `PaymentWebhookService`, which resolves it via the one
+/// `SECURITY DEFINER` exception this phase introduces (migration.sql).
+model PaymentWebhookEvent {
+  id             String       @id @default(uuid())
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider       String
+  eventId        String       @map("event_id")
+  eventType      String       @map("event_type")
+  paymentId      String       @map("payment_id")
+  payment        Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  processedAt    DateTime     @default(now()) @map("processed_at")
+
+  @@unique([provider, eventId])
+  @@index([organizationId])
+  @@map("payment_webhook_events")
+}
+
+// ---------------------------------------------------------------------------
+// Organization Payment Configuration (master plan §5.8, §4.1/§4.2 — the
+// finalized two-mode payment-collection decision, prerequisite to Phase
+// P13). Deliberately NOT Course Commerce (§23) — no `course_orders`, no
+// `revenue_ledger_entries`, no payout tables here. Pure configuration:
+// which of the two Organization-level modes an Organization has chosen
+// (§4.1), its own-gateway credentials if it chose Organization-Owned
+// Gateway, its Atlas Payments connected-account reference if it chose
+// Atlas Payments, and its commission override (§4.2) — Platform-Owner-
+// controlled, never self-service.
+// ---------------------------------------------------------------------------
+
+/// Matches the finalized §4.1 three-state model exactly. `unconfigured` is
+/// the real default every Organization starts in — never nullable-as-a-
+/// mode, and never silently treated as either real mode.
+enum PaymentCollectionMode {
+  unconfigured
+  atlas_payments
+  organization_gateway
+
+  @@map("payment_collection_mode")
+}
+
+/// Lifecycle of an Organization's own-gateway configuration (§5.8).
+enum OrganizationGatewayCredentialStatus {
+  not_configured
+  configured
+  verified
+  disabled
+
+  @@map("organization_gateway_credential_status")
+}
+
+/// Atlas Payments custodial/onboarding lifecycle (§5.8) — schema/service
+/// foundation only; no real Connect-style processor is integrated in this
+/// phase (§21 P13 scope boundary).
+enum OrganizationConnectedAccountOnboardingStatus {
+  not_started
+  pending
+  action_required
+  verified
+  restricted
+  disabled
+
+  @@map("organization_connected_account_onboarding_status")
+}
+
+/// Matches §4.2's commission-override hierarchy exactly. `exempt` is a
+/// distinct, explicit state from "default happens to resolve to 0" — never
+/// conflated.
+enum OrganizationCommissionMode {
+  default
+  custom
+  exempt
+
+  @@map("organization_commission_mode")
+}
+
+/// Which of the two §4.1 modes an Organization has chosen — Organization-
+/// level only (no Academy-level override; §4.1 confirms the domain model
+/// gives Academies no independent billing identity today). One row per
+/// Organization, created lazily on first read/write (see
+/// `OrganizationPaymentSettingsRepository`), so an Organization that has
+/// never touched this setting still resolves to `unconfigured` rather than
+/// having no row at all.
+model OrganizationPaymentSettings {
+  id                    String                @id @default(uuid())
+  organizationId        String                @unique @map("organization_id")
+  organization          Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  paymentCollectionMode PaymentCollectionMode @default(unconfigured) @map("payment_collection_mode")
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+
+  @@map("organization_payment_settings")
+}
+
+/// An Organization's own gateway configuration, for Organization-Owned
+/// Gateway mode (§4.1/§5.8). One active configuration per Organization
+/// (unique `organizationId`), matching the dashboard's single "Online
+/// Gateway" selector, not a list. `encryptedConfig` is application-layer
+/// envelope-encrypted before it ever reaches this column (§16,
+/// `CredentialEncryptionService`) — never plaintext, and never selected by
+/// any repository method used on a response path (see
+/// `OrganizationGatewayCredentialsRepository`'s own doc comment). No
+/// gateway-specific column is added here — `providerKey` is the only
+/// structural field; everything provider-specific lives inside the
+/// encrypted blob, decrypted only inside the resolved `PaymentProviderAdapter`
+/// at call time.
+model OrganizationGatewayCredential {
+  id              String                              @id @default(uuid())
+  organizationId  String                              @unique @map("organization_id")
+  organization    Organization                        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerKey     String                              @map("provider_key")
+  status          OrganizationGatewayCredentialStatus @default(not_configured)
+  encryptedConfig String?                             @map("encrypted_config")
+  enabled         Boolean                             @default(false)
+  lastTestedAt    DateTime?                           @map("last_tested_at")
+  /// Provider-agnostic success/failure summary only — never a raw provider error payload (§16).
+  lastTestResult  Json?                               @map("last_test_result")
+  createdAt       DateTime                            @default(now()) @map("created_at")
+  updatedAt       DateTime                            @updatedAt @map("updated_at")
+
+  @@map("organization_gateway_credentials")
+}
+
+/// An Organization's Atlas Payments custodial/onboarding relationship
+/// (§4.1/§5.8) — the Organization-level replacement for the originally
+/// Academy-scoped `academy_connected_accounts` design (master plan §5.8,
+/// "Superseded by §4.1" note). Reference fields only, never a raw banking
+/// credential. Schema/service foundation only in this phase — no real
+/// Connect-style processor is integrated, so every row starts and stays
+/// `not_started` until a future phase adds one.
+model OrganizationConnectedAccount {
+  id                       String                                       @id @default(uuid())
+  organizationId           String                                       @unique @map("organization_id")
+  organization             Organization                                 @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerKey              String?                                      @map("provider_key")
+  externalAccountReference String?                                      @map("external_account_reference")
+  onboardingStatus         OrganizationConnectedAccountOnboardingStatus @default(not_started) @map("onboarding_status")
+  payoutsEnabled           Boolean                                      @default(false) @map("payouts_enabled")
+  createdAt                DateTime                                     @default(now()) @map("created_at")
+  updatedAt                DateTime                                     @updatedAt @map("updated_at")
+
+  @@map("organization_connected_accounts")
+}
+
+/// The Organization-level commission override from §4.2. Write access is
+/// Platform-Owner-only at every layer (RLS in migration.sql, guard at the
+/// controller) — an Organization can read its own row but can never insert
+/// or update it, the concrete enforcement of "an Organization must not be
+/// able to grant itself a commission exemption or modify its own rate."
+model OrganizationCommissionSettings {
+  id                          String                     @id @default(uuid())
+  organizationId              String                     @unique @map("organization_id")
+  organization                Organization               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  commissionMode              OrganizationCommissionMode @default(default) @map("commission_mode")
+  /// Populated only when `commissionMode = 'custom'` — basis points (0–10000), never a float.
+  customPercentageBasisPoints Int?                       @map("custom_percentage_basis_points")
+  updatedBy                   String?                    @map("updated_by")
+  updatedByUser               User?                      @relation("OrganizationCommissionSettingsUpdatedBy", fields: [updatedBy], references: [id])
+  createdAt                   DateTime                   @default(now()) @map("created_at")
+  updatedAt                   DateTime                   @updatedAt @map("updated_at")
+
+  @@map("organization_commission_settings")
+}
+
+/// The platform-wide global default commission from §4.2. Platform-owned
+/// singleton — mirrors `PlatformDomainConfiguration` (P11) exactly: a
+/// fixed, well-known id and `upsert` close the concurrent-first-read race
+/// atomically at the database level, never a find-then-create race. Not
+/// tenant-scoped, no tenant RLS — same category as `Plan`/`AddOn`/
+/// `PaymentMethod`. `defaultCommissionBasisPoints` starts and stays `null`
+/// until a Platform Owner explicitly sets it (§4.2) — this schema does not
+/// invent a default value.
+model AtlasCommissionConfig {
+  id                           String   @id @default(uuid())
+  defaultCommissionBasisPoints Int?     @map("default_commission_basis_points")
+  updatedBy                    String?  @map("updated_by")
+  updatedByUser                User?    @relation("AtlasCommissionConfigUpdatedBy", fields: [updatedBy], references: [id])
+  updatedAt                    DateTime @updatedAt @map("updated_at")
+
+  @@map("atlas_commission_config")
+}
+
+// ---------------------------------------------------------------------------
+// Atlas Subscription Payment — Generic Payment Gateway Integration Readiness
+// (implemented on top of §5.8's provider abstraction; distinct from both
+// P12's existing `payment_methods` catalog and §5.8's Organization-owned
+// `organization_gateway_credentials`/course-payment tables above). This is
+// ATLAS's own configuration of which `PaymentProviderAdapter` currently
+// backs Atlas Subscription Billing (Organization → Atlas) — never an
+// Organization- or Student-facing concept.
+// ---------------------------------------------------------------------------
+
+/// Lifecycle of Atlas's own subscription-payment provider configuration —
+/// same shape as `OrganizationGatewayCredentialStatus` (§5.8) by
+/// coincidence of concept, deliberately a SEPARATE, clearly-named enum
+/// (never reused across the Organization/Atlas ownership boundary).
+enum AtlasSubscriptionPaymentProviderStatus {
+  not_configured
+  configured
+  verified
+  disabled
+
+  @@map("atlas_subscription_payment_provider_status")
+}
+
+/// Platform-owned singleton — mirrors `AtlasCommissionConfig`/
+/// `PlatformDomainConfiguration` exactly: a fixed, well-known id and
+/// `upsert` close the concurrent-first-read race atomically at the
+/// database level. Not tenant-scoped, no RLS — same category as
+/// `PaymentMethod`/`AtlasCommissionConfig`.
+///
+/// Absence of a row (or `providerKey = null`) means Atlas Subscription
+/// Payments are running on today's real default — Manual Transfer
+/// (`ManualTransferProvider`, `payment_methods.provider = 'atlas_manual'`)
+/// — resolved by `AtlasSubscriptionPaymentProviderService`, never a
+/// second hardcoded default anywhere else. `encryptedConfig` is envelope-
+/// encrypted the identical way `organization_gateway_credentials` already
+/// is (`CredentialEncryptionService`, §5.8/§16) — never plaintext, never
+/// selected on any response path.
+model AtlasSubscriptionPaymentProviderConfig {
+  id              String                                 @id @default(uuid())
+  /// Null until a Platform Owner explicitly selects a provider other than the real default (Manual Transfer).
+  providerKey     String?                                @map("provider_key")
+  status          AtlasSubscriptionPaymentProviderStatus @default(not_configured)
+  encryptedConfig String?                                @map("encrypted_config")
+  enabled         Boolean                                @default(false)
+  lastTestedAt    DateTime?                              @map("last_tested_at")
+  /// Provider-agnostic success/failure summary only — never a raw provider error payload (§16).
+  lastTestResult  Json?                                  @map("last_test_result")
+  updatedBy       String?                                @map("updated_by")
+  updatedByUser   User?                                  @relation("AtlasSubscriptionPaymentProviderConfigUpdatedBy", fields: [updatedBy], references: [id])
+  createdAt       DateTime                               @default(now()) @map("created_at")
+  updatedAt       DateTime                               @updatedAt @map("updated_at")
+
+  @@map("atlas_subscription_payment_provider_config")
 }

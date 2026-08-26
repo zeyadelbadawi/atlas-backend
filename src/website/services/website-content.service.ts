@@ -63,7 +63,7 @@ import {
   updateFaqEntrySchema,
   updateTestimonialEntrySchema,
 } from '../validation/website-content.schemas';
-import { parseOrThrow } from '../validation/zod-violations.util';
+import { parseOrThrow } from '../../common/validation/zod-violations.util';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';

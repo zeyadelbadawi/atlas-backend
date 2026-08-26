@@ -3165,6 +3165,213 @@ subdomain allocation (P14), Atlas subscription billing (P12+).
 
 ---
 
+## P12 — Atlas Subscription Billing Test Cases
+
+No real payment gateway is connected in this environment (master plan
+§21 P12: "not yet connected") — every test below exercises the real
+manual bank/wallet transfer flow, the only provider registered today
+(`ManualTransferProvider`, `PaymentProviderRegistry`). The seeded demo
+fixture (`prisma/seed.ts`) leaves Org B (`omar.hassan@nextgen-learning.dev`,
+NextGen Learning, currently `trialing` on Starter) with one real Checkout
+already created (`seed-demo-growth-upgrade`, upgrading to Growth) — Test
+Cases 001–004 below walk that exact Checkout through the rest of the real
+flow. `admin@atlas.dev` is the seeded Platform Owner, and is NOT a member
+of NextGen Learning — the correct account for every review test.
+
+### P12-MANUAL-001
+
+**Feature:** Payment method catalog + Checkout creation
+
+**Test Account:** Omar Hassan (`omar.hassan@nextgen-learning.dev`)
+
+**Exact Steps:**
+1. Sign in as Omar Hassan. Navigate to Billing → Checkout.
+2. Select the Growth plan; observe the payment method list.
+
+**Expected Result:** Both `Bank Transfer` and `Mobile Wallet` are listed with real, backend-supplied instructions (bank name/account number or wallet number) — never hardcoded in the page itself. The Checkout's price matches Growth's real catalog price ($79.00/mo).
+
+**Security Verification:** Confirm via Network tab that `GET /payment-methods` and `POST /organizations/:id/checkouts` are the real calls, not any local/mocked data.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P12-MANUAL-002
+
+**Feature:** Payment creation + manual-transfer instructions
+
+**Test Account:** Omar Hassan
+
+**Exact Steps:**
+1. From the Checkout created in P12-MANUAL-001, select "Bank Transfer" and confirm.
+2. Observe the Payment Details page.
+
+**Expected Result:** A real `Payment` is created, `status: pending`, `reviewStatus: not_required`, `nextAction: { type: 'awaiting_proof' }` — the bank instructions shown match the catalog's real fixture values.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P12-MANUAL-003
+
+**Feature:** Proof submission
+
+**Test Account:** Omar Hassan
+
+**Exact Steps:**
+1. On the Payment Details page, upload any small image or PDF as proof, with a note.
+2. Observe the resulting state.
+
+**Expected Result:** `reviewStatus` moves to `pending`, `nextAction` becomes `awaiting_manual_review` — the Payment's own `status` does NOT change to `succeeded` merely from uploading proof (proof is never a success signal by itself).
+
+**Security Verification:** Confirm the proof file is retrievable only while signed in as Omar Hassan or the reviewing Platform Owner — attempting the same download URL from a different, unrelated account's session returns 403.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P12-MANUAL-004
+
+**Feature:** Platform review — approve, and the real commercial effect
+
+**Test Account:** Atlas Admin (`admin@atlas.dev`)
+
+**Exact Steps:**
+1. Sign in as Atlas Admin. Navigate to Payment Review, locate Omar Hassan's pending Payment.
+2. Approve it with a note.
+3. Sign back in as Omar Hassan and check NextGen Learning's subscription.
+
+**Expected Result:** The Payment shows `status: succeeded`, `reviewStatus: approved`. NextGen Learning's subscription now shows Plan = Growth, Status = Active — a real change, not merely a Payment-record flag (master plan §21 P12 Definition of Done: "correctly updates `tenant_subscriptions`").
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P12-MANUAL-005
+
+**Feature:** Platform review — reject
+
+**Test Account:** Atlas Admin
+
+**Exact Steps:**
+1. As Omar Hassan (or any other tenant), create a second Checkout + Payment for a different plan, submit proof.
+2. As Atlas Admin, reject it with a required note (e.g. "amount does not match").
+
+**Expected Result:** The Payment shows `status: failed`, `reviewStatus: rejected`, the note is visible on the Payment. The organization's subscription is completely unchanged.
+
+**Security Verification:** Confirm attempting to reject with an empty/too-short note is rejected client-side AND server-side (a network-tools direct `POST /payments/:id/reject` with `{"notes":"short"}` returns 400).
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P12-MANUAL-006
+
+**Feature:** Self-review is blocked by the real backend, not just hidden by the UI
+
+**Test Account:** A user who is both a Platform Owner AND a member of the paying organization (create one manually for this test: `isPlatformOwner: true` on an existing org owner, or ask an engineer to flip the flag for a throwaway account)
+
+**Exact Steps:**
+1. As that dual-role user, create a Checkout + Payment for their own organization, submit proof.
+2. Attempt to approve/reject that same Payment from the Platform Review console.
+
+**Expected Result:** The UI disables Approve/Reject with an explanatory notice (frontend UX guard). Confirm the REAL enforcement too: a direct `POST /payments/:id/approve` call (browser dev tools / curl, same session token) also returns 403 — the frontend guard is not the only thing standing between this user and self-approval.
+
+**Security Verification:** This IS the security verification — see Expected Result.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P12-MANUAL-007
+
+**Feature:** Idempotent Checkout creation
+
+**Test Account:** Omar Hassan
+
+**Exact Steps:**
+1. On the Checkout page, submit the plan-selection form.
+2. Using browser dev tools, quickly re-send the exact same `POST /organizations/:id/checkouts` request (same `idempotencyKey`) 2–3 times in a row.
+
+**Expected Result:** Every response returns the SAME Checkout id — never a second/third Checkout row created for one real intent.
+
+**Security Verification:** N/A for this test.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+### P12-MANUAL-008
+
+**Feature:** Cross-tenant isolation — Payment history and direct access
+
+**Test Account:** Sarah Chen (`sarah.chen@acme-academy.dev`, Acme Academy Group)
+
+**Exact Steps:**
+1. As Sarah Chen, open Payment History for Acme Academy Group.
+2. Attempt to open NextGen Learning's Payment (from P12-MANUAL-002/004) by directly editing the URL/organization id.
+
+**Expected Result:** Acme Academy Group's Payment History never contains NextGen Learning's Payment. The direct-URL attempt returns a real "not found" state, never NextGen's Payment data.
+
+**Security Verification:** Confirm via Network tab that the request returns 403/404, not 200 with cross-tenant data.
+
+**Result:** [ ] PASS [ ] FAIL [ ] BLOCKED
+
+**Tester Notes:**
+________________________________
+
+---
+
+**Coverage summary:**
+
+| Test ID | Feature | Key edge case |
+|---|---|---|
+| P12-MANUAL-001 | Payment method catalog + Checkout | Real backend-supplied instructions, real price |
+| P12-MANUAL-002 | Payment creation | Correct initial status/reviewStatus/nextAction |
+| P12-MANUAL-003 | Proof submission | Never implies success by itself |
+| P12-MANUAL-004 | Approve | Real `tenant_subscriptions` effect, not just a flag |
+| P12-MANUAL-005 | Reject | Subscription unchanged; notes required server-side |
+| P12-MANUAL-006 | Self-review block | Real 403, not just a disabled button |
+| P12-MANUAL-007 | Idempotent Checkout creation | Replay never duplicates |
+| P12-MANUAL-008 | Cross-tenant isolation | Never leaks across organizations |
+
+**Not covered (features not implemented this phase — matches master plan
+§21 P12/§24 exactly):** any real payment gateway connection, card data
+collection, real refund processing, real reconciliation/accounting, real
+recurring/automatic billing, invoice generation (no trigger rule is
+specified anywhere — `GET .../invoices` is real and RLS-protected but
+genuinely returns an empty list until a future phase defines when a row
+gets created), Course Commerce / student course purchases / academy
+payouts / revenue ledger (P13), Platform Owner Control Plane / audit log
+writes (P15).
+
+---
+
 ## Human Feedback Log
 
 Record results here as they come back. Format: `TEST-ID  RESULT  DATE  NOTES`.

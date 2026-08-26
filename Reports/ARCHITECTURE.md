@@ -1047,3 +1047,169 @@ consumer (`WebsiteDomainTab.tsx`) expecting to read it — but P11 writes
 nothing into it; that remains explicitly P14's job, confirmed by the
 complete absence of any "allocate subdomain" method anywhere in the real
 `DomainService` contract.
+
+## P12 — Atlas Subscription Billing (2026-08-26)
+
+Backend Prompt 13 (master plan §21 Phase P12). Discovery-first, and the
+first phase where the P11 handover prompt's own throwaway phrase
+("billing/provisioning/Platform Owner Control Plane, P12+") was
+explicitly NOT treated as the specification — the master plan's own §21
+phase table names P12 "Atlas Subscription Billing" precisely, §5.7 gives
+its exact schema, and the real frontend's `checkout.types.ts`/
+`payment.types.ts`/`CheckoutService`/`PaymentService`/
+`PlatformPaymentService`/`ManualTransferProvider`/`PaymentProviderRegistry`
+and its own `Reports/ARCHITECTURE.md` "Prompt 7" section (with its own
+"Backend Contracts To Document" list, items 1–11) were read directly
+before any schema or code was written.
+
+### Two additive catalog/ledger tables beyond §5.7's own list
+
+`payment_methods` and `payment_webhook_events` are not named in master
+plan §5.7's table list but are both genuinely required by the real
+contract, not invented: `payment_methods` backs the real, callable
+`GET /payment-methods` (`CheckoutPaymentMethod`, catalog-scoped like
+`plans`/`add_ons`, since `manualInstructions` must be real backend-
+supplied configuration — "never hardcoded real banking details in the
+frontend," the frontend type's own doc comment); `payment_webhook_events`
+is explicitly required by master plan §12's own "Payment webhook
+processing" row ("Unique constraint on (provider, event_id)") and §18
+scenario 8. Both mirror the exact catalog/RLS precedent already
+established (`plans`/`add_ons` for the former, the transitive-child-table
+shape for the latter).
+
+### The RLS problem P0–P11 never had to solve: a genuinely cross-tenant, role-gated write
+
+Every prior phase's RLS need fell into one of two shapes: an ordinary
+tenant-scoped table (`app.current_organization_id`), or — P7/P11's own
+precedent — a narrow `SECURITY DEFINER` function resolving ONE id-to-id
+fact with no session context at all. `PlatformPaymentService`
+(`/payments`, flat, cross-tenant, `PlatformOwnerGuard`-gated) needed
+something neither shape covers: genuine paginated/filtered listing AND
+writes (approve/reject) across every organization's `payments` row,
+authorized by a REAL fact (`users.is_platform_owner`) rather than a
+resolvable id. Solved by extending the exact idiom P7 already
+established for "real domain fact, not a session flag" (`is_course_instructor`/
+`is_academy_member`) one step further: a new `SECURITY DEFINER` function,
+`is_platform_owner(user_id)`, paired with the P2-established
+`app.current_user_id` session variable (`TenancyContextService.
+runInUserContext`, already used by `UserOrganizationsService` for "which
+organizations does this user belong to") — `payments`/`payment_attempts`/
+`payment_proofs`/`payment_reviews` each gain a SECOND permissive policy
+alongside their existing tenant-scoped one, `USING (is_platform_owner(
+current_setting('app.current_user_id', true)))`. No new session-variable
+mechanism was invented; considered and rejected (see below).
+
+`approvePayment`/`rejectPayment` additionally need ONE atomic transaction
+that writes both a `payment_reviews` row (platform-owner-scoped) AND
+`payments`/`checkouts`/`tenant_subscriptions`/`tenant_add_ons` rows
+(organization-scoped) — so that a failure partway through (e.g. no
+`tenant_subscriptions` row exists yet to update) rolls back the review
+record too. Neither `runInTenantContext` nor `runInUserContext` alone can
+express this (each opens its own separate `$transaction`). Rather than a
+new bespoke mechanism, `TenancyContextService` gained one additive
+method, `runInTenantAndUserContext`, setting BOTH session variables in
+one transaction — the two variables are never set together anywhere
+else in the codebase, so a caller who is merely an organization member
+can never incidentally satisfy the platform-review policies, and vice
+versa.
+
+Considered and rejected: a third boolean session flag
+(`app.platform_review_context`) set by the service layer itself. Rejected
+because it would be the first RLS-relevant session variable in this
+codebase NOT tied to a real, independently-verifiable fact (a real user
+id, a real organization id) — it would only be as trustworthy as the
+service code that sets it, silently reopening the exact class of bug RLS
+exists to make structurally impossible. `is_platform_owner` re-derives
+the fact from `users.is_platform_owner` on every check instead, the same
+"never trust a claim, always re-read the source of truth" discipline
+`PlatformOwnerGuard` itself already documents for the identical column.
+
+### The webhook ingestion path's own narrow RLS exception
+
+An inbound payment-provider webhook carries a bare payment id and no
+session at all — exactly P11's `resolve_academy_organization` situation,
+one level down. `resolve_payment_organization(payment_id)`, a third
+`SECURITY DEFINER` function this phase introduces, resolves a Payment's
+`organization_id` with no context set; `PaymentWebhookService` calls it
+once, then opens a completely ordinary `runInTenantContext(organizationId,
+...)` for every subsequent query — never a fourth bypass mechanism.
+
+### Private object storage for payment proofs — a second bucket, not a policy change to P8's
+
+Master plan §5.7/§13 are explicit: `payment_proofs.file_url` is "private,
+signed-URL access only — never a public asset path." P8's
+`R2StorageProvider`/media bucket is deliberately PUBLIC-read (§13: public
+CDN-served assets) — reusing it for proofs would violate the spec outright,
+and rule 12 ("do not modify unrelated P0–P11 behavior") rules out changing
+that bucket's policy. `PaymentProofStorageService` is a second, minimal
+storage class reusing the SAME R2/MinIO endpoint and credentials `media`
+config already validates (`{R2_BUCKET}-payment-proofs`, no new required
+env var), whose `onModuleInit` deliberately never calls
+`PutBucketPolicyCommand` — the one line of difference from
+`R2StorageProvider` that keeps the bucket private by S3/MinIO's own
+default. Every read goes through an authenticated backend endpoint
+(`GET .../payments/:id/proof/file`, `GET /payments/:id/proof/file`),
+governed by the exact same guards as the parent Payment — never a raw
+storage URL returned to any client. `PaymentProof.fileUrl` is that
+backend route path, resolved fresh on every read; stitching a fully-
+qualified origin onto it is a deployment-configuration detail this phase
+deliberately did not invent a new env var for (see the P12 implementation
+report's "specification-undefined" list).
+
+### Webhook signature scheme — real, deterministic, and honestly Atlas's own
+
+No real gateway is connected in this phase (master plan §21 P12: "not yet
+connected"), so there is no external provider's exact signing algorithm
+to replicate. `PAYMENT_WEBHOOK_SECRET` (required, unlike the optional
+`CLOUDFLARE_*` vars — Atlas controls both ends of this contract, no "no
+real account exists" exemption applies) plus HMAC-SHA256 over a stable,
+explicit canonical string (`id.type.paymentId.occurredAt`) — deliberately
+never `JSON.stringify(body)`, which is fragile to key-order/whitespace
+differences that are not real content changes. A future concrete gateway
+adapter would translate that provider's own signature scheme into this
+verification call — an adapter swap, matching the same "provider-agnostic
+core, one real adapter today" shape `ManualTransferProvider`/
+`PaymentProviderRegistry` already establish on the frontend.
+
+### A real bug found during manual smoke testing, not by inspection
+
+`PaymentWebhookProducer`'s first `jobId` implementation
+(`` `${provider}:${eventId}` ``) made every webhook delivery 500 instead
+of enqueuing — BullMQ's custom-id validation rejects any `jobId`
+containing `:` (it reserves that character for its own internal Redis key
+namespacing). Found by actually POSTing a real signed synthetic event
+against the running dev server, not caught by typecheck/lint/unit tests
+(none of which exercise a real BullMQ connection). Fixed by switching the
+separator to `__`; confirmed fixed by re-running the exact same signed
+event twice end-to-end (second delivery correctly no-ops) before writing
+the automated `billing.e2e-spec.ts` regression test for the same
+scenario.
+
+### Checkout/Payment lifecycle — one canonical "apply success" method, never duplicated
+
+`PaymentApplicationService.applySuccessfulPayment`/`applyFailedPayment`
+are the ONLY code that ever marks a Payment `succeeded`/`failed` and
+mutates `tenant_subscriptions`/`tenant_add_ons` — called identically by
+`PlatformPaymentService.approvePayment` (a human reviewer) and
+`PaymentWebhookService.processEvent` (`payment.succeeded`/`payment.failed`
+events). Deliberately re-resolves the commercial effect (which Plan/AddOn
+to activate) from `checkout.targetKey` against the LIVE catalog at apply
+time, never from `checkout.snapshot` — the snapshot is frozen display/
+audit data (master plan §5.7), and a manual review can complete hours
+after the snapshot was taken. A missing `tenant_subscriptions` row (real
+creation is Phase P14 provisioning, not this phase's job) rolls back the
+ENTIRE transaction, including the review record and the payment's own
+`succeeded` status — never a partial success where a Payment says
+"succeeded" but no commercial effect actually landed.
+
+### Self-review — the one place P12 has REAL backend enforcement beyond what the frontend already checked
+
+The frontend's own architecture doc states this explicitly: "Backend MUST
+reject a reviewer approving/rejecting their own organization's payment —
+the frontend guard is UX only." Implemented as a real, tested service-
+layer check (`PlatformPaymentService.loadReviewablePayment`, querying
+the reviewer's own `organization_memberships` under `runInUserContext`)
+— not a permission-catalog invention (master plan §9/§24 forbid that);
+`PlatformOwnerGuard` (role-level, reused verbatim) remains the only
+server-side authorization gate on the platform-review routes themselves,
+matching every prior Platform Owner route in this codebase.

@@ -53,6 +53,23 @@ export interface CloudflareConfig {
   readonly accountId?: string;
 }
 
+/** Phase P12 — Atlas Subscription Billing configuration (master plan §5.7, §16). */
+export interface BillingConfig {
+  readonly webhookSecret: string;
+}
+
+/**
+ * Organization Payment Configuration (master plan §5.8, §16; product
+ * decisions §4.1/§4.2, 2026-08-26). `credentialEncryptionKeyHex` is the raw
+ * hex string as read from the environment — `CredentialEncryptionService`
+ * is the one place it is ever turned into a `Buffer` for actual AES-256-GCM
+ * use, matching this codebase's "one seam, never ad hoc" convention
+ * (`toMinorUnits`/`buildPaymentProofStorageKey`'s identical precedent).
+ */
+export interface PaymentConfigurationConfig {
+  readonly credentialEncryptionKeyHex: string;
+}
+
 /** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
 export interface IdentityConfig {
   readonly jwtAccessSecret: string;
@@ -152,5 +169,23 @@ export default () => {
     accountId: env.CLOUDFLARE_ACCOUNT_ID || undefined,
   };
 
-  return { app, database, redis, identity, media, platformDomain, cloudflare };
+  const billing: BillingConfig = {
+    webhookSecret: env.PAYMENT_WEBHOOK_SECRET,
+  };
+
+  const paymentConfiguration: PaymentConfigurationConfig = {
+    credentialEncryptionKeyHex: env.PAYMENT_CREDENTIALS_ENCRYPTION_KEY,
+  };
+
+  return {
+    app,
+    database,
+    redis,
+    identity,
+    media,
+    platformDomain,
+    cloudflare,
+    billing,
+    paymentConfiguration,
+  };
 };

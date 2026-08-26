@@ -2159,7 +2159,364 @@ domain write authorization reuses P9/P10's exact pattern;
 `PlatformOwnerGuard` reused verbatim, unmodified. No new
 `SPECIFICATION-UNDEFINED` was discovered beyond what §24 already lists.
 
+## P12 — Atlas Subscription Billing (2026-08-26)
+
+Backend Prompt 13 (master plan §21 Phase P12). Discovery-first: the P11
+report's own throwaway phrase ("Atlas subscription billing, checkout,
+payments, payouts (P12+)") was explicitly NOT treated as a scope
+definition — the master plan's own §21 phase table, §5.7's exact schema,
+and the real frontend's `checkout.types.ts`/`payment.types.ts`/
+`CheckoutService.ts`/`PaymentService.ts`/`PlatformPaymentService.ts`/
+`ManualTransferProvider.ts`/`PaymentProviderRegistry.ts` and its own
+`Reports/ARCHITECTURE.md` "Prompt 7" section (with its own numbered
+"Backend Contracts To Document" list) were read directly before any
+schema or code was written.
+
+### What was built
+
+The real business flow the frontend already has a complete contract for:
+Organization selects an Atlas Plan/Add-on → creates a Checkout → submits
+a manual bank/wallet Payment → uploads proof → a Platform Owner reviews
+(approve/reject) → approval correctly updates `tenant_subscriptions`
+(master plan §21 P12's own Definition of Done, verbatim).
+
+`CheckoutService`/`PaymentService` (tenant-scoped, `organizations/:id/*`)
+match the real frontend services method-for-method: `createCheckout`/
+`getCheckout`; `getPaymentMethods`/`createPayment`/`getPayments`/
+`getPayment`/`submitProof`/`cancelPayment`/`createPaymentIntent`/
+`getInvoices`. `PlatformPaymentService` (flat, `/payments`,
+`PlatformOwnerGuard`-gated) matches `getPayments`/`getPayment`/
+`approvePayment`/`rejectPayment`. `PaymentWebhookService` is real,
+callable, HMAC-signature-verified, idempotent infrastructure — "ready for
+a future gateway adapter, not yet connected" (master plan §21 P12's own
+words), never a faked integration.
+
+### Database
+
+New migration `20260826080421_p12_atlas_subscription_billing`, additive
+only. Tables: `checkouts`, `payments` (base shape — `organization_id`
+required/non-null, `checkout_id` nullable; the `payer_user_id`/
+`payee_academy_id` extension master plan §5.7 documents is explicitly
+P13's job, left untouched), `payment_attempts`, `payment_proofs`,
+`payment_reviews`, `tenant_invoices` — the exact §5.7 table list — plus
+two additive tables the real contract requires beyond §5.7's own list:
+`payment_methods` (catalog, mirrors `plans`/`add_ons`'s precedent —
+required by the real, callable `GET /payment-methods`) and
+`payment_webhook_events` (the processed-event idempotency ledger master
+plan §12's own "Payment webhook processing" row requires: "Unique
+constraint on (provider, event_id)").
+
+RLS: every organization-scoped table reuses the exact P2 session variable
+(`app.current_organization_id`) — no new tenant mechanism.
+`payment_attempts`/`payment_proofs`/`payment_reviews` reach tenant scope
+transitively through `payment_id → payments.organization_id`, the same
+one-directional child→parent subquery shape P6 already established
+(never circular — confirmed, `payments`'s own policies never reference
+these child tables back). Two new, narrow, explicit `SECURITY DEFINER`/
+session-variable mechanisms, matching P7/P11's exact "documented, never a
+blanket bypass" discipline:
+
+1. `resolve_payment_organization(payment_id)` — resolves a Payment's
+   `organization_id` with NO session context at all, the one legitimate
+   step an inbound payment webhook (no session, no user) needs before
+   `PaymentWebhookService` can open an ordinary `runInTenantContext` —
+   directly mirrors P11's `resolve_academy_organization`.
+2. `is_platform_owner(user_id)` — a `SECURITY DEFINER` function reading
+   the real `users.is_platform_owner` column, paired with the
+   P2-established `app.current_user_id` session variable
+   (`TenancyContextService.runInUserContext`) to grant
+   `PlatformPaymentService`'s flat, cross-tenant `/payments` review
+   surface real SELECT/UPDATE access to exactly the four payment tables
+   platform review touches. This is the first phase in this codebase with
+   a genuinely cross-tenant, role-gated WRITE requirement (P7/P11's own
+   exceptions were read-only lookups) — see `Reports/ARCHITECTURE.md`'s
+   P12 entry for the full reasoning, including the boolean-session-flag
+   design that was considered and rejected.
+
+`TenancyContextService` gained one additive method,
+`runInTenantAndUserContext` (sets both session variables in the same
+transaction) — needed because `approvePayment`/`rejectPayment` write both
+an organization-scoped row (`payments`/`checkouts`/`tenant_subscriptions`/
+`tenant_add_ons`) and a platform-owner-scoped row (`payment_reviews`) in
+one atomic transaction, so a failure partway through (e.g. no
+`tenant_subscriptions` row exists yet) rolls back the review too.
+
+Additive change to a P4 table, exactly the shape that table's own RLS
+migration comment anticipated: `tenant_subscriptions` gains its
+first-ever UPDATE policy (`tenant_subscriptions_tenant_update`) — P4
+shipped none because nothing wrote to that table yet. `tenant_add_ons`
+needed no new policy — its existing P4 INSERT policy already covers
+add-on activation. Two small, additive write methods were added to P4's
+own repositories (`TenantSubscriptionsRepository.updateForPlanPurchase`,
+`TenantAddOnsRepository.activate`), exported from `PlansModule` for
+`BillingModule` to reuse rather than duplicating `tenant_subscriptions`/
+`tenant_add_ons` data access inside `src/billing/` — no other P4 file was
+touched.
+
+### API endpoints
+
+```
+POST   organizations/:id/checkouts
+GET    organizations/:id/checkouts/:checkoutId
+GET    /payment-methods
+POST   organizations/:id/payments
+GET    organizations/:id/payments
+GET    organizations/:id/payments/:paymentId
+PATCH  organizations/:id/payments/:paymentId/proof
+POST   organizations/:id/payments/:paymentId/cancel
+POST   organizations/:id/payments/intents
+GET    organizations/:id/payments/:paymentId/proof/file
+GET    organizations/:id/invoices
+GET    /payments
+GET    /payments/:id
+POST   /payments/:id/approve
+POST   /payments/:id/reject
+GET    /payments/:id/proof/file
+POST   /payments/webhook
+```
+
+Every URL matches the real frontend `resource`/path strings exactly
+(confirmed by direct inspection of `protected readonly resource = '…'`
+across `CheckoutService`/`PaymentService`/`PlatformPaymentService`, master
+plan §10's own stated verification method).
+
+### Authorization
+
+Tenant routes: `JwtAuthGuard` + `OrganizationMembershipGuard` (reused
+verbatim, unmodified — identical to `TenantSubscriptionController`'s own
+P4 precedent). Platform review routes: `JwtAuthGuard` + `PlatformOwnerGuard`
+(reused verbatim — identical to `PlatformDomainController`'s P11
+precedent). The frontend's finer `tenant.payment.create`/`platform.payment.
+approve`/`reject` PERMISSION strings have no independent backend
+enforcement in this phase — confirmed by direct inspection that NO
+permission-string guard exists anywhere across P0–P11 (only structural
+membership/role guards and service-layer domain-fact checks); inventing
+one now would be exactly the "generic policy-engine RBAC system the
+frontend has no [backend] contract for" master plan §9 forbids. The ONE
+real, non-role-based enforcement this phase adds: a Platform Owner who is
+ALSO a member of the paying organization cannot approve/reject its own
+Payment — a real service-layer check (`PlatformPaymentService.
+loadReviewablePayment`), matching the frontend's own explicit statement
+that its identical UI guard is "UX only; the backend contract states the
+actual requirement."
+
+### Manual-payment lifecycle, concretely
+
+`createPayment`: Checkout `draft` → `pending_payment` (the first Payment
+created against it); Payment starts `status: pending`,
+`reviewStatus: not_required`, `nextAction: {type: 'awaiting_proof'}`.
+`submitProof`: `reviewStatus` → `pending`, `nextAction` →
+`{type: 'awaiting_manual_review'}` — the Payment's own `status` never
+changes from proof submission alone ("Payment is not Subscription," the
+frontend's own single most load-bearing Prompt 7 rule, extended here:
+proof submission is not success either). `approvePayment`: `payments`.
+`status` → `succeeded`, Checkout → `completed`,
+`PaymentApplicationService.applySuccessfulPayment` re-resolves the
+Checkout's `target.planKey`/`target.addOnKey` against the LIVE catalog
+(never the frozen `snapshot`, which is display/audit data only) and calls
+`TenantSubscriptionsRepository.updateForPlanPurchase`/
+`TenantAddOnsRepository.activate`. `rejectPayment`: `status` → `failed`,
+`tenant_subscriptions`/`tenant_add_ons` untouched. Both approve and
+reject funnel through the SAME `PaymentApplicationService` methods a
+future `payment.succeeded`/`payment.failed` webhook event calls too —
+never two parallel "apply the result" implementations.
+
+### Payment proof storage — a second, private bucket
+
+Master plan §5.7/§13: `payment_proofs.file_url` is "private, signed-URL
+access only — never a public asset path." P8's `R2StorageProvider`/media
+bucket is deliberately PUBLIC-read — reusing it would violate the spec
+and rule 12 forbids changing its policy. `PaymentProofStorageService` is
+a new, minimal class reusing the SAME R2/MinIO endpoint and credentials
+`media` config already validates (`{R2_BUCKET}-payment-proofs`, no new
+required env var), whose `onModuleInit` never applies a public bucket
+policy — the one deliberate difference from `R2StorageProvider`. Every
+read goes through an authenticated backend route
+(`.../payments/:id/proof/file`), governed by the exact same guard as the
+parent Payment; `PaymentProof.fileUrl` is that route's path, resolved
+fresh on every read, never a raw storage URL. Verified live: uploaded a
+real proof through the running dev server, downloaded it back byte-
+identical as the authorized tenant, confirmed 403 for an unrelated
+account.
+
+### Webhook infrastructure — real, idempotent, genuinely not connected
+
+`POST /payments/webhook` (public, no `JwtAuthGuard` — a payment provider
+is not an authenticated Atlas user) verifies an HMAC-SHA256 signature
+(`X-Atlas-Webhook-Signature`) over a stable canonical string
+(`id.type.paymentId.occurredAt`, deliberately never `JSON.stringify`)
+using `PAYMENT_WEBHOOK_SECRET` (required env var — unlike the optional
+`CLOUDFLARE_*` vars, Atlas controls both ends of this contract, so there
+is no "no real account exists" exemption). A valid, signed event is
+enqueued (`PaymentWebhookProducer`/`PaymentWebhookProcessor`, BullMQ,
+matching master plan §12's own `payment-webhook-worker` row) and applied
+inside `runInTenantContext` after `resolve_payment_organization`
+resolves the target organization. Idempotency is enforced at the real DB
+level: `payment_webhook_events` carries a `(provider, event_id)` unique
+constraint, checked via an atomic try-insert
+(`PaymentWebhookEventsRepository.tryInsert`) — never a separate
+find-then-create race. No real gateway calls this endpoint in this phase
+(master plan §21 P12: "not yet connected"); its own tests sign synthetic
+events with the exact same secret the server validates against — a real,
+deterministic proof of the verification/idempotency logic, not a live
+external-provider claim.
+
+### A real bug found during manual smoke testing
+
+`PaymentWebhookProducer`'s first `jobId` (`` `${provider}:${eventId}` ``)
+made every webhook delivery 500 instead of enqueuing — BullMQ's
+custom-id validation rejects any `jobId` containing `:` (reserved for its
+own internal Redis key namespacing). Found by POSTing a real signed
+synthetic event against the running dev server (`npm run dev`), not by
+inspection or typecheck/lint (none of which exercise a real BullMQ
+connection). Fixed by switching the separator to `__`; confirmed by
+re-running the exact same signed event twice end-to-end (first delivery
+applies it, second correctly no-ops) before writing the automated
+regression test for the same scenario (`billing.e2e-spec.ts`).
+
+### Seed / fixtures
+
+`payment_methods` catalog seeded directly (two rows, `atlas_bank_transfer`/
+`atlas_wallet_transfer`, both provider `atlas_manual`, obviously-fake dev
+fixture bank/wallet details — matches P8's fake MinIO-credentials
+precedent, never real banking data). One realistic demo Checkout seeded
+for Org B (NextGen Learning, still `trialing` on Starter) upgrading to
+Growth, left in `draft` for the manual test runbook to walk the rest of
+the flow through the real API/UI — matches P6/P7's "seed one real
+starting point, not a fully-simulated end-to-end" precedent. Re-running
+the seed is idempotent (confirmed: ran twice against a freshly-reset
+database, zero duplicate `payment_methods`/`checkouts` rows).
+
+### Tests
+
+Unit: 9 new cases — `money.util.spec.ts` (display-to-minor-units
+conversion, including IEEE754 rounding), `webhook-signature.util.spec.ts`
+(valid signature accepted; wrong secret/tampered payload/missing/
+malformed/wrong-length signature all rejected, none throw). E2e: 3 new
+suites, 44 new tests — `billing.e2e-spec.ts` (the full manual-payment
+lifecycle: checkout creation + idempotency replay, payment creation,
+proof submission incl. real magic-byte file-type rejection, approve incl.
+the real `tenant_subscriptions` effect and a rejected double-approve,
+reject incl. the required-notes floor, the self-review block, cancel,
+the honest gateway-not-connected response, the genuinely-empty invoices
+list, webhook signature verification and the real double-delivery
+idempotency proof — signed synthetic events, polled through the real
+BullMQ worker), `rls-billing.e2e-spec.ts` (direct DB proof for every new
+table plus both new `SECURITY DEFINER`/session-variable mechanisms,
+including the platform-review cross-tenant SELECT/UPDATE proof and its
+negative — a non-platform-owner gets nothing), `billing-tenant-isolation.
+e2e-spec.ts` (P12-TENANT-001..006, extending the permanent
+tenant-isolation suite per §18).
+
+Idempotency-key replay proof (master plan §21 P12's own "Tests" line):
+three concurrent identical `createCheckout` calls (same idempotency key)
+resolve to the same Checkout id, and exactly one row exists in the
+database afterward. Webhook double-delivery proof (§18 scenario 8,
+applied to Atlas billing first): the same signed event, delivered twice,
+produces exactly one `payment_webhook_events` row and one state
+transition — confirmed both via the automated e2e test and, first, by
+hand against the running dev server (see "a real bug found" above).
+
+**Full regression, twice** — once immediately after implementation,
+once again after a full `prisma migrate reset` from zero and re-seed (to
+prove the migration/RLS/seed chain is genuinely reproducible, not just
+"worked once on an already-migrated database"): **56 e2e suites, 413
+tests, all passing**, plus all 385 unit tests (`src/**/*.spec.ts`). Zero
+regressions in any P0–P11 file or behavior.
+
+`lint`/`typecheck`/`format:check`/`build` all clean. One pre-existing
+unit test fixture (`env.validation.spec.ts`'s `VALID_BASE` object)
+required a one-line addition (`PAYMENT_WEBHOOK_SECRET`) once that
+variable became required — a mechanical fixture update, not a behavior
+change to the test itself.
+
+### A shared utility promoted to `common/`, not duplicated a third time
+
+`zod-violations.util.ts` (the Zod → `NormalizedApiError` bridge P9/P10
+introduced under `src/website/validation/`) moved to
+`src/common/validation/` when `src/billing/`'s own discriminated-union
+validation (`CheckoutTarget`) needed the identical bridge — the same
+"one shared definition, not a third near-identical copy"
+`common/dto/collection-query.dto.ts` already established when P5 needed
+what P3 had built for `academy`. The three existing Website imports were
+updated to the new path; nothing about their behavior changed (confirmed:
+full website test suites still pass).
+
+### What is deliberately NOT implemented (P12 boundary, matches master plan §21/§24 exactly)
+
+Course Commerce: `course_orders`, `revenue_ledger_entries`,
+`academy_payouts`/`academy_payout_items`, `academy_connected_accounts`,
+any student-buys-a-course flow, `payments.payer_user_id`/`payee_academy_id`
+(all explicitly P13, blocked on the §3/§4 product decision). Any real
+payment gateway connection, gateway SDK, card data collection, real
+refund processing, real reconciliation/accounting, real recurring/
+automatic billing. Invoice GENERATION (the `tenant_invoices` table/read
+endpoint is real and RLS-protected; no trigger rule for when a row gets
+created is specified anywhere — frontend's own Backend Contract #7:
+"Read-only; no invoice-generation endpoint defined here" — genuinely
+empty until a future phase defines this). Platform Owner Control Plane,
+audit log writes, analytics, notifications, search (P15+). A
+Role/Permission catalog or assignment endpoint (master plan §9/§24
+forbid inventing one).
+
+### SPECIFICATION-UNDEFINED / product-decision-shaped items surfaced this phase
+
+- **Checkout expiry window** — no duration is specified anywhere;
+  `CHECKOUT_EXPIRY_MINUTES = 30` is a reasonable, narrow, documented
+  default (matching `PASSWORD_RESET_TOKEN_TTL_MINUTES`'s own precedent
+  for "a short-lived window with no specified number"), not derived from
+  any specification. A real product owner should confirm or override it.
+- **Cross-billing-cycle pricing** — `PlanPricingMetadata`/
+  `AddOnPricingMetadata` carry exactly one `{amount, currency,
+  billingCycle?}`, not separate monthly/yearly prices. `CheckoutService`
+  uses the plan/add-on's own single configured price/currency regardless
+  of the `billingCycle` the caller requests, and rejects outright
+  (`errors.checkout.pricingUnavailable`) if no pricing is configured at
+  all — a documented default, not a fabricated multi-cycle price matrix.
+- **`PaymentProof.fileUrl` as a relative backend route, not a
+  fully-qualified URL** — no `PUBLIC_API_BASE_URL`-style config exists
+  anywhere in P0–P11 to build an absolute origin from; inventing one
+  seemed out of proportion to this phase's actual scope. The route
+  itself is real and correctly authorized either way; stitching a
+  deployed origin onto it is a deployment-configuration detail for
+  whichever phase first needs an absolute API URL elsewhere too.
+- **Platform-review cross-tenant RLS mechanism** — no prior phase (P0–P11)
+  ever needed a genuinely cross-tenant, role-gated WRITE; the
+  `is_platform_owner()` + `runInUserContext`/`runInTenantAndUserContext`
+  design is this phase's own engineering decision, not dictated by any
+  master-plan section — see `Reports/ARCHITECTURE.md`'s P12 entry for
+  the alternative that was considered and rejected.
+
+### External integration verification
+
+`PAYMENT_WEBHOOK_SECRET`-based HMAC verification and the full webhook
+idempotency chain WERE live-verified in this environment — signed
+synthetic events posted against the real running dev server (`npm run
+dev`), a real BullMQ worker, a real Postgres unique constraint. What
+could NOT be live-verified, because no such thing exists in this
+environment (matching P11's identical, honest limitation for
+Cloudflare): a REAL payment gateway's own signature scheme, a REAL
+provider webhook delivery. `ManualTransferProvider`'s entire flow (the
+one provider actually registered) WAS fully live-verified end to end —
+real Checkout, real Payment, real proof upload/download through real
+private object storage, real Platform Owner approval, real
+`tenant_subscriptions` mutation, confirmed by direct SQL query against
+the database, not just the API response.
+
+### CTO audit
+
+Confirmed by direct grep across `src/billing/`: no TODO/FIXME/
+console.log/hardcoded id/`any`/eslint-disable/fake webhook success/fake
+"payment succeeded" without a real caller/real banking secret in code or
+seed data (the seeded bank/wallet details are obviously-fake dev fixture
+values, matching P8's identical precedent)/card-data field anywhere. No
+new permission entity or role invented. `PlatformOwnerGuard`/
+`OrganizationMembershipGuard` reused verbatim, unmodified, in every
+guard usage this phase adds.
+
 ## Next phase
 
-**P12 — Atlas Subscription Billing.** Not started. Do not begin without
-explicit approval.
+**P13 — Course Pricing, Purchase & Payouts.** Not started. Blocked on
+the master plan §3/§4 `PRODUCT DECISION REQUIRED` (merchant-of-record
+model for course sales) — do not begin without both that decision and
+explicit approval to start the phase.

@@ -189,6 +189,54 @@ const EnvSchema = z.object({
   CLOUDFLARE_API_TOKEN: z.string().min(1).optional(),
   CLOUDFLARE_ZONE_ID: z.string().min(1).optional(),
   CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
+
+  // --- Phase P12 — Atlas Subscription Billing (master plan §5.7, §12,
+  // §16, §21 P12) ---
+  // HMAC signing secret `PaymentWebhookController` verifies every inbound
+  // payment-provider webhook against (§16: "HMAC signature verification on
+  // every inbound payment/provider webhook"). Unlike `CLOUDFLARE_API_TOKEN`
+  // (no real Cloudflare account exists in any environment) this secret is
+  // NOT third-party-account-dependent — Atlas itself controls both ends of
+  // this contract (it's the value a future gateway adapter would be
+  // configured with, exactly like `JWT_ACCESS_SECRET`'s own "dev-only,
+  // locally generated" precedent) — so it is required, not optional, and
+  // has the same minimum-length floor. No real gateway calls this endpoint
+  // in this phase (master plan §21 P12: "not yet connected") — its own
+  // e2e/idempotency tests sign synthetic events with this exact secret,
+  // proving the verification/idempotency logic deterministically without a
+  // live external provider.
+  PAYMENT_WEBHOOK_SECRET: z
+    .string()
+    .min(
+      32,
+      'PAYMENT_WEBHOOK_SECRET is required and must be at least 32 characters — the backend ' +
+        'cannot start without a real webhook signing secret (see master plan §16, "Webhook verification").',
+    ),
+
+  // --- Organization Payment Configuration (master plan §5.8, §16;
+  // product decisions §4.1/§4.2, 2026-08-26) ---
+  // Symmetric key `CredentialEncryptionService` uses to envelope-encrypt
+  // `organization_gateway_credentials.encrypted_config` before it is ever
+  // written to the database (AES-256-GCM — 32 raw key bytes, hex-encoded,
+  // so exactly 64 hex characters). Required, no default — this is exactly
+  // the class of connectivity/security-critical secret this file's header
+  // comment refuses to silently default (same bar as JWT_ACCESS_SECRET/
+  // PAYMENT_WEBHOOK_SECRET), and it is security-critical from the moment
+  // this column exists, even though no real gateway is integrated yet —
+  // an Organization can already attempt to save its own gateway
+  // configuration in this phase.
+  PAYMENT_CREDENTIALS_ENCRYPTION_KEY: z
+    .string()
+    .length(
+      64,
+      'PAYMENT_CREDENTIALS_ENCRYPTION_KEY is required and must be exactly 64 hex characters ' +
+        '(32 raw bytes) — the backend cannot start without a real AES-256-GCM key for ' +
+        'encrypting organization-owned gateway credentials at rest (see master plan §16).',
+    )
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'PAYMENT_CREDENTIALS_ENCRYPTION_KEY must be a 64-character hex string (32 raw bytes).',
+    ),
 });
 
 export type EnvVariables = z.infer<typeof EnvSchema>;

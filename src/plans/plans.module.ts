@@ -68,6 +68,22 @@ import { TENANT_USAGE_RECOMPUTE_QUEUE } from './queue/tenant-usage-recompute.typ
     TenantUsageRecomputeProducer,
     TenantUsageRecomputeProcessor,
   ],
-  exports: [EntitlementService, TenantUsageRecomputeService],
+  exports: [
+    EntitlementService,
+    TenantUsageRecomputeService,
+    // P12 additions — `BillingModule` needs the catalog lookups
+    // (`PlansRepository`/`AddOnsRepository`, to resolve a Checkout's
+    // `targetKey` against a real Plan/AddOn) and the two write methods
+    // `CheckoutService`/`PaymentApplicationService` call when a Payment
+    // succeeds (`TenantSubscriptionsRepository.updateForPlanPurchase`,
+    // `TenantAddOnsRepository.activate`) — reusing these repositories
+    // directly, rather than duplicating `plans`/`tenant_subscriptions`/
+    // `tenant_add_ons` data access inside `src/billing/`, matches this
+    // codebase's "one shared definition, not a second copy" rule.
+    PlansRepository,
+    AddOnsRepository,
+    TenantSubscriptionsRepository,
+    TenantAddOnsRepository,
+  ],
 })
 export class PlansModule {}

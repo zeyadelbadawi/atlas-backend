@@ -41,6 +41,7 @@ import { MediaModule } from './media/media.module';
 import { WebsiteModule } from './website/website.module';
 import { DomainModule } from './domain/domain.module';
 import { PublicWebsiteModule } from './public-website/public-website.module';
+import { BillingModule } from './billing/billing.module';
 
 @Module({
   imports: [
@@ -100,6 +101,7 @@ import { PublicWebsiteModule } from './public-website/public-website.module';
     WebsiteModule,
     DomainModule,
     PublicWebsiteModule,
+    BillingModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

@@ -48,7 +48,7 @@ import {
   websiteNavigationSchema,
   globalSeoSchema,
 } from '../validation/website-config.schemas';
-import { parseOrThrow } from '../validation/zod-violations.util';
+import { parseOrThrow } from '../../common/validation/zod-violations.util';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator']);
 

@@ -101,6 +101,10 @@ async function main(): Promise<void> {
       studentId: student.id,
     });
 
+    console.log('Seeding payment methods catalog and a demo Checkout (P12)...');
+    await seedPaymentMethods(adminPrisma);
+    await seedBillingDemo(adminPrisma, orgs);
+
     console.log('Recomputing tenant usage from real seeded data (real worker logic, not fabricated)...');
     await recomputeService.recomputeOne(orgs.orgA.id);
     await recomputeService.recomputeOne(orgs.orgB.id);
@@ -435,6 +439,118 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
     where: { organizationId_addOnId: { organizationId: orgs.orgA.id, addOnId: extraAcademyAddOn.id } },
     create: { organizationId: orgs.orgA.id, addOnId: extraAcademyAddOn.id },
     update: {},
+  });
+}
+
+// ---------------------------------------------------------------------------
+// P12 — Atlas Subscription Billing
+// ---------------------------------------------------------------------------
+
+/**
+ * `payment_methods` is a platform-owned catalog table — no write endpoint
+ * exists (mirrors `plans`/`add_ons`'s exact P4 precedent), seeded directly
+ * here. `manualInstructions` are obviously-fake dev fixture values (never
+ * real banking/wallet details), matching how P8's dev environment already
+ * uses fake MinIO storage credentials, not a real Cloudflare R2 account.
+ */
+async function seedPaymentMethods(prisma: PrismaClient): Promise<void> {
+  const capabilities = {
+    supportsManualReview: true,
+    supportsProof: true,
+    supportsRedirect: false,
+    supportsEmbeddedCheckout: false,
+    supportsAdditionalAuthentication: false,
+    supportsWebhooks: false,
+    supportsRefunds: false,
+    supportsRecurring: false,
+    supportsCancellation: true,
+  };
+
+  await prisma.paymentMethod.upsert({
+    where: { key: 'atlas_bank_transfer' },
+    create: {
+      key: 'atlas_bank_transfer',
+      type: 'manual_bank_transfer',
+      displayName: 'Bank Transfer',
+      description: 'Pay by direct bank transfer — reviewed manually within 1-2 business days.',
+      provider: 'atlas_manual',
+      capabilities,
+      manualInstructions: {
+        type: 'manual_bank_transfer',
+        bankName: 'Atlas Platform Bank (dev fixture — not a real bank)',
+        accountName: 'Atlas Inc.',
+        accountNumber: '0000000000',
+        iban: 'XX00ATLASDEV0000000000',
+        instructions: 'Transfer the exact Checkout amount to the account above.',
+        referenceInstructions: 'Use your Checkout id as the transfer reference.',
+      },
+      displayOrder: 1,
+    },
+    update: {},
+  });
+
+  await prisma.paymentMethod.upsert({
+    where: { key: 'atlas_wallet_transfer' },
+    create: {
+      key: 'atlas_wallet_transfer',
+      type: 'manual_wallet_transfer',
+      displayName: 'Mobile Wallet',
+      description: 'Pay by mobile wallet transfer — reviewed manually within 1-2 business days.',
+      provider: 'atlas_manual',
+      capabilities,
+      manualInstructions: {
+        type: 'manual_wallet_transfer',
+        walletProvider: 'Atlas Pay (dev fixture — not a real wallet provider)',
+        walletNumber: '+10000000000',
+        accountName: 'Atlas Inc.',
+        instructions: 'Send the exact Checkout amount to the wallet number above.',
+        referenceInstructions: 'Use your Checkout id as the transfer note.',
+      },
+      displayOrder: 2,
+    },
+    update: {},
+  });
+}
+
+/**
+ * One realistic Checkout — Org B (still `trialing` on Starter) considering
+ * an upgrade to Growth — left in `pending_payment` for the manual test
+ * runbook to walk the rest of the flow (create a Payment, submit proof,
+ * approve as the platform owner) through the real API, rather than
+ * pre-seeding every step (matches P6/P7's "seed one real starting point,
+ * not a fully-simulated end-to-end").
+ */
+async function seedBillingDemo(prisma: PrismaClient, orgs: SeededOrgs): Promise<void> {
+  const growth = await prisma.plan.findUniqueOrThrow({ where: { key: 'growth' } });
+
+  await prisma.checkout.upsert({
+    where: {
+      organizationId_idempotencyKey: {
+        organizationId: orgs.orgB.id,
+        idempotencyKey: 'seed-demo-growth-upgrade',
+      },
+    },
+    create: {
+      organizationId: orgs.orgB.id,
+      targetType: 'plan_subscription',
+      targetKey: growth.key,
+      billingCycle: 'monthly',
+      snapshot: {
+        target: { type: 'plan_subscription', planKey: growth.key },
+        billingCycle: 'monthly',
+        displayName: growth.name,
+        price: { amountMinorUnits: 7900, currency: 'USD' },
+        capturedAt: new Date().toISOString(),
+      },
+      status: 'draft',
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+      idempotencyKey: 'seed-demo-growth-upgrade',
+    },
+    // Re-running the seed against an already-seeded database refreshes
+    // `expiresAt` (and resets `status` to `draft` if a prior manual test
+    // run had advanced it) — the same "seed is safely re-runnable" rule
+    // every other `upsert` in this file already follows.
+    update: { status: 'draft', expiresAt: new Date(Date.now() + 30 * 60 * 1000) },
   });
 }
 
