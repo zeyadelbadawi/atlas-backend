@@ -71,6 +71,22 @@ export function toPaymentProofResponse(
   };
 }
 
+/** Phase P13 — the Course Commerce analog of `toPaymentProofResponse` for a course-order Payment's proof, whose download route lives under `course-orders/:id/payments/:paymentId/proof/file` (no `organizationId` segment — Course Commerce payments have none, see `payments.organizationId`'s own P13 doc comment). Kept as its own function rather than an `organizationId?`-optional branch inside the one above, matching this module's existing precedent of one function per real, distinct route shape (`toPaymentResponse` vs. a future course-order variant, below). */
+export function toCourseOrderPaymentProofResponse(
+  proof: PrismaPaymentProof,
+  courseOrderId: string,
+): PaymentProofResponse {
+  return {
+    id: proof.id,
+    paymentId: proof.paymentId,
+    fileName: proof.fileName,
+    fileUrl: `/course-orders/${courseOrderId}/payments/${proof.paymentId}/proof/file`,
+    mimeType: proof.mimeType,
+    note: proof.note ?? undefined,
+    uploadedAt: proof.uploadedAt.toISOString(),
+  };
+}
+
 export interface PaymentReviewResponse {
   readonly id: string;
   readonly paymentId: string;
@@ -132,10 +148,14 @@ export function toPaymentResponse(
 
   return {
     id: payment.id,
-    organizationId: payment.organizationId,
-    // Never null for a P12-created row (Course Commerce, the only future
-    // caller that would leave this unset, is out of this phase's scope —
-    // see `payments.checkoutId`'s own schema doc comment).
+    // Never null for an Atlas-subscription-billing row — `organizationId`
+    // only became nullable in P13 to make room for Course Commerce's
+    // `payerUserId`/`payeeAcademyId` pair on the SAME table (§5.7's
+    // extension point); a course-order Payment is never routed through
+    // this function (it has its own `toCourseOrderPaymentResponse`, P13),
+    // so this fallback is defensive only, matching `checkoutId`'s own
+    // identical, pre-existing precedent immediately below.
+    organizationId: payment.organizationId ?? '',
     checkoutId: payment.checkoutId ?? '',
     methodKey: payment.methodKey,
     methodType: payment.methodType,
@@ -147,7 +167,7 @@ export function toPaymentResponse(
     status: payment.status,
     reviewStatus: payment.reviewStatus,
     proof: latestProof
-      ? toPaymentProofResponse(latestProof, payment.organizationId)
+      ? toPaymentProofResponse(latestProof, payment.organizationId ?? '')
       : undefined,
     attempts: (payment.attempts ?? [])
       .slice()

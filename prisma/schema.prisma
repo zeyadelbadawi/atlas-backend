@@ -106,6 +106,11 @@ model User {
   organizationCommissionSettingsUpdates         OrganizationCommissionSettings[]         @relation("OrganizationCommissionSettingsUpdatedBy")
   atlasCommissionConfigUpdates                  AtlasCommissionConfig[]                  @relation("AtlasCommissionConfigUpdatedBy")
   atlasSubscriptionPaymentProviderConfigUpdates AtlasSubscriptionPaymentProviderConfig[] @relation("AtlasSubscriptionPaymentProviderConfigUpdatedBy")
+  /// Phase P13 — Course Commerce (master plan §23).
+  courseOrders                                  CourseOrder[]
+  courseOrderPayments                           Payment[]                                @relation("PaymentPayer")
+  courseOrderRefundRequests                     CourseOrderRefund[]
+  planCommissionSettingsUpdates                 PlanCommissionSettings[]                 @relation("PlanCommissionSettingsUpdatedBy")
 
   @@index([status])
   @@map("users")
@@ -195,6 +200,7 @@ model Organization {
   gatewayCredential  OrganizationGatewayCredential?
   connectedAccount   OrganizationConnectedAccount?
   commissionSettings OrganizationCommissionSettings?
+  CourseOrder        CourseOrder[]
 
   @@index([status])
   @@map("organizations")
@@ -306,6 +312,11 @@ model Academy {
   websiteTestimonials  WebsiteTestimonialEntry[]
   subdomainAllocation  SubdomainAllocation?
   domainConnection     DomainConnection?
+  /// Phase P13 — Course Commerce (master plan §23/§5.8).
+  courseOrderPayments  Payment[]
+  courseOrders         CourseOrder[]
+  revenueLedgerEntries RevenueLedgerEntry[]
+  payouts              AcademyPayout[]
 
   @@index([organizationId, status])
   @@map("academies")
@@ -398,7 +409,11 @@ model Plan {
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  subscriptions TenantSubscription[]
+  subscriptions      TenantSubscription[]
+  /// Phase P13 — Course Commerce (master plan §4.2's user-directed
+  /// plan-tier commission extension). Optional 1:1 — see
+  /// `PlanCommissionSettings`'s own doc comment.
+  commissionSettings PlanCommissionSettings?
 
   @@index([status, displayOrder])
   @@map("plans")
@@ -653,6 +668,8 @@ model Course {
   assignments   Assignment[]
   announcements Announcement[]
   forum         Forum?
+  /// Phase P13 — Course Commerce (master plan §23).
+  orders        CourseOrder[]
 
   @@unique([academyId, slug])
   @@index([academyId, status, visibility])
@@ -1884,40 +1901,76 @@ model Checkout {
 }
 
 /// Mirrors `Payment` (`payment.types.ts`) — the provider-agnostic core, one
-/// shape for manual and gateway payments. `checkoutId` nullable and
-/// `organizationId` required/non-null — the exact §5.7 "extension point for
-/// §23" shape, left unmodified by this phase (Course Commerce is P13's job).
+/// shape for manual and gateway payments. Originally `organizationId`
+/// required/non-null (P12) — Phase P13 (master plan §5.7's own documented
+/// "Extension point for §23") makes it nullable and adds `payerUserId`/
+/// `payeeAcademyId` (Course Commerce's buyer/seller pair) plus the §4.2
+/// commission-snapshot columns, so ONE table continues to serve both money
+/// flows (ADR-010) rather than a parallel `course_payments` table. A
+/// database `CHECK` constraint (see this phase's migration.sql — Prisma's
+/// schema language has no CHECK-constraint syntax) enforces exactly one of
+/// `(organizationId)` or `(payerUserId, payeeAcademyId)` is populated per
+/// row, keeping the two flows structurally distinguishable even though
+/// they share a table, matching §5.7's own instruction verbatim.
 model Payment {
-  id                String                 @id @default(uuid())
-  checkoutId        String?                @map("checkout_id")
-  checkout          Checkout?              @relation(fields: [checkoutId], references: [id])
-  organizationId    String                 @map("organization_id")
-  organization      Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  methodKey         String                 @map("method_key")
-  methodType        PaymentMethodType      @map("method_type")
-  provider          String
-  amountMinorUnits  BigInt                 @map("amount_minor_units")
-  currency          String                 @map("currency")
-  status            PaymentLifecycleStatus @default(created)
-  reviewStatus      ManualReviewStatus     @default(not_required) @map("review_status")
-  failureReason     String?                @map("failure_reason")
+  id                                String                 @id @default(uuid())
+  checkoutId                        String?                @map("checkout_id")
+  checkout                          Checkout?              @relation(fields: [checkoutId], references: [id])
+  /// Atlas-subscription-billing flow only (P12) — null for a Course
+  /// Commerce (P13) row, which uses `payerUserId`/`payeeAcademyId` instead.
+  organizationId                    String?                @map("organization_id")
+  organization                      Organization?          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Course Commerce (P13) only — the student who owes this Payment.
+  payerUserId                       String?                @map("payer_user_id")
+  payer                             User?                  @relation("PaymentPayer", fields: [payerUserId], references: [id])
+  /// Course Commerce (P13) only — the Academy this Payment is ultimately for (never a raw banking destination, just the revenue-attribution key `revenue_ledger_entries` also uses).
+  payeeAcademyId                    String?                @map("payee_academy_id")
+  payeeAcademy                      Academy?               @relation(fields: [payeeAcademyId], references: [id])
+  /// Course Commerce (P13) only — the CourseOrder this Payment is an attempt toward. Nullable/one-to-many, mirroring `checkoutId`'s own "a Checkout may see more than one Payment attempt" shape.
+  courseOrderId                     String?                @map("course_order_id")
+  courseOrder                       CourseOrder?           @relation(fields: [courseOrderId], references: [id])
+  methodKey                         String                 @map("method_key")
+  methodType                        PaymentMethodType      @map("method_type")
+  provider                          String
+  amountMinorUnits                  BigInt                 @map("amount_minor_units")
+  currency                          String                 @map("currency")
+  status                            PaymentLifecycleStatus @default(created)
+  reviewStatus                      ManualReviewStatus     @default(not_required) @map("review_status")
+  failureReason                     String?                @map("failure_reason")
   /// The latest manual review's notes, denormalized here for `Payment.reviewNotes` (frontend doc comment: "the Tenant needs to see why a rejection happened without a second fetch").
-  reviewNotes       String?                @map("review_notes")
+  reviewNotes                       String?                @map("review_notes")
   /// Mirrors `PaymentNextAction` — a discriminated union, validated server-side, not schema-enforced.
-  nextAction        Json?                  @map("next_action")
-  providerReference String?                @map("provider_reference")
-  expiresAt         DateTime?              @map("expires_at")
-  createdAt         DateTime               @default(now()) @map("created_at")
-  updatedAt         DateTime               @updatedAt @map("updated_at")
+  nextAction                        Json?                  @map("next_action")
+  providerReference                 String?                @map("provider_reference")
+  expiresAt                         DateTime?              @map("expires_at")
+  /// §4.1 snapshot — which payment-collection mode was effective for the
+  /// Organization at the moment this Payment was created. Null for P12
+  /// Atlas-subscription-billing rows (that flow predates and is outside
+  /// the §4.1 mode concept entirely). Frozen, never recomputed (§4.2's
+  /// "freeze at creation" discipline).
+  paymentCollectionModeSnapshot     PaymentCollectionMode? @map("payment_collection_mode_snapshot")
+  /// §4.2 snapshot — the effective Atlas commission rate resolved at
+  /// creation time. Null when no commission applies (Organization-Owned
+  /// Gateway mode, or a non-course-order Payment) — never a stray `0` used
+  /// to mean two different things.
+  commissionRateBasisPointsSnapshot Int?                   @map("commission_rate_basis_points_snapshot")
+  /// §4.2 snapshot — `applyBasisPoints(amountMinorUnits, commissionRateBasisPointsSnapshot)`, computed once and frozen alongside the rate it came from.
+  commissionAmountMinorUnits        BigInt?                @map("commission_amount_minor_units")
+  createdAt                         DateTime               @default(now()) @map("created_at")
+  updatedAt                         DateTime               @updatedAt @map("updated_at")
 
-  attempts      PaymentAttempt[]
-  proofs        PaymentProof[]
-  reviews       PaymentReview[]
-  invoices      TenantInvoice[]
-  webhookEvents PaymentWebhookEvent[]
+  attempts           PaymentAttempt[]
+  proofs             PaymentProof[]
+  reviews            PaymentReview[]
+  invoices           TenantInvoice[]
+  webhookEvents      PaymentWebhookEvent[]
+  refunds            CourseOrderRefund[]
+  RevenueLedgerEntry RevenueLedgerEntry[]
 
   @@index([organizationId])
   @@index([checkoutId])
+  @@index([payerUserId])
+  @@index([courseOrderId])
   @@map("payments")
 }
 
@@ -2234,4 +2287,312 @@ model AtlasSubscriptionPaymentProviderConfig {
   updatedAt       DateTime                               @updatedAt @map("updated_at")
 
   @@map("atlas_subscription_payment_provider_config")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P13 — Course Pricing, Purchase & Payouts (master plan §5.8/§23,
+// §21 Phase P13; product decisions §4.1/§4.2 finalized 2026-08-26, and the
+// P13-scoping decisions this implementation session resolved: full-refund-
+// only within a 30-day window, a third plan-tier commission level between
+// the Organization override and the platform default, and Atlas Payments
+// mode implemented today through the SAME `ManualTransferProvider`
+// Atlas-subscription-billing already uses — no second payment engine).
+//
+// `PlanCommissionSettings` — the plan-tier level of §4.2's commission
+// hierarchy, extended per this session's product direction: "Organization
+// override → Plan commission → Platform default", never a silent
+// four-state ambiguity. Platform-owned catalog-adjacent configuration
+// (mirrors `AtlasCommissionConfig`'s "no RLS, Platform-Owner-write-gated
+// at the application/controller layer" shape) — deliberately its own
+// table, not a column on `Plan` itself, so `Plan`'s own response contract
+// (mirroring the frontend's `Plan` type field-for-field) never
+// accidentally grows a field the frontend has no contract for. Row
+// ABSENCE means "no plan-tier override configured" — the same
+// null-means-unconfigured convention `AtlasCommissionConfig`/
+// `OrganizationCommissionSettings` already established, extended to a
+// third tier rather than inventing a new pattern.
+//
+// `CourseOrder` — the course-purchase analog of `checkouts` (§5.8's own
+// documented reason: "the scoping dimension is different (`student_id` +
+// `course_id`, not `organization_id`)"). User-scoped like `enrollments`
+// (P6) — a student is never an `organization_memberships` row of the
+// Academy/Organization selling the course — reusing
+// `TenancyContextService.runInUserContext`/`runInTenantAndUserContext`
+// exactly as P6/P12's `PlatformPaymentService` already do, never a new
+// tenancy mechanism. `organizationId`/`academyId` are both denormalized
+// from the purchased Course at order-creation time (the exact
+// `Enrollment.academyId`/`CourseLesson.courseId` "no join on the hot path"
+// convention this schema has used since P5/P6), used here specifically so
+// the commission/ledger/RLS machinery below can resolve an Organization's
+// payment-collection mode and effective commission without a join back
+// through `courses → academies → organizations` on every write.
+//
+// `Payment` (P12, extended above) — `payerUserId`/`payeeAcademyId`/
+// `courseOrderId` plus the three commission-snapshot columns are this
+// phase's own extension of §5.7's documented extension point. A
+// `CHECK` constraint (migration.sql; Prisma's schema language has no
+// CHECK syntax) enforces exactly one of `(organizationId)` or
+// `(payerUserId, payeeAcademyId)` populated per row.
+//
+// `RevenueLedgerEntry` — append-only, NEVER updated in place (master plan
+// §5.8: "a refund is a new negative-amount entry referencing the original,
+// not a mutation of it"). Only ever inserted inside the SAME atomic
+// transaction as the Payment/CourseOrder/Enrollment state change it
+// records (master plan §10's transaction rule) — see
+// `CourseOrderPaymentApplicationService`/`CourseOrderRefundsService`.
+// Signed `amountMinorUnits`: a `sale` entry is the full price (+), a
+// `platform_fee` entry is the commission taken out (-), so
+// `SUM(amount_minor_units)` per Academy directly yields what that Academy
+// is actually owed — no separate "gross vs. net" computation needed
+// anywhere else in this codebase. A `refund`/`commission_reversal` pair
+// exactly reverses a prior `sale`/`platform_fee` pair (§4.2's proportional-
+// reversal rule; full refunds only in this phase, so the reversal is
+// always exact, never fractional). Populated ONLY for Organizations in
+// Atlas Payments mode — Organization-Owned Gateway transactions insert no
+// ledger row at all, the concrete enforcement of "Atlas must not create an
+// Atlas commission liability from a transaction it was never a party to."
+//
+// `AcademyPayout`/`AcademyPayoutItem` — mirrors §5.8 exactly. Computed and
+// recorded by `PlatformAcademyPayoutsService` in this phase (a
+// Platform-Owner-triggered computation/recording action, matching §4's
+// own recommendation — "payout is a manually-triggered or simply-
+// scheduled batch job against a ledger" — for the interim Model-A bridge);
+// a scheduled/automated payout-execution worker remains explicitly future
+// scope (§12's `payout-worker` row), not built here.
+//
+// `CourseOrderRefund` — the explicit refund-lifecycle row this session's
+// product direction requires ("the refund lifecycle must be represented
+// explicitly in the data model"). `refundType`/`status` are real enum
+// columns carrying values beyond what this phase ever produces
+// (`refundType` stays `full` only; `status` stays `succeeded` only, since
+// every refund in this phase is synchronous and buyer-initiated with no
+// async gateway leg) — deliberately structured so a future partial-refund
+// or async-gateway-refund capability is an ADDITIVE enum value plus a
+// relaxed uniqueness rule, never a redesign of this table's shape or the
+// ledger convention above. `courseOrderId` is `@unique` — a real database
+// constraint making a second refund on the same order structurally
+// impossible, not merely an application-layer check (matching this
+// session's explicit "duplicate refunds impossible" requirement).
+//
+// RLS (migration.sql) reuses every session-variable mechanism already
+// established — `app.current_organization_id` (P2), `app.current_user_id`
+// (P6), `is_platform_owner()` (P12) — and introduces exactly one function
+// change: `resolve_payment_organization` (P12) is updated (`CREATE OR
+// REPLACE`, additive) to also resolve a course-order Payment's
+// organization transitively through `course_orders.organization_id` when
+// `payments.organization_id` is null, so the existing webhook
+// infrastructure stays correct for a future course-order-capable gateway
+// even though this phase's own real Atlas Payments flow (manual transfer +
+// Platform Owner review) never exercises that path. No other new
+// `SECURITY DEFINER` function is introduced.
+// ---------------------------------------------------------------------------
+
+/// The plan-tier level of §4.2's now-three-tier commission hierarchy
+/// (`Organization override → Plan commission → Platform default`). See
+/// this section's header comment for why this is its own table rather
+/// than a column on `Plan`.
+model PlanCommissionSettings {
+  planId                String   @id @map("plan_id")
+  plan                  Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+  /// Basis points (0–10000) — never a float, matching every other
+  /// commission field in this schema. Required on this table (row absence
+  /// IS the "not configured" state — see header comment — so once a row
+  /// exists, it always carries a real value, never a second null-as-
+  /// unconfigured signal nested inside an already-optional row).
+  commissionBasisPoints Int      @map("commission_basis_points")
+  updatedBy             String?  @map("updated_by")
+  updatedByUser         User?    @relation("PlanCommissionSettingsUpdatedBy", fields: [updatedBy], references: [id])
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("plan_commission_settings")
+}
+
+/// Matches this session's finalized §4.1-consistent three-value shape —
+/// `unconfigured` is impossible here by construction (a `CourseOrder`/
+/// `Payment` is never created for an `unconfigured` Organization at all,
+/// per §4.1's "must refuse to proceed" rule, enforced in
+/// `CourseOrdersService`/`CourseOrderPaymentsService`) — but the column
+/// still uses the SAME `PaymentCollectionMode` enum as
+/// `organization_payment_settings`, never a narrower duplicate enum, so a
+/// snapshot value is always a real, valid mode by the type system itself.
+enum CourseOrderStatus {
+  draft
+  pending_payment
+  paid
+  expired
+  cancelled
+  refunded
+
+  @@map("course_order_status")
+}
+
+/// The course-purchase analog of `Checkout` — see this section's header
+/// comment.
+model CourseOrder {
+  id             String            @id @default(uuid())
+  studentId      String            @map("student_id")
+  student        User              @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  courseId       String            @map("course_id")
+  course         Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  /// Denormalized from `course.academyId` at order-creation time.
+  academyId      String            @map("academy_id")
+  academy        Academy           @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  /// Denormalized from `academy.organizationId` at order-creation time —
+  /// see header comment for why this table needs it directly.
+  organizationId String            @map("organization_id")
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Frozen `{course: {id, title}, price: {amountMinorUnits, currency}}` —
+  /// written once, never recomputed from the live Course afterward (the
+  /// exact `CheckoutSnapshot` discipline, master plan §5.7/§23).
+  snapshot       Json
+  status         CourseOrderStatus @default(draft)
+  expiresAt      DateTime          @map("expires_at")
+  idempotencyKey String            @map("idempotency_key")
+  paidAt         DateTime?         @map("paid_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  payments      Payment[]
+  refund        CourseOrderRefund?
+  ledgerEntries RevenueLedgerEntry[]
+
+  @@unique([studentId, idempotencyKey])
+  @@index([studentId, status])
+  @@index([courseId])
+  @@index([academyId])
+  @@map("course_orders")
+}
+
+/// See this section's header comment for the full sign/reversal
+/// convention. `payout` is reserved for a future
+/// `payout-worker`-authored entry type (master plan §5.8's own enum
+/// list) — not produced by this phase's payout computation, which reads
+/// `sale`/`platform_fee`/`refund`/`commission_reversal` rows directly
+/// rather than writing a new ledger row for the payout itself (the
+/// `AcademyPayoutItem` join is what marks a set of entries "settled";
+/// see that model's own doc comment).
+enum RevenueLedgerEntryType {
+  sale
+  platform_fee
+  refund
+  commission_reversal
+  payout
+
+  @@map("revenue_ledger_entry_type")
+}
+
+/// Append-only — see this section's header comment. No UPDATE/DELETE RLS
+/// policy exists on this table at all (migration.sql), the same
+/// "structurally impossible to mutate, not just discouraged" discipline
+/// `payment_reviews`/`payment_webhook_events` already established in P12.
+model RevenueLedgerEntry {
+  id               String                 @id @default(uuid())
+  academyId        String                 @map("academy_id")
+  academy          Academy                @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  courseOrderId    String                 @map("course_order_id")
+  courseOrder      CourseOrder            @relation(fields: [courseOrderId], references: [id], onDelete: Cascade)
+  paymentId        String?                @map("payment_id")
+  payment          Payment?               @relation(fields: [paymentId], references: [id])
+  entryType        RevenueLedgerEntryType @map("entry_type")
+  /// Signed — see header comment for the sign convention per `entryType`.
+  amountMinorUnits BigInt                 @map("amount_minor_units")
+  currency         String
+  occurredAt       DateTime               @default(now()) @map("occurred_at")
+
+  payoutItems AcademyPayoutItem[]
+
+  @@index([academyId, occurredAt])
+  @@index([courseOrderId])
+  @@map("revenue_ledger_entries")
+}
+
+enum AcademyPayoutStatus {
+  pending
+  processing
+  paid
+  failed
+
+  @@map("academy_payout_status")
+}
+
+/// Mirrors master plan §5.8 exactly. `providerReference` stays null under
+/// every payout this phase creates (Model-A manual bridge, §4's own
+/// recommendation) — populated only once a real Connect-style payout
+/// integration exists.
+model AcademyPayout {
+  id                String              @id @default(uuid())
+  academyId         String              @map("academy_id")
+  academy           Academy             @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  status            AcademyPayoutStatus @default(pending)
+  amountMinorUnits  BigInt              @map("amount_minor_units")
+  currency          String
+  periodStart       DateTime            @map("period_start")
+  periodEnd         DateTime            @map("period_end")
+  paidAt            DateTime?           @map("paid_at")
+  providerReference String?             @map("provider_reference")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  items AcademyPayoutItem[]
+
+  @@index([academyId, status])
+  @@map("academy_payouts")
+}
+
+/// Line-item detail linking a payout back to the ledger entries it
+/// settles (master plan §5.8) — the presence of a row here is what marks a
+/// `RevenueLedgerEntry` "already paid out," so payout computation never
+/// double-counts an entry into two payouts.
+model AcademyPayoutItem {
+  id                   String             @id @default(uuid())
+  payoutId             String             @map("payout_id")
+  payout               AcademyPayout      @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  revenueLedgerEntryId String             @map("revenue_ledger_entry_id")
+  revenueLedgerEntry   RevenueLedgerEntry @relation(fields: [revenueLedgerEntryId], references: [id])
+  createdAt            DateTime           @default(now()) @map("created_at")
+
+  @@unique([revenueLedgerEntryId])
+  @@index([payoutId])
+  @@map("academy_payout_items")
+}
+
+/// Structurally ready for extension, not built out — see this section's
+/// header comment. Only `full`/`succeeded` are ever produced by this
+/// phase's own service.
+enum CourseOrderRefundType {
+  full
+
+  @@map("course_order_refund_type")
+}
+
+enum CourseOrderRefundStatus {
+  pending
+  succeeded
+  failed
+
+  @@map("course_order_refund_status")
+}
+
+/// The explicit refund-lifecycle row — see this section's header comment.
+/// `courseOrderId @unique` is the real database-level "duplicate refunds
+/// impossible" guarantee.
+model CourseOrderRefund {
+  id               String                  @id @default(uuid())
+  courseOrderId    String                  @unique @map("course_order_id")
+  courseOrder      CourseOrder             @relation(fields: [courseOrderId], references: [id], onDelete: Cascade)
+  paymentId        String                  @map("payment_id")
+  payment          Payment                 @relation(fields: [paymentId], references: [id])
+  refundType       CourseOrderRefundType   @default(full) @map("refund_type")
+  status           CourseOrderRefundStatus @default(succeeded)
+  amountMinorUnits BigInt                  @map("amount_minor_units")
+  currency         String
+  reason           String?
+  requestedBy      String                  @map("requested_by")
+  requester        User                    @relation(fields: [requestedBy], references: [id])
+  idempotencyKey   String                  @map("idempotency_key")
+  requestedAt      DateTime                @default(now()) @map("requested_at")
+  processedAt      DateTime?               @map("processed_at")
+
+  @@map("course_order_refunds")
 }

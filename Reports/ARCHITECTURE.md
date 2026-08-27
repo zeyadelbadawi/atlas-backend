@@ -1213,3 +1213,219 @@ the reviewer's own `organization_memberships` under `runInUserContext`)
 `PlatformOwnerGuard` (role-level, reused verbatim) remains the only
 server-side authorization gate on the platform-review routes themselves,
 matching every prior Platform Owner route in this codebase.
+
+## P13 — Course Pricing, Purchase & Payouts (2026-08-27)
+
+Backend Prompt 14 (master plan §21 Phase P13, §23). The one phase master
+plan §21 itself flags as having no frontend contract to mirror
+("genuinely new scope") — `atlas-front` has a `CoursePricing` display
+field and nothing else (no `CourseOrder` type, no purchase hook, no
+course-checkout service anywhere in the frontend repository, confirmed by
+grep before writing a line of backend code). Every endpoint/DTO shape in
+this phase is therefore designed directly from master plan §23's
+lifecycle diagram and this session's five resolved product decisions
+(`Reports/P13_PRODUCT_DECISIONS.md`), not mirrored from an existing
+frontend file — the one legitimate exception to this repository's usual
+"frontend is the contract" rule, and itself dictated by that same rule
+(§0's golden rule: invent only where the repository is genuinely silent).
+
+### A new module, not a modification of BillingModule or LearningModule
+
+`CourseCommerceModule` is its own module, importing both `BillingModule`
+(now exporting `PaymentsRepository`/`PaymentAttemptsRepository`/
+`PaymentProofsRepository`/`PaymentReviewsRepository`/
+`PaymentMethodsRepository`/`PaymentProofStorageService`/
+`PaymentProviderRegistry`/`CommissionService`/
+`OrganizationPaymentSettingsService`/`OrganizationGatewayCredentialsRepository`
+— an additive `exports` array this phase adds, nothing else changes) and
+`LearningModule` (now exporting `EnrollmentsService`/`EnrollmentsRepository`).
+Considered and rejected: extending `PaymentApplicationService` (P12) with
+a course-order branch. Rejected because Course Commerce genuinely needs
+providers from BOTH `BillingModule` and `LearningModule`/`CourseModule`,
+and `BillingModule` importing `LearningModule` (or the reverse) to reach
+across would be exactly the module-DAG cycle every prior phase's module
+doc comment explicitly avoids. `CourseOrderPaymentApplicationService`
+(new) is the Course Commerce twin of `PaymentApplicationService` —
+independently satisfying the same "ONE place a Payment's success is
+applied" rule for its own money flow, per ADR-010's own "two distinct
+money flows sharing one provider-agnostic adapter and one extended
+`payments` table" design: shared table and shared `PaymentProviderAdapter`/
+`PaymentProviderRegistry`, never a shared or duplicated application
+service.
+
+### `payments` becomes genuinely bimodal — a real CHECK constraint enforces it
+
+§5.7's own documented extension point: `organizationId` is now nullable;
+`payerUserId`/`payeeAcademyId`/`courseOrderId` and the §4.2 commission
+snapshot (`paymentCollectionModeSnapshot`/
+`commissionRateBasisPointsSnapshot`/`commissionAmountMinorUnits`) are
+new, all nullable. A hand-written `CHECK` constraint
+(`payments_org_xor_course_order_payer_chk`) enforces exactly one of
+`(organizationId)` or `(payerUserId AND payeeAcademyId)` populated per
+row — never both, never neither — at the database level, not merely by
+service-layer discipline. `PaymentsRepository.findManyAnyOrganization`
+(the flat P12 `/payments` Platform review surface) gained a
+`checkoutId IS NOT NULL` filter (a no-op against every existing P12 row,
+which always has one) so the two review queues — `/payments` and the new
+`/platform-course-order-payments` — never bleed into each other; a
+`findManyAnyOrganizationCourseOrders` sibling method covers the new
+surface. `PlatformPaymentService.getPayment`/`loadReviewablePayment`
+gained an explicit `organizationId == null` rejection for the identical
+reason — a course-order Payment id must 404 on the org-billing review
+endpoint, not silently succeed.
+
+### Commission hierarchy extended from two tiers to three
+
+§4.2 originally specified "Organization override → global default." This
+session's product direction adds a middle tier: "Organization override →
+Plan-tier commission → Platform default," resolved by one pure function
+(`resolveEffectiveCommission`, extended in place — not duplicated —
+with a new `planCommissionBasisPoints` parameter and a `'plan'` result
+source) and one new platform-owned, no-RLS table
+(`plan_commission_settings`, mirroring `atlas_commission_config`'s exact
+shape: row absence = "not configured," never a second null-as-unconfigured
+signal). Exposed for write via two new `PlatformCommissionController`
+routes (`GET`/`PATCH /platform-commission/plans/:planKey`), reusing the
+existing controller/guard/DTO conventions verbatim. The actual commission
+percentage remains deliberately unset everywhere in code/seed data,
+exactly as before this phase — only the resolution *mechanism* gained a
+tier.
+
+### The real, tested Atlas Payments flow: manual transfer + Platform review, not a new payment engine
+
+Course purchase reuses `ManualTransferProvider`/the `payment_methods`
+catalog verbatim — the same adapter P12 Atlas-subscription billing
+already uses. `CourseOrderPaymentsService.createPayment` resolves the
+provider from the Organization's `payment_collection_mode` (§4.1) rather
+than a client-chosen value: `unconfigured` → refused outright (checked
+once at order creation, `CourseOrdersService.createOrder`, and again at
+payment creation as defense-in-depth); `atlas_payments` → resolves
+through the shared catalog, then calls
+`CommissionService.resolveEffectiveCommissionForOrganization` (new,
+public method — the one place a course-order Payment's commission is
+resolved, exactly once, and frozen onto the row) and refuses with `409
+errors.courseOrder.commissionNotConfigured` if no rate resolves, never a
+silent 0%; `organization_gateway` → resolves the Organization's own
+gateway credential, and — since no real gateway adapter is registered
+anywhere in this codebase, unchanged by this phase — genuinely, honestly
+fails with `409 errors.courseOrder.gatewayNotConfigured` today. No Atlas
+commission is ever computed for that path; no ledger row is ever written
+for it — Atlas is structurally never a party to that money flow, not
+merely policy-excluded from it.
+
+`PlatformCourseOrderPaymentsService` (approve/reject) is the ONLY real,
+connected trigger for `CourseOrderPaymentApplicationService.
+applySuccessfulPayment` in this phase (`ManualTransferProvider` has no
+online success webhook) — a Platform Owner reviewing an uploaded proof,
+exactly mirroring `PlatformPaymentService.approvePayment`'s P12 shape,
+self-review guard included (adapted: a course-order Payment has no
+`organizationId` to check directly, so the guard resolves the owning
+Organization through the Payment's `CourseOrder.organizationId`).
+
+### The RLS bug hunt: three distinct, genuinely new failure shapes, found by direct empirical reproduction
+
+This phase needed Postgres RLS to authorize actors and money flows no
+prior phase combined in one atomic transaction, and surfaced three real
+bugs — none caught by typecheck/lint/unit tests, all found by actually
+running the e2e suite against the real database and reading the raw
+Postgres error, then reproducing each in isolation with a minimal Node
+script before writing the fix:
+
+1. **Prisma's nested `connect` performs its own RLS-gated pre-flight
+   SELECT.** A buying student is never an Academy/Organization member —
+   `CourseOrdersRepository.create`'s original `academy: {connect:{id}}}`/
+   `organization: {connect:{id}}}` failed with "No 'Academy' record(s)...
+   found" even though the row existed, because Prisma's relational
+   `CreateInput` resolves nested connects via a SELECT under the CALLER's
+   own session context before the INSERT. Fixed by switching to
+   `UncheckedCreateInput` (plain scalar `academyId`/`organizationId`/etc.)
+   everywhere a Platform Owner or a non-member student writes a row with
+   a foreign key into a table they cannot themselves SELECT — the real
+   Postgres foreign-key CONSTRAINT (which, per Postgres's own documented
+   semantics, always bypasses row security to preserve referential
+   integrity) remains the actual validation, just without Prisma's own
+   redundant, RLS-visible pre-check. Applied to
+   `CourseOrdersRepository.create`, a new
+   `PaymentsRepository.createCourseOrderPayment` (sibling to the existing
+   `create`, which stays untouched for P12), and
+   `AcademyPayoutsRepository.create`.
+
+2. **The reviewing actor's identity, not the buyer's, must be the active
+   `app.current_user_id` for a Platform-Owner-triggered transaction.**
+   `payment_reviews`'s existing P12 RLS policy requires `reviewed_by =
+   app.current_user_id`, so `PlatformCourseOrderPaymentsService.
+   approvePayment`/`rejectPayment` must run its whole atomic transaction
+   under the REVIEWER's id (`runInTenantAndUserContext(courseOrder.
+   organizationId, reviewerId, ...)`, matching `PlatformPaymentService.
+   approvePayment`'s P12 precedent exactly) — never the buyer's, an
+   initial design mistake caught by this exact test failure. Doing so
+   correctly means the Enrollment/CourseOrder/progress writes
+   `CourseOrderPaymentApplicationService` performs inside that same
+   transaction are no longer covered by the buyer's own self-scoped RLS
+   policies (`enrollments_self_insert`, `course_orders_buyer_update`,
+   etc.) — three small additive migrations
+   (`p13_1_course_commerce_rls_fixes`, `p13_2_enrollments_platform_select`,
+   `p13_3_progress_platform_insert`) add narrow, real
+   `is_platform_owner()`-gated INSERT/UPDATE policies to `course_orders`/
+   `enrollments`/`course_progress`/`lesson_progress`, and payer-scoped
+   (`payer_user_id = app.current_user_id`) SELECT/INSERT policies to
+   `payment_attempts`/`payment_proofs` (written by the BUYER under their
+   own context, which never had a payer-scoped path before — only the
+   org-scoped P12 policy, structurally unsatisfiable for a course-order
+   row whose `organization_id` is null) — mirroring
+   `payments_platform_review_update`'s exact "narrow, audited, real write
+   path" pattern every time, never a blanket bypass.
+
+3. **PostgreSQL RLS also checks SELECT policies against a write's
+   `RETURNING` clause — and Prisma's `create()`/`update()` always
+   generates one.** The genuinely non-obvious one: after fix #2,
+   `course_progress`/`lesson_progress` INSERTs still failed with the
+   IDENTICAL "new row violates row-level security policy" error even
+   though their new `is_platform_owner()` INSERT policies were
+   confirmed correct by direct SQL testing. Root-caused by comparing
+   Prisma's actual generated SQL (via query-event logging) against a
+   manually-run equivalent: the only structural difference was Prisma's
+   `RETURNING` clause, and Postgres's documented row-security behavior is
+   that a `RETURNING` clause is ALSO filtered by the table's SELECT
+   policies — an INSERT can succeed and still be rejected as "violates
+   row-level security policy" if nothing permits reading the row back.
+   Every other P13 write path already had a matching SELECT policy for
+   whichever context performs its write; `course_progress`/
+   `lesson_progress` were the one gap, fixed by a fourth additive
+   migration (`p13_4_progress_platform_select_for_returning`) adding the
+   missing `is_platform_owner()` SELECT policies. Documented here at
+   length because it is a real, reusable lesson for any future phase
+   combining Prisma's ORM write path with `FORCE ROW LEVEL SECURITY`: a
+   write policy alone is not sufficient if the ORM's write also reads the
+   row back.
+
+### Refund — buyer-initiated, self-service, synchronous, and structurally distinct from review
+
+This session's product direction ("customer-friendly," no manual-review
+gate) meant `CourseOrderRefundsService.requestRefund` needed no
+reviewer-identity complication at all — it runs the entire eligibility-
+check-and-write transaction under `runInTenantAndUserContext(order.
+organizationId, studentId, ...)`, the student's OWN id, which already
+satisfies every existing self-scoped policy (`enrollments_self_update`,
+`course_order_refunds_buyer_insert`) with no new RLS policy required for
+this specific flow — a direct, informative contrast with the
+review-approval flow's RLS needs immediately above. Idempotency is a real
+database constraint (`course_order_refunds.course_order_id @unique`), not
+merely an application-level check, checked-then-caught exactly like
+`CheckoutService.createCheckout`'s established P2002-race-safe pattern.
+
+### Payout — computation and recording, not automation
+
+`PlatformAcademyPayoutsService.createPayout` (Platform-Owner-triggered)
+sums every unsettled `revenue_ledger_entries` row for one Academy/period,
+grouped by currency, creates one `AcademyPayout` row per currency with a
+genuinely positive balance (skipping currencies that net to zero or
+negative — never a fabricated zero-amount payout), and links every
+settled entry via `AcademyPayoutItem` inside one transaction — an entry
+can never be double-counted into two payouts, since "already settled" is
+defined as "has an `AcademyPayoutItem`," checked directly in the
+unsettled-entries query. Matches master plan §4's own recommendation for
+the Model-A interim bridge ("payout is a manually-triggered or
+simply-scheduled batch job against a ledger") — a real scheduled/
+automated execution worker remains explicit future scope (§12's
+`payout-worker` row), not built here.

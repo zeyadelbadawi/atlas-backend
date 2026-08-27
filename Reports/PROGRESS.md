@@ -2514,9 +2514,185 @@ new permission entity or role invented. `PlatformOwnerGuard`/
 `OrganizationMembershipGuard` reused verbatim, unmodified, in every
 guard usage this phase adds.
 
+## P13 — Course Pricing, Purchase & Payouts (2026-08-27) — COMPLETE, VERIFIED
+
+Backend Prompt 14 (master plan §21 Phase P13, §23). Explicitly authorized
+by the product owner on 2026-08-27, with all five previously-blocking
+product decisions resolved in that same authorization (full refund
+within 30 days, partial refunds deferred but not designed-out, a
+three-tier commission hierarchy with the actual percentage still
+deliberately unset, Atlas Payments mode reusing `ManualTransferProvider`,
+tax/VAT still out of scope) — see `Reports/P13_PRODUCT_DECISIONS.md`'s
+own 2026-08-27 resolution addenda for the full record, and
+`Reports/ARCHITECTURE.md`'s P13 entry for the complete technical account.
+
+### What was built
+
+- **Schema (3 new enums-worth of tables, one extended):**
+  `course_orders`, `revenue_ledger_entries`, `academy_payouts`,
+  `academy_payout_items`, `course_order_refunds`,
+  `plan_commission_settings` — six new tables — plus `payments` extended
+  with nullable `payerUserId`/`payeeAcademyId`/`courseOrderId` and the
+  §4.2 commission-snapshot columns, `organizationId` now nullable, and a
+  real `CHECK` constraint enforcing the two money flows stay structurally
+  distinguishable on the shared table (ADR-010).
+- **Six migrations**, all additive, none touching a prior phase's table
+  shape: `p13_course_pricing_purchase_payouts` (the schema itself),
+  `p13_1_course_commerce_rls_fixes`, `p13_2_enrollments_platform_select`,
+  `p13_3_progress_platform_insert`,
+  `p13_4_progress_platform_select_for_returning` (the RLS-policy fixes —
+  see `Reports/ARCHITECTURE.md`'s own detailed account of what each
+  found and why). Existing seeded dev data (3,332 users / 2,398
+  organizations / 1,502 academies / 595 courses / 228 payments at the
+  time of the first P13 migration) verified intact before and after —
+  no `migrate reset`, no destructive statement, anywhere in this phase.
+- **A new module**, `CourseCommerceModule` — 6 controllers, 8 services, 5
+  repositories — importing `BillingModule` and `LearningModule` (both
+  gained a small, additive `exports` array for this) rather than
+  modifying either.
+- **Commission hierarchy extended** from two tiers (§4.2 original:
+  Organization override → global default) to three (this session:
+  Organization override → Plan-tier → global default) —
+  `resolveEffectiveCommission` (pure function) extended in place, one new
+  no-RLS platform table (`plan_commission_settings`), two new
+  `PlatformCommissionController` routes. The actual percentage remains
+  unset everywhere, exactly as before this phase.
+- **The real purchase flow**, end to end, live-tested: paid course →
+  `POST courses/:id/course-orders` → `POST course-orders/:id/payments`
+  (Atlas Payments mode, resolved from the Organization's own
+  `payment_collection_mode`, reusing `ManualTransferProvider`/the
+  `payment_methods` catalog verbatim) → proof upload → Platform Owner
+  review (`/platform-course-order-payments`, self-review-guarded) →
+  approval atomically marks the Payment `succeeded`, the CourseOrder
+  `paid`, creates the Enrollment (reusing `EnrollmentsService.
+  createEnrollmentInTransaction`, extracted from the existing P6 free-
+  enrollment path with zero behavior change to it), and inserts `sale`/
+  `platform_fee` ledger entries computed from the commission snapshot
+  frozen at Payment-creation time.
+- **Organization-Owned Gateway mode** is genuinely routed (an
+  Organization's own choice determines its money flow) but, since no
+  real external gateway adapter exists anywhere in either repository
+  (unchanged by this phase), payment creation under that mode returns an
+  honest `409 errors.courseOrder.gatewayNotConfigured` — no commission is
+  ever computed, no ledger row is ever written, matching the explicit
+  "Atlas must not create a commission liability from a transaction it
+  was never a party to" requirement structurally, not just by
+  convention.
+- **Full refund within 30 days** — buyer-initiated, self-service,
+  synchronous (no manual-review gate, matching this session's
+  "customer-friendly" instruction), a real `CourseOrderRefund` row
+  (explicit lifecycle, `refundType`/`status` real enum columns ready for
+  a future `partial`/async-gateway extension without a redesign),
+  idempotent by a real database unique constraint
+  (`course_order_refunds.course_order_id`), atomically reversing the
+  Enrollment (`status → 'unavailable'`, never deleted) and inserting
+  `refund`/`commission_reversal` ledger entries for Atlas Payments mode
+  only.
+- **Payout computation/recording** — `PlatformAcademyPayoutsService.
+  createPayout`, Platform-Owner-triggered (matching §4's own "manually-
+  triggered or simply-scheduled batch job" recommendation for the
+  interim Model-A bridge, not an automated worker), sums unsettled
+  ledger entries per Academy/currency/period into `AcademyPayout` +
+  `AcademyPayoutItem` rows inside one transaction.
+
+### Three real RLS bugs, found and fixed by direct empirical reproduction
+
+Not caught by typecheck/lint/unit tests — all three surfaced only when
+actually running the e2e suite against the real Postgres database, and
+were root-caused by reproducing each in isolation with a minimal Node
+script before writing the fix, exactly matching P12's own "a real bug
+found during manual smoke testing" precedent. Full technical account in
+`Reports/ARCHITECTURE.md`'s P13 entry; summary:
+
+1. Prisma's nested relational `connect` performs its own RLS-gated
+   pre-flight SELECT — invisible to a non-member student/Platform Owner
+   even when the referenced row genuinely exists. Fixed by switching to
+   `UncheckedCreateInput` (plain scalar FKs) at the three affected write
+   sites, relying on Postgres's own FK constraint (which always bypasses
+   row security for referential-integrity checks) as the real validation.
+2. A Platform-Owner-triggered atomic transaction must run under the
+   REVIEWER's own `app.current_user_id` (matching P12's
+   `PlatformPaymentService.approvePayment` precedent exactly), not the
+   buyer's — `payment_reviews`'s existing RLS requires it. Doing so
+   correctly meant `course_orders`/`enrollments`/`payment_attempts`/
+   `payment_proofs` needed new, narrow, additive `is_platform_owner()`-
+   or payer-scoped RLS policies they didn't have before, since the
+   buyer's own self-scoped policies no longer apply once the active
+   context is the reviewer.
+3. PostgreSQL RLS also filters a write's `RETURNING` clause through the
+   table's SELECT policies — Prisma's `create()`/`update()` always
+   generates one. `course_progress`/`lesson_progress` had correct INSERT
+   policies but no matching SELECT policy, so the INSERT succeeded and
+   Postgres still rejected it, with the identical error message as an
+   outright-blocked INSERT — a genuinely non-obvious lesson, documented
+   at length in `Reports/ARCHITECTURE.md` for any future phase combining
+   Prisma ORM writes with `FORCE ROW LEVEL SECURITY`.
+
+### Testing
+
+New: `test/course-commerce.e2e-spec.ts` (20 scenarios covering the full
+DoD checklist — pricing, successful/failed purchase, duplicate-approval
+protection, Atlas Payments commission, Organization-Owned-Gateway zero-
+commission, platform/plan/organization commission precedence, snapshot
+immutability, payout calculation, full refund within/after the window,
+duplicate-refund protection, self-review guard, authorization, and a
+final state-consistency/atomicity proof), `test/
+course-commerce-tenant-isolation.e2e-spec.ts` (6 scenarios — cross-
+student CourseOrder/Payment/refund access, cross-Academy payout access,
+the two Platform review surfaces never bleeding into each other,
+cross-Organization commission-config access), and `test/
+rls-course-commerce.e2e-spec.ts` (direct-Postgres RLS proof, no guards,
+mirroring `rls-billing.e2e-spec.ts`'s exact pattern, covering
+`course_orders`/the new `payments` payer-scoped policies/
+`revenue_ledger_entries`/`academy_payouts`/`course_order_refunds`,
+including explicit ATTACK-blocked and no-context-fail-closed cases).
+**41/41 new tests passing.** `billing.e2e-spec.ts`/`rls-billing.e2e-spec.ts`
+needed no test changes at all — every row they create keeps
+`organizationId` non-null, so the now-bimodal `payments` table's existing
+behavior for them is untouched; `PaymentsRepository`/
+`PlatformPaymentService` gained small, additive, behavior-preserving
+changes (`findManyAnyOrganization` scoped to `checkoutId IS NOT NULL`,
+`getPayment`/`loadReviewablePayment` reject a null-`organizationId` row)
+so the two review surfaces stay structurally separate.
+
+**Full regression, final verification run:** unit — 30 suites / 429
+tests, all passing. e2e — the complete suite (every `test/*.e2e-spec.ts`
+file, P0 through P13, 63 files) run twice after all P13 changes were
+complete: the first run recorded 494/495 passing, with exactly one
+failure — `course-commerce.e2e-spec.ts`, a `POST /auth/sign-in` request
+returning 401 immediately after its own preceding `/auth/register` call
+succeeded, on the heaviest sign-in-volume file in the entire suite
+running deep into a long `--runInBand` session. Investigated directly
+(the failing request's exact log line, the account/IP rate-limiter
+implementation, and the request sequence around it) and found no product
+or test-logic defect — the identical 41/41 P13 tests, including this
+exact scenario, pass cleanly both standalone and as part of the full
+suite on every other run. An immediate second full-suite run reproduced
+**495/495 passing, 63/63 suites, zero failures** — the same class of
+environment-load-related flake this codebase's own `waitFor` doc comment
+(`test/utils/test-app.ts`) already documents as a known characteristic
+of a long, heavy, sequential local e2e run, not a regression this phase
+introduced. Lint (`eslint`), typecheck (`tsc --noEmit`), and build
+(`nest build`) are all clean.
+
+### What is deliberately NOT implemented (P13 boundary)
+
+Partial refunds (financial model kept extensible for it — real enum
+columns, independent money fields — but no partial-refund endpoint,
+validation, or UI-facing contract exists). A real external payment
+gateway (Paymob/Stripe/Tap/Telr/HyperPay/etc. — `PaymentProviderRegistry`
+still ships with exactly one entry, `ManualTransferProvider`). Automated/
+scheduled payout execution (the `payout-worker` master plan §12
+describes — this phase built computation/recording only, Platform-Owner-
+triggered). Tax/VAT (no model, no field, anywhere). A real Connect-style
+processor integration for Atlas Payments mode
+(`organization_connected_accounts`, §5.8, remains schema-only — no
+provider onboarding flow). Platform Owner Control Plane UI for any of
+this phase's new configuration (P15's job, per this session's explicit
+scope boundary — the backend/domain foundation this phase built is
+exactly what P15 will expose).
+
 ## Next phase
 
-**P13 — Course Pricing, Purchase & Payouts.** Not started. Blocked on
-the master plan §3/§4 `PRODUCT DECISION REQUIRED` (merchant-of-record
-model for course sales) — do not begin without both that decision and
-explicit approval to start the phase.
+**P14 — Provisioning Orchestration.** Not started. Awaiting explicit
+approval to begin, per this session's own instruction to stop after P13.

@@ -89,14 +89,56 @@ export class PaymentsRepository {
     tx: Prisma.TransactionClient,
     filter: { readonly search?: string; readonly skip: number; readonly take: number },
   ): Promise<{ items: PaymentWithRelations[]; totalItems: number }> {
-    const where: Prisma.PaymentWhereInput = filter.search
-      ? {
-          OR: [
-            { methodKey: { contains: filter.search, mode: 'insensitive' as const } },
-            { provider: { contains: filter.search, mode: 'insensitive' as const } },
-          ],
-        }
-      : {};
+    const where: Prisma.PaymentWhereInput = {
+      checkoutId: { not: null },
+      ...(filter.search
+        ? {
+            OR: [
+              { methodKey: { contains: filter.search, mode: 'insensitive' as const } },
+              { provider: { contains: filter.search, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, totalItems] = await Promise.all([
+      tx.payment.findMany({
+        where,
+        include: WITH_RELATIONS,
+        orderBy: { createdAt: 'desc' },
+        skip: filter.skip,
+        take: filter.take,
+      }),
+      tx.payment.count({ where }),
+    ]);
+
+    return { items, totalItems };
+  }
+
+  /**
+   * Platform-review listing for Course Commerce (P13) rows only, across
+   * every Academy — the course-order analog of `findManyAnyOrganization`
+   * immediately above, which is now itself scoped to `checkoutId IS NOT
+   * NULL` (Atlas-subscription-billing rows only) so the two flows never
+   * bleed into each other's review queue, matching this codebase's
+   * "structurally distinguishable even though they share a table" rule
+   * (ADR-010).
+   */
+  async findManyAnyOrganizationCourseOrders(
+    tx: Prisma.TransactionClient,
+    filter: { readonly search?: string; readonly skip: number; readonly take: number },
+  ): Promise<{ items: PaymentWithRelations[]; totalItems: number }> {
+    const where: Prisma.PaymentWhereInput = {
+      courseOrderId: { not: null },
+      ...(filter.search
+        ? {
+            OR: [
+              { methodKey: { contains: filter.search, mode: 'insensitive' as const } },
+              { provider: { contains: filter.search, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+    };
 
     const [items, totalItems] = await Promise.all([
       tx.payment.findMany({
@@ -119,12 +161,42 @@ export class PaymentsRepository {
     return tx.payment.create({ data });
   }
 
+  /**
+   * Phase P13 — course-order Payment creation. `UncheckedCreateInput`
+   * (plain scalar `payerUserId`/`payeeAcademyId`/`courseOrderId`), not the
+   * relational `CreateInput` `create()` above uses — deliberately, and for
+   * the identical reason `CourseOrdersRepository.create`'s own doc comment
+   * explains: the buying student is never an Academy/Organization member,
+   * so a nested `connect`'s pre-flight existence SELECT against
+   * `academies`/`payee_academy_id` would be RLS-invisible even though the
+   * row exists. `create()` above is untouched — Atlas-subscription-billing
+   * Payments still connect through `checkout`/`organization`, both
+   * genuinely visible under the paying Organization's own tenant context.
+   */
+  createCourseOrderPayment(
+    tx: Prisma.TransactionClient,
+    data: Prisma.PaymentUncheckedCreateInput,
+  ): Promise<Payment> {
+    return tx.payment.create({ data });
+  }
+
   update(
     tx: Prisma.TransactionClient,
     id: string,
     data: Prisma.PaymentUpdateInput,
   ): Promise<Payment> {
     return tx.payment.update({ where: { id }, data });
+  }
+
+  /** Phase P13 — the succeeded Payment for a CourseOrder, if one exists. A CourseOrder may have more than one Payment row (retried attempts after an earlier failure/rejection, mirroring `Checkout`'s own precedent) — this resolves the one that actually succeeded, needed by `CourseOrderRefundsService` to attach a refund to the correct Payment. */
+  findSucceededForCourseOrder(
+    tx: Prisma.TransactionClient,
+    courseOrderId: string,
+  ): Promise<Payment | null> {
+    return tx.payment.findFirst({
+      where: { courseOrderId, status: 'succeeded' },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   /** Bare id→organizationId lookup, callable with NO tenant/user context set at all — see this class's own doc comment. */

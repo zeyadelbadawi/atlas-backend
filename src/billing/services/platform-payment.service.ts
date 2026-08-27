@@ -88,7 +88,11 @@ export class PlatformPaymentService {
     const payment = await this.tenancyContextService.runInUserContext(reviewerId, (tx) =>
       this.paymentsRepository.findByIdAnyOrganization(tx, paymentId),
     );
-    if (!payment) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    // A Course Commerce (P13) row has no `organizationId` — see
+    // `loadReviewablePayment`'s identical guard and doc comment above.
+    if (!payment || payment.organizationId == null) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
     return toPaymentResponse(payment);
   }
 
@@ -214,6 +218,16 @@ export class PlatformPaymentService {
       this.paymentsRepository.findByIdAnyOrganization(tx, paymentId),
     );
     if (!payment) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    // A Course Commerce (P13) row has no `organizationId` at all (it
+    // carries `payerUserId`/`payeeAcademyId` instead, per §5.7's
+    // extension point) — this service manages Atlas-subscription-billing
+    // review only. Reviewing a course-order payment is a genuinely
+    // separate, structurally distinct flow, handled exclusively by
+    // `PlatformCourseOrderPaymentsService`/`/platform-course-order-payments`
+    // — never silently accepted here.
+    if (payment.organizationId == null) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
     if (payment.reviewStatus !== 'pending') {
       throw new ConflictException({ messageKey: 'errors.payment.notPendingReview' });
     }
@@ -223,7 +237,7 @@ export class PlatformPaymentService {
       (tx) =>
         this.organizationMembershipsRepository.findForUserInOrganization(
           tx,
-          payment.organizationId,
+          payment.organizationId!,
           reviewerId,
         ),
     );

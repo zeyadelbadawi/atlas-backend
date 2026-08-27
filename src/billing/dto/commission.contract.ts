@@ -40,7 +40,7 @@ export type EffectiveCommissionResolution =
   | {
       readonly resolved: true;
       readonly basisPoints: number;
-      readonly source: 'custom' | 'exempt' | 'default';
+      readonly source: 'custom' | 'exempt' | 'plan' | 'default';
     }
   | { readonly resolved: false };
 
@@ -48,18 +48,29 @@ export interface OrganizationCommissionResponse {
   readonly organizationId: string;
   readonly commissionMode: OrganizationCommissionSettings['commissionMode'];
   readonly customPercentageBasisPoints: number | null;
+  /** The Organization's currently-subscribed Plan's own commission override, if the Plan has one configured — `null` otherwise (no Plan, or the Plan has none). Surfaced so a caller can see why `effective.source === 'plan'` resolved to the value it did, without a second request. */
+  readonly planCommissionBasisPoints: number | null;
   readonly effective: EffectiveCommissionResolution;
 }
 
 export function toOrganizationCommissionResponse(
   organizationId: string,
   settings: OrganizationCommissionSettings | null,
+  planCommissionBasisPoints: number | null,
   effective: EffectiveCommissionResolution,
 ): OrganizationCommissionResponse {
   return {
     organizationId,
     commissionMode: settings?.commissionMode ?? 'default',
     customPercentageBasisPoints: settings?.customPercentageBasisPoints ?? null,
+    planCommissionBasisPoints,
     effective,
   };
+}
+
+/** Mirrors `PlanCommissionSettings` (Phase P13) — the plan-tier level of §4.2's three-tier hierarchy. */
+export interface PlanCommissionResponse {
+  readonly planKey: string;
+  readonly commissionBasisPoints: number | null;
+  readonly updatedAt: string | null;
 }

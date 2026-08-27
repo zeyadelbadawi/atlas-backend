@@ -21,6 +21,12 @@
  * introduced for `CurrentUser.organizations` — for every P6 query. No new
  * tenancy model, no new session variable. See `schema.prisma`'s P6 header
  * comment and the P6 migration's RLS block for the full design.
+ *
+ * Phase P13 addition: exports `EnrollmentsService` (for its
+ * `createEnrollmentInTransaction` method) and `EnrollmentsRepository` —
+ * `CourseCommerceModule` reuses both directly for paid-course enrollment
+ * creation on payment success and enrollment reversal on refund, rather
+ * than duplicating enrollment-materialization logic a second time.
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
@@ -61,5 +67,6 @@ import { AssignmentsRepository } from './repositories/assignments.repository';
     QuizzesRepository,
     AssignmentsRepository,
   ],
+  exports: [EnrollmentsService, EnrollmentsRepository],
 })
 export class LearningModule {}

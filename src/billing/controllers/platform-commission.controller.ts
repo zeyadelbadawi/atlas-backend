@@ -17,9 +17,11 @@ import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { CommissionService } from '../services/commission.service';
 import { UpdateAtlasCommissionConfigDto } from '../dto/update-atlas-commission-config.dto';
 import { UpdateOrganizationCommissionDto } from '../dto/update-organization-commission.dto';
+import { UpdatePlanCommissionDto } from '../dto/update-plan-commission.dto';
 import type {
   AtlasCommissionConfigResponse,
   OrganizationCommissionResponse,
+  PlanCommissionResponse,
 } from '../dto/commission.contract';
 
 @Controller('platform-commission')
@@ -40,6 +42,25 @@ export class PlatformCommissionController {
     return this.commissionService.setGlobalDefault(
       auth.userId,
       payload.defaultCommissionBasisPoints,
+    );
+  }
+
+  /** Phase P13 — the plan-tier level of §4.2's three-tier hierarchy. `:planKey` (not a Plan id) matches every other Plan-scoped route in this codebase (`PlansController`'s own `key`-addressed shape). */
+  @Get('plans/:planKey')
+  async getForPlan(@Param('planKey') planKey: string): Promise<PlanCommissionResponse> {
+    return this.commissionService.getPlanCommission(planKey);
+  }
+
+  @Patch('plans/:planKey')
+  async updateForPlan(
+    @CurrentAuthContext() auth: AuthContext,
+    @Param('planKey') planKey: string,
+    @Body() payload: UpdatePlanCommissionDto,
+  ): Promise<PlanCommissionResponse> {
+    return this.commissionService.setPlanCommission(
+      auth.userId,
+      planKey,
+      payload.commissionBasisPoints,
     );
   }
 

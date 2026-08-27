@@ -1,10 +1,19 @@
 # Atlas P13 — Product Decisions Gate
 
-## Status
+## Status (updated 2026-08-27)
 
-P13 implementation is NOT STARTED.
+**P13 implementation is COMPLETE for the scope resolved below.** The
+Platform Owner/product owner resolved all five decisions on 2026-08-27
+(session instructions, reproduced faithfully in the "2026-08-27
+Resolution" subsection under each decision below) and explicitly
+authorized implementation to proceed. This file is kept as the historical
+record of the original five open questions and their resolutions — see
+`Reports/PROGRESS.md`'s P13 entry and `Reports/ARCHITECTURE.md` for what
+was actually built against these resolutions.
 
-P13 is architecturally unblocked, but implementation is blocked pending five product decisions.
+P13 is architecturally unblocked, and implementation is no longer
+pending any of the five decisions below — each has a real, final
+resolution.
 
 ## Current Architecture Baseline
 
@@ -37,6 +46,22 @@ What the Master Plan currently says (§23, "Explicit behavior per state"):
 - **What requires product confirmation:** whether a full refund revokes the student's course access (`Enrollment.status` → `'unavailable'`, the recommended default) or leaves access intact; whether the recommended default itself is accepted.
 - **What P13 implementation must wait for:** explicit product sign-off on the enrollment-reversal behavior before any full-refund code path is built.
 
+### 2026-08-27 Resolution — RESOLVED
+
+Full refund, **customer-friendly**: a student may request a full refund
+within **30 days** of the course purchase (`REFUND_WINDOW_DAYS`,
+`src/course-commerce/dto/course-commerce.constants.ts`). Enrollment
+reversal IS the confirmed behavior — a successful full refund moves
+`Enrollment.status` to `'unavailable'` (never deletes the row, preserving
+progress history). Refund is buyer-initiated and self-service (`POST
+course-orders/:id/refund`) — no Platform Owner manual-review gate, matching
+the "customer-friendly" instruction. Implemented as an explicit
+`CourseOrderRefund` row (its own table, its own lifecycle status/type
+columns) — never inferred from `CourseOrder.status` alone. Idempotent by
+a real database unique constraint (`course_order_refunds.course_order_id
+@unique`) — a second refund attempt is structurally impossible, not just
+application-checked.
+
 ## Decision 2 — Partial Refund Policy
 
 **Status: OPEN**
@@ -48,6 +73,21 @@ What the Master Plan currently says (§23, "Explicit behavior per state"):
 - **What is already defined:** nothing is confirmed. A partial-refund concept does not exist anywhere in the frontend contracts today. A recommended default (partial refund does not revoke enrollment) exists but is explicitly marked as a proposal, not a decision.
 - **What requires product confirmation:** whether partial refunds are supported at all for course purchases; if so, whether the recommended non-revocation default is accepted.
 - **What P13 implementation must wait for:** a real product decision on whether partial refunds exist as a feature, before any schema or ledger entry type for them is built.
+
+### 2026-08-27 Resolution — RESOLVED (deferred, not built)
+
+Partial refunds remain **out of production scope for P13**, confirmed
+explicitly. The financial model was built so a future partial-refund
+capability is additive, never a redesign: `CourseOrderRefund.refundType`
+is a real enum column (currently only `full` is a valid/produced value —
+adding `partial` later is an additive enum value, not a schema rewrite);
+`CourseOrderRefund.amountMinorUnits` is already a real, independent
+money field (not derived/hardcoded from the order total at the type
+level, even though today's service always sets it to the full amount);
+`revenue_ledger_entries` is already a signed, per-event ledger, so a
+future proportional partial reversal is just another row of the existing
+`refund`/`commission_reversal` types with a smaller amount — no ledger
+redesign. No partial-refund UI, endpoint, or validation branch was built.
 
 ## Decision 3 — Atlas Commission Percentage
 
@@ -61,6 +101,25 @@ What the Master Plan currently says (§23, "Explicit behavior per state"):
 
 Do not choose a percentage. None is recorded here or anywhere else in the repository.
 
+### 2026-08-27 Resolution — RESOLVED (architecture, not a percentage)
+
+The commission model is extended from two tiers to **three**: `Organization
+override → Plan-tier commission (new, `plan_commission_settings`) →
+Platform default`, resolved by `resolveEffectiveCommission` (`src/billing/
+utils/commission-resolution.util.ts`) and exposed for write via
+`PlatformCommissionController`'s new `GET/PATCH /platform-commission/plans/:planKey`
+endpoints (Platform-Owner-only, mirroring the existing Organization/global
+endpoints' exact shape). The plan-tier level lets different subscription
+Plans carry different commission rates — e.g. a higher-tier Plan could
+carry a lower commission — without inventing a fourth mechanism. Still
+true exactly as before: **no percentage is chosen anywhere in code, a
+seed script, or this document** — `atlas_commission_config.default_commission_basis_points`
+and every `plan_commission_settings` row start and stay absent/null until
+a real Platform Owner sets one through the API. Atlas Payments remains
+genuinely unusable for an Organization (a real `409
+errors.courseOrder.commissionNotConfigured`) until an effective rate
+resolves through this three-tier chain — never a silent 0%.
+
 ## Decision 4 — Gateway Selection + Gateway Fee Mechanics
 
 **Status: OPEN**
@@ -73,6 +132,27 @@ Do not choose a percentage. None is recorded here or anywhere else in the reposi
 - **What P13 implementation must wait for:** (a) which real gateway(s), if any, Atlas will actually integrate for Course Commerce, and (b) final confirmation of gateway processing-fee treatment once that gateway's real fee mechanics are known.
 
 Do not choose Paymob, Stripe, Tap, Telr, HyperPay, or any other provider. None is chosen here or anywhere else in the repository.
+
+### 2026-08-27 Resolution — RESOLVED (Atlas Payments mode reuses ManualTransferProvider; Organization-Owned Gateway stays honestly unusable)
+
+For P13's real, shipped scope, Atlas Payments mode is implemented through
+the SAME `ManualTransferProvider`/`payment_methods` catalog P12's
+Atlas-subscription billing already uses — no second provider, no new
+adapter. A student purchasing a paid course under Atlas Payments mode
+submits a manual-transfer proof; a Platform Owner reviews/approves it
+through a real, tested `/platform-course-order-payments` surface,
+exactly mirroring P12's own manual-review flow. Organization-Owned
+Gateway mode is real and correctly ROUTED (an Organization's chosen mode
+determines its money flow), but since no real external gateway adapter
+is registered in `PaymentProviderRegistry` (unchanged from before this
+session — still zero real gateways implemented), attempting to create a
+course-order Payment under that mode returns a real, honest `409
+errors.courseOrder.gatewayNotConfigured` rather than silently falling
+back to Atlas Payments or fabricating success. Still true exactly as
+before: **no external gateway (Paymob, Stripe, Tap, Telr, HyperPay, or
+otherwise) is implemented anywhere.** Gateway fee mechanics remain
+unaddressed for the same reason — there is still no real gateway to have
+fee mechanics for.
 
 ## Decision 5 — Tax / VAT
 

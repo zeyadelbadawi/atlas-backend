@@ -17,7 +17,9 @@
  *     own read" discipline.
  */
 import { Injectable } from '@nestjs/common';
-import type { Academy, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { Academy } from '@prisma/client';
+import { PrismaService } from '../../database/prisma.service';
 
 export interface AcademyListFilter {
   readonly search?: string;
@@ -29,9 +31,30 @@ export interface AcademyListFilter {
 
 @Injectable()
 export class AcademiesRepository {
+  constructor(private readonly prisma: PrismaService) {}
+
   /** Bootstrap read — see this class's doc comment. Visible iff the caller belongs to the owning organization. */
   findVisibleToUser(tx: Prisma.TransactionClient, id: string): Promise<Academy | null> {
     return tx.academy.findUnique({ where: { id } });
+  }
+
+  /**
+   * Phase P13 addition — the narrow academyId → organizationId lookup
+   * `CourseOrdersService` needs to open a legitimate `runInTenantContext`
+   * for a course a STUDENT (never an organization member) is buying.
+   * Reuses the EXISTING `resolve_academy_organization` `SECURITY DEFINER`
+   * function P11 already introduced for the identical "no session context
+   * yet, but the caller legitimately needs this one id→id fact" problem
+   * (`PublicHostnameResolutionRepository.resolveAcademyOrganization`,
+   * P11's own precedent) — no new SQL function, no new migration. Callable
+   * with NO tenant/user context set at all, exactly like
+   * `PaymentsRepository.resolvePaymentOrganization` (P12/P13).
+   */
+  async resolveOrganizationId(academyId: string): Promise<string | null> {
+    const rows = await this.prisma.$queryRaw<{ organization_id: string }[]>(
+      Prisma.sql`SELECT * FROM resolve_academy_organization(${academyId})`,
+    );
+    return rows[0]?.organization_id ?? null;
   }
 
   findById(tx: Prisma.TransactionClient, id: string): Promise<Academy | null> {

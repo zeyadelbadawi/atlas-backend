@@ -27,6 +27,20 @@
  * configuration of which registered `PaymentProviderAdapter` currently
  * backs Atlas's own Subscription Billing (distinct from both P12's
  * `payment_methods` catalog and §5.8's Organization-owned tables above).
+ *
+ * Phase P13 addition: `PlanCommissionSettingsRepository` (the plan-tier
+ * level of §4.2's now-three-tier commission hierarchy, wired into the
+ * existing `CommissionService`/`PlatformCommissionController` rather than
+ * a parallel service). `CourseCommerceModule` (the real Course Commerce
+ * money flow — `course_orders`/`revenue_ledger_entries`/payouts/refunds)
+ * imports THIS module to reuse `PaymentsRepository`/
+ * `PaymentAttemptsRepository`/`PaymentProofsRepository`/
+ * `PaymentProofStorageService`/`PaymentProviderRegistry`/
+ * `CommissionService`/`OrganizationPaymentSettingsRepository`/
+ * `OrganizationMembershipsRepository` (the latter via `TenancyModule`) —
+ * see this `exports` array below and `CourseCommerceModule`'s own doc
+ * comment for the full "reuse, never duplicate" reasoning (ADR-010, this
+ * phase's explicit instruction).
  */
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
@@ -65,6 +79,7 @@ import { OrganizationGatewayCredentialsRepository } from './repositories/organiz
 import { OrganizationConnectedAccountsRepository } from './repositories/organization-connected-accounts.repository';
 import { OrganizationCommissionSettingsRepository } from './repositories/organization-commission-settings.repository';
 import { AtlasCommissionConfigRepository } from './repositories/atlas-commission-config.repository';
+import { PlanCommissionSettingsRepository } from './repositories/plan-commission-settings.repository';
 import { AtlasSubscriptionPaymentProviderConfigRepository } from './repositories/atlas-subscription-payment-provider-config.repository';
 import { PaymentProofStorageService } from './storage/payment-proof-storage.service';
 import { CredentialEncryptionService } from './utils/credential-encryption.util';
@@ -116,6 +131,7 @@ import { PAYMENT_WEBHOOK_QUEUE } from './queue/payment-webhook.types';
     OrganizationConnectedAccountsRepository,
     OrganizationCommissionSettingsRepository,
     AtlasCommissionConfigRepository,
+    PlanCommissionSettingsRepository,
     AtlasSubscriptionPaymentProviderConfigRepository,
     PaymentProofStorageService,
     CredentialEncryptionService,
@@ -123,6 +139,25 @@ import { PAYMENT_WEBHOOK_QUEUE } from './queue/payment-webhook.types';
     PaymentProviderRegistry,
     PaymentWebhookProducer,
     PaymentWebhookProcessor,
+  ],
+  exports: [
+    // Phase P13 — the exact, narrow set `CourseCommerceModule` needs to
+    // reuse the P12/P12.5 payment infrastructure without duplicating any
+    // of it. Nothing else in this module is exported — every other
+    // provider stays this module's own internal implementation detail,
+    // matching `PlansModule`'s identical "export only what a later phase
+    // genuinely needs" precedent.
+    PaymentsRepository,
+    PaymentAttemptsRepository,
+    PaymentProofsRepository,
+    PaymentReviewsRepository,
+    PaymentMethodsRepository,
+    PaymentProofStorageService,
+    PaymentProviderRegistry,
+    CommissionService,
+    OrganizationPaymentSettingsService,
+    OrganizationPaymentSettingsRepository,
+    OrganizationGatewayCredentialsRepository,
   ],
 })
 export class BillingModule {}

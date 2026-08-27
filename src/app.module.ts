@@ -42,6 +42,7 @@ import { WebsiteModule } from './website/website.module';
 import { DomainModule } from './domain/domain.module';
 import { PublicWebsiteModule } from './public-website/public-website.module';
 import { BillingModule } from './billing/billing.module';
+import { CourseCommerceModule } from './course-commerce/course-commerce.module';
 
 @Module({
   imports: [
@@ -102,6 +103,7 @@ import { BillingModule } from './billing/billing.module';
     DomainModule,
     PublicWebsiteModule,
     BillingModule,
+    CourseCommerceModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
