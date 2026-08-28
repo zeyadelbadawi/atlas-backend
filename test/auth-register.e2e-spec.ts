@@ -10,15 +10,25 @@ import { PrismaService } from '../src/database/prisma.service';
 describe('POST /auth/register (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let flushRateLimitKeys: () => Promise<void>;
 
   beforeAll(async () => {
     const testApp = await createTestApp();
     app = testApp.app;
     prisma = testApp.prisma;
+    flushRateLimitKeys = testApp.flushRateLimitKeys;
   });
 
   afterAll(async () => {
     await app.close();
+  });
+
+  // Same rationale as every other e2e spec file (see `test/utils/test-app.ts`):
+  // without this, this file's own 7 real `/auth/register` calls (Phase P18
+  // added a dedicated rate limit to this endpoint) would accumulate against
+  // each other and any earlier spec file run in the same process/IP.
+  beforeEach(async () => {
+    await flushRateLimitKeys();
   });
 
   it('registers a new account and does not establish a session', async () => {

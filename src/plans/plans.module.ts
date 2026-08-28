@@ -84,6 +84,13 @@ import { TENANT_USAGE_RECOMPUTE_QUEUE } from './queue/tenant-usage-recompute.typ
     AddOnsRepository,
     TenantSubscriptionsRepository,
     TenantAddOnsRepository,
+    // Phase P15 — `PlatformOrganizationsService` needs the exact same
+    // `getSubscription`/`getUsage` reads a Tenant's own dashboard already
+    // performs (full entitlement-aware `TenantUsageResponse` assembly),
+    // for one already-resolved `organizationId` — reusing this service
+    // verbatim (it already re-establishes its own `runInTenantContext`)
+    // rather than re-deriving entitlements a second time.
+    TenantSubscriptionService,
   ],
 })
 export class PlansModule {}

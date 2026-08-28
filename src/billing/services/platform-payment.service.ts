@@ -35,11 +35,14 @@ import {
 } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
+import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
 import { PaymentsRepository } from '../repositories/payments.repository';
 import { PaymentReviewsRepository } from '../repositories/payment-reviews.repository';
 import { PaymentProofsRepository } from '../repositories/payment-proofs.repository';
 import { PaymentProofStorageService } from '../storage/payment-proof-storage.service';
 import { PaymentApplicationService } from './payment-application.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
 import { toPaymentResponse } from '../dto/payment.contract';
 import type { PaymentResponse } from '../dto/payment.contract';
 import type { PaymentListQueryDto } from '../dto/payment-list-query.dto';
@@ -54,11 +57,14 @@ export class PlatformPaymentService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly organizationMembershipsRepository: OrganizationMembershipsRepository,
+    private readonly organizationsRepository: OrganizationsRepository,
     private readonly paymentsRepository: PaymentsRepository,
     private readonly paymentReviewsRepository: PaymentReviewsRepository,
     private readonly paymentProofsRepository: PaymentProofsRepository,
     private readonly paymentProofStorageService: PaymentProofStorageService,
     private readonly paymentApplicationService: PaymentApplicationService,
+    private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly notificationFanoutService: NotificationFanoutService,
   ) {}
 
   async getPayments(
@@ -103,7 +109,10 @@ export class PlatformPaymentService {
   ): Promise<PaymentResponse> {
     const payment = await this.loadReviewablePayment(reviewerId, paymentId);
 
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let notifiedNew = false;
+    let recipientUserId: string | null = null;
+    let notifiedAmountValues: { amount: number; currency: string } | null = null;
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       payment.organizationId,
       reviewerId,
       async (tx) => {
@@ -133,6 +142,39 @@ export class PlatformPaymentService {
         );
         await this.paymentApplicationService.applySuccessfulPayment(tx, reloaded!);
 
+        // Phase P15 retroactive audit coverage — same transaction as the
+        // review/payment/subscription writes above.
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: reviewerId,
+          organizationId: payment.organizationId,
+          action: 'payment.approved',
+          targetType: 'payment',
+          targetId: paymentId,
+        });
+
+        // Phase P17 — notify the paying Organization's owner, same
+        // transaction as the state change above.
+        const organization = await this.organizationsRepository.findByIdAnyOrganization(
+          tx,
+          payment.organizationId,
+        );
+        if (organization) {
+          recipientUserId = organization.ownerUserId;
+          notifiedAmountValues = {
+            amount: this.toDisplayAmount(fresh.amountMinorUnits),
+            currency: fresh.currency,
+          };
+          notifiedNew = await this.notificationFanoutService.notify(tx, {
+            userId: organization.ownerUserId,
+            type: 'billing',
+            priority: 'medium',
+            titleKey: 'notifications:events.platformPaymentApproved.title',
+            messageKey: 'notifications:events.platformPaymentApproved.message',
+            values: notifiedAmountValues,
+            dedupeKey: `payment_approved:${paymentId}`,
+          });
+        }
+
         const final = await this.paymentsRepository.findByIdAnyOrganization(
           tx,
           paymentId,
@@ -140,6 +182,19 @@ export class PlatformPaymentService {
         return toPaymentResponse(final!);
       },
     );
+
+    if (recipientUserId && notifiedAmountValues) {
+      await this.notificationFanoutService.sendEmailAfterCommit(
+        recipientUserId,
+        notifiedNew,
+        {
+          template: 'platform_payment_approved',
+          values: notifiedAmountValues,
+        },
+      );
+    }
+
+    return result;
   }
 
   async rejectPayment(
@@ -149,7 +204,11 @@ export class PlatformPaymentService {
   ): Promise<PaymentResponse> {
     const payment = await this.loadReviewablePayment(reviewerId, paymentId);
 
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let notifiedNew = false;
+    let recipientUserId: string | null = null;
+    let notifiedValues: { amount: number; currency: string; reason?: string } | null =
+      null;
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       payment.organizationId,
       reviewerId,
       async (tx) => {
@@ -178,6 +237,39 @@ export class PlatformPaymentService {
           'errors.payment.rejectedByReviewer',
         );
 
+        // Phase P15 retroactive audit coverage.
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: reviewerId,
+          organizationId: payment.organizationId,
+          action: 'payment.rejected',
+          targetType: 'payment',
+          targetId: paymentId,
+          context: payload.notes ? { notes: payload.notes } : undefined,
+        });
+
+        // Phase P17 — notify the paying Organization's owner.
+        const organization = await this.organizationsRepository.findByIdAnyOrganization(
+          tx,
+          payment.organizationId,
+        );
+        if (organization) {
+          recipientUserId = organization.ownerUserId;
+          notifiedValues = {
+            amount: this.toDisplayAmount(fresh.amountMinorUnits),
+            currency: fresh.currency,
+            reason: payload.notes,
+          };
+          notifiedNew = await this.notificationFanoutService.notify(tx, {
+            userId: organization.ownerUserId,
+            type: 'billing',
+            priority: 'high',
+            titleKey: 'notifications:events.platformPaymentRejected.title',
+            messageKey: 'notifications:events.platformPaymentRejected.message',
+            values: notifiedValues,
+            dedupeKey: `payment_rejected:${paymentId}`,
+          });
+        }
+
         const final = await this.paymentsRepository.findByIdAnyOrganization(
           tx,
           paymentId,
@@ -185,6 +277,24 @@ export class PlatformPaymentService {
         return toPaymentResponse(final!);
       },
     );
+
+    if (recipientUserId && notifiedValues) {
+      await this.notificationFanoutService.sendEmailAfterCommit(
+        recipientUserId,
+        notifiedNew,
+        {
+          template: 'platform_payment_rejected',
+          values: notifiedValues,
+        },
+      );
+    }
+
+    return result;
+  }
+
+  /** Minor units → display decimal, the same 2-decimal-exponent convention `toMinorUnits` (`money.util.ts`) already established for the reverse direction — used only for notification/email display text here, never a business calculation. */
+  private toDisplayAmount(amountMinorUnits: bigint): number {
+    return Number(amountMinorUnits) / 100;
   }
 
   /** Streams the latest proof's bytes for ANY organization's Payment — Platform review authority, gated by `PlatformOwnerGuard` at the controller. */

@@ -15,7 +15,7 @@
  * the P1 spec allows as an alternative to logging.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import type { EmailProvider } from './email-provider.interface';
+import type { EmailProvider, TransactionalEmailInput } from './email-provider.interface';
 import { normalizeEmail } from '../utils/email.util';
 
 function maskEmail(email: string): string {
@@ -42,5 +42,22 @@ export class StubEmailProvider implements EmailProvider {
   /** Test-only accessor — never called from any controller/HTTP path. */
   peekLastPasswordResetToken(email: string): string | undefined {
     return this.lastPasswordResetTokens.get(normalizeEmail(email));
+  }
+
+  /** Phase P17 — same "log an attempt, never fail, never expose real content over HTTP" posture as `sendPasswordResetEmail`, extended to the generic transactional-email surface. Keeps the last sent input per address for test assertions, mirroring `peekLastPasswordResetToken`. */
+  private readonly lastTransactionalEmails = new Map<string, TransactionalEmailInput>();
+
+  async sendTransactionalEmail(input: TransactionalEmailInput): Promise<void> {
+    const normalized = normalizeEmail(input.to);
+    this.lastTransactionalEmails.set(normalized, input);
+    this.logger.log(
+      { to: maskEmail(normalized), subject: input.subject },
+      'Stub email provider: transactional email would be sent (no real provider configured — set EMAIL_PROVIDER)',
+    );
+  }
+
+  /** Test-only accessor — never called from any controller/HTTP path. */
+  peekLastTransactionalEmail(email: string): TransactionalEmailInput | undefined {
+    return this.lastTransactionalEmails.get(normalizeEmail(email));
   }
 }

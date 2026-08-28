@@ -38,6 +38,7 @@ import { PaymentsRepository } from '../../billing/repositories/payments.reposito
 import { CourseOrdersRepository } from '../repositories/course-orders.repository';
 import { CourseOrderRefundsRepository } from '../repositories/course-order-refunds.repository';
 import { RevenueLedgerEntriesRepository } from '../repositories/revenue-ledger-entries.repository';
+import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
 import { REFUND_WINDOW_DAYS } from '../dto/course-commerce.constants';
 import {
   toCourseOrderRefundResponse,
@@ -58,6 +59,7 @@ export class CourseOrderRefundsService {
     private readonly paymentsRepository: PaymentsRepository,
     private readonly enrollmentsRepository: EnrollmentsRepository,
     private readonly revenueLedgerEntriesRepository: RevenueLedgerEntriesRepository,
+    private readonly notificationFanoutService: NotificationFanoutService,
   ) {}
 
   async requestRefund(
@@ -73,7 +75,12 @@ export class CourseOrderRefundsService {
     );
     if (!order) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let notifiedNew = false;
+    const courseTitle =
+      (order.snapshot as { course?: { title?: string } } | null)?.course?.title ??
+      'your course';
+
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       order.organizationId,
       studentId,
       async (tx) => {
@@ -202,9 +209,27 @@ export class CourseOrderRefundsService {
           }
         }
 
+        // Phase P17 — notify the buyer, same transaction as the refund itself.
+        notifiedNew = await this.notificationFanoutService.notify(tx, {
+          userId: studentId,
+          type: 'billing',
+          priority: 'medium',
+          titleKey: 'notifications:events.courseOrderRefunded.title',
+          messageKey: 'notifications:events.courseOrderRefunded.message',
+          values: { courseTitle },
+          dedupeKey: `course_order_refunded:${fresh.id}`,
+        });
+
         return toCourseOrderRefundResponse(refund);
       },
     );
+
+    await this.notificationFanoutService.sendEmailAfterCommit(studentId, notifiedNew, {
+      template: 'course_order_refunded',
+      values: { courseTitle },
+    });
+
+    return result;
   }
 
   async getRefund(

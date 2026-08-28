@@ -43,6 +43,13 @@ import { DomainModule } from './domain/domain.module';
 import { PublicWebsiteModule } from './public-website/public-website.module';
 import { BillingModule } from './billing/billing.module';
 import { CourseCommerceModule } from './course-commerce/course-commerce.module';
+import { ProvisioningModule } from './provisioning/provisioning.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
+import { PlatformModule } from './platform/platform.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { NotificationEventsModule } from './notification-events/notification-events.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
@@ -89,6 +96,13 @@ import { CourseCommerceModule } from './course-commerce/course-commerce.module';
     }),
     DatabaseModule,
     RedisModule,
+    // `@Global()` — every later module can inject `AuditLogWriterService`
+    // without importing this explicitly; registered early purely so its
+    // own providers exist before anything might need them.
+    AuditLogModule,
+    // `@Global()` — same reasoning as `AuditLogModule` immediately above,
+    // for `NotificationFanoutService`/`NotificationsRepository` (P17).
+    NotificationEventsModule,
     HealthModule,
     TenancyModule,
     IdentityModule,
@@ -104,6 +118,11 @@ import { CourseCommerceModule } from './course-commerce/course-commerce.module';
     PublicWebsiteModule,
     BillingModule,
     CourseCommerceModule,
+    ProvisioningModule,
+    PlatformModule,
+    AnalyticsModule,
+    NotificationsModule,
+    SearchModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

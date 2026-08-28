@@ -20,6 +20,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { PrismaService } from '../../database/prisma.service';
 import { OrganizationCommissionSettingsRepository } from '../repositories/organization-commission-settings.repository';
 import { AtlasCommissionConfigRepository } from '../repositories/atlas-commission-config.repository';
 import { PlanCommissionSettingsRepository } from '../repositories/plan-commission-settings.repository';
@@ -45,6 +47,8 @@ export class CommissionService {
     private readonly planCommissionSettingsRepository: PlanCommissionSettingsRepository,
     private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
     private readonly plansRepository: PlansRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly prisma: PrismaService,
   ) {}
 
   // --- Global default (Platform Owner) ---------------------------------
@@ -62,6 +66,23 @@ export class CommissionService {
       defaultCommissionBasisPoints,
       platformOwnerUserId,
     );
+
+    // Phase P15 retroactive audit coverage. `setDefault` above is its own
+    // atomic upsert (not part of a larger transaction this service
+    // already opens) — a separate, best-effort write here is the
+    // documented, lower-risk choice over restructuring this repository's
+    // existing signature; see `AuditLogWriterService.writeBestEffort`'s
+    // own doc comment.
+    await this.prisma.$transaction((tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: platformOwnerUserId,
+        action: 'commission_config.global_default_updated',
+        targetType: 'atlas_commission_config',
+        targetId: config.id,
+        context: { defaultCommissionBasisPoints },
+      }),
+    );
+
     return toAtlasCommissionConfigResponse(config);
   }
 

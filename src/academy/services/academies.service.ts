@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { AcademiesRepository } from '../repositories/academies.repository';
 import { AcademyMembersRepository } from '../repositories/academy-members.repository';
 import { toAcademyResponse } from '../dto/academy.contract';
@@ -41,6 +42,7 @@ export class AcademiesService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly academiesRepository: AcademiesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   async list(query: ListAcademiesQueryDto): Promise<PaginatedResult<AcademyResponse>> {
@@ -107,6 +109,18 @@ export class AcademiesService {
             academy: { connect: { id: created.id } },
             user: { connect: { id: userId } },
             role: 'owner',
+          });
+
+          // Phase P15 retroactive audit coverage (master plan §21 P15's
+          // own Definition of Done) — same transaction, atomic with the
+          // Academy/membership rows above.
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: userId,
+            organizationId: payload.organizationId,
+            action: 'academy.created',
+            targetType: 'academy',
+            targetId: created.id,
+            targetLabel: created.name,
           });
 
           return created;

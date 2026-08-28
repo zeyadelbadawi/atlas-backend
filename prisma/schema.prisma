@@ -111,6 +111,13 @@ model User {
   courseOrderPayments                           Payment[]                                @relation("PaymentPayer")
   courseOrderRefundRequests                     CourseOrderRefund[]
   planCommissionSettingsUpdates                 PlanCommissionSettings[]                 @relation("PlanCommissionSettingsUpdatedBy")
+  /// Phase P14 — Provisioning Orchestration (master plan §5.11/§21).
+  provisioningRequestsCreated                   ProvisioningRequest[]
+  /// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21).
+  auditLogEntriesActedBy                        AuditLogEntry[]
+  supportCasesRequested                         SupportCase[]
+  /// Phase P17 — Notifications, Email & Search (master plan §5/§21).
+  notifications                                 Notification[]
 
   @@index([status])
   @@map("users")
@@ -187,20 +194,25 @@ model Organization {
   createdAt   DateTime           @default(now()) @map("created_at")
   updatedAt   DateTime           @updatedAt @map("updated_at")
 
-  memberships        OrganizationMembership[]
-  academies          Academy[]
-  subscription       TenantSubscription?
-  addOns             TenantAddOn[]
-  usage              TenantUsage?
-  checkouts          Checkout[]
-  payments           Payment[]
-  invoices           TenantInvoice[]
-  webhookEvents      PaymentWebhookEvent[]
-  paymentSettings    OrganizationPaymentSettings?
-  gatewayCredential  OrganizationGatewayCredential?
-  connectedAccount   OrganizationConnectedAccount?
-  commissionSettings OrganizationCommissionSettings?
-  CourseOrder        CourseOrder[]
+  memberships          OrganizationMembership[]
+  academies            Academy[]
+  subscription         TenantSubscription?
+  addOns               TenantAddOn[]
+  usage                TenantUsage?
+  checkouts            Checkout[]
+  payments             Payment[]
+  invoices             TenantInvoice[]
+  webhookEvents        PaymentWebhookEvent[]
+  paymentSettings      OrganizationPaymentSettings?
+  gatewayCredential    OrganizationGatewayCredential?
+  connectedAccount     OrganizationConnectedAccount?
+  commissionSettings   OrganizationCommissionSettings?
+  CourseOrder          CourseOrder[]
+  /// Phase P14 — Provisioning Orchestration (master plan §5.11/§21).
+  provisioningRequests ProvisioningRequest[]
+  /// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21).
+  auditLogEntries      AuditLogEntry[]
+  supportCases         SupportCase[]
 
   @@index([status])
   @@map("organizations")
@@ -317,6 +329,8 @@ model Academy {
   courseOrders         CourseOrder[]
   revenueLedgerEntries RevenueLedgerEntry[]
   payouts              AcademyPayout[]
+  /// Phase P14 — Provisioning Orchestration (master plan §5.11/§21).
+  provisioningRequest  ProvisioningRequest?
 
   @@index([organizationId, status])
   @@map("academies")
@@ -1959,13 +1973,15 @@ model Payment {
   createdAt                         DateTime               @default(now()) @map("created_at")
   updatedAt                         DateTime               @updatedAt @map("updated_at")
 
-  attempts           PaymentAttempt[]
-  proofs             PaymentProof[]
-  reviews            PaymentReview[]
-  invoices           TenantInvoice[]
-  webhookEvents      PaymentWebhookEvent[]
-  refunds            CourseOrderRefund[]
-  RevenueLedgerEntry RevenueLedgerEntry[]
+  attempts                      PaymentAttempt[]
+  proofs                        PaymentProof[]
+  reviews                       PaymentReview[]
+  invoices                      TenantInvoice[]
+  webhookEvents                 PaymentWebhookEvent[]
+  refunds                       CourseOrderRefund[]
+  RevenueLedgerEntry            RevenueLedgerEntry[]
+  /// Phase P14 — Provisioning Orchestration (master plan §5.11/§21). Present only when a ProvisioningRequest's `triggeringPaymentId` references this row.
+  triggeredProvisioningRequests ProvisioningRequest[]
 
   @@index([organizationId])
   @@index([checkoutId])
@@ -2595,4 +2611,424 @@ model CourseOrderRefund {
   processedAt      DateTime?               @map("processed_at")
 
   @@map("course_order_refunds")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P14 — Provisioning Orchestration (master plan §5.11/§21 Phase P14).
+// The 7-step resumable state machine tying together Academy creation
+// (reusing P3's `AcademiesService` verbatim, never a second creation path),
+// subdomain allocation (this phase's own real first writer of
+// `subdomain_allocations` — P11 shipped that table read-only, exactly as
+// its own doc comment anticipated), domain-step observability (no real
+// custom-domain data is ever collected by this flow — see below), and the
+// triggering Payment reference (P12's real `Payment` row, never a second
+// payment abstraction).
+//
+// `ProvisioningStepKey` — the exact 7-value enum confirmed directly against
+// the real frontend contract (`atlas-front/src/types/provisioning.types.ts`,
+// `PROVISIONING_STEP_KEYS`), not invented: `tenant, academy, theme,
+// branding, subdomain, domain, finalization`. `tenant` is always
+// `completed` immediately (a request is only ever created inside an
+// already-authenticated Organization context — there is no "create the
+// tenant" work left to do, matching that file's own doc comment verbatim).
+// `theme`/`branding` are always `skipped` — `CreateProvisioningRequestPayload`
+// carries no theme/branding selection field at all, and the frontend's own
+// doc comment confirms no picker UI exists for either yet ("Prompt 8 does
+// not implement a Theme Engine... reported 'skipped' until one exists").
+// `domain` is likewise always `skipped` in this phase — the payload carries
+// no custom-domain field either; connecting a REAL custom domain remains
+// the existing, separate, already-implemented P11 `DomainService.
+// addCustomDomain` flow (an Academy Owner's own later, deliberate action),
+// never invented here. This is the concrete, current-repository-verified
+// application of master plan §24's "DNS/SSL/CDN mutations... every status
+// is honestly 'not configured'" rule to this phase: nothing here ever
+// fabricates a connected custom domain.
+//
+// `ProvisioningStatus` — the exact 12-value enum from the same frontend
+// file, used as the coarse "milestone" tracker `ProvisioningRequest.status`
+// carries (distinct from the fine-grained `ProvisioningStep.status` each
+// step row carries). The initial status is `payment_success` when the
+// request carries a `triggeringPaymentId` (a real payment just completed,
+// about to provision), or `tenant_created` directly when it does not (no
+// payment milestone applies) — a reasonable, documented interpretation of
+// the enum's own naming and the field's own "present only when triggered by
+// a payment" semantics; master plan/frontend do not state this mapping
+// explicitly, so it is called out again in the P14 implementation report
+// rather than treated as self-evidently specified.
+//
+// `ProvisioningRequest.subdomain`/`.domain` (the frontend's own
+// `SubdomainAllocation`/`DomainConnection` fields on `ProvisioningRequest`)
+// are deliberately NOT redundant JSONB snapshot columns on this table —
+// master plan §5.11's own schema sketch suggests `subdomain jsonb, domain
+// jsonb`, but once `academyId` is set, the EXISTING, already-real
+// `subdomain_allocations`/`domain_connections` tables (keyed by
+// `academy_id`, already read via `SubdomainAllocationsRepository.
+// findByAcademyId`/`DomainConnectionsRepository.findByAcademyId`, both
+// already exported by `DomainModule`) are the single source of truth for
+// that data — resolved live at response-build time instead. A documented,
+// deliberate adaptation of the master plan's schema sketch to this
+// repository's actual, already-established pattern (this session's own
+// explicit "preserve architectural intent, adapt to current state, document
+// the discrepancy" instruction) — avoids a second, staleness-prone copy of
+// data `DomainService`'s own later writes (e.g. a real custom-domain
+// connection) would otherwise need to keep in sync on two tables.
+//
+// `requestedByUserId` — one field beyond this session's own literal listed
+// field set, added because it is structurally required to correctly reuse
+// `AcademiesService.create(userId, payload)` (P3) — that method requires a
+// real user id to add as the new Academy's first `owner`-role member, and
+// using the Organization's own `owner_user_id` instead would misattribute
+// Academy ownership to someone who may not be the actual requester (any
+// Organization member may create a provisioning request, mirroring
+// `POST /academies`' own `AcademyOrganizationScopeGuard`-only, no-extra-
+// role-check authorization). Documented here rather than silently added.
+//
+// RLS mirrors the exact `checkouts`/`payments` (P12) org-tenant-scoped
+// shape — `app.current_organization_id`, no new session variable — plus
+// one narrow addition for the one genuinely new cross-tenant read this
+// phase needs: `subdomain_is_taken(text)`, a `SECURITY DEFINER` function in
+// the SAME documented category as `resolve_academy_organization`/
+// `resolve_payment_organization` (P11/P12/P13) — subdomain uniqueness is
+// necessarily a GLOBAL fact (matches `subdomain_allocations.subdomain`'s
+// own `@unique` constraint, not scoped to one Organization), so checking
+// availability cannot be answered from inside any one tenant's own RLS
+// context. It answers only "is this exact string already taken," never
+// leaking which Organization/Academy holds it.
+// ---------------------------------------------------------------------------
+
+/// The 7 real orchestration steps — see this section's header comment for
+/// why each is real work (`academy`, `subdomain`) or structurally always
+/// `completed`/`skipped` (`tenant`, `theme`, `branding`, `domain`) in this
+/// phase.
+enum ProvisioningStepKey {
+  tenant
+  academy
+  theme
+  branding
+  subdomain
+  domain
+  finalization
+
+  @@map("provisioning_step_key")
+}
+
+enum ProvisioningStepStatus {
+  pending
+  running
+  completed
+  failed
+  skipped
+
+  @@map("provisioning_step_status")
+}
+
+/// The coarse request-level milestone — see this section's header comment
+/// for the exact status-per-step-completion mapping this phase uses.
+enum ProvisioningStatus {
+  payment_success
+  tenant_created
+  academy_created
+  theme_applied
+  branding_applied
+  subdomain_assigned
+  custom_domain_pending
+  custom_domain_connected
+  provisioning
+  ready
+  failed
+  cancelled
+
+  @@map("provisioning_status")
+}
+
+/// Mirrors `ProvisioningRequest` (`provisioning.types.ts`) field-for-field,
+/// plus `requestedByUserId` (see header comment). Organization-scoped —
+/// created only by an authenticated Organization member, mirroring
+/// `Checkout`'s exact tenant-scoping shape, never a second tenancy
+/// mechanism.
+model ProvisioningRequest {
+  id                   String              @id @default(uuid())
+  organizationId       String              @map("organization_id")
+  organization         Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Populated once the `academy` step completes — absent, not a placeholder id, before that (master plan §5.11's own exact wording).
+  academyId            String?             @unique @map("academy_id")
+  academy              Academy?            @relation(fields: [academyId], references: [id])
+  requestedByUserId    String              @map("requested_by_user_id")
+  requestedByUser      User                @relation(fields: [requestedByUserId], references: [id])
+  status               ProvisioningStatus  @default(payment_success)
+  currentStepKey       ProvisioningStepKey @default(tenant) @map("current_step_key")
+  requestedAcademyName String              @map("requested_academy_name")
+  requestedSubdomain   String              @map("requested_subdomain")
+  /// Present only when this request was triggered by a specific P12 Payment — the real row, never a second payment abstraction (this phase's explicit instruction).
+  triggeringPaymentId  String?             @map("triggering_payment_id")
+  triggeringPayment    Payment?            @relation(fields: [triggeringPaymentId], references: [id])
+  idempotencyKey       String              @map("idempotency_key")
+  attemptCount         Int                 @default(0) @map("attempt_count")
+  /// Mirrors `ProvisioningError` (`{code, messageKey, detail?}`) — set only while `status = 'failed'`.
+  lastError            Json?               @map("last_error")
+  startedAt            DateTime?           @map("started_at")
+  completedAt          DateTime?           @map("completed_at")
+  failedAt             DateTime?           @map("failed_at")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+
+  steps ProvisioningStep[]
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, status])
+  @@map("provisioning_requests")
+}
+
+/// Mirrors `ProvisioningStep` (`provisioning.types.ts`) field-for-field.
+/// Mutable state, unlike the P13 revenue ledger — a step row is updated in
+/// place across attempts (`attemptNumber` increments), never re-inserted;
+/// `@@unique([provisioningRequestId, key])` is the real database-level
+/// guarantee that a duplicate step row for the same request/key is
+/// structurally impossible, not merely an application-layer convention.
+model ProvisioningStep {
+  id                    String                 @id @default(uuid())
+  provisioningRequestId String                 @map("provisioning_request_id")
+  provisioningRequest   ProvisioningRequest    @relation(fields: [provisioningRequestId], references: [id], onDelete: Cascade)
+  key                   ProvisioningStepKey
+  status                ProvisioningStepStatus @default(pending)
+  attemptNumber         Int                    @default(0) @map("attempt_number")
+  startedAt             DateTime?              @map("started_at")
+  completedAt           DateTime?              @map("completed_at")
+  failedAt              DateTime?              @map("failed_at")
+  /// Mirrors `ProvisioningError` — set only while `status = 'failed'`.
+  error                 Json?
+
+  @@unique([provisioningRequestId, key])
+  @@index([provisioningRequestId])
+  @@map("provisioning_steps")
+}
+
+// =============================================================================
+// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21/§7 point 4)
+// =============================================================================
+//
+// P15 does NOT add any new cross-tenant DATA — `organizations`/`academies`/
+// `users`/`tenant_subscriptions`/etc. already exist (P2–P14). What P15 adds
+// is: (a) narrow, additive `_platform_select` RLS policies on those EXISTING
+// tenant tables so a verified Platform Owner can read across every tenant —
+// never a global RLS bypass, never a second tenancy mechanism (see the
+// migration's own header comment for the exact policy list); (b) three
+// genuinely new, Platform-owned tables below.
+//
+// `AuditLogEntry` — append-only, backend-sole-writer (master plan §5.12).
+// `actorUserId` is a REQUIRED FK (every audited mutation has a real,
+// authenticated acting user; there is no "system" actor in this codebase),
+// `organizationId` is nullable (a Platform-Owner-only action, e.g. a
+// commission-config change, has no single owning Organization). `context`
+// is a small `Json` bag of non-secret diagnostic fields — see
+// `AuditLogWriterService`'s own doc comment for the "never log secrets"
+// discipline this column must uphold.
+//
+// `SupportCase`/`SupportCaseMessage` — mirrors `SupportCaseSummary`/
+// `SupportCaseDetail`/`SupportCaseMessage` (frontend `support.types.ts`)
+// field-for-field. `requesterUserId` is nullable — a support case's
+// requester is not necessarily a registered Atlas user (matches
+// `requesterName`/`requesterEmail` being their own denormalized columns,
+// not a live join, since the frontend contract itself carries them
+// directly on `SupportCaseSummary`, and master plan §5.12 lists no
+// `requester_name`/`requester_email` FK-through-join design). There is
+// deliberately NO create-case endpoint (master plan §24: "Support case
+// creation from the dashboard | SPECIFICATION-UNDEFINED | No creation
+// endpoint in any frontend contract") — every row here is provisioned
+// outside this phase's API surface (fixture/seed/future channel), exactly
+// like `payment_methods`' own P12 seed-only precedent.
+//
+// `PlatformSettings` — a Platform-owned singleton, NO RLS, matching
+// `PlatformDomainConfiguration`/`TrialPolicy`'s own identical precedent
+// exactly (a single global config row is not tenant data; `PlatformOwnerGuard`
+// at the application layer is the real, sufficient protection, the same
+// as those two tables already established).
+
+enum SupportCaseStatus {
+  open
+  in_progress
+  resolved
+  closed
+
+  @@map("support_case_status")
+}
+
+enum SupportCasePriority {
+  low
+  medium
+  high
+  urgent
+
+  @@map("support_case_priority")
+}
+
+enum SupportCaseMessageAuthorRole {
+  requester
+  agent
+
+  @@map("support_case_message_author_role")
+}
+
+/// Mirrors `AuditLogEntrySummary`/`AuditLogEntryDetail` (frontend
+/// `audit-log.types.ts`) field-for-field.
+model AuditLogEntry {
+  id             String        @id @default(uuid())
+  actorUserId    String        @map("actor_user_id")
+  actor          User          @relation(fields: [actorUserId], references: [id])
+  organizationId String?       @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  /// A dotted event name, e.g. `"academy.provisioned"`, `"payment.approved"`.
+  action         String
+  targetType     String        @map("target_type")
+  targetId       String        @map("target_id")
+  targetLabel    String?       @map("target_label")
+  /// Mirrors `AuditLogEntryDetail.context` — a flat, non-secret diagnostic
+  /// bag (`Record<string, string | number | boolean | null>`), never a
+  /// nested object, never a token/credential/password.
+  context        Json?
+  occurredAt     DateTime      @default(now()) @map("occurred_at")
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([organizationId, occurredAt(sort: Desc)])
+  @@index([targetType, targetId])
+  @@map("audit_log_entries")
+}
+
+/// Mirrors `SupportCaseSummary`/`SupportCaseDetail` field-for-field.
+model SupportCase {
+  id              String              @id @default(uuid())
+  organizationId  String?             @map("organization_id")
+  organization    Organization?       @relation(fields: [organizationId], references: [id])
+  requesterUserId String?             @map("requester_user_id")
+  requester       User?               @relation(fields: [requesterUserId], references: [id])
+  subject         String
+  status          SupportCaseStatus   @default(open)
+  priority        SupportCasePriority @default(medium)
+  requesterName   String              @map("requester_name")
+  requesterEmail  String              @map("requester_email")
+  /// Display-only — no agent-directory table exists (frontend's own
+  /// documented boundary, `support.types.ts`).
+  assignedToName  String?             @map("assigned_to_name")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  messages SupportCaseMessage[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([organizationId])
+  @@map("support_cases")
+}
+
+/// Mirrors `SupportCaseMessage` field-for-field.
+model SupportCaseMessage {
+  id         String                       @id @default(uuid())
+  caseId     String                       @map("case_id")
+  case       SupportCase                  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  authorName String                       @map("author_name")
+  authorRole SupportCaseMessageAuthorRole @map("author_role")
+  body       String
+  createdAt  DateTime                     @default(now()) @map("created_at")
+
+  @@index([caseId, createdAt(sort: Asc)])
+  @@map("support_case_messages")
+}
+
+/// Mirrors `PlatformConfiguration` (frontend `platform-settings.types.ts`)
+/// field-for-field. `sessionTimeoutMinutes` is nullable — `null` means the
+/// frontend's `'never'` literal; 15/30/60 are the only other server-
+/// validated values (DTO-enforced, not a Postgres CHECK — matching this
+/// codebase's established "validate server-side, not schema-enforced"
+/// convention for small closed sets, e.g. `PlatformSessionTimeout` itself).
+model PlatformSettings {
+  id                    String   @id
+  platformName          String   @map("platform_name")
+  platformDescription   String?  @map("platform_description")
+  supportEmail          String?  @map("support_email")
+  twoFactorRequired     Boolean  @default(false) @map("two_factor_required")
+  sessionTimeoutMinutes Int?     @map("session_timeout_minutes")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Phase P17 — Notifications, Email & Search (master plan §5 "notifications",
+// §12 "Notification fan-out"/"Transactional email", §15 "Search").
+//
+// `Notification` mirrors master plan §5's own `notifications` table
+// definition and the frontend `Notification` type (`notifications.
+// types.ts`) field-for-field — `title_key`/`message_key` are i18n
+// translation keys, never literal English/Arabic text, matching every
+// other translated-content column in this schema (`support_cases.
+// subject` is the one narrow exception, already documented there).
+// User-owned (master plan §7's resource-ownership table: "own
+// Notifications") — RLS is self-scoped for SELECT/UPDATE, but INSERT is
+// deliberately unrestricted (`WITH CHECK (true)`, migration.sql) because
+// the writer is always a trusted, server-side business-process action on
+// behalf of ANOTHER user (e.g. a Platform Owner approving a payment
+// writes a notification for the paying Organization's owner) — never a
+// user-submitted row. Mirrors `audit_log_entries`' own identical,
+// extensively-documented precedent (P15) exactly, including the same
+// raw-`$executeRaw`-INSERT-with-no-RETURNING technique
+// (`NotificationsRepository.create`) to sidestep the same "RLS filters
+// the implicit RETURNING clause through the table's own SELECT policy"
+// bug class that precedent already discovered and fixed.
+//
+// `dedupeKey` + `@@unique([userId, dedupeKey])` is this phase's chosen
+// "deduped by a natural key (event + user)" idempotency strategy (master
+// plan §12's own words for `notification-worker`) — Postgres treats every
+// `NULL` in a unique index as distinct from every other `NULL`, so an
+// event type that has no meaningful retry/duplicate risk (e.g. a security
+// alert, which SHOULD fire every time) simply passes `dedupeKey: null`
+// and is naturally exempted from the constraint, never forced into an
+// artificial key.
+// ---------------------------------------------------------------------------
+
+/// Matches `NotificationType` (`notifications.types.ts`) exactly — 6 values.
+enum NotificationType {
+  system
+  account
+  billing
+  security
+  activity
+  announcement
+
+  @@map("notification_type")
+}
+
+/// Matches `NotificationPriority` (`notifications.types.ts`) exactly.
+enum NotificationPriority {
+  low
+  medium
+  high
+  urgent
+
+  @@map("notification_priority")
+}
+
+model Notification {
+  id             String               @id @default(uuid())
+  userId         String               @map("user_id")
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type           NotificationType
+  priority       NotificationPriority
+  titleKey       String               @map("title_key")
+  messageKey     String               @map("message_key")
+  /// Interpolation values for `titleKey`/`messageKey` — matches
+  /// `Notification.values` (frontend) exactly, resolved client-side via
+  /// `t(titleKey, values)`.
+  values         Json?
+  isRead         Boolean              @default(false) @map("is_read")
+  actionUrl      String?              @map("action_url")
+  actionLabelKey String?              @map("action_label_key")
+  metadata       Json?
+  /// Natural idempotency key — see this section's header comment. Null for
+  /// event types that intentionally never dedupe.
+  dedupeKey      String?              @map("dedupe_key")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, isRead, createdAt(sort: Desc)])
+  @@map("notifications")
 }

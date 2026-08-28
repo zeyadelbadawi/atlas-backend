@@ -47,6 +47,8 @@ import { PaymentProofsRepository } from '../../billing/repositories/payment-proo
 import { PaymentProofStorageService } from '../../billing/storage/payment-proof-storage.service';
 import { CourseOrdersRepository } from '../repositories/course-orders.repository';
 import { CourseOrderPaymentApplicationService } from './course-order-payment-application.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
 import {
   toCourseOrderPaymentResponse,
   type CourseOrderPaymentResponse,
@@ -57,6 +59,12 @@ import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { PaymentListQueryDto } from '../../billing/dto/payment-list-query.dto';
+
+/** `CourseOrder.snapshot` is the frozen `{course: {id, title}, price: {...}}` shape (§4.2/§23) — the one place this class needs the course's display title for a notification/email, never a live join back to `courses` (matches the snapshot's own "written once, never recomputed" discipline). */
+function extractCourseTitle(snapshot: unknown): string {
+  const course = (snapshot as { course?: { title?: string } } | null)?.course;
+  return course?.title ?? 'your course';
+}
 
 @Injectable()
 export class PlatformCourseOrderPaymentsService {
@@ -69,6 +77,8 @@ export class PlatformCourseOrderPaymentsService {
     private readonly paymentProofStorageService: PaymentProofStorageService,
     private readonly courseOrdersRepository: CourseOrdersRepository,
     private readonly courseOrderPaymentApplicationService: CourseOrderPaymentApplicationService,
+    private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly notificationFanoutService: NotificationFanoutService,
   ) {}
 
   async getPayments(
@@ -117,7 +127,8 @@ export class PlatformCourseOrderPaymentsService {
       paymentId,
     );
 
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let notifiedNew = false;
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       courseOrder.organizationId,
       reviewerId,
       async (tx) => {
@@ -155,13 +166,42 @@ export class PlatformCourseOrderPaymentsService {
           reloadedOrder!,
         );
 
+        // Phase P15 retroactive audit coverage.
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: reviewerId,
+          organizationId: courseOrder.organizationId,
+          action: 'course_order_payment.approved',
+          targetType: 'payment',
+          targetId: paymentId,
+        });
+
+        // Phase P17 — notify the buyer, same transaction as the state change.
+        const courseTitle = extractCourseTitle(reloadedOrder?.snapshot);
+        notifiedNew = await this.notificationFanoutService.notify(tx, {
+          userId: courseOrder.studentId,
+          type: 'billing',
+          priority: 'medium',
+          titleKey: 'notifications:events.courseOrderPaid.title',
+          messageKey: 'notifications:events.courseOrderPaid.message',
+          values: { courseTitle },
+          dedupeKey: `course_order_paid:${paymentId}`,
+        });
+
         const final = await this.paymentsRepository.findByIdAnyOrganization(
           tx,
           paymentId,
         );
-        return toCourseOrderPaymentResponse(final!);
+        return { response: toCourseOrderPaymentResponse(final!), courseTitle };
       },
     );
+
+    await this.notificationFanoutService.sendEmailAfterCommit(
+      courseOrder.studentId,
+      notifiedNew,
+      { template: 'course_order_paid', values: { courseTitle: result.courseTitle } },
+    );
+
+    return result.response;
   }
 
   async rejectPayment(
@@ -174,7 +214,8 @@ export class PlatformCourseOrderPaymentsService {
       paymentId,
     );
 
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let notifiedNew = false;
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       courseOrder.organizationId,
       reviewerId,
       async (tx) => {
@@ -203,13 +244,50 @@ export class PlatformCourseOrderPaymentsService {
           'errors.payment.rejectedByReviewer',
         );
 
+        // Phase P15 retroactive audit coverage.
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: reviewerId,
+          organizationId: courseOrder.organizationId,
+          action: 'course_order_payment.rejected',
+          targetType: 'payment',
+          targetId: paymentId,
+          context: payload.notes ? { notes: payload.notes } : undefined,
+        });
+
+        // Phase P17 — notify the buyer, same transaction as the state change.
+        const orderForTitle = await this.courseOrdersRepository.findById(
+          tx,
+          courseOrder.id,
+        );
+        const courseTitle = extractCourseTitle(orderForTitle?.snapshot);
+        notifiedNew = await this.notificationFanoutService.notify(tx, {
+          userId: courseOrder.studentId,
+          type: 'billing',
+          priority: 'high',
+          titleKey: 'notifications:events.courseOrderPaymentFailed.title',
+          messageKey: 'notifications:events.courseOrderPaymentFailed.message',
+          values: { courseTitle },
+          dedupeKey: `course_order_payment_failed:${paymentId}`,
+        });
+
         const final = await this.paymentsRepository.findByIdAnyOrganization(
           tx,
           paymentId,
         );
-        return toCourseOrderPaymentResponse(final!);
+        return { response: toCourseOrderPaymentResponse(final!), courseTitle };
       },
     );
+
+    await this.notificationFanoutService.sendEmailAfterCommit(
+      courseOrder.studentId,
+      notifiedNew,
+      {
+        template: 'course_order_payment_failed',
+        values: { courseTitle: result.courseTitle },
+      },
+    );
+
+    return result.response;
   }
 
   /** Streams the latest proof's bytes for ANY course-order Payment — Platform review authority, gated by `PlatformOwnerGuard` at the controller. */

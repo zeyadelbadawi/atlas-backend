@@ -25,6 +25,8 @@ import type {
 } from '../dto/contracts';
 import { PasswordResetEmailProducer } from '../queue/password-reset-email.producer';
 import { UserOrganizationsService } from '../../tenancy/services/user-organizations.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { PrismaService } from '../../database/prisma.service';
 
 /** A value nobody can ever sign in with — see `getDummyHash()`. */
 const DUMMY_PASSWORD = 'atlas-p1-dummy-password-for-timing-safety-only';
@@ -56,6 +58,8 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly passwordResetEmailProducer: PasswordResetEmailProducer,
     private readonly userOrganizationsService: UserOrganizationsService,
+    private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -236,6 +240,21 @@ export class AuthService {
     await this.usersRepository.updatePasswordHash(resetToken.userId, passwordHash);
     await this.passwordResetTokensRepository.markUsed(resetToken.id);
     await this.refreshTokensRepository.revokeAllForUser(resetToken.userId);
+
+    // Phase P15 retroactive audit coverage (master plan §8: "security
+    // events... fold into audit_log_entries"). This flow predates any
+    // shared `$transaction` across its three writes above (a P1
+    // structural fact, not something this phase should restructure) —
+    // `writeBestEffort`, in its own small transaction, is the documented,
+    // lower-risk choice; see that method's own doc comment.
+    await this.prisma.$transaction((tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: resetToken.userId,
+        action: 'password_reset.confirmed',
+        targetType: 'user',
+        targetId: resetToken.userId,
+      }),
+    );
   }
 
   private async issueSession(user: User): Promise<AuthenticationResponseContract> {

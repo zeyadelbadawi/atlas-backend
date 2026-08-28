@@ -105,7 +105,9 @@ describe('Atlas Subscription Payment Provider (e2e)', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(200);
 
-    expect(res.body).toEqual([{ providerKey: 'atlas_manual', displayName: 'Manual Transfer' }]);
+    expect(res.body).toEqual([
+      { providerKey: 'atlas_manual', displayName: 'Manual Transfer' },
+    ]);
   });
 
   it('a brand-new deployment resolves the effective provider to Manual Transfer — never a silent default to anything else', async () => {
@@ -186,7 +188,10 @@ describe('Atlas Subscription Payment Provider (e2e)', () => {
     const saved = await request(app.getHttpServer())
       .patch('/platform-atlas-payment-provider')
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ providerKey: 'atlas_manual', config: { secretValue: 'super-secret-token' } })
+      .send({
+        providerKey: 'atlas_manual',
+        config: { secretValue: 'super-secret-token' },
+      })
       .expect(200);
 
     expect(saved.body).not.toHaveProperty('encryptedConfig');
@@ -232,7 +237,9 @@ describe('Atlas Subscription Payment Provider (e2e)', () => {
   });
 
   it('an unauthenticated caller is rejected before reaching any handler', async () => {
-    await request(app.getHttpServer()).get('/platform-atlas-payment-provider').expect(401);
+    await request(app.getHttpServer())
+      .get('/platform-atlas-payment-provider')
+      .expect(401);
   });
 
   it('P12 regression: createPaymentIntent still honestly reports no gateway is connected, even after Manual Transfer is fully configured/tested/enabled through the new provider config', async () => {

@@ -2692,7 +2692,399 @@ this phase's new configuration (P15's job, per this session's explicit
 scope boundary — the backend/domain foundation this phase built is
 exactly what P15 will expose).
 
+## P14 — Provisioning Orchestration (2026-08-27) — COMPLETE, VERIFIED
+
+Backend Prompt 15 (master plan §21 Phase P14, §5.11). Unlike P13,
+`atlas-front` carries the complete contract for this phase — every enum
+value, step key, field name, and route shape is discovered directly from
+`src/types/provisioning.types.ts`/`src/features/provisioning/*`, never
+invented. Full technical account in `Reports/ARCHITECTURE.md`'s P14
+entry.
+
+### What was built
+
+- **Schema (2 new tables, 3 new enums):** `provisioning_requests`,
+  `provisioning_steps`, plus `ProvisioningStatus`/`ProvisioningStepKey`/
+  `ProvisioningStepStatus` enums — one additive migration
+  (`p14_provisioning_orchestration`), RLS policies in the same migration
+  as the tables, one new `SECURITY DEFINER` function
+  (`subdomain_is_taken`). Existing seeded dev data (5,830 users / 3,879
+  organizations / 2,511 academies / 447 payments) verified row-count-
+  identical before and after — no destructive statement anywhere.
+- **A new module**, `ProvisioningModule` — 3 controllers, 4 services, 2
+  repositories, a BullMQ queue (producer + processor) — importing
+  `AcademyModule` (now additionally exporting `AcademiesService`),
+  `DomainModule` (now additionally exporting
+  `PlatformDomainConfigurationRepository`), and `BillingModule`, rather
+  than reimplementing any of their logic.
+- **The real seven-step state machine**: `tenant` → `academy` → `theme` →
+  `branding` → `subdomain` → `domain` → `finalization`, each step
+  persisted through a begin/execute/complete three-phase commit sequence
+  — proven, by direct test, to survive a mid-flight crash and resume from
+  exactly the failed step, never re-executing a completed or skipped one,
+  never creating a duplicate Academy or subdomain allocation on
+  redelivery.
+- **Org-scoped surface** (`organizations/:id/provisioning-requests*`) and
+  a flat **Platform Owner review console** (`/provisioning-requests*`,
+  delegating into the same tenant-scoped write logic under
+  `runInTenantAndUserContext` — `PlatformCourseOrderPaymentsService`'s
+  exact P13 precedent, needing no new platform-owner WRITE RLS policy)
+  plus the global, non-tenant-scoped `GET /subdomains/availability`.
+- **Retry/cancel**: any non-`ready`/`cancelled` request (including a
+  genuinely `failed` one) is retryable, re-enqueuing the SAME orchestrator
+  entry point; cancellation is a pure status transition, never a rollback
+  of already-created infrastructure — the same "no hard delete" discipline
+  every prior phase's cancellation flow follows.
+
+### Two real, non-obvious things found and fixed by direct empirical reproduction
+
+Full technical account in `Reports/ARCHITECTURE.md`'s P14 entry; summary:
+
+1. `AcademiesService`'s own `P2002`→`ConflictException` conversion
+   silently never fires in this environment (`error.meta.target` comes
+   back as the string `"(not available)"`, not an array) — a latent,
+   pre-existing P3 gap, left unmodified (different phase's file, no P14
+   integration reason to touch it); this phase's own slug-conflict
+   detection was made robust to the raw, unconverted `P2002` directly
+   rather than depending on that conversion.
+2. Opening a new Prisma interactive transaction immediately after
+   catching an error from a different, just-aborted one can fail with
+   Prisma's own "old closed transaction" error — reproduced
+   deterministically, confirmed transient and connection-pool-related, not
+   a business-logic bug. A second, wider shape of the same issue
+   (`P2024`/`P2028`) then surfaced only under the FULL e2e regression
+   suite's real concurrent load, at a different call site — proof that
+   this phase's own isolated tests passing repeatedly wasn't sufficient
+   evidence by itself. Fixed with a small `withTransientRetry` helper
+   (bounded retries, short backoff, matching the full known error family)
+   wrapping every database call this orchestrator makes, via one shared
+   `runTenant` helper, not just the original call site.
+
+### Testing
+
+New: `test/provisioning.e2e-spec.ts` (22 scenarios), `test/
+provisioning-tenant-isolation.e2e-spec.ts` (9 scenarios), `test/
+rls-provisioning.e2e-spec.ts` (14 direct-Postgres, no-guard scenarios).
+**45/45 new tests passing**, confirmed stable across 5+ repeated runs of
+the retry/resume scenario specifically (the one that surfaced both issues
+above) after the fix, and passing as part of two consecutive full 66-file
+e2e regression runs.
+
+**Full regression, final verification run:** unit — 30 suites / 429
+tests, all passing, unchanged from the P13 baseline. e2e — the complete
+suite run twice after the `withTransientRetry` broadening: first run
+538/540 (two failures — this phase's own retry/resume scenario, and an
+untouched, pre-existing `media.e2e-spec.ts` flake, same class P13's own
+report already documented); second run **66/66 suites, 540/540 tests,
+zero failures**. Every prior phase's own suite unaffected (no shared file
+touched except the two additive module `exports` arrays and
+`SubdomainAllocationsRepository`'s new methods, none of which change any
+existing method's behavior). Lint and typecheck are clean across the
+entire `src`/`test` tree except one
+pre-existing, untouched file (`test/atlas-subscription-payment-provider.e2e-spec.ts`,
+3 formatting errors present before this session started, confirmed via
+`git status` to be outside this phase's changes). Build (`nest build`) is
+clean.
+
+### What is deliberately NOT implemented (P14 boundary)
+
+A real Theme Engine (`theme` step unconditionally `skipped`). Real
+branding application beyond what P3 already stores (`branding` step
+unconditionally `skipped`). Real DNS/CDN/SSL automation for `domain`
+(unconditionally `skipped`; connecting a real custom domain remains the
+existing, separate `DomainService.addCustomDomain` flow). A
+`provisioning.*` domain-event/audit trail (the frontend's own type is
+documented there as not consumed by any runtime code path). Automatic
+rollback of an already-created Academy/subdomain on cancellation (a
+deliberate, conservative choice, not a gap).
+
+## P15 — Platform Owner Control Plane (2026-08-27) — COMPLETE, VERIFIED
+
+Backend Prompt 16 (master plan §21 Phase P15, §5.12/§7 point 4). Full
+technical account in `Reports/ARCHITECTURE.md`'s P15 entry.
+
+### What was built
+
+- **Schema (3 new tables, 3 new enums, no existing table shape changed):**
+  `audit_log_entries`, `support_cases`, `support_case_messages`,
+  `platform_settings` — plus 9 additive `_platform_select` RLS policies on
+  EXISTING tenant tables (`organizations`/`organization_memberships`/
+  `academies`/`academy_members`/`courses`/`tenant_subscriptions`/
+  `tenant_usage`/`domain_connections`/`website_configurations`) — one
+  migration, RLS in the same migration as the tables it protects. Existing
+  seeded dev data verified row-count-identical before and after — no
+  destructive statement anywhere.
+- **Two new modules**: `PlatformModule` (6 controllers, 6 services, 4 new
+  repositories, plus small additive methods on 6 existing repositories)
+  and `AuditLogModule` (`@Global()`, the one writer every other phase can
+  now inject).
+- **The real cross-tenant read surfaces**: `GET /organizations` (new) +
+  `GET /organizations/:id` (P2's own route, now serving BOTH a tenant
+  member's narrow view and a Platform Owner's rich cross-tenant view — a
+  real, confirmed frontend contract collision, resolved without inventing
+  a new path; see architecture doc), `GET /platform-academies*`,
+  `GET /platform-users*`.
+- **A real, queryable Audit Log** (`GET /audit-log*`), backend-sole-writer,
+  wired into 9 representative mutations spanning P1–P15 (see the table in
+  `Reports/ARCHITECTURE.md`'s P15 entry) — not literally every mutating
+  endpoint, a deliberate, documented, representative sample per this
+  phase's own "do not blindly modify every endpoint" instruction.
+- **Support Operations**, real and operational: `GET/PATCH/POST
+  /support-cases*`, the standard 4-state lifecycle, no invented
+  agent-assignment system, no invented case-creation endpoint (master plan
+  §24 confirms none is specified).
+- **Platform Settings**, real and writable: `GET/PATCH /platform-settings`,
+  genuine partial updates, server-validated `sessionTimeoutMinutes`
+  (15/30/60/`'never'` only).
+- **Roles & Permissions**: confirmed, by reading `rbac.utils.ts` directly,
+  that this page needs NO backend endpoint at all — a pure client-side
+  derivation from the already-fetched `CurrentUser`. Zero backend work
+  required or performed here, correctly.
+- **Plans/Add-ons and Platform Payment Review**: verified working as-is
+  for the Platform Owner surface; left completely untouched, per this
+  phase's explicit "do not duplicate" instruction.
+
+### Two real bugs found and fixed by direct empirical reproduction
+
+1. The audit INSERT's implicit Prisma `RETURNING` clause hit RLS — the
+   same "RLS also filters RETURNING through the table's own SELECT
+   policies" lesson P13 documented, in a new shape (most `write()` callers
+   are NOT Platform Owners). Fixed with a raw, `RETURNING`-free `INSERT`
+   instead of widening the SELECT policy, which would have defeated the
+   whole point of restricting general audit-log reads to Platform Owners.
+2. `class-validator`'s `@IsOptional()` treats an explicit `null` the same
+   as an omitted field, silently accepting an invalid `sessionTimeoutMinutes:
+   null`. Fixed with `@ValidateIf` checking specifically `!== undefined`.
+   Caught by this phase's own new unit test, not e2e.
+
+### Testing
+
+New: `test/platform-control-plane.e2e-spec.ts` (15 scenarios), `test/
+platform-control-plane-tenant-isolation.e2e-spec.ts` (12 scenarios —
+cross-tenant security plus explicit audit-coverage proofs), `test/
+rls-platform-control-plane.e2e-spec.ts` (10 direct-Postgres, no-guard
+scenarios). **37/37 new e2e scenarios passing.** Plus 33 new unit tests
+(`OrganizationsAccessGuard`'s composition logic, DTO validation, response
+mapping) — one of which caught the `@IsOptional()`/`null` bug above before
+it ever reached e2e.
+
+**Full regression, final verification run:** unit — 34 suites / 462
+tests, all passing (429 P0–P14 baseline + 33 new P15). e2e — the complete
+suite (69 files, every phase P0–P15) run twice: first run 576/577 (one
+failure — `media.e2e-spec.ts`'s oversized-payload scenario, an untouched,
+pre-existing file, confirmed to pass cleanly standalone, the same class
+of environment-load-related flake prior phases' own reports already
+documented); second run **69/69 suites, 577/577 tests, zero failures**.
+Every prior phase's own suite unaffected (no shared file's existing
+behavior changed — `OrganizationsController` moved but P2's own response
+shape/guard behavior for every non-Platform-Owner caller is byte-for-byte
+unchanged, proven by this phase's own regression scenario A5/G2). Lint,
+typecheck, and build are all clean.
+
+### What is deliberately NOT implemented (P15 boundary)
+
+Any organization/academy/user mutation (suspend/edit/delete/archive) —
+none is specified. A Role/Permission catalog or assignment endpoint —
+`PlatformRolesPermissionsPage` needs none (pure `CurrentUser` derivation,
+confirmed). Support case creation (`SPECIFICATION-UNDEFINED`, master plan
+§24). An agent-assignment system for Support. Any new Plan/Add-on
+mutation. A second billing/payment surface (P12/P13's existing Platform
+review services reused, only gained an additive audit-write call each).
+Full retroactive audit coverage of literally every P1–P14 mutating
+endpoint (a representative, justified 9-mutation sample instead — see
+`Reports/ARCHITECTURE.md`'s own table). The frontend's own
+`platform.support.manage`/`platform.payment.approve`/`.reject` inline
+permission-string checks remain a confirmed, pre-existing, out-of-scope
+gap (`CurrentUser.permissions` is hard-coded `[]` everywhere in this
+codebase, predating P15) — real server-side authorization
+(`PlatformOwnerGuard`) is complete and correct regardless.
+
+## P16 — Platform Analytics — COMPLETE, VERIFIED
+
+Two real, previously-unserved frontend surfaces now have a real backend:
+the **Platform Command Center** singleton (`GET /platform-metrics`, seven
+KPIs, "vs. last calendar month" trends) and the **Analytics tab**
+(`GET /analytics/overview|time-series/:metric|breakdown/:dimension`, four
+KPIs + `users`/`engagement`/`revenue` time series + `plan` breakdown, all
+date-ranged). Both `PlatformOwnerGuard`-protected, matching every P15
+cross-tenant surface exactly. Full write-up: `Reports/ARCHITECTURE.md`'s
+new "Phase P16 — Platform Analytics" section (backend structure,
+authorization/RLS — no new policy needed, the deliberate live-aggregation-
+vs-snapshot-pipeline deviation from master plan §14, the exact revenue/
+commission/refund formulas, trend-comparison conventions, and every
+`SPECIFICATION-UNDEFINED` decision).
+
+**No migration.** Every table P16 reads either already had a
+`_platform_select` policy (P15) or no RLS at all (`users`/`plans`); the
+two financial tables (`payments`/`revenue_ledger_entries`) already had an
+unconditional platform-owner SELECT policy from P12/P13 — discovered
+before writing a redundant one (a draft migration was applied, conflicted,
+and was cleanly rolled back and deleted; recorded in `ARCHITECTURE.md` for
+an honest account of the discovery process).
+
+**New module:** `src/analytics/` (2 controllers, 2 services, 2
+repositories, 4 pure util files, 1 module) + `AnalyticsModule` wired into
+`app.module.ts`.
+
+**Financial correctness proven end to end** (`test/analytics.e2e-spec.ts`
+D1/D2): a real e2e scenario seeds a succeeded $100 subscription payment, a
+$999,999.99 FAILED payment (must be excluded), a $50 course sale with a
+10% commission ($5 net), and a SECOND course sale that is fully refunded
+(sale + fee + refund + commission-reversal) — the API's returned `revenue`
+is asserted to be exactly `$105.00`, proving both the failed-payment
+exclusion and the refund-nets-to-zero-commission behavior through the real
+HTTP surface, not just in a unit test.
+
+**Testing:** 4 new unit suites / 25 tests (pure calculation logic — safe
+division, calendar-month boundaries including a leap-adjacent February,
+series gap-filling, currency aggregation); 1 new e2e suite / 12 scenarios
+(authorization × 3, singleton shape, date filtering × 6, financial
+correctness × 2).
+
+**Full regression:** unit 38/38 suites, 487/487 tests green (was 34/462
+before P16). E2E: see the final report's exact figures (ran twice per
+this project's established convention). Lint/typecheck/build all clean.
+Prisma schema unchanged — `prisma validate`/`migrate status` both report
+no drift (no migration this phase).
+
+**Deferred, not built:** the master plan §14 V1 scheduled-snapshot-table
+pipeline (`platform_metrics_snapshots` etc.) — a reasoned, documented
+deviation (current data volume doesn't warrant the operational complexity
+yet; every query here is already a single indexed aggregate). Real
+infra/APM monitoring backing `systemHealthPercent`/`apiUptimePercent`
+(none exists anywhere in this codebase yet — P18/P20 scope; both fields
+return an honest, documented fixed baseline rather than a fabricated
+formula).
+
+## P17 — Notifications, Email & Search — COMPLETE, VERIFIED
+
+Three real backends: in-app notifications (`GET/PATCH/POST /notifications*`,
+user-scoped), transactional email (`EmailProvider` widened + a new
+`ResendEmailProvider`, `EMAIL_PROVIDER` env-driven), and permission-scoped
+global search (`GET /search?q=`). Full write-up:
+`Reports/ARCHITECTURE.md`'s new "Phase P17" section (module structure,
+notification data model + dedupe strategy, the two-step notify-then-email
+contract, all 9 real domain events wired, email provider/config, search
+architecture/permission model, both real bugs found and fixed, tests).
+
+**New table**: `notifications` (additive migration
+`20260828120000_p17_notifications_search`, also adds `search_vector`
+generated-tsvector + GIN index columns to `users`/`organizations`/
+`academies`/`courses` — no other schema change).
+
+**Three real bugs found and fixed by this phase's own tests, before any
+was ever exposed**:
+1. The notifications raw INSERT omitted `updated_at` (`NOT NULL`, no DB
+   default — Prisma's `@updatedAt` is normally populated by the Client,
+   which the RLS-motivated raw `$executeRaw` INSERT bypasses).
+2. A genuine PostgreSQL RLS + `ON CONFLICT` interaction bug: the original
+   dedupe implementation used `INSERT ... ON CONFLICT ("user_id",
+   "dedupe_key") DO NOTHING`, which failed with a real RLS violation
+   (`42501`) on every actual business flow (never in isolated testing) —
+   `ON CONFLICT`'s conflict-detection implicitly requires the table's
+   SELECT policy to permit seeing the conflicting row, which fails
+   whenever the notification's `user_id` differs from the acting
+   session's `app.current_user_id` (true almost everywhere a real
+   business-process service notifies someone other than itself). Fixed
+   by removing `ON CONFLICT` entirely — a plain `INSERT`, catching the
+   real unique-constraint violation as the dedupe signal instead,
+   mirroring `CourseOrderRefundsService`'s own established
+   catch-and-recover pattern (P13). This one caused 24 test failures
+   across 5 e2e suites on the first full-suite confirmation run before
+   being root-caused and fixed — all green afterward.
+3. A real cross-tenant leak in search: `courses` carries a pre-existing,
+   unconditional public-discovery RLS policy (P11, for the public website
+   runtime) with no tenant scoping — relying on RLS alone let any
+   Organization's publicly-visible course leak into another tenant's
+   search results. Fixed with an explicit `organization_id` filter at the
+   query layer, never relying on RLS alone (master plan §21 P17's own
+   "business-level visibility checks must also exist in the service/
+   repository query path" rule, applied concretely).
+
+**⚠️ Incident during this phase** (fully disclosed to and approved by the
+user before recovery): a `prisma migrate diff --shadow-database-url`
+command was mistakenly pointed at the real local dev database instead of
+a disposable one, wiping all table DATA (schema/structure was
+unaffected). Recovered per explicit user approval: verified the target
+was the local dev DB only (never production), verified the schema already
+matched the pre-P17 migration history structurally, reconciled Prisma's
+`_prisma_migrations` bookkeeping (`migrate resolve --applied` per prior
+migration), applied the real P17 migration via `migrate deploy`, and
+restored the baseline via the project's own existing `prisma/seed.ts`
+script. No production system was ever involved. Documented here for a
+complete, honest record — see the conversation's own incident report for
+full detail.
+
+**Testing**: 7 new unit suites / ~38 tests (dedupe logic, email-failure
+isolation, template rendering, preference resolution, DTO validation); 2
+new e2e suites / 29 scenarios (notifications ownership/preferences/
+duplicate-protection; search's full platform-owner/tenant-user/student
+permission matrix + tenant isolation + response-shape safety).
+
+**Full regression**: unit 45/45 suites, 523/523 tests green (was 38/487
+before P17). E2E: see the final report's exact figures (ran twice per
+this project's established convention). Lint/typecheck/build all clean.
+Migration applied cleanly; `prisma validate`/`migrate status` both clean.
+
+**Deferred, documented, not built**: a BullMQ queue for email dispatch
+(plain async call instead — reasoned scope decision);
+`announcements`/`blog_posts` in content search (courses only this phase);
+`pg_trgm` typo-tolerant search; a server-side email-localization system;
+push/SMS delivery (no provider exists — preferences honestly stored,
+never falsely reported as delivered); notifications for every P1–P16
+mutation (a representative, justified 9-event set only).
+
+## Phase P18 — Production Hardening & Launch Readiness (complete)
+
+The final backend implementation phase in the Atlas Master Plan — a
+verification/audit/tuning pass, not a feature phase. No new tables, no
+migration, no frontend contract changes. Full write-up:
+`Reports/P18_PRODUCTION_READINESS.md` (16-section evidence record);
+architecture-level summary in `Reports/ARCHITECTURE.md`'s new "Phase
+P18" section.
+
+**Real work executed, not just documented**: a full backup/restore drill
+against a disposable local database (real `pg_dump`/`pg_restore`, real
+verification queries, real boot of the compiled app against the restored
+DB — found and fixed a real bug in the process: bare `/health` was
+unreachable); two real `autocannon` load-test runs with actual measured
+latency/error-rate numbers; a tenant-isolation inventory rebuilt fresh
+from the live Postgres catalog (69 tables, 55 RLS-forced, 0 in a
+dangerous half-state, 14 justified exemptions); an OWASP-shaped security
+review; a migration-safety guardrail script directly preventing the P17
+incident's exact failure mode; a real, verified CI/CD fix (CI could not
+previously boot the app at all — 8 required env vars were missing,
+confirmed by running the app's own validator against CI's prior
+environment); and a full regression pass.
+
+**Two real regressions found and fixed by this phase's own testing**:
+the new `POST /auth/register` rate limiter's initial 5/hour default broke
+legitimate e2e fixture flows (course-commerce's commission-snapshot test
+creates 6 real accounts in one test) — raised to a still-meaningful
+20/hour, reasoning documented inline in `env.validation.ts`. One
+transient e2e flake in `media.e2e-spec.ts` matched this project's
+already-documented flake class (heavy sustained `--runInBand` load) and
+did not reproduce in 2 of 3 full regression runs — not a P18 regression.
+
+**Full regression**: unit 45/45 suites, 523/523 tests. E2E: 72/72 suites,
+619/619 tests (2 of 3 full runs clean; the third had 1 transient,
+non-reproducing failure — see above). Lint/typecheck/build all clean.
+Migration status clean (27 migrations, no drift, no new migration this
+phase).
+
+**Documented, honestly not done this phase**: no error-tracking/APM
+connected (no monitoring stack exists to wire yet); the global rate
+limiter is in-memory rather than Redis-backed (a real, flagged
+consideration for whenever horizontal scaling begins, not fixed
+unilaterally here); 16 pre-existing transitive dependency vulnerabilities
+(0 critical, no non-breaking fix available per `npm audit fix --dry-run`);
+real production email credentials intentionally not configured, per this
+phase's explicit instruction not to connect Gmail/real credentials.
+
+**Not committed, not pushed** — per this phase's explicit stop condition,
+awaiting product-owner review.
+
 ## Next phase
 
-**P14 — Provisioning Orchestration.** Not started. Awaiting explicit
-approval to begin, per this session's own instruction to stop after P13.
+None. P18 was the final backend implementation phase in the Atlas Master
+Plan.

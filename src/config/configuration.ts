@@ -70,6 +70,14 @@ export interface PaymentConfigurationConfig {
   readonly credentialEncryptionKeyHex: string;
 }
 
+/** Phase P17 — Notifications, Email & Search configuration (master plan §12, §21). */
+export interface EmailConfig {
+  readonly provider: EnvVariables['EMAIL_PROVIDER'];
+  readonly apiKey?: string;
+  readonly fromEmail?: string;
+  readonly fromName: string;
+}
+
 /** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
 export interface IdentityConfig {
   readonly jwtAccessSecret: string;
@@ -81,6 +89,8 @@ export interface IdentityConfig {
     readonly max: number;
     readonly windowSeconds: number;
   };
+  /** Phase P18 — see `env.validation.ts`'s own doc comment on `AUTH_REGISTER_RATE_LIMIT_MAX`. */
+  readonly registerRateLimit: { readonly max: number; readonly windowSeconds: number };
 }
 
 /**
@@ -140,6 +150,10 @@ export default () => {
       max: Number(env.AUTH_PASSWORD_RESET_RATE_LIMIT_MAX ?? 5),
       windowSeconds: Number(env.AUTH_PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS ?? 3600),
     },
+    registerRateLimit: {
+      max: Number(env.AUTH_REGISTER_RATE_LIMIT_MAX ?? 5),
+      windowSeconds: Number(env.AUTH_REGISTER_RATE_LIMIT_WINDOW_SECONDS ?? 3600),
+    },
   };
 
   const media: MediaStorageConfig = {
@@ -177,6 +191,13 @@ export default () => {
     credentialEncryptionKeyHex: env.PAYMENT_CREDENTIALS_ENCRYPTION_KEY,
   };
 
+  const email: EmailConfig = {
+    provider: env.EMAIL_PROVIDER ?? 'stub',
+    apiKey: env.EMAIL_API_KEY || undefined,
+    fromEmail: env.EMAIL_FROM_EMAIL || undefined,
+    fromName: env.EMAIL_FROM_NAME ?? 'Atlas',
+  };
+
   return {
     app,
     database,
@@ -187,5 +208,6 @@ export default () => {
     cloudflare,
     billing,
     paymentConfiguration,
+    email,
   };
 };

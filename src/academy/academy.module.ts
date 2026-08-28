@@ -14,6 +14,12 @@
  * reuse it verbatim for every `academies/:id/courses/*` route — Course
  * routes always resolve `:id` as the ACADEMY id, the exact case this guard
  * already handles, so no new guard was written for P5 at all.
+ *
+ * `AcademiesService` is additionally exported as of Phase P14 —
+ * `ProvisioningModule`'s `academy` orchestration step calls
+ * `AcademiesService.create` directly, reusing the complete, already-tested
+ * slug-conflict-handling/membership-creation logic verbatim rather than
+ * duplicating any part of it (this phase's explicit instruction).
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
@@ -35,6 +41,11 @@ import { AcademyScopeGuard } from './guards/academy-scope.guard';
     AcademyOrganizationScopeGuard,
     AcademyScopeGuard,
   ],
-  exports: [AcademiesRepository, AcademyMembersRepository, AcademyScopeGuard],
+  exports: [
+    AcademiesRepository,
+    AcademyMembersRepository,
+    AcademyScopeGuard,
+    AcademiesService,
+  ],
 })
 export class AcademyModule {}

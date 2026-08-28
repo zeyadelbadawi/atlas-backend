@@ -18,8 +18,9 @@
  */
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { Academy } from '@prisma/client';
+import type { Academy, Organization } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { PLATFORM_DETAIL_MEMBER_CAP } from '../../tenancy/repositories/organization-memberships.repository';
 
 export interface AcademyListFilter {
   readonly search?: string;
@@ -28,6 +29,11 @@ export interface AcademyListFilter {
   readonly skip: number;
   readonly take: number;
 }
+
+export type AcademyWithOrganizationAndCounts = Academy & {
+  organization: Pick<Organization, 'id' | 'name'>;
+  _count: { courses: number; members: number };
+};
 
 @Injectable()
 export class AcademiesRepository {
@@ -103,5 +109,58 @@ export class AcademiesRepository {
     data: Prisma.AcademyUpdateInput,
   ): Promise<Academy> {
     return tx.academy.update({ where: { id }, data });
+  }
+
+  /** Phase P15 — `PlatformOrganizationDetail.academies` (id/name/status refs only). Meaningful only inside `runInUserContext(platformOwnerId)` (the `academies_platform_select` policy); capped, not paginated — see `PLATFORM_DETAIL_MEMBER_CAP`. */
+  findRefsForOrganization(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<Pick<Academy, 'id' | 'name' | 'status'>[]> {
+    return tx.academy.findMany({
+      where: { organizationId },
+      select: { id: true, name: true, status: true },
+      orderBy: { createdAt: 'desc' },
+      take: PLATFORM_DETAIL_MEMBER_CAP,
+    });
+  }
+
+  /** Phase P15 — the Platform Owner's cross-tenant academy list. Meaningful only inside `runInUserContext(platformOwnerId)` (the `academies_platform_select` policy). */
+  async findManyAnyOrganization(
+    tx: Prisma.TransactionClient,
+    filter: { readonly search?: string; readonly skip: number; readonly take: number },
+  ): Promise<{ items: AcademyWithOrganizationAndCounts[]; totalItems: number }> {
+    const where: Prisma.AcademyWhereInput = filter.search
+      ? { name: { contains: filter.search, mode: 'insensitive' as const } }
+      : {};
+
+    const [items, totalItems] = await Promise.all([
+      tx.academy.findMany({
+        where,
+        include: {
+          organization: { select: { id: true, name: true } },
+          _count: { select: { courses: true, members: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: filter.skip,
+        take: filter.take,
+      }),
+      tx.academy.count({ where }),
+    ]);
+
+    return { items, totalItems };
+  }
+
+  /** Phase P15 — the Platform Owner's cross-tenant academy detail read. Same RLS/context rule as `findManyAnyOrganization`. */
+  findByIdAnyOrganization(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<AcademyWithOrganizationAndCounts | null> {
+    return tx.academy.findUnique({
+      where: { id },
+      include: {
+        organization: { select: { id: true, name: true } },
+        _count: { select: { courses: true, members: true } },
+      },
+    });
   }
 }

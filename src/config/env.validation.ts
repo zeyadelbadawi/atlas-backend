@@ -107,6 +107,33 @@ const EnvSchema = z.object({
     .positive()
     .default(3600),
 
+  // --- Phase P18 — Production Hardening (master plan §16/§21 P18) ---
+  // `POST /auth/register` had no dedicated rate limit before this phase —
+  // only the generic global 120-req/min-per-IP default (§0's own P18
+  // audit finding). Bulk fake-account creation is a real, distinct abuse
+  // pattern from repeated sign-in attempts, so it gets its own budget. It
+  // is deliberately NOT as tight as an initial 5/hour draft: registration
+  // is IP-only (no account yet exists to scope a second key to, unlike
+  // sign-in's combined IP+account check), and IP-only budgets are shared by
+  // everyone behind the same NAT/campus/office network — a real, legitimate
+  // school or coworking space can plausibly onboard more than 5 accounts
+  // from one IP within an hour. 20/hour still meaningfully blocks bulk
+  // automated account creation (which wants hundreds, not tens) while
+  // comfortably covering that legitimate case. (Also confirmed against this
+  // repo's own e2e suite: the heaviest single legitimate multi-actor test
+  // flow — `course-commerce.e2e-spec.ts`'s commission-snapshot scenario —
+  // creates 6 real accounts in one test run; a production-realistic limit
+  // must clear real usage like that, not just an arbitrary round number.)
+  // Same Redis-backed fixed-window mechanism as sign-in/password-reset
+  // (`AuthRateLimiterService`) — no second rate-limiting architecture
+  // introduced.
+  AUTH_REGISTER_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
+  AUTH_REGISTER_RATE_LIMIT_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3600),
+
   // --- Phase P8 — Media Library & Object Storage (master plan §13, §21 P8, ADR-005) ---
   // Cloudflare R2, S3-compatible — same client/protocol against a local
   // MinIO endpoint in development/test (docker-compose.yml) and the real
@@ -237,6 +264,25 @@ const EnvSchema = z.object({
       /^[0-9a-fA-F]{64}$/,
       'PAYMENT_CREDENTIALS_ENCRYPTION_KEY must be a 64-character hex string (32 raw bytes).',
     ),
+
+  // --- Phase P17 — Notifications, Email & Search (master plan §12
+  // "Transactional email", §21 P17) ---
+  // Which `EmailProvider` implementation `EmailModule`'s DI factory wires
+  // up (`identity.module.ts`'s own `EMAIL_PROVIDER` token). Defaults to
+  // `'stub'` — no real transactional-email account exists in any
+  // environment today, the same "optional, no fake default" honesty
+  // `CLOUDFLARE_API_TOKEN`'s own doc comment already established for a
+  // third-party account this codebase doesn't yet have. `'resend'` is the
+  // one real, simple-HTTP-API provider this phase wires (see
+  // `resend-email.provider.ts`'s own doc comment for why Resend).
+  EMAIL_PROVIDER: z.enum(['stub', 'resend']).default('stub'),
+  // Required only when EMAIL_PROVIDER=resend — validated below via
+  // `.superRefine`, mirroring `validateEnv`'s existing
+  // NODE_ENV=production → CORS_ALLOWED_ORIGINS-required cross-field
+  // precedent exactly, rather than a second, ad hoc check elsewhere.
+  EMAIL_API_KEY: z.string().min(1).optional(),
+  EMAIL_FROM_EMAIL: z.string().email().optional(),
+  EMAIL_FROM_NAME: z.string().min(1).default('Atlas'),
 });
 
 export type EnvVariables = z.infer<typeof EnvSchema>;
@@ -266,6 +312,15 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
       throw new Error(
         'CORS_ALLOWED_ORIGINS is required when NODE_ENV=production — refusing to start with an ' +
           'implicit/wildcard CORS policy in production (see master plan §16, "CORS").',
+      );
+    }
+  }
+
+  if (parsed.data.EMAIL_PROVIDER === 'resend') {
+    if (!parsed.data.EMAIL_API_KEY || !parsed.data.EMAIL_FROM_EMAIL) {
+      throw new Error(
+        'EMAIL_API_KEY and EMAIL_FROM_EMAIL are required when EMAIL_PROVIDER=resend — refusing ' +
+          'to start with a real provider selected but no credentials/sender to actually send from.',
       );
     }
   }

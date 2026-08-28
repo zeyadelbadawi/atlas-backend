@@ -356,3 +356,95 @@ export async function seedAssignment(
     },
   });
 }
+
+/** P16 — a Payment with `createdAt` freely controllable (needed to place fixtures inside/outside a test's date-range window), mirroring `seedTenantSubscription`'s own "no creation endpoint reachable this way, seed via admin" precedent. Defaults to the Atlas Subscription Billing flow (`organizationId` set); pass `payerUserId`/`payeeAcademyId`/`courseOrderId` instead for a Course Commerce row. */
+export async function seedPayment(
+  admin: PrismaClient,
+  overrides: {
+    organizationId?: string;
+    payerUserId?: string;
+    payeeAcademyId?: string;
+    courseOrderId?: string;
+    amountMinorUnits: bigint;
+    currency?: string;
+    status?:
+      | 'created'
+      | 'pending'
+      | 'processing'
+      | 'requires_action'
+      | 'requires_confirmation'
+      | 'succeeded'
+      | 'failed'
+      | 'cancelled'
+      | 'expired';
+    createdAt?: Date;
+  },
+) {
+  return admin.payment.create({
+    data: {
+      organizationId: overrides.organizationId,
+      payerUserId: overrides.payerUserId,
+      payeeAcademyId: overrides.payeeAcademyId,
+      courseOrderId: overrides.courseOrderId,
+      methodKey: 'manual_bank_transfer',
+      methodType: 'manual_bank_transfer',
+      provider: 'atlas_manual',
+      amountMinorUnits: overrides.amountMinorUnits,
+      currency: overrides.currency ?? 'USD',
+      status: overrides.status ?? 'succeeded',
+      createdAt: overrides.createdAt,
+    },
+  });
+}
+
+/** P16 — the minimum `course_orders` row `revenue_ledger_entries` FK-requires (no ledger row can exist without one — `courseOrderId` is a required, non-nullable FK). */
+export async function seedCourseOrder(
+  admin: PrismaClient,
+  studentId: string,
+  courseId: string,
+  academyId: string,
+  organizationId: string,
+) {
+  return admin.courseOrder.create({
+    data: {
+      studentId,
+      courseId,
+      academyId,
+      organizationId,
+      snapshot: {
+        course: { id: courseId, title: 'Test course' },
+        price: { amountMinorUnits: 0, currency: 'USD' },
+      },
+      status: 'paid',
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      idempotencyKey: `p16-order-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      paidAt: new Date(),
+    },
+  });
+}
+
+/** P16 — a `revenue_ledger_entries` row with `occurredAt` freely controllable, matching `RevenueLedgerEntry`'s own documented signed-amount convention (`sale` +, `platform_fee`/`refund` -, `commission_reversal` +). */
+export async function seedRevenueLedgerEntry(
+  admin: PrismaClient,
+  academyId: string,
+  courseOrderId: string,
+  overrides: {
+    entryType: 'sale' | 'platform_fee' | 'refund' | 'commission_reversal' | 'payout';
+    amountMinorUnits: bigint;
+    currency?: string;
+    occurredAt?: Date;
+    paymentId?: string;
+  },
+) {
+  return admin.revenueLedgerEntry.create({
+    data: {
+      academyId,
+      courseOrderId,
+      paymentId: overrides.paymentId,
+      entryType: overrides.entryType,
+      amountMinorUnits: overrides.amountMinorUnits,
+      currency: overrides.currency ?? 'USD',
+      occurredAt: overrides.occurredAt,
+    },
+  });
+}

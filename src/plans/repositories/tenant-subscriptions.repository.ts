@@ -31,6 +31,27 @@ export class TenantSubscriptionsRepository {
     });
   }
 
+  /**
+   * Phase P15 — `PlatformOrganizationsService.listOrganizations`'s
+   * `planName`/`subscriptionStatus` columns, resolved for a WHOLE PAGE of
+   * organizations in one query (master plan §27's N+1-avoidance) rather
+   * than one `TenantSubscriptionService.getSubscription` call per row.
+   * Meaningful only inside `runInUserContext(platformOwnerId)` (the
+   * `tenant_subscriptions_platform_select` policy — a genuine
+   * cross-organization batch read, unlike this repository's other
+   * methods' single-tenant-context use).
+   */
+  findManyByOrganizationIds(
+    tx: Prisma.TransactionClient,
+    organizationIds: readonly string[],
+  ): Promise<(TenantSubscription & { plan: Plan })[]> {
+    if (organizationIds.length === 0) return Promise.resolve([]);
+    return tx.tenantSubscription.findMany({
+      where: { organizationId: { in: [...organizationIds] } },
+      include: { plan: true },
+    });
+  }
+
   updateForPlanPurchase(
     tx: Prisma.TransactionClient,
     organizationId: string,

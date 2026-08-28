@@ -11,6 +11,7 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
     passwordResetTokenTtlMinutes: 45,
     signInRateLimit: { max: 10, windowSeconds: 900 },
     passwordResetRateLimit: { max: 5, windowSeconds: 3600 },
+    registerRateLimit: { max: 5, windowSeconds: 3600 },
     ...overrides,
   };
 }

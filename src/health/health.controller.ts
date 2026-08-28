@@ -7,8 +7,23 @@
  * versioned business API every later phase adds under `/api/v1`. This is
  * the only endpoint Phase P0 defines (master plan §21 P0: "API changes:
  * `GET /health` only").
+ *
+ * Phase P18 fix: `main.ts`'s `setGlobalPrefix('api', {exclude:['health']})`
+ * only opts this controller out of the `/api` PREFIX — `enableVersioning`
+ * (added by a later phase, once the versioned business API existed) is a
+ * SEPARATE mechanism that still applies its default version to every
+ * route regardless of prefix exclusion, unless a route explicitly opts
+ * out with `@Version(VERSION_NEUTRAL)`. Without it, this endpoint was
+ * only reachable at `/v1/health`, never the bare `/health` this file's
+ * own (pre-existing) doc comment always documented as the intent —
+ * `test/health.e2e-spec.ts` never caught this because the e2e test
+ * harness (`test/utils/test-app.ts`) never calls `enableVersioning` at
+ * all, so it only ever exercised the un-versioned code path. Found during
+ * this phase's own backup/restore drill (booting the real, compiled
+ * `dist/main.js` — not the e2e harness — against a freshly restored
+ * database and hitting `/health` directly).
  */
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Version, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { HealthCheck, HealthCheckService } from '@nestjs/terminus';
 import { PrismaHealthIndicator } from './indicators/prisma-health.indicator';
@@ -31,6 +46,7 @@ export class HealthController {
   ) {}
 
   @Get()
+  @Version(VERSION_NEUTRAL)
   @HealthCheck()
   @ApiOperation({
     summary:

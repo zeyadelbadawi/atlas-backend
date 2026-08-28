@@ -11,6 +11,13 @@
  * guard combination), `TenancyModule` (for `TenancyContextService`), and
  * `AcademyModule` (for `AcademyScopeGuard`/`AcademyMembersRepository`,
  * reused verbatim).
+ *
+ * `PlatformDomainConfigurationRepository` is additionally exported as of
+ * Phase P14 — `ProvisioningModule`'s `subdomain` orchestration step needs
+ * the Platform's configured `baseDomain` to compute a real `fullHost`.
+ * `SubdomainAllocationsRepository` was already exported (P11); this table
+ * is its real first writer (see that repository's own updated doc
+ * comment).
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
@@ -41,6 +48,10 @@ import { CloudflareApiProvider } from './providers/cloudflare-api.provider';
     PlatformDomainConfigurationRepository,
     { provide: CLOUDFLARE_PROVIDER, useClass: CloudflareApiProvider },
   ],
-  exports: [SubdomainAllocationsRepository, DomainConnectionsRepository],
+  exports: [
+    SubdomainAllocationsRepository,
+    DomainConnectionsRepository,
+    PlatformDomainConfigurationRepository,
+  ],
 })
 export class DomainModule {}

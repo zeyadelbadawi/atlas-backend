@@ -155,4 +155,18 @@ export class CoursesRepository {
       include: { category: true, instructors: INSTRUCTOR_INCLUDE },
     });
   }
+
+  /** Phase P15 — `PlatformAcademyDetail.courses` (id/title/status refs only) and `courseCount`. Meaningful only inside `runInUserContext(platformOwnerId)` (the `courses_platform_select` policy); capped, not paginated, matching `AcademiesRepository.findRefsForOrganization`'s identical precedent. */
+  findRefsForAcademy(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    take: number,
+  ): Promise<Pick<Course, 'id' | 'title' | 'status'>[]> {
+    return tx.course.findMany({
+      where: { academyId },
+      select: { id: true, title: true, status: true },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+  }
 }

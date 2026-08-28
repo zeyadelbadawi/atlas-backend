@@ -10,6 +10,8 @@ import { PasswordHasherService } from './password-hasher.service';
 import { toCurrentUser } from '../dto/contracts';
 import type { CurrentUserResponse, UserPreferences } from '../dto/contracts';
 import { UserOrganizationsService } from '../../tenancy/services/user-organizations.service';
+import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
 
 @Injectable()
 export class UsersService {
@@ -18,6 +20,8 @@ export class UsersService {
     private readonly refreshTokensRepository: RefreshTokensRepository,
     private readonly passwordHasher: PasswordHasherService,
     private readonly userOrganizationsService: UserOrganizationsService,
+    private readonly tenancyContextService: TenancyContextService,
+    private readonly notificationFanoutService: NotificationFanoutService,
   ) {}
 
   async getCurrent(userId: string): Promise<CurrentUserResponse> {
@@ -85,6 +89,28 @@ export class UsersService {
     const newHash = await this.passwordHasher.hash(newPassword);
     await this.usersRepository.updatePasswordHash(userId, newHash);
     await this.refreshTokensRepository.revokeAllForUser(userId);
+
+    // Phase P17 — a security-relevant event that should fire every time,
+    // never deduped (see `Notification`'s own schema.prisma doc comment:
+    // "a security alert... simply passes `dedupeKey: null`"). No existing
+    // shared transaction to append to here (this method's own writes
+    // above are already two separate, non-transactional calls) — opens
+    // its own small transaction just for the notification insert, the
+    // same narrow exception `AuditLogWriterService.writeBestEffort`
+    // documents for this exact situation (P1's password-reset-confirm).
+    const notifiedNew = await this.tenancyContextService.runInUserContext(userId, (tx) =>
+      this.notificationFanoutService.notify(tx, {
+        userId,
+        type: 'security',
+        priority: 'high',
+        titleKey: 'notifications:events.passwordChanged.title',
+        messageKey: 'notifications:events.passwordChanged.message',
+        dedupeKey: null,
+      }),
+    );
+    await this.notificationFanoutService.sendEmailAfterCommit(userId, notifiedNew, {
+      template: 'password_changed',
+    });
   }
 
   private async requireUser(userId: string) {

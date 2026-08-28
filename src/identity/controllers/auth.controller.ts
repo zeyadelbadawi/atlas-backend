@@ -26,6 +26,7 @@ import { CurrentAuthContext } from '../decorators/auth-context.decorator';
 import type { AuthContext } from '../guards/jwt-auth.guard';
 import { SignInRateLimitGuard } from '../guards/signin-rate-limit.guard';
 import { PasswordResetRateLimitGuard } from '../guards/password-reset-rate-limit.guard';
+import { RegisterRateLimitGuard } from '../guards/register-rate-limit.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -34,6 +35,7 @@ export class AuthController {
   /** Matches `authenticationService.register` — does not establish a session. */
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(RegisterRateLimitGuard)
   async register(@Body() dto: RegisterDto): Promise<void> {
     await this.authService.register(dto);
   }

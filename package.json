@@ -23,11 +23,14 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:migrate:diff:safe": "bash scripts/safe-prisma-migrate-diff.sh",
     "prisma:studio": "prisma studio",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "worker:recompute-usage": "ts-node -r tsconfig-paths/register scripts/recompute-tenant-usage.ts",
-    "db:seed": "ts-node -r tsconfig-paths/register prisma/seed.ts"
+    "db:seed": "ts-node -r tsconfig-paths/register prisma/seed.ts",
+    "audit:deps": "npm audit --omit=dev",
+    "loadtest": "ts-node -r tsconfig-paths/register scripts/load-test.ts"
   },
   "prisma": {
     "seed": "ts-node -r tsconfig-paths/register prisma/seed.ts"
@@ -61,12 +64,14 @@
     "@nestjs/cli": "^10.4.5",
     "@nestjs/schematics": "^10.1.4",
     "@nestjs/testing": "^10.4.4",
+    "@types/autocannon": "^7.12.7",
     "@types/express": "^4.17.21",
     "@types/jest": "^29.5.13",
     "@types/node": "^22.7.4",
     "@types/supertest": "^6.0.2",
     "@typescript-eslint/eslint-plugin": "^8.7.0",
     "@typescript-eslint/parser": "^8.7.0",
+    "autocannon": "^7.15.0",
     "eslint": "^8.57.1",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.2.1",
