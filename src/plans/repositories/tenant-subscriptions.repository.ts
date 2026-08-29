@@ -4,20 +4,42 @@
  * obtained from `TenancyContextService`, never the raw `PrismaService`,
  * matching `OrganizationsRepository`'s established rule.
  *
- * `updateForPlanPurchase` is a P12 addition (master plan §21 P12's own
+ * `upsertForPlanPurchase` is a P12 addition (master plan §21 P12's own
  * Definition of Done: "correctly updates `tenant_subscriptions`") — P4
  * shipped this repository read-only because no real Payment existed yet to
  * change one; this is the exact "additive, narrow, non-invented write"
  * P4's own RLS migration comment anticipated (see the P12 migration's
  * header comment for the matching `tenant_subscriptions_tenant_update` RLS
- * policy this method relies on). `Prisma.update` throws `P2025` if no row
- * exists — real Tenant-subscription CREATION remains explicitly out of
- * scope (Phase P14 provisioning, per both P4's and this phase's own doc
- * comments), so `CheckoutService`/`PaymentApplicationService` surface that
- * as a real, honest error rather than fabricating a subscription row here.
+ * policy this method relies on).
+ *
+ * Phase P19 fix (`Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` P0-3): this was
+ * originally `updateForPlanPurchase`, a bare `.update()` that threw
+ * `P2025` for any Organization's first-ever subscription — real
+ * Tenant-subscription CREATION was deferred to "Phase P14 provisioning"
+ * by this file's own prior doc comment, but P14's own orchestrator never
+ * implemented it either (its `'tenant'` step does no such work — see
+ * `provisioning-orchestrator.service.ts`). Both phases' own documentation
+ * agreed where responsibility belonged; neither phase put it there. Fixed
+ * here, in the one place the codebase's own architecture already
+ * documents as authoritative for this exact effect
+ * (`PaymentApplicationService`'s doc comment: "the one and only
+ * server-side trigger that turns a successful Payment into a real
+ * subscription change") — try the update first (preserves 100% of the
+ * existing plan-change/upgrade behavior for an Organization that already
+ * has a subscription), and only create a new row on `P2025` (no existing
+ * row — this Organization's very first successful payment). No new
+ * migration needed: the P4 `tenant_subscriptions_insert` RLS policy
+ * (`organization_id = app.current_organization_id`) already permits this
+ * insert under the exact same tenant context every caller already runs
+ * this method inside.
  */
 import { Injectable } from '@nestjs/common';
-import type { Plan, Prisma, TenantSubscription } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { Plan, TenantSubscription } from '@prisma/client';
+
+function isRecordNotFound(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
+}
 
 @Injectable()
 export class TenantSubscriptionsRepository {
@@ -52,7 +74,7 @@ export class TenantSubscriptionsRepository {
     });
   }
 
-  updateForPlanPurchase(
+  async upsertForPlanPurchase(
     tx: Prisma.TransactionClient,
     organizationId: string,
     data: {
@@ -62,18 +84,39 @@ export class TenantSubscriptionsRepository {
       readonly currentPeriodEnd: Date;
     },
   ): Promise<TenantSubscription> {
-    return tx.tenantSubscription.update({
-      where: { organizationId },
-      data: {
-        planId: data.planId,
-        status: 'active',
-        billingCycle: data.billingCycle,
-        currentPeriodStart: data.currentPeriodStart,
-        currentPeriodEnd: data.currentPeriodEnd,
-        trialEndsAt: null,
-        graceEndsAt: null,
-        cancelAtPeriodEnd: false,
-      },
-    });
+    try {
+      return await tx.tenantSubscription.update({
+        where: { organizationId },
+        data: {
+          planId: data.planId,
+          status: 'active',
+          billingCycle: data.billingCycle,
+          currentPeriodStart: data.currentPeriodStart,
+          currentPeriodEnd: data.currentPeriodEnd,
+          trialEndsAt: null,
+          graceEndsAt: null,
+          cancelAtPeriodEnd: false,
+        },
+      });
+    } catch (error) {
+      if (!isRecordNotFound(error)) throw error;
+
+      // No existing row — this Organization's first-ever successful
+      // payment. `create` (not `upsert`) deliberately: avoids the
+      // RLS + `ON CONFLICT` interaction bug this codebase already hit and
+      // fixed once before (Phase P17, `NotificationsRepository.create`'s
+      // own doc comment) — a plain create/catch pair, never `INSERT ...
+      // ON CONFLICT`.
+      return tx.tenantSubscription.create({
+        data: {
+          organizationId,
+          planId: data.planId,
+          status: 'active',
+          billingCycle: data.billingCycle,
+          currentPeriodStart: data.currentPeriodStart,
+          currentPeriodEnd: data.currentPeriodEnd,
+        },
+      });
+    }
   }
 }

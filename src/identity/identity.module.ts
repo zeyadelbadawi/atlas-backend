@@ -96,6 +96,18 @@ import { TenancyModule } from '../tenancy/tenancy.module';
   // (`src/notification-events/services/email.service.ts`) needs the same
   // resolved provider `PasswordResetEmailProcessor` already injects, not
   // a second `useFactory` resolution elsewhere.
-  exports: [StubEmailProvider, UsersRepository, PlatformOwnerGuard, EMAIL_PROVIDER],
+  // `PasswordHasherService` — exported as of the Organization Manager
+  // phase's Instructor/Student additions: `AcademiesService.addInstructor`/
+  // `createStudent` need to hash a password when creating a brand-new
+  // account directly (the same reasoning `UsersRepository`'s own export
+  // note already documents for admin-initiated account creation without
+  // an invitation/email system).
+  exports: [
+    StubEmailProvider,
+    UsersRepository,
+    PlatformOwnerGuard,
+    EMAIL_PROVIDER,
+    PasswordHasherService,
+  ],
 })
 export class IdentityModule {}

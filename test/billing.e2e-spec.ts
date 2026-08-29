@@ -419,6 +419,68 @@ describe('Atlas Subscription Billing (e2e)', () => {
         .expect(409);
     });
 
+    // Phase P19 (`Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` P0-3): the exact
+    // gap the audit found — approving an Organization's FIRST-EVER
+    // Payment previously threw `errors.checkout.noSubscriptionToUpdate`
+    // because `updateForPlanPurchase` was a bare `.update()` with nothing
+    // to update yet. Deliberately does NOT reuse `arrangeCheckoutAndPayment`
+    // (which pre-seeds a subscription) — this org has none at all until
+    // approval creates it, matching a genuinely brand-new Client.
+    it("approve() creates the tenant_subscriptions row for an Organization's first-ever Payment, not just updates one", async () => {
+      const label = 'lifecycle-first-payment';
+      const owner = await signUpAndSignIn(app, `${label}-owner`);
+      const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
+      const plan = await seedPricedPlan(admin, `${label}-plan`, 79);
+      const method = await seedPaymentMethod(admin, `${label}-method`);
+
+      // Honestly absent before any payment — never a fabricated default.
+      const beforeAny = await admin.tenantSubscription.findUnique({
+        where: { organizationId: org.id },
+      });
+      expect(beforeAny).toBeNull();
+
+      const checkoutRes = await request(app.getHttpServer())
+        .post(`/organizations/${org.id}/checkouts`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          target: { type: 'plan_subscription', planKey: plan.key },
+          billingCycle: 'monthly',
+          idempotencyKey: `${label}-idem`,
+        })
+        .expect(201);
+
+      const paymentRes = await request(app.getHttpServer())
+        .post(`/organizations/${org.id}/payments`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ checkoutId: checkoutRes.body.id, methodKey: method.key })
+        .expect(201);
+
+      await submitProof(org.id, paymentRes.body.id, owner.accessToken);
+
+      const reviewer = await signUpAndSignIn(app, `${label}-reviewer`);
+      await makePlatformOwner(admin, reviewer.userId);
+
+      await request(app.getHttpServer())
+        .post(`/payments/${paymentRes.body.id}/approve`)
+        .set('Authorization', `Bearer ${reviewer.accessToken}`)
+        .send({ notes: 'first payment, no prior subscription' })
+        .expect(201);
+
+      const subscription = await admin.tenantSubscription.findUniqueOrThrow({
+        where: { organizationId: org.id },
+      });
+      expect(subscription.status).toBe('active');
+      expect(subscription.planId).toBe(plan.id);
+
+      // The real client-observable state — the honest 404 from before
+      // approval is now a real, populated subscription.
+      const clientView = await request(app.getHttpServer())
+        .get(`/organizations/${org.id}/subscription`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+      expect(clientView.body.status).toBe('active');
+    });
+
     it('reject() marks the Payment failed and never touches tenant_subscriptions', async () => {
       const { owner, org, payment } = await arrangeCheckoutAndPayment('lifecycle-reject');
       await submitProof(org.id, payment.id, owner.accessToken);

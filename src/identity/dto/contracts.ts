@@ -10,6 +10,10 @@
  */
 import type { User } from '@prisma/client';
 import type { OrganizationMembershipResponse } from '../../tenancy/dto/organization-membership.contract';
+import {
+  BASE_USER_PERMISSIONS,
+  PLATFORM_OWNER_PERMISSIONS,
+} from '../constants/platform-permissions.constants';
 
 export interface NotificationPreferences {
   readonly email: boolean;
@@ -58,7 +62,12 @@ export interface TokenRefreshResponseContract {
  * computed, never stored — matching master plan §9: the API surface
  * exposes only flat string arrays; `platform_owner` is the only global
  * role, and it comes from the real `is_platform_owner` column, never
- * inferred from a permission string. `organizations`/
+ * inferred from a permission string. `permissions` mirrors that same
+ * `is_platform_owner` source via `PLATFORM_OWNER_PERMISSIONS` — a real,
+ * non-empty catalog, not the `[]` this returned before (see that
+ * constant's doc comment for the live-confirmed bug this closes:
+ * `platform.payment.approve` etc. never being held by anyone, including
+ * the real seeded Platform Owner). `organizations`/
  * `organizationMemberships` are real as of Phase P2 — the caller (identity
  * services) is responsible for fetching them via `UserOrganizationsService`
  * and passing the same array into both fields (the frontend type declares
@@ -77,7 +86,9 @@ export function toCurrentUser(
     name: user.name,
     avatar: user.avatarUrl ?? undefined,
     roles: user.isPlatformOwner ? ['platform_owner'] : [],
-    permissions: [],
+    permissions: user.isPlatformOwner
+      ? [...PLATFORM_OWNER_PERMISSIONS, ...BASE_USER_PERMISSIONS]
+      : BASE_USER_PERMISSIONS,
     organizations: organizationMemberships,
     organizationMemberships,
     preferences,

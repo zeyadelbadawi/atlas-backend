@@ -58,7 +58,7 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-que
 import type { MediaStorageConfig } from '../../config/configuration';
 import type { Prisma } from '@prisma/client';
 
-const MANAGING_ROLES = new Set(['owner', 'administrator']);
+const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
 @Injectable()
 export class MediaService {

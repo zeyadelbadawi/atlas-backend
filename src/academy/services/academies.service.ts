@@ -17,12 +17,22 @@ import {
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
+import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
+import {
+  ORGANIZATION_INSTRUCTOR_PERMISSIONS,
+  ORGANIZATION_MANAGER_PERMISSIONS,
+} from '../../tenancy/constants/organization-permissions.constants';
+import { UsersRepository } from '../../identity/repositories/users.repository';
+import { PasswordHasherService } from '../../identity/services/password-hasher.service';
 import { AcademiesRepository } from '../repositories/academies.repository';
 import { AcademyMembersRepository } from '../repositories/academy-members.repository';
 import { toAcademyResponse } from '../dto/academy.contract';
 import type { AcademyResponse, AcademyAddressResponse } from '../dto/academy.contract';
 import { toAcademyMemberResponse } from '../dto/academy-member.contract';
 import type { AcademyMemberResponse } from '../dto/academy-member.contract';
+import { toAcademyStudentResponse } from '../dto/academy-student.contract';
+import type { AcademyStudentResponse } from '../dto/academy-student.contract';
 import type { AcademyStatsResponse } from '../dto/academy-stats.contract';
 import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
@@ -32,9 +42,38 @@ import type { CollectionQueryDto, ListAcademiesQueryDto } from '../dto/list-quer
 import type { CreateAcademyDto } from '../dto/create-academy.dto';
 import type { UpdateAcademyDto } from '../dto/update-academy.dto';
 import type { UpdateAcademyBrandingDto } from '../dto/update-academy-branding.dto';
+import type { AddAcademyManagerDto } from '../dto/add-academy-manager.dto';
+import type { AddAcademyInstructorDto } from '../dto/add-academy-instructor.dto';
+import type { CreateAcademyStudentDto } from '../dto/create-academy-student.dto';
+import type { User } from '@prisma/client';
 
-/** Roles permitted to write to an Academy (create/update/branding/archive) — never assumed from organization role. See `AcademyScopeGuard`'s doc comment. */
-const MANAGING_ROLES = new Set(['owner', 'administrator']);
+/**
+ * Roles permitted to write to an Academy (create/update/branding/archive)
+ * — never assumed from organization role. See `AcademyScopeGuard`'s doc
+ * comment. `'manager'` joined this set in the Organization Manager phase:
+ * a real `AcademyMemberRole` enum value (`schema.prisma`) that previously
+ * had no code path that ever created one — see `addManager` below, the
+ * one method that now does. `'instructor'` deliberately does NOT join
+ * this set — an Instructor teaches/grades (via the separate
+ * `course_instructors` mechanism) but never authors academy/course
+ * content; see `ORGANIZATION_INSTRUCTOR_PERMISSIONS`'s doc comment for
+ * the same exclusion at the organization-permission layer.
+ */
+const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
+
+/**
+ * Only the Academy's `owner`-role member may grant Manager or Instructor
+ * access to someone else, or create a Student account — a more sensitive
+ * action than ordinary content management, so deliberately narrower than
+ * `MANAGING_ROLES`. Also matches the one real database constraint this
+ * relies on: the `organization_memberships_owner_grants_insert` RLS
+ * policy (P20 migration) only admits an INSERT for another user when
+ * `organizations.owner_user_id` equals the caller — a Manager attempting
+ * the same grant would fail at the database layer regardless of what the
+ * service layer permitted, so the service-layer gate is kept identically
+ * narrow rather than presenting a capability the database would then deny.
+ */
+const GRANTS_MANAGER_ROLES = new Set(['owner']);
 
 @Injectable()
 export class AcademiesService {
@@ -43,7 +82,34 @@ export class AcademiesService {
     private readonly academiesRepository: AcademiesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly organizationsRepository: OrganizationsRepository,
+    private readonly organizationMembershipsRepository: OrganizationMembershipsRepository,
+    private readonly usersRepository: UsersRepository,
+    private readonly passwordHasherService: PasswordHasherService,
   ) {}
+
+  /**
+   * Resolves the target user for a Manager/Instructor grant: an existing
+   * account found by email, or — when `name`+`password` are BOTH supplied
+   * — a brand-new one created on the spot (there is no invitation/email
+   * system in this codebase; this is the closest equivalent an owner has
+   * to "invite someone who doesn't have an account yet"). Returns `null`
+   * only when no account exists AND no creation fields were supplied,
+   * letting the caller report the pre-existing "that email has no Atlas
+   * account yet" 404 unchanged.
+   */
+  private async findOrCreateUserByEmail(
+    email: string,
+    name?: string,
+    password?: string,
+  ): Promise<User | null> {
+    const existing = await this.usersRepository.findByEmail(email);
+    if (existing) return existing;
+    if (!name || !password) return null;
+
+    const passwordHash = await this.passwordHasherService.hash(password);
+    return this.usersRepository.create({ email, passwordHash, name });
+  }
 
   async list(query: ListAcademiesQueryDto): Promise<PaginatedResult<AcademyResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
@@ -233,6 +299,298 @@ export class AcademiesService {
       items: items.map(toAcademyMemberResponse),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
     };
+  }
+
+  /**
+   * `POST /academies/:id/members` — grants an already-registered Atlas
+   * user Manager access to this Academy. There is no invitation system
+   * in this codebase (see `AddAcademyManagerDto`'s doc comment), so the
+   * target user must already have an account; a 404 here means "that
+   * email has no Atlas account yet", not "not found" in the generic
+   * sense.
+   *
+   * Two rows are ensured, matching the two parallel authorization axes
+   * this codebase has (see `organization-permissions.constants.ts`'s
+   * updated doc comment):
+   *   1. `organization_memberships` (role `'manager'`,
+   *      `ORGANIZATION_MANAGER_PERMISSIONS`) — reused if the user already
+   *      has one for this organization (never downgraded/overwritten;
+   *      an existing Owner adding themselves to a second academy, for
+   *      instance, keeps their Owner permissions), created otherwise.
+   *      This is what the frontend's `RouteGuard` actually reads.
+   *   2. `academy_members` (role `'manager'`) — this specific academy's
+   *      grant; this is what every backend `MANAGING_ROLES` check reads.
+   *
+   * Only the Academy's `owner`-role member may call this
+   * (`GRANTS_MANAGER_ROLES`, deliberately narrower than the
+   * `MANAGING_ROLES` content-management set) — granting operational
+   * access to another person is a more sensitive action than editing
+   * academy content. The database backs this up independently: the new
+   * `organization_memberships_owner_grants_insert` RLS policy (P20
+   * migration) only admits the INSERT when `organizations.owner_user_id`
+   * equals the caller, which this method also checks explicitly first so
+   * a mismatch surfaces as a clean `ForbiddenException` rather than a raw
+   * RLS-denial database error.
+   */
+  async addManager(
+    academyId: string,
+    organizationId: string,
+    actingUserId: string,
+    payload: AddAcademyManagerDto,
+  ): Promise<AcademyMemberResponse> {
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      actingUserId,
+      async (tx) => {
+        const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
+          tx,
+          academyId,
+          actingUserId,
+        );
+        if (!actingMembership || !GRANTS_MANAGER_ROLES.has(actingMembership.role)) {
+          throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+        }
+
+        const organization = await this.organizationsRepository.findById(
+          tx,
+          organizationId,
+        );
+        if (!organization || organization.ownerUserId !== actingUserId) {
+          // Backstops the RLS policy's own check (see this method's doc
+          // comment) with a clean application-level error instead of
+          // letting the later INSERT fail on the database constraint.
+          throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+        }
+
+        const targetUser = await this.findOrCreateUserByEmail(
+          payload.email,
+          payload.name,
+          payload.password,
+        );
+        if (!targetUser) {
+          throw new NotFoundException({
+            messageKey: 'errors.academy.managerUserNotFound',
+          });
+        }
+
+        const existingAcademyMembership =
+          await this.academyMembersRepository.findForUserInAcademy(
+            tx,
+            academyId,
+            targetUser.id,
+          );
+        if (existingAcademyMembership) {
+          throw new ConflictException({
+            messageKey: 'errors.academy.managerAlreadyMember',
+          });
+        }
+
+        const existingOrgMembership =
+          await this.organizationMembershipsRepository.findForUserInOrganization(
+            tx,
+            organizationId,
+            targetUser.id,
+          );
+        if (!existingOrgMembership) {
+          await this.organizationMembershipsRepository.create(tx, {
+            organizationId,
+            userId: targetUser.id,
+            role: 'manager',
+            permissions: ORGANIZATION_MANAGER_PERMISSIONS,
+            isPrimary: false,
+          });
+        }
+
+        const created = await this.academyMembersRepository.create(tx, {
+          academy: { connect: { id: academyId } },
+          user: { connect: { id: targetUser.id } },
+          role: 'manager',
+        });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: actingUserId,
+          organizationId,
+          action: 'academy.manager.added',
+          targetType: 'academy_member',
+          targetId: created.id,
+          targetLabel: targetUser.email,
+        });
+
+        return toAcademyMemberResponse({
+          ...created,
+          user: { id: targetUser.id, name: targetUser.name, email: targetUser.email },
+        });
+      },
+    );
+  }
+
+  /**
+   * `POST /academies/:id/instructors` — the Instructor counterpart of
+   * `addManager` above; same shape, same owner-only gate, same
+   * find-or-create-by-email resolution, same two-row (org membership +
+   * academy member) grant — only the role and the granted permission set
+   * differ (`ORGANIZATION_INSTRUCTOR_PERMISSIONS`, deliberately narrower
+   * than a Manager's, see that constant's doc comment).
+   *
+   * This grant does NOT, by itself, connect the instructor to any course
+   * — `course_instructors` (a separate table `InstructorService` actually
+   * reads for `/dashboard/instructor`) is populated per-course, wherever
+   * this codebase already lets an owner/manager assign instructors to a
+   * course. An academy_members `'instructor'` row is this codebase's
+   * staffing/roster record and its `ORGANIZATION_INSTRUCTOR_PERMISSIONS`
+   * grant (route access); it was never the thing that assigns teaching
+   * responsibility for a specific course, and this method does not change
+   * that.
+   */
+  async addInstructor(
+    academyId: string,
+    organizationId: string,
+    actingUserId: string,
+    payload: AddAcademyInstructorDto,
+  ): Promise<AcademyMemberResponse> {
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      actingUserId,
+      async (tx) => {
+        const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
+          tx,
+          academyId,
+          actingUserId,
+        );
+        if (!actingMembership || !GRANTS_MANAGER_ROLES.has(actingMembership.role)) {
+          throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+        }
+
+        const organization = await this.organizationsRepository.findById(
+          tx,
+          organizationId,
+        );
+        if (!organization || organization.ownerUserId !== actingUserId) {
+          throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+        }
+
+        const targetUser = await this.findOrCreateUserByEmail(
+          payload.email,
+          payload.name,
+          payload.password,
+        );
+        if (!targetUser) {
+          throw new NotFoundException({
+            messageKey: 'errors.academy.managerUserNotFound',
+          });
+        }
+
+        const existingAcademyMembership =
+          await this.academyMembersRepository.findForUserInAcademy(
+            tx,
+            academyId,
+            targetUser.id,
+          );
+        if (existingAcademyMembership) {
+          throw new ConflictException({
+            messageKey: 'errors.academy.managerAlreadyMember',
+          });
+        }
+
+        const existingOrgMembership =
+          await this.organizationMembershipsRepository.findForUserInOrganization(
+            tx,
+            organizationId,
+            targetUser.id,
+          );
+        if (!existingOrgMembership) {
+          await this.organizationMembershipsRepository.create(tx, {
+            organizationId,
+            userId: targetUser.id,
+            role: 'instructor',
+            permissions: ORGANIZATION_INSTRUCTOR_PERMISSIONS,
+            isPrimary: false,
+          });
+        }
+
+        const created = await this.academyMembersRepository.create(tx, {
+          academy: { connect: { id: academyId } },
+          user: { connect: { id: targetUser.id } },
+          role: 'instructor',
+        });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: actingUserId,
+          organizationId,
+          action: 'academy.instructor.added',
+          targetType: 'academy_member',
+          targetId: created.id,
+          targetLabel: targetUser.email,
+        });
+
+        return toAcademyMemberResponse({
+          ...created,
+          user: { id: targetUser.id, name: targetUser.name, email: targetUser.email },
+        });
+      },
+    );
+  }
+
+  /**
+   * `POST /academies/:id/students` — creates a brand-new Atlas account for
+   * a real test/actual student. Deliberately NOT a Manager/Instructor-style
+   * grant: "student" is never an `academy_members` row in this codebase
+   * (`AcademyMemberRole` has no `student` value) and never an
+   * `organization_memberships` row either — `Enrollment`'s own RLS
+   * policies key only on `student_id = app.current_user_id`, with no
+   * academy/organization predicate at all (confirmed against
+   * `schema.prisma` and the P6 migration). So this method creates ONLY a
+   * `users` row (name + email + password, all required — there is no
+   * existing account to "find" the way Manager/Instructor can, since the
+   * whole point is a fresh test student) and does nothing else; the
+   * returned account then self-discovers and self-enrolls in courses
+   * through the ordinary student flow, exactly like any other Atlas user.
+   */
+  async createStudent(
+    academyId: string,
+    organizationId: string,
+    actingUserId: string,
+    payload: CreateAcademyStudentDto,
+  ): Promise<AcademyStudentResponse> {
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      actingUserId,
+      async (tx) => {
+        const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
+          tx,
+          academyId,
+          actingUserId,
+        );
+        if (!actingMembership || !GRANTS_MANAGER_ROLES.has(actingMembership.role)) {
+          throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+        }
+
+        const existing = await this.usersRepository.findByEmail(payload.email);
+        if (existing) {
+          throw new ConflictException({
+            messageKey: 'errors.auth.emailAlreadyRegistered',
+          });
+        }
+
+        const passwordHash = await this.passwordHasherService.hash(payload.password);
+        const created = await this.usersRepository.create({
+          email: payload.email,
+          passwordHash,
+          name: payload.name,
+        });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: actingUserId,
+          organizationId,
+          action: 'academy.student.created',
+          targetType: 'user',
+          targetId: created.id,
+          targetLabel: created.email,
+        });
+
+        return toAcademyStudentResponse(created);
+      },
+    );
   }
 
   async getStats(

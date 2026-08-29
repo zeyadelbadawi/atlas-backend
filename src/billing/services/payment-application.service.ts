@@ -20,7 +20,7 @@
  * change — the frontend never performs this mutation itself, only reacts
  * to `Payment.status === 'succeeded'` afterward.
  */
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Checkout, Payment, SubscriptionBillingCycle } from '@prisma/client';
 import { CheckoutsRepository } from '../repositories/checkouts.repository';
@@ -29,10 +29,6 @@ import { PlansRepository } from '../../plans/repositories/plans.repository';
 import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
 import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
 import { TenantAddOnsRepository } from '../../plans/repositories/tenant-add-ons.repository';
-
-function isRecordNotFound(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
-}
 
 function addPeriod(start: Date, billingCycle: SubscriptionBillingCycle | null): Date {
   const end = new Date(start);
@@ -119,31 +115,24 @@ export class PaymentApplicationService {
       }
 
       const now = new Date();
-      try {
-        await this.tenantSubscriptionsRepository.updateForPlanPurchase(
-          tx,
-          checkout.organizationId,
-          {
-            planId: plan.id,
-            billingCycle: checkout.billingCycle,
-            currentPeriodStart: now,
-            currentPeriodEnd: addPeriod(now, checkout.billingCycle),
-          },
-        );
-      } catch (error) {
-        if (isRecordNotFound(error)) {
-          // No `tenant_subscriptions` row exists for this Organization yet
-          // — real creation is Phase P14 provisioning (see this file's own
-          // header comment). Surfacing this as a real error rolls back the
-          // whole transaction (the Payment does NOT get marked `succeeded`
-          // for a commercial effect that could not actually be applied) —
-          // never a silent partial success.
-          throw new ConflictException({
-            messageKey: 'errors.checkout.noSubscriptionToUpdate',
-          });
-        }
-        throw error;
-      }
+      // Phase P19 (`Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` P0-3):
+      // `upsertForPlanPurchase` now creates the Organization's first-ever
+      // `tenant_subscriptions` row itself when none exists yet, rather
+      // than this call site catching `P2025` and refusing — see that
+      // method's own doc comment for the full reasoning. This IS still
+      // "the one and only server-side trigger that turns a successful
+      // Payment into a real subscription change" (this file's own header
+      // comment) for both the create and update cases now.
+      await this.tenantSubscriptionsRepository.upsertForPlanPurchase(
+        tx,
+        checkout.organizationId,
+        {
+          planId: plan.id,
+          billingCycle: checkout.billingCycle,
+          currentPeriodStart: now,
+          currentPeriodEnd: addPeriod(now, checkout.billingCycle),
+        },
+      );
       return;
     }
 

@@ -21,6 +21,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { PaymentsRepository } from '../../billing/repositories/payments.repository';
+import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
 import { SubdomainAllocationsRepository } from '../../domain/repositories/subdomain-allocations.repository';
 import { DomainConnectionsRepository } from '../../domain/repositories/domain-connections.repository';
 import { ProvisioningRequestsRepository } from '../repositories/provisioning-requests.repository';
@@ -53,6 +54,7 @@ export class ProvisioningRequestsService {
     private readonly provisioningRequestsRepository: ProvisioningRequestsRepository,
     private readonly provisioningStepsRepository: ProvisioningStepsRepository,
     private readonly paymentsRepository: PaymentsRepository,
+    private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
     private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
     private readonly domainConnectionsRepository: DomainConnectionsRepository,
     private readonly provisioningProducer: ProvisioningProducer,
@@ -80,6 +82,33 @@ export class ProvisioningRequestsService {
         );
         if (existing) return existing;
 
+        // Phase P19 (`Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` P1-2):
+        // previously, `triggeringPaymentId` was optional and, even when
+        // supplied, only checked for existence — never that a real,
+        // active subscription actually resulted from it. Provisioning
+        // must not be startable merely by knowing an organization id.
+        // Checking the Organization's real subscription state (rather
+        // than re-deriving a specific payment's own success) is the
+        // simpler, more robust gate: it holds regardless of which payment
+        // (or future payment provider) produced the subscription, and it
+        // is exactly the state `PaymentApplicationService.
+        // applyCommercialEffect` establishes the moment a Payment is
+        // actually approved (see that file's own doc comment — "the one
+        // and only server-side trigger").
+        const subscription =
+          await this.tenantSubscriptionsRepository.findByOrganizationId(
+            tx,
+            organizationId,
+          );
+        if (
+          !subscription ||
+          (subscription.status !== 'active' && subscription.status !== 'trialing')
+        ) {
+          throw new ConflictException({
+            messageKey: 'errors.provisioning.subscriptionRequired',
+          });
+        }
+
         if (payload.triggeringPaymentId) {
           const payment = await this.paymentsRepository.findById(
             tx,
@@ -100,6 +129,7 @@ export class ProvisioningRequestsService {
             requestedAcademyName: payload.academyName,
             requestedSubdomain: payload.requestedSubdomain,
             triggeringPaymentId: payload.triggeringPaymentId,
+            selectedThemeKey: payload.selectedThemeKey,
             idempotencyKey: payload.idempotencyKey,
           });
           await this.provisioningStepsRepository.initializeForRequest(tx, created.id);

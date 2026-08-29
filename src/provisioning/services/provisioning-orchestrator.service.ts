@@ -53,6 +53,8 @@ import { PlatformDomainConfigurationRepository } from '../../domain/repositories
 import { ProvisioningRequestsRepository } from '../repositories/provisioning-requests.repository';
 import { ProvisioningStepsRepository } from '../repositories/provisioning-steps.repository';
 import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { WebsiteConfigurationService } from '../../website/services/website-configuration.service';
+import { WEBSITE_THEME_KEYS } from '../../website/constants/website.constants';
 import {
   PROVISIONING_STEP_ORDER,
   STATUS_AFTER_STEP,
@@ -145,6 +147,7 @@ export class ProvisioningOrchestratorService {
     private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
     private readonly platformDomainConfigurationRepository: PlatformDomainConfigurationRepository,
     private readonly notificationFanoutService: NotificationFanoutService,
+    private readonly websiteConfigurationService: WebsiteConfigurationService,
   ) {}
 
   /** `TenancyContextService.runInTenantContext`, wrapped with `withTransientRetry` — the ONE call path every method in this class uses to touch the database, so the transient-connection-pool protection documented on `withTransientRetry` applies uniformly, not just at the one call site that first surfaced it. */
@@ -384,15 +387,17 @@ export class ProvisioningOrchestratorService {
         return this.executeAcademyStep(request, organizationId);
 
       case 'theme':
+        return this.executeThemeStep(request, organizationId);
+
       case 'branding':
       case 'domain':
-        // No theme/branding/custom-domain data exists anywhere in
-        // `CreateProvisioningRequestPayload` — always skipped in this
-        // phase, matching the frontend's own documented "reported skipped
-        // until [a picker] exists" rule for theme/branding, and matching
+        // Still no branding/custom-domain data anywhere in
+        // `CreateProvisioningRequestPayload` — remain skipped, matching
         // the deliberate decision that connecting a REAL custom domain
-        // remains the existing, separate `DomainService.addCustomDomain`
+        // stays the existing, separate `DomainService.addCustomDomain`
         // flow (master plan §24: never fabricate a connected domain).
+        // `theme` (Phase P19) is no longer in this branch — see
+        // `executeThemeStep` below.
         return { result: 'skipped' };
 
       case 'subdomain':
@@ -441,6 +446,46 @@ export class ProvisioningOrchestratorService {
       if (adopted) return { result: 'completed' };
       throw error;
     }
+  }
+
+  /**
+   * Phase P19 — real theme selection during onboarding (previously
+   * always `{ result: 'skipped' }`, see `Reports/
+   * DEVELOPMENT_E2E_FLOW_AUDIT.md` P1-1). Reuses `WebsiteConfigurationService.
+   * updateConfiguration` verbatim — the exact same write path the
+   * post-onboarding Website Settings theme tab uses — never a second
+   * theme-persistence mechanism. `request.academyId` is guaranteed set
+   * here: `'academy'` always runs immediately before `'theme'` in
+   * `PROVISIONING_STEP_ORDER`, and this orchestrator never skips ahead.
+   *
+   * No `selectedThemeKey` on the request is a real, valid outcome, not an
+   * error: `WebsiteBootstrapService`'s own lazy get-or-create already
+   * applies a sensible default theme the moment `updateConfiguration`
+   * (or any website read) first touches this Academy — nothing to change,
+   * so this step completes without a write, exactly like `'academy'`
+   * completing immediately when `request.academyId` is already set.
+   */
+  private async executeThemeStep(
+    request: ProvisioningRequest,
+    organizationId: string,
+  ): Promise<StepOutcome> {
+    const themeKey = request.selectedThemeKey;
+    const isKnownTheme = (value: string): value is (typeof WEBSITE_THEME_KEYS)[number] =>
+      (WEBSITE_THEME_KEYS as readonly string[]).includes(value);
+
+    // Not selected, or (defensively) no longer a real registry key — the
+    // request-time DTO already validates against this exact list, so this
+    // is unreachable in normal operation; treated as "nothing to change,"
+    // never a failed step, consistent with this method's own doc comment.
+    if (!themeKey || !isKnownTheme(themeKey)) return { result: 'completed' };
+
+    await this.websiteConfigurationService.updateConfiguration(
+      request.academyId!,
+      organizationId,
+      request.requestedByUserId,
+      { themeKey },
+    );
+    return { result: 'completed' };
   }
 
   /**

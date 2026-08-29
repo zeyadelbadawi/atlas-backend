@@ -23,6 +23,8 @@ import { TenancyModule } from '../tenancy/tenancy.module';
 import { AcademyModule } from '../academy/academy.module';
 import { DomainModule } from '../domain/domain.module';
 import { BillingModule } from '../billing/billing.module';
+import { PlansModule } from '../plans/plans.module';
+import { WebsiteModule } from '../website/website.module';
 import { ProvisioningRequestsController } from './controllers/provisioning-requests.controller';
 import { PlatformProvisioningController } from './controllers/platform-provisioning.controller';
 import { SubdomainAvailabilityController } from './controllers/subdomain-availability.controller';
@@ -44,6 +46,17 @@ import { PROVISIONING_QUEUE } from './queue/provisioning.types';
     AcademyModule,
     DomainModule,
     BillingModule,
+    // Phase P19 additions: `PlansModule` for `TenantSubscriptionsRepository`
+    // (the payment-gate check — see `ProvisioningRequestsService.
+    // createRequest`'s own comment); `WebsiteModule` for
+    // `WebsiteConfigurationService` (the real 'theme' provisioning step —
+    // see `ProvisioningOrchestratorService.executeStep`'s 'theme' case).
+    // Neither creates a cycle: `PlansModule` imports only
+    // `AuthCoreModule`/`IdentityModule`/`TenancyModule`; `WebsiteModule`
+    // imports only `AuthCoreModule`/`TenancyModule`/`AcademyModule`/
+    // `CourseModule` — none of which import `ProvisioningModule`.
+    PlansModule,
+    WebsiteModule,
     BullModule.registerQueue({ name: PROVISIONING_QUEUE }),
   ],
   controllers: [

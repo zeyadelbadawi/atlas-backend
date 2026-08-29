@@ -1,0 +1,102 @@
+[
+  {
+    "id": "TC001",
+    "title": "gethealthendpointreturnsservicestatus",
+    "description": "Verify GET /health returns 200 with database and Redis status up when services are healthy."
+  },
+  {
+    "id": "TC002",
+    "title": "postapiv1authregisterwithvaliddata",
+    "description": "Test user registration at POST /api/v1/auth/register with valid data returns 201 and created user data."
+  },
+  {
+    "id": "TC003",
+    "title": "postapiv1authregisterwithduplicateemail",
+    "description": "Test registering with an email that already exists returns a 409/400 conflict error rather than creating a duplicate account."
+  },
+  {
+    "id": "TC004",
+    "title": "postapiv1authsigninwithvalidcredentials",
+    "description": "Test POST /api/v1/auth/sign-in with valid credentials returns 200 with access and refresh tokens."
+  },
+  {
+    "id": "TC005",
+    "title": "postapiv1authsigninwithinvalidcredentials",
+    "description": "Test POST /api/v1/auth/sign-in with wrong password returns 401 unauthorized and does not leak whether the email exists."
+  },
+  {
+    "id": "TC006",
+    "title": "postapiv1authrefreshwithvalidrefreshtoken",
+    "description": "Test POST /api/v1/auth/refresh with a valid refresh token returns 200 with a new access token."
+  },
+  {
+    "id": "TC007",
+    "title": "postapiv1authsignoutrevokessession",
+    "description": "Test POST /api/v1/auth/sign-out with a valid access token returns 200 and subsequently invalidates the refresh token so it can no longer be used."
+  },
+  {
+    "id": "TC008",
+    "title": "getapiv1authvalidatewithandwithoutjwt",
+    "description": "Test GET /api/v1/auth/validate returns 200 for a valid access token and 401 when no/invalid token is supplied."
+  },
+  {
+    "id": "TC009",
+    "title": "getapiv1usersmerequiresauth",
+    "description": "Test GET /api/v1/users/me returns the authenticated user's profile with a valid token and 401 without a token."
+  },
+  {
+    "id": "TC010",
+    "title": "patchapiv1usersmeupdatesprofile",
+    "description": "Test PATCH /api/v1/users/me with valid fields updates and returns the profile, and rejects invalid payloads with 400."
+  },
+  {
+    "id": "TC011",
+    "title": "postapiv1usersmepasswordwithwrongcurrentpassword",
+    "description": "Test POST /api/v1/users/me/password with an incorrect current password is rejected (400/403) and does not change the password."
+  },
+  {
+    "id": "TC012",
+    "title": "getapiv1academieslistscopedtoorg",
+    "description": "Test GET /api/v1/academies returns only academies belonging to the authenticated user's organization, and 401 when unauthenticated."
+  },
+  {
+    "id": "TC013",
+    "title": "postapiv1academiescreatesnewacademy",
+    "description": "Test POST /api/v1/academies with valid data creates a new academy scoped to the caller's organization and returns 201."
+  },
+  {
+    "id": "TC014",
+    "title": "getapiv1academiesbyidnotfoundforforeigntenant",
+    "description": "Test GET /api/v1/academies/:id returns 404 (not leaking existence) when the academy belongs to a different organization than the caller."
+  },
+  {
+    "id": "TC015",
+    "title": "getapiv1planslistsplancatalog",
+    "description": "Test GET /api/v1/plans returns the subscription plan catalog for an authenticated caller."
+  },
+  {
+    "id": "TC016",
+    "title": "getapiv1addonslistsaddoncatalog",
+    "description": "Test GET /api/v1/add-ons returns the plan add-on catalog for an authenticated caller."
+  },
+  {
+    "id": "TC017",
+    "title": "getapiv1coursesundernonexistentacademyreturns404",
+    "description": "Test GET /api/v1/academies/:id/courses with a non-existent academy id returns 404."
+  },
+  {
+    "id": "TC018",
+    "title": "getapiv1notificationsrequiresauth",
+    "description": "Test GET /api/v1/notifications returns the authenticated user's notification feed and 401 without authentication."
+  },
+  {
+    "id": "TC019",
+    "title": "getapiv1searchrequiresauthandvalidatesquery",
+    "description": "Test GET /api/v1/search performs a tenant-scoped search for an authenticated user and returns 400 for a missing/empty query parameter."
+  },
+  {
+    "id": "TC020",
+    "title": "postapiv1paymentswebhookrejectsunsignedpayload",
+    "description": "Test the payment webhook endpoint rejects requests with a missing or invalid provider signature rather than processing them."
+  }
+]

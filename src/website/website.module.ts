@@ -55,7 +55,14 @@ import { WebsiteTestimonialEntriesRepository } from './repositories/website-test
   // `PublicWebsiteModule` (P11) can reuse their real published-only query
   // methods (`findPublishedByAcademyId`/`findAllPublished`/
   // `findPublishedBySlug`) directly — never a duplicated query against the
-  // same tables.
-  exports: [WebsiteConfigurationRepository, WebsitePagesRepository],
+  // same tables. `WebsiteConfigurationService` additionally exported as
+  // of Phase P19, so `ProvisioningModule`'s orchestrator can call its
+  // real `updateConfiguration` (the theme-selection provisioning step)
+  // rather than re-implementing theme persistence a second time.
+  exports: [
+    WebsiteConfigurationRepository,
+    WebsitePagesRepository,
+    WebsiteConfigurationService,
+  ],
 })
 export class WebsiteModule {}

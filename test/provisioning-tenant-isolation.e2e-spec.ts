@@ -11,7 +11,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail, waitForAsync } from './utils/test-app';
-import { createAdminPrisma, seedOrganizationWithOwner } from './utils/db-admin';
+import { createAdminPrisma, seedOrganizationWithOwner, seedPlan } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
 jest.setTimeout(30000);
@@ -65,6 +65,13 @@ describe('Provisioning Orchestration — tenant isolation (e2e)', () => {
   async function arrangeOrg(label: string) {
     const owner = await signUpAndSignIn(app, `${label}-owner`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
+    // Phase P19 — see `provisioning.e2e-spec.ts`'s `arrangeOrg`'s
+    // identical comment: `createRequest` now requires an active/trialing
+    // subscription; this suite tests tenant isolation, not that gate.
+    const plan = await seedPlan(admin, `${label}-plan`);
+    await admin.tenantSubscription.create({
+      data: { organizationId: org.id, planId: plan.id, status: 'active' },
+    });
     return { owner, org };
   }
 

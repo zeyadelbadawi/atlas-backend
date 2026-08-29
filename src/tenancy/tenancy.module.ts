@@ -28,6 +28,7 @@
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
+import { OrganizationsController } from './controllers/organizations.controller';
 import { OrganizationsService } from './services/organizations.service';
 import { UserOrganizationsService } from './services/user-organizations.service';
 import { TenancyContextService } from './services/tenancy-context.service';
@@ -37,6 +38,12 @@ import { OrganizationMembershipGuard } from './guards/organization-membership.gu
 
 @Module({
   imports: [AuthCoreModule],
+  controllers: [
+    // Phase P19 — `POST /organizations` only; every `GET` route for this
+    // resource still lives in `PlatformModule` per this file's own P15
+    // note below.
+    OrganizationsController,
+  ],
   providers: [
     TenancyContextService,
     OrganizationsRepository,

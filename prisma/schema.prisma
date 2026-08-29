@@ -2762,6 +2762,8 @@ model ProvisioningRequest {
   /// Present only when this request was triggered by a specific P12 Payment — the real row, never a second payment abstraction (this phase's explicit instruction).
   triggeringPaymentId  String?             @map("triggering_payment_id")
   triggeringPayment    Payment?            @relation(fields: [triggeringPaymentId], references: [id])
+  /// Phase P19 — the Client's chosen theme key from the real Website Builder theme registry (`WEBSITE_THEME_KEYS`, matched exactly, never re-validated against a second catalog). Optional: the 'theme' provisioning step applies it if present, and otherwise leaves `WebsiteBootstrapService`'s own default theme in place — never a hard requirement, matching P9's own "always a sensible bootstrap default" design.
+  selectedThemeKey     String?             @map("selected_theme_key")
   idempotencyKey       String              @map("idempotency_key")
   attemptCount         Int                 @default(0) @map("attempt_count")
   /// Mirrors `ProvisioningError` (`{code, messageKey, detail?}`) — set only while `status = 'failed'`.

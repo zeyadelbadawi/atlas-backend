@@ -39,7 +39,7 @@ import type {
 import type { ReorderItemsDto } from '../dto/reorder-items.dto';
 
 /** See `AcademiesService.MANAGING_ROLES` — identical rule. */
-const MANAGING_ROLES = new Set(['owner', 'administrator']);
+const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
 @Injectable()
 export class CourseCurriculumService {

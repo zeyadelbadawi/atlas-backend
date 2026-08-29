@@ -30,9 +30,13 @@ import { AcademiesService } from '../services/academies.service';
 import { CreateAcademyDto } from '../dto/create-academy.dto';
 import { UpdateAcademyDto } from '../dto/update-academy.dto';
 import { UpdateAcademyBrandingDto } from '../dto/update-academy-branding.dto';
+import { AddAcademyManagerDto } from '../dto/add-academy-manager.dto';
+import { AddAcademyInstructorDto } from '../dto/add-academy-instructor.dto';
+import { CreateAcademyStudentDto } from '../dto/create-academy-student.dto';
 import { CollectionQueryDto, ListAcademiesQueryDto } from '../dto/list-query.dto';
 import type { AcademyResponse } from '../dto/academy.contract';
 import type { AcademyMemberResponse } from '../dto/academy-member.contract';
+import type { AcademyStudentResponse } from '../dto/academy-student.contract';
 import type { AcademyStatsResponse } from '../dto/academy-stats.contract';
 import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
@@ -117,6 +121,51 @@ export class AcademiesController {
   ): Promise<PaginatedResult<AcademyMemberResponse>> {
     const { academyId, organizationId } = request.academyContext!;
     return this.academiesService.getMembers(academyId, organizationId, query);
+  }
+
+  @Post(':id/members')
+  @UseGuards(AcademyScopeGuard)
+  async addManager(
+    @Req() request: Request,
+    @Body() body: AddAcademyManagerDto,
+  ): Promise<AcademyMemberResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.academiesService.addManager(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body,
+    );
+  }
+
+  @Post(':id/instructors')
+  @UseGuards(AcademyScopeGuard)
+  async addInstructor(
+    @Req() request: Request,
+    @Body() body: AddAcademyInstructorDto,
+  ): Promise<AcademyMemberResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.academiesService.addInstructor(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body,
+    );
+  }
+
+  @Post(':id/students')
+  @UseGuards(AcademyScopeGuard)
+  async createStudent(
+    @Req() request: Request,
+    @Body() body: CreateAcademyStudentDto,
+  ): Promise<AcademyStudentResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.academiesService.createStudent(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body,
+    );
   }
 
   @Get(':id/stats')

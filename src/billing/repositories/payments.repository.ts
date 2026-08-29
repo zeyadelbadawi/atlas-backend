@@ -17,7 +17,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { Payment } from '@prisma/client';
+import type { ManualReviewStatus, Payment } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 
 const WITH_RELATIONS = {
@@ -87,10 +87,16 @@ export class PaymentsRepository {
   /** Platform-review listing, across every organization — see `findByIdAnyOrganization`'s doc comment for the RLS mechanism this relies on. */
   async findManyAnyOrganization(
     tx: Prisma.TransactionClient,
-    filter: { readonly search?: string; readonly skip: number; readonly take: number },
+    filter: {
+      readonly search?: string;
+      readonly reviewStatus?: ManualReviewStatus;
+      readonly skip: number;
+      readonly take: number;
+    },
   ): Promise<{ items: PaymentWithRelations[]; totalItems: number }> {
     const where: Prisma.PaymentWhereInput = {
       checkoutId: { not: null },
+      ...(filter.reviewStatus ? { reviewStatus: filter.reviewStatus } : {}),
       ...(filter.search
         ? {
             OR: [

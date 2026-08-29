@@ -15,7 +15,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail, waitForAsync } from './utils/test-app';
-import { createAdminPrisma, seedOrganizationWithOwner } from './utils/db-admin';
+import { createAdminPrisma, seedOrganizationWithOwner, seedPlan } from './utils/db-admin';
 import { ProvisioningProducer } from '../src/provisioning/queue/provisioning.producer';
 import type { PrismaClient } from '@prisma/client';
 
@@ -71,6 +71,18 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
   async function arrangeOrg(label: string) {
     const owner = await signUpAndSignIn(app, `${label}-owner`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
+    // Phase P19: `createRequest` now requires a real, active/trialing
+    // subscription before provisioning can start (`Reports/
+    // DEVELOPMENT_E2E_FLOW_AUDIT.md` P1-2 — "provisioning cannot be
+    // started merely by knowing an organization id"). This suite tests
+    // the orchestrator itself, not that gate (covered by
+    // `organizations.e2e-spec.ts`), so every fixture org here legitimately
+    // has one from the start, matching `billing.e2e-spec.ts`'s own
+    // `arrangeCheckoutAndPayment` precedent.
+    const plan = await seedPlan(admin, `${label}-plan`);
+    await admin.tenantSubscription.create({
+      data: { organizationId: org.id, planId: plan.id, status: 'active' },
+    });
     return { owner, org };
   }
 
@@ -177,15 +189,29 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     const byKey = Object.fromEntries(
       final.steps.map((s: { key: string; status: string }) => [s.key, s.status]),
     );
+    // Phase P19: 'theme' now genuinely completes even with no
+    // `selectedThemeKey` in the request — the real Website Builder
+    // bootstrap default applies (see `provisioning-orchestrator.service.
+    // ts`'s `executeThemeStep`'s own doc comment: "nothing to change,"
+    // never a skip). 'branding'/'domain' remain skipped — still
+    // genuinely no data for either in this phase.
     expect(byKey).toEqual({
       tenant: 'completed',
       academy: 'completed',
-      theme: 'skipped',
+      theme: 'completed',
       branding: 'skipped',
       subdomain: 'completed',
       domain: 'skipped',
       finalization: 'completed',
     });
+
+    // Phase P19 — this request submitted no `selectedThemeKey`, so the
+    // 'theme' step has nothing to write (see `executeThemeStep`'s own
+    // doc comment) and correctly does not eagerly create a
+    // `website_configurations` row — that stays exactly the pre-existing,
+    // established `WebsiteBootstrapService` lazy get-or-create-on-read
+    // behavior (test 3b, below, proves the row IS created — with the
+    // Client's real chosen theme — when one is actually selected).
 
     // The real Academy this request created — no duplicate, correct fields.
     const academy = await admin.academy.findUnique({ where: { id: final.academyId } });
@@ -197,6 +223,47 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
 
     // The real subdomain allocation this request created.
     expect(final.subdomain).toMatchObject({ subdomain, status: 'assigned' });
+  });
+
+  // --- 3b. Real theme selection (Phase P19) ----------------------------------
+
+  it('3b: a Client-selected theme is applied to the real Academy website configuration, not just the bootstrap default', async () => {
+    const { owner, org } = await arrangeOrg('themed');
+    const subdomain = uniqueSubdomain('themed');
+    const created = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        academyName: 'Themed Academy',
+        requestedSubdomain: subdomain,
+        selectedThemeKey: 'bold-creative',
+        idempotencyKey: `themed-idem-${subdomain}`,
+      })
+      .expect(201);
+    expect(created.body.selectedThemeKey).toBe('bold-creative');
+
+    const final = await waitForTerminal(owner, org.id, created.body.id);
+    expect(final.status).toBe('ready');
+    expect(final.selectedThemeKey).toBe('bold-creative');
+
+    const themeStep = final.steps.find((s: { key: string }) => s.key === 'theme');
+    expect(themeStep.status).toBe('completed');
+
+    // Real persistence via the SAME `WebsiteConfigurationService` the
+    // post-onboarding Website Settings theme tab uses — never a second
+    // theme mechanism.
+    const websiteConfig = await admin.websiteConfiguration.findUnique({
+      where: { academyId: final.academyId },
+    });
+    expect(websiteConfig?.themeKey).toBe('bold-creative');
+
+    // Reachable through the real, ordinary Website Configuration read
+    // endpoint too — not just visible via a direct DB read.
+    const configRes = await request(app.getHttpServer())
+      .get(`/academies/${final.academyId}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(configRes.body.themeKey).toBe('bold-creative');
   });
 
   // --- 4. Step/request bookkeeping persistence ------------------------------

@@ -37,7 +37,7 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-que
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { Forum, Prisma } from '@prisma/client';
 
-const MODERATING_ROLES = new Set(['owner', 'administrator']);
+const MODERATING_ROLES = new Set(['owner', 'administrator', 'manager']);
 const ACTIVE_ENROLLMENT_STATUSES = new Set(['enrolled', 'completed']);
 
 @Injectable()

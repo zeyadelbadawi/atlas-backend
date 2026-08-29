@@ -38,6 +38,8 @@ export interface ProvisioningRequestResponse {
   readonly requestedAcademyName: string;
   readonly requestedSubdomain: string;
   readonly triggeringPaymentId?: string;
+  /** Phase P19 — see `provisioning.constants.ts`'s 'theme' step. */
+  readonly selectedThemeKey?: string;
   readonly lastError?: ProvisioningErrorResponse;
   readonly createdAt: string;
   readonly startedAt?: string;
@@ -65,6 +67,7 @@ export function toProvisioningRequestResponse(
     requestedAcademyName: request.requestedAcademyName,
     requestedSubdomain: request.requestedSubdomain,
     triggeringPaymentId: request.triggeringPaymentId ?? undefined,
+    selectedThemeKey: request.selectedThemeKey ?? undefined,
     lastError:
       (request.lastError as unknown as ProvisioningErrorResponse | null) ?? undefined,
     createdAt: request.createdAt.toISOString(),

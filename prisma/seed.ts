@@ -54,6 +54,7 @@ import { InstructorService } from '../src/instructor/services/instructor.service
 import { AnnouncementsService } from '../src/community/services/announcements.service';
 import { BlogPostsService } from '../src/community/services/blog-posts.service';
 import { ForumsService } from '../src/community/services/forums.service';
+import { permissionsForRole } from '../src/tenancy/constants/organization-permissions.constants';
 
 const DEV_PASSWORD = 'DevPassword123!';
 
@@ -178,12 +179,21 @@ async function seedOrganizations(prisma: PrismaClient, users: SeededUsers): Prom
     update: { name: 'NextGen Learning' },
   });
 
-  const upsertMembership = (organizationId: string, userId: string, role: string, isPrimary: boolean) =>
-    prisma.organizationMembership.upsert({
+  // Phase P19 fix: previously hardcoded `permissions: []` on every seeded
+  // membership — the exact same real-world root cause
+  // `Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` (P0-2) found via a live API
+  // call against `sarah.chen`'s own seeded owner membership. Now derived
+  // from `role` via the same shared, real logic `OrganizationsService.
+  // create` uses for a brand-new Organization, so seeded baseline data
+  // and freshly-created data are permission-consistent.
+  const upsertMembership = (organizationId: string, userId: string, role: string, isPrimary: boolean) => {
+    const permissions = permissionsForRole(role);
+    return prisma.organizationMembership.upsert({
       where: { organizationId_userId: { organizationId, userId } },
-      create: { organizationId, userId, role, isPrimary, permissions: [] },
-      update: { role, isPrimary },
+      create: { organizationId, userId, role, isPrimary, permissions: [...permissions] },
+      update: { role, isPrimary, permissions: [...permissions] },
     });
+  };
 
   await Promise.all([
     upsertMembership(orgA.id, users.sarahChen.id, 'owner', true),

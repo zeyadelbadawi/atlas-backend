@@ -4,7 +4,22 @@
  * matching every other repository in this codebase's established rule.
  */
 import { Injectable } from '@nestjs/common';
-import type { Enrollment, Prisma } from '@prisma/client';
+import type {
+  Course,
+  CourseCategory,
+  CourseInstructor,
+  Enrollment,
+  Prisma,
+  User,
+} from '@prisma/client';
+
+/** Row shape returned by {@link EnrollmentsRepository.findManyForStudent} — an `Enrollment` with its `course` (and the course's `category`/`instructors`) joined in, matching what `toEnrollmentResponse` needs to build a "My Learning" card. */
+export type EnrollmentWithCourse = Enrollment & {
+  course: Course & {
+    category: CourseCategory | null;
+    instructors: (CourseInstructor & { user: Pick<User, 'id' | 'name' | 'avatarUrl'> })[];
+  };
+};
 
 @Injectable()
 export class EnrollmentsRepository {
@@ -26,7 +41,7 @@ export class EnrollmentsRepository {
     tx: Prisma.TransactionClient,
     studentId: string,
     options: { skip: number; take: number },
-  ): Promise<{ items: Enrollment[]; totalItems: number }> {
+  ): Promise<{ items: EnrollmentWithCourse[]; totalItems: number }> {
     const where: Prisma.EnrollmentWhereInput = { studentId };
     const [items, totalItems] = await Promise.all([
       tx.enrollment.findMany({
@@ -34,6 +49,19 @@ export class EnrollmentsRepository {
         orderBy: { createdAt: 'desc' },
         skip: options.skip,
         take: options.take,
+        // Joined so `EnrollmentsService.list` can return enough per-row
+        // course detail (title/thumbnail/pricing) to render a "My
+        // Learning" card grid without a second round-trip per row — see
+        // `EnrollmentResponse.course`'s doc comment for why this join
+        // exists only here, not on the other lookup methods below.
+        include: {
+          course: {
+            include: {
+              category: true,
+              instructors: { include: { user: { select: { id: true, name: true, avatarUrl: true } } } },
+            },
+          },
+        },
       }),
       tx.enrollment.count({ where }),
     ]);

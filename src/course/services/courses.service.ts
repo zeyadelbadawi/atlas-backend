@@ -37,7 +37,7 @@ import type { CreateCourseDto } from '../dto/create-course.dto';
 import type { UpdateCourseDto } from '../dto/update-course.dto';
 
 /** See `AcademiesService.MANAGING_ROLES` — identical rule, applied here to Course writes. */
-const MANAGING_ROLES = new Set(['owner', 'administrator']);
+const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
 @Injectable()
 export class CoursesService {

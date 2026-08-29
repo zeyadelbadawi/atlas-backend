@@ -50,7 +50,7 @@ import {
 } from '../validation/website-config.schemas';
 import { parseOrThrow } from '../../common/validation/zod-violations.util';
 
-const MANAGING_ROLES = new Set(['owner', 'administrator']);
+const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
 @Injectable()
 export class WebsiteConfigurationService {

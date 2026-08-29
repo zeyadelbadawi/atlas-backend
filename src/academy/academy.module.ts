@@ -20,9 +20,21 @@
  * `AcademiesService.create` directly, reusing the complete, already-tested
  * slug-conflict-handling/membership-creation logic verbatim rather than
  * duplicating any part of it (this phase's explicit instruction).
+ *
+ * Imports `IdentityModule` as of the Organization Manager phase —
+ * `AcademiesService.addManager` needs `UsersRepository.findByEmail` to
+ * resolve the target user (there is no invitation system; the target must
+ * already have an Atlas account). `IdentityModule` already depends on
+ * `TenancyModule` (never the reverse), and `TenancyModule` has no
+ * dependency on `AcademyModule`, so this stays a clean DAG — no
+ * `forwardRef` needed, the same reasoning `IdentityModule`'s own doc
+ * comment already establishes for importing `TenancyModule`.
+ * `OrganizationsRepository`/`OrganizationMembershipsRepository` need no
+ * new import here — `TenancyModule` (already imported) exports both.
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
+import { IdentityModule } from '../identity/identity.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { AcademiesController } from './controllers/academies.controller';
 import { AcademiesService } from './services/academies.service';
@@ -32,7 +44,7 @@ import { AcademyOrganizationScopeGuard } from './guards/academy-organization-sco
 import { AcademyScopeGuard } from './guards/academy-scope.guard';
 
 @Module({
-  imports: [AuthCoreModule, TenancyModule],
+  imports: [AuthCoreModule, TenancyModule, IdentityModule],
   controllers: [AcademiesController],
   providers: [
     AcademiesRepository,

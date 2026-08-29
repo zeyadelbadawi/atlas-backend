@@ -21,6 +21,37 @@ export const PLATFORM_DETAIL_MEMBER_CAP = 200;
 
 @Injectable()
 export class OrganizationMembershipsRepository {
+  /**
+   * Phase P19 — the owner-membership half of real Organization creation
+   * (see `OrganizationsRepository.create`'s doc comment for the RLS
+   * session-variable choreography this depends on). `permissions` is
+   * caller-supplied, not defaulted here — `OrganizationsService.create`
+   * passes the real owner permission set (see
+   * `src/tenancy/constants/organization-permissions.constants.ts`),
+   * closing the separate, previously-always-empty-permissions gap
+   * (`Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` P0-2) in the same stroke.
+   */
+  create(
+    tx: Prisma.TransactionClient,
+    data: {
+      readonly organizationId: string;
+      readonly userId: string;
+      readonly role: string;
+      readonly permissions: readonly string[];
+      readonly isPrimary: boolean;
+    },
+  ): Promise<OrganizationMembership> {
+    return tx.organizationMembership.create({
+      data: {
+        organizationId: data.organizationId,
+        userId: data.userId,
+        role: data.role,
+        permissions: [...data.permissions],
+        isPrimary: data.isPrimary,
+      },
+    });
+  }
+
   /** Finds the caller's own membership row within the active tenant context — this IS the membership-verification query (see `OrganizationMembershipGuard`). */
   findForUserInOrganization(
     tx: Prisma.TransactionClient,

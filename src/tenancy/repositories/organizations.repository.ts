@@ -20,6 +20,46 @@ export class OrganizationsRepository {
     return tx.organization.findUnique({ where: { id } });
   }
 
+  findBySlug(tx: Prisma.TransactionClient, slug: string): Promise<Organization | null> {
+    return tx.organization.findUnique({ where: { slug } });
+  }
+
+  /**
+   * Phase P19 — real Organization creation, previously missing entirely
+   * (see `Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` P0-1). `id` is caller-
+   * supplied (a pre-generated UUID), never DB-generated here — the caller
+   * must know the new organization's id BEFORE this insert so it can open
+   * `runInTenantAndUserContext(id, ownerUserId, ...)` around both this
+   * call and the owner-membership insert that follows it in the same
+   * transaction: `organizations_insert`'s RLS policy only permits
+   * `owner_user_id = app.current_user_id` (any org id), but
+   * `organization_memberships_insert`'s policy additionally requires the
+   * target organization to already be SELECT-visible under
+   * `app.current_organization_id` — which only holds if that session
+   * variable is set to this exact new id from the start (see
+   * `prisma/migrations/20260823184500_p2_narrow_insert_rls_policies/
+   * migration.sql`'s own header comment, which predicted precisely this
+   * bootstrap shape for "a future org-creation flow").
+   */
+  create(
+    tx: Prisma.TransactionClient,
+    data: {
+      readonly id: string;
+      readonly name: string;
+      readonly slug: string;
+      readonly ownerUserId: string;
+    },
+  ): Promise<Organization> {
+    return tx.organization.create({
+      data: {
+        id: data.id,
+        name: data.name,
+        slug: data.slug,
+        ownerUserId: data.ownerUserId,
+      },
+    });
+  }
+
   /** All organizations RLS currently permits — meaningful only inside `runInUserContext` (see that method's doc comment), where it resolves to exactly the organizations the given user belongs to. */
   findAllVisible(tx: Prisma.TransactionClient): Promise<Organization[]> {
     return tx.organization.findMany();

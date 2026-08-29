@@ -43,7 +43,7 @@ function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
-const MANAGING_ROLES = new Set(['owner', 'administrator']);
+const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
 @Injectable()
 export class DomainService {
