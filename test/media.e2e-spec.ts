@@ -11,6 +11,7 @@ import {
   createAdminPrisma,
   seedAcademy,
   seedAcademyMember,
+  seedActiveSubscriptionForOrg,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
@@ -62,6 +63,7 @@ describe('Media Library (e2e)', () => {
   async function seedManagedAcademy(label: string) {
     const owner = await signUpAndSignIn(app, `${label}-owner`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
+    await seedActiveSubscriptionForOrg(admin, org.id, label);
     const academy = await seedAcademy(admin, org.id, `${label}-academy`);
     await seedAcademyMember(admin, academy.id, owner.userId, 'owner');
     return { owner, org, academy };

@@ -27,11 +27,17 @@
  * `CourseCommerceModule` reuses both directly for paid-course enrollment
  * creation on payment success and enrollment reversal on refund, rather
  * than duplicating enrollment-materialization logic a second time.
+ *
+ * Imports `PlansModule` as of Phase 2 — `EnrollmentsService.createEnrollment`
+ * needs `EntitlementEnforcementService` (the live `students` plan-limit
+ * check). `PlansModule` depends on neither `LearningModule` nor
+ * `CourseModule`, so this stays a clean DAG.
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { CourseModule } from '../course/course.module';
+import { PlansModule } from '../plans/plans.module';
 import { CourseDiscoveryController } from './controllers/course-discovery.controller';
 import { EnrollmentsController } from './controllers/enrollments.controller';
 import { CourseProgressController } from './controllers/course-progress.controller';
@@ -48,7 +54,7 @@ import { QuizzesRepository } from './repositories/quizzes.repository';
 import { AssignmentsRepository } from './repositories/assignments.repository';
 
 @Module({
-  imports: [AuthCoreModule, TenancyModule, CourseModule],
+  imports: [AuthCoreModule, TenancyModule, CourseModule, PlansModule],
   controllers: [
     CourseDiscoveryController,
     EnrollmentsController,

@@ -28,6 +28,9 @@ import type { CourseWithRelations } from '../../course/repositories/courses.repo
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { CoursesRepository } from '../../course/repositories/courses.repository';
 import { CourseSectionsRepository } from '../../course/repositories/course-sections.repository';
+import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
+import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
+import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { CourseProgressRepository } from '../repositories/course-progress.repository';
 import { toEnrollmentResponse } from '../dto/enrollment.contract';
@@ -47,6 +50,9 @@ export class EnrollmentsService {
     private readonly courseProgressRepository: CourseProgressRepository,
     private readonly coursesRepository: CoursesRepository,
     private readonly courseSectionsRepository: CourseSectionsRepository,
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
+    private readonly entitlementEnforcementService: EntitlementEnforcementService,
+    private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
   ) {}
 
   async list(
@@ -86,28 +92,111 @@ export class EnrollmentsService {
     userId: string,
     payload: CreateEnrollmentDto,
   ): Promise<EnrollmentResponse> {
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      const course = await this.coursesRepository.findPublishedById(tx, payload.courseId);
-      if (!course) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    // Phase 2 — the live `students` entitlement check below needs real
+    // organization-scoped RLS access (`tenant_subscriptions`, and every
+    // table `EntitlementEnforcementService.assertWithinLimit`'s live count
+    // reads), which a bare `runInUserContext` never grants. Resolving the
+    // course's Academy — and, from that, its Organization — BEFORE
+    // opening any transaction (both contextless, safe reads; see
+    // `resolveAcademyIdForPublishedCourse`'s own doc comment) lets the
+    // entire rest of this method run inside one real
+    // `runInTenantAndUserContext`, exactly like `AcademyScopeGuard`'s own
+    // "bootstrap, then reestablish with full context" precedent —
+    // preserving single-transaction atomicity for every write below.
+    const academyId = await this.coursesRepository.resolveAcademyIdForPublishedCourse(
+      payload.courseId,
+    );
+    if (!academyId) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-      if (course.pricingType === 'paid') {
-        throw new ForbiddenException({
-          messageKey: 'errors.enrollment.paidCourseRequiresPayment',
-        });
-      }
+    const organizationId =
+      await this.academyStudentsRepository.resolveOrganizationId(academyId);
+    if (!organizationId) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-      const existing = await this.enrollmentsRepository.findByStudentAndCourse(
-        tx,
-        userId,
-        course.id,
-      );
-      // Idempotent: re-clicking "Enroll" on an already-enrolled course
-      // returns the existing enrollment rather than erroring.
-      if (existing) return toEnrollmentResponse(existing);
+    return this.tenancyContextService
+      .runInTenantAndUserContext(organizationId, userId, async (tx) => {
+        const course = await this.coursesRepository.findPublishedById(
+          tx,
+          payload.courseId,
+        );
+        if (!course) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-      const enrollment = await this.createEnrollmentInTransaction(tx, userId, course);
-      return toEnrollmentResponse(enrollment);
-    });
+        if (course.pricingType === 'paid') {
+          throw new ForbiddenException({
+            messageKey: 'errors.enrollment.paidCourseRequiresPayment',
+          });
+        }
+
+        // Phase 1 (Extended Scope, Decision 11, dependency D) — a student
+        // may only enroll into a course owned by an Academy they hold a
+        // real `academy_students` membership for (populated at
+        // registration through that Academy's own public website, or by
+        // a Manager/Owner explicitly creating the account for that
+        // Academy). This is the application-layer twin of
+        // `enrollments_self_insert`'s RLS check — checked here first so
+        // a genuine mismatch surfaces as a clean, typed error instead of
+        // a raw RLS-denial database error (this codebase's standard
+        // "app-layer check backstopped by RLS, never the other way
+        // around" discipline).
+        const membership = await this.academyStudentsRepository.findForUserInAcademy(
+          tx,
+          course.academyId,
+          userId,
+        );
+        if (!membership) {
+          throw new ForbiddenException({
+            messageKey: 'errors.enrollment.academyMembershipRequired',
+          });
+        }
+
+        const existing = await this.enrollmentsRepository.findByStudentAndCourse(
+          tx,
+          userId,
+          course.id,
+        );
+        // Idempotent: re-clicking "Enroll" on an already-enrolled course
+        // returns the existing enrollment rather than erroring — and,
+        // deliberately, WITHOUT re-checking the entitlement limit: an
+        // already-enrolled student consumes no additional seat, so this
+        // can never be blocked by a limit reached after they first
+        // enrolled.
+        if (existing) return toEnrollmentResponse(existing);
+
+        // Phase 2 (Decision 4) — live `students` limit check, inside the
+        // same transaction as the enrollment insert below. Placed after
+        // every authorization/idempotency check above, matching
+        // `AcademiesService.addInstructor`'s identical ordering: a
+        // request that was never going to succeed for another reason
+        // reports THAT reason first. `additionalStudents` is 0 (never 1)
+        // when this student already holds another real enrollment
+        // anywhere in this organization — see
+        // `EnrollmentsRepository.countActiveForStudentInOrganization`'s
+        // own doc comment for why: a second/third course enrollment for
+        // an already-counted student must never be blocked as if it were
+        // a brand-new one.
+        const alreadyCounted =
+          await this.enrollmentsRepository.countActiveForStudentInOrganization(
+            tx,
+            organizationId,
+            userId,
+          );
+        await this.entitlementEnforcementService.assertWithinLimit(
+          tx,
+          organizationId,
+          'students',
+          alreadyCounted > 0 ? 0 : 1,
+        );
+
+        const enrollment = await this.createEnrollmentInTransaction(tx, userId, course);
+        return toEnrollmentResponse(enrollment);
+      })
+      .then(async (response) => {
+        // Phase 2 — real reactive usage-recompute trigger (an enrollment
+        // change) — enqueued unconditionally; the idempotent-return branch
+        // above (already enrolled) causes no harm here either, a redundant
+        // recompute produces byte-identical results.
+        await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
+        return response;
+      });
   }
 
   /**

@@ -24,12 +24,18 @@
  * real frontend contract (`MediaAssetSummary`) has no thumbnail-url field
  * for one to ever be returned through. Generating one would be dead
  * storage with no response shape to reach it.
+ *
+ * Imports `PlansModule` as of Phase 2 — `MediaService.upload` needs
+ * `EntitlementEnforcementService` (the live `generalStorage`/
+ * `videoStorage` plan-limit check, byte-precise). `PlansModule` depends
+ * on neither `MediaModule` nor `AcademyModule`, so this stays a clean DAG.
  */
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { AuthCoreModule } from '../identity/auth-core.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { AcademyModule } from '../academy/academy.module';
+import { PlansModule } from '../plans/plans.module';
 import { MediaController } from './controllers/media.controller';
 import { MediaService } from './services/media.service';
 import { MediaAssetsRepository } from './repositories/media-assets.repository';
@@ -44,6 +50,7 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
     AuthCoreModule,
     TenancyModule,
     AcademyModule,
+    PlansModule,
     BullModule.registerQueue({ name: MEDIA_PROCESSING_QUEUE }),
   ],
   controllers: [MediaController],

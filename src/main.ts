@@ -17,6 +17,7 @@ import { ValidationPipe, VersioningType } from '@nestjs/common';
 import helmet from 'helmet';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { throwClassValidatorViolations } from './common/validation/class-validator-violations.util';
 import type { AppConfig } from './config/configuration';
 import type { MediaStorageConfig } from './config/configuration';
 
@@ -60,6 +61,10 @@ async function bootstrap(): Promise<void> {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      // Real per-field violations instead of Nest's default flat English
+      // message array (which `AllExceptionsFilter` could only ever report
+      // as `field: 'unknown'`) — see `class-validator-violations.util.ts`.
+      exceptionFactory: (errors) => throwClassValidatorViolations(errors),
     }),
   );
 

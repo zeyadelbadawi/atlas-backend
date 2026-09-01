@@ -13,6 +13,7 @@ import {
   createAdminPrisma,
   seedAcademy,
   seedAcademyMember,
+  seedActiveSubscriptionForOrg,
   seedCourse,
   seedCourseCategory,
   seedOrganizationWithOwner,
@@ -77,6 +78,7 @@ describe('Course Management (e2e) — functional/contract', () => {
   it('full CRUD lifecycle: create -> get -> list -> update -> publish -> unpublish -> archive', async () => {
     const owner = await signUpAndSignIn(app, 'course-crud');
     const org = await seedOrganizationWithOwner(admin, owner.userId, 'course-crud-org');
+    await seedActiveSubscriptionForOrg(admin, org.id, 'course-crud');
     const academy = await seedManagedAcademy(
       admin,
       org.id,
@@ -171,6 +173,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       owner.userId,
       'course-pricing-org',
     );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'course-pricing');
     const academy = await seedManagedAcademy(
       admin,
       org.id,
@@ -217,6 +220,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       owner.userId,
       'course-dup-slug-org',
     );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'course-dup-slug');
     const academy = await seedManagedAcademy(
       admin,
       org.id,
@@ -245,6 +249,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       owner.userId,
       'course-cross-slug-org',
     );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'course-cross-slug');
     const academyA = await seedManagedAcademy(
       admin,
       org.id,

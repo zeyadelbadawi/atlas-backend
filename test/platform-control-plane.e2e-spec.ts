@@ -15,6 +15,7 @@ import {
   createAdminPrisma,
   seedAcademy,
   seedAcademyMember,
+  seedActiveSubscriptionForOrg,
   seedCourse,
   seedOrganizationWithOwner,
   seedPlan,
@@ -247,6 +248,7 @@ describe('Platform Owner Control Plane — P15 (e2e)', () => {
       const platformOwner = await arrangePlatformOwner('audit-po');
       const tenantOwner = await signUpAndSignIn(app, 'audit-tenant');
       const org = await seedOrganizationWithOwner(admin, tenantOwner.userId, 'audit-org');
+      await seedActiveSubscriptionForOrg(admin, org.id, 'audit-org');
       const academyName = `Audited Academy ${Date.now()}`;
 
       const created = await request(app.getHttpServer())

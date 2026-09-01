@@ -165,4 +165,76 @@ describe('Blog Posts (e2e)', () => {
       created.body.id,
     );
   });
+
+  /* ------- Phase 1 (Extended Scope, Decision 11, dependency B) ------- */
+
+  it('a staff member of TWO academies must supply an explicit academyId — no longer hard-blocked by "ambiguous academy"', async () => {
+    const staff = await signUpAndSignIn(app, 'blog-multi-academy-staff');
+    const orgA = await seedOrganizationWithOwner(admin, staff.userId, 'blog-multi-org-a');
+    const academyA = await seedAcademy(admin, orgA.id, 'blog-multi-academy-a');
+    await seedAcademyMember(admin, academyA.id, staff.userId, 'owner');
+    const orgB = await seedOrganizationWithOwner(admin, staff.userId, 'blog-multi-org-b');
+    const academyB = await seedAcademy(admin, orgB.id, 'blog-multi-academy-b');
+    await seedAcademyMember(admin, academyB.id, staff.userId, 'owner');
+
+    // No academyId at all — the pre-existing ambiguity failure, unchanged.
+    const ambiguous = await request(app.getHttpServer())
+      .post('/blog-posts')
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .send({ title: 'No Academy', slug: `no-academy-${Date.now()}`, content: 'x' })
+      .expect(400);
+    expect(ambiguous.body.error.messageKey).toBe('errors.blog.ambiguousAcademy');
+
+    // An explicit, real academyId now resolves it cleanly.
+    const createdForA = await request(app.getHttpServer())
+      .post('/blog-posts')
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .send({
+        title: 'Academy A Post',
+        slug: `academy-a-post-${Date.now()}`,
+        content: 'x',
+        academyId: academyA.id,
+      })
+      .expect(201);
+    expect(createdForA.body.academyId).toBe(academyA.id);
+
+    const createdForB = await request(app.getHttpServer())
+      .post('/blog-posts')
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .send({
+        title: 'Academy B Post',
+        slug: `academy-b-post-${Date.now()}`,
+        content: 'x',
+        academyId: academyB.id,
+      })
+      .expect(201);
+    expect(createdForB.body.academyId).toBe(academyB.id);
+  });
+
+  it('rejects an academyId the caller is not actually a staff member of — never trusted on its own', async () => {
+    const staff = await signUpAndSignIn(app, 'blog-foreign-academy-staff');
+    const org = await seedOrganizationWithOwner(admin, staff.userId, 'blog-foreign-org');
+    const ownAcademy = await seedAcademy(admin, org.id, 'blog-foreign-own-academy');
+    await seedAcademyMember(admin, ownAcademy.id, staff.userId, 'owner');
+
+    const otherOwner = await signUpAndSignIn(app, 'blog-foreign-other-owner');
+    const otherOrg = await seedOrganizationWithOwner(
+      admin,
+      otherOwner.userId,
+      'blog-foreign-other-org',
+    );
+    const foreignAcademy = await seedAcademy(admin, otherOrg.id, 'blog-foreign-academy');
+    await seedAcademyMember(admin, foreignAcademy.id, otherOwner.userId, 'owner');
+
+    await request(app.getHttpServer())
+      .post('/blog-posts')
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .send({
+        title: 'Hijack Attempt',
+        slug: `hijack-attempt-${Date.now()}`,
+        content: 'x',
+        academyId: foreignAcademy.id,
+      })
+      .expect(403);
+  });
 });

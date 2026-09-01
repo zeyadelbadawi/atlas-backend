@@ -61,15 +61,46 @@ describe('Row-Level Security — website_configurations / website_pages (direct,
   }
 
   async function createAcademyFor(organizationId: string, label: string) {
-    return tenancyContext.runInTenantContext(organizationId, (tx) =>
-      tx.academy.create({
+    return tenancyContext.runInTenantContext(organizationId, async (tx) => {
+      const org = await tx.organization.findUniqueOrThrow({
+        where: { id: organizationId },
+      });
+      const academy = await tx.academy.create({
         data: { organizationId, name: label, slug: `${label}-${Date.now()}` },
-      }),
+      });
+      // Phase 1 (Extended Scope, dependency A) — the real `AcademiesService.create`
+      // always gives the creator an `owner` `academy_members` row; this
+      // direct-DB fixture reproduces that fact so the new
+      // `is_academy_member`-gated policies below have a real member to
+      // authorize, exactly like production.
+      await tx.academyMember.create({
+        data: {
+          academyId: academy.id,
+          userId: org.ownerUserId,
+          role: 'owner',
+          status: 'active',
+        },
+      });
+      return academy;
+    });
+  }
+
+  /** Phase 1 (Extended Scope, dependency A) — the website/domain policies now require a real `academy_members` row, not just organization membership; every direct-DB fixture write below runs as this academy's own owner. */
+  async function resolveAcademyOwnerId(
+    organizationId: string,
+    academyId: string,
+  ): Promise<string> {
+    const membership = await tenancyContext.runInTenantContext(organizationId, (tx) =>
+      tx.academyMember.findFirst({ where: { academyId, role: 'owner' } }),
     );
+    if (!membership)
+      throw new Error(`No owner membership found for academy ${academyId}`);
+    return membership.userId;
   }
 
   async function createConfiguration(organizationId: string, academyId: string) {
-    return tenancyContext.runInTenantContext(organizationId, (tx) =>
+    const ownerId = await resolveAcademyOwnerId(organizationId, academyId);
+    return tenancyContext.runInTenantAndUserContext(organizationId, ownerId, (tx) =>
       tx.websiteConfiguration.create({
         data: {
           academyId,
@@ -90,7 +121,8 @@ describe('Row-Level Security — website_configurations / website_pages (direct,
   }
 
   async function createPage(organizationId: string, academyId: string, label: string) {
-    return tenancyContext.runInTenantContext(organizationId, (tx) =>
+    const ownerId = await resolveAcademyOwnerId(organizationId, academyId);
+    return tenancyContext.runInTenantAndUserContext(organizationId, ownerId, (tx) =>
       tx.websitePage.create({
         data: {
           academyId,
@@ -129,15 +161,51 @@ describe('Row-Level Security — website_configurations / website_pages (direct,
     const pageA = await createPage(orgA.id, academyA.id, 'rls-website-cross-a-page');
     const pageB = await createPage(orgB.id, academyB.id, 'rls-website-cross-b-page');
 
-    const visibleToA = await tenancyContext.runInTenantContext(orgA.id, (tx) =>
-      tx.websitePage.findMany({ where: { id: { in: [pageA.id, pageB.id] } } }),
+    const visibleToA = await tenancyContext.runInTenantAndUserContext(
+      orgA.id,
+      ownerA.id,
+      (tx) => tx.websitePage.findMany({ where: { id: { in: [pageA.id, pageB.id] } } }),
     );
     expect(visibleToA.map((p) => p.id)).toEqual([pageA.id]);
 
-    const visibleToB = await tenancyContext.runInTenantContext(orgB.id, (tx) =>
-      tx.websitePage.findMany({ where: { id: { in: [pageA.id, pageB.id] } } }),
+    const visibleToB = await tenancyContext.runInTenantAndUserContext(
+      orgB.id,
+      ownerB.id,
+      (tx) => tx.websitePage.findMany({ where: { id: { in: [pageA.id, pageB.id] } } }),
     );
     expect(visibleToB.map((p) => p.id)).toEqual([pageB.id]);
+  });
+
+  it("SELECT: a Manager assigned only to Academy A never sees Academy B's website data, even though both share the same Organization (Phase 1, Extended Scope, dependency A)", async () => {
+    const owner = await createUser('rls-website-same-org-owner');
+    const manager = await createUser('rls-website-same-org-manager');
+    const org = await createOrgOwnedBy(owner.id, 'rls-website-same-org');
+    const academyA = await createAcademyFor(org.id, 'rls-website-same-org-academyA');
+    const academyB = await createAcademyFor(org.id, 'rls-website-same-org-academyB');
+    const pageA = await createPage(org.id, academyA.id, 'rls-website-same-org-a-page');
+    const pageB = await createPage(org.id, academyB.id, 'rls-website-same-org-b-page');
+
+    // A Manager granted a real `academy_members` row for Academy A ONLY
+    // (never the org owner, who — by creating both academies — legitimately
+    // holds an owner row in each; that is correct, expected behavior, not
+    // the gap this test targets).
+    await tenancyContext.runInTenantContext(org.id, (tx) =>
+      tx.academyMember.create({
+        data: {
+          academyId: academyA.id,
+          userId: manager.id,
+          role: 'manager',
+          status: 'active',
+        },
+      }),
+    );
+
+    const visibleToManager = await tenancyContext.runInTenantAndUserContext(
+      org.id,
+      manager.id,
+      (tx) => tx.websitePage.findMany({ where: { id: { in: [pageA.id, pageB.id] } } }),
+    );
+    expect(visibleToManager.map((p) => p.id)).toEqual([pageA.id]);
   });
 
   it('ATTACK (blocked): cannot insert a website_page under a different organization than the active tenant context', async () => {
@@ -233,8 +301,9 @@ describe('Row-Level Security — website_configurations / website_pages (direct,
     const org = await createOrgOwnedBy(owner.id, 'rls-website-real-delete');
     const academy = await createAcademyFor(org.id, 'rls-website-real-delete');
     const page = await createPage(org.id, academy.id, 'rls-website-real-delete-page');
+    const ownerId = await resolveAcademyOwnerId(org.id, academy.id);
 
-    const result = await tenancyContext.runInTenantContext(org.id, (tx) =>
+    const result = await tenancyContext.runInTenantAndUserContext(org.id, ownerId, (tx) =>
       tx.websitePage.deleteMany({ where: { id: page.id } }),
     );
     expect(result.count).toBe(1);

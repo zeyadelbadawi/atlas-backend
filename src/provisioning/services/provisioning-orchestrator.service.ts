@@ -42,7 +42,7 @@
  * so a concurrent cancel or a redelivered duplicate job both observe and
  * respect whatever the OTHER concurrent execution already committed.
  */
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { ConflictException, HttpException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { ProvisioningRequest, ProvisioningStepKey } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -123,7 +123,39 @@ type StepOutcome =
   | { readonly result: 'completed' | 'skipped' }
   | { readonly result: 'failed'; readonly error: ProvisioningErrorResponse };
 
+/**
+ * Phase 2 — a step that fails because of a deliberate, typed business
+ * rejection (most notably `EntitlementEnforcementService.assertWithinLimit`/
+ * `assertStorageWithinLimit`, thrown from `executeAcademyStep`'s call into
+ * `AcademiesService.create`) carries its own real `messageKey`/`code`
+ * (the exact same `{messageKey, code}` payload shape `AllExceptionsFilter`
+ * already knows how to render everywhere else in this codebase — see that
+ * filter's own `hasCustomMessageKey` check, mirrored here). Previously
+ * EVERY step failure collapsed to the same generic
+ * `errors.provisioning.stepFailed`, discarding a plan-limit rejection's
+ * own specific, customer-facing message the instant it crossed into the
+ * async orchestration path — `ProvisioningStatusPage` (atlas frontend)
+ * renders `lastError.messageKey` directly, so this is the one place that
+ * message is decided. Any OTHER error (a genuine, unexpected bug) falls
+ * through unchanged to the pre-existing generic behavior.
+ */
 function toProvisioningError(error: unknown): ProvisioningErrorResponse {
+  if (error instanceof HttpException) {
+    const payload = error.getResponse();
+    if (
+      typeof payload === 'object' &&
+      payload !== null &&
+      'messageKey' in payload &&
+      typeof (payload as { messageKey: unknown }).messageKey === 'string'
+    ) {
+      const typed = payload as { messageKey: string; code?: string };
+      return {
+        code: typed.code ?? 'step_execution_failed',
+        messageKey: typed.messageKey,
+      };
+    }
+  }
+
   if (error instanceof Error) {
     return {
       code: 'step_execution_failed',
@@ -157,6 +189,31 @@ export class ProvisioningOrchestratorService {
   ): Promise<T> {
     return withTransientRetry(() =>
       this.tenancyContextService.runInTenantContext(organizationId, work),
+    );
+  }
+
+  /**
+   * Phase 1 (Extended Scope, dependency A) — `runTenant`'s twin for the
+   * one step (`executeSubdomainStep`) that writes to `subdomain_allocations`,
+   * now RLS-gated on `is_academy_member`, not just organization membership.
+   * `request.requestedByUserId` is always the Organization Owner who
+   * initiated this provisioning request, and always already holds a real
+   * `academy_members` (owner) row for `request.academyId` by this point —
+   * `'academy'` runs strictly before `'subdomain'` in
+   * `PROVISIONING_STEP_ORDER`, and that step is what grants it
+   * (`AcademiesService.create`).
+   */
+  private runTenantAsRequester<T>(
+    organizationId: string,
+    requestedByUserId: string,
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return withTransientRetry(() =>
+      this.tenancyContextService.runInTenantAndUserContext(
+        organizationId,
+        requestedByUserId,
+        work,
+      ),
     );
   }
 
@@ -564,38 +621,42 @@ export class ProvisioningOrchestratorService {
     }
     const academyId = request.academyId;
 
-    return this.runTenant(organizationId, async (tx) => {
-      const existing = await this.subdomainAllocationsRepository.findByAcademyId(
-        tx,
-        academyId,
-      );
-      if (existing) return { result: 'completed' as const };
-
-      const platformDomainConfig =
-        await this.platformDomainConfigurationRepository.findSingleton();
-      const fullHost = platformDomainConfig.baseDomain
-        ? `${request.requestedSubdomain}.${platformDomainConfig.baseDomain}`
-        : null;
-
-      try {
-        await this.subdomainAllocationsRepository.create(tx, {
+    return this.runTenantAsRequester(
+      organizationId,
+      request.requestedByUserId,
+      async (tx) => {
+        const existing = await this.subdomainAllocationsRepository.findByAcademyId(
+          tx,
           academyId,
-          subdomain: request.requestedSubdomain,
-          status: 'assigned',
-          fullHost,
-        });
-        return { result: 'completed' as const };
-      } catch (error) {
-        if (isUniqueConstraintViolation(error)) {
-          const raced = await this.subdomainAllocationsRepository.findByAcademyId(
-            tx,
+        );
+        if (existing) return { result: 'completed' as const };
+
+        const platformDomainConfig =
+          await this.platformDomainConfigurationRepository.findSingleton();
+        const fullHost = platformDomainConfig.baseDomain
+          ? `${request.requestedSubdomain}.${platformDomainConfig.baseDomain}`
+          : null;
+
+        try {
+          await this.subdomainAllocationsRepository.create(tx, {
             academyId,
-          );
-          if (raced) return { result: 'completed' as const };
+            subdomain: request.requestedSubdomain,
+            status: 'assigned',
+            fullHost,
+          });
+          return { result: 'completed' as const };
+        } catch (error) {
+          if (isUniqueConstraintViolation(error)) {
+            const raced = await this.subdomainAllocationsRepository.findByAcademyId(
+              tx,
+              academyId,
+            );
+            if (raced) return { result: 'completed' as const };
+          }
+          throw error;
         }
-        throw error;
-      }
-    });
+      },
+    );
   }
 }
 

@@ -45,6 +45,7 @@ import { PaymentsRepository } from '../../billing/repositories/payments.reposito
 import { applyBasisPoints } from '../../billing/utils/commission-math.util';
 import { CourseOrdersRepository } from '../repositories/course-orders.repository';
 import { RevenueLedgerEntriesRepository } from '../repositories/revenue-ledger-entries.repository';
+import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 
 @Injectable()
 export class CourseOrderPaymentApplicationService {
@@ -55,6 +56,7 @@ export class CourseOrderPaymentApplicationService {
     private readonly enrollmentsRepository: EnrollmentsRepository,
     private readonly enrollmentsService: EnrollmentsService,
     private readonly coursesRepository: CoursesRepository,
+    private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
   ) {}
 
   /**
@@ -64,6 +66,17 @@ export class CourseOrderPaymentApplicationService {
    * — inserts the `sale`/`platform_fee` ledger entries computed from the
    * commission snapshot already frozen on the Payment row at creation
    * time (§4.2 — never recomputed here).
+   *
+   * Phase 2 note — deliberately never calls
+   * `EntitlementEnforcementService` here: blocking an ALREADY-successful
+   * payment because of a plan limit is a billing-policy decision (would
+   * require a checkout-time pre-authorization check instead, itself
+   * commerce-phase territory) outside Phase 2's "server-side authorization
+   * and subscription lifecycle" charter — audited and intentionally left
+   * as-is (see the Phase 2 completion report's own audit section). It
+   * DOES enqueue a real usage-recompute trigger below, same as the free
+   * enrollment path — a paid enrollment is still a real `students` usage
+   * change the Usage page must reflect.
    */
   async applySuccessfulPayment(
     tx: Prisma.TransactionClient,
@@ -117,6 +130,12 @@ export class CourseOrderPaymentApplicationService {
     // never a party to this money flow (this session's explicit
     // requirement, restated here at the one call site that could
     // otherwise accidentally create a commission liability).
+
+    // Phase 2 — real reactive usage-recompute trigger (a paid enrollment
+    // is a real `students` usage change too). See this method's own doc
+    // comment for why this is the SAFE half (accuracy) of Phase 2's
+    // change to this method, never the entitlement-enforcement half.
+    await this.tenantUsageRecomputeProducer.enqueueOne(courseOrder.organizationId);
 
     return updated;
   }

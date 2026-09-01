@@ -6,8 +6,16 @@
  * (`src/features/auth/components/RegistrationForm.tsx`): name min length 2,
  * password min length 8. No additional complexity rules are invented —
  * that's not a constraint the frontend enforces today.
+ *
+ * `academyId` (Phase 1, Extended Scope, Decision 11, dependency D) is
+ * optional and additive: absent, registration behaves exactly as before
+ * (the self-service Organization-Owner onboarding journey, Decision 5).
+ * Supplied — by the public Academy website's Sign Up page (dependency C),
+ * which already knows its own resolved Academy id — it must resolve to a
+ * real Academy or the whole registration is rejected; see
+ * `AuthService.resolveRegistrationAcademyId`.
  */
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 // `@IsNotEmpty()` matters beyond its literal name here: class-validator's
 // other decorators (`@IsString`, `@IsEmail`, `@MinLength`, ...) silently
@@ -30,4 +38,8 @@ export class RegisterDto {
   @IsString()
   @MinLength(8)
   readonly password!: string;
+
+  @IsOptional()
+  @IsString()
+  readonly academyId?: string;
 }

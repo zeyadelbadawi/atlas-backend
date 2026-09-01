@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
+  seedActiveSubscriptionForOrg,
   seedOrganizationWithOwner,
   seedMembership,
 } from './utils/db-admin';
@@ -91,6 +92,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
   it('full CRUD lifecycle: create -> get -> list -> update -> branding -> archive', async () => {
     const user = await signUpAndSignIn(app, 'academy-crud');
     const org = await seedOrganizationWithOwner(admin, user.userId, 'academy-crud-org');
+    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-crud');
     const slug = `academy-crud-${Date.now()}`;
 
     const created = await request(app.getHttpServer())
@@ -170,6 +172,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       user.userId,
       'academy-auto-owner-org',
     );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-auto-owner');
 
     const created = await request(app.getHttpServer())
       .post('/academies')
@@ -200,6 +203,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       user.userId,
       'academy-dup-slug-org',
     );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-dup-slug');
     const slug = `dup-slug-${Date.now()}`;
 
     await request(app.getHttpServer())
@@ -215,9 +219,50 @@ describe('Academy Management (e2e) — functional/contract', () => {
     expect(dup.status).toBe(409);
   });
 
+  it('duplicate slug across two DIFFERENT organizations -> 409, not a raw 500 (Phase 0 fix: withSlugConflictHandling)', async () => {
+    // The pre-check (`assertSlugAvailable`) only sees same-organization
+    // collisions — a slug already taken by a DIFFERENT organization is
+    // RLS-invisible to it, so this specific scenario exercises the real
+    // DB-level `withSlugConflictHandling` backstop directly, not the
+    // pre-check. This is the exact path that previously escaped as an
+    // unhandled 500 in this environment (see `AcademiesService
+    // .withSlugConflictHandling`'s doc comment).
+    const firstOwner = await signUpAndSignIn(app, 'academy-cross-org-slug-1');
+    const firstOrg = await seedOrganizationWithOwner(
+      admin,
+      firstOwner.userId,
+      'academy-cross-org-slug-org-1',
+    );
+    await seedActiveSubscriptionForOrg(admin, firstOrg.id, 'academy-cross-org-slug-1');
+    const slug = `cross-org-dup-slug-${Date.now()}`;
+
+    await request(app.getHttpServer())
+      .post('/academies')
+      .set('Authorization', `Bearer ${firstOwner.accessToken}`)
+      .send({ organizationId: firstOrg.id, name: 'First Org Academy', slug })
+      .expect(201);
+
+    const secondOwner = await signUpAndSignIn(app, 'academy-cross-org-slug-2');
+    const secondOrg = await seedOrganizationWithOwner(
+      admin,
+      secondOwner.userId,
+      'academy-cross-org-slug-org-2',
+    );
+    await seedActiveSubscriptionForOrg(admin, secondOrg.id, 'academy-cross-org-slug-2');
+
+    const dup = await request(app.getHttpServer())
+      .post('/academies')
+      .set('Authorization', `Bearer ${secondOwner.accessToken}`)
+      .send({ organizationId: secondOrg.id, name: 'Second Org Academy', slug });
+
+    expect(dup.status).toBe(409);
+    expect(dup.body.error.messageKey).toBe('errors.academy.slugTaken');
+  });
+
   it('GET /academies/:id/stats reflects real academy_members counts, and publishedCourses is honestly 0', async () => {
     const user = await signUpAndSignIn(app, 'academy-stats');
     const org = await seedOrganizationWithOwner(admin, user.userId, 'academy-stats-org');
+    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-stats');
 
     const created = await request(app.getHttpServer())
       .post('/academies')
@@ -254,6 +299,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       user.userId,
       'academy-activity-org',
     );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-activity');
     const created = await request(app.getHttpServer())
       .post('/academies')
       .set('Authorization', `Bearer ${user.accessToken}`)
@@ -272,5 +318,41 @@ describe('Academy Management (e2e) — functional/contract', () => {
       items: [],
       pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 1 },
     });
+  });
+
+  it('POST /academies/:id/students creates a real, Academy-scoped academy_students membership (Phase 1, Extended Scope, dependency D) — not just a global user', async () => {
+    const owner = await signUpAndSignIn(app, 'academy-create-student');
+    const org = await seedOrganizationWithOwner(
+      admin,
+      owner.userId,
+      'academy-create-student-org',
+    );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-create-student');
+    const academy = await request(app.getHttpServer())
+      .post('/academies')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        organizationId: org.id,
+        name: 'Create Student Academy',
+        slug: `create-student-${Date.now()}`,
+      })
+      .expect(201);
+
+    const email = uniqueTestEmail('academy-created-student');
+    const created = await request(app.getHttpServer())
+      .post(`/academies/${academy.body.id}/students`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ name: 'Manager-Created Student', email, password: 'correct-horse-battery' })
+      .expect(201);
+
+    expect(created.body.academyId).toBe(academy.body.id);
+
+    const membership = await admin.academyStudent.findUnique({
+      where: {
+        academyId_userId: { academyId: academy.body.id, userId: created.body.id },
+      },
+    });
+    expect(membership).not.toBeNull();
+    expect(membership?.status).toBe('active');
   });
 });

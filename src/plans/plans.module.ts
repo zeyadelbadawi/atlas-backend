@@ -6,11 +6,22 @@
  * `tenant-usage-recompute` worker.
  *
  * Imports `AuthCoreModule` (for `JwtAuthGuard`), `IdentityModule` (for
- * `PlatformOwnerGuard`, reused verbatim), and `TenancyModule` (for
- * `TenancyContextService` and `OrganizationMembershipGuard`, also reused
- * verbatim, unmodified) — same DAG-cleanliness reasoning as
- * `AcademyModule`, and the same "reuse P1/P2's existing mechanisms, never
- * duplicate them" rule.
+ * `PlatformOwnerGuard`, reused verbatim, and — Phase 2 — `UsersRepository`,
+ * needed by the subscription-sweep jobs to resolve a platform-owner id to
+ * run under), and `TenancyModule` (for `TenancyContextService` and
+ * `OrganizationMembershipGuard`, also reused verbatim, unmodified) — same
+ * DAG-cleanliness reasoning as `AcademyModule`, and the same "reuse P1/P2's
+ * existing mechanisms, never duplicate them" rule.
+ *
+ * Phase 2 (master plan §21 Phase P22, "Entitlement & Plan Enforcement")
+ * additions: `EntitlementEnforcementService` (the live, write-time
+ * authority every plan-limited write path now calls — exported so
+ * `AcademyModule`/`CourseModule`/`LearningModule`/`MediaModule` can inject
+ * it without duplicating entitlement logic), `SubscriptionExpiryService`
+ * + `SubscriptionSweepService` + the new `subscription-sweep` BullMQ queue
+ * (one repeatable job, registered by `SubscriptionSweepScheduler`, driving
+ * both trial expiry and the usage-recompute safety net — see that
+ * scheduler's own doc comment for why this is ONE mechanism, not two).
  */
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
@@ -21,10 +32,15 @@ import { PlansController } from './controllers/plans.controller';
 import { AddOnsController } from './controllers/add-ons.controller';
 import { TrialPolicyController } from './controllers/trial-policy.controller';
 import { TenantSubscriptionController } from './controllers/tenant-subscription.controller';
+import { OrganizationsController } from './controllers/organizations.controller';
 import { PlansService } from './services/plans.service';
 import { TenantSubscriptionService } from './services/tenant-subscription.service';
 import { EntitlementService } from './services/entitlement.service';
+import { EntitlementEnforcementService } from './services/entitlement-enforcement.service';
 import { TenantUsageRecomputeService } from './services/tenant-usage-recompute.service';
+import { SubscriptionExpiryService } from './services/subscription-expiry.service';
+import { SubscriptionSweepService } from './services/subscription-sweep.service';
+import { OrganizationSubscriptionBootstrapService } from './services/organization-subscription-bootstrap.service';
 import { PlansRepository } from './repositories/plans.repository';
 import { AddOnsRepository } from './repositories/add-ons.repository';
 import { TrialPolicyRepository } from './repositories/trial-policy.repository';
@@ -34,6 +50,9 @@ import { TenantUsageRepository } from './repositories/tenant-usage.repository';
 import { TenantUsageRecomputeProducer } from './queue/tenant-usage-recompute.producer';
 import { TenantUsageRecomputeProcessor } from './queue/tenant-usage-recompute.processor';
 import { TENANT_USAGE_RECOMPUTE_QUEUE } from './queue/tenant-usage-recompute.types';
+import { SubscriptionSweepProcessor } from './queue/subscription-sweep.processor';
+import { SubscriptionSweepScheduler } from './queue/subscription-sweep.scheduler';
+import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
 
 @Module({
   imports: [
@@ -46,19 +65,31 @@ import { TENANT_USAGE_RECOMPUTE_QUEUE } from './queue/tenant-usage-recompute.typ
     // depends on `PlansModule`.
     IdentityModule,
     TenancyModule,
-    BullModule.registerQueue({ name: TENANT_USAGE_RECOMPUTE_QUEUE }),
+    BullModule.registerQueue(
+      { name: TENANT_USAGE_RECOMPUTE_QUEUE },
+      { name: SUBSCRIPTION_SWEEP_QUEUE },
+    ),
   ],
   controllers: [
     PlansController,
     AddOnsController,
     TrialPolicyController,
     TenantSubscriptionController,
+    // Phase 2 — relocated from `TenancyModule` (see that module's own doc
+    // comment for why: it now needs
+    // `OrganizationSubscriptionBootstrapService` alongside the reused,
+    // unmodified `OrganizationsService`).
+    OrganizationsController,
   ],
   providers: [
     PlansService,
     TenantSubscriptionService,
     EntitlementService,
+    EntitlementEnforcementService,
     TenantUsageRecomputeService,
+    SubscriptionExpiryService,
+    SubscriptionSweepService,
+    OrganizationSubscriptionBootstrapService,
     PlansRepository,
     AddOnsRepository,
     TrialPolicyRepository,
@@ -67,10 +98,21 @@ import { TENANT_USAGE_RECOMPUTE_QUEUE } from './queue/tenant-usage-recompute.typ
     TenantUsageRepository,
     TenantUsageRecomputeProducer,
     TenantUsageRecomputeProcessor,
+    SubscriptionSweepProcessor,
+    SubscriptionSweepScheduler,
   ],
   exports: [
     EntitlementService,
+    // Phase 2 — the live, write-time entitlement authority every
+    // plan-limited write path (`AcademiesService.create`, course
+    // creation, instructor grants, enrollment, media upload) now calls.
+    EntitlementEnforcementService,
     TenantUsageRecomputeService,
+    // Phase 2 — the real reactive trigger every academy/course/enrollment/
+    // media write path now calls after a change that affects usage, so
+    // the cached `tenant_usage` row stays current within moments rather
+    // than only via the periodic safety-net sweep.
+    TenantUsageRecomputeProducer,
     // P12 additions — `BillingModule` needs the catalog lookups
     // (`PlansRepository`/`AddOnsRepository`, to resolve a Checkout's
     // `targetKey` against a real Plan/AddOn) and the two write methods

@@ -41,7 +41,12 @@ export class WebsiteContentController {
     @Query() query: WebsiteContentListQueryDto,
   ): Promise<PaginatedResult<WebsiteFaqEntryResponse>> {
     const { academyId, organizationId } = request.academyContext!;
-    return this.websiteContentService.getFaqEntries(academyId, organizationId, query);
+    return this.websiteContentService.getFaqEntries(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      query,
+    );
   }
 
   @Get(':id/website/faq-entries/:entryId')
@@ -50,7 +55,12 @@ export class WebsiteContentController {
     @Param('entryId') entryId: string,
   ): Promise<WebsiteFaqEntryResponse> {
     const { academyId, organizationId } = request.academyContext!;
-    return this.websiteContentService.getFaqEntry(academyId, organizationId, entryId);
+    return this.websiteContentService.getFaqEntry(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      entryId,
+    );
   }
 
   @Post(':id/website/faq-entries')
@@ -122,6 +132,7 @@ export class WebsiteContentController {
     return this.websiteContentService.getTestimonialEntries(
       academyId,
       organizationId,
+      request.authContext!.userId,
       query,
     );
   }
@@ -135,6 +146,7 @@ export class WebsiteContentController {
     return this.websiteContentService.getTestimonialEntry(
       academyId,
       organizationId,
+      request.authContext!.userId,
       entryId,
     );
   }

@@ -31,11 +31,19 @@
  * comment already establishes for importing `TenancyModule`.
  * `OrganizationsRepository`/`OrganizationMembershipsRepository` need no
  * new import here — `TenancyModule` (already imported) exports both.
+ *
+ * Imports `PlansModule` as of Phase 2 — `AcademiesService.create`/
+ * `addInstructor` need `EntitlementEnforcementService` (the live
+ * academies/instructors plan-limit check). `PlansModule` already depends
+ * on `TenancyModule`/`IdentityModule`, never on `AcademyModule`, so this
+ * stays a clean DAG — no `forwardRef` needed, same reasoning as every
+ * other import in this file.
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
 import { IdentityModule } from '../identity/identity.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { PlansModule } from '../plans/plans.module';
 import { AcademiesController } from './controllers/academies.controller';
 import { AcademiesService } from './services/academies.service';
 import { AcademiesRepository } from './repositories/academies.repository';
@@ -44,7 +52,7 @@ import { AcademyOrganizationScopeGuard } from './guards/academy-organization-sco
 import { AcademyScopeGuard } from './guards/academy-scope.guard';
 
 @Module({
-  imports: [AuthCoreModule, TenancyModule, IdentityModule],
+  imports: [AuthCoreModule, TenancyModule, IdentityModule, PlansModule],
   controllers: [AcademiesController],
   providers: [
     AcademiesRepository,

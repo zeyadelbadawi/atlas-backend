@@ -6,6 +6,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -27,6 +28,8 @@ import { PasswordResetEmailProducer } from '../queue/password-reset-email.produc
 import { UserOrganizationsService } from '../../tenancy/services/user-organizations.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { PrismaService } from '../../database/prisma.service';
+import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 
 /** A value nobody can ever sign in with — see `getDummyHash()`. */
 const DUMMY_PASSWORD = 'atlas-p1-dummy-password-for-timing-safety-only';
@@ -60,7 +63,47 @@ export class AuthService {
     private readonly userOrganizationsService: UserOrganizationsService,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly prisma: PrismaService,
+    private readonly tenancyContextService: TenancyContextService,
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
   ) {}
+
+  /**
+   * Resolves and validates a caller-supplied Academy context for
+   * registration (Phase 1, Extended Scope, Decision 11, dependency D).
+   * `academyId` is optional — a brand-new user completing the
+   * self-service Organization-Owner onboarding journey (Decision 5)
+   * registers with none, exactly as before this phase. When supplied (a
+   * public Academy website's Sign Up page, dependency C), it must resolve
+   * to a REAL, existing Academy — reusing the exact
+   * `resolve_academy_organization` `SECURITY DEFINER` lookup the public
+   * website runtime already relies on for the identical "no session
+   * context yet" problem (see `AcademyStudentsRepository.
+   * resolveOrganizationId`'s own doc comment) — never a second, invented
+   * mechanism. An unresolvable id fails the whole registration rather
+   * than silently falling back to an Organization-level or academy-less
+   * account, matching this dependency's explicit requirement.
+   */
+  private async resolveRegistrationAcademyId(
+    academyId: string | undefined,
+  ): Promise<string | undefined> {
+    if (!academyId) return undefined;
+
+    const organizationId =
+      await this.academyStudentsRepository.resolveOrganizationId(academyId);
+    if (!organizationId) {
+      throw new NotFoundException({ messageKey: 'errors.academy.notFound' });
+    }
+
+    const academy = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => tx.academy.findUnique({ where: { id: academyId } }),
+    );
+    if (!academy) {
+      throw new NotFoundException({ messageKey: 'errors.academy.notFound' });
+    }
+
+    return academy.id;
+  }
 
   /**
    * Creates an account. Deliberately does not establish a session — matches
@@ -72,6 +115,7 @@ export class AuthService {
     name: string;
     email: string;
     password: string;
+    academyId?: string;
   }): Promise<void> {
     const email = normalizeEmail(input.email);
     const existing = await this.usersRepository.findByEmail(email);
@@ -88,8 +132,30 @@ export class AuthService {
       });
     }
 
+    // Validated BEFORE the account is created — a bad/unknown academyId
+    // must never leave an orphaned user record behind.
+    const academyId = await this.resolveRegistrationAcademyId(input.academyId);
+
     const passwordHash = await this.passwordHasher.hash(input.password);
-    await this.usersRepository.create({ email, passwordHash, name: input.name });
+    const user = await this.usersRepository.create({
+      email,
+      passwordHash,
+      name: input.name,
+    });
+
+    if (academyId) {
+      // Self-insert, under the new user's own identity — see the
+      // migration's `academy_students_self_insert` policy doc comment for
+      // why this is the one write on this table that needs no tenant
+      // context: this IS the step that gives the account its first real
+      // Academy fact.
+      await this.tenancyContextService.runInUserContext(user.id, (tx) =>
+        this.academyStudentsRepository.create(tx, {
+          academyId,
+          userId: user.id,
+        }),
+      );
+    }
   }
 
   async signIn(input: {

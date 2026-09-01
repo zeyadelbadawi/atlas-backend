@@ -47,33 +47,53 @@ export class ProvisioningRequestsController {
 
   @Get(':id/provisioning-requests')
   async list(
+    @Req() request: Request,
     @Param('id') organizationId: string,
     @Query() query: CollectionQueryDto,
   ): Promise<PaginatedResult<ProvisioningRequestResponse>> {
-    return this.provisioningRequestsService.listRequests(organizationId, query);
+    return this.provisioningRequestsService.listRequests(
+      organizationId,
+      request.authContext!.userId,
+      query,
+    );
   }
 
   @Get(':id/provisioning-requests/:requestId')
   async get(
+    @Req() request: Request,
     @Param('id') organizationId: string,
     @Param('requestId') requestId: string,
   ): Promise<ProvisioningRequestResponse> {
-    return this.provisioningRequestsService.getRequest(organizationId, requestId);
+    return this.provisioningRequestsService.getRequest(
+      organizationId,
+      request.authContext!.userId,
+      requestId,
+    );
   }
 
   @Post(':id/provisioning-requests/:requestId/retry')
   async retry(
+    @Req() request: Request,
     @Param('id') organizationId: string,
     @Param('requestId') requestId: string,
   ): Promise<ProvisioningRequestResponse> {
-    return this.provisioningRequestsService.retryRequest(organizationId, requestId);
+    return this.provisioningRequestsService.retryRequest(
+      organizationId,
+      request.authContext!.userId,
+      requestId,
+    );
   }
 
   @Post(':id/provisioning-requests/:requestId/cancel')
   async cancel(
+    @Req() request: Request,
     @Param('id') organizationId: string,
     @Param('requestId') requestId: string,
   ): Promise<ProvisioningRequestResponse> {
-    return this.provisioningRequestsService.cancelRequest(organizationId, requestId);
+    return this.provisioningRequestsService.cancelRequest(
+      organizationId,
+      request.authContext!.userId,
+      requestId,
+    );
   }
 }

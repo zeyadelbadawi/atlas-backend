@@ -77,13 +77,43 @@ export class WebsiteConfigurationService {
     }
   }
 
+  /**
+   * Phase 1 (Extended Scope, Decision 11, dependency A) — reads were the
+   * one gap `assertCanManage` (write-only) never closed: `AcademyScopeGuard`
+   * only proves organization membership, so before this check a Manager
+   * assigned to Academy A could read Academy B's website configuration
+   * merely because both share an Organization. Any real academy role
+   * (not just the managing tier) is sufficient to read — matching
+   * `academies_academy_member_select`'s own "any real membership" RLS
+   * precedent for the Academy record itself.
+   */
+  private async assertIsMember(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+  ): Promise<void> {
+    const membership = await this.academyMembersRepository.findForUserInAcademy(
+      tx,
+      academyId,
+      userId,
+    );
+    if (!membership) {
+      throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
+    }
+  }
+
   async getConfiguration(
     academyId: string,
     organizationId: string,
+    userId: string,
   ): Promise<WebsiteConfigurationResponse> {
-    const configuration = await this.tenancyContextService.runInTenantContext(
+    const configuration = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
-      (tx) => this.websiteBootstrapService.ensureConfiguration(tx, academyId),
+      userId,
+      async (tx) => {
+        await this.assertIsMember(tx, academyId, userId);
+        return this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+      },
     );
     return toWebsiteConfigurationResponse(configuration);
   }
@@ -94,65 +124,71 @@ export class WebsiteConfigurationService {
     userId: string,
     payload: UpdateWebsiteConfigurationDto,
   ): Promise<WebsiteConfigurationResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const current = await this.websiteBootstrapService.ensureConfiguration(
-        tx,
-        academyId,
-      );
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const current = await this.websiteBootstrapService.ensureConfiguration(
+          tx,
+          academyId,
+        );
 
-      const data: Prisma.WebsiteConfigurationUpdateInput = {};
+        const data: Prisma.WebsiteConfigurationUpdateInput = {};
 
-      if (payload.themeKey !== undefined) {
-        data.themeKey = payload.themeKey;
-      }
+        if (payload.themeKey !== undefined) {
+          data.themeKey = payload.themeKey;
+        }
 
-      if (payload.brand !== undefined) {
-        const patch = parseOrThrow(websiteBrandPatchSchema, payload.brand);
-        const merged = { ...(current.brand as Record<string, unknown>), ...patch };
-        data.brand = parseOrThrow(websiteBrandSchema, merged);
-      }
+        if (payload.brand !== undefined) {
+          const patch = parseOrThrow(websiteBrandPatchSchema, payload.brand);
+          const merged = { ...(current.brand as Record<string, unknown>), ...patch };
+          data.brand = parseOrThrow(websiteBrandSchema, merged);
+        }
 
-      if (payload.seo !== undefined) {
-        const patch = parseOrThrow(globalSeoSchema, payload.seo);
-        data.seo = { ...(current.seo as Record<string, unknown>), ...patch };
-      }
+        if (payload.seo !== undefined) {
+          const patch = parseOrThrow(globalSeoSchema, payload.seo);
+          data.seo = { ...(current.seo as Record<string, unknown>), ...patch };
+        }
 
-      if (payload.navigation !== undefined) {
-        data.navigation = parseOrThrow(websiteNavigationSchema, payload.navigation);
-      }
+        if (payload.navigation !== undefined) {
+          data.navigation = parseOrThrow(websiteNavigationSchema, payload.navigation);
+        }
 
-      if (payload.header !== undefined) {
-        data.header = parseOrThrow(websiteHeaderSchema, payload.header);
-      }
+        if (payload.header !== undefined) {
+          data.header = parseOrThrow(websiteHeaderSchema, payload.header);
+        }
 
-      if (payload.footer !== undefined) {
-        data.footer = parseOrThrow(websiteFooterSchema, payload.footer);
-      }
+        if (payload.footer !== undefined) {
+          data.footer = parseOrThrow(websiteFooterSchema, payload.footer);
+        }
 
-      await this.sectionReferenceValidatorService.validateConfigurationReferences(
-        tx,
-        academyId,
-        {
-          navigation: (data.navigation as { pageId: string }[] | undefined) ?? undefined,
-          header: (data.header as { cta?: { pageId?: string } } | undefined) ?? undefined,
-          footer:
-            (data.footer as
-              | {
-                  groups?: { links?: { pageId?: string }[] }[];
-                  socialLinks?: { pageId?: string }[];
-                }
-              | undefined) ?? undefined,
-        },
-      );
+        await this.sectionReferenceValidatorService.validateConfigurationReferences(
+          tx,
+          academyId,
+          {
+            navigation:
+              (data.navigation as { pageId: string }[] | undefined) ?? undefined,
+            header:
+              (data.header as { cta?: { pageId?: string } } | undefined) ?? undefined,
+            footer:
+              (data.footer as
+                | {
+                    groups?: { links?: { pageId?: string }[] }[];
+                    socialLinks?: { pageId?: string }[];
+                  }
+                | undefined) ?? undefined,
+          },
+        );
 
-      const updated = await this.websiteConfigurationRepository.update(
-        tx,
-        academyId,
-        data,
-      );
-      return toWebsiteConfigurationResponse(updated);
-    });
+        const updated = await this.websiteConfigurationRepository.update(
+          tx,
+          academyId,
+          data,
+        );
+        return toWebsiteConfigurationResponse(updated);
+      },
+    );
   }
 
   async publishConfiguration(
@@ -160,17 +196,21 @@ export class WebsiteConfigurationService {
     organizationId: string,
     userId: string,
   ): Promise<WebsiteConfigurationResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
 
-      const updated = await this.websiteConfigurationRepository.update(tx, academyId, {
-        status: 'published',
-        publishedAt: new Date(),
-        lastPublishError: Prisma.JsonNull,
-        configVersion: { increment: 1 },
-      });
-      return toWebsiteConfigurationResponse(updated);
-    });
+        const updated = await this.websiteConfigurationRepository.update(tx, academyId, {
+          status: 'published',
+          publishedAt: new Date(),
+          lastPublishError: Prisma.JsonNull,
+          configVersion: { increment: 1 },
+        });
+        return toWebsiteConfigurationResponse(updated);
+      },
+    );
   }
 }

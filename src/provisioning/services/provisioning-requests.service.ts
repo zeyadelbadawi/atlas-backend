@@ -173,11 +173,12 @@ export class ProvisioningRequestsService {
       organizationId,
     });
 
-    return this.toResponse(organizationId, request);
+    return this.toResponse(organizationId, userId, request);
   }
 
   async getRequest(
     organizationId: string,
+    userId: string,
     requestId: string,
   ): Promise<ProvisioningRequestResponse> {
     const request = await this.tenancyContextService.runInTenantContext(
@@ -187,11 +188,12 @@ export class ProvisioningRequestsService {
     if (!request || request.organizationId !== organizationId) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
-    return this.toResponse(organizationId, request);
+    return this.toResponse(organizationId, userId, request);
   }
 
   async listRequests(
     organizationId: string,
+    userId: string,
     query: CollectionQueryDto,
   ): Promise<PaginatedResult<ProvisioningRequestResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
@@ -208,7 +210,7 @@ export class ProvisioningRequestsService {
     );
 
     const responses = await Promise.all(
-      items.map((item) => this.toResponse(organizationId, item)),
+      items.map((item) => this.toResponse(organizationId, userId, item)),
     );
 
     return {
@@ -220,6 +222,7 @@ export class ProvisioningRequestsService {
   /** Covers both "retry a failed step" and "resume an interrupted request" — the frontend's own single `retryProvisioning` method's doc comment: the backend, not the customer, decides what re-running the request actually means. Refused once the request has reached a real terminal state (`ready`/`cancelled`) — a genuinely failed or crash-stalled request (anything else) is always retryable. */
   async retryRequest(
     organizationId: string,
+    userId: string,
     requestId: string,
   ): Promise<ProvisioningRequestResponse> {
     const request = await this.loadOwnedRequestOrThrow(organizationId, requestId);
@@ -230,12 +233,13 @@ export class ProvisioningRequestsService {
       organizationId,
     });
 
-    return this.toResponse(organizationId, request);
+    return this.toResponse(organizationId, userId, request);
   }
 
   /** Cancels a still-in-progress request. Does NOT roll back an already-created Academy/subdomain allocation — a conservative, "no hard delete" choice (see `Reports/PROGRESS.md`'s P14 section for the documented reasoning), matching every other cancellation in this codebase being a status transition, never a destructive undo. */
   async cancelRequest(
     organizationId: string,
+    userId: string,
     requestId: string,
   ): Promise<ProvisioningRequestResponse> {
     await this.loadOwnedRequestOrThrow(organizationId, requestId);
@@ -256,7 +260,7 @@ export class ProvisioningRequestsService {
       },
     );
 
-    return this.toResponse(organizationId, updated);
+    return this.toResponse(organizationId, userId, updated);
   }
 
   private async loadOwnedRequestOrThrow(
@@ -279,22 +283,44 @@ export class ProvisioningRequestsService {
     }
   }
 
+  /**
+   * `userId` (Phase 1, Extended Scope, dependency A) — the subdomain/
+   * domain reads below are now RLS-gated on `is_academy_member`, not just
+   * organization membership; the caller's own real identity is threaded
+   * through so an org member who also holds the real (auto-granted)
+   * academy_members row for the Academy this request created — always
+   * true for whoever actually requested it — keeps seeing the exact same
+   * detail as before. A caller with no such membership degrades
+   * gracefully (subdomain/domainConnection read as `null`, the base
+   * provisioning status is still returned) rather than throwing — this
+   * endpoint's own guard (`OrganizationMembershipGuard`) remains
+   * organization-level by design; this only narrows what the ADDITIONAL
+   * website/domain detail exposes, never the request's own visibility.
+   */
   private async toResponse(
     organizationId: string,
+    userId: string,
     request: ProvisioningRequest,
   ): Promise<ProvisioningRequestResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      const steps = await this.provisioningStepsRepository.findAllForRequest(
-        tx,
-        request.id,
-      );
-      const subdomain = request.academyId
-        ? await this.subdomainAllocationsRepository.findByAcademyId(tx, request.academyId)
-        : null;
-      const domainConnection = request.academyId
-        ? await this.domainConnectionsRepository.findByAcademyId(tx, request.academyId)
-        : null;
-      return toProvisioningRequestResponse(request, steps, subdomain, domainConnection);
-    });
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        const steps = await this.provisioningStepsRepository.findAllForRequest(
+          tx,
+          request.id,
+        );
+        const subdomain = request.academyId
+          ? await this.subdomainAllocationsRepository.findByAcademyId(
+              tx,
+              request.academyId,
+            )
+          : null;
+        const domainConnection = request.academyId
+          ? await this.domainConnectionsRepository.findByAcademyId(tx, request.academyId)
+          : null;
+        return toProvisioningRequestResponse(request, steps, subdomain, domainConnection);
+      },
+    );
   }
 }

@@ -40,6 +40,8 @@ import { MediaAssetsRepository } from '../repositories/media-assets.repository';
 import { MEDIA_STORAGE_PROVIDER } from '../storage/media-storage.interface';
 import type { MediaStorageProvider } from '../storage/media-storage.interface';
 import { MediaProcessingProducer } from '../queue/media-processing.producer';
+import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
+import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { toMediaAssetResponse } from '../dto/media-asset.contract';
 import type { MediaAssetResponse } from '../dto/media-asset.contract';
 import type { UploadMediaAssetDto } from '../dto/upload-media-asset.dto';
@@ -69,6 +71,8 @@ export class MediaService {
     private readonly mediaAssetsRepository: MediaAssetsRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly mediaProcessingProducer: MediaProcessingProducer,
+    private readonly entitlementEnforcementService: EntitlementEnforcementService,
+    private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
     @Inject(MEDIA_STORAGE_PROVIDER)
     private readonly storageProvider: MediaStorageProvider,
     configService: ConfigService,
@@ -136,13 +140,6 @@ export class MediaService {
     userId: string,
     payload: UploadMediaAssetDto,
   ): Promise<MediaAssetResponse> {
-    // Authorization first, before any storage I/O — an unauthorized
-    // caller must never cause a real R2 upload, even one whose DB write
-    // will ultimately be rejected.
-    await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
-      this.assertCanManage(tx, academyId, userId),
-    );
-
     const { buffer } = parseDataUrl(payload.dataUrl);
     assertWithinSizeLimit(buffer, this.storageConfig.maxUploadBytes);
 
@@ -150,6 +147,21 @@ export class MediaService {
     if (!kind) {
       throw new BadRequestException({ messageKey: 'errors.media.unsupportedFileType' });
     }
+
+    // Authorization, THEN the live storage-entitlement check — both
+    // before any real storage I/O, so an unauthorized OR over-limit
+    // caller can never cause a real R2 upload, even one whose DB write
+    // will ultimately be rejected (extends this method's own pre-existing
+    // "authorization first" rule to Phase 2's new entitlement check).
+    await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      await this.assertCanManage(tx, academyId, userId);
+      await this.entitlementEnforcementService.assertStorageWithinLimit(
+        tx,
+        organizationId,
+        kind.assetType === 'video' ? 'videoStorage' : 'generalStorage',
+        buffer.length,
+      );
+    });
 
     const id = randomUUID();
     const storageKey = buildStorageKey(academyId, kind.extension, id);
@@ -176,6 +188,8 @@ export class MediaService {
     );
 
     await this.mediaProcessingProducer.enqueue(asset.id, academyId, organizationId);
+    // Phase 2 — real reactive usage-recompute trigger (a storage change).
+    await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
 
     return toMediaAssetResponse(asset);
   }
@@ -205,15 +219,28 @@ export class MediaService {
     userId: string,
     assetId: string,
   ): Promise<MediaAssetResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const existing = await this.mediaAssetsRepository.findById(tx, academyId, assetId);
-      if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    const response = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.mediaAssetsRepository.findById(
+          tx,
+          academyId,
+          assetId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-      const updated = await this.mediaAssetsRepository.update(tx, assetId, {
-        status: 'archived',
-      });
-      return toMediaAssetResponse(updated);
-    });
+        const updated = await this.mediaAssetsRepository.update(tx, assetId, {
+          status: 'archived',
+        });
+        return toMediaAssetResponse(updated);
+      },
+    );
+
+    // Phase 2 — an archived asset frees its storage footprint — real
+    // reactive usage-recompute trigger.
+    await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
+
+    return response;
   }
 }

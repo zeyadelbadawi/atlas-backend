@@ -49,6 +49,12 @@ describe('Row-Level Security — P7 Instructor Operations & Community tables (di
     const academy = await admin.academy.create({
       data: { organizationId: org.id, name: label, slug: `${label}-${Date.now()}` },
     });
+    // Phase 1 (Extended Scope, dependency A/B) — reproduces the real
+    // `AcademiesService.create`'s auto-granted owner membership, which the
+    // new `is_academy_member`-gated `blog_posts` write policies now require.
+    await admin.academyMember.create({
+      data: { academyId: academy.id, userId: owner.id, role: 'owner', status: 'active' },
+    });
     const course = await admin.course.create({
       data: {
         academyId: academy.id,
@@ -83,6 +89,9 @@ describe('Row-Level Security — P7 Instructor Operations & Community tables (di
   it('announcements: a published course announcement is visible to an actively enrolled student under their own user context', async () => {
     const { course, owner, academy } = await createFullCourseGraph('rls-ann-published');
     const student = await createUser('rls-ann-published-student');
+    await admin.academyStudent.create({
+      data: { academyId: academy.id, userId: student.id },
+    });
     await tenancyContext.runInUserContext(student.id, (tx) =>
       tx.enrollment.create({
         data: {

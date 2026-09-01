@@ -327,7 +327,7 @@ describe('CMS Content Library — FAQ & Testimonial entries (e2e)', () => {
 
   /* --------------------------- Authorization -------------------------- */
 
-  it('a plain org member (no academy role) can read CMS content but cannot write, publish, or archive it', async () => {
+  it('a plain org member (no academy role) cannot read, write, publish, or archive CMS content (Phase 1, Extended Scope, dependency A: organization membership alone is never sufficient)', async () => {
     const { academy, org, owner } = await seedManagedAcademy('cms-authz');
     const plainMember = await signUpAndSignIn(app, 'cms-authz-member');
     await admin.organizationMembership.create({
@@ -343,7 +343,7 @@ describe('CMS Content Library — FAQ & Testimonial entries (e2e)', () => {
     await request(app.getHttpServer())
       .get(`/academies/${academy.id}/website/faq-entries`)
       .set('Authorization', `Bearer ${plainMember.accessToken}`)
-      .expect(200);
+      .expect(403);
 
     await request(app.getHttpServer())
       .post(`/academies/${academy.id}/website/faq-entries`)
@@ -359,6 +359,21 @@ describe('CMS Content Library — FAQ & Testimonial entries (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/academies/${academy.id}/website/faq-entries/${created.body.id}/archive`)
       .set('Authorization', `Bearer ${plainMember.accessToken}`)
+      .expect(403);
+  });
+
+  it("a Manager assigned to a DIFFERENT Academy in the same Organization cannot read this Academy's CMS content (Phase 1, Extended Scope, dependency A)", async () => {
+    const { academy, org } = await seedManagedAcademy('cms-cross-academy-read');
+    const otherAcademy = await seedAcademy(admin, org.id, 'cms-cross-academy-read-other');
+    const manager = await signUpAndSignIn(app, 'cms-cross-academy-manager');
+    await admin.organizationMembership.create({
+      data: { organizationId: org.id, userId: manager.userId, role: 'manager' },
+    });
+    await seedAcademyMember(admin, otherAcademy.id, manager.userId, 'manager');
+
+    await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/website/faq-entries`)
+      .set('Authorization', `Bearer ${manager.accessToken}`)
       .expect(403);
   });
 });

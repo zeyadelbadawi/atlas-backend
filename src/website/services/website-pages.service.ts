@@ -87,6 +87,22 @@ export class WebsitePagesService {
     }
   }
 
+  /** Phase 1 (Extended Scope, dependency A) — see `WebsiteConfigurationService.assertIsMember`'s doc comment for why reads need this and writes already had it. */
+  private async assertIsMember(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+  ): Promise<void> {
+    const membership = await this.academyMembersRepository.findForUserInAcademy(
+      tx,
+      academyId,
+      userId,
+    );
+    if (!membership) {
+      throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
+    }
+  }
+
   private assertSlugAllowed(slug: string): void {
     if (RESERVED_PAGE_SLUGS.includes(slug)) {
       throw new ConflictException({ messageKey: 'errors.website.slugReserved' });
@@ -96,22 +112,26 @@ export class WebsitePagesService {
   async list(
     academyId: string,
     organizationId: string,
+    userId: string,
     query: CollectionQueryDto,
   ): Promise<PaginatedResult<WebsitePageResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
-    const { items, totalItems } = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      async (tx) => {
-        await this.websiteBootstrapService.ensureBootstrapped(tx, academyId);
-        return this.websitePagesRepository.findManyForAcademy(tx, academyId, {
-          search: query.search,
-          skip: (page - 1) * pageSize,
-          take: pageSize,
-        });
-      },
-    );
+    const { items, totalItems } =
+      await this.tenancyContextService.runInTenantAndUserContext(
+        organizationId,
+        userId,
+        async (tx) => {
+          await this.assertIsMember(tx, academyId, userId);
+          await this.websiteBootstrapService.ensureBootstrapped(tx, academyId);
+          return this.websitePagesRepository.findManyForAcademy(tx, academyId, {
+            search: query.search,
+            skip: (page - 1) * pageSize,
+            take: pageSize,
+          });
+        },
+      );
 
     return {
       items: items.map(toWebsitePageResponse),
@@ -122,11 +142,14 @@ export class WebsitePagesService {
   async getById(
     academyId: string,
     organizationId: string,
+    userId: string,
     pageId: string,
   ): Promise<WebsitePageResponse> {
-    const page = await this.tenancyContextService.runInTenantContext(
+    const page = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
+      userId,
       async (tx) => {
+        await this.assertIsMember(tx, academyId, userId);
         await this.websiteBootstrapService.ensureBootstrapped(tx, academyId);
         return this.websitePagesRepository.findById(tx, academyId, pageId);
       },
@@ -141,31 +164,35 @@ export class WebsitePagesService {
     userId: string,
     payload: CreateWebsitePageDto,
   ): Promise<WebsitePageResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      await this.websiteBootstrapService.ensureBootstrapped(tx, academyId);
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        await this.websiteBootstrapService.ensureBootstrapped(tx, academyId);
 
-      const validated = parseOrThrow(createWebsitePageSchema, payload);
-      this.assertSlugAllowed(validated.slug);
+        const validated = parseOrThrow(createWebsitePageSchema, payload);
+        this.assertSlugAllowed(validated.slug);
 
-      try {
-        const created = await this.websitePagesRepository.create(tx, {
-          academy: { connect: { id: academyId } },
-          pageType: 'custom',
-          title: validated.title,
-          slug: validated.slug,
-          visible: true,
-          seo: {},
-          sections: [],
-        });
-        return toWebsitePageResponse(created);
-      } catch (error) {
-        if (isUniqueConstraintViolation(error)) {
-          throw new ConflictException({ messageKey: 'errors.website.slugTaken' });
+        try {
+          const created = await this.websitePagesRepository.create(tx, {
+            academy: { connect: { id: academyId } },
+            pageType: 'custom',
+            title: validated.title,
+            slug: validated.slug,
+            visible: true,
+            seo: {},
+            sections: [],
+          });
+          return toWebsitePageResponse(created);
+        } catch (error) {
+          if (isUniqueConstraintViolation(error)) {
+            throw new ConflictException({ messageKey: 'errors.website.slugTaken' });
+          }
+          throw error;
         }
-        throw error;
-      }
-    });
+      },
+    );
   }
 
   async update(
@@ -175,57 +202,65 @@ export class WebsitePagesService {
     pageId: string,
     payload: UpdateWebsitePageDto,
   ): Promise<WebsitePageResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      await this.websiteBootstrapService.ensureBootstrapped(tx, academyId);
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        await this.websiteBootstrapService.ensureBootstrapped(tx, academyId);
 
-      const existing = await this.websitePagesRepository.findById(tx, academyId, pageId);
-      if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
-
-      const data: Prisma.WebsitePageUpdateInput = {};
-
-      if (payload.title !== undefined) {
-        data.title = payload.title;
-      }
-
-      if (payload.slug !== undefined && payload.slug !== existing.slug) {
-        this.assertSlugAllowed(payload.slug);
-        data.slug = payload.slug;
-      }
-
-      if (payload.visible !== undefined) {
-        if (existing.coreType === 'courseDetails') {
-          throw new ForbiddenException({
-            messageKey: 'errors.website.courseDetailsNotToggleable',
-          });
-        }
-        data.visible = payload.visible;
-      }
-
-      if (payload.seo !== undefined) {
-        data.seo = parseOrThrow(pageSeoSchema, payload.seo);
-      }
-
-      if (payload.sections !== undefined) {
-        const sections = parseOrThrow(sectionInstanceArraySchema, payload.sections);
-        await this.sectionReferenceValidatorService.validateSectionReferences(
+        const existing = await this.websitePagesRepository.findById(
           tx,
           academyId,
-          sections,
+          pageId,
         );
-        data.sections = sections as unknown as Prisma.InputJsonValue;
-      }
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-      try {
-        const updated = await this.websitePagesRepository.update(tx, pageId, data);
-        return toWebsitePageResponse(updated);
-      } catch (error) {
-        if (isUniqueConstraintViolation(error)) {
-          throw new ConflictException({ messageKey: 'errors.website.slugTaken' });
+        const data: Prisma.WebsitePageUpdateInput = {};
+
+        if (payload.title !== undefined) {
+          data.title = payload.title;
         }
-        throw error;
-      }
-    });
+
+        if (payload.slug !== undefined && payload.slug !== existing.slug) {
+          this.assertSlugAllowed(payload.slug);
+          data.slug = payload.slug;
+        }
+
+        if (payload.visible !== undefined) {
+          if (existing.coreType === 'courseDetails') {
+            throw new ForbiddenException({
+              messageKey: 'errors.website.courseDetailsNotToggleable',
+            });
+          }
+          data.visible = payload.visible;
+        }
+
+        if (payload.seo !== undefined) {
+          data.seo = parseOrThrow(pageSeoSchema, payload.seo);
+        }
+
+        if (payload.sections !== undefined) {
+          const sections = parseOrThrow(sectionInstanceArraySchema, payload.sections);
+          await this.sectionReferenceValidatorService.validateSectionReferences(
+            tx,
+            academyId,
+            sections,
+          );
+          data.sections = sections as unknown as Prisma.InputJsonValue;
+        }
+
+        try {
+          const updated = await this.websitePagesRepository.update(tx, pageId, data);
+          return toWebsitePageResponse(updated);
+        } catch (error) {
+          if (isUniqueConstraintViolation(error)) {
+            throw new ConflictException({ messageKey: 'errors.website.slugTaken' });
+          }
+          throw error;
+        }
+      },
+    );
   }
 
   async delete(
@@ -234,17 +269,25 @@ export class WebsitePagesService {
     userId: string,
     pageId: string,
   ): Promise<void> {
-    await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const existing = await this.websitePagesRepository.findById(tx, academyId, pageId);
-      if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      if (existing.pageType === 'core') {
-        throw new ForbiddenException({
-          messageKey: 'errors.website.corePageNotDeletable',
-        });
-      }
-      await this.websitePagesRepository.delete(tx, pageId);
-    });
+    await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.websitePagesRepository.findById(
+          tx,
+          academyId,
+          pageId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        if (existing.pageType === 'core') {
+          throw new ForbiddenException({
+            messageKey: 'errors.website.corePageNotDeletable',
+          });
+        }
+        await this.websitePagesRepository.delete(tx, pageId);
+      },
+    );
   }
 
   async reorderSections(
@@ -254,31 +297,41 @@ export class WebsitePagesService {
     pageId: string,
     payload: ReorderItemsDto,
   ): Promise<WebsitePageResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const existing = await this.websitePagesRepository.findById(tx, academyId, pageId);
-      if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.websitePagesRepository.findById(
+          tx,
+          academyId,
+          pageId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-      const currentSections = existing.sections as { id: string }[];
-      const currentIds = new Set(currentSections.map((section) => section.id));
-      const orderedIds = payload.orderedIds;
+        const currentSections = existing.sections as { id: string }[];
+        const currentIds = new Set(currentSections.map((section) => section.id));
+        const orderedIds = payload.orderedIds;
 
-      const isSamePermutation =
-        orderedIds.length === currentSections.length &&
-        orderedIds.every((id) => currentIds.has(id)) &&
-        new Set(orderedIds).size === orderedIds.length;
+        const isSamePermutation =
+          orderedIds.length === currentSections.length &&
+          orderedIds.every((id) => currentIds.has(id)) &&
+          new Set(orderedIds).size === orderedIds.length;
 
-      if (!isSamePermutation) {
-        throw new ConflictException({ messageKey: 'errors.website.invalidSectionOrder' });
-      }
+        if (!isSamePermutation) {
+          throw new ConflictException({
+            messageKey: 'errors.website.invalidSectionOrder',
+          });
+        }
 
-      const byId = new Map(currentSections.map((section) => [section.id, section]));
-      const reordered = orderedIds.map((id) => byId.get(id));
+        const byId = new Map(currentSections.map((section) => [section.id, section]));
+        const reordered = orderedIds.map((id) => byId.get(id));
 
-      const updated = await this.websitePagesRepository.update(tx, pageId, {
-        sections: reordered as unknown as Prisma.InputJsonValue,
-      });
-      return toWebsitePageResponse(updated);
-    });
+        const updated = await this.websitePagesRepository.update(tx, pageId, {
+          sections: reordered as unknown as Prisma.InputJsonValue,
+        });
+        return toWebsitePageResponse(updated);
+      },
+    );
   }
 }

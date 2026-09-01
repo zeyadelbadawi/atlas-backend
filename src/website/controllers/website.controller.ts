@@ -42,7 +42,11 @@ export class WebsiteController {
   @Get(':id/website/configuration')
   async getConfiguration(@Req() request: Request): Promise<WebsiteConfigurationResponse> {
     const { academyId, organizationId } = request.academyContext!;
-    return this.websiteConfigurationService.getConfiguration(academyId, organizationId);
+    return this.websiteConfigurationService.getConfiguration(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+    );
   }
 
   @Patch(':id/website/configuration')
@@ -75,7 +79,12 @@ export class WebsiteController {
     @Query() query: CollectionQueryDto,
   ): Promise<PaginatedResult<WebsitePageResponse>> {
     const { academyId, organizationId } = request.academyContext!;
-    return this.websitePagesService.list(academyId, organizationId, query);
+    return this.websitePagesService.list(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      query,
+    );
   }
 
   @Get(':id/website/pages/:pageId')
@@ -84,7 +93,12 @@ export class WebsiteController {
     @Param('pageId') pageId: string,
   ): Promise<WebsitePageResponse> {
     const { academyId, organizationId } = request.academyContext!;
-    return this.websitePagesService.getById(academyId, organizationId, pageId);
+    return this.websitePagesService.getById(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      pageId,
+    );
   }
 
   @Post(':id/website/pages')

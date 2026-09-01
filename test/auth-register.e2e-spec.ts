@@ -6,20 +6,29 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
+import {
+  createAdminPrisma,
+  seedAcademy,
+  seedOrganizationWithOwner,
+} from './utils/db-admin';
+import type { PrismaClient } from '@prisma/client';
 
 describe('POST /auth/register (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let admin: PrismaClient;
   let flushRateLimitKeys: () => Promise<void>;
 
   beforeAll(async () => {
     const testApp = await createTestApp();
     app = testApp.app;
     prisma = testApp.prisma;
+    admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
   });
 
   afterAll(async () => {
+    await admin.$disconnect();
     await app.close();
   });
 
@@ -104,5 +113,118 @@ describe('POST /auth/register (e2e)', () => {
         password: 'correct-horse-battery',
       })
       .expect(409);
+  });
+
+  /* ------- Phase 1 (Extended Scope, Decision 11, dependency D) ------- */
+
+  async function seedRealAcademy(label: string) {
+    const owner = await admin.user.create({
+      data: { email: uniqueTestEmail(`${label}-owner`), passwordHash: 'x', name: label },
+    });
+    const org = await seedOrganizationWithOwner(admin, owner.id, `${label}-org`);
+    return seedAcademy(admin, org.id, `${label}-academy`);
+  }
+
+  it('registering with a real academyId (the public Academy website Sign Up flow) creates a real, Academy-scoped membership', async () => {
+    const academy = await seedRealAcademy('register-academy-scoped');
+    const email = uniqueTestEmail('register-with-academy');
+
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        name: 'New Student',
+        email,
+        password: 'correct-horse-battery',
+        academyId: academy.id,
+      })
+      .expect(201);
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    expect(user).not.toBeNull();
+
+    const membership = await admin.academyStudent.findUnique({
+      where: { academyId_userId: { academyId: academy.id, userId: user!.id } },
+    });
+    expect(membership).not.toBeNull();
+    expect(membership?.status).toBe('active');
+  });
+
+  it('registering through two different academies produces two independent memberships, one per academy', async () => {
+    const academyA = await seedRealAcademy('register-independent-a');
+    const academyB = await seedRealAcademy('register-independent-b');
+    const emailA = uniqueTestEmail('register-independent-student-a');
+    const emailB = uniqueTestEmail('register-independent-student-b');
+
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        name: 'Student A',
+        email: emailA,
+        password: 'correct-horse-battery',
+        academyId: academyA.id,
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        name: 'Student B',
+        email: emailB,
+        password: 'correct-horse-battery',
+        academyId: academyB.id,
+      })
+      .expect(201);
+
+    const userA = await prisma.user.findUniqueOrThrow({ where: { email: emailA } });
+    const userB = await prisma.user.findUniqueOrThrow({ where: { email: emailB } });
+
+    const membershipAInB = await admin.academyStudent.findUnique({
+      where: { academyId_userId: { academyId: academyB.id, userId: userA.id } },
+    });
+    const membershipBInA = await admin.academyStudent.findUnique({
+      where: { academyId_userId: { academyId: academyA.id, userId: userB.id } },
+    });
+    expect(membershipAInB).toBeNull();
+    expect(membershipBInA).toBeNull();
+
+    const membershipA = await admin.academyStudent.findUnique({
+      where: { academyId_userId: { academyId: academyA.id, userId: userA.id } },
+    });
+    const membershipB = await admin.academyStudent.findUnique({
+      where: { academyId_userId: { academyId: academyB.id, userId: userB.id } },
+    });
+    expect(membershipA).not.toBeNull();
+    expect(membershipB).not.toBeNull();
+  });
+
+  it('rejects registration against an unknown academyId — never silently falls back to an academy-less account', async () => {
+    const email = uniqueTestEmail('register-unknown-academy');
+
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        name: 'Ghost Student',
+        email,
+        password: 'correct-horse-battery',
+        academyId: 'not-a-real-academy-id',
+      })
+      .expect(404);
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    expect(user).toBeNull();
+  });
+
+  it('registering with no academyId still works exactly as before (the self-service Organization-Owner onboarding journey, Decision 5) and creates no academy membership', async () => {
+    const email = uniqueTestEmail('register-no-academy');
+
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ name: 'Future Owner', email, password: 'correct-horse-battery' })
+      .expect(201);
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    const memberships = await admin.academyStudent.findMany({
+      where: { userId: user.id },
+    });
+    expect(memberships).toEqual([]);
   });
 });

@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { Organization } from '@prisma/client';
 import { TenancyContextService } from './tenancy-context.service';
 import { OrganizationsRepository } from '../repositories/organizations.repository';
 import { OrganizationMembershipsRepository } from '../repositories/organization-memberships.repository';
@@ -66,10 +67,30 @@ export class OrganizationsService {
    * with a real, non-empty permission set (closing P0-2 in the same
    * stroke — see `organization-permissions.constants.ts`). RLS
    * choreography documented on `OrganizationsRepository.create`.
+   *
+   * `onCreated` (Phase 2 addition) — an optional extra step run INSIDE
+   * the exact same transaction, given the already-open `tx` and the
+   * freshly-created `Organization` row, immediately after the owner
+   * membership/audit-log write above. Exists so `PlansModule`'s
+   * `OrganizationsController` (which now owns the real `POST
+   * /organizations` route — see that module's own doc comment for why)
+   * can atomically bootstrap the new Organization's trial subscription
+   * without this service ever importing anything from `PlansModule`
+   * itself: `TenancyModule` stays exactly as dependency-free as it always
+   * was (see this module's own header comment on the DAG this keeps
+   * clean) — a plain callback parameter, no new module import, no new
+   * injection token, the caller supplies the cross-cutting behavior. A
+   * caller that omits it (every other, non-Phase-2 call site, and every
+   * pre-existing test) gets byte-identical behavior to before this
+   * parameter existed.
    */
   async create(
     userId: string,
     payload: CreateOrganizationDto,
+    onCreated?: (
+      tx: Prisma.TransactionClient,
+      organization: Organization,
+    ) => Promise<void>,
   ): Promise<OrganizationResponse> {
     const baseSlug = slugify(payload.name);
     const organizationId = randomUUID();
@@ -105,6 +126,10 @@ export class OrganizationsService {
               targetId: created.id,
               targetLabel: created.name,
             });
+
+            if (onCreated) {
+              await onCreated(tx, created);
+            }
 
             return created;
           },

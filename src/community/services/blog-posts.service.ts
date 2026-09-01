@@ -39,9 +39,21 @@ export class BlogPostsService {
     private readonly blogPostsRepository: BlogPostsRepository,
   ) {}
 
+  /**
+   * Phase 1 (Extended Scope, Decision 11, dependency B) — `academyId`
+   * omitted keeps the exact pre-existing rule (0 real memberships →
+   * forbidden, exactly 1 → use it, more than 1 → the "ambiguous academy"
+   * error, since guessing among several is still not this method's job).
+   * `academyId` supplied is the actual gap closed: resolved against the
+   * caller's own real `academy_members` rows, never trusted on its own —
+   * a value that does not match one of the caller's own authoring-role
+   * memberships is rejected exactly like having none at all, never
+   * silently substituted for a different academy.
+   */
   private async resolveAuthorAcademyId(
     tx: Prisma.TransactionClient,
     userId: string,
+    requestedAcademyId?: string,
   ): Promise<string | null> {
     const user = await tx.user.findUnique({
       where: { id: userId },
@@ -53,6 +65,15 @@ export class BlogPostsService {
       where: { userId, role: { in: AUTHORING_ROLES as never } },
       select: { academyId: true },
     });
+
+    if (requestedAcademyId) {
+      const matches = memberships.some((m) => m.academyId === requestedAcademyId);
+      if (!matches) {
+        throw new ForbiddenException({ messageKey: 'errors.forbidden' });
+      }
+      return requestedAcademyId;
+    }
+
     if (memberships.length === 0) {
       throw new ForbiddenException({ messageKey: 'errors.forbidden' });
     }
@@ -93,7 +114,7 @@ export class BlogPostsService {
     payload: CreateBlogPostDto,
   ): Promise<BlogPostResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      const academyId = await this.resolveAuthorAcademyId(tx, userId);
+      const academyId = await this.resolveAuthorAcademyId(tx, userId, payload.academyId);
       const existing = await this.blogPostsRepository.findByAcademyAndSlug(
         tx,
         academyId,

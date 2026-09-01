@@ -12,7 +12,11 @@ import {
   createAdminPrisma,
   seedAcademy,
   seedAcademyMember,
+  seedAcademyStudent,
   seedAddOn,
+  seedCourse,
+  seedEnrollment,
+  seedMediaAsset,
   seedOrganizationWithOwner,
   seedPlan,
   seedTenantAddOn,
@@ -371,7 +375,7 @@ describe('Tenant Subscription/Usage/Add-ons (e2e)', () => {
     expect(usage.staff).toBe(0);
   });
 
-  it('students/courses/storage metrics are honestly 0 — no source table exists yet', async () => {
+  it('students/courses/storage metrics are honestly 0 when no real source data exists', async () => {
     const owner = await signUpAndSignIn(app, 'honest-zero-owner');
     const org = await seedOrganizationWithOwner(admin, owner.userId, 'honest-zero-org');
     const plan = await seedPlan(admin, 'honest-zero-plan');
@@ -385,6 +389,102 @@ describe('Tenant Subscription/Usage/Add-ons (e2e)', () => {
     expect(usage.courses).toBe(0);
     expect(usage.generalStorageGb).toBe(0);
     expect(usage.videoStorageGb).toBe(0);
+  });
+
+  // Phase 2 — `students`/`generalStorageGb`/`videoStorageGb` are no longer
+  // hardcoded zero; `Enrollment`/`MediaAsset` are real source tables now.
+  it('recomputation counts real distinct enrolled students from Enrollment', async () => {
+    const owner = await signUpAndSignIn(app, 'students-owner');
+    const org = await seedOrganizationWithOwner(admin, owner.userId, 'students-org');
+    const plan = await seedPlan(admin, 'students-plan');
+    await seedTenantSubscription(admin, org.id, plan.id);
+    const academy = await seedAcademy(admin, org.id, 'students-academy');
+    const course = await seedCourse(admin, academy.id, 'Students Course', {
+      status: 'published',
+      visibility: 'public',
+    });
+    const studentA = await signUpAndSignIn(app, 'students-a');
+    const studentB = await signUpAndSignIn(app, 'students-b');
+    await seedAcademyStudent(admin, academy.id, studentA.userId);
+    await seedAcademyStudent(admin, academy.id, studentB.userId);
+    await seedEnrollment(admin, studentA.userId, course.id, academy.id, {
+      status: 'enrolled',
+    });
+    await seedEnrollment(admin, studentB.userId, course.id, academy.id, {
+      status: 'completed',
+    });
+
+    await recomputeService.recomputeOne(org.id);
+    const usage = await admin.tenantUsage.findUniqueOrThrow({
+      where: { organizationId: org.id },
+    });
+    expect(usage.students).toBe(2);
+  });
+
+  it('recomputation never counts a student more than once, and never counts a revoked (unavailable) enrollment', async () => {
+    const owner = await signUpAndSignIn(app, 'students-dedupe-owner');
+    const org = await seedOrganizationWithOwner(
+      admin,
+      owner.userId,
+      'students-dedupe-org',
+    );
+    const plan = await seedPlan(admin, 'students-dedupe-plan');
+    await seedTenantSubscription(admin, org.id, plan.id);
+    const academy = await seedAcademy(admin, org.id, 'students-dedupe-academy');
+    const courseOne = await seedCourse(admin, academy.id, 'Course One', {
+      status: 'published',
+      visibility: 'public',
+    });
+    const courseTwo = await seedCourse(admin, academy.id, 'Course Two', {
+      status: 'published',
+      visibility: 'public',
+    });
+    const student = await signUpAndSignIn(app, 'students-dedupe-student');
+    const revokedStudent = await signUpAndSignIn(app, 'students-dedupe-revoked');
+    await seedAcademyStudent(admin, academy.id, student.userId);
+    await seedAcademyStudent(admin, academy.id, revokedStudent.userId);
+    // Same student enrolled in two courses — counts once.
+    await seedEnrollment(admin, student.userId, courseOne.id, academy.id, {
+      status: 'enrolled',
+    });
+    await seedEnrollment(admin, student.userId, courseTwo.id, academy.id, {
+      status: 'enrolled',
+    });
+    // A revoked/refunded enrollment does not count at all.
+    await seedEnrollment(admin, revokedStudent.userId, courseOne.id, academy.id, {
+      status: 'unavailable',
+    });
+
+    await recomputeService.recomputeOne(org.id);
+    const usage = await admin.tenantUsage.findUniqueOrThrow({
+      where: { organizationId: org.id },
+    });
+    expect(usage.students).toBe(1);
+  });
+
+  it('recomputation sums real MediaAsset storage, video tracked separately from general storage, rounded up to whole GB', async () => {
+    const owner = await signUpAndSignIn(app, 'storage-owner');
+    const org = await seedOrganizationWithOwner(admin, owner.userId, 'storage-org');
+    const plan = await seedPlan(admin, 'storage-plan');
+    await seedTenantSubscription(admin, org.id, plan.id);
+    const academy = await seedAcademy(admin, org.id, 'storage-academy');
+
+    // 1.5 GB of images (general) — rounds up to 2.
+    await seedMediaAsset(admin, academy.id, 1_500_000_000n, { type: 'image' });
+    // An archived asset never counts.
+    await seedMediaAsset(admin, academy.id, 5_000_000_000n, {
+      type: 'image',
+      status: 'archived',
+    });
+    // 3 GB of video, tracked in the separate videoStorageGb bucket.
+    await seedMediaAsset(admin, academy.id, 3_000_000_000n, { type: 'video' });
+
+    await recomputeService.recomputeOne(org.id);
+    const usage = await admin.tenantUsage.findUniqueOrThrow({
+      where: { organizationId: org.id },
+    });
+    expect(usage.generalStorageGb).toBe(2);
+    expect(usage.videoStorageGb).toBe(3);
   });
 
   it('inactive/pending academy_members do not count toward usage', async () => {

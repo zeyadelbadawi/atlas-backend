@@ -87,6 +87,7 @@ export class PlatformProvisioningService {
     const request = await this.loadAnyOrThrow(reviewerId, requestId);
     return this.provisioningRequestsService.retryRequest(
       request.organizationId,
+      reviewerId,
       requestId,
     );
   }
@@ -98,6 +99,7 @@ export class PlatformProvisioningService {
     const request = await this.loadAnyOrThrow(reviewerId, requestId);
     return this.provisioningRequestsService.cancelRequest(
       request.organizationId,
+      reviewerId,
       requestId,
     );
   }

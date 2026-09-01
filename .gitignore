@@ -29,3 +29,5 @@ prisma/*.db
 
 # Claude Code local settings
 .claude/settings.local.json
+testsprite_tests/tmp/
+testsprite_tests/tmp/config.json

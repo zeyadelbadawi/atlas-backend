@@ -71,15 +71,39 @@ export class DomainService {
     }
   }
 
+  /** Phase 1 (Extended Scope, dependency A) — see `WebsiteConfigurationService.assertIsMember`'s doc comment: `AcademyScopeGuard` proves organization membership only, and `getDomainConfiguration` (unlike every write below) never independently confirmed the caller belongs to THIS specific Academy. */
+  private async assertIsMember(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+  ): Promise<void> {
+    const membership = await this.academyMembersRepository.findForUserInAcademy(
+      tx,
+      academyId,
+      userId,
+    );
+    if (!membership) {
+      throw new ForbiddenException({ messageKey: 'errors.domain.insufficientRole' });
+    }
+  }
+
   async getDomainConfiguration(
     academyId: string,
     organizationId: string,
+    userId: string,
   ): Promise<AcademyDomainConfigurationResponse> {
     const [subdomain, domainConnection] =
-      await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => [
-        await this.subdomainAllocationsRepository.findByAcademyId(tx, academyId),
-        await this.domainConnectionsRepository.findByAcademyId(tx, academyId),
-      ]);
+      await this.tenancyContextService.runInTenantAndUserContext(
+        organizationId,
+        userId,
+        async (tx) => {
+          await this.assertIsMember(tx, academyId, userId);
+          return [
+            await this.subdomainAllocationsRepository.findByAcademyId(tx, academyId),
+            await this.domainConnectionsRepository.findByAcademyId(tx, academyId),
+          ] as const;
+        },
+      );
     return toAcademyDomainConfigurationResponse(academyId, subdomain, domainConnection);
   }
 
@@ -89,64 +113,77 @@ export class DomainService {
     userId: string,
     payload: AddCustomDomainDto,
   ): Promise<AcademyDomainConfigurationResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
 
-      // A same-tenant conflict is visible under this transaction's own
-      // RLS context and caught here for a fast, friendly error. A
-      // DIFFERENT tenant's row is invisible under this SELECT by RLS
-      // design (it must be — this is a normal, correctly-scoped tenant
-      // context, not the public runtime's special resolution path), so
-      // that case can only ever be caught by the real database-level
-      // UNIQUE constraint on `hostname` when the `upsert` below runs —
-      // handled explicitly, never left to surface as a raw 500.
-      const existingForHostname = await this.domainConnectionsRepository.findByHostname(
-        tx,
-        payload.hostname,
-      );
-      if (existingForHostname && existingForHostname.academyId !== academyId) {
-        throw new ConflictException({ messageKey: 'errors.domain.hostnameTaken' });
-      }
-
-      const connected = await this.cloudflareProvider.verifyToken();
-      let verificationRecords: unknown = null;
-      if (connected) {
-        try {
-          const customHostname = await this.cloudflareProvider.createCustomHostname(
-            payload.hostname,
-          );
-          verificationRecords = customHostname.verificationRecords;
-        } catch {
-          // A real, failed provider call — the row still records the
-          // Academy Owner's intent (status stays `verification_required`,
-          // no fabricated records), never a fake success.
-          verificationRecords = null;
-        }
-      }
-
-      let domainConnection;
-      try {
-        domainConnection = await this.domainConnectionsRepository.upsert(tx, academyId, {
-          hostname: payload.hostname,
-          status: 'verification_required',
-          verificationRecords: verificationRecords as Prisma.InputJsonValue | undefined,
-          sslStatus: 'not_configured',
-          cdnStatus: 'not_configured',
-          connectedAt: null,
-        });
-      } catch (error) {
-        if (isUniqueConstraintViolation(error)) {
+        // A same-tenant conflict is visible under this transaction's own
+        // RLS context and caught here for a fast, friendly error. A
+        // DIFFERENT tenant's row is invisible under this SELECT by RLS
+        // design (it must be — this is a normal, correctly-scoped tenant
+        // context, not the public runtime's special resolution path), so
+        // that case can only ever be caught by the real database-level
+        // UNIQUE constraint on `hostname` when the `upsert` below runs —
+        // handled explicitly, never left to surface as a raw 500.
+        const existingForHostname = await this.domainConnectionsRepository.findByHostname(
+          tx,
+          payload.hostname,
+        );
+        if (existingForHostname && existingForHostname.academyId !== academyId) {
           throw new ConflictException({ messageKey: 'errors.domain.hostnameTaken' });
         }
-        throw error;
-      }
 
-      const subdomain = await this.subdomainAllocationsRepository.findByAcademyId(
-        tx,
-        academyId,
-      );
-      return toAcademyDomainConfigurationResponse(academyId, subdomain, domainConnection);
-    });
+        const connected = await this.cloudflareProvider.verifyToken();
+        let verificationRecords: unknown = null;
+        if (connected) {
+          try {
+            const customHostname = await this.cloudflareProvider.createCustomHostname(
+              payload.hostname,
+            );
+            verificationRecords = customHostname.verificationRecords;
+          } catch {
+            // A real, failed provider call — the row still records the
+            // Academy Owner's intent (status stays `verification_required`,
+            // no fabricated records), never a fake success.
+            verificationRecords = null;
+          }
+        }
+
+        let domainConnection;
+        try {
+          domainConnection = await this.domainConnectionsRepository.upsert(
+            tx,
+            academyId,
+            {
+              hostname: payload.hostname,
+              status: 'verification_required',
+              verificationRecords: verificationRecords as
+                Prisma.InputJsonValue | undefined,
+              sslStatus: 'not_configured',
+              cdnStatus: 'not_configured',
+              connectedAt: null,
+            },
+          );
+        } catch (error) {
+          if (isUniqueConstraintViolation(error)) {
+            throw new ConflictException({ messageKey: 'errors.domain.hostnameTaken' });
+          }
+          throw error;
+        }
+
+        const subdomain = await this.subdomainAllocationsRepository.findByAcademyId(
+          tx,
+          academyId,
+        );
+        return toAcademyDomainConfigurationResponse(
+          academyId,
+          subdomain,
+          domainConnection,
+        );
+      },
+    );
   }
 
   async removeCustomDomain(
@@ -154,46 +191,56 @@ export class DomainService {
     organizationId: string,
     userId: string,
   ): Promise<AcademyDomainConfigurationResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
 
-      const existing = await this.domainConnectionsRepository.findByAcademyId(
-        tx,
-        academyId,
-      );
-      if (existing?.hostname) {
-        const connected = await this.cloudflareProvider.verifyToken();
-        if (connected) {
-          const customHostname =
-            await this.cloudflareProvider.getCustomHostnameByHostname(existing.hostname);
-          if (customHostname) {
-            await this.cloudflareProvider.deleteCustomHostname(customHostname.id);
+        const existing = await this.domainConnectionsRepository.findByAcademyId(
+          tx,
+          academyId,
+        );
+        if (existing?.hostname) {
+          const connected = await this.cloudflareProvider.verifyToken();
+          if (connected) {
+            const customHostname =
+              await this.cloudflareProvider.getCustomHostnameByHostname(
+                existing.hostname,
+              );
+            if (customHostname) {
+              await this.cloudflareProvider.deleteCustomHostname(customHostname.id);
+            }
           }
         }
-      }
 
-      // Reset, never a hard delete — see this table's own RLS doc comment
-      // (no DELETE policy exists on `domain_connections`).
-      const domainConnection = await this.domainConnectionsRepository.upsert(
-        tx,
-        academyId,
-        {
-          hostname: null,
-          status: 'not_configured',
-          verificationRecords: Prisma.JsonNull,
-          sslStatus: 'not_configured',
-          cdnStatus: 'not_configured',
-          cdnProvider: null,
-          connectedAt: null,
-        },
-      );
+        // Reset, never a hard delete — see this table's own RLS doc comment
+        // (no DELETE policy exists on `domain_connections`).
+        const domainConnection = await this.domainConnectionsRepository.upsert(
+          tx,
+          academyId,
+          {
+            hostname: null,
+            status: 'not_configured',
+            verificationRecords: Prisma.JsonNull,
+            sslStatus: 'not_configured',
+            cdnStatus: 'not_configured',
+            cdnProvider: null,
+            connectedAt: null,
+          },
+        );
 
-      const subdomain = await this.subdomainAllocationsRepository.findByAcademyId(
-        tx,
-        academyId,
-      );
-      return toAcademyDomainConfigurationResponse(academyId, subdomain, domainConnection);
-    });
+        const subdomain = await this.subdomainAllocationsRepository.findByAcademyId(
+          tx,
+          academyId,
+        );
+        return toAcademyDomainConfigurationResponse(
+          academyId,
+          subdomain,
+          domainConnection,
+        );
+      },
+    );
   }
 
   async verifyDomain(
@@ -201,65 +248,73 @@ export class DomainService {
     organizationId: string,
     userId: string,
   ): Promise<AcademyDomainConfigurationResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
 
-      const existing = await this.domainConnectionsRepository.findByAcademyId(
-        tx,
-        academyId,
-      );
-      if (!existing?.hostname) {
-        throw new NotFoundException({ messageKey: 'errors.domain.noCustomDomain' });
-      }
+        const existing = await this.domainConnectionsRepository.findByAcademyId(
+          tx,
+          academyId,
+        );
+        if (!existing?.hostname) {
+          throw new NotFoundException({ messageKey: 'errors.domain.noCustomDomain' });
+        }
 
-      const connected = await this.cloudflareProvider.verifyToken();
-      if (!connected) {
-        // Nothing to re-check against — the backend never simulates a
-        // result, so the row is returned exactly as it stood.
+        const connected = await this.cloudflareProvider.verifyToken();
+        if (!connected) {
+          // Nothing to re-check against — the backend never simulates a
+          // result, so the row is returned exactly as it stood.
+          const subdomain = await this.subdomainAllocationsRepository.findByAcademyId(
+            tx,
+            academyId,
+          );
+          return toAcademyDomainConfigurationResponse(academyId, subdomain, existing);
+        }
+
+        const customHostname = await this.cloudflareProvider.getCustomHostnameByHostname(
+          existing.hostname,
+        );
+        if (!customHostname) {
+          const subdomain = await this.subdomainAllocationsRepository.findByAcademyId(
+            tx,
+            academyId,
+          );
+          return toAcademyDomainConfigurationResponse(academyId, subdomain, existing);
+        }
+
+        const mapped = mapCloudflareCustomHostname(customHostname);
+        const wasConnected = existing.status === 'connected';
+        const domainConnection = await this.domainConnectionsRepository.upsert(
+          tx,
+          academyId,
+          {
+            hostname: existing.hostname,
+            status: mapped.status,
+            verificationRecords:
+              customHostname.verificationRecords as unknown as Prisma.InputJsonValue,
+            sslStatus: mapped.sslStatus,
+            cdnStatus: mapped.cdnStatus,
+            connectedAt:
+              mapped.status === 'connected'
+                ? wasConnected
+                  ? existing.connectedAt
+                  : new Date()
+                : null,
+          },
+        );
+
         const subdomain = await this.subdomainAllocationsRepository.findByAcademyId(
           tx,
           academyId,
         );
-        return toAcademyDomainConfigurationResponse(academyId, subdomain, existing);
-      }
-
-      const customHostname = await this.cloudflareProvider.getCustomHostnameByHostname(
-        existing.hostname,
-      );
-      if (!customHostname) {
-        const subdomain = await this.subdomainAllocationsRepository.findByAcademyId(
-          tx,
+        return toAcademyDomainConfigurationResponse(
           academyId,
+          subdomain,
+          domainConnection,
         );
-        return toAcademyDomainConfigurationResponse(academyId, subdomain, existing);
-      }
-
-      const mapped = mapCloudflareCustomHostname(customHostname);
-      const wasConnected = existing.status === 'connected';
-      const domainConnection = await this.domainConnectionsRepository.upsert(
-        tx,
-        academyId,
-        {
-          hostname: existing.hostname,
-          status: mapped.status,
-          verificationRecords:
-            customHostname.verificationRecords as unknown as Prisma.InputJsonValue,
-          sslStatus: mapped.sslStatus,
-          cdnStatus: mapped.cdnStatus,
-          connectedAt:
-            mapped.status === 'connected'
-              ? wasConnected
-                ? existing.connectedAt
-                : new Date()
-              : null,
-        },
-      );
-
-      const subdomain = await this.subdomainAllocationsRepository.findByAcademyId(
-        tx,
-        academyId,
-      );
-      return toAcademyDomainConfigurationResponse(academyId, subdomain, domainConnection);
-    });
+      },
+    );
   }
 }

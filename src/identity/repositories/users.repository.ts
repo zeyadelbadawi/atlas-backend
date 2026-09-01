@@ -65,6 +65,28 @@ export class UsersRepository {
   }
 
   /**
+   * Phase 2 — the one id a genuine background system job (the trial-
+   * expiry/usage-recompute sweep, `SubscriptionSweepService`) needs to
+   * open a legitimate `runInUserContext` under, so it can use the
+   * existing Platform Owner cross-tenant RLS bypass
+   * (`organizations_platform_select`/`tenant_subscriptions_platform_select`
+   * /`_platform_update`, P15) exactly like every real Platform Owner
+   * request already does — never a second, parallel "system" bypass
+   * mechanism. Which specific platform owner is returned does not matter:
+   * `is_platform_owner(uid)` only checks the boolean flag on that one row,
+   * so any user with `isPlatformOwner: true` satisfies every policy this
+   * job relies on identically. `users` carries no RLS (see this
+   * repository's own doc comment), so this is a plain, unscoped read.
+   */
+  findFirstPlatformOwnerId(): Promise<Pick<User, 'id'> | null> {
+    return this.prisma.user.findFirst({
+      where: { isPlatformOwner: true },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+  }
+
+  /**
    * Atomically shallow-merges `partial` into the stored `preferences` JSONB
    * document using Postgres's `||` jsonb concatenation operator, so two
    * concurrent preference updates for the same user can never lose one

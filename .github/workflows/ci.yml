@@ -36,6 +36,34 @@ jobs:
       DATABASE_URL: postgresql://atlas:atlas_ci_password@localhost:5432/atlas_ci?schema=public
       REDIS_URL: redis://localhost:6379
       CORS_ALLOWED_ORIGINS: http://localhost:5173
+      # --- Phase P18 audit finding -------------------------------------
+      # These 4 + the R2_* block below were REQUIRED (no default, Zod
+      # `.min()`/`.length()` validated — see `src/config/env.validation.ts`)
+      # but absent from this file before P18: the app could not actually
+      # boot in CI (confirmed by running `validateEnv()` directly against
+      # this job's exact prior env set). None of these are real secrets —
+      # same non-secret, CI-only-placeholder pattern as `POSTGRES_PASSWORD`
+      # above. APP_DATABASE_URL's `atlas_app` role/password is not a secret
+      # either: it's created with this exact fixed password by
+      # `prisma/migrations/20260823183500_p2_app_role_rls_enforcement`,
+      # already committed to this repo.
+      APP_DATABASE_URL: postgresql://atlas_app:atlas_app_dev_password@localhost:5432/atlas_ci?schema=public
+      JWT_ACCESS_SECRET: ci-only-placeholder-jwt-secret-not-a-real-secret-32c
+      PAYMENT_WEBHOOK_SECRET: ci-only-placeholder-webhook-secret-not-real-32ch
+      PAYMENT_CREDENTIALS_ENCRYPTION_KEY: 'abababababababababababababababababababababababababababababababab'
+      # Local, disposable MinIO (S3-compatible) standing in for Cloudflare
+      # R2 — identical pattern to `docker-compose.yml`'s own `minio`
+      # service for local dev (ADR-005: R2 is S3-compatible, same client
+      # code either way). Started manually below since GitHub Actions
+      # `services:` containers can't override a command, and MinIO's image
+      # needs `server /data` args to actually start serving.
+      R2_ENDPOINT: http://localhost:9000
+      R2_REGION: auto
+      R2_ACCESS_KEY_ID: atlas_media_ci
+      R2_SECRET_ACCESS_KEY: atlas_media_ci_password
+      R2_BUCKET: atlas-media-ci
+      R2_PUBLIC_URL_BASE: http://localhost:9000/atlas-media-ci
+      R2_FORCE_PATH_STYLE: 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +73,17 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Start MinIO (local S3-compatible object store — see env block above)
+        run: |
+          docker run -d --name minio -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=atlas_media_ci \
+            -e MINIO_ROOT_PASSWORD=atlas_media_ci_password \
+            minio/minio:latest server /data --console-address ":9001"
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 2
+          done
+
       - name: Install dependencies
         run: npm ci
 
@@ -53,6 +92,17 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Dependency audit (production dependencies only — informational, does not fail the build)
+        # Phase P18 finding: 16 pre-existing production-dependency
+        # vulnerabilities (11 moderate, 5 high, 0 critical), all
+        # transitive, none with a fix available without a breaking major
+        # upgrade (`npm audit fix --dry-run` confirmed). Documented,
+        # accepted risk (see Reports/P18_PRODUCTION_READINESS.md) rather
+        # than force-upgrading mid-hardening-phase — surfaced here for
+        # ongoing visibility, not a merge gate.
+        run: npm audit --omit=dev
+        continue-on-error: true
 
       - name: Prisma — generate client
         run: npm run prisma:generate
@@ -66,5 +116,8 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: E2E tests (health check against real Postgres + Redis)
+      - name: E2E tests — run 1 (against real Postgres + Redis + MinIO)
+        run: npm run test:e2e
+
+      - name: E2E tests — run 2 (repeat, same convention this project's manual verification always uses — catches ordering/flake issues a single run can hide)
         run: npm run test:e2e

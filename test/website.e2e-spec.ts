@@ -557,7 +557,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .expect(403);
   });
 
-  it('a plain org member (no academy role) can read the website surface but cannot write to it', async () => {
+  it('a plain org member (no academy role) cannot read or write the website surface (Phase 1, Extended Scope, dependency A: organization membership alone is never sufficient)', async () => {
     const { academy, org } = await seedManagedAcademy('authz');
     const plainMember = await signUpAndSignIn(app, 'website-authz-member');
     await admin.organizationMembership.create({
@@ -567,7 +567,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .get(`/academies/${academy.id}/website/configuration`)
       .set('Authorization', `Bearer ${plainMember.accessToken}`)
-      .expect(200);
+      .expect(403);
 
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/configuration`)
@@ -579,6 +579,21 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .post(`/academies/${academy.id}/website/pages`)
       .set('Authorization', `Bearer ${plainMember.accessToken}`)
       .send({ title: 'X', slug: 'x-page' })
+      .expect(403);
+  });
+
+  it("a Manager assigned to a DIFFERENT Academy in the same Organization cannot read this Academy's website surface (Phase 1, Extended Scope, dependency A)", async () => {
+    const { academy, org } = await seedManagedAcademy('cross-academy-read');
+    const otherAcademy = await seedAcademy(admin, org.id, 'cross-academy-read-other');
+    const manager = await signUpAndSignIn(app, 'website-cross-academy-manager');
+    await admin.organizationMembership.create({
+      data: { organizationId: org.id, userId: manager.userId, role: 'manager' },
+    });
+    await seedAcademyMember(admin, otherAcademy.id, manager.userId, 'manager');
+
+    await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${manager.accessToken}`)
       .expect(403);
   });
 });

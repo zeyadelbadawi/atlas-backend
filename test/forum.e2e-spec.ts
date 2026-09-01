@@ -10,6 +10,8 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
   seedAcademy,
+  seedAcademyStudent,
+  seedActiveSubscriptionForOrg,
   seedCourse,
   seedCourseInstructor,
   seedOrganizationWithOwner,
@@ -59,12 +61,14 @@ describe('Course Forum (e2e)', () => {
     const instructor = await signUpAndSignIn(app, `${label}-instr`);
     const student = await signUpAndSignIn(app, `${label}-student`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
+    await seedActiveSubscriptionForOrg(admin, org.id, label);
     const academy = await seedAcademy(admin, org.id, `${label}-academy`);
     const course = await seedCourse(admin, academy.id, `${label}-course-${Date.now()}`, {
       status: 'published',
       visibility: 'public',
     });
     await seedCourseInstructor(admin, course.id, instructor.userId);
+    await seedAcademyStudent(admin, academy.id, student.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)

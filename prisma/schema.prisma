@@ -93,6 +93,11 @@ model User {
   ownedOrganizations                            Organization[]                           @relation("OrganizationOwner")
   organizationMemberships                       OrganizationMembership[]
   academyMemberships                            AcademyMember[]
+  /// Phase 1 (Extended Scope, Decision 11, dependency D) — a student's real,
+  /// validated home Academy, structurally parallel to `AcademyMember` (the
+  /// staff equivalent). Populated at registration time (or backfilled from
+  /// pre-existing enrollments) — see the migration's own doc comment.
+  academyStudentships                            AcademyStudent[]
   courseInstructorships                         CourseInstructor[]
   enrollments                                   Enrollment[]
   quizAttempts                                  QuizAttempt[]
@@ -313,6 +318,7 @@ model Academy {
   updatedAt      DateTime      @updatedAt @map("updated_at")
 
   members              AcademyMember[]
+  students             AcademyStudent[]
   courseCategories     CourseCategory[]
   courses              Course[]
   announcements        Announcement[]
@@ -353,6 +359,33 @@ model AcademyMember {
   @@index([academyId])
   @@index([userId])
   @@map("academy_members")
+}
+
+/// Phase 1 (Extended Scope, Decision 11, dependency D) — a Student's real
+/// Academy membership, structurally parallel to `AcademyMember` above but
+/// deliberately a SEPARATE table/enum-less role, not a reuse of
+/// `AcademyMember`/`AcademyMemberRole` (which has no `student` role and is
+/// reserved for staff — see `AcademyStudentResponse`'s pre-existing doc
+/// comment: "a student is never an `academy_members` row"). Populated
+/// either by self-registration through a specific Academy's public
+/// website (`AuthService.register`) or by a Manager/Owner explicitly
+/// creating a student account for their Academy (`AcademiesService.
+/// createStudent`) — see the migration's own doc comment for the RLS
+/// shape both paths rely on, and `is_academy_student` (mirrors
+/// `is_academy_member`) for how downstream RLS (`enrollments`) uses it.
+model AcademyStudent {
+  id        String              @id @default(uuid())
+  academyId String              @map("academy_id")
+  academy   Academy             @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  userId    String              @map("user_id")
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    AcademyMemberStatus @default(active)
+  joinedAt  DateTime            @default(now()) @map("joined_at")
+
+  @@unique([academyId, userId])
+  @@index([academyId])
+  @@index([userId])
+  @@map("academy_students")
 }
 
 // ---------------------------------------------------------------------------
@@ -533,7 +566,12 @@ model TenantUsage {
 model TrialPolicy {
   id           String   @id @default(uuid())
   enabled      Boolean  @default(true)
-  durationDays Int      @default(7) @map("duration_days")
+  /// Phase 2 (Decision 6, locked): exactly 3 days, no credit card — the
+  /// 7-day figure this default previously carried is an explicitly
+  /// superseded historical value (see the P22 migration's own doc
+  /// comment for the one-time data correction this default change is
+  /// paired with).
+  durationDays Int      @default(3) @map("duration_days")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 

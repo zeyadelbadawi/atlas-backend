@@ -40,6 +40,7 @@ import { CourseModule } from '../course/course.module';
 import { AcademyModule } from '../academy/academy.module';
 import { LearningModule } from '../learning/learning.module';
 import { BillingModule } from '../billing/billing.module';
+import { PlansModule } from '../plans/plans.module';
 import { CourseOrdersController } from './controllers/course-orders.controller';
 import { CourseOrderPaymentsController } from './controllers/course-order-payments.controller';
 import { CourseOrderRefundsController } from './controllers/course-order-refunds.controller';
@@ -70,6 +71,13 @@ import { CourseOrderRefundsRepository } from './repositories/course-order-refund
     AcademyModule,
     LearningModule,
     BillingModule,
+    // Phase 2 — `CourseOrderPaymentApplicationService` needs
+    // `TenantUsageRecomputeProducer` to keep the `students` usage metric
+    // current after a paid-course enrollment (a real enrollment change,
+    // same as the free path) — never `EntitlementEnforcementService`
+    // here; see that service's own doc comment for why a successful
+    // payment's enrollment is never blocked by a plan limit.
+    PlansModule,
   ],
   controllers: [
     CourseOrdersController,

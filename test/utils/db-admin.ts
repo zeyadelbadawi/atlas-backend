@@ -77,6 +77,26 @@ export async function seedAcademyMember(
   });
 }
 
+/**
+ * Phase 1 (Extended Scope, Decision 11, dependency D) — every test
+ * fixture that needs "a real enrolled student" now needs this too:
+ * `enrollments_self_insert` (RLS) requires a real `academy_students` row
+ * for the enrolling Academy, matching the real product's own
+ * registration-time behavior (`AuthService.register`/`AcademiesService.
+ * createStudent`). Direct-DB fixture setup reproduces that fact instead
+ * of going through the full registration HTTP flow, exactly like
+ * `seedAcademyMember` already does for staff.
+ */
+export async function seedAcademyStudent(
+  admin: PrismaClient,
+  academyId: string,
+  userId: string,
+) {
+  return admin.academyStudent.create({
+    data: { academyId, userId },
+  });
+}
+
 /** P4 — `plans`/`add_ons` are platform-owned (no RLS), but still seeded via the admin connection for consistency: there is no write endpoint for either in P4. */
 export async function seedPlan(
   admin: PrismaClient,
@@ -164,6 +184,38 @@ export async function seedTenantAddOn(
   addOnId: string,
 ) {
   return admin.tenantAddOn.create({ data: { organizationId, addOnId } });
+}
+
+/**
+ * Phase 2 — every test fixture that goes through a REAL plan-limited write
+ * path (`POST /academies`, `POST /courses`, `POST /enrollments`, media
+ * upload, instructor grants) now needs a real, active
+ * `tenant_subscriptions` row for its organization — `EntitlementEnforcementService`
+ * rejects any organization with none at all. A single, generous,
+ * effectively-unlimited plan (never `'unlimited'` string values — this
+ * mirrors a REAL Plan shape, just with numbers no ordinary test fixture
+ * could ever reach) so existing fixtures unrelated to entitlement testing
+ * never need to reason about limits at all — dedicated entitlement tests
+ * seed their own narrow plans instead (see
+ * `entitlement-enforcement.e2e-spec.ts`).
+ */
+export async function seedActiveSubscriptionForOrg(
+  admin: PrismaClient,
+  organizationId: string,
+  labelHint = 'fixture',
+) {
+  const plan = await seedPlan(admin, `${labelHint}-generous-plan`, {
+    limits: {
+      academies: 1000,
+      students: 1000,
+      instructors: 1000,
+      staff: 1000,
+      courses: 1000,
+      generalStorage: 1000,
+      videoStorage: 1000,
+    },
+  });
+  return seedTenantSubscription(admin, organizationId, plan.id, { status: 'active' });
 }
 
 /** P5 — `courses`/`course_categories`/etc. are Academy-scoped and RLS-protected; seeded via the admin connection, mirroring `seedAcademy`'s own precedent. */
@@ -419,6 +471,63 @@ export async function seedCourseOrder(
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       idempotencyKey: `p16-order-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       paidAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Phase 2 — a real `enrollments` row for `TenantUsageRecomputeService`'s
+ * `students` metric / `EntitlementEnforcementService`'s live `students`
+ * count, seeded directly (mirrors every other cross-tenant fixture in this
+ * file — no HTTP enrollment flow needed for a usage/entitlement test that
+ * only cares about the resulting count).
+ */
+export async function seedEnrollment(
+  admin: PrismaClient,
+  studentId: string,
+  courseId: string,
+  academyId: string,
+  overrides: {
+    status?: 'available' | 'pending' | 'enrolled' | 'completed' | 'unavailable';
+  } = {},
+) {
+  return admin.enrollment.create({
+    data: {
+      studentId,
+      courseId,
+      academyId,
+      status: overrides.status ?? 'enrolled',
+      enrolledAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Phase 2 — a real `media_assets` row for `TenantUsageRecomputeService`'s
+ * `generalStorageGb`/`videoStorageGb` metrics / `EntitlementEnforcementService`'s
+ * live storage check. `sizeBytes` is the one field every storage test
+ * actually varies; everything else is a plausible, fixed fixture value.
+ */
+export async function seedMediaAsset(
+  admin: PrismaClient,
+  academyId: string,
+  sizeBytes: bigint,
+  overrides: {
+    type?: 'image' | 'video' | 'document' | 'other';
+    status?: 'active' | 'archived';
+  } = {},
+) {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return admin.mediaAsset.create({
+    data: {
+      academyId,
+      type: overrides.type ?? 'image',
+      status: overrides.status ?? 'active',
+      fileName: `fixture-${suffix}.bin`,
+      storageKey: `academies/${academyId}/${suffix}.bin`,
+      url: `https://storage.test.local/${suffix}.bin`,
+      mimeType: 'application/octet-stream',
+      sizeBytes,
     },
   });
 }

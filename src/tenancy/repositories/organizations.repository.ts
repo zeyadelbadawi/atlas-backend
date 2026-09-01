@@ -66,6 +66,23 @@ export class OrganizationsRepository {
   }
 
   /**
+   * Phase 2 — the subscription-sweep's own platform-wide enumeration:
+   * every organization id on the platform, unpaginated (the sweep needs
+   * to enqueue a recompute for ALL of them, not one page at a time).
+   * Meaningful only inside `runInUserContext(<a real platform-owner id>)`,
+   * relying on the same `organizations_platform_select` policy (P15)
+   * `findManyAnyOrganization` below already uses — kept as its own narrow
+   * method rather than reusing that one with an unbounded `take`, since
+   * returning only `id` avoids fetching every organization's full row
+   * (name, timestamps, owner) for a job that only ever needs the id.
+   */
+  findAllIdsPlatformWide(
+    tx: Prisma.TransactionClient,
+  ): Promise<Pick<Organization, 'id'>[]> {
+    return tx.organization.findMany({ select: { id: true } });
+  }
+
+  /**
    * Phase P15 — the Platform Owner's cross-tenant list. Meaningful only
    * inside `runInUserContext(platformOwnerId)`, relying on the additive
    * `organizations_platform_select` RLS policy (P15 migration) rather

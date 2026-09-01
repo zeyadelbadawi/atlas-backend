@@ -11,7 +11,11 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
-import { createAdminPrisma, seedOrganizationWithOwner } from './utils/db-admin';
+import {
+  createAdminPrisma,
+  seedActiveSubscriptionForOrg,
+  seedOrganizationWithOwner,
+} from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
 jest.setTimeout(30000);
@@ -233,6 +237,7 @@ describe('Platform Owner Control Plane — tenant isolation & audit coverage (e2
     it('H2: a real academy creation writes a real audit entry with the correct actor and organization — the business mutation itself generates it, not the audit endpoint', async () => {
       const tenantOwner = await signUpAndSignIn(app, 'h2-tenant');
       const org = await seedOrganizationWithOwner(admin, tenantOwner.userId, 'h2-org');
+      await seedActiveSubscriptionForOrg(admin, org.id, 'h2-org');
 
       const created = await request(app.getHttpServer())
         .post('/academies')

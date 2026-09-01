@@ -63,11 +63,39 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
   }
 
   async function createAcademyFor(organizationId: string, label: string) {
-    return tenancyContext.runInTenantContext(organizationId, (tx) =>
-      tx.academy.create({
+    return tenancyContext.runInTenantContext(organizationId, async (tx) => {
+      const org = await tx.organization.findUniqueOrThrow({
+        where: { id: organizationId },
+      });
+      const academy = await tx.academy.create({
         data: { organizationId, name: label, slug: `${label}-${Date.now()}` },
-      }),
+      });
+      // Phase 1 (Extended Scope, dependency A) — reproduces the real
+      // `AcademiesService.create`'s auto-granted owner membership, which
+      // the new `is_academy_member`-gated policies below now require.
+      await tx.academyMember.create({
+        data: {
+          academyId: academy.id,
+          userId: org.ownerUserId,
+          role: 'owner',
+          status: 'active',
+        },
+      });
+      return academy;
+    });
+  }
+
+  /** Phase 1 (Extended Scope, dependency A) — see `rls-website.e2e-spec.ts`'s identical helper. */
+  async function resolveAcademyOwnerId(
+    organizationId: string,
+    academyId: string,
+  ): Promise<string> {
+    const membership = await tenancyContext.runInTenantContext(organizationId, (tx) =>
+      tx.academyMember.findFirst({ where: { academyId, role: 'owner' } }),
     );
+    if (!membership)
+      throw new Error(`No owner membership found for academy ${academyId}`);
+    return membership.userId;
   }
 
   async function createDomainConnection(
@@ -75,7 +103,8 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
     academyId: string,
     hostname: string,
   ) {
-    return tenancyContext.runInTenantContext(organizationId, (tx) =>
+    const ownerId = await resolveAcademyOwnerId(organizationId, academyId);
+    return tenancyContext.runInTenantAndUserContext(organizationId, ownerId, (tx) =>
       tx.domainConnection.create({
         data: { academyId, hostname, status: 'connected' },
       }),
@@ -114,19 +143,64 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
       `b-${Date.now()}.test`,
     );
 
-    const visibleToA = await tenancyContext.runInTenantContext(orgA.id, (tx) =>
-      tx.domainConnection.findMany({
-        where: { id: { in: [connectionA.id, connectionB.id] } },
-      }),
+    const visibleToA = await tenancyContext.runInTenantAndUserContext(
+      orgA.id,
+      ownerA.id,
+      (tx) =>
+        tx.domainConnection.findMany({
+          where: { id: { in: [connectionA.id, connectionB.id] } },
+        }),
     );
     expect(visibleToA.map((c) => c.id)).toEqual([connectionA.id]);
 
-    const visibleToB = await tenancyContext.runInTenantContext(orgB.id, (tx) =>
-      tx.domainConnection.findMany({
-        where: { id: { in: [connectionA.id, connectionB.id] } },
-      }),
+    const visibleToB = await tenancyContext.runInTenantAndUserContext(
+      orgB.id,
+      ownerB.id,
+      (tx) =>
+        tx.domainConnection.findMany({
+          where: { id: { in: [connectionA.id, connectionB.id] } },
+        }),
     );
     expect(visibleToB.map((c) => c.id)).toEqual([connectionB.id]);
+  });
+
+  it("SELECT: a Manager assigned only to Academy A never sees Academy B's domain connection, even though both share the same Organization (Phase 1, Extended Scope, dependency A)", async () => {
+    const owner = await createUser('rls-domain-same-org-owner');
+    const manager = await createUser('rls-domain-same-org-manager');
+    const org = await createOrgOwnedBy(owner.id, 'rls-domain-same-org');
+    const academyA = await createAcademyFor(org.id, 'rls-domain-same-org-academyA');
+    const academyB = await createAcademyFor(org.id, 'rls-domain-same-org-academyB');
+    const connectionA = await createDomainConnection(
+      org.id,
+      academyA.id,
+      `same-a-${Date.now()}.test`,
+    );
+    const connectionB = await createDomainConnection(
+      org.id,
+      academyB.id,
+      `same-b-${Date.now()}.test`,
+    );
+
+    await tenancyContext.runInTenantContext(org.id, (tx) =>
+      tx.academyMember.create({
+        data: {
+          academyId: academyA.id,
+          userId: manager.id,
+          role: 'manager',
+          status: 'active',
+        },
+      }),
+    );
+
+    const visibleToManager = await tenancyContext.runInTenantAndUserContext(
+      org.id,
+      manager.id,
+      (tx) =>
+        tx.domainConnection.findMany({
+          where: { id: { in: [connectionA.id, connectionB.id] } },
+        }),
+    );
+    expect(visibleToManager.map((c) => c.id)).toEqual([connectionA.id]);
   });
 
   it('ATTACK (blocked): cannot insert a domain_connections row under a different organization than the active tenant context', async () => {
@@ -251,14 +325,18 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
     const owner = await createUser('rls-subdomain-no-delete-owner');
     const org = await createOrgOwnedBy(owner.id, 'rls-subdomain-no-delete');
     const academy = await createAcademyFor(org.id, 'rls-subdomain-no-delete');
-    const allocation = await tenancyContext.runInTenantContext(org.id, (tx) =>
-      tx.subdomainAllocation.create({
-        data: {
-          academyId: academy.id,
-          subdomain: `nodelete-${Date.now()}`,
-          status: 'assigned',
-        },
-      }),
+    const ownerId = await resolveAcademyOwnerId(org.id, academy.id);
+    const allocation = await tenancyContext.runInTenantAndUserContext(
+      org.id,
+      ownerId,
+      (tx) =>
+        tx.subdomainAllocation.create({
+          data: {
+            academyId: academy.id,
+            subdomain: `nodelete-${Date.now()}`,
+            status: 'assigned',
+          },
+        }),
     );
 
     const result = await tenancyContext.runInTenantContext(org.id, (tx) =>
@@ -296,7 +374,8 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
       const org = await createOrgOwnedBy(owner.id, 'rls-fn-pending-org');
       const academy = await createAcademyFor(org.id, 'rls-fn-pending-academy');
       const hostname = `fn-pending-${Date.now()}.test`;
-      await tenancyContext.runInTenantContext(org.id, (tx) =>
+      const pendingOwnerId = await resolveAcademyOwnerId(org.id, academy.id);
+      await tenancyContext.runInTenantAndUserContext(org.id, pendingOwnerId, (tx) =>
         tx.domainConnection.create({
           data: { academyId: academy.id, hostname, status: 'verification_required' },
         }),
@@ -313,7 +392,8 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
       const org = await createOrgOwnedBy(owner.id, 'rls-fn-subdomain-org');
       const academy = await createAcademyFor(org.id, 'rls-fn-subdomain-academy');
       const label = `fnsub${Date.now()}`;
-      await tenancyContext.runInTenantContext(org.id, (tx) =>
+      const subdomainOwnerId = await resolveAcademyOwnerId(org.id, academy.id);
+      await tenancyContext.runInTenantAndUserContext(org.id, subdomainOwnerId, (tx) =>
         tx.subdomainAllocation.create({
           data: { academyId: academy.id, subdomain: label, status: 'assigned' },
         }),

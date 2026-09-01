@@ -195,7 +195,7 @@ describe('Domain management (e2e)', () => {
     expect(row.hostname).toBeNull();
   });
 
-  it('a plain org member (no academy role) can read domain configuration but cannot write it', async () => {
+  it('a plain org member (no academy role) cannot read or write domain configuration (Phase 1, Extended Scope, dependency A: organization membership alone is never sufficient)', async () => {
     const { academy, org } = await seedManagedAcademy('domain-authz');
     const plainMember = await signUpAndSignIn(app, 'domain-authz-member');
     await admin.organizationMembership.create({
@@ -205,12 +205,31 @@ describe('Domain management (e2e)', () => {
     await request(app.getHttpServer())
       .get(`/academies/${academy.id}/website/domain`)
       .set('Authorization', `Bearer ${plainMember.accessToken}`)
-      .expect(200);
+      .expect(403);
 
     await request(app.getHttpServer())
       .post(`/academies/${academy.id}/website/domain/custom-domain`)
       .set('Authorization', `Bearer ${plainMember.accessToken}`)
       .send({ hostname: `authz-${Date.now()}.example.com` })
+      .expect(403);
+  });
+
+  it("a Manager assigned to a DIFFERENT Academy in the same Organization cannot read this Academy's domain configuration (Phase 1, Extended Scope, dependency A)", async () => {
+    const { academy, org } = await seedManagedAcademy('domain-cross-academy-read');
+    const otherAcademy = await seedAcademy(
+      admin,
+      org.id,
+      'domain-cross-academy-read-other',
+    );
+    const manager = await signUpAndSignIn(app, 'domain-cross-academy-manager');
+    await admin.organizationMembership.create({
+      data: { organizationId: org.id, userId: manager.userId, role: 'manager' },
+    });
+    await seedAcademyMember(admin, otherAcademy.id, manager.userId, 'manager');
+
+    await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/website/domain`)
+      .set('Authorization', `Bearer ${manager.accessToken}`)
       .expect(403);
   });
 

@@ -61,11 +61,37 @@ describe('Row-Level Security — website_faq_entries / website_testimonial_entri
   }
 
   async function createAcademyFor(organizationId: string, label: string) {
-    return tenancyContext.runInTenantContext(organizationId, (tx) =>
-      tx.academy.create({
+    return tenancyContext.runInTenantContext(organizationId, async (tx) => {
+      const org = await tx.organization.findUniqueOrThrow({
+        where: { id: organizationId },
+      });
+      const academy = await tx.academy.create({
         data: { organizationId, name: label, slug: `${label}-${Date.now()}` },
-      }),
+      });
+      // Phase 1 (Extended Scope, dependency A) — see `rls-website.e2e-spec.ts`'s identical helper doc comment.
+      await tx.academyMember.create({
+        data: {
+          academyId: academy.id,
+          userId: org.ownerUserId,
+          role: 'owner',
+          status: 'active',
+        },
+      });
+      return academy;
+    });
+  }
+
+  /** Phase 1 (Extended Scope, dependency A) — see `rls-website.e2e-spec.ts`'s identical helper. */
+  async function resolveAcademyOwnerId(
+    organizationId: string,
+    academyId: string,
+  ): Promise<string> {
+    const membership = await tenancyContext.runInTenantContext(organizationId, (tx) =>
+      tx.academyMember.findFirst({ where: { academyId, role: 'owner' } }),
     );
+    if (!membership)
+      throw new Error(`No owner membership found for academy ${academyId}`);
+    return membership.userId;
   }
 
   async function createFaqEntry(
@@ -73,7 +99,8 @@ describe('Row-Level Security — website_faq_entries / website_testimonial_entri
     academyId: string,
     label: string,
   ) {
-    return tenancyContext.runInTenantContext(organizationId, (tx) =>
+    const ownerId = await resolveAcademyOwnerId(organizationId, academyId);
+    return tenancyContext.runInTenantAndUserContext(organizationId, ownerId, (tx) =>
       tx.websiteFaqEntry.create({
         data: {
           academyId,
@@ -89,7 +116,8 @@ describe('Row-Level Security — website_faq_entries / website_testimonial_entri
     academyId: string,
     label: string,
   ) {
-    return tenancyContext.runInTenantContext(organizationId, (tx) =>
+    const ownerId = await resolveAcademyOwnerId(organizationId, academyId);
+    return tenancyContext.runInTenantAndUserContext(organizationId, ownerId, (tx) =>
       tx.websiteTestimonialEntry.create({
         data: {
           academyId,
@@ -127,13 +155,17 @@ describe('Row-Level Security — website_faq_entries / website_testimonial_entri
     const faqA = await createFaqEntry(orgA.id, academyA.id, 'rls-content-cross-a-faq');
     const faqB = await createFaqEntry(orgB.id, academyB.id, 'rls-content-cross-b-faq');
 
-    const visibleToA = await tenancyContext.runInTenantContext(orgA.id, (tx) =>
-      tx.websiteFaqEntry.findMany({ where: { id: { in: [faqA.id, faqB.id] } } }),
+    const visibleToA = await tenancyContext.runInTenantAndUserContext(
+      orgA.id,
+      ownerA.id,
+      (tx) => tx.websiteFaqEntry.findMany({ where: { id: { in: [faqA.id, faqB.id] } } }),
     );
     expect(visibleToA.map((e) => e.id)).toEqual([faqA.id]);
 
-    const visibleToB = await tenancyContext.runInTenantContext(orgB.id, (tx) =>
-      tx.websiteFaqEntry.findMany({ where: { id: { in: [faqA.id, faqB.id] } } }),
+    const visibleToB = await tenancyContext.runInTenantAndUserContext(
+      orgB.id,
+      ownerB.id,
+      (tx) => tx.websiteFaqEntry.findMany({ where: { id: { in: [faqA.id, faqB.id] } } }),
     );
     expect(visibleToB.map((e) => e.id)).toEqual([faqB.id]);
   });

@@ -23,6 +23,8 @@ import {
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
+import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { CoursesRepository } from '../repositories/courses.repository';
 import { CourseCategoriesRepository } from '../repositories/course-categories.repository';
 import { toCourseResponse } from '../dto/course.contract';
@@ -46,6 +48,8 @@ export class CoursesService {
     private readonly coursesRepository: CoursesRepository,
     private readonly courseCategoriesRepository: CourseCategoriesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly entitlementEnforcementService: EntitlementEnforcementService,
+    private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
   ) {}
 
   async list(
@@ -124,6 +128,14 @@ export class CoursesService {
       this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
         await this.assertCanManage(tx, academyId, userId);
 
+        // Phase 2 (Decision 4) — live `courses` limit check, inside the
+        // same transaction as the insert below.
+        await this.entitlementEnforcementService.assertWithinLimit(
+          tx,
+          organizationId,
+          'courses',
+        );
+
         return this.coursesRepository.create(tx, {
           academy: { connect: { id: academyId } },
           category: payload.categoryId
@@ -142,6 +154,9 @@ export class CoursesService {
         });
       }),
     );
+
+    // Phase 2 — real reactive usage-recompute trigger (a course change).
+    await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
 
     return toCourseResponse(course, { totalSections: 0, totalLessons: 0 });
   }
@@ -221,6 +236,9 @@ export class CoursesService {
       this.assertBelongsToAcademy(current, academyId);
       await this.coursesRepository.update(tx, courseId, { status: 'archived' });
     });
+
+    // Phase 2 — real reactive usage-recompute trigger (a course change).
+    await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
   }
 
   /**

@@ -319,6 +319,20 @@ describe('Row-Level Security — Provisioning (provisioning_requests/provisionin
           },
         }),
       );
+      // Phase 1 (Extended Scope, dependency A) — reproduces the real
+      // `AcademiesService.create`'s auto-granted owner membership, which
+      // the new `is_academy_member`-gated `subdomain_allocations` policies
+      // now require.
+      await tenancyContext.runInTenantContext(org.id, (tx) =>
+        tx.academyMember.create({
+          data: {
+            academyId: academy.id,
+            userId: owner.id,
+            role: 'owner',
+            status: 'active',
+          },
+        }),
+      );
       const subdomain = `rls-sit-check-${Date.now()}`;
 
       const before = await prisma.$queryRaw<{ subdomain_is_taken: boolean }[]>`
@@ -326,7 +340,7 @@ describe('Row-Level Security — Provisioning (provisioning_requests/provisionin
       `;
       expect(before[0]?.subdomain_is_taken).toBe(false);
 
-      await tenancyContext.runInTenantContext(org.id, (tx) =>
+      await tenancyContext.runInTenantAndUserContext(org.id, owner.id, (tx) =>
         tx.subdomainAllocation.create({
           data: { academyId: academy.id, subdomain, status: 'assigned' },
         }),

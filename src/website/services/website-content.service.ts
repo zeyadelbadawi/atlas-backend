@@ -94,25 +94,46 @@ export class WebsiteContentService {
     }
   }
 
+  /** Phase 1 (Extended Scope, dependency A) — see `WebsiteConfigurationService.assertIsMember`'s doc comment for why reads need this and writes already had it. */
+  private async assertIsMember(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+  ): Promise<void> {
+    const membership = await this.academyMembersRepository.findForUserInAcademy(
+      tx,
+      academyId,
+      userId,
+    );
+    if (!membership) {
+      throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
+    }
+  }
+
   /* ------------------------------ FAQ ------------------------------ */
 
   async getFaqEntries(
     academyId: string,
     organizationId: string,
+    userId: string,
     query: WebsiteContentListQueryDto,
   ): Promise<PaginatedResult<WebsiteFaqEntryResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
-    const { items, totalItems } = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) =>
-        this.websiteFaqEntriesRepository.findManyForAcademy(tx, academyId, {
-          status: query.status,
-          skip: (page - 1) * pageSize,
-          take: pageSize,
-        }),
-    );
+    const { items, totalItems } =
+      await this.tenancyContextService.runInTenantAndUserContext(
+        organizationId,
+        userId,
+        async (tx) => {
+          await this.assertIsMember(tx, academyId, userId);
+          return this.websiteFaqEntriesRepository.findManyForAcademy(tx, academyId, {
+            status: query.status,
+            skip: (page - 1) * pageSize,
+            take: pageSize,
+          });
+        },
+      );
 
     return {
       items: items.map(toWebsiteFaqEntryResponse),
@@ -123,11 +144,16 @@ export class WebsiteContentService {
   async getFaqEntry(
     academyId: string,
     organizationId: string,
+    userId: string,
     entryId: string,
   ): Promise<WebsiteFaqEntryResponse> {
-    const entry = await this.tenancyContextService.runInTenantContext(
+    const entry = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
-      (tx) => this.websiteFaqEntriesRepository.findById(tx, academyId, entryId),
+      userId,
+      async (tx) => {
+        await this.assertIsMember(tx, academyId, userId);
+        return this.websiteFaqEntriesRepository.findById(tx, academyId, entryId);
+      },
     );
     if (!entry) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return toWebsiteFaqEntryResponse(entry);
@@ -139,19 +165,23 @@ export class WebsiteContentService {
     userId: string,
     payload: CreateWebsiteFaqEntryDto,
   ): Promise<WebsiteFaqEntryResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const validated = parseOrThrow(createFaqEntrySchema, payload);
-      const order = await this.websiteFaqEntriesRepository.nextOrder(tx, academyId);
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const validated = parseOrThrow(createFaqEntrySchema, payload);
+        const order = await this.websiteFaqEntriesRepository.nextOrder(tx, academyId);
 
-      const created = await this.websiteFaqEntriesRepository.create(tx, {
-        academy: { connect: { id: academyId } },
-        question: validated.question,
-        answer: validated.answer,
-        order,
-      });
-      return toWebsiteFaqEntryResponse(created);
-    });
+        const created = await this.websiteFaqEntriesRepository.create(tx, {
+          academy: { connect: { id: academyId } },
+          question: validated.question,
+          answer: validated.answer,
+          order,
+        });
+        return toWebsiteFaqEntryResponse(created);
+      },
+    );
   }
 
   async updateFaqEntry(
@@ -161,25 +191,29 @@ export class WebsiteContentService {
     entryId: string,
     payload: UpdateWebsiteFaqEntryDto,
   ): Promise<WebsiteFaqEntryResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const existing = await this.websiteFaqEntriesRepository.findById(
-        tx,
-        academyId,
-        entryId,
-      );
-      if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.websiteFaqEntriesRepository.findById(
+          tx,
+          academyId,
+          entryId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-      const validated = parseOrThrow(updateFaqEntrySchema, payload);
-      const data: Prisma.WebsiteFaqEntryUpdateInput = {};
-      if (validated.question !== undefined) data.question = validated.question;
-      if (validated.answer !== undefined) data.answer = validated.answer;
-      if (validated.order !== undefined) data.order = validated.order;
-      if (validated.visible !== undefined) data.visible = validated.visible;
+        const validated = parseOrThrow(updateFaqEntrySchema, payload);
+        const data: Prisma.WebsiteFaqEntryUpdateInput = {};
+        if (validated.question !== undefined) data.question = validated.question;
+        if (validated.answer !== undefined) data.answer = validated.answer;
+        if (validated.order !== undefined) data.order = validated.order;
+        if (validated.visible !== undefined) data.visible = validated.visible;
 
-      const updated = await this.websiteFaqEntriesRepository.update(tx, entryId, data);
-      return toWebsiteFaqEntryResponse(updated);
-    });
+        const updated = await this.websiteFaqEntriesRepository.update(tx, entryId, data);
+        return toWebsiteFaqEntryResponse(updated);
+      },
+    );
   }
 
   async publishFaqEntry(
@@ -188,23 +222,27 @@ export class WebsiteContentService {
     userId: string,
     entryId: string,
   ): Promise<WebsiteFaqEntryResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const existing = await this.websiteFaqEntriesRepository.findById(
-        tx,
-        academyId,
-        entryId,
-      );
-      if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      if (existing.status === 'archived') {
-        throw new ConflictException({ messageKey: 'errors.website.contentArchived' });
-      }
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.websiteFaqEntriesRepository.findById(
+          tx,
+          academyId,
+          entryId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        if (existing.status === 'archived') {
+          throw new ConflictException({ messageKey: 'errors.website.contentArchived' });
+        }
 
-      const updated = await this.websiteFaqEntriesRepository.update(tx, entryId, {
-        status: 'published',
-      });
-      return toWebsiteFaqEntryResponse(updated);
-    });
+        const updated = await this.websiteFaqEntriesRepository.update(tx, entryId, {
+          status: 'published',
+        });
+        return toWebsiteFaqEntryResponse(updated);
+      },
+    );
   }
 
   async archiveFaqEntry(
@@ -213,23 +251,27 @@ export class WebsiteContentService {
     userId: string,
     entryId: string,
   ): Promise<WebsiteFaqEntryResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const existing = await this.websiteFaqEntriesRepository.findById(
-        tx,
-        academyId,
-        entryId,
-      );
-      if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      if (existing.status === 'archived') {
-        throw new ConflictException({ messageKey: 'errors.website.contentArchived' });
-      }
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.websiteFaqEntriesRepository.findById(
+          tx,
+          academyId,
+          entryId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        if (existing.status === 'archived') {
+          throw new ConflictException({ messageKey: 'errors.website.contentArchived' });
+        }
 
-      const updated = await this.websiteFaqEntriesRepository.update(tx, entryId, {
-        status: 'archived',
-      });
-      return toWebsiteFaqEntryResponse(updated);
-    });
+        const updated = await this.websiteFaqEntriesRepository.update(tx, entryId, {
+          status: 'archived',
+        });
+        return toWebsiteFaqEntryResponse(updated);
+      },
+    );
   }
 
   /* --------------------------- Testimonial -------------------------- */
@@ -237,20 +279,29 @@ export class WebsiteContentService {
   async getTestimonialEntries(
     academyId: string,
     organizationId: string,
+    userId: string,
     query: WebsiteContentListQueryDto,
   ): Promise<PaginatedResult<WebsiteTestimonialEntryResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
-    const { items, totalItems } = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) =>
-        this.websiteTestimonialEntriesRepository.findManyForAcademy(tx, academyId, {
-          status: query.status,
-          skip: (page - 1) * pageSize,
-          take: pageSize,
-        }),
-    );
+    const { items, totalItems } =
+      await this.tenancyContextService.runInTenantAndUserContext(
+        organizationId,
+        userId,
+        async (tx) => {
+          await this.assertIsMember(tx, academyId, userId);
+          return this.websiteTestimonialEntriesRepository.findManyForAcademy(
+            tx,
+            academyId,
+            {
+              status: query.status,
+              skip: (page - 1) * pageSize,
+              take: pageSize,
+            },
+          );
+        },
+      );
 
     return {
       items: items.map(toWebsiteTestimonialEntryResponse),
@@ -261,11 +312,16 @@ export class WebsiteContentService {
   async getTestimonialEntry(
     academyId: string,
     organizationId: string,
+    userId: string,
     entryId: string,
   ): Promise<WebsiteTestimonialEntryResponse> {
-    const entry = await this.tenancyContextService.runInTenantContext(
+    const entry = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
-      (tx) => this.websiteTestimonialEntriesRepository.findById(tx, academyId, entryId),
+      userId,
+      async (tx) => {
+        await this.assertIsMember(tx, academyId, userId);
+        return this.websiteTestimonialEntriesRepository.findById(tx, academyId, entryId);
+      },
     );
     if (!entry) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return toWebsiteTestimonialEntryResponse(entry);
@@ -277,24 +333,28 @@ export class WebsiteContentService {
     userId: string,
     payload: CreateWebsiteTestimonialEntryDto,
   ): Promise<WebsiteTestimonialEntryResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const validated = parseOrThrow(createTestimonialEntrySchema, payload);
-      const order = await this.websiteTestimonialEntriesRepository.nextOrder(
-        tx,
-        academyId,
-      );
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const validated = parseOrThrow(createTestimonialEntrySchema, payload);
+        const order = await this.websiteTestimonialEntriesRepository.nextOrder(
+          tx,
+          academyId,
+        );
 
-      const created = await this.websiteTestimonialEntriesRepository.create(tx, {
-        academy: { connect: { id: academyId } },
-        quote: validated.quote,
-        authorName: validated.authorName,
-        authorRole: validated.authorRole,
-        avatar: validated.avatar,
-        order,
-      });
-      return toWebsiteTestimonialEntryResponse(created);
-    });
+        const created = await this.websiteTestimonialEntriesRepository.create(tx, {
+          academy: { connect: { id: academyId } },
+          quote: validated.quote,
+          authorName: validated.authorName,
+          authorRole: validated.authorRole,
+          avatar: validated.avatar,
+          order,
+        });
+        return toWebsiteTestimonialEntryResponse(created);
+      },
+    );
   }
 
   async updateTestimonialEntry(
@@ -304,31 +364,35 @@ export class WebsiteContentService {
     entryId: string,
     payload: UpdateWebsiteTestimonialEntryDto,
   ): Promise<WebsiteTestimonialEntryResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const existing = await this.websiteTestimonialEntriesRepository.findById(
-        tx,
-        academyId,
-        entryId,
-      );
-      if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.websiteTestimonialEntriesRepository.findById(
+          tx,
+          academyId,
+          entryId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-      const validated = parseOrThrow(updateTestimonialEntrySchema, payload);
-      const data: Prisma.WebsiteTestimonialEntryUpdateInput = {};
-      if (validated.quote !== undefined) data.quote = validated.quote;
-      if (validated.authorName !== undefined) data.authorName = validated.authorName;
-      if (validated.authorRole !== undefined) data.authorRole = validated.authorRole;
-      if (validated.avatar !== undefined) data.avatar = validated.avatar;
-      if (validated.order !== undefined) data.order = validated.order;
-      if (validated.visible !== undefined) data.visible = validated.visible;
+        const validated = parseOrThrow(updateTestimonialEntrySchema, payload);
+        const data: Prisma.WebsiteTestimonialEntryUpdateInput = {};
+        if (validated.quote !== undefined) data.quote = validated.quote;
+        if (validated.authorName !== undefined) data.authorName = validated.authorName;
+        if (validated.authorRole !== undefined) data.authorRole = validated.authorRole;
+        if (validated.avatar !== undefined) data.avatar = validated.avatar;
+        if (validated.order !== undefined) data.order = validated.order;
+        if (validated.visible !== undefined) data.visible = validated.visible;
 
-      const updated = await this.websiteTestimonialEntriesRepository.update(
-        tx,
-        entryId,
-        data,
-      );
-      return toWebsiteTestimonialEntryResponse(updated);
-    });
+        const updated = await this.websiteTestimonialEntriesRepository.update(
+          tx,
+          entryId,
+          data,
+        );
+        return toWebsiteTestimonialEntryResponse(updated);
+      },
+    );
   }
 
   async publishTestimonialEntry(
@@ -337,23 +401,31 @@ export class WebsiteContentService {
     userId: string,
     entryId: string,
   ): Promise<WebsiteTestimonialEntryResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const existing = await this.websiteTestimonialEntriesRepository.findById(
-        tx,
-        academyId,
-        entryId,
-      );
-      if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      if (existing.status === 'archived') {
-        throw new ConflictException({ messageKey: 'errors.website.contentArchived' });
-      }
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.websiteTestimonialEntriesRepository.findById(
+          tx,
+          academyId,
+          entryId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        if (existing.status === 'archived') {
+          throw new ConflictException({ messageKey: 'errors.website.contentArchived' });
+        }
 
-      const updated = await this.websiteTestimonialEntriesRepository.update(tx, entryId, {
-        status: 'published',
-      });
-      return toWebsiteTestimonialEntryResponse(updated);
-    });
+        const updated = await this.websiteTestimonialEntriesRepository.update(
+          tx,
+          entryId,
+          {
+            status: 'published',
+          },
+        );
+        return toWebsiteTestimonialEntryResponse(updated);
+      },
+    );
   }
 
   async archiveTestimonialEntry(
@@ -362,22 +434,30 @@ export class WebsiteContentService {
     userId: string,
     entryId: string,
   ): Promise<WebsiteTestimonialEntryResponse> {
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const existing = await this.websiteTestimonialEntriesRepository.findById(
-        tx,
-        academyId,
-        entryId,
-      );
-      if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      if (existing.status === 'archived') {
-        throw new ConflictException({ messageKey: 'errors.website.contentArchived' });
-      }
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.websiteTestimonialEntriesRepository.findById(
+          tx,
+          academyId,
+          entryId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        if (existing.status === 'archived') {
+          throw new ConflictException({ messageKey: 'errors.website.contentArchived' });
+        }
 
-      const updated = await this.websiteTestimonialEntriesRepository.update(tx, entryId, {
-        status: 'archived',
-      });
-      return toWebsiteTestimonialEntryResponse(updated);
-    });
+        const updated = await this.websiteTestimonialEntriesRepository.update(
+          tx,
+          entryId,
+          {
+            status: 'archived',
+          },
+        );
+        return toWebsiteTestimonialEntryResponse(updated);
+      },
+    );
   }
 }

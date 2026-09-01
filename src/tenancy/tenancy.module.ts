@@ -25,29 +25,44 @@
  * controller can still call it, UNMODIFIED, for the non-Platform-Owner
  * branch — every byte of P2's own tenant-member behavior is preserved,
  * just invoked from a different module.
+ *
+ * Phase 2 note — for the exact same reason, `POST /organizations` (this
+ * module's OWN controller, previously declared here) moved downstream
+ * into `PlansModule` too: it now needs
+ * `OrganizationSubscriptionBootstrapService` to give every brand-new
+ * Organization a real trial subscription atomically at creation time
+ * (Decision 6), and `PlansModule` already depends on `TenancyModule`
+ * one-directionally, so it can safely hold that controller.
+ * `OrganizationsService.create` itself gained one new OPTIONAL parameter
+ * (`onCreated`, a plain transaction-scoped callback) for exactly this —
+ * see that method's own doc comment — so this module still imports
+ * nothing new and stays exactly as dependency-free as it always was.
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
-import { OrganizationsController } from './controllers/organizations.controller';
 import { OrganizationsService } from './services/organizations.service';
 import { UserOrganizationsService } from './services/user-organizations.service';
 import { TenancyContextService } from './services/tenancy-context.service';
 import { OrganizationsRepository } from './repositories/organizations.repository';
 import { OrganizationMembershipsRepository } from './repositories/organization-memberships.repository';
+import { AcademyStudentsRepository } from './repositories/academy-students.repository';
 import { OrganizationMembershipGuard } from './guards/organization-membership.guard';
 
 @Module({
   imports: [AuthCoreModule],
-  controllers: [
-    // Phase P19 — `POST /organizations` only; every `GET` route for this
-    // resource still lives in `PlatformModule` per this file's own P15
-    // note below.
-    OrganizationsController,
-  ],
+  // Phase P19's `POST /organizations` controller moved into `PlansModule`
+  // in Phase 2 (see this file's own header comment) — every `GET` route
+  // for this resource already lived in `PlatformModule` per the P15 note
+  // above, so this module now declares no controllers of its own at all.
+  controllers: [],
   providers: [
     TenancyContextService,
     OrganizationsRepository,
     OrganizationMembershipsRepository,
+    // Phase 1 (Extended Scope, dependency D) — lives here, not
+    // `AcademyModule`, so `IdentityModule` (self-registration) can use it
+    // too without a circular import; see the repository's own doc comment.
+    AcademyStudentsRepository,
     OrganizationsService,
     UserOrganizationsService,
     OrganizationMembershipGuard,
@@ -56,6 +71,7 @@ import { OrganizationMembershipGuard } from './guards/organization-membership.gu
     TenancyContextService,
     OrganizationsRepository,
     OrganizationMembershipsRepository,
+    AcademyStudentsRepository,
     UserOrganizationsService,
     // Phase P15 additions — both reused verbatim, unmodified, by
     // `PlatformModule`'s `OrganizationsController` (see this file's own

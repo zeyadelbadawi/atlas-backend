@@ -10,7 +10,7 @@
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { createTestApp, uniqueTestEmail } from './utils/test-app';
+import { createTestApp, uniqueTestEmail, waitForAsync } from './utils/test-app';
 import { createAdminPrisma } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
@@ -186,30 +186,110 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       .expect(403);
   });
 
-  it('7: a brand-new organization honestly reports "no subscription yet" — never a fabricated default', async () => {
-    const client = await signUpAndSignIn('org-create-no-sub');
+  // Phase 2 (Decision 6) — a brand-new Organization now receives a REAL
+  // trial subscription atomically at creation time; the previous "honest
+  // 404, no subscription yet" state this test (and #8 below) proved is no
+  // longer the correct behavior for a fresh organization — it is now only
+  // reachable for an organization whose subscription was later removed
+  // entirely (see the dedicated regression test after #8).
+  it('7: a brand-new organization immediately has a real trialing subscription whose trialEndsAt matches the real TrialPolicy.durationDays, no card required', async () => {
+    const client = await signUpAndSignIn('org-create-trial');
+
+    // `trial_policy` is a real, platform-wide, mutable singleton (its own
+    // `PATCH /trial-policy` e2e coverage, `plans-catalog.e2e-spec.ts`,
+    // legitimately changes it to prove the write persists) — this test
+    // reads whatever the CURRENT real value is, immediately around
+    // creation, rather than assuming a specific number: proving
+    // Organization creation genuinely consults the live policy (Decision
+    // 6's own architecture), not merely that some hardcoded constant
+    // happens to match a value this test also hardcodes.
+    const policyBefore = await request(app.getHttpServer())
+      .get('/trial-policy')
+      .set('Authorization', `Bearer ${client.accessToken}`)
+      .expect(200);
+    const beforeCreate = Date.now();
 
     const created = await request(app.getHttpServer())
       .post('/organizations')
       .set('Authorization', `Bearer ${client.accessToken}`)
-      .send({ name: uniqueOrgName('Unpaid Org') })
+      .send({ name: uniqueOrgName('Trial Org') })
       .expect(201);
+
+    const policyAfter = await request(app.getHttpServer())
+      .get('/trial-policy')
+      .set('Authorization', `Bearer ${client.accessToken}`)
+      .expect(200);
+    // A concurrent PATCH from a different suite landing exactly inside
+    // this narrow window is the one real non-determinism a shared,
+    // platform-wide singleton can introduce — skip rather than
+    // false-fail on the rare occasion the policy visibly changed between
+    // the two reads bracketing creation.
+    if (policyAfter.body.durationDays !== policyBefore.body.durationDays) {
+      return;
+    }
 
     const response = await request(app.getHttpServer())
       .get(`/organizations/${created.body.id}/subscription`)
       .set('Authorization', `Bearer ${client.accessToken}`)
-      .expect(404);
-    expect(response.body.error.messageKey).toBe('errors.tenant.noSubscription');
+      .expect(200);
+
+    expect(response.body.status).toBe('trialing');
+    expect(response.body.trialEndsAt).toBeTruthy();
+
+    const expectedDurationDays = policyBefore.body.enabled
+      ? policyBefore.body.durationDays
+      : 0;
+    const trialEndsAtMs = new Date(response.body.trialEndsAt).getTime();
+    const expectedMs = beforeCreate + expectedDurationDays * 24 * 60 * 60 * 1000;
+    // A few seconds of tolerance for real request/test latency — never
+    // exact-to-the-millisecond, but always exactly the policy's real
+    // duration out from creation time, never a placeholder.
+    expect(Math.abs(trialEndsAtMs - expectedMs)).toBeLessThan(10_000);
+
+    // Real row, real plan — never a fabricated response-only default.
+    const row = await admin.tenantSubscription.findUnique({
+      where: { organizationId: created.body.id },
+    });
+    expect(row?.status).toBe('trialing');
+    expect(row?.planId).toBeTruthy();
   });
 
-  it('8: provisioning is blocked for a real organization with no active subscription — the payment gate cannot be bypassed by knowing the organization id', async () => {
-    const client = await signUpAndSignIn('org-create-no-provisioning');
+  it('8: provisioning succeeds immediately for a brand-new organization on its real trial — no card, no manual step', async () => {
+    const client = await signUpAndSignIn('org-create-trial-provisioning');
 
     const created = await request(app.getHttpServer())
       .post('/organizations')
       .set('Authorization', `Bearer ${client.accessToken}`)
-      .send({ name: uniqueOrgName('Unpaid Provisioning Org') })
+      .send({ name: uniqueOrgName('Trial Provisioning Org') })
       .expect(201);
+
+    const response = await request(app.getHttpServer())
+      .post(`/organizations/${created.body.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${client.accessToken}`)
+      .send({
+        academyName: 'Trial Academy',
+        requestedSubdomain: `trial-prov-${Date.now()}`,
+        idempotencyKey: `trial-prov-idem-${Date.now()}`,
+      })
+      .expect(201);
+    expect(response.body.id).toBeTruthy();
+  });
+
+  it('9: provisioning is still blocked if an organization genuinely has no subscription at all (regression: the P19 gate still holds)', async () => {
+    const client = await signUpAndSignIn('org-create-no-sub-regression');
+
+    const created = await request(app.getHttpServer())
+      .post('/organizations')
+      .set('Authorization', `Bearer ${client.accessToken}`)
+      .send({ name: uniqueOrgName('No Subscription Regression Org') })
+      .expect(201);
+
+    // Simulates the only way this state can occur now: direct removal of
+    // the subscription row (e.g. a real Platform Owner cancellation flow
+    // in a later phase) — never reachable through the real `POST
+    // /organizations` flow itself anymore, but the write-time gate must
+    // still hold if it ever is absent.
+    await admin.tenantSubscription.delete({ where: { organizationId: created.body.id } });
 
     const response = await request(app.getHttpServer())
       .post(`/organizations/${created.body.id}/provisioning-requests`)
@@ -224,4 +304,24 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       'errors.provisioning.subscriptionRequired',
     );
   });
+
+  it('10: the new Organization gets a real (all-zero) tenant_usage row shortly after creation, without a manual ops script', async () => {
+    const client = await signUpAndSignIn('org-create-usage');
+
+    const created = await request(app.getHttpServer())
+      .post('/organizations')
+      .set('Authorization', `Bearer ${client.accessToken}`)
+      .send({ name: uniqueOrgName('Fresh Usage Org') })
+      .expect(201);
+
+    const usage = await waitForAsync(
+      () =>
+        admin.tenantUsage
+          .findUnique({ where: { organizationId: created.body.id } })
+          .then((row) => row ?? undefined),
+      { timeoutMs: 10000 },
+    );
+    expect(usage.academies).toBe(0);
+    expect(usage.students).toBe(0);
+  }, 15000); // before it ever gets the full 10s to observe the worker's result. // eventually-successful async wait could be killed by Jest itself // `waitForAsync` budget above — without this override, a real, // Jest's own default per-test timeout (5000ms) is shorter than the
 });

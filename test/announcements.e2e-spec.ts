@@ -11,7 +11,9 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
   seedAcademy,
+  seedAcademyStudent,
   seedAcademyMember,
+  seedActiveSubscriptionForOrg,
   seedCourse,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
@@ -58,6 +60,7 @@ describe('Announcements (e2e)', () => {
   async function seedManagedCourse(label: string) {
     const owner = await signUpAndSignIn(app, `${label}-owner`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
+    await seedActiveSubscriptionForOrg(admin, org.id, label);
     const academy = await seedAcademy(admin, org.id, `${label}-academy`);
     await seedAcademyMember(admin, academy.id, owner.userId, 'owner');
     const course = await seedCourse(admin, academy.id, `${label}-course-${Date.now()}`, {
@@ -100,8 +103,9 @@ describe('Announcements (e2e)', () => {
   });
 
   it('a published course announcement is visible in the feed to an enrolled student, and archiving removes it from further public visibility', async () => {
-    const { owner, course } = await seedManagedCourse('ann-feed');
+    const { owner, academy, course } = await seedManagedCourse('ann-feed');
     const student = await signUpAndSignIn(app, 'ann-feed-student');
+    await seedAcademyStudent(admin, academy.id, student.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)
@@ -139,8 +143,9 @@ describe('Announcements (e2e)', () => {
   });
 
   it('a draft course announcement never appears in a student feed before publishing', async () => {
-    const { owner, course } = await seedManagedCourse('ann-draft-hidden');
+    const { owner, academy, course } = await seedManagedCourse('ann-draft-hidden');
     const student = await signUpAndSignIn(app, 'ann-draft-hidden-student');
+    await seedAcademyStudent(admin, academy.id, student.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)

@@ -16,6 +16,8 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
   seedAcademy,
+  seedAcademyStudent,
+  seedActiveSubscriptionForOrg,
   seedAssignment,
   seedCourse,
   seedOrganizationWithOwner,
@@ -66,6 +68,7 @@ describe('Student Learning tenant isolation (e2e) — P6-TENANT-001..006', () =>
   async function seedCourseFixture(label: string) {
     const owner = await signUpAndSignIn(app, `${label}-owner`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
+    await seedActiveSubscriptionForOrg(admin, org.id, label);
     const academy = await seedAcademy(admin, org.id, `${label}-academy`);
     const course = await seedCourse(admin, academy.id, `${label}-course-${Date.now()}`, {
       status: 'published',
@@ -79,6 +82,8 @@ describe('Student Learning tenant isolation (e2e) — P6-TENANT-001..006', () =>
     const { course } = await seedCourseFixture('t001');
     const studentA = await signUpAndSignIn(app, 't001-a');
     const studentB = await signUpAndSignIn(app, 't001-b');
+    await seedAcademyStudent(admin, course.academyId, studentA.userId);
+    await seedAcademyStudent(admin, course.academyId, studentB.userId);
 
     await request(app.getHttpServer())
       .post('/enrollments')
@@ -99,6 +104,8 @@ describe('Student Learning tenant isolation (e2e) — P6-TENANT-001..006', () =>
     const { course } = await seedCourseFixture('t002');
     const studentA = await signUpAndSignIn(app, 't002-a');
     const studentB = await signUpAndSignIn(app, 't002-b');
+    await seedAcademyStudent(admin, course.academyId, studentA.userId);
+    await seedAcademyStudent(admin, course.academyId, studentB.userId);
 
     const enrollmentA = await request(app.getHttpServer())
       .post('/enrollments')
@@ -119,6 +126,8 @@ describe('Student Learning tenant isolation (e2e) — P6-TENANT-001..006', () =>
     const { course } = await seedCourseFixture('t003');
     const studentA = await signUpAndSignIn(app, 't003-a');
     const studentB = await signUpAndSignIn(app, 't003-b');
+    await seedAcademyStudent(admin, course.academyId, studentA.userId);
+    await seedAcademyStudent(admin, course.academyId, studentB.userId);
 
     await request(app.getHttpServer())
       .post('/enrollments')
@@ -142,6 +151,8 @@ describe('Student Learning tenant isolation (e2e) — P6-TENANT-001..006', () =>
 
     const studentA = await signUpAndSignIn(app, 't004-a');
     const studentB = await signUpAndSignIn(app, 't004-b');
+    await seedAcademyStudent(admin, course.academyId, studentA.userId);
+    await seedAcademyStudent(admin, course.academyId, studentB.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${studentA.accessToken}`)
@@ -184,6 +195,8 @@ describe('Student Learning tenant isolation (e2e) — P6-TENANT-001..006', () =>
     });
     const studentA = await signUpAndSignIn(app, 't005-a');
     const studentB = await signUpAndSignIn(app, 't005-b');
+    await seedAcademyStudent(admin, course.academyId, studentA.userId);
+    await seedAcademyStudent(admin, course.academyId, studentB.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${studentA.accessToken}`)
@@ -227,6 +240,8 @@ describe('Student Learning tenant isolation (e2e) — P6-TENANT-001..006', () =>
 
     const studentA = await signUpAndSignIn(app, 't006-a');
     const studentB = await signUpAndSignIn(app, 't006-b');
+    await seedAcademyStudent(admin, course.academyId, studentA.userId);
+    await seedAcademyStudent(admin, course.academyId, studentB.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${studentA.accessToken}`)

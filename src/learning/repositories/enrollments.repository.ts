@@ -58,7 +58,9 @@ export class EnrollmentsRepository {
           course: {
             include: {
               category: true,
-              instructors: { include: { user: { select: { id: true, name: true, avatarUrl: true } } } },
+              instructors: {
+                include: { user: { select: { id: true, name: true, avatarUrl: true } } },
+              },
             },
           },
         },
@@ -73,6 +75,33 @@ export class EnrollmentsRepository {
     data: Prisma.EnrollmentCreateInput,
   ): Promise<Enrollment> {
     return tx.enrollment.create({ data });
+  }
+
+  /**
+   * Phase 2 — whether this student already holds at least one OTHER real
+   * (non-`unavailable`) enrollment anywhere in this organization, BEFORE
+   * the enrollment currently being created. `EnrollmentsService.
+   * createEnrollment` uses this to decide whether a new enrollment
+   * actually adds a NEW distinct student against the `students` plan
+   * limit (0 more, if they are already counted via another course in the
+   * same organization) or a genuinely new one (1 more) — without this,
+   * a student's second, third, ... enrollment in the same organization
+   * would be wrongly charged against the limit a second time, a real
+   * false-positive block the roadmap explicitly requires this codebase
+   * avoid ("confirm no false-positive blocking").
+   */
+  countActiveForStudentInOrganization(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    studentId: string,
+  ): Promise<number> {
+    return tx.enrollment.count({
+      where: {
+        studentId,
+        status: { not: 'unavailable' },
+        course: { academy: { organizationId, status: { not: 'archived' } } },
+      },
+    });
   }
 
   update(

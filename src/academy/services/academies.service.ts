@@ -19,12 +19,15 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
+import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import {
   ORGANIZATION_INSTRUCTOR_PERMISSIONS,
   ORGANIZATION_MANAGER_PERMISSIONS,
 } from '../../tenancy/constants/organization-permissions.constants';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { PasswordHasherService } from '../../identity/services/password-hasher.service';
+import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
+import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { AcademiesRepository } from '../repositories/academies.repository';
 import { AcademyMembersRepository } from '../repositories/academy-members.repository';
 import { toAcademyResponse } from '../dto/academy.contract';
@@ -86,6 +89,9 @@ export class AcademiesService {
     private readonly organizationMembershipsRepository: OrganizationMembershipsRepository,
     private readonly usersRepository: UsersRepository,
     private readonly passwordHasherService: PasswordHasherService,
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
+    private readonly entitlementEnforcementService: EntitlementEnforcementService,
+    private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
   ) {}
 
   /**
@@ -154,6 +160,22 @@ export class AcademiesService {
       this.tenancyContextService.runInTenantContext(
         payload.organizationId,
         async (tx) => {
+          // Phase 2 (Decision 4) — the live, write-time entitlement
+          // check, INSIDE the same transaction as the insert below, so
+          // the count and the write can never observe a different state
+          // of the world. Reached from every real entry point this
+          // codebase has for creating an Academy — the direct `POST
+          // /academies` route AND `ProvisioningModule`'s orchestration
+          // step (`ProvisioningOrchestratorService`, which calls this
+          // exact method, never a second, parallel academy-creation
+          // path) — so both are covered by this one check, never just
+          // the primary UI-driven one.
+          await this.entitlementEnforcementService.assertWithinLimit(
+            tx,
+            payload.organizationId,
+            'academies',
+          );
+
           const created = await this.academiesRepository.create(tx, {
             organization: { connect: { id: payload.organizationId } },
             name: payload.name,
@@ -193,6 +215,9 @@ export class AcademiesService {
         },
       ),
     );
+
+    // Phase 2 — real reactive usage-recompute trigger (an academy change).
+    await this.tenantUsageRecomputeProducer.enqueueOne(payload.organizationId);
 
     return toAcademyResponse(academy);
   }
@@ -276,6 +301,11 @@ export class AcademiesService {
       await this.assertCanManage(tx, academyId, userId);
       await this.academiesRepository.update(tx, academyId, { status: 'archived' });
     });
+
+    // Phase 2 — an archived academy frees its entire quota footprint
+    // (academies/instructors/staff/courses/students/storage all drop) —
+    // real reactive usage-recompute trigger.
+    await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
   }
 
   async getMembers(
@@ -448,10 +478,8 @@ export class AcademiesService {
     actingUserId: string,
     payload: AddAcademyInstructorDto,
   ): Promise<AcademyMemberResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
-      organizationId,
-      actingUserId,
-      async (tx) => {
+    return this.tenancyContextService
+      .runInTenantAndUserContext(organizationId, actingUserId, async (tx) => {
         const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
           tx,
           academyId,
@@ -508,6 +536,17 @@ export class AcademiesService {
           });
         }
 
+        // Phase 2 (Decision 4) — live `instructors` limit check, after
+        // every authorization/conflict check above (a caller who was
+        // never allowed to grant this, or a target who is already a
+        // member, gets that specific error first — a limit rejection
+        // only fires for an otherwise-legitimate grant).
+        await this.entitlementEnforcementService.assertWithinLimit(
+          tx,
+          organizationId,
+          'instructors',
+        );
+
         const created = await this.academyMembersRepository.create(tx, {
           academy: { connect: { id: academyId } },
           user: { connect: { id: targetUser.id } },
@@ -527,8 +566,13 @@ export class AcademiesService {
           ...created,
           user: { id: targetUser.id, name: targetUser.name, email: targetUser.email },
         });
-      },
-    );
+      })
+      .then(async (response) => {
+        // Phase 2 — real reactive usage-recompute trigger (an `instructors`
+        // count change), run after the granting transaction has committed.
+        await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
+        return response;
+      });
   }
 
   /**
@@ -579,6 +623,20 @@ export class AcademiesService {
           name: payload.name,
         });
 
+        // Phase 1 (Extended Scope, Decision 11, dependency D) — a
+        // Manager/Owner-created student now gets the exact same real
+        // Academy membership self-registration does, closing the gap this
+        // response type's own pre-existing doc comment named explicitly
+        // ("a student is never an `academy_members` row" — true, and now
+        // also no longer true that they have NO academy row at all).
+        // Staff-insert policy (`academy_students_staff_insert`), tenant-
+        // scoped exactly like `academy_members_insert` — the role check
+        // above already gates who may reach this point.
+        await this.academyStudentsRepository.create(tx, {
+          academyId,
+          userId: created.id,
+        });
+
         await this.auditLogWriterService.write(tx, {
           actorUserId: actingUserId,
           organizationId,
@@ -588,7 +646,7 @@ export class AcademiesService {
           targetLabel: created.email,
         });
 
-        return toAcademyStudentResponse(created);
+        return toAcademyStudentResponse(created, academyId);
       },
     );
   }
@@ -650,14 +708,33 @@ export class AcademiesService {
    * actual source of truth, and a violation here is converted to the same
    * clean 409 rather than surfacing as a raw, unhandled 500.
    */
+  /**
+   * `academies` has exactly one relevant unique constraint reachable from
+   * the two callers of this method (`create`/`update`'s wrapped writes):
+   * `slug`. `error.meta.target` is NOT reliably populated by Postgres/
+   * Prisma for every `P2002` — confirmed empirically in this environment
+   * (surfaces as `"(not available)"`, no target array at all), which is
+   * exactly the same, already-documented limitation
+   * `OrganizationsService.isUniqueSlugViolation` and the provisioning
+   * orchestrator's `tryAdoptExistingAcademy` (`isRawSlugConflict`) both
+   * work around by matching on `error.code === 'P2002'` alone rather than
+   * trusting `target`'s shape. This previously relied on `target` being
+   * an array containing `'slug'`, which this driver never actually
+   * provides, so the conversion below silently never fired and a raw
+   * `PrismaClientKnownRequestError` escaped as an unhandled 500 on every
+   * real slug/subdomain collision through `create`/`update` (the
+   * orchestrator's own call path already worked around this independently
+   * — see its doc comment — but the direct `create`/`update` routes did
+   * not). Fixed here at the actual source, matching the same reasoning
+   * `OrganizationsService` already documents for the identical problem.
+   */
   private async withSlugConflictHandling<T>(work: () => Promise<T>): Promise<T> {
     try {
       return await work();
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002' &&
-        (error.meta?.target as string[] | undefined)?.includes('slug')
+        error.code === 'P2002'
       ) {
         throw new ConflictException({ messageKey: 'errors.academy.slugTaken' });
       }

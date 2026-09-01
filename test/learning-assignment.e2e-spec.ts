@@ -11,6 +11,8 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
   seedAcademy,
+  seedAcademyStudent,
+  seedActiveSubscriptionForOrg,
   seedAssignment,
   seedCourse,
   seedOrganizationWithOwner,
@@ -61,6 +63,7 @@ describe('Assignments (e2e)', () => {
   ) {
     const owner = await signUpAndSignIn(app, `${label}-owner`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
+    await seedActiveSubscriptionForOrg(admin, org.id, label);
     const academy = await seedAcademy(admin, org.id, `${label}-academy`);
     const course = await seedCourse(admin, academy.id, `${label}-course-${Date.now()}`, {
       status: 'published',
@@ -73,6 +76,7 @@ describe('Assignments (e2e)', () => {
     });
 
     const student = await signUpAndSignIn(app, `${label}-student`);
+    await seedAcademyStudent(admin, academy.id, student.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)

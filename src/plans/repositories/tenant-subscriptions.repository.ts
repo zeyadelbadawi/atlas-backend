@@ -74,6 +74,72 @@ export class TenantSubscriptionsRepository {
     });
   }
 
+  /**
+   * Phase 2 — the trial-expiry sweep's own platform-wide read: every
+   * organization still `trialing` whose clock has already run out,
+   * regardless of which organization it belongs to. Meaningful only
+   * inside `runInUserContext(<a real platform-owner id>)`, relying on the
+   * `tenant_subscriptions_platform_select` policy (P15) exactly like
+   * `findManyByOrganizationIds` above — the one difference being this
+   * query has no known organization id set to seed a normal tenant
+   * context with at all (a genuine, periodic, cross-tenant sweep, not a
+   * request acting on behalf of one known organization).
+   */
+  findManyDueForTrialExpiry(
+    tx: Prisma.TransactionClient,
+    now: Date,
+  ): Promise<TenantSubscription[]> {
+    return tx.tenantSubscription.findMany({
+      where: { status: 'trialing', trialEndsAt: { lte: now } },
+    });
+  }
+
+  /**
+   * Phase 2 — the sweep's own write half, relying on the new
+   * `tenant_subscriptions_platform_update` policy (P22 migration) added
+   * specifically because this is the first genuinely cross-tenant WRITE
+   * to this table (every prior write, `upsertForPlanPurchase`, always ran
+   * inside that one organization's own tenant context).
+   */
+  markExpired(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<TenantSubscription> {
+    return tx.tenantSubscription.update({
+      where: { organizationId },
+      data: { status: 'expired', trialEndsAt: null },
+    });
+  }
+
+  /**
+   * Phase 2 — the ONE place a brand-new Organization's real trial
+   * subscription row is created (`OrganizationSubscriptionBootstrapService`,
+   * called from `OrganizationsService.create`'s `onCreated` hook, inside
+   * that same transaction/tenant context). A plain `create`, never an
+   * `upsert`: an organization this fresh cannot already have a
+   * subscription row (its id was only just generated), so there is
+   * nothing to race against — matching `OrganizationsRepository.create`'s
+   * own "caller-supplied id, opened inside its own brand-new tenant
+   * context" precedent.
+   */
+  create(
+    tx: Prisma.TransactionClient,
+    data: {
+      readonly organizationId: string;
+      readonly planId: string;
+      readonly trialEndsAt: Date;
+    },
+  ): Promise<TenantSubscription> {
+    return tx.tenantSubscription.create({
+      data: {
+        organizationId: data.organizationId,
+        planId: data.planId,
+        status: 'trialing',
+        trialEndsAt: data.trialEndsAt,
+      },
+    });
+  }
+
   async upsertForPlanPurchase(
     tx: Prisma.TransactionClient,
     organizationId: string,

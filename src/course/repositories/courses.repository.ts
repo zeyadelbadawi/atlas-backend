@@ -11,6 +11,7 @@ import type {
   Prisma,
   User,
 } from '@prisma/client';
+import { PrismaService } from '../../database/prisma.service';
 
 export type CourseWithRelations = Course & {
   category?: CourseCategory | null;
@@ -35,6 +36,35 @@ const INSTRUCTOR_INCLUDE = {
 
 @Injectable()
 export class CoursesRepository {
+  // Every OTHER method here takes a `Prisma.TransactionClient` — see this
+  // class's own header comment. `PrismaService` is injected ONLY for
+  // `resolveAcademyIdForPublishedCourse` below, mirroring
+  // `AcademiesRepository.resolveOrganizationId`'s identical, documented
+  // exception to that rule.
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Phase 2 — `EnrollmentsService.createEnrollment` needs the course's
+   * `academyId` (and, from that, its `organizationId`) BEFORE it can open
+   * the real `runInTenantAndUserContext` its new live entitlement check
+   * requires (that check reads `tenant_subscriptions`/counts other
+   * organization-scoped tables, none of which are visible under a bare
+   * `runInUserContext`). Safe to call with NO tenant/user context at all
+   * — `courses_public_discovery_select`'s RLS policy (P6) has no
+   * `current_setting` predicate whatsoever, so a published+public course
+   * is visible unconditionally, exactly like `resolve_academy_organization`
+   * (P11) and `AcademyStudentsRepository.resolveOrganizationId` (P13) are
+   * for the identical "no context yet, but the caller legitimately needs
+   * this one fact" problem shape.
+   */
+  async resolveAcademyIdForPublishedCourse(courseId: string): Promise<string | null> {
+    const course = await this.prisma.course.findFirst({
+      where: { id: courseId, status: 'published', visibility: 'public' },
+      select: { academyId: true },
+    });
+    return course?.academyId ?? null;
+  }
+
   findById(
     tx: Prisma.TransactionClient,
     id: string,

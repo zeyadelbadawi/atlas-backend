@@ -90,6 +90,11 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
     courseId: string,
     academyId: string,
   ) {
+    // Phase 1 (Extended Scope, Decision 11, dependency D) —
+    // `enrollments_self_insert` now also requires a real `academy_students`
+    // row for this Academy, matching the real product's registration-time
+    // behavior; this direct-DB fixture reproduces that fact first.
+    await admin.academyStudent.create({ data: { academyId, userId: studentId } });
     return tenancyContext.runInUserContext(studentId, (tx) =>
       tx.enrollment.create({
         data: {

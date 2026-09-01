@@ -25,6 +25,11 @@ export const RESERVED_PAGE_SLUGS: readonly string[] = [
   'courses',
   'faqs',
   'contact',
+  // Phase 1 (Extended Scope, Decision 11, dependency C) — real public
+  // routes (`PublicWebsiteRouter`), not CMS content; a Custom Page must
+  // never claim either slug.
+  'sign-in',
+  'sign-up',
 ];
 
 export const MAX_SEO_TITLE_LENGTH = 70;

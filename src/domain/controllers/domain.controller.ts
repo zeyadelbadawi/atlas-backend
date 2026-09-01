@@ -22,7 +22,11 @@ export class DomainController {
     @Req() request: Request,
   ): Promise<AcademyDomainConfigurationResponse> {
     const { academyId, organizationId } = request.academyContext!;
-    return this.domainService.getDomainConfiguration(academyId, organizationId);
+    return this.domainService.getDomainConfiguration(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+    );
   }
 
   @Post(':id/website/domain/custom-domain')

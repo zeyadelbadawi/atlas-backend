@@ -9,6 +9,8 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
   seedAcademy,
+  seedAcademyStudent,
+  seedActiveSubscriptionForOrg,
   seedCourse,
   seedCourseLesson,
   seedCourseSection,
@@ -57,6 +59,7 @@ describe('Course/Lesson Progress (e2e)', () => {
   async function seedEnrollableCourseWithLessons(label: string) {
     const owner = await signUpAndSignIn(app, `${label}-owner`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
+    await seedActiveSubscriptionForOrg(admin, org.id, label);
     const academy = await seedAcademy(admin, org.id, `${label}-academy`);
     const course = await seedCourse(admin, academy.id, `${label}-course-${Date.now()}`, {
       status: 'published',
@@ -94,6 +97,7 @@ describe('Course/Lesson Progress (e2e)', () => {
     const { course, lesson1, lesson2 } =
       await seedEnrollableCourseWithLessons('progress-init');
     const student = await signUpAndSignIn(app, 'progress-init-student');
+    await seedAcademyStudent(admin, course.academyId, student.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)
@@ -124,6 +128,7 @@ describe('Course/Lesson Progress (e2e)', () => {
   it('rejects completing a locked lesson', async () => {
     const { course, lesson2 } = await seedEnrollableCourseWithLessons('progress-locked');
     const student = await signUpAndSignIn(app, 'progress-locked-student');
+    await seedAcademyStudent(admin, course.academyId, student.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)
@@ -141,6 +146,7 @@ describe('Course/Lesson Progress (e2e)', () => {
     const { course, lesson1, lesson2 } =
       await seedEnrollableCourseWithLessons('progress-advance');
     const student = await signUpAndSignIn(app, 'progress-advance-student');
+    await seedAcademyStudent(admin, course.academyId, student.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)
@@ -170,6 +176,7 @@ describe('Course/Lesson Progress (e2e)', () => {
     const { course, lesson1 } =
       await seedEnrollableCourseWithLessons('progress-idempotent');
     const student = await signUpAndSignIn(app, 'progress-idempotent-student');
+    await seedAcademyStudent(admin, course.academyId, student.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)
@@ -194,6 +201,7 @@ describe('Course/Lesson Progress (e2e)', () => {
     const { course, lesson1, lesson2 } =
       await seedEnrollableCourseWithLessons('progress-complete');
     const student = await signUpAndSignIn(app, 'progress-complete-student');
+    await seedAcademyStudent(admin, course.academyId, student.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)
@@ -228,6 +236,7 @@ describe('Course/Lesson Progress (e2e)', () => {
     const { lesson1: foreignLesson } =
       await seedEnrollableCourseWithLessons('progress-crossB');
     const student = await signUpAndSignIn(app, 'progress-cross-student');
+    await seedAcademyStudent(admin, courseA.academyId, student.userId);
     await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)

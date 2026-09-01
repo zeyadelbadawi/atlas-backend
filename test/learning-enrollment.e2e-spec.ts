@@ -9,6 +9,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
   seedAcademy,
+  seedActiveSubscriptionForOrg,
   seedCourse,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
@@ -23,6 +24,25 @@ async function signUpAndSignIn(
   await request(app.getHttpServer())
     .post('/auth/register')
     .send({ name: label, email, password })
+    .expect(201);
+  const signIn = await request(app.getHttpServer())
+    .post('/auth/sign-in')
+    .send({ email, password })
+    .expect(200);
+  return { userId: signIn.body.user.id, accessToken: signIn.body.accessToken };
+}
+
+/** Phase 1 (Extended Scope, Decision 11, dependency D) — a real, Academy-scoped student, the same shape a public Academy website's Sign Up page produces. */
+async function signUpStudentForAcademy(
+  app: INestApplication,
+  label: string,
+  academyId: string,
+): Promise<{ userId: string; accessToken: string }> {
+  const email = uniqueTestEmail(label);
+  const password = 'correct-horse-battery';
+  await request(app.getHttpServer())
+    .post('/auth/register')
+    .send({ name: label, email, password, academyId })
     .expect(201);
   const signIn = await request(app.getHttpServer())
     .post('/auth/sign-in')
@@ -79,6 +99,7 @@ describe('Enrollment (e2e)', () => {
   it('enrolls a student in a free, published, public course', async () => {
     const owner = await signUpAndSignIn(app, 'enroll-free-owner');
     const org = await seedOrganizationWithOwner(admin, owner.userId, 'enroll-free-org');
+    await seedActiveSubscriptionForOrg(admin, org.id, 'enroll-free');
     const academy = await seedAcademy(admin, org.id, 'enroll-free-academy');
     const course = await seedCourse(admin, academy.id, `Free ${Date.now()}`, {
       status: 'published',
@@ -86,7 +107,7 @@ describe('Enrollment (e2e)', () => {
       pricingType: 'free',
     });
 
-    const student = await signUpAndSignIn(app, 'enroll-free-student');
+    const student = await signUpStudentForAcademy(app, 'enroll-free-student', academy.id);
     const created = await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)
@@ -121,6 +142,7 @@ describe('Enrollment (e2e)', () => {
       owner.userId,
       'enroll-idempotent-org',
     );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'enroll-idempotent');
     const academy = await seedAcademy(admin, org.id, 'enroll-idempotent-academy');
     const course = await seedCourse(admin, academy.id, `Idempotent ${Date.now()}`, {
       status: 'published',
@@ -128,7 +150,11 @@ describe('Enrollment (e2e)', () => {
       pricingType: 'free',
     });
 
-    const student = await signUpAndSignIn(app, 'enroll-idempotent-student');
+    const student = await signUpStudentForAcademy(
+      app,
+      'enroll-idempotent-student',
+      academy.id,
+    );
     const first = await request(app.getHttpServer())
       .post('/enrollments')
       .set('Authorization', `Bearer ${student.accessToken}`)
@@ -194,5 +220,70 @@ describe('Enrollment (e2e)', () => {
       .set('Authorization', `Bearer ${student.accessToken}`)
       .send({ courseId: '00000000-0000-0000-0000-000000000000' })
       .expect(404);
+  });
+
+  /* ------- Phase 1 (Extended Scope, Decision 11, dependency D) ------- */
+
+  it('rejects enrollment for a student with no Academy membership at all — a clean 403, never a raw RLS 500', async () => {
+    const owner = await signUpAndSignIn(app, 'enroll-no-academy-owner');
+    const org = await seedOrganizationWithOwner(
+      admin,
+      owner.userId,
+      'enroll-no-academy-org',
+    );
+    const academy = await seedAcademy(admin, org.id, 'enroll-no-academy-academy');
+    const course = await seedCourse(admin, academy.id, `NoAcademy ${Date.now()}`, {
+      status: 'published',
+      visibility: 'public',
+      pricingType: 'free',
+    });
+
+    // Registered through no Academy website at all (the self-service
+    // Organization-Owner onboarding journey shape) — has no
+    // `academy_students` row anywhere.
+    const student = await signUpAndSignIn(app, 'enroll-no-academy-student');
+    const response = await request(app.getHttpServer())
+      .post('/enrollments')
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ courseId: course.id })
+      .expect(403);
+    expect(response.body.error.messageKey).toBe(
+      'errors.enrollment.academyMembershipRequired',
+    );
+  });
+
+  it("rejects enrollment for a student registered through a DIFFERENT Academy's website — Academy A membership never grants Academy B course access", async () => {
+    const ownerA = await signUpAndSignIn(app, 'enroll-cross-academy-owner-a');
+    const orgA = await seedOrganizationWithOwner(
+      admin,
+      ownerA.userId,
+      'enroll-cross-academy-org-a',
+    );
+    const academyA = await seedAcademy(admin, orgA.id, 'enroll-cross-academy-academy-a');
+
+    const ownerB = await signUpAndSignIn(app, 'enroll-cross-academy-owner-b');
+    const orgB = await seedOrganizationWithOwner(
+      admin,
+      ownerB.userId,
+      'enroll-cross-academy-org-b',
+    );
+    const academyB = await seedAcademy(admin, orgB.id, 'enroll-cross-academy-academy-b');
+    const courseB = await seedCourse(admin, academyB.id, `CrossAcademy ${Date.now()}`, {
+      status: 'published',
+      visibility: 'public',
+      pricingType: 'free',
+    });
+
+    const studentOfA = await signUpStudentForAcademy(
+      app,
+      'enroll-cross-academy-student',
+      academyA.id,
+    );
+
+    await request(app.getHttpServer())
+      .post('/enrollments')
+      .set('Authorization', `Bearer ${studentOfA.accessToken}`)
+      .send({ courseId: courseB.id })
+      .expect(403);
   });
 });
