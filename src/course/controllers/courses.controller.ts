@@ -26,6 +26,7 @@ import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { CoursesService } from '../services/courses.service';
 import { CreateCourseDto } from '../dto/create-course.dto';
 import { UpdateCourseDto } from '../dto/update-course.dto';
+import { AssignCourseInstructorDto } from '../dto/assign-course-instructor.dto';
 import { CourseListQueryDto } from '../dto/course-list-query.dto';
 import type { CourseResponse } from '../dto/course.contract';
 import type { CourseCategoryResponse } from '../dto/course-category.contract';
@@ -126,6 +127,47 @@ export class CoursesController {
       academyId,
       organizationId,
       request.authContext!.userId,
+    );
+  }
+
+  /**
+   * Phase 3 — grants course-level instructor access. `userId` must already
+   * be an active `instructor`-role member of THIS academy (see
+   * `CoursesService.assignInstructor`'s doc comment) — this never creates
+   * an account or an Academy membership, unlike
+   * `AcademiesController.addInstructor`.
+   */
+  @Post(':id/courses/:courseId/instructors')
+  async assignInstructor(
+    @Req() request: Request,
+    @Param('courseId') courseId: string,
+    @Body() body: AssignCourseInstructorDto,
+  ): Promise<CourseResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.coursesService.assignInstructor(
+      courseId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body.userId,
+    );
+  }
+
+  /** Phase 3 — revokes course-level instructor access. Never removes the target's Academy instructor-roster membership. */
+  @Delete(':id/courses/:courseId/instructors/:userId')
+  @HttpCode(204)
+  async removeInstructor(
+    @Req() request: Request,
+    @Param('courseId') courseId: string,
+    @Param('userId') targetUserId: string,
+  ): Promise<void> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.coursesService.removeInstructor(
+      courseId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      targetUserId,
     );
   }
 

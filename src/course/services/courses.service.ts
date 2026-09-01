@@ -1,5 +1,6 @@
 /**
- * CoursesService — course CRUD, publish/unpublish, and category reads.
+ * CoursesService — course CRUD, publish/unpublish, category reads, and
+ * (Phase 3, master plan §22/§23) course-level instructor assignment.
  * Mirrors `CourseService`'s authoring surface (atlas frontend).
  *
  * Every method independently re-establishes the RLS tenant context via
@@ -11,8 +12,11 @@
  * Write authorization mirrors `AcademiesService.assertCanManage` exactly:
  * organization membership alone is READ-sufficient (governed entirely by
  * `AcademyScopeGuard`), but WRITE requires an `academy_members` row with
- * role `owner`/`administrator` — never assumed from organization role
- * (master plan P5 §11: "Do not assume Organization Owner = Course Owner").
+ * role `owner`/`administrator`/`manager` — never assumed from organization
+ * role (master plan P5 §11: "Do not assume Organization Owner = Course
+ * Owner"). `assignInstructor`/`removeInstructor` reuse this exact same
+ * gate — assigning a course instructor is a course-write action, not a
+ * different privilege tier.
  */
 import {
   ConflictException,
@@ -27,6 +31,7 @@ import { EntitlementEnforcementService } from '../../plans/services/entitlement-
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { CoursesRepository } from '../repositories/courses.repository';
 import { CourseCategoriesRepository } from '../repositories/course-categories.repository';
+import { CourseInstructorsRepository } from '../repositories/course-instructors.repository';
 import { toCourseResponse } from '../dto/course.contract';
 import type { CourseResponse } from '../dto/course.contract';
 import { toCourseCategoryResponse } from '../dto/course-category.contract';
@@ -48,6 +53,7 @@ export class CoursesService {
     private readonly coursesRepository: CoursesRepository,
     private readonly courseCategoriesRepository: CourseCategoriesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly entitlementEnforcementService: EntitlementEnforcementService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
   ) {}
@@ -309,6 +315,108 @@ export class CoursesService {
       });
 
     return toCourseResponse(course, { totalSections, totalLessons });
+  }
+
+  /**
+   * Phase 3 (master plan §22/§23, "Instructor <-> Course Assignment") —
+   * the one missing write path the Teaching Dashboard, "My Courses", and
+   * quiz/assignment grading were already built to consume via
+   * `CourseInstructorsRepository.findCourseIdsForInstructor` /
+   * `is_course_instructor()` (both reused verbatim, unmodified).
+   *
+   * CORE RULE this method enforces: Academy instructor-roster membership
+   * (`AcademyMember` role `instructor`, granted by `AcademiesService.
+   * addInstructor` — a staffing operation) is a PREREQUISITE for course
+   * access, never a SUBSTITUTE for it. A course access grant is always a
+   * second, explicit, per-course action:
+   *
+   *   Academy instructor roster -> eligible to teach
+   *                              -> explicit course assignment (this method)
+   *                              -> can access THIS course
+   *
+   * Authorization mirrors `assertCanManage` exactly (Owner/Administrator/
+   * Manager of the course's OWN academy — never assumed from organization
+   * role, never satisfied by membership in a different academy, even in
+   * the same organization). The target must independently be an ACTIVE
+   * `instructor`-role member of that SAME academy — an instructor from a
+   * different academy (or a non-instructor role) is rejected with the
+   * same 404 shape as any other cross-academy lookup, never leaking
+   * whether the user exists elsewhere.
+   *
+   * All assigned instructors have equal standing — this method never
+   * writes any rank/order/primary flag, because `course_instructors` has
+   * none (see its own schema doc comment).
+   */
+  async assignInstructor(
+    courseId: string,
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    targetUserId: string,
+  ): Promise<CourseResponse> {
+    await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      await this.assertCanManage(tx, academyId, userId);
+      const current = await this.coursesRepository.findById(tx, courseId);
+      this.assertBelongsToAcademy(current, academyId);
+
+      const targetMembership = await this.academyMembersRepository.findForUserInAcademy(
+        tx,
+        academyId,
+        targetUserId,
+      );
+      if (
+        !targetMembership ||
+        targetMembership.role !== 'instructor' ||
+        targetMembership.status !== 'active'
+      ) {
+        throw new NotFoundException({
+          messageKey: 'errors.course.instructorNotEligible',
+        });
+      }
+
+      const alreadyAssigned = await this.courseInstructorsRepository.isInstructor(
+        tx,
+        courseId,
+        targetUserId,
+      );
+      if (alreadyAssigned) {
+        throw new ConflictException({
+          messageKey: 'errors.course.instructorAlreadyAssigned',
+        });
+      }
+
+      await this.courseInstructorsRepository.create(tx, courseId, targetUserId);
+    });
+
+    return this.getById(courseId, academyId, organizationId);
+  }
+
+  /** Revokes course-level access granted by `assignInstructor` above. Never touches the Academy instructor-roster membership itself — removing someone from a course does not remove them from the Academy (the reverse of the "roster membership does not imply course access" rule: revoking course access does not imply revoking roster membership either). */
+  async removeInstructor(
+    courseId: string,
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      await this.assertCanManage(tx, academyId, userId);
+      const current = await this.coursesRepository.findById(tx, courseId);
+      this.assertBelongsToAcademy(current, academyId);
+
+      const assigned = await this.courseInstructorsRepository.isInstructor(
+        tx,
+        courseId,
+        targetUserId,
+      );
+      if (!assigned) {
+        throw new NotFoundException({
+          messageKey: 'errors.course.instructorNotAssigned',
+        });
+      }
+
+      await this.courseInstructorsRepository.delete(tx, courseId, targetUserId);
+    });
   }
 
   async getCategories(

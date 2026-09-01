@@ -464,13 +464,15 @@ export class AcademiesService {
    *
    * This grant does NOT, by itself, connect the instructor to any course
    * — `course_instructors` (a separate table `InstructorService` actually
-   * reads for `/dashboard/instructor`) is populated per-course, wherever
-   * this codebase already lets an owner/manager assign instructors to a
-   * course. An academy_members `'instructor'` row is this codebase's
+   * reads for `/dashboard/instructor`) is populated per-course, via the
+   * explicit Phase 3 assignment path (`CoursesService.assignInstructor`/
+   * `removeInstructor`, master plan §22/§23), never automatically by this
+   * method. An `academy_members` `'instructor'` row is this codebase's
    * staffing/roster record and its `ORGANIZATION_INSTRUCTOR_PERMISSIONS`
-   * grant (route access); it was never the thing that assigns teaching
-   * responsibility for a specific course, and this method does not change
-   * that.
+   * grant (route access) — it makes someone ELIGIBLE to be assigned to a
+   * course, never actually assigned to one. This method must never be
+   * changed to auto-assign every existing or future course in the
+   * academy; course access always requires the separate, explicit grant.
    */
   async addInstructor(
     academyId: string,

@@ -732,9 +732,15 @@ model Course {
 /// Join table — mirrors master plan §5.3's `course_instructors` exactly
 /// ("the server-side source of truth for 'which courses can this
 /// instructor teach,' resolved fresh on every request, never client-
-/// trusted"). Read-only in P5 (projected into `Course.instructors`) — see
-/// this section's header comment; real assignment is a future phase
-/// (InstructorService, P7) once the frontend defines one.
+/// trusted"). Read-only through P5-P22 (projected into `Course.instructors`,
+/// consumed by `is_course_instructor()` (P7) and the Teaching Dashboard/
+/// "My Courses" reads it was always designed for). Phase 3 (P23, master
+/// plan §22/§23) adds the real write path
+/// (`CoursesService.assignInstructor`/`removeInstructor`): explicit,
+/// per-course grant/revoke by an Academy owner/administrator/manager,
+/// distinct from — and never implied by — Academy-wide instructor roster
+/// membership (`AcademyMember` role `instructor`). No ordering/rank
+/// column: every assigned instructor has identical standing, by design.
 model CourseInstructor {
   courseId   String   @map("course_id")
   course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)

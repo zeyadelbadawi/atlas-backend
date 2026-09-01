@@ -249,7 +249,12 @@ describe('Course Management tenant isolation (e2e) — P5-TENANT-001..010', () =
       .expect(200);
     expect(responseB.body.instructors).toHaveLength(1);
     expect(responseB.body.instructors[0].id).toBe(instructor.userId);
-  });
+    // Phase 3 — explicit timeout: 3 real register+sign-in round trips
+    // legitimately exceed Jest's un-overridden 5000ms default under real,
+    // non-mocked bcrypt latency; same pre-existing pattern documented and
+    // fixed identically across Phase 2's own new tests. Assertions above
+    // are untouched.
+  }, 20000);
 
   it("P5-TENANT-008: concurrent requests for different academies' courses never cross-contaminate", async () => {
     const userA = await signUpAndSignIn(app, 'p5t008-userA');
@@ -279,7 +284,12 @@ describe('Course Management tenant isolation (e2e) — P5-TENANT-001..010', () =
       expect(res.status).toBe(200);
       expect(res.body.id).toBe(expected);
     }
-  });
+    // Phase 3 — explicit timeout: 2 real register+sign-in round trips plus
+    // 15 concurrent real requests legitimately exceed Jest's un-overridden
+    // 5000ms default under real, non-mocked latency; same pre-existing
+    // pattern documented and fixed identically across Phase 2's own new
+    // tests. Assertions above are untouched.
+  }, 20000);
 
   it('P5-TENANT-009: missing tenant context (unauthenticated, and authenticated-but-not-a-member) both fail closed', async () => {
     const owner = await signUpAndSignIn(app, 'p5t009-owner');

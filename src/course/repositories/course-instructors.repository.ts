@@ -7,12 +7,15 @@
  * access) and `InstructorModule` (P7) — both already depend on
  * `CourseModule`, never the reverse, matching this codebase's DAG rule.
  *
- * Read-only, matching `course_instructors`'s own P5 precedent (still no
- * write endpoint anywhere — master plan §24's audited decision): this
- * repository only ever resolves teaching scope, never writes it.
+ * Phase 3 (master plan §22/§23) adds the first write operations
+ * (`create`/`delete`) — `CoursesService.assignInstructor`/
+ * `removeInstructor` are the only callers. No ordering/rank column exists
+ * on the row and none is added: every assigned instructor has identical
+ * standing (no primary/lead/secondary concept — see `CoursesService`'s
+ * doc comment on `assignInstructor`).
  */
 import { Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import type { CourseInstructor, Prisma } from '@prisma/client';
 
 @Injectable()
 export class CourseInstructorsRepository {
@@ -35,5 +38,23 @@ export class CourseInstructorsRepository {
       select: { courseId: true },
     });
     return rows.map((row) => row.courseId);
+  }
+
+  /** Grants course-level instructor access. Caller (`CoursesService.assignInstructor`) has already verified eligibility (an active Academy `instructor` membership in the course's own academy) and that no row already exists — this is a plain insert, never an upsert, so a genuine race still surfaces as a real unique-constraint conflict rather than being silently swallowed. */
+  create(
+    tx: Prisma.TransactionClient,
+    courseId: string,
+    userId: string,
+  ): Promise<CourseInstructor> {
+    return tx.courseInstructor.create({ data: { courseId, userId } });
+  }
+
+  /** Revokes course-level instructor access. Caller has already verified the row exists — mirrors `CourseSectionsRepository.delete`'s plain `.delete({ where: { id } })` precedent, just keyed by the table's own composite PK. */
+  delete(
+    tx: Prisma.TransactionClient,
+    courseId: string,
+    userId: string,
+  ): Promise<CourseInstructor> {
+    return tx.courseInstructor.delete({ where: { courseId_userId: { courseId, userId } } });
   }
 }

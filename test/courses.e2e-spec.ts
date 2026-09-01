@@ -164,7 +164,15 @@ describe('Course Management (e2e) — functional/contract', () => {
 
     const row = await admin.course.findUniqueOrThrow({ where: { id: courseId } });
     expect(row.status).toBe('archived');
-  });
+    // Phase 3 — explicit timeout: this test's ~8 sequential real HTTP round
+    // trips (2 of them full register+sign-in bcrypt flows) legitimately
+    // exceed Jest's un-overridden 5000ms default under real, non-mocked
+    // latency; matches the same "internal cost > Jest's default per-test
+    // timeout" pattern documented and fixed the same way across Phase 2's
+    // own new tests (see e.g. `organizations.e2e-spec.ts`,
+    // `entitlement-enforcement.e2e-spec.ts`). Not a Phase 3 behavioral
+    // change — this test's assertions and expected outcomes are untouched.
+  }, 20000);
 
   it('pricing round-trips a decimal amount through integer minor units at rest', async () => {
     const owner = await signUpAndSignIn(app, 'course-pricing');
