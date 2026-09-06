@@ -35,7 +35,10 @@ export class UserOrganizationsService {
     const { memberships, organizationNamesById } =
       await this.tenancyContextService.runInUserContext(userId, async (tx) => {
         const memberships = await this.membershipsRepository.findAllForUser(tx, userId);
-        const organizations = await this.organizationsRepository.findAllVisible(tx);
+        const organizations = await this.organizationsRepository.findManyVisibleByIds(
+          tx,
+          memberships.map((membership) => membership.organizationId),
+        );
         const organizationNamesById = new Map(
           organizations.map((org) => [org.id, org.name]),
         );

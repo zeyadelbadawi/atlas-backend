@@ -31,7 +31,8 @@ import {
   WEBSITE_THEME_KEYS,
 } from '../constants/website.constants';
 
-const CORE_PAGE_DEFAULTS: Record<
+/** Exported so `WebsiteGenerationService` (Phase 6) creates pages with the exact same title/slug this lazy path would have used — one source of truth for "what a core page is called by default," never two. */
+export const CORE_PAGE_DEFAULTS: Record<
   (typeof WEBSITE_CORE_PAGE_TYPES)[number],
   { readonly title: string; readonly slug: string }
 > = {

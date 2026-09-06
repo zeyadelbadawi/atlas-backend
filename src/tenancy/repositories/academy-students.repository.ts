@@ -33,6 +33,27 @@ export class AcademyStudentsRepository {
   }
 
   /**
+   * Foundational-audit fix (`SaasLevelCallerGuard`) — "does this user have
+   * a real, staff/owner-created OR self-registered home-Academy
+   * membership at all," independent of which Academy. Meaningful under
+   * `runInUserContext` alone (the `academy_students_self_select` policy),
+   * matching `OrganizationMembershipsRepository.findAllForUser`'s
+   * identical "no tenant context needed" shape — this is exactly the
+   * signal that was missing from `PlansController`/
+   * `OrganizationsController.create`'s authorization: a caller with this
+   * row is a genuine Academy-scoped Student and must never be treated as
+   * SaaS-level-onboarding-eligible, regardless of having zero
+   * `organization_memberships` rows.
+   */
+  async existsForUser(tx: Prisma.TransactionClient, userId: string): Promise<boolean> {
+    const row = await tx.academyStudent.findFirst({
+      where: { userId },
+      select: { id: true },
+    });
+    return row !== null;
+  }
+
+  /**
    * Deliberately takes the "unchecked" input shape (plain `academyId`/
    * `userId` scalars, never `academy: { connect }`/`user: { connect }`):
    * Prisma's nested-`connect` form issues its own SELECT against the
@@ -70,5 +91,10 @@ export class AcademyStudentsRepository {
       Prisma.sql`SELECT * FROM resolve_academy_organization(${academyId})`,
     );
     return rows[0]?.organization_id ?? null;
+  }
+
+  /** Phase 6 — the public statistics endpoint's real, live student count. */
+  countForAcademy(tx: Prisma.TransactionClient, academyId: string): Promise<number> {
+    return tx.academyStudent.count({ where: { academyId } });
   }
 }

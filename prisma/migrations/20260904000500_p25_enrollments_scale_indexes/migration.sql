@@ -1,0 +1,73 @@
+-- ============================================================================
+-- P25 — Phase 4.5.1 (Scalability: database query/index scalability).
+--
+-- Adds the ONE index this phase's investigation justified against real,
+-- named call sites and verified empirically (temporary index, created and
+-- dropped again, `EXPLAIN ANALYZE` before/after) on the real dev database —
+-- see `ATLAS_SCALABILITY_PHASE_4_5_1_REPORT.md` for the full evidence.
+--
+-- `enrollments.course_id` is a foreign key (`enrollments_course_id_fkey`)
+-- with NO backing index — Postgres never auto-indexes FK columns, only
+-- unique-constraint columns. `enrollments_student_id_course_id_key`
+-- (leading column `student_id`) cannot serve a `course_id`-only or
+-- `course_id + status` lookup. Every one of the following REAL call sites
+-- filters `enrollments` by `courseId` together with `status`, and until
+-- now paid a cost proportional to the ENTIRE `enrollments` table, not the
+-- one course being queried:
+--   - `InstructorRepository.countActiveEnrollmentsForCourse`
+--     (`src/instructor/repositories/instructor.repository.ts`)
+--   - `InstructorRepository.findEnrolledStudents` (same file)
+--   - `InstructorRepository`'s per-course distinct-student count
+--     (`courseId: { in: [...] }, status: { in: [...] }`, same file)
+--   - `TenantUsageRecomputeService.computeLiveCounts`'s `students` metric
+--     join (`src/plans/services/tenant-usage-recompute.service.ts`)
+--   - The `can_access_quiz` RLS helper's `enrollments e ON e.course_id =
+--     q.course_id` join (migration
+--     `20260904000200_p24c_lms_authoring_rls_performance`)
+--
+-- Measured via `EXPLAIN ANALYZE` against the real dev database (21,641
+-- organizations, 1,834 enrollments) with a temporary version of this exact
+-- index: `countActiveEnrollmentsForCourse`'s query plan went from a full
+-- index-order scan (cost 168.07, 33 buffer hits) to a true indexed seek
+-- (cost 22.32, 2 buffer hits); the recompute service's course-driven join
+-- went from cost 27.86 (33 buffer hits) to a real `Index Cond: course_id =
+-- ...` nested loop (cost 14.38, 2 buffer hits). Both costs are now
+-- proportional to the matching course's own enrollment count, not total
+-- platform enrollments — the exact property required before this table
+-- can grow toward the 10M+ row range the Phase 4.5 scalability plan
+-- targets.
+--
+-- `status` is included as the second column (not a standalone
+-- `course_id`-only index) because every real caller above filters on both
+-- columns together — never `courseId` alone — matching this schema's own
+-- established `[studentId, status]` precedent immediately above.
+--
+-- An `academy_id` index was considered (Phase 4.5's original scalability
+-- plan proposed one) and deliberately NOT added here: this phase's own
+-- verification (a temporary index, created and rolled back on the real
+-- dev database) proved it provides ZERO measured benefit for its only
+-- theoretical consumer — the `enrollments_tenant_select` RLS policy
+-- evaluated with no other predicate — because that policy is OR'd with
+-- `enrollments_instructor_select`'s non-indexable
+-- `is_course_instructor(course_id, ...)` function-call branch, which
+-- forces Postgres to fall back to a Seq Scan regardless of any index on
+-- `academy_id`. No application code filters `enrollments` by `academyId`
+-- directly today. This is a distinct, deferred, RLS-compounding finding
+-- (the same class of issue already fixed once for `quiz_questions` in
+-- `20260904000200_p24c_lms_authoring_rls_performance`) — documented in
+-- `ATLAS_SCALABILITY_PHASE_4_5_1_REPORT.md` §7/§17 as intentionally out of
+-- this phase's scope, not silently dropped.
+--
+-- `CONCURRENTLY` — this table is small in every environment that has run
+-- this migration so far, but the migration is written the way it must run
+-- in production: `CREATE INDEX CONCURRENTLY` builds the index without
+-- holding a lock that blocks concurrent reads/writes on `enrollments`, at
+-- the cost of not running inside Prisma's implicit migration transaction
+-- (`CONCURRENTLY` is rejected inside a transaction block by Postgres
+-- itself). This is a single-statement migration for exactly that reason —
+-- see this project's own established precedent for RLS/index migrations
+-- that must run outside a transaction.
+-- ============================================================================
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "enrollments_course_id_status_idx"
+  ON "enrollments" ("course_id", "status");

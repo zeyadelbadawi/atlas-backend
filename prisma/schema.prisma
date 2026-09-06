@@ -337,6 +337,8 @@ model Academy {
   payouts              AcademyPayout[]
   /// Phase P14 — Provisioning Orchestration (master plan §5.11/§21).
   provisioningRequest  ProvisioningRequest?
+  /// Phase 6 — real, persisted public Contact-form submissions.
+  contactSubmissions   ContactSubmission[]
 
   @@index([organizationId, status])
   @@map("academies")
@@ -556,6 +558,36 @@ model TenantUsage {
   updatedAt        DateTime     @updatedAt @map("updated_at")
 
   @@map("tenant_usage")
+}
+
+/// Phase 4.6 (scalability fix) — persists `SubscriptionSweepService`'s
+/// stale-usage scan cursor ACROSS ticks, closing the bug where a fresh
+/// `cursor: string | undefined` local was created on every `run()` call:
+/// each tick re-scanned from `id > null` (the very beginning of the
+/// `organizations` table) regardless of how far a previous tick had
+/// gotten, so the backlog past the per-tick ceiling was never actually
+/// reached at scale — every tick just re-did the same first page of work.
+///
+/// Platform-owned singleton, no RLS — same shape and same reasoning as
+/// `TrialPolicy` below: a fixed, well-known id + `upsert` (enforced in
+/// `TenantUsageSweepCursorRepository`, not here) closes the concurrent-
+/// first-read race atomically, which matters here specifically because
+/// this row may be read/written by more than one backend instance's
+/// sweep worker under BullMQ horizontal scaling.
+///
+/// `lastOrganizationId` is `null` in two distinct situations that share
+/// one representation on purpose: "no tick has ever run yet" and "the
+/// most recent tick scanned all the way to the real end of the
+/// `organizations` table and wrapped around" — both mean the next tick
+/// should start from the beginning of the id space, which is exactly
+/// what `findStaleUsageOrganizationIds(tx, olderThan, undefined, limit)`
+/// already does, so no extra "has wrapped" flag is needed.
+model TenantUsageSweepCursor {
+  id                 String   @id @default(uuid())
+  lastOrganizationId String?  @map("last_organization_id")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("tenant_usage_sweep_cursor")
 }
 
 /// Platform-owned singleton — mirrors `TrialPolicy` (`plan.types.ts`).
@@ -886,6 +918,32 @@ model Enrollment {
 
   @@unique([studentId, courseId])
   @@index([studentId, status])
+  /// Phase 4.5.1 (scalability). `courseId` is an FK with no backing index —
+  /// Postgres does not auto-index FK columns — so every course-scoped
+  /// enrollment read fell back to a full-table-order scan of
+  /// `enrollments_student_id_course_id_key` (leading column `studentId`,
+  /// useless for a `courseId`-only lookup) or a Seq Scan. Verified live via
+  /// `EXPLAIN ANALYZE` against the real dev database (see
+  /// `ATLAS_SCALABILITY_PHASE_4_5_1_REPORT.md`): cost dropped from 168 to 22
+  /// (buffers 33→2) for `InstructorRepository.countActiveEnrollmentsForCourse`,
+  /// and the `TenantUsageRecomputeService`/RLS `can_access_quiz` course-join
+  /// path went from a full-order index scan (cost 27.86) to a real indexed
+  /// nested loop (cost 14.38) — both now cost-proportional to the matching
+  /// course's own rows, not total platform enrollments. `status` is the
+  /// second column because every real caller (`countActiveEnrollmentsForCourse`,
+  /// `findEnrolledStudents`, the instructor distinct-student-count query,
+  /// `TenantUsageRecomputeService.computeLiveCounts`) filters `courseId`
+  /// together with `status` in the same query — never `courseId` alone. An
+  /// `academyId` index was considered and rejected this phase: empirically
+  /// verified (temporary index, rolled back) to provide zero measured
+  /// benefit for the only theoretical consumer (`enrollments_tenant_select`
+  /// RLS policy evaluated with no other predicate) because that policy is
+  /// OR'd with `enrollments_instructor_select`'s non-indexable
+  /// `is_course_instructor(course_id, ...)` function call, which forces a
+  /// Seq Scan regardless of any index on `academyId` — a distinct,
+  /// deferred, RLS-compounding finding (same class as the already-fixed
+  /// P7/P24c pattern), not something a new index alone can address.
+  @@index([courseId, status])
   @@map("enrollments")
 }
 
@@ -965,11 +1023,15 @@ enum LessonProgressStatus {
   @@map("lesson_progress_status")
 }
 
-/// Mirrors `Quiz` (`quiz.types.ts`). No write endpoint in P6 — see this
-/// section's header comment. `sectionId` is an optional plain categorization
-/// column (not a `@relation`), matching how `Course.instructors` etc. keep
-/// denormalized/optional pointers plain rather than adding a reverse
-/// relation array to `CourseSection` for a field nothing cascades on.
+/// Mirrors `Quiz` (`quiz.types.ts`). Read-only through P6-P23; Phase 4 (P24,
+/// master plan §22/§24) adds the real write path
+/// (`QuizzesService.createQuiz`/`updateQuiz`/`deleteQuiz`), gated by the new
+/// `can_author_course_content()` RLS function — the course's assigned
+/// instructor(s), or the owning academy's owner/administrator/manager.
+/// `sectionId` is an optional plain categorization column (not a
+/// `@relation`), matching how `Course.instructors` etc. keep denormalized/
+/// optional pointers plain rather than adding a reverse relation array to
+/// `CourseSection` for a field nothing cascades on.
 model Quiz {
   id           String     @id @default(uuid())
   courseId     String     @map("course_id")
@@ -997,7 +1059,8 @@ enum QuizStatus {
   @@map("quiz_status")
 }
 
-/// Mirrors `QuizQuestion` (`quiz.types.ts`). No write endpoint in P6.
+/// Mirrors `QuizQuestion` (`quiz.types.ts`). Real write path as of Phase 4
+/// (P24) — see `Quiz`'s own doc comment.
 model QuizQuestion {
   id        String           @id @default(uuid())
   quizId    String           @map("quiz_id")
@@ -1075,7 +1138,8 @@ enum QuizAttemptStatus {
   @@map("quiz_attempt_status")
 }
 
-/// Mirrors `Assignment` (`assignment.types.ts`). No write endpoint in P6.
+/// Mirrors `Assignment` (`assignment.types.ts`). Real write path as of
+/// Phase 4 (P24) — see `Quiz`'s own doc comment; identical authorization.
 /// `sectionId`/`lessonId` are optional plain categorization columns, same
 /// "no reverse relation array for a field nothing cascades on" reasoning as
 /// `Quiz.sectionId`.
@@ -1254,6 +1318,12 @@ model Announcement {
 /// Matches `BlogPostStatus` (`blog.types.ts`) exactly.
 enum BlogPostStatus {
   draft
+  /// Phase 6 — a real `scheduledAt` is set; the Phase 2 subscription-sweep
+  /// tick (the one scheduled-task mechanism this codebase has — never a
+  /// second scheduler) transitions this to `published` once `scheduledAt`
+  /// has passed, exactly mirroring `Announcement`'s own pre-existing
+  /// `scheduled` status and its own `scheduledAt` field.
+  scheduled
   published
   archived
 
@@ -1284,12 +1354,52 @@ model BlogPost {
   category      String?
   tags          String[]       @default([])
   status        BlogPostStatus @default(draft)
+  /// Phase 6 — set only when `status = 'scheduled'`. The Phase 2
+  /// subscription-sweep tick publishes this post once real wall-clock
+  /// time passes it, exactly as it already does for `Announcement`.
+  scheduledAt   DateTime?      @map("scheduled_at")
+  /// Phase 6 — real, persisted SEO metadata (never frontend-only state).
+  /// Each falls back to `title`/`excerpt`/`featuredImage` respectively
+  /// when unset, matching `WebsitePage`'s own established SEO-field
+  /// fallback convention.
+  metaTitle       String?      @map("meta_title")
+  metaDescription String?      @map("meta_description")
+  ogImage         String?      @map("og_image_url")
   publishedAt   DateTime?      @map("published_at")
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
 
   @@unique([academyId, slug])
   @@map("blog_posts")
+}
+
+/// Phase 6 — the real backend destination the public website's Contact
+/// section form submits to (previously intentionally a no-op: "no fake
+/// backend" — see `ContactSection.tsx`'s own doc comment). A visitor
+/// submission, never an Academy's OWN contact info (that is
+/// `Academy.contactEmail`/`contactPhone`/`address`, already real and
+/// persisted since Phase P19 — reused, not duplicated, by this phase's
+/// header/footer/contact-section identity work).
+enum ContactSubmissionStatus {
+  new
+  read
+  archived
+
+  @@map("contact_submission_status")
+}
+
+model ContactSubmission {
+  id        String                  @id @default(uuid())
+  academyId String                  @map("academy_id")
+  academy   Academy                 @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  name      String
+  email     String
+  message   String
+  status    ContactSubmissionStatus @default(new)
+  createdAt DateTime                @default(now()) @map("created_at")
+
+  @@index([academyId, status])
+  @@map("contact_submissions")
 }
 
 /// Matches `Forum['status']` (`forum.types.ts`) exactly.
@@ -2808,6 +2918,8 @@ model ProvisioningRequest {
   triggeringPayment    Payment?            @relation(fields: [triggeringPaymentId], references: [id])
   /// Phase P19 — the Client's chosen theme key from the real Website Builder theme registry (`WEBSITE_THEME_KEYS`, matched exactly, never re-validated against a second catalog). Optional: the 'theme' provisioning step applies it if present, and otherwise leaves `WebsiteBootstrapService`'s own default theme in place — never a hard requirement, matching P9's own "always a sensible bootstrap default" design.
   selectedThemeKey     String?             @map("selected_theme_key")
+  /// Phase 6 (Bilingual Academy Websites) — `'empty' | 'complete'` (`WEBSITE_SETUP_MODES`). Meaningless without `selectedThemeKey`; `null` is treated as `'empty'` by `executeThemeStep`, matching every Academy provisioned before this column existed.
+  websiteSetupMode     String?             @map("website_setup_mode")
   idempotencyKey       String              @map("idempotency_key")
   attemptCount         Int                 @default(0) @map("attempt_count")
   /// Mirrors `ProvisioningError` (`{code, messageKey, detail?}`) — set only while `status = 'failed'`.

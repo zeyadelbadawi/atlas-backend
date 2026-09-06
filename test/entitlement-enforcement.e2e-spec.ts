@@ -21,6 +21,7 @@ import {
   seedAcademy,
   seedAcademyMember,
   seedCourse,
+  seedMembership,
   seedOrganizationWithOwner,
   seedPlan,
   seedTenantSubscription,
@@ -238,6 +239,76 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
       });
       expect(academyCount).toBe(1);
     }, 20000); // first. // eventually-successful async wait could be killed by Jest itself // `waitForAsync` budget above — without this override, a real, // Jest's own default per-test timeout (5000ms) is shorter than the
+
+    /**
+     * Phase 5 — `academy.provisioning.create` is Organization-Owner-only
+     * (`ORGANIZATION_OWNER_PERMISSIONS`, never `ORGANIZATION_MANAGER_
+     * PERMISSIONS`/`ORGANIZATION_INSTRUCTOR_PERMISSIONS` — see that
+     * file's own doc comment: "a Manager operates the academy but never
+     * touches... provisioning of new academies"), and the frontend's own
+     * `AcademyCreatePage` route is already gated on exactly that
+     * permission. This proves the SAME rule holds against a direct,
+     * manually-constructed API call for BOTH organization-scoped
+     * Academy-level roles — the frontend route guard must never be the
+     * only thing enforcing it. (A Student never receives an
+     * `organization_memberships` row at all — that role is covered
+     * separately below, by the "no membership" case, which is exactly
+     * what a Student's direct call hits.)
+     */
+    it.each(['manager', 'instructor'])(
+      'an Organization %s (Academy-level role) cannot create an academy via the direct API, even within plan limits',
+      async (role) => {
+        const { org } = await seedOrgWithLimits(`ent-acad-${role}-unauth`, {
+          academies: 5,
+          students: 100,
+          instructors: 100,
+          staff: 100,
+          courses: 100,
+          generalStorage: 100,
+          videoStorage: 100,
+        });
+        const caller = await signUpAndSignIn(app, `ent-acad-${role}`);
+        await seedMembership(admin, org.id, caller.userId, role);
+
+        const rejected = await request(app.getHttpServer())
+          .post('/academies')
+          .set('Authorization', `Bearer ${caller.accessToken}`)
+          .send({
+            organizationId: org.id,
+            name: `${role} Attempted Academy`,
+            slug: `${role}-attempt-${Date.now()}`,
+          })
+          .expect(403);
+        expect(rejected.body.error.messageKey).toBe('errors.academy.insufficientRole');
+
+        const academyCount = await admin.academy.count({ where: { organizationId: org.id } });
+        expect(academyCount).toBe(0);
+      },
+    );
+
+    it('a caller with no membership in the target organization at all (e.g. a Student) is rejected before any entitlement check runs', async () => {
+      const { org } = await seedOrgWithLimits('ent-academies-nonmember', {
+        academies: 5,
+        students: 100,
+        instructors: 100,
+        staff: 100,
+        courses: 100,
+        generalStorage: 100,
+        videoStorage: 100,
+      });
+      const outsider = await signUpAndSignIn(app, 'ent-academies-outsider');
+
+      const rejected = await request(app.getHttpServer())
+        .post('/academies')
+        .set('Authorization', `Bearer ${outsider.accessToken}`)
+        .send({
+          organizationId: org.id,
+          name: 'Outsider Attempted Academy',
+          slug: `outsider-attempt-${Date.now()}`,
+        })
+        .expect(403);
+      expect(rejected.body.error.messageKey).toBe('errors.tenancy.notAMember');
+    });
   });
 
   describe('courses', () => {

@@ -347,6 +347,8 @@ describe('Organization Payment Configuration (e2e)', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(200);
 
-    expect(Array.isArray(res.body)).toBe(true);
+    // Phase 4.5.3 (Change 4) — paginated (`{ items, pagination }`), never
+    // a bare array; see `ATLAS_SCALABILITY_PHASE_4_5_3_REPORT.md`.
+    expect(Array.isArray(res.body.items)).toBe(true);
   });
 });

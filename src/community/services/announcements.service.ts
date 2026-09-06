@@ -29,6 +29,29 @@ import type { Prisma } from '@prisma/client';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
+/**
+ * Phase 6 — academy-wide announcement authoring, structurally parallel to
+ * the pre-existing course-scoped `assertCanManage` above (same
+ * `MANAGING_ROLES`, checked against the caller's `academy_members` row
+ * directly rather than resolved transitively through a course). Backed by
+ * the new `announcements_academy_manage_*` RLS policies (P27 migration) —
+ * this app-layer check exists to return a real 403 instead of a
+ * confusing empty/failed write, exactly like `assertCanManage`'s own
+ * doc comment explains.
+ */
+async function assertCanManageAcademy(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  academyId: string,
+): Promise<void> {
+  const membership = await tx.academyMember.findFirst({
+    where: { academyId, userId },
+  });
+  if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    throw new ForbiddenException({ messageKey: 'errors.forbidden' });
+  }
+}
+
 @Injectable()
 export class AnnouncementsService {
   constructor(
@@ -173,6 +196,208 @@ export class AnnouncementsService {
       await this.assertCanManage(tx, userId, courseId);
       const existing = await this.announcementsRepository.findById(tx, announcementId);
       if (!existing || existing.courseId !== courseId) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const updated = await this.announcementsRepository.update(tx, announcementId, {
+        status: 'archived',
+      });
+      return toAnnouncementResponse(updated, updated.author.name);
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 6 — academy-wide authoring. Mirrors the course-scoped methods
+  // above exactly (same shape, same lifecycle), scoped to an Academy
+  // directly instead of transitively through a Course.
+  // ---------------------------------------------------------------------
+
+  async getAcademyAnnouncements(
+    userId: string,
+    academyId: string,
+    query?: CollectionQueryDto,
+  ): Promise<PaginatedResult<AnnouncementResponse>> {
+    const page = query?.page ?? DEFAULT_PAGE;
+    const pageSize = query?.pageSize ?? DEFAULT_PAGE_SIZE;
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      await assertCanManageAcademy(tx, userId, academyId);
+      const { items, totalItems } = await this.announcementsRepository.findManyForAcademy(
+        tx,
+        academyId,
+        { skip: (page - 1) * pageSize, take: pageSize },
+      );
+      return {
+        items: items.map((a) => toAnnouncementResponse(a, a.author.name)),
+        pagination: buildPaginationMeta(page, pageSize, totalItems),
+      };
+    });
+  }
+
+  async createAcademyAnnouncement(
+    userId: string,
+    academyId: string,
+    payload: CreateAnnouncementDto,
+  ): Promise<AnnouncementResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      await assertCanManageAcademy(tx, userId, academyId);
+      const created = await this.announcementsRepository.create(tx, {
+        audience: 'academy',
+        academy: { connect: { id: academyId } },
+        author: { connect: { id: userId } },
+        title: payload.title,
+        body: payload.body,
+        scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : undefined,
+        status: payload.scheduledAt ? 'scheduled' : 'draft',
+      });
+      return toAnnouncementResponse(created, created.author.name);
+    });
+  }
+
+  async updateAcademyAnnouncement(
+    userId: string,
+    academyId: string,
+    announcementId: string,
+    payload: UpdateAnnouncementDto,
+  ): Promise<AnnouncementResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      await assertCanManageAcademy(tx, userId, academyId);
+      const existing = await this.announcementsRepository.findById(tx, announcementId);
+      if (!existing || existing.academyId !== academyId || existing.courseId) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const updated = await this.announcementsRepository.update(tx, announcementId, {
+        title: payload.title,
+        body: payload.body,
+        scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : undefined,
+      });
+      return toAnnouncementResponse(updated, updated.author.name);
+    });
+  }
+
+  async publishAcademyAnnouncement(
+    userId: string,
+    academyId: string,
+    announcementId: string,
+  ): Promise<AnnouncementResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      await assertCanManageAcademy(tx, userId, academyId);
+      const existing = await this.announcementsRepository.findById(tx, announcementId);
+      if (!existing || existing.academyId !== academyId || existing.courseId) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const updated = await this.announcementsRepository.update(tx, announcementId, {
+        status: 'published',
+        publishedAt: new Date(),
+      });
+      return toAnnouncementResponse(updated, updated.author.name);
+    });
+  }
+
+  async archiveAcademyAnnouncement(
+    userId: string,
+    academyId: string,
+    announcementId: string,
+  ): Promise<AnnouncementResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      await assertCanManageAcademy(tx, userId, academyId);
+      const existing = await this.announcementsRepository.findById(tx, announcementId);
+      if (!existing || existing.academyId !== academyId || existing.courseId) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const updated = await this.announcementsRepository.update(tx, announcementId, {
+        status: 'archived',
+      });
+      return toAnnouncementResponse(updated, updated.author.name);
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 6 — platform-wide authoring. Authorization is the controller's
+  // `PlatformOwnerGuard` (re-checked live against `users.is_platform_owner`
+  // on every call, never a JWT claim — matching every other Platform-Owner
+  // surface in this codebase); the `announcements_platform_manage_*` RLS
+  // policies (P27 migration) are the backstop, not the primary gate,
+  // mirroring `assertCanManage`'s own "app-layer check exists to return a
+  // real error, RLS is the independent third layer" doc comment.
+  // ---------------------------------------------------------------------
+
+  async getPlatformAnnouncements(
+    userId: string,
+    query?: CollectionQueryDto,
+  ): Promise<PaginatedResult<AnnouncementResponse>> {
+    const page = query?.page ?? DEFAULT_PAGE;
+    const pageSize = query?.pageSize ?? DEFAULT_PAGE_SIZE;
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const { items, totalItems } = await this.announcementsRepository.findManyForPlatform(tx, {
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      });
+      return {
+        items: items.map((a) => toAnnouncementResponse(a, a.author.name)),
+        pagination: buildPaginationMeta(page, pageSize, totalItems),
+      };
+    });
+  }
+
+  async createPlatformAnnouncement(
+    userId: string,
+    payload: CreateAnnouncementDto,
+  ): Promise<AnnouncementResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const created = await this.announcementsRepository.create(tx, {
+        audience: 'platform',
+        author: { connect: { id: userId } },
+        title: payload.title,
+        body: payload.body,
+        scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : undefined,
+        status: payload.scheduledAt ? 'scheduled' : 'draft',
+      });
+      return toAnnouncementResponse(created, created.author.name);
+    });
+  }
+
+  async updatePlatformAnnouncement(
+    userId: string,
+    announcementId: string,
+    payload: UpdateAnnouncementDto,
+  ): Promise<AnnouncementResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const existing = await this.announcementsRepository.findById(tx, announcementId);
+      if (!existing || existing.audience !== 'platform') {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const updated = await this.announcementsRepository.update(tx, announcementId, {
+        title: payload.title,
+        body: payload.body,
+        scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : undefined,
+      });
+      return toAnnouncementResponse(updated, updated.author.name);
+    });
+  }
+
+  async publishPlatformAnnouncement(
+    userId: string,
+    announcementId: string,
+  ): Promise<AnnouncementResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const existing = await this.announcementsRepository.findById(tx, announcementId);
+      if (!existing || existing.audience !== 'platform') {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const updated = await this.announcementsRepository.update(tx, announcementId, {
+        status: 'published',
+        publishedAt: new Date(),
+      });
+      return toAnnouncementResponse(updated, updated.author.name);
+    });
+  }
+
+  async archivePlatformAnnouncement(
+    userId: string,
+    announcementId: string,
+  ): Promise<AnnouncementResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const existing = await this.announcementsRepository.findById(tx, announcementId);
+      if (!existing || existing.audience !== 'platform') {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
       const updated = await this.announcementsRepository.update(tx, announcementId, {

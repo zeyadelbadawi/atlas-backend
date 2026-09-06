@@ -30,6 +30,7 @@ import { EntitlementEnforcementService } from '../../plans/services/entitlement-
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { AcademiesRepository } from '../repositories/academies.repository';
 import { AcademyMembersRepository } from '../repositories/academy-members.repository';
+import { ContactSubmissionsRepository } from '../repositories/contact-submissions.repository';
 import { toAcademyResponse } from '../dto/academy.contract';
 import type { AcademyResponse, AcademyAddressResponse } from '../dto/academy.contract';
 import { toAcademyMemberResponse } from '../dto/academy-member.contract';
@@ -38,6 +39,11 @@ import { toAcademyStudentResponse } from '../dto/academy-student.contract';
 import type { AcademyStudentResponse } from '../dto/academy-student.contract';
 import type { AcademyStatsResponse } from '../dto/academy-stats.contract';
 import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
+import {
+  toContactSubmissionResponse,
+  type ContactSubmissionResponse,
+} from '../dto/contact-submission.contract';
+import type { UpdateContactSubmissionStatusDto } from '../dto/update-contact-submission-status.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../dto/list-query.dto';
@@ -78,6 +84,28 @@ const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
  */
 const GRANTS_MANAGER_ROLES = new Set(['owner']);
 
+/**
+ * Phase 5 (Onboarding & Provisioning Completion) — who may create a brand
+ * NEW Academy at all, independent of and checked before the entitlement
+ * check below. `academy.provisioning.create` is Organization-Owner-only
+ * (`ORGANIZATION_OWNER_PERMISSIONS`, deliberately absent from
+ * `ORGANIZATION_MANAGER_PERMISSIONS` — see that file's own doc comment:
+ * "a Manager operates the academy but never touches... provisioning of
+ * new academies"), and the frontend's `AcademyCreatePage` route is
+ * already gated on exactly that permission
+ * (`requiredPermissions={['academy.provisioning.create']}`). Before this
+ * check existed, `AcademyOrganizationScopeGuard` (which only verifies
+ * SOME organization-membership row exists, not its role) was the only
+ * gate on `POST /academies`, so a Manager's own valid JWT could reach and
+ * succeed at `AcademiesService.create` directly — the frontend route
+ * guard was, in practice, the only thing enforcing the Owner-only rule.
+ * Same narrow `Set`-of-roles shape as `GRANTS_MANAGER_ROLES` immediately
+ * above, kept as its own constant rather than reused: the two gate
+ * different actions (granting Manager access vs. creating an Academy)
+ * that only currently happen to share the same one-role membership.
+ */
+const CREATES_ACADEMY_ROLES = new Set(['owner']);
+
 @Injectable()
 export class AcademiesService {
   constructor(
@@ -92,6 +120,7 @@ export class AcademiesService {
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly entitlementEnforcementService: EntitlementEnforcementService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
+    private readonly contactSubmissionsRepository: ContactSubmissionsRepository,
   ) {}
 
   /**
@@ -160,6 +189,22 @@ export class AcademiesService {
       this.tenancyContextService.runInTenantContext(
         payload.organizationId,
         async (tx) => {
+          // Phase 5 — WHO may create an Academy at all, checked first and
+          // independent of the entitlement check below (see
+          // `CREATES_ACADEMY_ROLES`'s own doc comment for the exact gap
+          // this closes: without it, any organization member with a
+          // valid JWT — not only the Owner the frontend route restricts
+          // this to — could reach and succeed at this method directly).
+          const actingMembership =
+            await this.organizationMembershipsRepository.findForUserInOrganization(
+              tx,
+              payload.organizationId,
+              userId,
+            );
+          if (!actingMembership || !CREATES_ACADEMY_ROLES.has(actingMembership.role)) {
+            throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+          }
+
           // Phase 2 (Decision 4) — the live, write-time entitlement
           // check, INSIDE the same transaction as the insert below, so
           // the count and the write can never observe a different state
@@ -681,6 +726,67 @@ export class AcademiesService {
     return Promise.resolve({
       items: [],
       pagination: buildPaginationMeta(page, pageSize, 0),
+    });
+  }
+
+  /**
+   * Phase 6 — staff-side read of the public Contact section's real
+   * submissions. `assertCanManage` (never mere organization membership,
+   * per `AcademyScopeGuard`'s own doc comment) gates this the same way
+   * every other write-adjacent Academy action already is; the
+   * `contact_submissions_manage_select` RLS policy independently agrees.
+   */
+  async getContactSubmissions(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    query: CollectionQueryDto,
+  ): Promise<PaginatedResult<ContactSubmissionResponse>> {
+    const page = query.page ?? DEFAULT_PAGE;
+    const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
+
+    // `runInTenantAndUserContext` — `contact_submissions_manage_select`
+    // (RLS) requires a real `app.current_user_id` (`is_academy_moderator`),
+    // unlike `academy_members`' own tenant-only backstop; a plain
+    // `runInTenantContext` would leave that setting unset.
+    return this.tenancyContextService.runInTenantAndUserContext(organizationId, userId, async (tx) => {
+      await this.assertCanManage(tx, academyId, userId);
+      const { items, totalItems } = await this.contactSubmissionsRepository.findManyForAcademy(
+        tx,
+        academyId,
+        { skip: (page - 1) * pageSize, take: pageSize },
+      );
+      return {
+        items: items.map(toContactSubmissionResponse),
+        pagination: buildPaginationMeta(page, pageSize, totalItems),
+      };
+    });
+  }
+
+  /** Phase 6 — staff triage (mark read/archived); never re-opens the public write path. */
+  async updateContactSubmissionStatus(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    submissionId: string,
+    body: UpdateContactSubmissionStatusDto,
+  ): Promise<ContactSubmissionResponse> {
+    // `runInTenantAndUserContext` — `contact_submissions_manage_update`
+    // (RLS) requires a real `app.current_user_id` (`is_academy_moderator`)
+    // in BOTH its `USING` and `WITH CHECK`; see `getContactSubmissions`'s
+    // identical doc comment.
+    return this.tenancyContextService.runInTenantAndUserContext(organizationId, userId, async (tx) => {
+      await this.assertCanManage(tx, academyId, userId);
+      const existing = await this.contactSubmissionsRepository.findById(tx, submissionId);
+      if (!existing || existing.academyId !== academyId) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const updated = await this.contactSubmissionsRepository.updateStatus(
+        tx,
+        submissionId,
+        body.status,
+      );
+      return toContactSubmissionResponse(updated);
     });
   }
 

@@ -50,6 +50,7 @@ import { toPaymentIntentResponse } from '../dto/payment-intent.contract';
 import type { PaymentIntentResponse } from '../dto/payment-intent.contract';
 import type { CreatePaymentDto } from '../dto/create-payment.dto';
 import type { SubmitPaymentProofDto } from '../dto/submit-payment-proof.dto';
+import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { PaymentListQueryDto } from '../dto/payment-list-query.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
@@ -79,10 +80,25 @@ export class PaymentService {
     private readonly atlasSubscriptionPaymentProviderService: AtlasSubscriptionPaymentProviderService,
   ) {}
 
-  /** Catalog-scoped, not organization-scoped — matches `getPaymentMethods`'s own doc comment. */
-  async getPaymentMethods(): Promise<PaymentMethodResponse[]> {
-    const methods = await this.paymentMethodsRepository.findAllEnabled();
-    return methods.map(toPaymentMethodResponse);
+  /**
+   * Catalog-scoped, not organization-scoped — matches `getPaymentMethods`'s
+   * own doc comment. Paginated as of Phase 4.5.3 (Change 4) — see
+   * `PaymentMethodsRepository.findManyEnabledPaginated`'s own doc comment.
+   */
+  async getPaymentMethods(
+    query: CollectionQueryDto,
+  ): Promise<PaginatedResult<PaymentMethodResponse>> {
+    const page = query.page ?? DEFAULT_PAGE;
+    const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
+    const { items, totalItems } =
+      await this.paymentMethodsRepository.findManyEnabledPaginated(
+        (page - 1) * pageSize,
+        pageSize,
+      );
+    return {
+      items: items.map(toPaymentMethodResponse),
+      pagination: buildPaginationMeta(page, pageSize, totalItems),
+    };
   }
 
   async createPayment(

@@ -37,6 +37,7 @@ import {
   WEBSITE_THEME_KEYS,
 } from '../constants/website.constants';
 import { isSafeExternalUrl } from './url-safety.util';
+import { localizedOptional, localizedRequired } from './section-config.schemas';
 
 export const websiteThemeKeySchema = z.enum(WEBSITE_THEME_KEYS);
 
@@ -59,29 +60,21 @@ const canonicalPathSchema = z
   .optional()
   .or(z.literal(''));
 
+/** Phase 6 — every title/description a search engine or social-share preview displays is `LocalizedText`: `/about` and `/ar/about` are two distinct indexed URLs (see `seo-resolution.util.ts`'s hreflang-alternate resolution), each needing its own language's copy, not one string served for both. */
 export const pageSeoSchema = z.object({
-  metaTitle: z.string().max(MAX_SEO_TITLE_LENGTH, 'validation:maxLength').optional(),
-  metaDescription: z
-    .string()
-    .max(MAX_SEO_DESCRIPTION_LENGTH, 'validation:maxLength')
-    .optional(),
-  ogTitle: z.string().max(MAX_OG_TITLE_LENGTH, 'validation:maxLength').optional(),
-  ogDescription: z
-    .string()
-    .max(MAX_OG_DESCRIPTION_LENGTH, 'validation:maxLength')
-    .optional(),
+  metaTitle: localizedOptional(MAX_SEO_TITLE_LENGTH).optional(),
+  metaDescription: localizedOptional(MAX_SEO_DESCRIPTION_LENGTH).optional(),
+  ogTitle: localizedOptional(MAX_OG_TITLE_LENGTH).optional(),
+  ogDescription: localizedOptional(MAX_OG_DESCRIPTION_LENGTH).optional(),
   ogImage: z.string().optional(),
   canonicalPath: canonicalPathSchema,
   indexable: z.boolean().optional(),
 });
 
 export const globalSeoSchema = z.object({
-  siteTitle: z.string().max(MAX_SITE_TITLE_LENGTH, 'validation:maxLength').optional(),
-  metaTitle: z.string().max(MAX_SEO_TITLE_LENGTH, 'validation:maxLength').optional(),
-  metaDescription: z
-    .string()
-    .max(MAX_SEO_DESCRIPTION_LENGTH, 'validation:maxLength')
-    .optional(),
+  siteTitle: localizedOptional(MAX_SITE_TITLE_LENGTH).optional(),
+  metaTitle: localizedOptional(MAX_SEO_TITLE_LENGTH).optional(),
+  metaDescription: localizedOptional(MAX_SEO_DESCRIPTION_LENGTH).optional(),
   ogImage: z.string().optional(),
   robotsIndexable: z.boolean().optional(),
   sitemapEnabled: z.boolean().optional(),
@@ -111,10 +104,7 @@ export const websiteBrandPatchSchema = z.object({
 
 const navigationItemSchema = z.object({
   id: z.string().min(1, 'validation:required'),
-  label: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
+  label: localizedRequired(MAX_SHORT_TEXT),
   pageId: z.string().min(1, 'validation:required'),
   order: z.number().int(),
 });
@@ -124,10 +114,7 @@ export const websiteNavigationSchema = z
   .max(MAX_SECTION_ITEMS);
 
 const websiteCtaSchema = z.object({
-  label: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
+  label: localizedRequired(MAX_SHORT_TEXT),
   pageId: z.string().optional(),
   courseId: z.string().optional(),
   url: z
@@ -136,18 +123,43 @@ const websiteCtaSchema = z.object({
     .refine(isSafeExternalUrl, { message: 'validation:invalidUrl' })
     .optional()
     .or(z.literal('')),
+  // Phase 1 (Extended Scope, Decision 11, dependency C) — targets the
+  // Academy's own public Sign In/Sign Up page. Was missing here even
+  // though the frontend's `WebsiteHeaderConfig.cta`/`WebsiteCta` types
+  // have always declared it: since this schema has no `.strict()`, Zod
+  // silently dropped `authAction` from every parsed header CTA before
+  // storage, so choosing "Sign In"/"Sign Up" as the header CTA target
+  // never persisted — it looked like the picker refused the selection.
+  authAction: z.enum(['signIn', 'signUp']).optional(),
+});
+
+/** One optional title/subtitle pair — every field independently optional, an unset one falls back to the app's own generic default copy client-side. */
+const websiteAuthPageCopySchema = z.object({
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  subtitle: localizedOptional(MAX_SHORT_TEXT).optional(),
+});
+
+/**
+ * Sign In/Sign Up are fixed, dedicated pages (not `WebsitePage` records —
+ * see `PublicWebsiteSignInPage`/`PublicWebsiteSignUpPage`), so this is the
+ * one narrow customization surface for them: just their heading copy,
+ * nested here rather than as a new top-level config column since it is
+ * conceptually the same "content that controls the CTA leading to these
+ * pages" the header CTA's own `authAction` already lives under.
+ */
+const websiteAuthPagesSchema = z.object({
+  signIn: websiteAuthPageCopySchema.optional(),
+  signUp: websiteAuthPageCopySchema.optional(),
 });
 
 export const websiteHeaderSchema = z.object({
   cta: websiteCtaSchema.optional(),
+  authPages: websiteAuthPagesSchema.optional(),
 });
 
 const footerLinkSchema = z.object({
   id: z.string().min(1, 'validation:required'),
-  label: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
+  label: localizedRequired(MAX_SHORT_TEXT),
   pageId: z.string().optional(),
   url: z
     .string()
@@ -159,15 +171,12 @@ const footerLinkSchema = z.object({
 
 const footerGroupSchema = z.object({
   id: z.string().min(1, 'validation:required'),
-  title: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
+  title: localizedRequired(MAX_SHORT_TEXT),
   links: z.array(footerLinkSchema).max(MAX_SECTION_ITEMS),
 });
 
 export const websiteFooterSchema = z.object({
   groups: z.array(footerGroupSchema).max(MAX_SECTION_ITEMS),
   socialLinks: z.array(footerLinkSchema).max(MAX_SECTION_ITEMS),
-  copyrightText: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
+  copyrightText: localizedOptional(MAX_SHORT_TEXT).optional(),
 });

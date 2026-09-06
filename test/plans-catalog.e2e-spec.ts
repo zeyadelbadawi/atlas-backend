@@ -34,15 +34,31 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
   let app: INestApplication;
   let admin: PrismaClient;
   let flushRateLimitKeys: () => Promise<void>;
+  // `trial_policy` is a real, GLOBAL, non-tenant-scoped singleton — every
+  // PATCH in this file mutates the one shared row real signups also read
+  // (`OrganizationSubscriptionBootstrapService`). Confirmed live, twice
+  // over separate phases of this project, that leaving it mutated (this
+  // file's own "durationDays: 0 is a legitimate value" test is the
+  // reproducible culprit) breaks real trial bootstrapping for every
+  // organization created afterward, including by a real human testing the
+  // real app, until someone notices and manually repairs it. Snapshot
+  // before this file's own writes and restore after, exactly like a
+  // tenant-scoped fixture would be torn down — this table has no tenant
+  // boundary to protect it, so this file's own discipline is the only
+  // thing that can.
+  let originalTrialPolicy: { enabled: boolean; durationDays: number };
 
   beforeAll(async () => {
     const testApp = await createTestApp();
     app = testApp.app;
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
+    const policy = await admin.trialPolicy.findFirstOrThrow();
+    originalTrialPolicy = { enabled: policy.enabled, durationDays: policy.durationDays };
   });
 
   afterAll(async () => {
+    await admin.trialPolicy.updateMany({ data: originalTrialPolicy });
     await admin.$disconnect();
     await app.close();
   });
@@ -58,45 +74,72 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
     await request(app.getHttpServer()).patch('/trial-policy').send({}).expect(401);
   });
 
-  it('GET /plans returns real, previously-seeded plans field-for-field', async () => {
+  /**
+   * checkout/plans investigation fix: `GET /plans` is now scoped to
+   * `CUSTOMER_FACING_WHERE` (`PlansRepository`'s own doc comment) — real,
+   * `status: 'active'`, `displayOrder > 0` plans ONLY. `starter`/`growth`/
+   * `enterprise` (`prisma/seed.ts`) are the only rows that have ever been
+   * given a real `displayOrder`, so this reads real, always-present
+   * catalog data rather than a throwaway fixture plan — which, as of this
+   * same fix, would never appear in this response at all (see the next
+   * test, which asserts exactly that).
+   */
+  it('GET /plans returns the real, customer-facing catalog field-for-field', async () => {
     const user = await signUpAndSignIn(app, 'plans-list');
-    const plan = await seedPlan(admin, 'plans-list-plan', {
-      limits: {
-        academies: 3,
-        students: 10,
-        instructors: 2,
-        staff: 2,
-        courses: 5,
-        generalStorage: 1,
-        videoStorage: 1,
-      },
-    });
 
-    const response = await request(app.getHttpServer())
+    // Also confirms the envelope shape itself (`{ items, pagination }`,
+    // never a bare array).
+    const firstPage = await request(app.getHttpServer())
       .get('/plans')
+      .query({ pageSize: 100 })
       .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(200);
+    expect(firstPage.body.pagination).toMatchObject({ page: 1, pageSize: 100 });
 
-    const found = response.body.find((p: { id: string }) => p.id === plan.id);
-    expect(found).toMatchObject({
-      key: plan.key,
-      name: plan.name,
+    const keys = firstPage.body.items.map((p: { key: string }) => p.key);
+    expect(keys).toEqual(['starter', 'growth', 'enterprise']);
+
+    const growth = firstPage.body.items.find((p: { key: string }) => p.key === 'growth');
+    expect(growth).toMatchObject({
+      key: 'growth',
+      name: 'Growth',
       status: 'active',
-      limits: { academies: 3 },
+      displayOrder: 2,
+      pricing: { amount: 79, currency: 'USD', billingCycle: 'monthly' },
     });
   });
 
-  it('GET /plans includes archived plans too (frontend disables selection client-side, never hides them server-side)', async () => {
+  /**
+   * checkout/plans investigation fix: this used to document the OPPOSITE,
+   * previously-intended contract ("frontend disables selection client-
+   * side, never hides them server-side") — the real incident this phase
+   * fixed is exactly that gap: an inert (`displayOrder: 0`) or archived
+   * plan reaching a real customer's catalog/checkout at all. The new,
+   * deliberate contract is server-side exclusion — `GET /plans/:key`
+   * (direct, by a caller who already knows the key) still resolves it
+   * unchanged, so nothing that depended on a specific already-known plan
+   * key breaks; only anonymous catalog BROWSING is scoped.
+   */
+  it('GET /plans excludes archived and non-customer-facing (fixture) plans; GET /plans/:key still resolves them directly', async () => {
     const user = await signUpAndSignIn(app, 'plans-archived');
-    const plan = await seedPlan(admin, 'plans-archived-plan', { status: 'archived' });
+    const archived = await seedPlan(admin, 'plans-archived-plan', { status: 'archived' });
+    const fixture = await seedPlan(admin, 'plans-fixture-plan', { status: 'active' });
 
-    const response = await request(app.getHttpServer())
+    const catalog = await request(app.getHttpServer())
       .get('/plans')
+      .query({ pageSize: 100 })
       .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(200);
+    const keys = catalog.body.items.map((p: { key: string }) => p.key);
+    expect(keys).not.toContain(archived.key);
+    expect(keys).not.toContain(fixture.key);
+    expect(keys).toEqual(['starter', 'growth', 'enterprise']);
 
-    const found = response.body.find((p: { id: string }) => p.id === plan.id);
-    expect(found?.status).toBe('archived');
+    const byKey = await request(app.getHttpServer())
+      .get(`/plans/${archived.key}`)
+      .set('Authorization', `Bearer ${user.accessToken}`)
+      .expect(200);
+    expect(byKey.body.status).toBe('archived');
   });
 
   it('GET /plans/:key returns 404 for an unknown key', async () => {

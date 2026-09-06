@@ -1,11 +1,30 @@
 /** `PATCH blog-posts/:id` request — matches `UpdateBlogPostPayload` exactly. */
-import { IsArray, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsArray, IsISO8601, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateBlogPostDto {
   @IsOptional()
   @IsString()
   @MaxLength(200)
   readonly title?: string;
+
+  /** Phase 6 — see `CreateBlogPostDto`'s identical field for the full rule (future-dated → `scheduled`, validated in `BlogPostsService`). */
+  @IsOptional()
+  @IsISO8601()
+  readonly scheduledAt?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(70)
+  readonly metaTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  readonly metaDescription?: string;
+
+  @IsOptional()
+  @IsString()
+  readonly ogImage?: string;
 
   @IsOptional()
   @IsString()

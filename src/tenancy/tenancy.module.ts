@@ -46,7 +46,9 @@ import { TenancyContextService } from './services/tenancy-context.service';
 import { OrganizationsRepository } from './repositories/organizations.repository';
 import { OrganizationMembershipsRepository } from './repositories/organization-memberships.repository';
 import { AcademyStudentsRepository } from './repositories/academy-students.repository';
+import { AcademyStaffRepository } from './repositories/academy-staff.repository';
 import { OrganizationMembershipGuard } from './guards/organization-membership.guard';
+import { SaasLevelCallerGuard } from './guards/saas-level-caller.guard';
 
 @Module({
   imports: [AuthCoreModule],
@@ -63,21 +65,27 @@ import { OrganizationMembershipGuard } from './guards/organization-membership.gu
     // `AcademyModule`, so `IdentityModule` (self-registration) can use it
     // too without a circular import; see the repository's own doc comment.
     AcademyStudentsRepository,
+    AcademyStaffRepository,
     OrganizationsService,
     UserOrganizationsService,
     OrganizationMembershipGuard,
+    // Foundational-audit fix (ATLAS_FOUNDATIONAL_AUTH_TENANCY_AUDIT.md,
+    // Fix A) — see the guard's own doc comment.
+    SaasLevelCallerGuard,
   ],
   exports: [
     TenancyContextService,
     OrganizationsRepository,
     OrganizationMembershipsRepository,
     AcademyStudentsRepository,
+    AcademyStaffRepository,
     UserOrganizationsService,
     // Phase P15 additions — both reused verbatim, unmodified, by
     // `PlatformModule`'s `OrganizationsController` (see this file's own
     // header comment).
     OrganizationsService,
     OrganizationMembershipGuard,
+    SaasLevelCallerGuard,
   ],
 })
 export class TenancyModule {}

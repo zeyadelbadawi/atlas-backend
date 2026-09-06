@@ -14,6 +14,10 @@ export interface BlogPostResponse {
   readonly category?: string;
   readonly tags: readonly string[];
   readonly status: PrismaBlogPost['status'];
+  readonly scheduledAt?: string;
+  readonly metaTitle?: string;
+  readonly metaDescription?: string;
+  readonly ogImage?: string;
   readonly publishedAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -36,6 +40,10 @@ export function toBlogPostResponse(
     category: post.category ?? undefined,
     tags: post.tags,
     status: post.status,
+    scheduledAt: post.scheduledAt?.toISOString(),
+    metaTitle: post.metaTitle ?? undefined,
+    metaDescription: post.metaDescription ?? undefined,
+    ogImage: post.ogImage ?? undefined,
     publishedAt: post.publishedAt?.toISOString(),
     createdAt: post.createdAt.toISOString(),
     updatedAt: post.updatedAt.toISOString(),

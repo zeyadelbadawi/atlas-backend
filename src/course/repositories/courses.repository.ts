@@ -126,6 +126,21 @@ export class CoursesRepository {
     return tx.course.update({ where: { id }, data });
   }
 
+  /**
+   * Phase 6 — the public statistics endpoint's real, live published-course
+   * count. Hardcodes `status: 'published', visibility: 'public'` for the
+   * exact same reason `findManyPublished` does (see that method's own doc
+   * comment): this is the established, reused definition of "publicly
+   * countable course" (`FeaturedCoursesSection`/`InstructorsSection`, atlas
+   * frontend, already filter identically) — never a caller-suppliable
+   * status/visibility that could widen the count to include drafts.
+   */
+  countPublished(tx: Prisma.TransactionClient, academyId: string): Promise<number> {
+    return tx.course.count({
+      where: { academyId, status: 'published', visibility: 'public' },
+    });
+  }
+
   countSections(tx: Prisma.TransactionClient, courseId: string): Promise<number> {
     return tx.courseSection.count({ where: { courseId } });
   }

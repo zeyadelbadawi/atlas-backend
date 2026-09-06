@@ -28,6 +28,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { AuthCoreModule } from '../identity/auth-core.module';
 import { IdentityModule } from '../identity/identity.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { CommunityModule } from '../community/community.module';
 import { PlansController } from './controllers/plans.controller';
 import { AddOnsController } from './controllers/add-ons.controller';
 import { TrialPolicyController } from './controllers/trial-policy.controller';
@@ -47,6 +48,7 @@ import { TrialPolicyRepository } from './repositories/trial-policy.repository';
 import { TenantSubscriptionsRepository } from './repositories/tenant-subscriptions.repository';
 import { TenantAddOnsRepository } from './repositories/tenant-add-ons.repository';
 import { TenantUsageRepository } from './repositories/tenant-usage.repository';
+import { TenantUsageSweepCursorRepository } from './repositories/tenant-usage-sweep-cursor.repository';
 import { TenantUsageRecomputeProducer } from './queue/tenant-usage-recompute.producer';
 import { TenantUsageRecomputeProcessor } from './queue/tenant-usage-recompute.processor';
 import { TENANT_USAGE_RECOMPUTE_QUEUE } from './queue/tenant-usage-recompute.types';
@@ -65,6 +67,12 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     // depends on `PlansModule`.
     IdentityModule,
     TenancyModule,
+    // Phase 6 — `AnnouncementsRepository`/`BlogPostsRepository`, needed by
+    // `SubscriptionSweepService` to publish due scheduled content on the
+    // same tick (see that service's own doc comment). No cycle:
+    // `CommunityModule` only imports `AuthCoreModule`/`TenancyModule`,
+    // neither of which import `PlansModule`.
+    CommunityModule,
     BullModule.registerQueue(
       { name: TENANT_USAGE_RECOMPUTE_QUEUE },
       { name: SUBSCRIPTION_SWEEP_QUEUE },
@@ -96,6 +104,7 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     TenantSubscriptionsRepository,
     TenantAddOnsRepository,
     TenantUsageRepository,
+    TenantUsageSweepCursorRepository,
     TenantUsageRecomputeProducer,
     TenantUsageRecomputeProcessor,
     SubscriptionSweepProcessor,

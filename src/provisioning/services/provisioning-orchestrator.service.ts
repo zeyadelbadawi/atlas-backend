@@ -54,6 +54,7 @@ import { ProvisioningRequestsRepository } from '../repositories/provisioning-req
 import { ProvisioningStepsRepository } from '../repositories/provisioning-steps.repository';
 import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
 import { WebsiteConfigurationService } from '../../website/services/website-configuration.service';
+import { WebsiteGenerationService } from '../../website/services/website-generation.service';
 import { WEBSITE_THEME_KEYS } from '../../website/constants/website.constants';
 import {
   PROVISIONING_STEP_ORDER,
@@ -180,6 +181,7 @@ export class ProvisioningOrchestratorService {
     private readonly platformDomainConfigurationRepository: PlatformDomainConfigurationRepository,
     private readonly notificationFanoutService: NotificationFanoutService,
     private readonly websiteConfigurationService: WebsiteConfigurationService,
+    private readonly websiteGenerationService: WebsiteGenerationService,
   ) {}
 
   /** `TenancyContextService.runInTenantContext`, wrapped with `withTransientRetry` — the ONE call path every method in this class uses to touch the database, so the transient-connection-pool protection documented on `withTransientRetry` applies uniformly, not just at the one call site that first surfaced it. */
@@ -521,6 +523,20 @@ export class ProvisioningOrchestratorService {
    * (or any website read) first touches this Academy — nothing to change,
    * so this step completes without a write, exactly like `'academy'`
    * completing immediately when `request.academyId` is already set.
+   *
+   * Phase 6 (Bilingual Academy Websites) — extended, not replaced: once a
+   * real theme is applied, this SAME step additionally calls
+   * `WebsiteGenerationService.generate` with `request.websiteSetupMode`
+   * (defaulting to `'empty'` — see `CreateProvisioningRequestDto`'s own
+   * doc comment on why that default differs from the UI's own
+   * pre-selected `'complete'`). Deliberately no new
+   * `PROVISIONING_STEP_ORDER` entry, no new `ProvisioningStatus` — the
+   * artifact's own §3.4 explicitly rejected a new step as unnecessarily
+   * invasive once this exact insertion point was found. Idempotent for
+   * the same reason `WebsiteGenerationService.generate` itself is: a
+   * retried step re-applies the theme (already idempotent) and calls
+   * generate again, which only ever creates pages that don't already
+   * exist.
    */
   private async executeThemeStep(
     request: ProvisioningRequest,
@@ -542,6 +558,17 @@ export class ProvisioningOrchestratorService {
       request.requestedByUserId,
       { themeKey },
     );
+
+    // `website_configurations`/`website_pages` writes are RLS-gated on
+    // `is_academy_member` (same reasoning as `runTenantAsRequester`'s own
+    // doc comment for `subdomain_allocations`) — plain tenant context
+    // alone isn't sufficient here, matching why `updateConfiguration`
+    // just above uses `runInTenantAndUserContext`, not `runInTenantContext`.
+    const setupMode = request.websiteSetupMode === 'complete' ? 'complete' : 'empty';
+    await this.runTenantAsRequester(organizationId, request.requestedByUserId, (tx) =>
+      this.websiteGenerationService.generate(tx, request.academyId!, themeKey, setupMode),
+    );
+
     return { result: 'completed' };
   }
 

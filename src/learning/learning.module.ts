@@ -32,12 +32,27 @@
  * needs `EntitlementEnforcementService` (the live `students` plan-limit
  * check). `PlansModule` depends on neither `LearningModule` nor
  * `CourseModule`, so this stays a clean DAG.
+ *
+ * Imports `AcademyModule` and `MediaModule` as of Phase 4 (P24). Quiz/
+ * Assignment authoring (`QuizzesService`/`AssignmentsService`) needs
+ * `AcademyMembersRepository` (`AcademyModule`) for
+ * `assertCanAuthorCourseContent`'s Owner/Administrator/Manager check —
+ * `CourseModule` (already imported) exports `CoursesRepository`/
+ * `CourseInstructorsRepository` but not `AcademyMembersRepository`.
+ * `AssignmentsService.uploadSubmissionAttachment` needs `MediaService`
+ * (`MediaModule`) to wire real file uploads through the existing R2
+ * pipeline. Neither `AcademyModule` nor `MediaModule` imports
+ * `LearningModule` or `CourseModule` (both depend only on
+ * `AuthCoreModule`/`TenancyModule`/`IdentityModule`/`PlansModule`), so
+ * this stays a clean, acyclic DAG — no `forwardRef` needed.
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { CourseModule } from '../course/course.module';
+import { AcademyModule } from '../academy/academy.module';
 import { PlansModule } from '../plans/plans.module';
+import { MediaModule } from '../media/media.module';
 import { CourseDiscoveryController } from './controllers/course-discovery.controller';
 import { EnrollmentsController } from './controllers/enrollments.controller';
 import { CourseProgressController } from './controllers/course-progress.controller';
@@ -54,7 +69,7 @@ import { QuizzesRepository } from './repositories/quizzes.repository';
 import { AssignmentsRepository } from './repositories/assignments.repository';
 
 @Module({
-  imports: [AuthCoreModule, TenancyModule, CourseModule, PlansModule],
+  imports: [AuthCoreModule, TenancyModule, CourseModule, AcademyModule, PlansModule, MediaModule],
   controllers: [
     CourseDiscoveryController,
     EnrollmentsController,

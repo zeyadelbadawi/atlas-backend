@@ -61,6 +61,8 @@ export const ORGANIZATION_MANAGER_PERMISSIONS: readonly string[] = [
   'course.manage',
   'course.update',
   'course.configure',
+  'quiz.manage',
+  'assignment.manage',
   'instructor.dashboard.view',
   'instructor.course.view',
   'instructor.student.view',
@@ -91,10 +93,23 @@ export const ORGANIZATION_MANAGER_PERMISSIONS: readonly string[] = [
  * Client/Admin/Manager-only capability. Granted whenever
  * `AcademiesService.addInstructor` creates (or reuses) this user's
  * `organization_memberships` row.
+ *
+ * Phase 4 (P24) exception: `quiz.manage`/`assignment.manage` ARE granted
+ * here, unlike every other authoring string — master plan §22/§24's own
+ * explicit rule is that quiz/assignment authoring is course-scoped, not
+ * academy-scoped: "an instructor may only author content for courses
+ * they're assigned to." This organization-level string only gates
+ * frontend ROUTE visibility (`RouteGuard`'s `requiredPermissions`); the
+ * real per-course boundary is enforced server-side by
+ * `assertCanAuthorCourseContent`/`can_author_course_content()` (RLS),
+ * which an Instructor still fails for any course they are not personally
+ * assigned to, even with this permission string present.
  */
 export const ORGANIZATION_INSTRUCTOR_PERMISSIONS: readonly string[] = [
   'academy.view',
   'academy.website.view',
+  'quiz.manage',
+  'assignment.manage',
   'instructor.dashboard.view',
   'instructor.course.view',
   'instructor.student.view',

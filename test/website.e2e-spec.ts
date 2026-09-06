@@ -165,6 +165,132 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .expect(400);
   });
 
+  it('header CTA authAction (Sign In / Sign Up) round-trips instead of being silently dropped', async () => {
+    // Regression: `websiteCtaSchema` had no `authAction` field even though
+    // the frontend's `WebsiteHeaderConfig.cta` type always declared it —
+    // Zod silently stripped it from every parsed header CTA, so choosing
+    // "Sign In"/"Sign Up" as the header CTA target never persisted.
+    const { owner, academy } = await seedManagedAcademy('header-cta-auth');
+
+    const updated = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ header: { cta: { label: 'Sign Up', authAction: 'signUp' } } })
+      .expect(200);
+    // Phase 6 — `label` is `LocalizedText`; a bare string sent by an old
+    // client is accepted and coerced (`coerceLegacyLocalized`) to English
+    // content with Arabic not yet translated.
+    expect(updated.body.header.cta).toMatchObject({
+      label: { en: 'Sign Up', ar: '' },
+      authAction: 'signUp',
+    });
+
+    const fetched = await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(fetched.body.header.cta).toMatchObject({
+      label: { en: 'Sign Up', ar: '' },
+      authAction: 'signUp',
+    });
+
+    const switched = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ header: { cta: { label: 'Sign Up', authAction: 'signIn' } } })
+      .expect(200);
+    expect(switched.body.header.cta.authAction).toBe('signIn');
+  });
+
+  it('rejects a header CTA authAction outside the signIn/signUp enum', async () => {
+    const { owner, academy } = await seedManagedAcademy('header-cta-auth-invalid');
+    await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ header: { cta: { label: 'Go', authAction: 'not-a-real-action' } } })
+      .expect(400);
+  });
+
+  it('header CTA and Sign In/Sign Up page copy coexist across separate PATCH calls (header is a full replace)', async () => {
+    // Regression risk this specifically guards against: `header` is
+    // replaced wholesale on every PATCH, not deep-merged. Saving `cta` in
+    // one request and `authPages` in another must not let the later save
+    // silently wipe the earlier one.
+    const { owner, academy } = await seedManagedAcademy('header-auth-pages');
+
+    const withCta = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ header: { cta: { label: 'Sign Up', authAction: 'signUp' } } })
+      .expect(200);
+    expect(withCta.body.header.cta).toMatchObject({
+      label: { en: 'Sign Up', ar: '' },
+      authAction: 'signUp',
+    });
+
+    const withAuthPages = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        header: {
+          cta: withCta.body.header.cta,
+          authPages: {
+            signIn: { title: 'Welcome back', subtitle: 'Sign in to continue learning' },
+            signUp: { title: 'Join us' },
+          },
+        },
+      })
+      .expect(200);
+    // The CTA saved in the previous request must still be there.
+    expect(withAuthPages.body.header.cta).toMatchObject({
+      label: { en: 'Sign Up', ar: '' },
+      authAction: 'signUp',
+    });
+    expect(withAuthPages.body.header.authPages).toMatchObject({
+      signIn: { title: { en: 'Welcome back', ar: '' }, subtitle: { en: 'Sign in to continue learning', ar: '' } },
+      signUp: { title: { en: 'Join us', ar: '' } },
+    });
+
+    const fetched = await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(fetched.body.header.cta).toMatchObject({
+      label: { en: 'Sign Up', ar: '' },
+      authAction: 'signUp',
+    });
+    expect(fetched.body.header.authPages.signIn.title).toEqual({ en: 'Welcome back', ar: '' });
+  });
+
+  it('a footer social link with a real label persists; an empty label is rejected (documents the constraint the "Add link" UI must satisfy)', async () => {
+    const { owner, academy } = await seedManagedAcademy('footer-social-link');
+
+    const withLink = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        footer: {
+          groups: [],
+          socialLinks: [{ id: 'link-1', label: 'New link', url: '' }],
+        },
+      })
+      .expect(200);
+    expect(withLink.body.footer.socialLinks).toEqual([
+      { id: 'link-1', label: { en: 'New link', ar: '' }, url: '' },
+    ]);
+
+    await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        footer: {
+          groups: [],
+          socialLinks: [{ id: 'link-1', label: '', url: '' }],
+        },
+      })
+      .expect(400);
+  });
+
   it('publish sets status to published deterministically and records publishedAt', async () => {
     const { owner, academy } = await seedManagedAcademy('publish');
     await request(app.getHttpServer())
@@ -241,7 +367,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .send({ sections: validSections })
       .expect(200);
     expect(updated.body.sections).toHaveLength(1);
-    expect(updated.body.sections[0].config.title).toBe('Welcome to our academy');
+    expect(updated.body.sections[0].config.title).toEqual({ en: 'Welcome to our academy', ar: '' });
 
     // Unregistered section type.
     await request(app.getHttpServer())

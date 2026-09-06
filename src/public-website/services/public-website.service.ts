@@ -44,6 +44,20 @@ import {
 } from '../utils/hostname-normalization.util';
 import type { HostnameResolutionResponse } from '../dto/hostname-resolution.contract';
 import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
+// Phase 6 additions — see this file's own header comment.
+import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
+import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { ContactSubmissionsRepository } from '../../academy/repositories/contact-submissions.repository';
+import { AcademiesRepository } from '../../academy/repositories/academies.repository';
+import { CoursesRepository } from '../../course/repositories/courses.repository';
+import type { PublicWebsiteStatisticsResponse } from '../dto/public-statistics.contract';
+import type { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
+import type { AcademyIdentityResponse } from '../dto/public-identity.contract';
+import type { AcademyAddressResponse } from '../../academy/dto/academy.contract';
+import {
+  toContactSubmissionResponse,
+  type ContactSubmissionResponse,
+} from '../../academy/dto/contact-submission.contract';
 
 @Injectable()
 export class PublicWebsiteService {
@@ -55,6 +69,12 @@ export class PublicWebsiteService {
     private readonly websiteConfigurationRepository: WebsiteConfigurationRepository,
     private readonly websitePagesRepository: WebsitePagesRepository,
     private readonly cacheService: PublicWebsiteCacheService,
+    // Phase 6 additions — see this file's own header comment.
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
+    private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly contactSubmissionsRepository: ContactSubmissionsRepository,
+    private readonly coursesRepository: CoursesRepository,
+    private readonly academiesRepository: AcademiesRepository,
     configService: ConfigService,
   ) {
     this.baseDomain =
@@ -162,5 +182,107 @@ export class PublicWebsiteService {
     const pages = await this.getPublishedPages(academyId);
     if (!pages) return null;
     return pages.find((page) => page.slug === slug) ?? null;
+  }
+
+  /**
+   * Phase 6 — `StatisticsSection`'s real, live, Academy-scoped counts.
+   * `academyId` is resolved to an organization exactly like every other
+   * method on this service (never trusted on its own); `null` here means
+   * the SAME thing it means everywhere else in this file — "no such
+   * Academy, from this caller's point of view" — so the controller turns
+   * it into the identical plain 404. One `runInTenantContext`, three
+   * counts, no revenue or any other private figure ever touched.
+   */
+  async getPublicStatistics(
+    academyId: string,
+  ): Promise<PublicWebsiteStatisticsResponse | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+
+    const [courses, students, instructors] = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) =>
+        Promise.all([
+          this.coursesRepository.countPublished(tx, academyId),
+          this.academyStudentsRepository.countForAcademy(tx, academyId),
+          this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
+        ]),
+    );
+
+    return { courses, students, instructors };
+  }
+
+  /**
+   * Phase 6 — the ONE combined Academy Identity/Branding read, reused by
+   * the public website, the Student LMS, and (indirectly, matching this
+   * exact shape) the authenticated dashboard. See
+   * `AcademyIdentityResponse`'s own doc comment for why this reads two
+   * already-existing sources rather than a new one. Colors are present
+   * only when a real, PUBLISHED `WebsiteConfiguration` exists — an Academy
+   * that has never published a website still resolves a real name/logo/
+   * contact identity, just with no custom color overrides.
+   */
+  async getPublicIdentity(academyId: string): Promise<AcademyIdentityResponse | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+
+    const [academy, configuration] = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) =>
+        Promise.all([
+          this.academiesRepository.findById(tx, academyId),
+          this.websiteConfigurationRepository.findPublishedByAcademyId(tx, academyId),
+        ]),
+    );
+    if (!academy) return null;
+
+    const brand = (configuration?.brand ?? undefined) as
+      | { primaryColor?: unknown; secondaryColor?: unknown; accentColor?: unknown }
+      | undefined;
+    const asColor = (value: unknown): string | undefined =>
+      typeof value === 'string' ? value : undefined;
+
+    return {
+      academyId: academy.id,
+      name: academy.name,
+      logoUrl: academy.logoUrl ?? undefined,
+      faviconUrl: academy.faviconUrl ?? undefined,
+      primaryColor: asColor(brand?.primaryColor),
+      secondaryColor: asColor(brand?.secondaryColor),
+      accentColor: asColor(brand?.accentColor),
+      contactEmail: academy.contactEmail ?? undefined,
+      contactPhone: academy.contactPhone ?? undefined,
+      address: (academy.address as AcademyAddressResponse | null) ?? undefined,
+    };
+  }
+
+  /**
+   * Phase 6 — the real backend destination for the public Contact
+   * section's form (previously an intentional no-op). `academyId` is
+   * resolved to an organization exactly like every other method on this
+   * service; the resulting SERVER-resolved `organizationId` (never a
+   * client-supplied one) is what `contact_submissions_public_insert`'s
+   * `WITH CHECK` actually verifies against (see that policy's own doc
+   * comment, P27 migration) — a request naming an academyId that does not
+   * resolve to a real organization never reaches the insert at all.
+   */
+  async submitContactMessage(
+    academyId: string,
+    payload: SubmitContactMessageDto,
+  ): Promise<ContactSubmissionResponse | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+
+    const created = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) =>
+        this.contactSubmissionsRepository.create(tx, {
+          academyId,
+          name: payload.name,
+          email: payload.email,
+          message: payload.message,
+        }),
+    );
+    return toContactSubmissionResponse(created);
   }
 }

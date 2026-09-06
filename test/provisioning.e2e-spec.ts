@@ -17,7 +17,9 @@ import request from 'supertest';
 import { createTestApp, uniqueTestEmail, waitForAsync } from './utils/test-app';
 import { createAdminPrisma, seedOrganizationWithOwner, seedPlan } from './utils/db-admin';
 import { ProvisioningProducer } from '../src/provisioning/queue/provisioning.producer';
-import type { PrismaClient } from '@prisma/client';
+import { WebsiteGenerationService } from '../src/website/services/website-generation.service';
+import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
+import type { Prisma, PrismaClient } from '@prisma/client';
 
 // Real BullMQ round trips (enqueue → worker pickup → orchestrator → DB),
 // not slow assertions — same headroom reasoning as
@@ -50,6 +52,8 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
   let admin: PrismaClient;
   let flushRateLimitKeys: () => Promise<void>;
   let provisioningProducer: ProvisioningProducer;
+  let websiteGenerationService: WebsiteGenerationService;
+  let tenancyContextService: TenancyContextService;
 
   beforeAll(async () => {
     const testApp = await createTestApp();
@@ -57,6 +61,8 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
     provisioningProducer = app.get(ProvisioningProducer, { strict: false });
+    websiteGenerationService = app.get(WebsiteGenerationService, { strict: false });
+    tenancyContextService = app.get(TenancyContextService, { strict: false });
   });
 
   afterAll(async () => {
@@ -264,6 +270,156 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(200);
     expect(configRes.body.themeKey).toBe('bold-creative');
+  });
+
+  // --- 3c. Phase 6 — Complete Website generation -----------------------------
+
+  it('3c: selecting a theme + "complete" setup mode generates a real, structured, bilingual website — never a fabricated statistic', async () => {
+    const { owner, org } = await arrangeOrg('complete-gen');
+    const subdomain = uniqueSubdomain('complete-gen');
+    const created = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        academyName: 'Complete Gen Academy',
+        requestedSubdomain: subdomain,
+        selectedThemeKey: 'modern-education',
+        websiteSetupMode: 'complete',
+        idempotencyKey: `complete-gen-idem-${subdomain}`,
+      })
+      .expect(201);
+    expect(created.body.websiteSetupMode).toBe('complete');
+
+    const final = await waitForTerminal(owner, org.id, created.body.id);
+    expect(final.status).toBe('ready');
+    expect(final.websiteSetupMode).toBe('complete');
+
+    const pages = await admin.websitePage.findMany({ where: { academyId: final.academyId } });
+    const byCoreType = Object.fromEntries(pages.map((page) => [page.coreType, page]));
+
+    // The 4 shared support pages + Home all exist — never zero sections.
+    for (const coreType of ['home', 'about', 'courses', 'faqs', 'contact']) {
+      expect(byCoreType[coreType]).toBeTruthy();
+      expect((byCoreType[coreType]!.sections as unknown[]).length).toBeGreaterThan(0);
+    }
+
+    const homeSections = byCoreType.home!.sections as Array<{ type: string; config: Record<string, unknown> }>;
+    const hero = homeSections.find((section) => section.type === 'hero');
+    expect(hero).toBeTruthy();
+    const heroTitle = hero!.config.title as { en: string; ar: string };
+    // Real, interpolated, bilingual — never blank, never a raw `{{academyName}}` token left unresolved.
+    expect(heroTitle.en).toContain('Complete Gen Academy');
+    expect(heroTitle.en).not.toContain('{{');
+    expect(heroTitle.ar.trim()).not.toBe('');
+    expect(heroTitle.ar).not.toContain('{{');
+
+    // Statistics is generated with a LIVE metric, never a hardcoded number — a brand-new Academy has 0 courses/students/instructors.
+    const statistics = homeSections.find((section) => section.type === 'statistics');
+    expect(statistics).toBeTruthy();
+    const items = statistics!.config.items as Array<{ metric?: string; value: { en: string } }>;
+    expect(items.every((item) => !!item.metric)).toBe(true);
+
+    // Hero's CTA target was resolved to the REAL Courses page id (ctaTargets → pageId), not left dangling.
+    const cta = hero!.config.cta as { pageId?: string } | undefined;
+    expect(cta?.pageId).toBe(byCoreType.courses!.id);
+
+    // Navigation + footer + header CTA were generated too (structure/polish, §6 of the specification).
+    const configuration = await admin.websiteConfiguration.findUnique({ where: { academyId: final.academyId } });
+    expect((configuration?.navigation as unknown[]).length).toBeGreaterThan(0);
+    const footer = configuration?.footer as { groups: unknown[] };
+    expect(footer.groups.length).toBeGreaterThan(0);
+    const header = configuration?.header as { cta?: { authAction?: string } };
+    expect(header.cta?.authAction).toBe('signUp');
+  });
+
+  // --- 3d. Phase 6 — Empty Academy generation ---------------------------------
+
+  it('3d: selecting a theme with no explicit setup mode generates a real structured shell (never a fabricated stat), with minimal copy', async () => {
+    const { owner, org } = await arrangeOrg('empty-gen');
+    const subdomain = uniqueSubdomain('empty-gen');
+    const created = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        academyName: 'Empty Gen Academy',
+        requestedSubdomain: subdomain,
+        selectedThemeKey: 'minimal-editorial',
+        idempotencyKey: `empty-gen-idem-${subdomain}`,
+      })
+      .expect(201);
+    // Omitted in the request — the DTO's own backward-compatible default.
+    expect(created.body.websiteSetupMode).toBeUndefined();
+
+    const final = await waitForTerminal(owner, org.id, created.body.id);
+    expect(final.status).toBe('ready');
+
+    const homePage = await admin.websitePage.findFirst({
+      where: { academyId: final.academyId, coreType: 'home' },
+    });
+    expect(homePage).toBeTruthy();
+    const sections = homePage!.sections as Array<{ type: string; config: Record<string, unknown> }>;
+    expect(sections.length).toBeGreaterThan(0);
+
+    const hero = sections.find((section) => section.type === 'hero');
+    const heroTitle = hero!.config.title as { en: string; ar: string };
+    // Minimal — just the real Academy name, never a theme-authored marketing sentence.
+    expect(heroTitle.en).toBe('Empty Gen Academy');
+  });
+
+  // --- 3e. Phase 6 — idempotency / non-destructive re-generation --------------
+
+  it('3e: re-running generation for an already-generated Academy never overwrites an Owner\'s real edit', async () => {
+    const { owner, org } = await arrangeOrg('idempotent-gen');
+    const subdomain = uniqueSubdomain('idempotent-gen');
+    const created = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        academyName: 'Idempotent Gen Academy',
+        requestedSubdomain: subdomain,
+        selectedThemeKey: 'premium-academy',
+        websiteSetupMode: 'complete',
+        idempotencyKey: `idempotent-gen-idem-${subdomain}`,
+      })
+      .expect(201);
+    const final = await waitForTerminal(owner, org.id, created.body.id);
+    expect(final.status).toBe('ready');
+    const academyId = final.academyId as string;
+
+    // Simulate an Owner's real edit to the generated Home page.
+    const homePage = await admin.websitePage.findFirst({ where: { academyId, coreType: 'home' } });
+    const editedSections = (homePage!.sections as Array<{ type: string; config: Record<string, unknown> }>).map(
+      (section) =>
+        section.type === 'hero'
+          ? { ...section, config: { ...section.config, title: { en: 'My Own Edited Title', ar: 'عنواني المعدّل' } } }
+          : section,
+    );
+    await admin.websitePage.update({
+      where: { id: homePage!.id },
+      data: { sections: editedSections as unknown as Prisma.InputJsonValue },
+    });
+
+    // Re-run generation directly — the same call the orchestrator's
+    // 'theme' step makes, simulating a redelivered/retried step.
+    // `website_configurations`/`website_pages` writes are RLS-gated on
+    // `is_academy_member`, so this needs the real requester's user
+    // context, not plain tenant context (see `executeThemeStep`'s own
+    // updated doc comment).
+    await tenancyContextService.runInTenantAndUserContext(org.id, owner.userId, (tx) =>
+      websiteGenerationService.generate(tx, academyId, 'premium-academy', 'complete'),
+    );
+
+    const afterRegeneration = await admin.websitePage.findFirst({ where: { academyId, coreType: 'home' } });
+    const heroAfter = (afterRegeneration!.sections as Array<{ type: string; config: Record<string, unknown> }>).find(
+      (section) => section.type === 'hero',
+    );
+    const titleAfter = heroAfter!.config.title as { en: string; ar: string };
+    expect(titleAfter.en).toBe('My Own Edited Title');
+    expect(titleAfter.ar).toBe('عنواني المعدّل');
+
+    // No duplicate page was created either.
+    const homePagesCount = await admin.websitePage.count({ where: { academyId, coreType: 'home' } });
+    expect(homePagesCount).toBe(1);
   });
 
   // --- 4. Step/request bookkeeping persistence ------------------------------

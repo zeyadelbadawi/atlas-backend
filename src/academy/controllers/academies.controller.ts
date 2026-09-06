@@ -16,6 +16,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  Param,
   Patch,
   Post,
   Query,
@@ -33,12 +34,14 @@ import { UpdateAcademyBrandingDto } from '../dto/update-academy-branding.dto';
 import { AddAcademyManagerDto } from '../dto/add-academy-manager.dto';
 import { AddAcademyInstructorDto } from '../dto/add-academy-instructor.dto';
 import { CreateAcademyStudentDto } from '../dto/create-academy-student.dto';
+import { UpdateContactSubmissionStatusDto } from '../dto/update-contact-submission-status.dto';
 import { CollectionQueryDto, ListAcademiesQueryDto } from '../dto/list-query.dto';
 import type { AcademyResponse } from '../dto/academy.contract';
 import type { AcademyMemberResponse } from '../dto/academy-member.contract';
 import type { AcademyStudentResponse } from '../dto/academy-student.contract';
 import type { AcademyStatsResponse } from '../dto/academy-stats.contract';
 import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
+import type { ContactSubmissionResponse } from '../dto/contact-submission.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('academies')
@@ -183,5 +186,45 @@ export class AcademiesController {
   ): Promise<PaginatedResult<AcademyActivityResponse>> {
     const { academyId } = request.academyContext!;
     return this.academiesService.getActivity(academyId, query);
+  }
+
+  // -------------------------------------------------------------------
+  // Phase 6 — real Contact submissions (staff read/triage). The public
+  // WRITE path is `POST public/websites/:academyId/contact`
+  // (`PublicWebsiteController`), deliberately not here — this controller
+  // requires `JwtAuthGuard`/`AcademyScopeGuard`, neither of which an
+  // anonymous website visitor can satisfy.
+  // -------------------------------------------------------------------
+
+  @Get(':id/contact-submissions')
+  @UseGuards(AcademyScopeGuard)
+  async getContactSubmissions(
+    @Req() request: Request,
+    @Query() query: CollectionQueryDto,
+  ): Promise<PaginatedResult<ContactSubmissionResponse>> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.academiesService.getContactSubmissions(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      query,
+    );
+  }
+
+  @Patch(':id/contact-submissions/:submissionId')
+  @UseGuards(AcademyScopeGuard)
+  async updateContactSubmissionStatus(
+    @Req() request: Request,
+    @Param('submissionId') submissionId: string,
+    @Body() body: UpdateContactSubmissionStatusDto,
+  ): Promise<ContactSubmissionResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.academiesService.updateContactSubmissionStatus(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      submissionId,
+      body,
+    );
   }
 }

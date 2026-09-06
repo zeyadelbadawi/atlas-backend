@@ -60,6 +60,62 @@ export class AnnouncementsRepository {
     return { items, totalItems };
   }
 
+  /** Academy-wide authoring's own list, matching `findManyForCourse` exactly — `courseId: null` excludes that academy's own course-scoped announcements, which have their own separate authoring surface. */
+  async findManyForAcademy(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    options: { skip: number; take: number },
+  ): Promise<{ items: AnnouncementWithAuthor[]; totalItems: number }> {
+    const where: Prisma.AnnouncementWhereInput = { academyId, courseId: null };
+    const [items, totalItems] = await Promise.all([
+      tx.announcement.findMany({
+        where,
+        include: WITH_AUTHOR,
+        orderBy: { createdAt: 'desc' },
+        skip: options.skip,
+        take: options.take,
+      }),
+      tx.announcement.count({ where }),
+    ]);
+    return { items, totalItems };
+  }
+
+  /** Platform-wide authoring's own list — every `audience: 'platform'` row, regardless of status, meaningful only inside `runInUserContext(<a real platform-owner id>)` (`announcements_platform_manage_select`). */
+  async findManyForPlatform(
+    tx: Prisma.TransactionClient,
+    options: { skip: number; take: number },
+  ): Promise<{ items: AnnouncementWithAuthor[]; totalItems: number }> {
+    const where: Prisma.AnnouncementWhereInput = { audience: 'platform' };
+    const [items, totalItems] = await Promise.all([
+      tx.announcement.findMany({
+        where,
+        include: WITH_AUTHOR,
+        orderBy: { createdAt: 'desc' },
+        skip: options.skip,
+        take: options.take,
+      }),
+      tx.announcement.count({ where }),
+    ]);
+    return { items, totalItems };
+  }
+
+  /**
+   * Phase 6 — the Phase 2 sweep tick's own "publish due scheduled content"
+   * step (see `SubscriptionSweepService.run`). Meaningful only inside
+   * `runInUserContext(<a real platform-owner id>)`: the
+   * `announcements_platform_schedule_select/update` bypass policies (P27
+   * migration) are what let this single `updateMany` reach every due row
+   * platform-wide, regardless of which academy/course it belongs to — this
+   * query itself carries no cross-tenant special-casing of its own.
+   */
+  async publishDueScheduled(tx: Prisma.TransactionClient, asOf: Date): Promise<number> {
+    const { count } = await tx.announcement.updateMany({
+      where: { status: 'scheduled', scheduledAt: { lte: asOf } },
+      data: { status: 'published', publishedAt: asOf },
+    });
+    return count;
+  }
+
   create(
     tx: Prisma.TransactionClient,
     data: Prisma.AnnouncementCreateInput,

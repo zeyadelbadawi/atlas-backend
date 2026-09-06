@@ -15,6 +15,40 @@
  * see `section-reference-validator.service.ts` — because Zod's synchronous
  * schema has no database access, unlike this validation's asynchronous
  * server-side counterpart).
+ *
+ * Phase 6 (Bilingual Academy Websites) — every field a website VISITOR
+ * actually reads as copy is now `LocalizedText { en, ar }`, not a plain
+ * string: `hero.title`, `about.body`, CTA labels, statistic labels, etc.
+ * Fields that are references, enums, or technical values (`id`, `mode`,
+ * `layout`, `courseIds`, `url`, `email`, `phone`, `image` src, `icon`) stay
+ * plain scalars — translating a URL or an enum key makes no sense. A
+ * proper name (`testimonial.authorName`) also stays a plain scalar — a
+ * person's name is not "translated" the way a job title or a sentence is.
+ *
+ * Deliberately looser than the FAQ/Testimonial LIBRARY content's own
+ * `localizedText` helper (`website-content.schemas.ts`), which requires
+ * BOTH `en` and `ar` non-empty: a page-embedded section is allowed to have
+ * an incomplete Arabic side (`ar: ''`) exactly as Revision 1 of the
+ * Bilingual Academy Websites specification requires — "English is the one
+ * required-complete language; Arabic degrades gracefully to it" — the
+ * renderer's own `resolveLocalizedText` (`localized-text.util.ts`) already
+ * falls back to `en` whenever `ar` is blank, so an incomplete translation
+ * never produces a broken or empty page.
+ *
+ * Backward compatible with every Academy created before this phase: every
+ * one of these fields accepts EITHER the new `{ en, ar }` object OR a
+ * bare legacy string (every section field was a bare string before this
+ * phase) via `coerceLegacyLocalized` — a legacy string is treated as
+ * pre-existing English content with Arabic not yet translated (`{ en:
+ * value, ar: '' }`), which is both true and exactly what the CMS's own
+ * completeness indicator should show for it. This is a pure
+ * validation-layer widening: `sections`/`header`/`footer`/`seo` are all
+ * already `Json` columns (`schema.prisma`), so no database migration is
+ * needed or performed — see `website-page.contract.ts`/
+ * `website-configuration.contract.ts`, which run every stored row through
+ * this same schema on the way OUT (not just on the way in) so a
+ * never-re-saved legacy Academy is normalized to the new shape the moment
+ * it's next read, not only the moment it's next edited.
  */
 import { z } from 'zod';
 import {
@@ -34,12 +68,37 @@ const responsiveVisibilitySchema = z.object({
   mobile: z.boolean(),
 });
 
+/** A bare string (every section field, pre-Phase-6) becomes pre-existing English content with Arabic not yet translated — never dropped, never duplicated into a mislabeled "Arabic" that isn't. Already-shaped `{en, ar}` input, or `undefined` for an optional field, passes through untouched. Exported so `website-config.schemas.ts` (header/footer/navigation/SEO) applies the exact same widening rule, not a second reinterpretation of it. */
+export function coerceLegacyLocalized(value: unknown): unknown {
+  return typeof value === 'string' ? { en: value, ar: '' } : value;
+}
+
+/** `en` is required non-empty (the one always-complete language); `ar` may be empty — an incomplete translation degrades to `en` at render time, it never blocks a save. */
+export const localizedRequired = (maxLength: number) =>
+  z.preprocess(
+    coerceLegacyLocalized,
+    z.object({
+      en: z.string().min(1, 'validation:required').max(maxLength, 'validation:maxLength'),
+      ar: z.string().max(maxLength, 'validation:maxLength'),
+    }),
+  );
+
+/** Neither key is required to be non-empty — matches the field's own plain-string equivalent already being optional-content (e.g. a `description` that may be blank). */
+export const localizedOptional = (maxLength: number) =>
+  z.preprocess(
+    coerceLegacyLocalized,
+    z.object({
+      en: z.string().max(maxLength, 'validation:maxLength'),
+      ar: z.string().max(maxLength, 'validation:maxLength'),
+    }),
+  );
+
+export const localizedTextFieldSchema = localizedOptional(MAX_LONG_TEXT);
+export type ValidatedLocalizedText = z.infer<typeof localizedTextFieldSchema>;
+
 /** `url` is checked against `isSafeExternalUrl` in addition to being syntactically a URL — matches the frontend's `websiteCtaSchema` exactly. */
 const websiteCtaSchema = z.object({
-  label: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
+  label: localizedRequired(MAX_SHORT_TEXT),
   pageId: z.string().optional(),
   courseId: z.string().optional(),
   url: z
@@ -51,38 +110,26 @@ const websiteCtaSchema = z.object({
 });
 
 export const heroSectionSchema = z.object({
-  eyebrow: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
-  title: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
-  subtitle: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
-  description: z.string().max(MAX_LONG_TEXT, 'validation:maxLength').optional(),
+  eyebrow: localizedOptional(MAX_SHORT_TEXT).optional(),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  subtitle: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
   image: z.string().optional(),
-  imageAlt: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
+  imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
   cta: websiteCtaSchema.optional(),
   secondaryCta: websiteCtaSchema.optional(),
 });
 
 export const aboutSectionSchema = z.object({
-  title: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
-  body: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_LONG_TEXT, 'validation:maxLength'),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  body: localizedRequired(MAX_LONG_TEXT),
   image: z.string().optional(),
-  imageAlt: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
+  imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
 });
 
 export const featuredCoursesSectionSchema = z.object({
-  title: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
-  description: z.string().max(MAX_LONG_TEXT, 'validation:maxLength').optional(),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
   mode: z.enum(['latest', 'selected']),
   courseIds: z.array(z.string()).optional(),
   layout: z.enum(['grid', 'carousel']),
@@ -93,51 +140,46 @@ export const featuredCoursesSectionSchema = z.object({
 
 const statisticItemSchema = z.object({
   id: z.string(),
-  value: z.string().min(1, 'validation:required').max(20, 'validation:maxLength'),
-  label: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
+  /** Deliberately localized, not just numeral-formatted: an Owner may want distinct copy per language (e.g. "500+" vs "٥٠٠+", or a differently-worded suffix), not a locale-conversion of one authored value. */
+  value: localizedRequired(20),
+  label: localizedRequired(MAX_SHORT_TEXT),
+  /** Present only when generated (§1.4/§6.2 of the specification) — resolves a real, live, Academy-scoped count instead of the static `value` above. Absent means "use the authored `value` as-is," matching today's manually-authored behavior exactly. */
+  metric: z.enum(['courses', 'students', 'instructors']).optional(),
 });
 
 export const statisticsSectionSchema = z.object({
-  title: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
   items: z.array(statisticItemSchema).max(MAX_SECTION_ITEMS),
 });
 
 const featureItemSchema = z.object({
   id: z.string(),
-  title: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
-  description: z.string().max(MAX_LONG_TEXT, 'validation:maxLength'),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT),
   icon: z.enum(FEATURE_ICON_OPTIONS as [string, ...string[]]),
 });
 
 export const featuresSectionSchema = z.object({
-  title: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
-  description: z.string().max(MAX_LONG_TEXT, 'validation:maxLength').optional(),
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
   items: z.array(featureItemSchema).max(MAX_SECTION_ITEMS),
 });
 
 const testimonialItemSchema = z.object({
   id: z.string(),
-  quote: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_LONG_TEXT, 'validation:maxLength'),
+  quote: localizedRequired(MAX_LONG_TEXT),
+  /** A proper name — not translated, matches the FAQ/Testimonial library's own `authorName` precedent (`website-content.schemas.ts`). */
   authorName: z
     .string()
     .min(1, 'validation:required')
     .max(MAX_SHORT_TEXT, 'validation:maxLength'),
-  authorRole: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
+  authorRole: localizedOptional(MAX_SHORT_TEXT).optional(),
   avatar: z.string().optional(),
-  avatarAlt: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
+  avatarAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
 });
 
 export const testimonialsSectionSchema = z.object({
-  title: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
   items: z.array(testimonialItemSchema).max(MAX_SECTION_ITEMS),
   // `libraryEntryIds` references the Prompt 10 CMS content library, which
   // does not exist yet in this phase — accepted structurally (matching the
@@ -148,52 +190,51 @@ export const testimonialsSectionSchema = z.object({
 
 const faqItemSchema = z.object({
   id: z.string(),
-  question: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
-  answer: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_LONG_TEXT, 'validation:maxLength'),
+  question: localizedRequired(MAX_SHORT_TEXT),
+  answer: localizedRequired(MAX_LONG_TEXT),
 });
 
 export const faqSectionSchema = z.object({
-  title: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
   items: z.array(faqItemSchema).max(MAX_SECTION_ITEMS),
   libraryEntryIds: z.array(z.string()).max(MAX_SECTION_ITEMS).optional(),
 });
 
 export const ctaSectionSchema = z.object({
-  title: z
-    .string()
-    .min(1, 'validation:required')
-    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
-  description: z.string().max(MAX_LONG_TEXT, 'validation:maxLength').optional(),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
   cta: websiteCtaSchema,
 });
 
 export const instructorsSectionSchema = z.object({
-  title: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
-  description: z.string().max(MAX_LONG_TEXT, 'validation:maxLength').optional(),
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
   count: z.number().int().min(1).max(MAX_SECTION_ITEMS),
 });
 
 const galleryImageSchema = z.object({
   id: z.string(),
   image: z.string().min(1, 'validation:required'),
-  caption: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
-  imageAlt: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
+  caption: localizedOptional(MAX_SHORT_TEXT).optional(),
+  imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
 });
 
 export const gallerySectionSchema = z.object({
-  title: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
   images: z.array(galleryImageSchema).max(MAX_SECTION_ITEMS),
 });
 
+/**
+ * `email`/`phone`/`address` stay plain scalars, on purpose — they are
+ * factual reference data (and, per §1.4, usually left blank so this
+ * section falls back to the Academy's own real `contactEmail`/
+ * `contactPhone`/`address` fields, which are themselves plain scalars on
+ * the `Academy` model today, not `LocalizedText`) rather than authored
+ * copy a translator would rewrite per language.
+ */
 export const contactSectionSchema = z.object({
-  title: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),
-  description: z.string().max(MAX_LONG_TEXT, 'validation:maxLength').optional(),
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
   email: z.string().email('validation:invalidEmail').optional().or(z.literal('')),
   phone: z.string().max(30, 'validation:maxLength').optional(),
   address: z.string().max(MAX_SHORT_TEXT, 'validation:maxLength').optional(),

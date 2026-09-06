@@ -13,6 +13,9 @@ import {
   createAdminPrisma,
   seedAcademy,
   seedAcademyMember,
+  seedAcademyStudent,
+  seedActiveSubscriptionForOrg,
+  seedCourse,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
@@ -117,7 +120,7 @@ describe('Public Website Runtime (e2e)', () => {
     const page = await request(app.getHttpServer())
       .get(`/public/websites/${academy.id}/pages/landing`)
       .expect(200);
-    expect(page.body.sections[0].config.title).toBe('Welcome to landing');
+    expect(page.body.sections[0].config.title).toEqual({ en: 'Welcome to landing', ar: '' });
   });
 
   it('SCENARIO 6: a draft website configuration (never published) is unreachable through any public URL, by any guessing strategy', async () => {
@@ -319,5 +322,139 @@ describe('Public Website Runtime (e2e)', () => {
     );
     // Academy A never published anything — 404, never Academy B's config.
     expect(configA.status).toBe(404);
+  });
+
+  // -------------------------------------------------------------------
+  // Phase 6 — real, live statistics; combined identity; real Contact
+  // submissions.
+  // -------------------------------------------------------------------
+
+  it('GET :academyId/statistics returns real, live counts scoped to that one Academy — never another Academy\'s, never revenue', async () => {
+    const { academy: academyA, org: orgA } = await seedManagedAcademy('pub-stats-a');
+    await seedActiveSubscriptionForOrg(admin, orgA.id, 'pub-stats-a');
+    await seedCourse(admin, academyA.id, `pub-stats-a-published-${Date.now()}`, {
+      status: 'published',
+      visibility: 'public',
+    });
+    // A draft course must never count.
+    await seedCourse(admin, academyA.id, `pub-stats-a-draft-${Date.now()}`, {
+      status: 'draft',
+      visibility: 'private',
+    });
+    const studentA = await signUpAndSignIn(app, 'pub-stats-a-student');
+    await seedAcademyStudent(admin, academyA.id, studentA.userId);
+    const instructorA = await signUpAndSignIn(app, 'pub-stats-a-instructor');
+    await seedAcademyMember(admin, academyA.id, instructorA.userId, 'instructor');
+
+    const { academy: academyB, org: orgB } = await seedManagedAcademy('pub-stats-b');
+    await seedActiveSubscriptionForOrg(admin, orgB.id, 'pub-stats-b');
+    // Academy B has MORE of everything — proves the count is isolated to
+    // Academy A, not a platform-wide total.
+    await seedCourse(admin, academyB.id, `pub-stats-b-1-${Date.now()}`, {
+      status: 'published',
+      visibility: 'public',
+    });
+    await seedCourse(admin, academyB.id, `pub-stats-b-2-${Date.now()}`, {
+      status: 'published',
+      visibility: 'public',
+    });
+    for (const label of ['pub-stats-b-s1', 'pub-stats-b-s2', 'pub-stats-b-s3']) {
+      const student = await signUpAndSignIn(app, label);
+      await seedAcademyStudent(admin, academyB.id, student.userId);
+    }
+
+    const statsA = await request(app.getHttpServer())
+      .get(`/public/websites/${academyA.id}/statistics`)
+      .expect(200);
+    expect(statsA.body).toEqual({ courses: 1, students: 1, instructors: 1 });
+    expect(statsA.body).not.toHaveProperty('revenue');
+  });
+
+  it('a manipulated/unknown academyId on the statistics endpoint returns public not-found, never another Academy\'s data', async () => {
+    const response = await request(app.getHttpServer()).get(
+      '/public/websites/00000000-0000-0000-0000-000000000000/statistics',
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it('GET :academyId/identity returns the real, combined Academy name/logo/contact — never another Academy\'s', async () => {
+    const { academy: academyA } = await seedManagedAcademy('pub-identity-a');
+    await admin.academy.update({
+      where: { id: academyA.id },
+      data: { contactEmail: 'hello@academy-a.test', contactPhone: '+1-000-000-0000' },
+    });
+    const { academy: academyB } = await seedManagedAcademy('pub-identity-b');
+    await admin.academy.update({
+      where: { id: academyB.id },
+      data: { contactEmail: 'hello@academy-b.test' },
+    });
+
+    const identityA = await request(app.getHttpServer())
+      .get(`/public/websites/${academyA.id}/identity`)
+      .expect(200);
+    expect(identityA.body.name).toBe(academyA.name);
+    expect(identityA.body.contactEmail).toBe('hello@academy-a.test');
+    expect(identityA.body.contactEmail).not.toBe('hello@academy-b.test');
+  });
+
+  it('a manipulated/unknown academyId on the identity endpoint returns public not-found', async () => {
+    const response = await request(app.getHttpServer()).get(
+      '/public/websites/00000000-0000-0000-0000-000000000000/identity',
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it('POST :academyId/contact persists a real submission (never a fake success), readable/triageable only by that Academy\'s own staff, and never crosses into another Academy', async () => {
+    const { owner: ownerA, academy: academyA } = await seedManagedAcademy('pub-contact-a');
+    const { owner: ownerB, academy: academyB } = await seedManagedAcademy('pub-contact-b');
+
+    const submitted = await request(app.getHttpServer())
+      .post(`/public/websites/${academyA.id}/contact`)
+      .send({ name: 'Jane Visitor', email: 'jane@example.com', message: 'Hi there!' })
+      .expect(201);
+    expect(submitted.body.academyId).toBe(academyA.id);
+    expect(submitted.body.status).toBe('new');
+
+    // Really persisted — not a console-log-only no-op.
+    const persisted = await admin.contactSubmission.findUnique({
+      where: { id: submitted.body.id },
+    });
+    expect(persisted?.email).toBe('jane@example.com');
+    expect(persisted?.message).toBe('Hi there!');
+
+    // Academy A's own staff can read/triage it.
+    const listA = await request(app.getHttpServer())
+      .get(`/academies/${academyA.id}/contact-submissions`)
+      .set('Authorization', `Bearer ${ownerA.accessToken}`)
+      .expect(200);
+    expect(listA.body.items.map((s: { id: string }) => s.id)).toContain(submitted.body.id);
+
+    const triaged = await request(app.getHttpServer())
+      .patch(`/academies/${academyA.id}/contact-submissions/${submitted.body.id}`)
+      .set('Authorization', `Bearer ${ownerA.accessToken}`)
+      .send({ status: 'read' })
+      .expect(200);
+    expect(triaged.body.status).toBe('read');
+
+    // Academy B's staff never sees it, and cannot triage it either.
+    const listB = await request(app.getHttpServer())
+      .get(`/academies/${academyB.id}/contact-submissions`)
+      .set('Authorization', `Bearer ${ownerB.accessToken}`)
+      .expect(200);
+    expect(listB.body.items.map((s: { id: string }) => s.id)).not.toContain(
+      submitted.body.id,
+    );
+    await request(app.getHttpServer())
+      .patch(`/academies/${academyA.id}/contact-submissions/${submitted.body.id}`)
+      .set('Authorization', `Bearer ${ownerB.accessToken}`)
+      .send({ status: 'archived' })
+      .expect(403);
+  });
+
+  it('a contact submission to a manipulated/unknown academyId is rejected, never silently attributed to a real academy', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/public/websites/00000000-0000-0000-0000-000000000000/contact')
+      .send({ name: 'Attacker', email: 'attacker@example.com', message: 'x' });
+    expect(response.status).toBe(404);
   });
 });

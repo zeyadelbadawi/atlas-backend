@@ -109,6 +109,25 @@ export class BlogPostsService {
     });
   }
 
+  /**
+   * Phase 6 — `scheduledAt` must be a real future instant; a past/`now`
+   * timestamp would create a `scheduled` post the sweep tick can never
+   * legitimately "catch" as newly-due, so it is rejected outright rather
+   * than silently published immediately (which "scheduled" `AnnouncementsService`
+   * itself does not need to guard against, since nothing there prevents
+   * `scheduled`-but-already-due either — this is a stricter rule this
+   * phase adds specifically for blog per the master plan's own "validate
+   * scheduled dates" instruction).
+   */
+  private assertValidScheduledAt(scheduledAt?: string): Date | undefined {
+    if (!scheduledAt) return undefined;
+    const date = new Date(scheduledAt);
+    if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) {
+      throw new BadRequestException({ messageKey: 'errors.blog.invalidScheduledDate' });
+    }
+    return date;
+  }
+
   async createPost(
     userId: string,
     payload: CreateBlogPostDto,
@@ -123,6 +142,7 @@ export class BlogPostsService {
       if (existing)
         throw new BadRequestException({ messageKey: 'errors.blog.slugTaken' });
 
+      const scheduledAt = this.assertValidScheduledAt(payload.scheduledAt);
       const created = await this.blogPostsRepository.create(tx, {
         academy: academyId ? { connect: { id: academyId } } : undefined,
         author: { connect: { id: userId } },
@@ -133,6 +153,11 @@ export class BlogPostsService {
         featuredImage: payload.featuredImage,
         category: payload.category,
         tags: payload.tags ? [...payload.tags] : [],
+        scheduledAt,
+        status: scheduledAt ? 'scheduled' : 'draft',
+        metaTitle: payload.metaTitle,
+        metaDescription: payload.metaDescription,
+        ogImage: payload.ogImage,
       });
       return toBlogPostResponse(created, created.author.name);
     });
@@ -156,6 +181,9 @@ export class BlogPostsService {
   ): Promise<BlogPostResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
       await this.assertOwnsPost(tx, userId, id);
+      const scheduledAt = payload.scheduledAt !== undefined
+        ? this.assertValidScheduledAt(payload.scheduledAt)
+        : undefined;
       const updated = await this.blogPostsRepository.update(tx, id, {
         title: payload.title,
         slug: payload.slug,
@@ -164,6 +192,11 @@ export class BlogPostsService {
         featuredImage: payload.featuredImage,
         category: payload.category,
         tags: payload.tags ? [...payload.tags] : undefined,
+        scheduledAt,
+        status: payload.scheduledAt !== undefined ? (scheduledAt ? 'scheduled' : 'draft') : undefined,
+        metaTitle: payload.metaTitle,
+        metaDescription: payload.metaDescription,
+        ogImage: payload.ogImage,
       });
       return toBlogPostResponse(updated, updated.author.name);
     });

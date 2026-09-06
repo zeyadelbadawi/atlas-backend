@@ -13,6 +13,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { SubscriptionSweepService } from '../src/plans/services/subscription-sweep.service';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -237,4 +238,116 @@ describe('Blog Posts (e2e)', () => {
       })
       .expect(403);
   });
+
+  // -------------------------------------------------------------------
+  // Phase 6 — scheduling + SEO metadata.
+  // -------------------------------------------------------------------
+
+  it('a future scheduledAt creates a scheduled post (not a draft); a past one is rejected; SEO metadata round-trips', async () => {
+    const { staff } = await seedAcademyStaff('blog-schedule-create');
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    const created = await request(app.getHttpServer())
+      .post('/blog-posts')
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .send({
+        title: 'Scheduled Post',
+        slug: `blog-schedule-create-${Date.now()}`,
+        content: 'Coming soon.',
+        scheduledAt: future,
+        metaTitle: 'A great meta title',
+        metaDescription: 'A great meta description',
+        ogImage: 'https://example.com/og.png',
+      })
+      .expect(201);
+    expect(created.body.status).toBe('scheduled');
+    expect(new Date(created.body.scheduledAt).toISOString()).toBe(future);
+    expect(created.body.metaTitle).toBe('A great meta title');
+    expect(created.body.metaDescription).toBe('A great meta description');
+    expect(created.body.ogImage).toBe('https://example.com/og.png');
+
+    const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const rejected = await request(app.getHttpServer())
+      .post('/blog-posts')
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .send({
+        title: 'Backdated',
+        slug: `blog-schedule-backdated-${Date.now()}`,
+        content: 'x',
+        scheduledAt: past,
+      })
+      .expect(400);
+    expect(rejected.body.error.messageKey).toBe('errors.blog.invalidScheduledDate');
+  });
+
+  it('the Phase 2 sweep tick (SubscriptionSweepService) publishes a due scheduled post and a due scheduled announcement on the SAME tick, and leaves a not-yet-due one alone', async () => {
+    const { staff, academy } = await seedAcademyStaff('blog-sweep-publish');
+    const soon = new Date(Date.now() + 2000).toISOString();
+    const farFuture = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    const duePost = await request(app.getHttpServer())
+      .post('/blog-posts')
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .send({
+        title: 'Due Soon',
+        slug: `blog-sweep-due-${Date.now()}`,
+        content: 'x',
+        scheduledAt: soon,
+      })
+      .expect(201);
+
+    const notDuePost = await request(app.getHttpServer())
+      .post('/blog-posts')
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .send({
+        title: 'Not Due Yet',
+        slug: `blog-sweep-not-due-${Date.now()}`,
+        content: 'x',
+        scheduledAt: farFuture,
+      })
+      .expect(201);
+
+    const dueAnnouncement = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/announcements`)
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .send({ title: 'Due announcement', body: 'x', scheduledAt: soon })
+      .expect(201);
+
+    // Force the row into the past directly (rather than waiting out a real
+    // clock-tick in the test), then run the exact same tick body the
+    // BullMQ repeatable job invokes — no second scheduler, no fake stand-in.
+    await admin.blogPost.update({
+      where: { id: duePost.body.id },
+      data: { scheduledAt: new Date(Date.now() - 1000) },
+    });
+    await admin.announcement.update({
+      where: { id: dueAnnouncement.body.id },
+      data: { scheduledAt: new Date(Date.now() - 1000) },
+    });
+
+    const sweepService = app.get(SubscriptionSweepService, { strict: false });
+    await sweepService.run();
+
+    const publishedPost = await request(app.getHttpServer())
+      .get(`/blog-posts/${duePost.body.id}`)
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .expect(200);
+    expect(publishedPost.body.status).toBe('published');
+    expect(publishedPost.body.publishedAt).toBeTruthy();
+
+    const stillScheduledPost = await request(app.getHttpServer())
+      .get(`/blog-posts/${notDuePost.body.id}`)
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .expect(200);
+    expect(stillScheduledPost.body.status).toBe('scheduled');
+
+    const publishedAnnouncement = await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/announcements`)
+      .set('Authorization', `Bearer ${staff.accessToken}`)
+      .expect(200);
+    const match = publishedAnnouncement.body.items.find(
+      (a: { id: string }) => a.id === dueAnnouncement.body.id,
+    );
+    expect(match?.status).toBe('published');
+  }, 30000);
 });

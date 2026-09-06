@@ -130,6 +130,7 @@ export class ProvisioningRequestsService {
             requestedSubdomain: payload.requestedSubdomain,
             triggeringPaymentId: payload.triggeringPaymentId,
             selectedThemeKey: payload.selectedThemeKey,
+            websiteSetupMode: payload.websiteSetupMode,
             idempotencyKey: payload.idempotencyKey,
           });
           await this.provisioningStepsRepository.initializeForRequest(tx, created.id);

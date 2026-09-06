@@ -48,6 +48,7 @@ import { AcademiesController } from './controllers/academies.controller';
 import { AcademiesService } from './services/academies.service';
 import { AcademiesRepository } from './repositories/academies.repository';
 import { AcademyMembersRepository } from './repositories/academy-members.repository';
+import { ContactSubmissionsRepository } from './repositories/contact-submissions.repository';
 import { AcademyOrganizationScopeGuard } from './guards/academy-organization-scope.guard';
 import { AcademyScopeGuard } from './guards/academy-scope.guard';
 
@@ -57,6 +58,7 @@ import { AcademyScopeGuard } from './guards/academy-scope.guard';
   providers: [
     AcademiesRepository,
     AcademyMembersRepository,
+    ContactSubmissionsRepository,
     AcademiesService,
     AcademyOrganizationScopeGuard,
     AcademyScopeGuard,
@@ -64,6 +66,11 @@ import { AcademyScopeGuard } from './guards/academy-scope.guard';
   exports: [
     AcademiesRepository,
     AcademyMembersRepository,
+    // Phase 6 — `PublicWebsiteModule` needs this for the public Contact
+    // section's real write path (`PublicWebsiteService.submitContactMessage`).
+    // Importing `AcademyModule` there introduces no NEW cycle: it already
+    // transitively depends on `AcademyModule` via `WebsiteModule`.
+    ContactSubmissionsRepository,
     AcademyScopeGuard,
     AcademiesService,
   ],

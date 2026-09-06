@@ -16,11 +16,24 @@
  * genuinely nonexistent resource. No draft title, SEO, section, or id
  * ever appears in any response body this controller can produce.
  */
-import { Controller, Get, NotFoundException, Param, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  NotFoundException,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { PublicWebsiteService } from '../services/public-website.service';
+import { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
 import type { HostnameResolutionResponse } from '../dto/hostname-resolution.contract';
 import type { WebsiteConfigurationResponse } from '../../website/dto/website-configuration.contract';
 import type { WebsitePageResponse } from '../../website/dto/website-page.contract';
+import type { PublicWebsiteStatisticsResponse } from '../dto/public-statistics.contract';
+import type { ContactSubmissionResponse } from '../../academy/dto/contact-submission.contract';
+import type { AcademyIdentityResponse } from '../dto/public-identity.contract';
 
 @Controller('public/websites')
 export class PublicWebsiteController {
@@ -61,5 +74,37 @@ export class PublicWebsiteController {
     const page = await this.publicWebsiteService.getPublishedPage(academyId, slug);
     if (!page) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return page;
+  }
+
+  /** Phase 6 — the combined Academy Identity/Branding read, reused by the public site, the LMS, and the dashboard. See `PublicWebsiteService.getPublicIdentity`'s own doc comment. */
+  @Get(':academyId/identity')
+  async getIdentity(
+    @Param('academyId') academyId: string,
+  ): Promise<AcademyIdentityResponse> {
+    const identity = await this.publicWebsiteService.getPublicIdentity(academyId);
+    if (!identity) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return identity;
+  }
+
+  /** Phase 6 — `StatisticsSection`'s real, live counts. See `PublicWebsiteService.getPublicStatistics`'s own doc comment. */
+  @Get(':academyId/statistics')
+  async getStatistics(
+    @Param('academyId') academyId: string,
+  ): Promise<PublicWebsiteStatisticsResponse> {
+    const statistics = await this.publicWebsiteService.getPublicStatistics(academyId);
+    if (!statistics) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return statistics;
+  }
+
+  /** Phase 6 — the real backend destination for the public Contact section's form. See `PublicWebsiteService.submitContactMessage`'s own doc comment. */
+  @Post(':academyId/contact')
+  @HttpCode(201)
+  async submitContactMessage(
+    @Param('academyId') academyId: string,
+    @Body() body: SubmitContactMessageDto,
+  ): Promise<ContactSubmissionResponse> {
+    const submission = await this.publicWebsiteService.submitContactMessage(academyId, body);
+    if (!submission) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return submission;
   }
 }

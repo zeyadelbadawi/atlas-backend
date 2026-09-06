@@ -46,7 +46,15 @@ export class SubscriptionSweepScheduler implements OnApplicationBootstrap {
         repeat: { every: SUBSCRIPTION_SWEEP_INTERVAL_MS },
         jobId: SUBSCRIPTION_SWEEP_REPEAT_JOB_ID,
         removeOnComplete: true,
-        removeOnFail: false,
+        // Phase 4.5.2 (Change 5) — bounded for consistency with
+        // `TenantUsageRecomputeProducer`'s identical change, though this
+        // queue's own volume is genuinely low (one job per 15-minute
+        // tick, ~96/day, never per-organization — the per-organization
+        // fan-out lives entirely on the separate `tenant-usage-recompute`
+        // queue this tick enqueues into) and was never observed
+        // accumulating unboundedly the way that queue was. Precautionary,
+        // not a fix for an observed problem on this specific queue.
+        removeOnFail: { count: 1000 },
       },
     );
     this.logger.log(

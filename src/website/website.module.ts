@@ -31,6 +31,7 @@ import { WebsiteConfigurationService } from './services/website-configuration.se
 import { WebsitePagesService } from './services/website-pages.service';
 import { WebsiteContentService } from './services/website-content.service';
 import { WebsiteBootstrapService } from './services/website-bootstrap.service';
+import { WebsiteGenerationService } from './services/website-generation.service';
 import { SectionReferenceValidatorService } from './services/section-reference-validator.service';
 import { WebsiteConfigurationRepository } from './repositories/website-configuration.repository';
 import { WebsitePagesRepository } from './repositories/website-pages.repository';
@@ -45,6 +46,7 @@ import { WebsiteTestimonialEntriesRepository } from './repositories/website-test
     WebsitePagesService,
     WebsiteContentService,
     WebsiteBootstrapService,
+    WebsiteGenerationService,
     SectionReferenceValidatorService,
     WebsiteConfigurationRepository,
     WebsitePagesRepository,
@@ -59,10 +61,13 @@ import { WebsiteTestimonialEntriesRepository } from './repositories/website-test
   // of Phase P19, so `ProvisioningModule`'s orchestrator can call its
   // real `updateConfiguration` (the theme-selection provisioning step)
   // rather than re-implementing theme persistence a second time.
+  // `WebsiteGenerationService` exported as of Phase 6, same reasoning —
+  // the orchestrator's extended theme step calls it directly.
   exports: [
     WebsiteConfigurationRepository,
     WebsitePagesRepository,
     WebsiteConfigurationService,
+    WebsiteGenerationService,
   ],
 })
 export class WebsiteModule {}

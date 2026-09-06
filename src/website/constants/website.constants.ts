@@ -119,6 +119,16 @@ export const WEBSITE_THEME_KEYS = [
 /** Sensible, schema-conformant bootstrap default — overwritten the first time an Academy Owner actually configures their brand colors. Not derived from any theme's real `defaultPrimary`/`defaultSecondary`/`defaultAccent` token (that registry is frontend-only, code-level, never exposed to the backend by any real contract). */
 export const DEFAULT_BRAND_COLOR = '221 83% 53%';
 
+/**
+ * Phase 6 (Bilingual Academy Websites) — how a newly provisioned Academy's
+ * website starts. `'empty'` is the safe default for any caller that
+ * doesn't set this explicitly (see `CreateProvisioningRequestDto`'s own
+ * doc comment) — real, structured, theme-appropriate pages/sections exist
+ * either way (`WebsiteGenerationService`); `'complete'` additionally fills
+ * every section with real, bilingual starter content.
+ */
+export const WEBSITE_SETUP_MODES = ['empty', 'complete'] as const;
+
 /* -------------------------------------------------------------------- */
 /* CMS content (Prompt 10) — matches the real frontend's                */
 /* `website.constants.ts` "CMS content" section values exactly.         */

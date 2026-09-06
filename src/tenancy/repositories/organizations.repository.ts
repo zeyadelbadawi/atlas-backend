@@ -66,6 +66,35 @@ export class OrganizationsRepository {
   }
 
   /**
+   * Phase 4.6 (scalability fix) — bounded replacement for
+   * `UserOrganizationsService.getMembershipsForUser`'s former use of
+   * `findAllVisible` above. `findAllVisible` itself is left untouched (the
+   * same "additive, not replacing" precedent this file already follows for
+   * `findAllIdsPlatformWide` → `findStaleUsageOrganizationIds`), in case a
+   * genuine "every organization this session can see" read is ever needed
+   * elsewhere.
+   *
+   * `findAllVisible`'s one caller already knows every organization id it
+   * needs — they come from the user's own `organization_memberships` rows
+   * (fetched moments earlier via `findAllForUser`, which is indexed on
+   * `user_id`) — so there is no reason to ask the database to re-derive
+   * "every organization visible to this session" from an unfiltered scan.
+   * `WHERE id IN (...)` filters on the `organizations` primary key: a cheap
+   * indexed lookup for a handful of ids regardless of total platform size,
+   * and it composes with (never bypasses) whatever `organizations_select`
+   * RLS policy is already in force for the session — an id outside both
+   * `ids` and what RLS permits is excluded either way, so tenant isolation
+   * and platform-owner behavior are unchanged.
+   */
+  findManyVisibleByIds(
+    tx: Prisma.TransactionClient,
+    ids: readonly string[],
+  ): Promise<Organization[]> {
+    if (ids.length === 0) return Promise.resolve([]);
+    return tx.organization.findMany({ where: { id: { in: [...ids] } } });
+  }
+
+  /**
    * Phase 2 — the subscription-sweep's own platform-wide enumeration:
    * every organization id on the platform, unpaginated (the sweep needs
    * to enqueue a recompute for ALL of them, not one page at a time).
@@ -80,6 +109,56 @@ export class OrganizationsRepository {
     tx: Prisma.TransactionClient,
   ): Promise<Pick<Organization, 'id'>[]> {
     return tx.organization.findMany({ select: { id: true } });
+  }
+
+  /**
+   * Phase 4.5.2 (scalability) — the bounded replacement for
+   * `SubscriptionSweepService`'s use of `findAllIdsPlatformWide` above.
+   * `findAllIdsPlatformWide` itself is left untouched (ATLAS_SCALABILITY_
+   * ARCHITECTURE_PLAN.md's own Phase 4.5.2 file note: "a new... finder
+   * alongside — not replacing" it) in case a genuine full-platform
+   * enumeration is ever needed elsewhere; the sweep no longer calls it.
+   *
+   * Returns up to `limit` organization ids whose usage is either missing
+   * entirely (`usage: null` — a brand-new organization whose reactive
+   * write-path trigger hasn't landed yet, or one that predates this
+   * mechanism) or older than `olderThan` — never an organization already
+   * recomputed within the staleness window. This is what makes one sweep
+   * tick's fan-out bounded by how much has actually gone stale, not by
+   * total platform organization count: at steady state, only the
+   * organizations a reactive trigger genuinely missed are ever
+   * re-enqueued, exactly matching the "safety net for the reactive
+   * triggers, not a replacement for them" role this sweep has always had
+   * (see `SubscriptionSweepService`'s own doc comment).
+   *
+   * Cursor-paginated (`id > cursor`, ordered by `id` ascending) rather
+   * than offset-based: `organizations.id` is the primary key, so this
+   * scan is a cheap indexed range regardless of how deep the cursor is —
+   * an `OFFSET N` pagination would itself become O(N) at high page
+   * counts, defeating the entire point of bounding a single tick's cost.
+   * `tenant_usage.organization_id` is that table's own primary key, so
+   * the `usage` relation check is a cheap point lookup per candidate row,
+   * not a second table scan.
+   *
+   * Meaningful only inside `runInUserContext(<a real platform-owner id>)`,
+   * exactly like `findAllIdsPlatformWide` above — same
+   * `organizations_platform_select` RLS policy, same reasoning.
+   */
+  findStaleUsageOrganizationIds(
+    tx: Prisma.TransactionClient,
+    olderThan: Date,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<Pick<Organization, 'id'>[]> {
+    return tx.organization.findMany({
+      where: {
+        id: cursor ? { gt: cursor } : undefined,
+        OR: [{ usage: null }, { usage: { updatedAt: { lt: olderThan } } }],
+      },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+      take: limit,
+    });
   }
 
   /**

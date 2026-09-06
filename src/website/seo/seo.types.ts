@@ -11,9 +11,24 @@
  * same "structural subset, not the full authenticated type" pattern the
  * frontend's own `buildOrganizationJsonLd` already established for
  * `Academy`).
+ *
+ * Phase 6 (Bilingual Academy Websites) — every SEO title/description field
+ * is `LocalizedText`, and `resolvePageSeo` takes an explicit `locale`
+ * parameter: `/about` and `/ar/about` are two distinct indexed URLs (see
+ * `hreflangAlternates` below), so resolution happens once per locale, not
+ * once per page.
  */
+import type { LocalizedTextLike } from '../utils/localized-text.util';
+import type { PublicWebsiteLocale } from '../constants/locale.constants';
 
 export type SeoResolutionSource = 'override' | 'global' | 'fallback';
+
+/** One `<link rel="alternate" hreflang="...">` entry per supported locale — matches Google's documented "self-referencing hreflang" requirement (the resolved page's own locale is included, pointing at itself). */
+export interface HreflangAlternate {
+  readonly locale: PublicWebsiteLocale;
+  /** Always a full, already-locale-prefixed path (`/ar/about`, or `/about` for `en`) — the renderer emits this verbatim, it never re-derives the prefix. */
+  readonly path: string;
+}
 
 export interface ResolvedSeoMetadata {
   readonly title: string;
@@ -25,6 +40,8 @@ export interface ResolvedSeoMetadata {
   readonly indexable: boolean;
   readonly titleSource: SeoResolutionSource;
   readonly descriptionSource: SeoResolutionSource;
+  readonly locale: PublicWebsiteLocale;
+  readonly hreflangAlternates: readonly HreflangAlternate[];
 }
 
 export interface SeoFallback {
@@ -34,10 +51,10 @@ export interface SeoFallback {
 
 /** Matches `WebsitePageSeo` (`website.types.ts`, P9) exactly. */
 export interface WebsitePageSeoInput {
-  readonly metaTitle?: string;
-  readonly metaDescription?: string;
-  readonly ogTitle?: string;
-  readonly ogDescription?: string;
+  readonly metaTitle?: LocalizedTextLike;
+  readonly metaDescription?: LocalizedTextLike;
+  readonly ogTitle?: LocalizedTextLike;
+  readonly ogDescription?: LocalizedTextLike;
   readonly ogImage?: string;
   readonly canonicalPath?: string;
   readonly indexable?: boolean;
@@ -51,9 +68,9 @@ export interface WebsitePageInput {
 
 /** Matches `WebsiteSeoConfig` (`website.types.ts`, P9) exactly. */
 export interface WebsiteSeoConfigInput {
-  readonly siteTitle?: string;
-  readonly metaTitle?: string;
-  readonly metaDescription?: string;
+  readonly siteTitle?: LocalizedTextLike;
+  readonly metaTitle?: LocalizedTextLike;
+  readonly metaDescription?: LocalizedTextLike;
   readonly ogImage?: string;
   readonly robotsIndexable?: boolean;
   readonly sitemapEnabled?: boolean;

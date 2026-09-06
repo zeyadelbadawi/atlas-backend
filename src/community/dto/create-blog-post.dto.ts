@@ -13,12 +13,32 @@
  * `@IsNotEmpty()` for required fields — see `RegisterDto`'s comment
  * (identity module): the other decorators silently skip `undefined`.
  */
-import { IsArray, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsArray, IsISO8601, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreateBlogPostDto {
   @IsOptional()
   @IsString()
   readonly academyId?: string;
+
+  /** Phase 6 — future-dated publish. Omitted/absent stays `draft`; a valid future timestamp puts the post in `scheduled` status, published by the same Phase 2 sweep tick that already publishes scheduled announcements. Past-dated values are rejected by `BlogPostsService` (see its own doc comment), not here — mirrors `CreateAnnouncementDto`'s identical field exactly. */
+  @IsOptional()
+  @IsISO8601()
+  readonly scheduledAt?: string;
+
+  /** Phase 6 — SEO metadata, real persisted data (never derived/faked at render time). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(70)
+  readonly metaTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  readonly metaDescription?: string;
+
+  @IsOptional()
+  @IsString()
+  readonly ogImage?: string;
 
   @IsNotEmpty()
   @IsString()

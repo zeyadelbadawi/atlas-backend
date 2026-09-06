@@ -29,6 +29,15 @@
  * `EntitlementEnforcementService` (the live `generalStorage`/
  * `videoStorage` plan-limit check, byte-precise). `PlansModule` depends
  * on neither `MediaModule` nor `AcademyModule`, so this stays a clean DAG.
+ *
+ * Exports `MediaService` as of Phase 4 (P24) — `LearningModule`'s
+ * `AssignmentsService` needs it to wire real assignment-submission
+ * attachments through this same R2 pipeline (`uploadForSubmission`), the
+ * exact "reuse the existing architecture" instruction that phase's own
+ * roadmap entry states explicitly, rather than a second, parallel upload
+ * implementation. `MediaModule` depends on neither `LearningModule` nor
+ * `CourseModule`, so `LearningModule` importing `MediaModule` stays a
+ * clean, acyclic DAG.
  */
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
@@ -61,5 +70,6 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
     MediaProcessingProducer,
     MediaProcessingProcessor,
   ],
+  exports: [MediaService],
 })
 export class MediaModule {}

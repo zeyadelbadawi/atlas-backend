@@ -25,7 +25,19 @@ export class TenantUsageRecomputeProducer {
         attempts: 5,
         backoff: { type: 'exponential', delay: 2000 },
         removeOnComplete: true,
-        removeOnFail: false,
+        // Phase 4.5.2 (scalability, Change 5) — `removeOnFail: false` is
+        // this codebase's deliberate, consistent convention everywhere
+        // else (password-reset, provisioning, billing-webhook, media-
+        // processing), kept there unchanged: those queues are low-volume,
+        // so unbounded failed-job retention is genuinely harmless and
+        // gives an operator permanent visibility into every failure. This
+        // is the highest-volume queue on the platform (one job per stale
+        // organization, potentially thousands per tick) — unbounded
+        // retention here would let Redis memory grow without limit under
+        // any sustained partial-failure rate. Bounded to the most recent
+        // 1,000 failed jobs: enough for real operator debugging, never
+        // unbounded.
+        removeOnFail: { count: 1000 },
       },
     );
   }

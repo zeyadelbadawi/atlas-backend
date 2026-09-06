@@ -26,10 +26,21 @@
  * with the Organization and its owner membership, in one transaction,
  * without `OrganizationsService` ever importing anything from
  * `PlansModule`.
+ *
+ * Foundational-audit fix (ATLAS_FOUNDATIONAL_AUTH_TENANCY_AUDIT.md, Fix
+ * A) — `SaasLevelCallerGuard` added alongside `JwtAuthGuard`. Still
+ * correctly no `OrganizationMembershipGuard` (no `:id` yet, per this
+ * file's own header above) — the new guard answers a different question
+ * ("is this caller eligible to onboard as an Owner at all") and allows
+ * both a real existing Owner creating an additional Organization AND a
+ * genuinely brand-new, not-yet-onboarded signup (Decision 5); it rejects
+ * only a caller who already has a real, non-owner Academy affiliation
+ * (Manager, Instructor, or Student) — see the guard's own doc comment.
  */
 import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { SaasLevelCallerGuard } from '../../tenancy/guards/saas-level-caller.guard';
 import { OrganizationsService } from '../../tenancy/services/organizations.service';
 import { OrganizationSubscriptionBootstrapService } from '../services/organization-subscription-bootstrap.service';
 import { TenantUsageRecomputeProducer } from '../queue/tenant-usage-recompute.producer';
@@ -37,7 +48,7 @@ import { CreateOrganizationDto } from '../../tenancy/dto/create-organization.dto
 import type { OrganizationResponse } from '../../tenancy/dto/organization.contract';
 
 @Controller('organizations')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, SaasLevelCallerGuard)
 export class OrganizationsController {
   constructor(
     private readonly organizationsService: OrganizationsService,

@@ -30,75 +30,104 @@
  * indexable regardless of any override, matching the frontend's own
  * explicit rule verbatim.
  *
- * `resolveBlogPostSeo` is deliberately NOT reproduced here — the
- * frontend's own `seo-resolution.utils.ts` marks it "UNRESOLVED... no
- * live UI consumer," confirmed by direct search (`resolveBlogPostSeo` is
- * never actually called anywhere in the real frontend, including
- * `WebsiteBlogContentTab.tsx`, whose doc comment references it but whose
- * code does not call it). Blog/Announcements are also outside the
- * Website/CMS domain (Community, P7) — porting a function the frontend
- * itself documents as unused would be inventing scope, not reproducing a
- * real contract.
+ * Phase 6 (Bilingual Academy Websites) — every title/description field is
+ * now `LocalizedText`, and both resolvers take an explicit `locale`
+ * parameter: the fall-through precedence (Override → Global → Fallback)
+ * is unchanged, it now simply runs once PER LOCALE, resolving each
+ * `LocalizedText` field to its `locale` side (falling back to `en` when
+ * `ar` is blank, per `resolveLocalizedText`) before applying the same
+ * `||`/`??` precedence rules as before. `resolvePageSeo` additionally
+ * returns `hreflangAlternates` — one entry per supported locale, pointing
+ * at that locale's own URL for the same page — so the public runtime can
+ * emit `<link rel="alternate" hreflang="...">` tags without a second
+ * resolution pass. `resolveBlogPostSeo` is deliberately NOT reproduced
+ * here — the frontend's own `seo-resolution.utils.ts` marks it
+ * "UNRESOLVED... no live UI consumer" (see prior revisions of this file's
+ * doc comment).
  */
+import { PUBLIC_WEBSITE_LOCALES, type PublicWebsiteLocale } from '../constants/locale.constants';
+import { resolveLocalizedText } from '../utils/localized-text.util';
 import type {
   CourseSeoInput,
+  HreflangAlternate,
   ResolvedSeoMetadata,
   SeoFallback,
   WebsiteConfigurationSeoInput,
   WebsitePageInput,
 } from './seo.types';
 
+/** `/ar/about` for `ar`, `/about` for `en` — the ONE place the locale URL prefix is applied when building hreflang alternates, matching the frontend router's own prefix rule (`locale.constants.ts`, `PUBLIC_WEBSITE_LOCALE_PATH_PREFIX`). */
+function withLocalePrefix(path: string, locale: PublicWebsiteLocale): string {
+  return locale === 'en' ? path : `/${locale}${path}`;
+}
+
+function buildHreflangAlternates(canonicalPath: string): readonly HreflangAlternate[] {
+  return PUBLIC_WEBSITE_LOCALES.map((locale) => ({
+    locale,
+    path: withLocalePrefix(canonicalPath, locale),
+  }));
+}
+
 export function resolvePageSeo(
   page: WebsitePageInput,
   configuration: WebsiteConfigurationSeoInput,
   fallback: SeoFallback,
+  locale: PublicWebsiteLocale,
 ): ResolvedSeoMetadata {
-  const title = page.seo.metaTitle || configuration.seo.metaTitle || fallback.title;
-  const titleSource: ResolvedSeoMetadata['titleSource'] = page.seo.metaTitle
+  const pageMetaTitle = resolveLocalizedText(page.seo.metaTitle, locale);
+  const globalMetaTitle = resolveLocalizedText(configuration.seo.metaTitle, locale);
+  const title = pageMetaTitle || globalMetaTitle || fallback.title;
+  const titleSource: ResolvedSeoMetadata['titleSource'] = pageMetaTitle
     ? 'override'
-    : configuration.seo.metaTitle
+    : globalMetaTitle
       ? 'global'
       : 'fallback';
 
-  const description =
-    page.seo.metaDescription || configuration.seo.metaDescription || fallback.description;
-  const descriptionSource: ResolvedSeoMetadata['descriptionSource'] = page.seo
-    .metaDescription
+  const pageMetaDescription = resolveLocalizedText(page.seo.metaDescription, locale);
+  const globalMetaDescription = resolveLocalizedText(configuration.seo.metaDescription, locale);
+  const description = pageMetaDescription || globalMetaDescription || fallback.description;
+  const descriptionSource: ResolvedSeoMetadata['descriptionSource'] = pageMetaDescription
     ? 'override'
-    : configuration.seo.metaDescription
+    : globalMetaDescription
       ? 'global'
       : 'fallback';
+
+  const canonicalPath = page.seo.canonicalPath || `/${page.slug}`;
 
   return {
     title,
     description,
-    ogTitle: page.seo.ogTitle || title,
-    ogDescription: page.seo.ogDescription || description,
+    ogTitle: resolveLocalizedText(page.seo.ogTitle, locale) || title,
+    ogDescription: resolveLocalizedText(page.seo.ogDescription, locale) || description,
     ogImage: page.seo.ogImage || configuration.seo.ogImage,
-    canonicalPath: page.seo.canonicalPath || `/${page.slug}`,
+    canonicalPath,
     // A hidden page can never be indexable, regardless of any override.
     indexable:
       page.visible && (page.seo.indexable ?? configuration.seo.robotsIndexable ?? true),
     titleSource,
     descriptionSource,
+    locale,
+    hreflangAlternates: buildHreflangAlternates(canonicalPath),
   };
 }
 
-/** Dynamic SEO for a Course — reads the EXISTING Course domain only, never a duplicated projection stored in the CMS. */
+/** Dynamic SEO for a Course — reads the EXISTING Course domain only, never a duplicated projection stored in the CMS. Course title/description are not `LocalizedText` today (the Course domain predates Phase 6 and is out of this phase's scope — see the Phase 6 completion report's "remaining limitations"), so `locale` only affects which side of the WEBSITE's own global SEO defaults/hreflang is used, not the course copy itself. */
 export function resolveCourseSeo(
   course: CourseSeoInput,
   configuration: WebsiteConfigurationSeoInput,
   fallback: SeoFallback,
+  locale: PublicWebsiteLocale,
 ): ResolvedSeoMetadata {
   const title = course.title || fallback.title;
   const description =
     course.shortDescription ||
     course.description ||
-    configuration.seo.metaDescription ||
+    resolveLocalizedText(configuration.seo.metaDescription, locale) ||
     fallback.description;
 
   const publiclyReachable =
     course.status === 'published' && course.visibility === 'public';
+  const canonicalPath = `/courses/${course.slug}`;
 
   return {
     title,
@@ -106,10 +135,12 @@ export function resolveCourseSeo(
     ogTitle: title,
     ogDescription: description,
     ogImage: course.thumbnail || configuration.seo.ogImage,
-    canonicalPath: `/courses/${course.slug}`,
+    canonicalPath,
     indexable: publiclyReachable && (configuration.seo.robotsIndexable ?? true),
     titleSource: course.title ? 'override' : 'fallback',
     descriptionSource:
       course.shortDescription || course.description ? 'override' : 'fallback',
+    locale,
+    hreflangAlternates: buildHreflangAlternates(canonicalPath),
   };
 }

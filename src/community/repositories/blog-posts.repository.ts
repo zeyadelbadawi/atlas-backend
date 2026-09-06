@@ -36,6 +36,15 @@ export class BlogPostsRepository {
     return tx.blogPost.findFirst({ where: { academyId, slug } });
   }
 
+  /** Phase 6 — see `AnnouncementsRepository.publishDueScheduled`'s identical doc comment; bypassed here by `blog_posts_platform_schedule_select/update` instead. */
+  async publishDueScheduled(tx: Prisma.TransactionClient, asOf: Date): Promise<number> {
+    const { count } = await tx.blogPost.updateMany({
+      where: { status: 'scheduled', scheduledAt: { lte: asOf } },
+      data: { status: 'published', publishedAt: asOf },
+    });
+    return count;
+  }
+
   create(
     tx: Prisma.TransactionClient,
     data: Prisma.BlogPostCreateInput,

@@ -124,6 +124,57 @@ export class CheckoutService {
     return checkout;
   }
 
+  /**
+   * Shared by both `buildSnapshot` branches (Plan and Add-on carry the
+   * identical `PlanPricingMetadata` shape). Two checks, both real business
+   * rules, never weakened:
+   *
+   * 1. `amount`/`currency` must both be present — deliberately a
+   *    "field present" check, never truthiness, so a free plan's honest
+   *    `amount: 0` is never mistaken for "pricing not configured".
+   * 2. If the caller requested a specific `billingCycle` AND this catalog
+   *    entry's own `pricing.billingCycle` is set, they must match. A
+   *    `Plan`/`AddOn` carries exactly ONE price for exactly ONE cycle
+   *    (`PlanPricingMetadata` — never a separate monthly/yearly pair; see
+   *    that type's own doc comment) — silently accepting a mismatched
+   *    cycle would create a Checkout LABELED "yearly" while charging the
+   *    monthly amount, which is exactly the "misleading" outcome this
+   *    validation exists to prevent. Reported through the same
+   *    `pricingUnavailable` key, which already reads "isn't configured
+   *    for this plan AND BILLING CYCLE" — this is the literal case that
+   *    copy was written for. A catalog entry with no `billingCycle` set at
+   *    all is treated as cycle-agnostic (skips this check) for backward
+   *    compatibility with any already-persisted pricing that predates this
+   *    field.
+   */
+  private resolvePricingOrThrow(
+    pricing: unknown,
+    requestedBillingCycle: 'monthly' | 'yearly' | undefined,
+  ): { amount: number; currency: string; billingCycle?: 'monthly' | 'yearly' } {
+    const parsed = pricing as {
+      amount?: number;
+      currency?: string;
+      billingCycle?: 'monthly' | 'yearly';
+    } | null;
+
+    const hasUsablePrice =
+      parsed?.amount !== undefined && parsed.amount !== null && !!parsed.currency;
+    const cycleMismatch =
+      hasUsablePrice &&
+      !!requestedBillingCycle &&
+      !!parsed!.billingCycle &&
+      parsed!.billingCycle !== requestedBillingCycle;
+
+    if (!hasUsablePrice || cycleMismatch) {
+      throw new BadRequestException({ messageKey: 'errors.checkout.pricingUnavailable' });
+    }
+    return {
+      amount: parsed!.amount!,
+      currency: parsed!.currency!,
+      billingCycle: parsed!.billingCycle,
+    };
+  }
+
   private async buildSnapshot(
     input: CreateCheckoutInput,
   ): Promise<CheckoutSnapshotResponse> {
@@ -132,19 +183,7 @@ export class CheckoutService {
       if (!plan || plan.status !== 'active') {
         throw new NotFoundException({ messageKey: 'errors.checkout.planNotFound' });
       }
-      const pricing = plan.pricing as unknown as {
-        amount?: number;
-        currency?: string;
-        billingCycle?: 'monthly' | 'yearly';
-      } | null;
-      // `amount` can be a real `0` (a free plan's own honest price) — the
-      // check is deliberately "field present", never a truthiness check,
-      // so a free plan is never mistaken for "pricing not configured".
-      if (pricing?.amount === undefined || pricing.amount === null || !pricing.currency) {
-        throw new BadRequestException({
-          messageKey: 'errors.checkout.pricingUnavailable',
-        });
-      }
+      const pricing = this.resolvePricingOrThrow(plan.pricing, input.billingCycle);
       return {
         target: { type: 'plan_subscription', planKey: plan.key },
         billingCycle: input.billingCycle ?? pricing.billingCycle,
@@ -161,14 +200,7 @@ export class CheckoutService {
     if (!addOn) {
       throw new NotFoundException({ messageKey: 'errors.checkout.addOnNotFound' });
     }
-    const pricing = addOn.pricing as unknown as {
-      amount?: number;
-      currency?: string;
-      billingCycle?: 'monthly' | 'yearly';
-    } | null;
-    if (pricing?.amount === undefined || pricing.amount === null || !pricing.currency) {
-      throw new BadRequestException({ messageKey: 'errors.checkout.pricingUnavailable' });
-    }
+    const pricing = this.resolvePricingOrThrow(addOn.pricing, input.billingCycle);
     return {
       target: { type: 'add_on', addOnKey: addOn.key },
       billingCycle: input.billingCycle ?? pricing.billingCycle,

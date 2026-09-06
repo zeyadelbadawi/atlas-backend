@@ -40,6 +40,8 @@ export interface ProvisioningRequestResponse {
   readonly triggeringPaymentId?: string;
   /** Phase P19 — see `provisioning.constants.ts`'s 'theme' step. */
   readonly selectedThemeKey?: string;
+  /** Phase 6 — see `CreateProvisioningRequestDto.websiteSetupMode`'s own doc comment. */
+  readonly websiteSetupMode?: string;
   readonly lastError?: ProvisioningErrorResponse;
   readonly createdAt: string;
   readonly startedAt?: string;
@@ -68,6 +70,7 @@ export function toProvisioningRequestResponse(
     requestedSubdomain: request.requestedSubdomain,
     triggeringPaymentId: request.triggeringPaymentId ?? undefined,
     selectedThemeKey: request.selectedThemeKey ?? undefined,
+    websiteSetupMode: request.websiteSetupMode ?? undefined,
     lastError:
       (request.lastError as unknown as ProvisioningErrorResponse | null) ?? undefined,
     createdAt: request.createdAt.toISOString(),

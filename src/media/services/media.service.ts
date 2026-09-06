@@ -2,7 +2,10 @@
  * MediaService — matches `MediaService` (atlas frontend) exactly:
  * `getAssets`/`getAsset`/`uploadAsset`/`updateAsset`/`archiveAsset`, no
  * more, no fewer (master plan §21 P8's own instruction: "if the frontend
- * does not have a method, do not invent it").
+ * does not have a method, do not invent it") — plus `uploadForSubmission`
+ * as of Phase 4 (P24), reached only from `AssignmentsService`, never from
+ * `MediaController` (see that method's own doc comment for why its
+ * authorization is deliberately different from `upload`'s).
  *
  * Every method independently re-establishes the RLS tenant context via
  * `TenancyContextService.runInTenantContext`, matching every other
@@ -140,13 +143,7 @@ export class MediaService {
     userId: string,
     payload: UploadMediaAssetDto,
   ): Promise<MediaAssetResponse> {
-    const { buffer } = parseDataUrl(payload.dataUrl);
-    assertWithinSizeLimit(buffer, this.storageConfig.maxUploadBytes);
-
-    const kind = detectFileKind(buffer);
-    if (!kind) {
-      throw new BadRequestException({ messageKey: 'errors.media.unsupportedFileType' });
-    }
+    const { buffer, kind } = this.parseAndValidate(payload);
 
     // Authorization, THEN the live storage-entitlement check — both
     // before any real storage I/O, so an unauthorized OR over-limit
@@ -163,6 +160,64 @@ export class MediaService {
       );
     });
 
+    return this.performUpload(academyId, organizationId, payload, buffer, kind);
+  }
+
+  /**
+   * Phase 4 (P24) — the student-submission counterpart of `upload`.
+   * Authorization is deliberately NOT `assertCanManage` (owner/
+   * administrator/manager only) — the caller here is
+   * `AssignmentsService.uploadSubmissionAttachment`, which has already
+   * verified a real, active enrollment for this student in the specific
+   * course the assignment belongs to before ever reaching this method.
+   * Everything after authorization (parse, validate, the live storage-
+   * entitlement check, the real R2 write, the `MediaAsset` row, the async
+   * dimension-extraction enqueue, the usage-recompute trigger) is
+   * IDENTICAL to `upload` — both delegate to the same `performUpload`, so
+   * a student's submitted file becomes a real, quota-counted
+   * `MediaAsset`, visible in the academy's own Media Library like any
+   * other upload, never a parallel/duplicate storage concept.
+   */
+  async uploadForSubmission(
+    academyId: string,
+    organizationId: string,
+    payload: UploadMediaAssetDto,
+  ): Promise<MediaAssetResponse> {
+    const { buffer, kind } = this.parseAndValidate(payload);
+
+    await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+      this.entitlementEnforcementService.assertStorageWithinLimit(
+        tx,
+        organizationId,
+        kind.assetType === 'video' ? 'videoStorage' : 'generalStorage',
+        buffer.length,
+      ),
+    );
+
+    return this.performUpload(academyId, organizationId, payload, buffer, kind);
+  }
+
+  private parseAndValidate(
+    payload: UploadMediaAssetDto,
+  ): { buffer: Buffer; kind: NonNullable<ReturnType<typeof detectFileKind>> } {
+    const { buffer } = parseDataUrl(payload.dataUrl);
+    assertWithinSizeLimit(buffer, this.storageConfig.maxUploadBytes);
+
+    const kind = detectFileKind(buffer);
+    if (!kind) {
+      throw new BadRequestException({ messageKey: 'errors.media.unsupportedFileType' });
+    }
+    return { buffer, kind };
+  }
+
+  /** The real storage write + metadata persistence, shared verbatim by `upload` and `uploadForSubmission` — every caller has already finished its OWN authorization/entitlement check before this runs. */
+  private async performUpload(
+    academyId: string,
+    organizationId: string,
+    payload: UploadMediaAssetDto,
+    buffer: Buffer,
+    kind: NonNullable<ReturnType<typeof detectFileKind>>,
+  ): Promise<MediaAssetResponse> {
     const id = randomUUID();
     const storageKey = buildStorageKey(academyId, kind.extension, id);
     const { url } = await this.storageProvider.putObject(
