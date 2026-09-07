@@ -58,11 +58,13 @@ import { EnrollmentsController } from './controllers/enrollments.controller';
 import { CourseProgressController } from './controllers/course-progress.controller';
 import { QuizzesController } from './controllers/quizzes.controller';
 import { AssignmentsController } from './controllers/assignments.controller';
+import { CourseContentController } from './controllers/course-content.controller';
 import { CourseDiscoveryService } from './services/course-discovery.service';
 import { EnrollmentsService } from './services/enrollments.service';
 import { CourseProgressService } from './services/course-progress.service';
 import { QuizzesService } from './services/quizzes.service';
 import { AssignmentsService } from './services/assignments.service';
+import { CourseContentService } from './services/course-content.service';
 import { EnrollmentsRepository } from './repositories/enrollments.repository';
 import { CourseProgressRepository } from './repositories/course-progress.repository';
 import { QuizzesRepository } from './repositories/quizzes.repository';
@@ -76,6 +78,7 @@ import { AssignmentsRepository } from './repositories/assignments.repository';
     CourseProgressController,
     QuizzesController,
     AssignmentsController,
+    CourseContentController,
   ],
   providers: [
     CourseDiscoveryService,
@@ -83,6 +86,7 @@ import { AssignmentsRepository } from './repositories/assignments.repository';
     CourseProgressService,
     QuizzesService,
     AssignmentsService,
+    CourseContentService,
     EnrollmentsRepository,
     CourseProgressRepository,
     QuizzesRepository,

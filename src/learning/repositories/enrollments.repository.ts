@@ -40,9 +40,20 @@ export class EnrollmentsRepository {
   async findManyForStudent(
     tx: Prisma.TransactionClient,
     studentId: string,
-    options: { skip: number; take: number },
+    options: { skip: number; take: number; academyId?: string },
   ): Promise<{ items: EnrollmentWithCourse[]; totalItems: number }> {
-    const where: Prisma.EnrollmentWhereInput = { studentId };
+    // `academyId` — narrows "my enrollments" down to one Academy's
+    // courses, using `Enrollment`'s own denormalized `academyId` column
+    // (no join needed). Added so the Academy-website-embedded "My
+    // Learning" experience never shows a student's enrollments from a
+    // DIFFERENT Academy — confirmed as a real gap: the original,
+    // dashboard-only "My Learning" page never needed this (it only ever
+    // showed one global list), but embedding the same endpoint inside one
+    // Academy's own public website must never leak cross-Academy data.
+    const where: Prisma.EnrollmentWhereInput = {
+      studentId,
+      ...(options.academyId ? { academyId: options.academyId } : {}),
+    };
     const [items, totalItems] = await Promise.all([
       tx.enrollment.findMany({
         where,

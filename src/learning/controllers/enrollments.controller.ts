@@ -31,7 +31,7 @@ import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { EnrollmentsService } from '../services/enrollments.service';
 import { CreateEnrollmentDto } from '../dto/create-enrollment.dto';
-import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
+import { ListEnrollmentsQueryDto } from '../dto/list-enrollments-query.dto';
 import type { EnrollmentResponse } from '../dto/enrollment.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
@@ -43,7 +43,7 @@ export class EnrollmentsController {
   @Get()
   async list(
     @Req() request: Request,
-    @Query() query: CollectionQueryDto,
+    @Query() query: ListEnrollmentsQueryDto,
   ): Promise<PaginatedResult<EnrollmentResponse>> {
     return this.enrollmentsService.list(request.authContext!.userId, query);
   }

@@ -38,8 +38,8 @@ import type { EnrollmentResponse } from '../dto/enrollment.contract';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
-import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { CreateEnrollmentDto } from '../dto/create-enrollment.dto';
+import type { ListEnrollmentsQueryDto } from '../dto/list-enrollments-query.dto';
 import { deriveCompletionState } from './progress-computation.util';
 
 @Injectable()
@@ -57,7 +57,7 @@ export class EnrollmentsService {
 
   async list(
     userId: string,
-    query: CollectionQueryDto,
+    query: ListEnrollmentsQueryDto,
   ): Promise<PaginatedResult<EnrollmentResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
@@ -68,6 +68,7 @@ export class EnrollmentsService {
         this.enrollmentsRepository.findManyForStudent(tx, userId, {
           skip: (page - 1) * pageSize,
           take: pageSize,
+          academyId: query.academyId,
         }),
     );
 
