@@ -50,9 +50,12 @@ import { AcademyMembersRepository } from '../../academy/repositories/academy-mem
 import { ContactSubmissionsRepository } from '../../academy/repositories/contact-submissions.repository';
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { CoursesRepository } from '../../course/repositories/courses.repository';
+import { CourseSectionsRepository } from '../../course/repositories/course-sections.repository';
 import { toCourseResponse } from '../../course/dto/course.contract';
 import type { CourseResponse } from '../../course/dto/course.contract';
 import type { CourseListQueryDto } from '../../course/dto/course-list-query.dto';
+import { toPublicCourseCurriculumResponse } from '../dto/public-course-curriculum.contract';
+import type { PublicCourseCurriculumSectionResponse } from '../dto/public-course-curriculum.contract';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
@@ -80,6 +83,7 @@ export class PublicWebsiteService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly contactSubmissionsRepository: ContactSubmissionsRepository,
     private readonly coursesRepository: CoursesRepository,
+    private readonly courseSectionsRepository: CourseSectionsRepository,
     private readonly academiesRepository: AcademiesRepository,
     configService: ConfigService,
   ) {
@@ -273,6 +277,65 @@ export class PublicWebsiteService {
     );
 
     return { items: withStats, pagination: buildPaginationMeta(page, pageSize, totalItems) };
+  }
+
+  /**
+   * The public Course Details marketing page's real data source — added
+   * alongside the Course Details UX overhaul after finding
+   * `CourseDetailsTemplate` (frontend) was calling `useCourse`, the
+   * TENANT-scoped `GET academies/:id/courses/:courseId`
+   * (`JwtAuthGuard`+`AcademyScopeGuard`), the exact same "403s for every
+   * real visitor" bug `getPublicCourses` above already documents having
+   * fixed for the listing section — just never applied to the single-
+   * course template. Same shape, same rule: `findPublishedById` is the
+   * P6 discovery catalog's own single-course lookup (published+public
+   * only, RLS-backed), re-scoped here to confirm the course actually
+   * belongs to THIS academy (defense in depth — `findPublishedById`
+   * itself is cross-academy by design, matching `discoverCourse`'s use of
+   * it) rather than trusting the caller's `academyId` alone.
+   */
+  async getPublicCourse(academyId: string, courseId: string): Promise<CourseResponse | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+
+    const result = await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      const course = await this.coursesRepository.findPublishedById(tx, courseId);
+      if (!course || course.academyId !== academyId) return null;
+      const [totalSections, totalLessons] = await Promise.all([
+        this.coursesRepository.countSections(tx, courseId),
+        this.coursesRepository.countLessons(tx, courseId),
+      ]);
+      return { course, totalSections, totalLessons };
+    });
+    if (!result) return null;
+
+    return toCourseResponse(result.course, {
+      totalSections: result.totalSections,
+      totalLessons: result.totalLessons,
+    });
+  }
+
+  /**
+   * The public Course Details page's curriculum PREVIEW — real section/
+   * lesson titles and structure for a visitor who has not enrolled yet,
+   * with no `contentUrl`/`description` ever leaving this method (see
+   * `toPublicCourseCurriculumResponse`'s own doc comment for why). Same
+   * academy-ownership + published-course confirmation as `getPublicCourse`
+   * before any section is even queried.
+   */
+  async getPublicCourseCurriculum(
+    academyId: string,
+    courseId: string,
+  ): Promise<PublicCourseCurriculumSectionResponse[] | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+
+    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      const course = await this.coursesRepository.findPublishedById(tx, courseId);
+      if (!course || course.academyId !== academyId) return null;
+      const sections = await this.courseSectionsRepository.findManyForCourse(tx, courseId);
+      return toPublicCourseCurriculumResponse(sections);
+    });
   }
 
   /**

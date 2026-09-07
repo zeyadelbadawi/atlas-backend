@@ -6,11 +6,29 @@ import type {
   Course as PrismaCourse,
   CourseCategory as PrismaCourseCategory,
   CourseInstructor as PrismaCourseInstructor,
+  CourseProgress as PrismaCourseProgress,
   Enrollment as PrismaEnrollment,
   User,
 } from '@prisma/client';
 import { toCourseResponse } from '../../course/dto/course.contract';
 import type { CourseResponse } from '../../course/dto/course.contract';
+
+/**
+ * A slim progress summary for list views (My Learning) — real totals only,
+ * never the per-lesson/per-section breakdown `CourseProgressResponse`
+ * carries (that's only needed once a student is actually inside the
+ * course's own progress/curriculum view). Reuses the same
+ * `CourseProgressRepository` row `CourseProgressService` already
+ * maintains — no new materialization path, no denormalized copy.
+ */
+export interface EnrollmentProgressSummary {
+  readonly totalLessons: number;
+  readonly completedLessons: number;
+  readonly percentage: number;
+  readonly currentLessonId?: string;
+  readonly completionState: PrismaCourseProgress['completionState'];
+  readonly certificateStatus: PrismaCourseProgress['certificateStatus'];
+}
 
 export interface EnrollmentResponse {
   readonly id: string;
@@ -32,6 +50,13 @@ export interface EnrollmentResponse {
    * on every enroll click.
    */
   readonly course?: CourseResponse;
+  /**
+   * Only populated by `EnrollmentsService.list` (My Learning) — the LMS UX
+   * pass's own real gap: a progress bar/"continue learning" CTA needs
+   * real completion data, not just the enrollment's own coarse `status`
+   * enum. Absent wherever `course` above is absent, for the same reason.
+   */
+  readonly progress?: EnrollmentProgressSummary;
 }
 
 export function toEnrollmentResponse(
@@ -43,6 +68,7 @@ export function toEnrollmentResponse(
       })[];
     };
   },
+  progress?: PrismaCourseProgress,
 ): EnrollmentResponse {
   return {
     id: enrollment.id,
@@ -53,5 +79,15 @@ export function toEnrollmentResponse(
     enrolledAt: enrollment.enrolledAt?.toISOString(),
     completedAt: enrollment.completedAt?.toISOString(),
     course: enrollment.course ? toCourseResponse(enrollment.course) : undefined,
+    progress: progress
+      ? {
+          totalLessons: progress.totalLessons,
+          completedLessons: progress.completedLessons,
+          percentage: Number(progress.percentage),
+          currentLessonId: progress.currentLessonId ?? undefined,
+          completionState: progress.completionState,
+          certificateStatus: progress.certificateStatus,
+        }
+      : undefined,
   };
 }

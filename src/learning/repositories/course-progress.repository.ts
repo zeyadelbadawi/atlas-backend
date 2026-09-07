@@ -28,6 +28,18 @@ export class CourseProgressRepository {
     return tx.courseProgress.findUnique({ where: { enrollmentId } });
   }
 
+  /** Batched counterpart to `findByEnrollmentId` for a whole page of enrollments (My Learning) — one query instead of N, matching `countSectionsAndLessonsBatch`'s identical precedent. */
+  async findManyByEnrollmentIds(
+    tx: Prisma.TransactionClient,
+    enrollmentIds: readonly string[],
+  ): Promise<Map<string, CourseProgress>> {
+    if (enrollmentIds.length === 0) return new Map();
+    const rows = await tx.courseProgress.findMany({
+      where: { enrollmentId: { in: [...enrollmentIds] } },
+    });
+    return new Map(rows.map((row) => [row.enrollmentId, row]));
+  }
+
   updateCourseProgress(
     tx: Prisma.TransactionClient,
     enrollmentId: string,

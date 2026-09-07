@@ -37,6 +37,7 @@ import type { ContactSubmissionResponse } from '../../academy/dto/contact-submis
 import type { AcademyIdentityResponse } from '../dto/public-identity.contract';
 import type { CourseResponse } from '../../course/dto/course.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import type { PublicCourseCurriculumSectionResponse } from '../dto/public-course-curriculum.contract';
 
 @Controller('public/websites')
 export class PublicWebsiteController {
@@ -108,6 +109,28 @@ export class PublicWebsiteController {
     const result = await this.publicWebsiteService.getPublicCourses(academyId, query);
     if (!result) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return result;
+  }
+
+  /** The public Course Details page's real data source. See `PublicWebsiteService.getPublicCourse`'s own doc comment. */
+  @Get(':academyId/courses/:courseId')
+  async getCourse(
+    @Param('academyId') academyId: string,
+    @Param('courseId') courseId: string,
+  ): Promise<CourseResponse> {
+    const course = await this.publicWebsiteService.getPublicCourse(academyId, courseId);
+    if (!course) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return course;
+  }
+
+  /** The public Course Details page's curriculum preview. See `PublicWebsiteService.getPublicCourseCurriculum`'s own doc comment. */
+  @Get(':academyId/courses/:courseId/curriculum')
+  async getCourseCurriculum(
+    @Param('academyId') academyId: string,
+    @Param('courseId') courseId: string,
+  ): Promise<readonly PublicCourseCurriculumSectionResponse[]> {
+    const curriculum = await this.publicWebsiteService.getPublicCourseCurriculum(academyId, courseId);
+    if (!curriculum) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return curriculum;
   }
 
   /** Phase 6 — the real backend destination for the public Contact section's form. See `PublicWebsiteService.submitContactMessage`'s own doc comment. */

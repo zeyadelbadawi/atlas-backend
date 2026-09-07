@@ -62,18 +62,24 @@ export class EnrollmentsService {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
-    const { items, totalItems } = await this.tenancyContextService.runInUserContext(
-      userId,
-      (tx) =>
-        this.enrollmentsRepository.findManyForStudent(tx, userId, {
+    const { items, totalItems, progressByEnrollmentId } =
+      await this.tenancyContextService.runInUserContext(userId, async (tx) => {
+        const result = await this.enrollmentsRepository.findManyForStudent(tx, userId, {
           skip: (page - 1) * pageSize,
           take: pageSize,
           academyId: query.academyId,
-        }),
-    );
+        });
+        const progressByEnrollmentId = await this.courseProgressRepository.findManyByEnrollmentIds(
+          tx,
+          result.items.map((enrollment) => enrollment.id),
+        );
+        return { ...result, progressByEnrollmentId };
+      });
 
     return {
-      items: items.map(toEnrollmentResponse),
+      items: items.map((enrollment) =>
+        toEnrollmentResponse(enrollment, progressByEnrollmentId.get(enrollment.id)),
+      ),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
     };
   }
