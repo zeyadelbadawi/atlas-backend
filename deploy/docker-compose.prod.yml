@@ -1,0 +1,74 @@
+# Atlas production stack — single Oracle Cloud VPS (Phase 7, confirmed
+# architecture). Canonical copy lives here for version history; the
+# deployed copy on the VPS itself is at /opt/atlas/docker-compose.yml.
+#
+# postgres/redis deliberately have no `ports:` mapping at all — not even
+# to 127.0.0.1 — so they are unreachable from outside this compose
+# network under any circumstance. Only caddy publishes to the host
+# (80/443); backend is reached exclusively via Caddy's internal
+# reverse_proxy over the compose network.
+name: atlas
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - atlas_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--requirepass', '${REDIS_PASSWORD}']
+    volumes:
+      - atlas_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: ghcr.io/zeyadelbadawi/atlas-backend:latest
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  caddy:
+    image: ghcr.io/zeyadelbadawi/atlas-frontend:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - '80:80'
+      - '443:443'
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  atlas_postgres_data:
+  atlas_redis_data:
+  caddy_data:
+  caddy_config:
