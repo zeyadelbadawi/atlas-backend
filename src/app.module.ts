@@ -18,6 +18,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { LoggerModule } from 'nestjs-pino';
 import { BullModule } from '@nestjs/bullmq';
 import configuration from './config/configuration';
@@ -28,6 +29,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 import { DatabaseModule } from './database/prisma.module';
 import { RedisModule } from './redis/redis.module';
+import { RedisService } from './redis/redis.service';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './identity/identity.module';
 import { TenancyModule } from './tenancy/tenancy.module';
@@ -69,7 +71,19 @@ import { SearchModule } from './search/search.module';
     // master plan §16/§18 call for. Those apply their own, stricter
     // `@Throttle()` overrides once those endpoints exist (P1, P12+); this
     // is only the foundation so no route is ever unlimited by omission.
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+    // Phase 7 — was `forRoot` with NestJS's default in-memory storage,
+    // correct for exactly one instance and silently wrong the moment a
+    // second instance/process joins (each would enforce its own
+    // independent counter). Backed by the same shared Redis connection
+    // (`RedisService`) every other cross-cutting concern here already
+    // uses, not a second connection.
+    ThrottlerModule.forRootAsync({
+      inject: [RedisService],
+      useFactory: (redisService: RedisService) => ({
+        throttlers: [{ ttl: 60_000, limit: 120 }],
+        storage: new ThrottlerStorageRedisService(redisService.getClient()),
+      }),
+    }),
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {

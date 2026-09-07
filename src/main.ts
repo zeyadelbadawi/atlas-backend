@@ -20,6 +20,7 @@ import { AppModule } from './app.module';
 import { throwClassValidatorViolations } from './common/validation/class-validator-violations.util';
 import type { AppConfig } from './config/configuration';
 import type { MediaStorageConfig } from './config/configuration';
+import type { PlatformDomainRuntimeConfig } from './config/configuration';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -51,8 +52,34 @@ async function bootstrap(): Promise<void> {
 
   app.use(helmet());
 
+  // Phase 7 — production serves the platform's main domain, every academy's
+  // `{slug}.{baseDomain}` subdomain, and (eventually) connected custom
+  // domains, all from this one API. A fixed array can't express "any
+  // subdomain of X" — origins are created dynamically at academy-provision
+  // time, long after boot, so they can never be enumerated up front. This
+  // keeps the static `CORS_ALLOWED_ORIGINS` allowlist (dev origins, any
+  // explicitly-configured extra origin) as the base case, and additionally
+  // allows the platform's own base domain and any single-label subdomain of
+  // it, once `PLATFORM_BASE_DOMAIN` is configured. No wildcard is ever
+  // reflected — the actual matched origin is echoed back, same as before.
+  const platformDomainConfig =
+    configService.get<PlatformDomainRuntimeConfig>('platformDomain');
+  const staticAllowedOrigins = new Set(config.corsAllowedOrigins as string[]);
+  const baseDomain = platformDomainConfig?.baseDomain;
+  const subdomainPattern = baseDomain
+    ? new RegExp(`^https:\\/\\/([a-z0-9-]+)\\.${baseDomain.replace(/\./g, '\\.')}$`, 'i')
+    : undefined;
+
   app.enableCors({
-    origin: config.corsAllowedOrigins as string[],
+    origin: (origin, callback) => {
+      // No Origin header (same-origin request, curl, server-to-server) —
+      // nothing for CORS to police.
+      if (!origin) return callback(null, true);
+      if (staticAllowedOrigins.has(origin)) return callback(null, true);
+      if (baseDomain && origin === `https://${baseDomain}`) return callback(null, true);
+      if (subdomainPattern?.test(origin)) return callback(null, true);
+      return callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+    },
     credentials: true,
   });
 
