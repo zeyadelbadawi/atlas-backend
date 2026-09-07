@@ -52,6 +52,27 @@ export class OrganizationMembershipsRepository {
     });
   }
 
+  /**
+   * `OrganizationsService.create` calls this immediately before inserting
+   * a new `isPrimary: true` membership — without it, a user who creates
+   * several organizations over time accumulates MULTIPLE `isPrimary: true`
+   * rows (reproduced live: a real seeded admin account ended up with 3),
+   * which makes `sessionService.selectPrimaryOrganization`'s `.find()`
+   * pick whichever row happens first in an arbitrary query order —
+   * exactly the intermittent "org-switcher shows the wrong org" bug this
+   * fixes. No unique DB constraint enforces "at most one primary per
+   * user" today (only `@@unique([organizationId, userId])`) — this is
+   * the application-level invariant instead, so every write site that
+   * sets `isPrimary: true` must clear prior primaries first, in the same
+   * transaction.
+   */
+  clearPrimaryForUser(tx: Prisma.TransactionClient, userId: string): Promise<Prisma.BatchPayload> {
+    return tx.organizationMembership.updateMany({
+      where: { userId, isPrimary: true },
+      data: { isPrimary: false },
+    });
+  }
+
   /** Finds the caller's own membership row within the active tenant context — this IS the membership-verification query (see `OrganizationMembershipGuard`). */
   findForUserInOrganization(
     tx: Prisma.TransactionClient,

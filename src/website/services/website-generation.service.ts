@@ -340,7 +340,7 @@ export class WebsiteGenerationService {
       .filter((coreType) => pageIdByCoreType.has(coreType))
       .map((coreType, index) => ({
         id: randomUUID(),
-        label: { en: CORE_PAGE_DEFAULTS[coreType].title, ar: '' },
+        label: lt(CORE_PAGE_DEFAULTS[coreType].title, CORE_PAGE_DEFAULTS[coreType].titleAr),
         pageId: pageIdByCoreType.get(coreType)!,
         order: index,
       }));
@@ -374,7 +374,7 @@ export class WebsiteGenerationService {
         .filter((coreType) => pageIdByCoreType.has(coreType))
         .map((coreType) => ({
           id: randomUUID(),
-          label: { en: CORE_PAGE_DEFAULTS[coreType].title, ar: '' },
+          label: lt(CORE_PAGE_DEFAULTS[coreType].title, CORE_PAGE_DEFAULTS[coreType].titleAr),
           pageId: pageIdByCoreType.get(coreType)!,
         }));
 

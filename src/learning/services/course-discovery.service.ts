@@ -51,16 +51,19 @@ export class CourseDiscoveryService {
         }),
     );
 
-    const withStats = await this.tenancyContextService.runInUserContext(userId, (tx) =>
-      Promise.all(
-        items.map(async (course) => {
-          const [totalSections, totalLessons] = await Promise.all([
-            this.coursesRepository.countSections(tx, course.id),
-            this.coursesRepository.countLessons(tx, course.id),
-          ]);
-          return toCourseResponse(course, { totalSections, totalLessons });
-        }),
-      ),
+    // Batched (2 round trips total), not per-course — see
+    // `CoursesRepository.countSectionsAndLessonsBatch`'s doc comment: this
+    // is the endpoint whose per-course N+1 version actually blew Prisma's
+    // interactive-transaction timeout once the cross-academy catalog grew.
+    const { sectionCounts, lessonCounts } = await this.tenancyContextService.runInUserContext(
+      userId,
+      (tx) => this.coursesRepository.countSectionsAndLessonsBatch(tx, items.map((course) => course.id)),
+    );
+    const withStats = items.map((course) =>
+      toCourseResponse(course, {
+        totalSections: sectionCounts.get(course.id) ?? 0,
+        totalLessons: lessonCounts.get(course.id) ?? 0,
+      }),
     );
 
     return {

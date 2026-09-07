@@ -28,12 +28,15 @@ import {
 } from '@nestjs/common';
 import { PublicWebsiteService } from '../services/public-website.service';
 import { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
+import { CourseListQueryDto } from '../../course/dto/course-list-query.dto';
 import type { HostnameResolutionResponse } from '../dto/hostname-resolution.contract';
 import type { WebsiteConfigurationResponse } from '../../website/dto/website-configuration.contract';
 import type { WebsitePageResponse } from '../../website/dto/website-page.contract';
 import type { PublicWebsiteStatisticsResponse } from '../dto/public-statistics.contract';
 import type { ContactSubmissionResponse } from '../../academy/dto/contact-submission.contract';
 import type { AcademyIdentityResponse } from '../dto/public-identity.contract';
+import type { CourseResponse } from '../../course/dto/course.contract';
+import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('public/websites')
 export class PublicWebsiteController {
@@ -94,6 +97,17 @@ export class PublicWebsiteController {
     const statistics = await this.publicWebsiteService.getPublicStatistics(academyId);
     if (!statistics) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return statistics;
+  }
+
+  /** `FeaturedCoursesSection`/`InstructorsSection`'s real, live, published course list. See `PublicWebsiteService.getPublicCourses`'s own doc comment. */
+  @Get(':academyId/courses')
+  async getCourses(
+    @Param('academyId') academyId: string,
+    @Query() query: CourseListQueryDto,
+  ): Promise<PaginatedResult<CourseResponse>> {
+    const result = await this.publicWebsiteService.getPublicCourses(academyId, query);
+    if (!result) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return result;
   }
 
   /** Phase 6 — the real backend destination for the public Contact section's form. See `PublicWebsiteService.submitContactMessage`'s own doc comment. */

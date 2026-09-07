@@ -31,17 +31,31 @@ import {
   WEBSITE_THEME_KEYS,
 } from '../constants/website.constants';
 
-/** Exported so `WebsiteGenerationService` (Phase 6) creates pages with the exact same title/slug this lazy path would have used — one source of truth for "what a core page is called by default," never two. */
+/**
+ * Exported so `WebsiteGenerationService` (Phase 6) creates pages with the
+ * exact same title/slug this lazy path would have used — one source of
+ * truth for "what a core page is called by default," never two.
+ *
+ * `title`/`slug` stay single-language on purpose — they only ever feed
+ * `WebsitePage.title`/`.slug` (plain `String` columns, §"WebsitePage" in
+ * `schema.prisma`), which are not bilingual fields anywhere in the schema.
+ * `titleAr` is additive: the one real Arabic counterpart, used only where
+ * a genuinely bilingual `LocalizedText` field is being generated from this
+ * default (auto-generated navigation items / footer "Quick Links" — see
+ * `WebsiteGenerationService.generateNavigation`/`.generateFooterAndHeaderCta`)
+ * so those auto-generated labels stop being seeded with a permanently
+ * blank Arabic half.
+ */
 export const CORE_PAGE_DEFAULTS: Record<
   (typeof WEBSITE_CORE_PAGE_TYPES)[number],
-  { readonly title: string; readonly slug: string }
+  { readonly title: string; readonly titleAr: string; readonly slug: string }
 > = {
-  home: { title: 'Home', slug: 'home' },
-  about: { title: 'About', slug: 'about' },
-  courses: { title: 'Courses', slug: 'courses' },
-  faqs: { title: 'FAQs', slug: 'faqs' },
-  contact: { title: 'Contact', slug: 'contact' },
-  courseDetails: { title: 'Course Details', slug: 'course-details' },
+  home: { title: 'Home', titleAr: 'الرئيسية', slug: 'home' },
+  about: { title: 'About', titleAr: 'من نحن', slug: 'about' },
+  courses: { title: 'Courses', titleAr: 'الدورات', slug: 'courses' },
+  faqs: { title: 'FAQs', titleAr: 'الأسئلة الشائعة', slug: 'faqs' },
+  contact: { title: 'Contact', titleAr: 'تواصل معنا', slug: 'contact' },
+  courseDetails: { title: 'Course Details', titleAr: 'تفاصيل الدورة', slug: 'course-details' },
 };
 
 function isUniqueConstraintViolation(error: unknown): boolean {

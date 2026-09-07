@@ -30,6 +30,7 @@
     "worker:recompute-usage": "ts-node -r tsconfig-paths/register scripts/recompute-tenant-usage.ts",
     "db:seed": "ts-node -r tsconfig-paths/register prisma/seed.ts",
     "db:cleanup-plan-catalog": "ts-node -r tsconfig-paths/register scripts/cleanup-plan-catalog.ts",
+    "db:backfill-nav-ar-labels": "ts-node -r tsconfig-paths/register scripts/backfill-nav-footer-ar-labels.ts",
     "audit:deps": "npm audit --omit=dev",
     "loadtest": "ts-node -r tsconfig-paths/register scripts/load-test.ts"
   },

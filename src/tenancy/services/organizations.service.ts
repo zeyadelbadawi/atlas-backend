@@ -110,6 +110,12 @@ export class OrganizationsService {
               ownerUserId: userId,
             });
 
+            // Clear any existing primary flag(s) for this user first — see
+            // `clearPrimaryForUser`'s own doc comment for the real bug this
+            // prevents (multiple `isPrimary: true` memberships accumulating
+            // across successive org-creation events).
+            await this.organizationMembershipsRepository.clearPrimaryForUser(tx, userId);
+
             await this.organizationMembershipsRepository.create(tx, {
               organizationId: created.id,
               userId,

@@ -50,6 +50,12 @@ import { AcademyMembersRepository } from '../../academy/repositories/academy-mem
 import { ContactSubmissionsRepository } from '../../academy/repositories/contact-submissions.repository';
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { CoursesRepository } from '../../course/repositories/courses.repository';
+import { toCourseResponse } from '../../course/dto/course.contract';
+import type { CourseResponse } from '../../course/dto/course.contract';
+import type { CourseListQueryDto } from '../../course/dto/course-list-query.dto';
+import { buildPaginationMeta } from '../../common/dto/pagination.contract';
+import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { PublicWebsiteStatisticsResponse } from '../dto/public-statistics.contract';
 import type { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
 import type { AcademyIdentityResponse } from '../dto/public-identity.contract';
@@ -210,6 +216,63 @@ export class PublicWebsiteService {
     );
 
     return { courses, students, instructors };
+  }
+
+  /**
+   * `FeaturedCoursesSection`/`InstructorsSection`'s real, live, published-
+   * course list — added after both sections were found calling the
+   * TENANT-scoped `GET /academies/:id/courses` (`CoursesService.list`,
+   * `AcademyScopeGuard`-gated) from the public website, which 403s for
+   * literally any real visitor (anonymous or authenticated) with no
+   * `OrganizationMembership` in this Academy's org — i.e. every genuine
+   * public visitor a marketing site exists for. Same `resolveOrganizationId`
+   * + `runInTenantContext` shape as every other method here (no user
+   * identity, no membership check), reusing the cross-academy discovery
+   * catalog's own `findManyPublished` (`CourseDiscoveryService`'s doc
+   * comment) with its `academyId` filter now scoping it to one Academy.
+   * `query.status`/`.visibility` are deliberately never read, exactly like
+   * `CourseDiscoveryService.discoverCourses` — see `findManyPublished`'s
+   * own doc comment for why a discovery-style caller must never be able to
+   * widen this to a draft/private course via a crafted query param.
+   */
+  async getPublicCourses(
+    academyId: string,
+    query: CourseListQueryDto,
+  ): Promise<PaginatedResult<CourseResponse> | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+
+    const page = query.page ?? DEFAULT_PAGE;
+    const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
+
+    const { items, totalItems } = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) =>
+        this.coursesRepository.findManyPublished(tx, {
+          academyId,
+          search: query.search,
+          categoryId: query.categoryId,
+          pricingType: query.pricingType,
+          sortBy: query.sortBy as
+            'title' | 'createdAt' | 'updatedAt' | 'publishedAt' | undefined,
+          sortDirection: query.sortDirection,
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        }),
+    );
+
+    const { sectionCounts, lessonCounts } = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.coursesRepository.countSectionsAndLessonsBatch(tx, items.map((course) => course.id)),
+    );
+    const withStats = items.map((course) =>
+      toCourseResponse(course, {
+        totalSections: sectionCounts.get(course.id) ?? 0,
+        totalLessons: lessonCounts.get(course.id) ?? 0,
+      }),
+    );
+
+    return { items: withStats, pagination: buildPaginationMeta(page, pageSize, totalItems) };
   }
 
   /**

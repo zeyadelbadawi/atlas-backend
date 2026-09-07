@@ -28,6 +28,8 @@ export interface CourseListFilter {
   readonly sortDirection?: 'asc' | 'desc';
   readonly skip: number;
   readonly take: number;
+  /** `findManyPublished` only — scopes the cross-academy discovery catalog down to one academy (public website's own Featured Courses/Instructors sections; see that method's doc comment). */
+  readonly academyId?: string;
 }
 
 const INSTRUCTOR_INCLUDE = {
@@ -150,6 +152,43 @@ export class CoursesRepository {
   }
 
   /**
+   * Batched counterpart to `countSections`/`countLessons` for a whole page
+   * of courses at once — two `groupBy` round trips total, not `2 × pageSize`.
+   * Added after the cross-academy discovery catalog (`findManyPublished`,
+   * called with no `academyId` filter) grew large enough that the previous
+   * per-course `Promise.all` loop (`CourseDiscoveryService.discoverCourses`,
+   * `CoursesService.list`) exceeded Prisma's interactive-transaction timeout
+   * mid-page and threw. Missing entries mean zero, not absent — callers
+   * should read via `?? 0`.
+   */
+  async countSectionsAndLessonsBatch(
+    tx: Prisma.TransactionClient,
+    courseIds: readonly string[],
+  ): Promise<{ sectionCounts: Map<string, number>; lessonCounts: Map<string, number> }> {
+    if (courseIds.length === 0) {
+      return { sectionCounts: new Map(), lessonCounts: new Map() };
+    }
+
+    const [sectionGroups, lessonGroups] = await Promise.all([
+      tx.courseSection.groupBy({
+        by: ['courseId'],
+        where: { courseId: { in: courseIds as string[] } },
+        _count: { _all: true },
+      }),
+      tx.courseLesson.groupBy({
+        by: ['courseId'],
+        where: { courseId: { in: courseIds as string[] } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    return {
+      sectionCounts: new Map(sectionGroups.map((group) => [group.courseId, group._count._all])),
+      lessonCounts: new Map(lessonGroups.map((group) => [group.courseId, group._count._all])),
+    };
+  }
+
+  /**
    * `discoverCourses` (P6, Student Learning) — the flat, cross-academy,
    * published-only catalog. Deliberately hardcodes `status: 'published'`/
    * `visibility: 'public'` in the `where` clause rather than accepting them
@@ -169,6 +208,7 @@ export class CoursesRepository {
     const where: Prisma.CourseWhereInput = {
       status: 'published',
       visibility: 'public',
+      ...(filter.academyId ? { academyId: filter.academyId } : {}),
       ...(filter.categoryId ? { categoryId: filter.categoryId } : {}),
       ...(filter.pricingType ? { pricingType: filter.pricingType } : {}),
       ...(filter.search
