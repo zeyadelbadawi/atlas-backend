@@ -35,7 +35,6 @@ import { ConfigService } from '@nestjs/config';
 import {
   CreateBucketCommand,
   GetObjectCommand,
-  PutBucketPolicyCommand,
   PutObjectCommand,
   S3Client,
   S3ServiceException,
@@ -103,51 +102,25 @@ export class R2StorageProvider implements MediaStorageProvider, OnModuleInit {
       }
     }
 
-    // Public read — master plan §13: "Public assets... served directly
-    // via CDN, cacheable indefinitely." Without this, MinIO/R2 both
-    // default a bucket to private, and every `media_assets.url` this
-    // service ever returns would 403 for anyone but the storage
-    // credential holder — real R2 buckets can carry this same policy
-    // (its S3 API surface includes `PutBucketPolicy`), so this is one
-    // idempotent call, not an environment-specific branch. Never applies
-    // to a hypothetical future *private*-asset use case (signed URLs,
-    // §13) — no such asset type exists in P8's own scope.
+    // Phase 7 correction — this used to also call `PutBucketPolicy` here
+    // to grant public read. Removed entirely, not just permission-
+    // tolerated: Cloudflare R2's S3 API does not implement bucket
+    // policies at all (confirmed against R2's own S3-compatibility
+    // documentation) — it isn't a permissions question the way
+    // `CreateBucket` above is, it's an operation R2 never supports,
+    // admin-scoped credential or not. Calling it and swallowing the
+    // failure would mean starting up by deliberately invoking an
+    // operation known not to exist on the real target platform.
     //
-    // Phase 7 — same tolerance as above: setting a bucket policy is also
-    // a bucket-admin action a least-privilege object-scoped token can't
-    // perform. If it 403s, the bucket's public-read access must already
-    // be configured out-of-band (Cloudflare dashboard's own "Public
-    // access" setting) — this never silently leaves a *newly created*
-    // bucket private, since bucket creation went through the identical
-    // tolerance above for the identical reason.
-    try {
-      await this.client.send(
-        new PutBucketPolicyCommand({
-          Bucket: this.config.bucket,
-          Policy: JSON.stringify({
-            Version: '2012-10-17',
-            Statement: [
-              {
-                Effect: 'Allow',
-                Principal: '*',
-                Action: ['s3:GetObject'],
-                Resource: [`arn:aws:s3:::${this.config.bucket}/*`],
-              },
-            ],
-          }),
-        }),
-      );
-    } catch (error) {
-      const status =
-        error instanceof S3ServiceException
-          ? error.$metadata?.httpStatusCode
-          : (error as { $metadata?: { httpStatusCode?: number } })?.$metadata
-              ?.httpStatusCode;
-      if (status !== 403) throw error;
-      this.logger.warn(
-        `PutBucketPolicy denied (403) for "${this.config.bucket}" — storage credential is object-scoped. Public-read access must be configured out-of-band (Cloudflare dashboard) for uploaded media to be publicly reachable.`,
-      );
-    }
+    // Public read for a bucket that needs it (master plan §13: "Public
+    // assets... served directly via CDN") is a bucket-level *setting* on
+    // R2 — Managed public access (an r2.dev subdomain) or a bound Custom
+    // Domain — configured once, out-of-band, via the Cloudflare
+    // dashboard or an Account-scoped R2 Admin API token. Neither is
+    // something this application's own object-scoped runtime credential
+    // should ever be able to do, and neither belongs in per-boot
+    // application code — matching how `CreateBucket` itself is already
+    // documented as "provisioned out-of-band in production" above.
     bucketsEnsured.add(this.config.bucket);
   }
 
