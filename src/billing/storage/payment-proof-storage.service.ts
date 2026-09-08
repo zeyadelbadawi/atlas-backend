@@ -58,12 +58,33 @@ export class PaymentProofStorageService implements OnModuleInit {
       await this.client.send(new CreateBucketCommand({ Bucket: this.bucket }));
       this.logger.log(`Created private object-storage bucket "${this.bucket}".`);
     } catch (error) {
+      // Phase 7 — same tolerance as `R2StorageProvider.onModuleInit`, for
+      // the identical, confirmed-real reason: this deployment's actual
+      // production credential is deliberately object-scoped (Object Read
+      // & Write only, not bucket-admin), which R2 rejects for
+      // `CreateBucket` with a 403 regardless of whether the bucket
+      // already exists — not the 409 "already exists" this code
+      // previously assumed real production credentials would hit.
       const code =
         error instanceof S3ServiceException
           ? error.name
-          : (error as { Code?: string })?.Code;
-      if (code !== 'BucketAlreadyOwnedByYou' && code !== 'BucketAlreadyExists') {
+          : (error as { Code?: string; $metadata?: { httpStatusCode?: number } })?.Code;
+      const status =
+        error instanceof S3ServiceException
+          ? error.$metadata?.httpStatusCode
+          : (error as { $metadata?: { httpStatusCode?: number } })?.$metadata
+              ?.httpStatusCode;
+      const tolerable =
+        code === 'BucketAlreadyOwnedByYou' ||
+        code === 'BucketAlreadyExists' ||
+        status === 403;
+      if (!tolerable) {
         throw error;
+      }
+      if (status === 403) {
+        this.logger.warn(
+          `CreateBucket denied (403) for "${this.bucket}" — storage credential is object-scoped, not bucket-admin. Assuming the bucket already exists and was provisioned out-of-band; if it does not actually exist yet, payment-proof uploads will fail at first real use, not at boot.`,
+        );
       }
     }
     // Deliberately NO `PutBucketPolicyCommand` here — this is the one
