@@ -72,13 +72,34 @@ export class R2StorageProvider implements MediaStorageProvider, OnModuleInit {
       // Already exists — the expected, idempotent steady state (real R2
       // buckets are provisioned out-of-band; MinIO's bucket is created on
       // the first `onModuleInit` and every subsequent boot hits this
-      // branch). Any other error is a real, fatal startup problem.
+      // branch). Phase 7 — also tolerate `AccessDenied`/403: a real,
+      // deliberately least-privilege R2 API token scoped to "Object Read
+      // & Write" (this deployment's own production credential) can't call
+      // `CreateBucket` at all, admin-scoped or not — it 403s outright
+      // rather than reporting "already exists" first, confirmed against
+      // real R2 during Phase 7. That is exactly the intended production
+      // shape (an app credential should never need bucket-admin rights),
+      // not a real startup failure. Any other error still is one.
       const code =
         error instanceof S3ServiceException
           ? error.name
-          : (error as { Code?: string })?.Code;
-      if (code !== 'BucketAlreadyOwnedByYou' && code !== 'BucketAlreadyExists') {
+          : (error as { Code?: string; $metadata?: { httpStatusCode?: number } })?.Code;
+      const status =
+        error instanceof S3ServiceException
+          ? error.$metadata?.httpStatusCode
+          : (error as { $metadata?: { httpStatusCode?: number } })?.$metadata
+              ?.httpStatusCode;
+      const tolerable =
+        code === 'BucketAlreadyOwnedByYou' ||
+        code === 'BucketAlreadyExists' ||
+        status === 403;
+      if (!tolerable) {
         throw error;
+      }
+      if (status === 403) {
+        this.logger.warn(
+          `CreateBucket denied (403) for "${this.config.bucket}" — storage credential is object-scoped, not bucket-admin. Assuming the bucket already exists and was provisioned out-of-band, matching this deployment's own least-privilege R2 token.`,
+        );
       }
     }
 
@@ -91,22 +112,42 @@ export class R2StorageProvider implements MediaStorageProvider, OnModuleInit {
     // idempotent call, not an environment-specific branch. Never applies
     // to a hypothetical future *private*-asset use case (signed URLs,
     // §13) — no such asset type exists in P8's own scope.
-    await this.client.send(
-      new PutBucketPolicyCommand({
-        Bucket: this.config.bucket,
-        Policy: JSON.stringify({
-          Version: '2012-10-17',
-          Statement: [
-            {
-              Effect: 'Allow',
-              Principal: '*',
-              Action: ['s3:GetObject'],
-              Resource: [`arn:aws:s3:::${this.config.bucket}/*`],
-            },
-          ],
+    //
+    // Phase 7 — same tolerance as above: setting a bucket policy is also
+    // a bucket-admin action a least-privilege object-scoped token can't
+    // perform. If it 403s, the bucket's public-read access must already
+    // be configured out-of-band (Cloudflare dashboard's own "Public
+    // access" setting) — this never silently leaves a *newly created*
+    // bucket private, since bucket creation went through the identical
+    // tolerance above for the identical reason.
+    try {
+      await this.client.send(
+        new PutBucketPolicyCommand({
+          Bucket: this.config.bucket,
+          Policy: JSON.stringify({
+            Version: '2012-10-17',
+            Statement: [
+              {
+                Effect: 'Allow',
+                Principal: '*',
+                Action: ['s3:GetObject'],
+                Resource: [`arn:aws:s3:::${this.config.bucket}/*`],
+              },
+            ],
+          }),
         }),
-      }),
-    );
+      );
+    } catch (error) {
+      const status =
+        error instanceof S3ServiceException
+          ? error.$metadata?.httpStatusCode
+          : (error as { $metadata?: { httpStatusCode?: number } })?.$metadata
+              ?.httpStatusCode;
+      if (status !== 403) throw error;
+      this.logger.warn(
+        `PutBucketPolicy denied (403) for "${this.config.bucket}" — storage credential is object-scoped. Public-read access must be configured out-of-band (Cloudflare dashboard) for uploaded media to be publicly reachable.`,
+      );
+    }
     bucketsEnsured.add(this.config.bucket);
   }
 
