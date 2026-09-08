@@ -19,6 +19,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { CoursesRepository } from '../repositories/courses.repository';
 import { CourseSectionsRepository } from '../repositories/course-sections.repository';
 import { CourseLessonsRepository } from '../repositories/course-lessons.repository';
@@ -49,6 +50,7 @@ export class CourseCurriculumService {
     private readonly sectionsRepository: CourseSectionsRepository,
     private readonly lessonsRepository: CourseLessonsRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   async getSections(
@@ -81,16 +83,30 @@ export class CourseCurriculumService {
     const section = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         await this.assertCourseInAcademy(tx, courseId, academyId);
 
         const { _max } = await this.sectionsRepository.maxOrder(tx, courseId);
-        return this.sectionsRepository.create(tx, {
+        const created = await this.sectionsRepository.create(tx, {
           course: { connect: { id: courseId } },
           title: payload.title,
           description: payload.description,
           order: (_max.order ?? -1) + 1,
         });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'course_section.created',
+          targetType: 'course_section',
+          targetId: created.id,
+          targetLabel: created.title,
+          context: { courseId },
+        });
+
+        return created;
       },
     );
 
@@ -108,14 +124,28 @@ export class CourseCurriculumService {
     const section = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         await this.assertCourseInAcademy(tx, courseId, academyId);
         await this.assertSectionInCourse(tx, sectionId, courseId);
 
-        return this.sectionsRepository.update(tx, sectionId, {
+        const updated = await this.sectionsRepository.update(tx, sectionId, {
           title: payload.title,
           description: payload.description,
         });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'course_section.updated',
+          targetType: 'course_section',
+          targetId: sectionId,
+          targetLabel: updated.title,
+          context: { courseId },
+        });
+
+        return updated;
       },
     );
 
@@ -135,13 +165,25 @@ export class CourseCurriculumService {
     userId: string,
   ): Promise<void> {
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
+      const role = await this.assertCanManage(tx, academyId, userId);
       await this.assertCourseInAcademy(tx, courseId, academyId);
-      await this.assertSectionInCourse(tx, sectionId, courseId);
+      const section = await this.assertSectionInCourse(tx, sectionId, courseId);
       // Cascades to `course_lessons` via the FK's `onDelete: Cascade` —
       // matches `CourseService.deleteCourseSection`'s own doc comment:
       // "Deletes a course section and its lessons."
       await this.sectionsRepository.delete(tx, sectionId);
+
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'course_section.deleted',
+        targetType: 'course_section',
+        targetId: sectionId,
+        targetLabel: section.title,
+        context: { courseId },
+      });
     });
   }
 
@@ -181,12 +223,12 @@ export class CourseCurriculumService {
     const lesson = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         await this.assertCourseInAcademy(tx, courseId, academyId);
         await this.assertSectionInCourse(tx, sectionId, courseId);
 
         const { _max } = await this.lessonsRepository.maxOrder(tx, sectionId);
-        return this.lessonsRepository.create(tx, {
+        const created = await this.lessonsRepository.create(tx, {
           section: { connect: { id: sectionId } },
           courseId,
           title: payload.title,
@@ -196,6 +238,20 @@ export class CourseCurriculumService {
           status: payload.status,
           order: (_max.order ?? -1) + 1,
         });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'course_lesson.created',
+          targetType: 'course_lesson',
+          targetId: created.id,
+          targetLabel: created.title,
+          context: { courseId, sectionId },
+        });
+
+        return created;
       },
     );
 
@@ -214,18 +270,32 @@ export class CourseCurriculumService {
     const lesson = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         await this.assertCourseInAcademy(tx, courseId, academyId);
         await this.assertSectionInCourse(tx, sectionId, courseId);
         await this.assertLessonInSection(tx, lessonId, sectionId);
 
-        return this.lessonsRepository.update(tx, lessonId, {
+        const updated = await this.lessonsRepository.update(tx, lessonId, {
           title: payload.title,
           description: payload.description,
           contentType: payload.contentType,
           contentUrl: payload.contentUrl,
           status: payload.status,
         });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'course_lesson.updated',
+          targetType: 'course_lesson',
+          targetId: lessonId,
+          targetLabel: updated.title,
+          context: { courseId, sectionId },
+        });
+
+        return updated;
       },
     );
 
@@ -241,11 +311,23 @@ export class CourseCurriculumService {
     userId: string,
   ): Promise<void> {
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
+      const role = await this.assertCanManage(tx, academyId, userId);
       await this.assertCourseInAcademy(tx, courseId, academyId);
       await this.assertSectionInCourse(tx, sectionId, courseId);
-      await this.assertLessonInSection(tx, lessonId, sectionId);
+      const lesson = await this.assertLessonInSection(tx, lessonId, sectionId);
       await this.lessonsRepository.delete(tx, lessonId);
+
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'course_lesson.deleted',
+        targetType: 'course_lesson',
+        targetId: lessonId,
+        targetLabel: lesson.title,
+        context: { courseId, sectionId },
+      });
     });
   }
 
@@ -276,11 +358,12 @@ export class CourseCurriculumService {
     });
   }
 
+  /** Returns the caller's real Academy-membership role (Phase 8) — used as the `role` attributed on each mutation's audit-log entry. */
   private async assertCanManage(
     tx: Prisma.TransactionClient,
     academyId: string,
     userId: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const membership = await this.academyMembersRepository.findForUserInAcademy(
       tx,
       academyId,
@@ -289,6 +372,7 @@ export class CourseCurriculumService {
     if (!membership || !MANAGING_ROLES.has(membership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
     }
+    return membership.role;
   }
 
   private async assertCourseInAcademy(
@@ -302,26 +386,30 @@ export class CourseCurriculumService {
     }
   }
 
+  /** Returns the section row (Phase 8's `deleteSection` needs its `title` for the audit-log `targetLabel` after the row itself is gone). */
   private async assertSectionInCourse(
     tx: Prisma.TransactionClient,
     sectionId: string,
     courseId: string,
-  ): Promise<void> {
+  ): Promise<{ id: string; title: string; courseId: string }> {
     const section = await this.sectionsRepository.findById(tx, sectionId);
     if (!section || section.courseId !== courseId) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
+    return section;
   }
 
+  /** Returns the lesson row — see `assertSectionInCourse`'s identical reasoning. */
   private async assertLessonInSection(
     tx: Prisma.TransactionClient,
     lessonId: string,
     sectionId: string,
-  ): Promise<void> {
+  ): Promise<{ id: string; title: string; sectionId: string }> {
     const lesson = await this.lessonsRepository.findById(tx, lessonId);
     if (!lesson || lesson.sectionId !== sectionId) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
+    return lesson;
   }
 
   /** `orderedIds` must be exactly the current set of child ids, no more, no fewer — never a partial reorder, never smuggling in a foreign id. */

@@ -56,7 +56,12 @@ import { NotificationFanoutService } from '../../notification-events/services/no
 import { WebsiteConfigurationService } from '../../website/services/website-configuration.service';
 import { WebsiteGenerationService } from '../../website/services/website-generation.service';
 import { WEBSITE_THEME_KEYS } from '../../website/constants/website.constants';
+import { UsersRepository } from '../../identity/repositories/users.repository';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { SupportCasesRepository } from '../../platform/repositories/support-cases.repository';
+import { SupportCaseMessagesRepository } from '../../platform/repositories/support-case-messages.repository';
 import {
+  PROVISIONING_AUTO_SUPPORT_CASE_FAILURE_THRESHOLD,
   PROVISIONING_STEP_ORDER,
   STATUS_AFTER_STEP,
 } from '../dto/provisioning.constants';
@@ -182,6 +187,10 @@ export class ProvisioningOrchestratorService {
     private readonly notificationFanoutService: NotificationFanoutService,
     private readonly websiteConfigurationService: WebsiteConfigurationService,
     private readonly websiteGenerationService: WebsiteGenerationService,
+    private readonly usersRepository: UsersRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly supportCasesRepository: SupportCasesRepository,
+    private readonly supportCaseMessagesRepository: SupportCaseMessagesRepository,
   ) {}
 
   /** `TenancyContextService.runInTenantContext`, wrapped with `withTransientRetry` — the ONE call path every method in this class uses to touch the database, so the transient-connection-pool protection documented on `withTransientRetry` applies uniformly, not just at the one call site that first surfaced it. */
@@ -308,9 +317,8 @@ export class ProvisioningOrchestratorService {
     }
 
     const isFinalizationStep = stepKey === 'finalization';
-    const { shouldContinue, notifiedNew } = await this.runTenant(
-      organizationId,
-      async (tx) => {
+    const { shouldContinue, notifiedNew, shouldAutoCreateSupportCase } =
+      await this.runTenant(organizationId, async (tx) => {
         if (outcome.result === 'failed') {
           await this.provisioningStepsRepository.markFailed(
             tx,
@@ -336,7 +344,25 @@ export class ProvisioningOrchestratorService {
             values: { academyName: request.requestedAcademyName },
             dedupeKey: `provisioning_failed:${provisioningRequestId}:${stepKey}`,
           });
-          return { shouldContinue: false, notifiedNew: created };
+
+          // Phase 8 — reuses `attemptCount`, the existing "how many times
+          // has this request been attempted" state `runToCompletion`
+          // already increments once per call — never a second failure
+          // counter. `autoSupportCaseId` (checked fresh here, inside this
+          // same transaction) is the dedup guard: once set, this branch
+          // never fires again for this request, so a request stuck
+          // retrying the same failed step opens at most one ticket for
+          // the whole failure episode, no matter how many more times it
+          // is retried afterward.
+          const shouldAutoCreateSupportCase =
+            request.attemptCount >= PROVISIONING_AUTO_SUPPORT_CASE_FAILURE_THRESHOLD &&
+            !request.autoSupportCaseId;
+
+          return {
+            shouldContinue: false,
+            notifiedNew: created,
+            shouldAutoCreateSupportCase,
+          };
         }
 
         if (outcome.result === 'skipped') {
@@ -368,9 +394,12 @@ export class ProvisioningOrchestratorService {
           });
         }
 
-        return { shouldContinue: !isFinalizationStep, notifiedNew: created };
-      },
-    );
+        return {
+          shouldContinue: !isFinalizationStep,
+          notifiedNew: created,
+          shouldAutoCreateSupportCase: false,
+        };
+      });
 
     // Step 2 of the notification contract — only after the transaction
     // above has actually committed (see `NotificationFanoutService`'s own
@@ -399,7 +428,112 @@ export class ProvisioningOrchestratorService {
       );
     }
 
+    // Phase 8 — a separate, best-effort write after the failure
+    // transaction above has already committed, mirroring the email step
+    // just above it: creating a `support_cases` row as the requester
+    // needs `app.current_user_id` set to the ORGANIZATION OWNER, not just
+    // tenant context (`support_cases_requester_insert`'s RLS check), and
+    // `runTenant` above only ever opens `app.current_organization_id` —
+    // reusing `runTenantAsRequester` here needs its own transaction, the
+    // same reason `sendEmailAfterCommit` is already a separate step
+    // rather than living inside the state-transition transaction above.
+    // A failure in this one write does not roll back (or retry) the
+    // state transition that already committed — the request is correctly
+    // `failed` regardless of whether the auto-ticket could be opened, so
+    // the error is logged and swallowed rather than propagated. Letting it
+    // escape would be actively harmful: `runOneStep` is called by the
+    // BullMQ processor, which would mark the whole job failed and retry a
+    // request whose state transition has ALREADY committed correctly —
+    // turning a cosmetic "couldn't open a courtesy ticket" into a real
+    // redelivery loop. Same reasoning, and the same
+    // log-and-continue shape, as `AuditLogWriterService.writeBestEffort`.
+    if (outcome.result === 'failed' && shouldAutoCreateSupportCase) {
+      try {
+        await this.createAutoSupportCase(request, stepKey, outcome.error);
+      } catch (error) {
+        this.logger.warn(
+          {
+            provisioningRequestId,
+            stepKey,
+            error: error instanceof Error ? error.message : error,
+          },
+          'Auto support-case creation failed (best-effort) — the provisioning request’s own failed state was recorded correctly and is unaffected.',
+        );
+      }
+    }
+
     return shouldContinue;
+  }
+
+  /**
+   * Opens a support case on the Organization Owner's behalf after
+   * `PROVISIONING_AUTO_SUPPORT_CASE_FAILURE_THRESHOLD` consecutive
+   * attempts have all ended in `failed`. Re-checks `autoSupportCaseId`
+   * fresh, inside this method's own transaction, immediately before
+   * creating the case — a genuine belt-and-braces guard against two
+   * redelivered/concurrent calls racing past the caller's own check
+   * (`runOneStep`'s closure-captured `request` can be momentarily stale),
+   * matching this whole file's established "never trust an outer read
+   * alone" discipline. The message body is a deliberately generic,
+   * customer-facing sentence — no stack trace, no internal error code, no
+   * secret — matching `AuditLogWriterService`'s own "never leak
+   * internals" rule; the FULL technical detail (`outcome.error`) is
+   * attached only to the audit log's `context` bag, which is
+   * Platform-Owner-only-readable, never to anything the requester sees.
+   */
+  private async createAutoSupportCase(
+    request: ProvisioningRequest,
+    stepKey: ProvisioningStepKey,
+    error: ProvisioningErrorResponse,
+  ): Promise<void> {
+    const requester = await this.usersRepository.findById(request.requestedByUserId);
+    if (!requester) return;
+
+    await this.runTenantAsRequester(
+      request.organizationId,
+      request.requestedByUserId,
+      async (tx) => {
+        const fresh = await this.provisioningRequestsRepository.findById(tx, request.id);
+        if (!fresh || fresh.autoSupportCaseId) return;
+
+        const created = await this.supportCasesRepository.create(tx, {
+          organizationId: request.organizationId,
+          academyId: fresh.academyId ?? undefined,
+          requesterUserId: request.requestedByUserId,
+          requesterName: requester.name,
+          requesterEmail: requester.email,
+          priority: 'high',
+          subject: `Academy setup for "${request.requestedAcademyName}" needs attention`,
+        });
+
+        await this.supportCaseMessagesRepository.create(tx, {
+          caseId: created.id,
+          authorName: requester.name,
+          authorRole: 'requester',
+          body: `This ticket was opened automatically: we've run into a repeated problem while setting up "${request.requestedAcademyName}" and have not been able to complete it after several attempts. Our team has been notified and will look into it — no action is needed from you right now.`,
+        });
+
+        await this.provisioningRequestsRepository.update(tx, request.id, {
+          autoSupportCaseId: created.id,
+        });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: request.requestedByUserId,
+          organizationId: request.organizationId,
+          academyId: fresh.academyId ?? undefined,
+          action: 'support_case.auto_created',
+          targetType: 'support_case',
+          targetId: created.id,
+          targetLabel: created.subject,
+          context: {
+            provisioningRequestId: request.id,
+            stepKey,
+            attemptCount: fresh.attemptCount,
+            errorCode: error.code,
+          },
+        });
+      },
+    );
   }
 
   /** Advances `current_step_key`/`status` without touching the step row — used when a step is discovered already `completed`/`skipped` on resume, so the request-level milestone stays consistent even though no new work happened. */

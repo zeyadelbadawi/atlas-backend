@@ -7,3 +7,7 @@ export const SUPPORT_CASE_STATUSES = [
 ] as const;
 
 export const MAX_SUPPORT_REPLY_BODY_LENGTH = 5000;
+
+/** Phase 8 — tenant-facing `POST .../support-cases` (create). */
+export const MAX_SUPPORT_SUBJECT_LENGTH = 200;
+export const MAX_SUPPORT_DESCRIPTION_LENGTH = 5000;

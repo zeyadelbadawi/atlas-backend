@@ -51,6 +51,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { NotificationEventsModule } from './notification-events/notification-events.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SearchModule } from './search/search.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -175,6 +176,8 @@ import { SearchModule } from './search/search.module';
     AnalyticsModule,
     NotificationsModule,
     SearchModule,
+    // Phase 8 — Support, Audit & Dashboards.
+    DashboardModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

@@ -97,7 +97,7 @@ model User {
   /// validated home Academy, structurally parallel to `AcademyMember` (the
   /// staff equivalent). Populated at registration time (or backfilled from
   /// pre-existing enrollments) — see the migration's own doc comment.
-  academyStudentships                            AcademyStudent[]
+  academyStudentships                           AcademyStudent[]
   courseInstructorships                         CourseInstructor[]
   enrollments                                   Enrollment[]
   quizAttempts                                  QuizAttempt[]
@@ -339,6 +339,9 @@ model Academy {
   provisioningRequest  ProvisioningRequest?
   /// Phase 6 — real, persisted public Contact-form submissions.
   contactSubmissions   ContactSubmission[]
+  /// Phase 8 — Support, Audit & Dashboards.
+  auditLogEntries      AuditLogEntry[]
+  supportCases         SupportCase[]
 
   @@index([organizationId, status])
   @@map("academies")
@@ -1341,33 +1344,33 @@ enum BlogPostStatus {
 /// from the authenticated session"); see `BlogPostsService` for the exact,
 /// narrow rule this schema does not itself encode.
 model BlogPost {
-  id            String         @id @default(uuid())
-  academyId     String?        @map("academy_id")
-  academy       Academy?       @relation(fields: [academyId], references: [id], onDelete: Cascade)
-  authorId      String         @map("author_id")
-  author        User           @relation(fields: [authorId], references: [id])
-  title         String
-  slug          String
-  excerpt       String?
-  content       String
-  featuredImage String?        @map("featured_image_url")
-  category      String?
-  tags          String[]       @default([])
-  status        BlogPostStatus @default(draft)
+  id              String         @id @default(uuid())
+  academyId       String?        @map("academy_id")
+  academy         Academy?       @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  authorId        String         @map("author_id")
+  author          User           @relation(fields: [authorId], references: [id])
+  title           String
+  slug            String
+  excerpt         String?
+  content         String
+  featuredImage   String?        @map("featured_image_url")
+  category        String?
+  tags            String[]       @default([])
+  status          BlogPostStatus @default(draft)
   /// Phase 6 — set only when `status = 'scheduled'`. The Phase 2
   /// subscription-sweep tick publishes this post once real wall-clock
   /// time passes it, exactly as it already does for `Announcement`.
-  scheduledAt   DateTime?      @map("scheduled_at")
+  scheduledAt     DateTime?      @map("scheduled_at")
   /// Phase 6 — real, persisted SEO metadata (never frontend-only state).
   /// Each falls back to `title`/`excerpt`/`featuredImage` respectively
   /// when unset, matching `WebsitePage`'s own established SEO-field
   /// fallback convention.
-  metaTitle       String?      @map("meta_title")
-  metaDescription String?      @map("meta_description")
-  ogImage         String?      @map("og_image_url")
-  publishedAt   DateTime?      @map("published_at")
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
+  metaTitle       String?        @map("meta_title")
+  metaDescription String?        @map("meta_description")
+  ogImage         String?        @map("og_image_url")
+  publishedAt     DateTime?      @map("published_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
 
   @@unique([academyId, slug])
   @@map("blog_posts")
@@ -2927,6 +2930,17 @@ model ProvisioningRequest {
   startedAt            DateTime?           @map("started_at")
   completedAt          DateTime?           @map("completed_at")
   failedAt             DateTime?           @map("failed_at")
+  /// Phase 8 — set exactly once, the moment `ProvisioningOrchestratorService`
+  /// auto-opens a support case for this request after it crosses the
+  /// consecutive-failure threshold (reusing `attemptCount`, never a second
+  /// failure counter). Checked before creating another — a request that
+  /// keeps failing on retry never opens a second ticket for the same
+  /// failure episode. Cleared back to `null` only if the request later
+  /// reaches `ready` and is genuinely retried again from scratch — never
+  /// today's actual retry path, so in practice this is set once per
+  /// request's lifetime.
+  autoSupportCaseId    String?             @map("auto_support_case_id")
+  autoSupportCase      SupportCase?        @relation(fields: [autoSupportCaseId], references: [id])
   createdAt            DateTime            @default(now()) @map("created_at")
   updatedAt            DateTime            @updatedAt @map("updated_at")
 
@@ -3035,6 +3049,24 @@ model AuditLogEntry {
   actor          User          @relation(fields: [actorUserId], references: [id])
   organizationId String?       @map("organization_id")
   organization   Organization? @relation(fields: [organizationId], references: [id])
+  /// Phase 8 — set whenever the audited mutation is Academy-scoped
+  /// (Course/Instructor/Learning content, Academy-scoped support cases),
+  /// so a Manager's "recent activity" dashboard widget can be scoped to
+  /// their own Academy without ever seeing another Academy's rows under
+  /// the same Organization. `null` for Organization-level-only actions
+  /// (e.g. `provisioning_request.created`, which has no single Academy
+  /// yet) and for every row written before this column existed.
+  academyId      String?       @map("academy_id")
+  academy        Academy?      @relation(fields: [academyId], references: [id])
+  /// Phase 8 — the actor's real role AT THE TIME of the action (Academy
+  /// membership role — `owner`/`administrator`/`manager`/`instructor`/
+  /// `staff` — or the literal `'platform_owner'`), resolved server-side
+  /// from the acting user's own membership row, never client-supplied.
+  /// `null` for every row written before this column existed, and for
+  /// actions with no single applicable role (e.g. a Student's own
+  /// action, or an Organization Owner action where "owner" is already
+  /// implied by there being no Academy role to record).
+  role           String?
   /// A dotted event name, e.g. `"academy.provisioned"`, `"payment.approved"`.
   action         String
   targetType     String        @map("target_type")
@@ -3048,6 +3080,7 @@ model AuditLogEntry {
 
   @@index([occurredAt(sort: Desc)])
   @@index([organizationId, occurredAt(sort: Desc)])
+  @@index([academyId, occurredAt(sort: Desc)])
   @@index([targetType, targetId])
   @@map("audit_log_entries")
 }
@@ -3057,6 +3090,13 @@ model SupportCase {
   id              String              @id @default(uuid())
   organizationId  String?             @map("organization_id")
   organization    Organization?       @relation(fields: [organizationId], references: [id])
+  /// Phase 8 — set for a ticket created from an Academy-scoped context
+  /// (a Manager submitting a ticket, or the provisioning auto-ticket,
+  /// which always concerns one specific Academy request). `null` for a
+  /// ticket with no single-Academy scope (e.g. an Organization Owner's
+  /// billing question) — never guessed at when genuinely absent.
+  academyId       String?             @map("academy_id")
+  academy         Academy?            @relation(fields: [academyId], references: [id])
   requesterUserId String?             @map("requester_user_id")
   requester       User?               @relation(fields: [requesterUserId], references: [id])
   subject         String
@@ -3070,10 +3110,16 @@ model SupportCase {
   createdAt       DateTime            @default(now()) @map("created_at")
   updatedAt       DateTime            @updatedAt @map("updated_at")
 
-  messages SupportCaseMessage[]
+  messages             SupportCaseMessage[]
+  /// Phase 8 — back-relation for `ProvisioningRequest.autoSupportCase`.
+  /// In practice never more than one row (dedup is per request, and one
+  /// request auto-opens at most one ticket), but left as a list since
+  /// that is the one-to-many direction of the relation.
+  autoOpenedByRequests ProvisioningRequest[]
 
   @@index([status, createdAt(sort: Desc)])
   @@index([organizationId])
+  @@index([academyId])
   @@map("support_cases")
 }
 

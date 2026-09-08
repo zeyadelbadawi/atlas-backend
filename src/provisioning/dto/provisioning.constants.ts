@@ -63,3 +63,22 @@ export const TERMINAL_PROVISIONING_STATUSES: ReadonlySet<ProvisioningStatus> = n
   'failed',
   'cancelled',
 ]);
+
+/**
+ * Phase 8 — the number of consecutive attempts (`provisioning_requests.
+ * attempt_count`, the existing "the orchestrator picked this request up"
+ * counter `runToCompletion` already increments — never a second, new
+ * failure counter) a request may accumulate while still landing in
+ * `status = 'failed'` before `ProvisioningOrchestratorService` auto-opens
+ * a support case on the requester's behalf.
+ *
+ * `2` is the roadmap's own stated acceptance criterion, verbatim: "Two
+ * consecutive provisioning failures automatically open a ticket with a
+ * friendly, non-technical message" (ATLAS_PRODUCTION_ROADMAP.md, Phase 8)
+ * — not a number chosen here. A single transient blip still never opens a
+ * ticket (and the connection-pool class of transient failure is absorbed
+ * one layer lower by `withTransientRetry` before it is ever recorded as a
+ * step failure at all), while a genuinely broken request reaches a human
+ * quickly.
+ */
+export const PROVISIONING_AUTO_SUPPORT_CASE_FAILURE_THRESHOLD = 2;

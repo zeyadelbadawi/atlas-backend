@@ -23,6 +23,8 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
+import { AcademiesRepository } from '../../academy/repositories/academies.repository';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import {
   InstructorRepository,
   type EnrollmentWithStudent,
@@ -86,6 +88,8 @@ export class InstructorService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly instructorRepository: InstructorRepository,
+    private readonly academiesRepository: AcademiesRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   private async assertTeachesCourse(
@@ -533,6 +537,33 @@ export class InstructorService {
         score: payload.score,
         feedback: payload.feedback,
         gradedBy: userId,
+      });
+
+      // Phase 8 — this service runs entirely under `runInUserContext`
+      // (no tenant context, see this class's own header comment), so
+      // `organizationId` is resolved via the same `SECURITY DEFINER`
+      // helper `AcademyStudentsRepository.resolveOrganizationId`/
+      // `CoursesRepository.resolveAcademyIdForPublishedCourse` already
+      // establish for the identical "no context yet" shape. A failure to
+      // resolve it (structurally unreachable — `assertTeachesCourse`
+      // above already proved this course is real) is not worth failing
+      // the whole grading action over; the audit write degrades to
+      // `academyId: undefined`/`organizationId: undefined` rather than
+      // ever blocking the actual grade from being recorded.
+      const course = await this.instructorRepository.findCourseById(tx, courseId);
+      const organizationId = course
+        ? await this.academiesRepository.resolveOrganizationId(course.academyId)
+        : null;
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId: organizationId ?? undefined,
+        academyId: course?.academyId,
+        role: 'instructor',
+        action: 'assignment_submission.graded',
+        targetType: 'assignment_submission',
+        targetId: submissionId,
+        targetLabel: submission.student.name,
+        context: { courseId, assignmentId, score: payload.score ?? null },
       });
 
       return toAssignmentSubmissionReviewResponse(graded, submission.student.name);

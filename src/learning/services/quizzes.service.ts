@@ -24,11 +24,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 import { CoursesRepository } from '../../course/repositories/courses.repository';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { AcademiesRepository } from '../../academy/repositories/academies.repository';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { QuizzesRepository } from '../repositories/quizzes.repository';
 import { toQuizResponse } from '../dto/quiz.contract';
 import type { QuizResponse } from '../dto/quiz.contract';
@@ -62,8 +65,26 @@ export class QuizzesService {
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly coursesRepository: CoursesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly academiesRepository: AcademiesRepository,
     private readonly quizzesRepository: QuizzesRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
+
+  /** See `AssignmentsService.resolveAuditAttribution`'s identical doc comment — same shape, same reasoning, this module's own authoring surface. */
+  private async resolveAuditAttribution(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+  ): Promise<{ organizationId: string | undefined; role: string }> {
+    const [organizationId, membership] = await Promise.all([
+      this.academiesRepository.resolveOrganizationId(academyId),
+      this.academyMembersRepository.findForUserInAcademy(tx, academyId, userId),
+    ]);
+    return {
+      organizationId: organizationId ?? undefined,
+      role: membership?.role ?? 'instructor',
+    };
+  }
 
   async getQuizzes(
     userId: string,
@@ -279,7 +300,7 @@ export class QuizzesService {
     this.assertValidQuestions(payload.questions);
 
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertCanAuthorCourseContent(
+      const academyId = await assertCanAuthorCourseContent(
         tx,
         this.coursesRepository,
         this.academyMembersRepository,
@@ -288,6 +309,24 @@ export class QuizzesService {
         courseId,
       );
       const quiz = await this.quizzesRepository.create(tx, courseId, payload);
+
+      const { organizationId, role } = await this.resolveAuditAttribution(
+        tx,
+        academyId,
+        userId,
+      );
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'quiz.created',
+        targetType: 'quiz',
+        targetId: quiz.id,
+        targetLabel: quiz.title,
+        context: { courseId },
+      });
+
       return toQuizAuthoringResponse(quiz);
     });
   }
@@ -304,7 +343,7 @@ export class QuizzesService {
     }
 
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertCanAuthorCourseContent(
+      const academyId = await assertCanAuthorCourseContent(
         tx,
         this.coursesRepository,
         this.academyMembersRepository,
@@ -337,13 +376,31 @@ export class QuizzesService {
         courseId,
         quizId,
       );
+
+      const { organizationId, role } = await this.resolveAuditAttribution(
+        tx,
+        academyId,
+        userId,
+      );
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'quiz.updated',
+        targetType: 'quiz',
+        targetId: quizId,
+        targetLabel: updated!.title,
+        context: { courseId },
+      });
+
       return toQuizAuthoringResponse(updated!);
     });
   }
 
   async deleteQuiz(userId: string, courseId: string, quizId: string): Promise<void> {
     await this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertCanAuthorCourseContent(
+      const academyId = await assertCanAuthorCourseContent(
         tx,
         this.coursesRepository,
         this.academyMembersRepository,
@@ -359,6 +416,23 @@ export class QuizzesService {
       if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
       await this.quizzesRepository.delete(tx, quizId);
+
+      const { organizationId, role } = await this.resolveAuditAttribution(
+        tx,
+        academyId,
+        userId,
+      );
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'quiz.deleted',
+        targetType: 'quiz',
+        targetId: quizId,
+        targetLabel: existing.title,
+        context: { courseId },
+      });
     });
   }
 

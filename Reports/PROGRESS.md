@@ -3084,7 +3084,95 @@ phase's explicit instruction not to connect Gmail/real credentials.
 **Not committed, not pushed** — per this phase's explicit stop condition,
 awaiting product-owner review.
 
+## Phase 8 — Support, Audit & Dashboards (2026-09-09)
+
+Roadmap phase (`ATLAS_PRODUCTION_ROADMAP.md` §9), not a Master Plan phase.
+Closes CO9 (support/tickets), G14 (audit attribution) and M1 (empty
+dashboard).
+
+**Schema** — three additive migrations, no destructive change to any
+existing column, index, policy or row:
+- `20260908000000_p31_support_audit_dashboards` — `audit_log_entries.
+  academy_id`/`.role`, `support_cases.academy_id`,
+  `provisioning_requests.auto_support_case_id`, their FKs/indexes, and
+  the first tenant-facing `support_cases` RLS policies (requester
+  insert/select; message select).
+- `20260908010000_p31b_audit_log_tenant_select` — `audit_log_entries` had
+  only a Platform-Owner SELECT policy, so the new tenant dashboard's
+  activity widget had no RLS path to read it at all.
+- `20260909000000_p31c_support_case_message_requester_insert` — a real gap
+  this phase's own security suite caught against a live database: the
+  create path could insert the case row and was then refused when writing
+  that case's FIRST message. The policy also pins `author_role =
+  'requester'`, so a customer can never fabricate an "agent" reply in
+  their own thread.
+
+**Support** — `POST`/`GET organizations/:id/support-cases` and
+`academies/:id/support-cases` (new `TenantSupportCasesController`),
+reusing the existing `SupportCase` model and `SupportCasesService`
+rather than a second support system. The Platform-Owner-only
+`SupportCasesController` is unchanged. Scope comes from the route, never
+the body; `requesterName`/`requesterEmail` are server-resolved from the
+caller's own row. A ticket is readable only by the person who filed it —
+deliberately not organization-shared.
+
+**Provisioning auto-ticket** — `ProvisioningOrchestratorService` opens one
+support case once `attempt_count` reaches
+`PROVISIONING_AUTO_SUPPORT_CASE_FAILURE_THRESHOLD` (2, the roadmap's own
+stated acceptance criterion) while still failing. Reuses the EXISTING
+`attempt_count`; no second failure counter was introduced.
+`auto_support_case_id` is the dedup marker, re-checked inside its own
+transaction, so a request retried indefinitely still opens exactly one
+ticket. The customer-facing message is plain language with no stack
+trace, error code or internal id; the technical detail goes only to the
+audit log's Platform-Owner-readable `context`.
+
+**Audit** — `AuditLogWriteInput` gained `academyId`/`role`, both resolved
+at the call site from a real membership row (never re-derived, never
+client-supplied). New coverage across the three modules the roadmap
+identified as sitting at zero: Course (`created`/`updated`/`published`/
+`unpublished`/`archived`/`instructor_assigned`/`instructor_removed`),
+Curriculum (section and lesson `created`/`updated`/`deleted`), and
+Learning (`quiz.*`, `assignment.*`, `assignment_submission.graded`).
+
+**Dashboard** — new `DashboardModule`: `GET organizations/:id/dashboard`
+(Client Owner, whole organization) and `GET academies/:id/dashboard`
+(Manager, one academy). Two routes and two guards rather than one route
+with a caller-supplied scope, so there is nothing to tamper with. Usage
+reuses `TenantSubscriptionService.getUsage` verbatim.
+
+**Revenue honesty** — the one figure this phase was told never to
+fabricate. `revenue.totals` is a real signed `SUM(amount_minor_units)`
+over `revenue_ledger_entries`, grouped by currency. But that ledger is
+only populated in Atlas Payments mode; an Organization on its own gateway
+moves money Atlas is never party to, so the response returns
+`tracked: false` plus the real `paymentCollectionMode`, and the UI renders
+an explicit "not tracked here" state. Reporting `0` there would have been
+a fabricated figure dressed as a real one.
+
+**Testing** — new `phase8-support-audit-dashboard-tenant-isolation.
+e2e-spec.ts`, P8-TENANT-001..011, all 11 required scenarios, 10/10
+passing against real Postgres/Redis. The suite found two real defects
+before any deploy: the missing message-insert RLS policy above, and a
+`createAutoSupportCase` call that was documented as best-effort but not
+actually wrapped — an escape there would have failed the BullMQ job and
+retried a request whose state had already committed correctly.
+
+**Pre-existing conditions confirmed unchanged by this phase** (each
+verified by stashing this work and re-running against clean `main` in the
+same database, not assumed): 9 unit failures in
+`subscription-sweep.service.spec.ts` (Phase 4.6); 3
+`platform-control-plane` e2e failures caused by a 5s interactive-
+transaction timeout over a dev database that has accumulated ~27k
+organizations / ~42k users across runs (the suite has no per-run
+cleanup, by design); ~600 prettier-only lint findings in files this phase
+never touched. Two further e2e failures were harness artifacts, not
+regressions, and pass in isolation: a 429 from cross-file rate-limit
+accumulation under a 6-suite `--runInBand` run, and an `afterAll`
+teardown timeout in `courses.e2e-spec.ts` in which no individual test
+failed.
+
 ## Next phase
 
-None. P18 was the final backend implementation phase in the Atlas Master
-Plan.
+Phase 9 (Student & Instructor Experience Polish) per
+`ATLAS_PRODUCTION_ROADMAP.md` — not started.

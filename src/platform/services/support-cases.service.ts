@@ -39,6 +39,7 @@ import type {
 } from '../dto/support-case.contract';
 import type { UpdateSupportCaseStatusDto } from '../dto/update-support-case-status.dto';
 import type { PostSupportCaseReplyDto } from '../dto/post-support-case-reply.dto';
+import type { CreateSupportCaseDto } from '../dto/create-support-case.dto';
 import type { ListSupportCasesQueryDto } from '../dto/list-support-cases-query.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
@@ -223,6 +224,107 @@ export class SupportCasesService {
     }
 
     return result;
+  }
+
+  /**
+   * Phase 8 — the tenant-facing create path (`POST organizations/:id/
+   * support-cases`/`POST academies/:id/support-cases`). `requesterName`/
+   * `requesterEmail` are resolved from the caller's OWN `users` row —
+   * never client-supplied — matching `postReply`'s identical rule for a
+   * Platform-Owner-authored reply above. `description` becomes the
+   * case's first message, same transaction as the case row itself: a
+   * rollback of one is a rollback of both, never a subject with no body
+   * or a body with no case.
+   *
+   * `role` is the caller's real Organization/Academy-membership role at
+   * the moment of creation (`'owner'`/`'manager'`/...), resolved by the
+   * CONTROLLER from whichever guard ran (`OrganizationMembershipGuard`/
+   * `AcademyScopeGuard`) — this service never re-derives it, matching
+   * `AuditLogWriteInput.role`'s own doc comment.
+   */
+  async createCase(
+    organizationId: string,
+    userId: string,
+    academyId: string | null,
+    role: string,
+    payload: CreateSupportCaseDto,
+  ): Promise<SupportCaseDetailResponse> {
+    const requester = await this.usersRepository.findById(userId);
+    if (!requester) {
+      // Structurally unreachable — the guard that ran before this
+      // controller method already re-read a real membership row for this
+      // exact user — kept as a real check, never an assertion, matching
+      // `postReply`'s identical rule above.
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        const created = await this.supportCasesRepository.create(tx, {
+          organizationId,
+          academyId: academyId ?? undefined,
+          requesterUserId: userId,
+          subject: payload.subject,
+          requesterName: requester.name,
+          requesterEmail: requester.email,
+        });
+
+        await this.supportCaseMessagesRepository.create(tx, {
+          caseId: created.id,
+          authorName: requester.name,
+          authorRole: 'requester',
+          body: payload.description,
+        });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId: academyId ?? undefined,
+          role,
+          action: 'support_case.created',
+          targetType: 'support_case',
+          targetId: created.id,
+          targetLabel: created.subject,
+        });
+
+        const messages = await this.supportCaseMessagesRepository.findManyForCase(
+          tx,
+          created.id,
+        );
+        return toSupportCaseDetailResponse(created, messages);
+      },
+    );
+  }
+
+  /**
+   * Phase 8 — "my tickets" (tracking what was submitted). Scoped by the
+   * `support_cases_requester_select` RLS policy to rows this exact
+   * caller requested; `runInUserContext` alone is enough (no tenant
+   * context needed) — mirrors `CourseOrder`'s identical "personal, not
+   * organization-shared" read shape.
+   */
+  async listMyCases(
+    userId: string,
+    query: ListSupportCasesQueryDto,
+  ): Promise<PaginatedResult<SupportCaseSummaryResponse>> {
+    const page = query.page ?? DEFAULT_PAGE;
+    const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
+
+    const { items, totalItems } = await this.tenancyContextService.runInUserContext(
+      userId,
+      (tx) =>
+        this.supportCasesRepository.findManyForRequester(tx, userId, {
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        }),
+    );
+
+    return {
+      items: items.map(toSupportCaseSummaryResponse),
+      pagination: buildPaginationMeta(page, pageSize, totalItems),
+    };
   }
 
   private async loadCaseOrThrow(

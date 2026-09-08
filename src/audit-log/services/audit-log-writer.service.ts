@@ -25,6 +25,22 @@ import { AuditLogEntriesRepository } from '../repositories/audit-log-entries.rep
 export interface AuditLogWriteInput {
   readonly actorUserId: string;
   readonly organizationId?: string;
+  /**
+   * Phase 8 — set whenever the audited mutation is Academy-scoped (Course/
+   * Instructor/Learning content, an Academy-scoped support case), so a
+   * Manager's "recent activity" dashboard widget can filter to their own
+   * Academy without seeing another Academy's rows under the same
+   * Organization. Omitted for Organization-level-only actions.
+   */
+  readonly academyId?: string;
+  /**
+   * Phase 8 — the actor's real role AT THE TIME of the action (Academy
+   * membership role, or the literal `'platform_owner'`), resolved by the
+   * CALLER from the actor's own membership row — this service never
+   * re-derives it, matching every other "who did this" field in this
+   * codebase being resolved once, at the call site, from a real row.
+   */
+  readonly role?: string;
   /** A dotted event name, e.g. `"academy.provisioned"`, `"payment.approved"`. */
   readonly action: string;
   readonly targetType: string;
@@ -44,6 +60,8 @@ export class AuditLogWriterService {
     await this.auditLogEntriesRepository.create(tx, {
       actorUserId: input.actorUserId,
       organizationId: input.organizationId,
+      academyId: input.academyId,
+      role: input.role,
       action: input.action,
       targetType: input.targetType,
       targetId: input.targetId,

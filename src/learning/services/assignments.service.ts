@@ -20,12 +20,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 import { CoursesRepository } from '../../course/repositories/courses.repository';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { MediaService } from '../../media/services/media.service';
 import type { UploadMediaAssetDto } from '../../media/dto/upload-media-asset.dto';
 import type { MediaAssetResponse } from '../../media/dto/media-asset.contract';
@@ -53,10 +56,37 @@ export class AssignmentsService {
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly coursesRepository: CoursesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly academiesRepository: AcademiesRepository,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly mediaService: MediaService,
     private readonly assignmentsRepository: AssignmentsRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
+
+  /**
+   * Phase 8 — this service runs entirely under `runInUserContext`, so
+   * `organizationId`/`role` (unlike `academyId`, already returned by
+   * `assertCanAuthorCourseContent`) have no tenant context to read from.
+   * `role` re-queries the SAME `academy_members` row
+   * `assertCanAuthorCourseContent` already checked — a real membership
+   * role when the caller manages the academy, or the literal
+   * `'instructor'` when they hold no such membership (the only other way
+   * that assertion passes is a `course_instructors` row).
+   */
+  private async resolveAuditAttribution(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+  ): Promise<{ organizationId: string | undefined; role: string }> {
+    const [organizationId, membership] = await Promise.all([
+      this.academiesRepository.resolveOrganizationId(academyId),
+      this.academyMembersRepository.findForUserInAcademy(tx, academyId, userId),
+    ]);
+    return {
+      organizationId: organizationId ?? undefined,
+      role: membership?.role ?? 'instructor',
+    };
+  }
 
   async getAssignments(
     userId: string,
@@ -298,7 +328,7 @@ export class AssignmentsService {
     payload: CreateAssignmentDto,
   ): Promise<AssignmentResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertCanAuthorCourseContent(
+      const academyId = await assertCanAuthorCourseContent(
         tx,
         this.coursesRepository,
         this.academyMembersRepository,
@@ -317,6 +347,24 @@ export class AssignmentsService {
         dueAt: payload.dueAt ? new Date(payload.dueAt) : undefined,
         allowResubmission: payload.allowResubmission,
       });
+
+      const { organizationId, role } = await this.resolveAuditAttribution(
+        tx,
+        academyId,
+        userId,
+      );
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'assignment.created',
+        targetType: 'assignment',
+        targetId: created.id,
+        targetLabel: created.title,
+        context: { courseId },
+      });
+
       return toAssignmentResponse(created);
     });
   }
@@ -328,7 +376,7 @@ export class AssignmentsService {
     payload: UpdateAssignmentDto,
   ): Promise<AssignmentResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertCanAuthorCourseContent(
+      const academyId = await assertCanAuthorCourseContent(
         tx,
         this.coursesRepository,
         this.academyMembersRepository,
@@ -353,6 +401,24 @@ export class AssignmentsService {
         dueAt: payload.dueAt ? new Date(payload.dueAt) : undefined,
         allowResubmission: payload.allowResubmission,
       });
+
+      const { organizationId, role } = await this.resolveAuditAttribution(
+        tx,
+        academyId,
+        userId,
+      );
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'assignment.updated',
+        targetType: 'assignment',
+        targetId: assignmentId,
+        targetLabel: updated.title,
+        context: { courseId },
+      });
+
       return toAssignmentResponse(updated);
     });
   }
@@ -363,7 +429,7 @@ export class AssignmentsService {
     assignmentId: string,
   ): Promise<void> {
     await this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertCanAuthorCourseContent(
+      const academyId = await assertCanAuthorCourseContent(
         tx,
         this.coursesRepository,
         this.academyMembersRepository,
@@ -379,6 +445,23 @@ export class AssignmentsService {
       if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
       await this.assignmentsRepository.delete(tx, assignmentId);
+
+      const { organizationId, role } = await this.resolveAuditAttribution(
+        tx,
+        academyId,
+        userId,
+      );
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'assignment.deleted',
+        targetType: 'assignment',
+        targetId: assignmentId,
+        targetLabel: existing.title,
+        context: { courseId },
+      });
     });
   }
 }

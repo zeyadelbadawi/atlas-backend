@@ -30,6 +30,7 @@ import { PlatformAcademiesController } from './controllers/platform-academies.co
 import { PlatformUsersController } from './controllers/platform-users.controller';
 import { AuditLogController } from './controllers/audit-log.controller';
 import { SupportCasesController } from './controllers/support-cases.controller';
+import { TenantSupportCasesController } from './controllers/tenant-support-cases.controller';
 import { PlatformSettingsController } from './controllers/platform-settings.controller';
 import { OrganizationsAccessGuard } from './guards/organizations-access.guard';
 import { PlatformOrganizationsService } from './services/platform-organizations.service';
@@ -61,6 +62,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     PlatformUsersController,
     AuditLogController,
     SupportCasesController,
+    TenantSupportCasesController,
     PlatformSettingsController,
   ],
   providers: [

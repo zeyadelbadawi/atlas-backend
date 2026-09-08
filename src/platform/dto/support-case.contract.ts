@@ -23,6 +23,8 @@ export interface SupportCaseSummaryResponse {
   readonly priority: SupportCase['priority'];
   readonly organizationId?: string;
   readonly organizationName?: string;
+  /** Phase 8 — set only for a ticket scoped to one Academy. */
+  readonly academyId?: string;
   readonly requesterName: string;
   readonly requesterEmail: string;
   readonly assignedToName?: string;
@@ -44,6 +46,7 @@ export function toSupportCaseSummaryResponse(
     priority: supportCase.priority,
     organizationId: supportCase.organization?.id,
     organizationName: supportCase.organization?.name,
+    academyId: supportCase.academyId ?? undefined,
     requesterName: supportCase.requesterName,
     requesterEmail: supportCase.requesterEmail,
     assignedToName: supportCase.assignedToName ?? undefined,

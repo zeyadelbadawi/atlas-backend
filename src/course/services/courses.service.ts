@@ -27,6 +27,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { CoursesRepository } from '../repositories/courses.repository';
@@ -56,6 +57,7 @@ export class CoursesService {
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly entitlementEnforcementService: EntitlementEnforcementService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   async list(
@@ -85,10 +87,13 @@ export class CoursesService {
 
     // Batched (2 round trips total), not per-course — see
     // `CoursesRepository.countSectionsAndLessonsBatch`'s doc comment.
-    const { sectionCounts, lessonCounts } = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) => this.coursesRepository.countSectionsAndLessonsBatch(tx, items.map((course) => course.id)),
-    );
+    const { sectionCounts, lessonCounts } =
+      await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+        this.coursesRepository.countSectionsAndLessonsBatch(
+          tx,
+          items.map((course) => course.id),
+        ),
+      );
     const withStats = items.map((course) =>
       toCourseResponse(course, {
         totalSections: sectionCounts.get(course.id) ?? 0,
@@ -131,7 +136,7 @@ export class CoursesService {
 
     const course = await this.withSlugConflictHandling(() =>
       this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
 
         // Phase 2 (Decision 4) — live `courses` limit check, inside the
         // same transaction as the insert below.
@@ -141,7 +146,7 @@ export class CoursesService {
           'courses',
         );
 
-        return this.coursesRepository.create(tx, {
+        const created = await this.coursesRepository.create(tx, {
           academy: { connect: { id: academyId } },
           category: payload.categoryId
             ? { connect: { id: payload.categoryId } }
@@ -157,6 +162,19 @@ export class CoursesService {
           pricingCurrency:
             payload.pricing.type === 'paid' ? payload.pricing.currency : undefined,
         });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'course.created',
+          targetType: 'course',
+          targetId: created.id,
+          targetLabel: created.title,
+        });
+
+        return created;
       }),
     );
 
@@ -180,7 +198,7 @@ export class CoursesService {
     const { course, totalSections, totalLessons } = await this.withSlugConflictHandling(
       () =>
         this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-          await this.assertCanManage(tx, academyId, userId);
+          const role = await this.assertCanManage(tx, academyId, userId);
 
           const current = await this.coursesRepository.findById(tx, courseId);
           this.assertBelongsToAcademy(current, academyId);
@@ -217,6 +235,18 @@ export class CoursesService {
           };
 
           const updated = await this.coursesRepository.update(tx, courseId, data);
+
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: userId,
+            organizationId,
+            academyId,
+            role,
+            action: 'course.updated',
+            targetType: 'course',
+            targetId: courseId,
+            targetLabel: updated.title,
+          });
+
           const [sections, lessons] = await Promise.all([
             this.coursesRepository.countSections(tx, courseId),
             this.coursesRepository.countLessons(tx, courseId),
@@ -236,10 +266,21 @@ export class CoursesService {
     userId: string,
   ): Promise<void> {
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
+      const role = await this.assertCanManage(tx, academyId, userId);
       const current = await this.coursesRepository.findById(tx, courseId);
       this.assertBelongsToAcademy(current, academyId);
       await this.coursesRepository.update(tx, courseId, { status: 'archived' });
+
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'course.archived',
+        targetType: 'course',
+        targetId: courseId,
+        targetLabel: current!.title,
+      });
     });
 
     // Phase 2 — real reactive usage-recompute trigger (a course change).
@@ -298,7 +339,7 @@ export class CoursesService {
   ): Promise<CourseResponse> {
     const { course, totalSections, totalLessons } =
       await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const current = await this.coursesRepository.findById(tx, courseId);
         this.assertBelongsToAcademy(current, academyId);
 
@@ -306,6 +347,18 @@ export class CoursesService {
           status,
           ...(publishedAt ? { publishedAt } : {}),
         });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: status === 'published' ? 'course.published' : 'course.unpublished',
+          targetType: 'course',
+          targetId: courseId,
+          targetLabel: updated.title,
+        });
+
         const [sections, lessons] = await Promise.all([
           this.coursesRepository.countSections(tx, courseId),
           this.coursesRepository.countLessons(tx, courseId),
@@ -354,7 +407,7 @@ export class CoursesService {
     targetUserId: string,
   ): Promise<CourseResponse> {
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
+      const role = await this.assertCanManage(tx, academyId, userId);
       const current = await this.coursesRepository.findById(tx, courseId);
       this.assertBelongsToAcademy(current, academyId);
 
@@ -385,6 +438,18 @@ export class CoursesService {
       }
 
       await this.courseInstructorsRepository.create(tx, courseId, targetUserId);
+
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'course.instructor_assigned',
+        targetType: 'course',
+        targetId: courseId,
+        targetLabel: current!.title,
+        context: { targetUserId },
+      });
     });
 
     return this.getById(courseId, academyId, organizationId);
@@ -399,7 +464,7 @@ export class CoursesService {
     targetUserId: string,
   ): Promise<void> {
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
+      const role = await this.assertCanManage(tx, academyId, userId);
       const current = await this.coursesRepository.findById(tx, courseId);
       this.assertBelongsToAcademy(current, academyId);
 
@@ -415,6 +480,18 @@ export class CoursesService {
       }
 
       await this.courseInstructorsRepository.delete(tx, courseId, targetUserId);
+
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'course.instructor_removed',
+        targetType: 'course',
+        targetId: courseId,
+        targetLabel: current!.title,
+        context: { targetUserId },
+      });
     });
   }
 
@@ -466,12 +543,12 @@ export class CoursesService {
     return toCourseCategoryResponse(category);
   }
 
-  /** Enforces the write-authorization rule documented on this class. */
+  /** Enforces the write-authorization rule documented on this class. Returns the caller's real Academy-membership role (Phase 8) — every call site uses this, rather than re-querying, as the `role` attributed on that mutation's audit-log entry. */
   private async assertCanManage(
     tx: Prisma.TransactionClient,
     academyId: string,
     userId: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const membership = await this.academyMembersRepository.findForUserInAcademy(
       tx,
       academyId,
@@ -480,6 +557,7 @@ export class CoursesService {
     if (!membership || !MANAGING_ROLES.has(membership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
     }
+    return membership.role;
   }
 
   /** Verifies the full ownership chain (course → academy) — a caller must not be able to reach a course by guessing its id under the wrong academy path. */

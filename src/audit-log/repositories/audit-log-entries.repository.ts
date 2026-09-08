@@ -63,6 +63,9 @@ export class AuditLogEntriesRepository {
     const id = randomUUID();
     const actorUserId = data.actorUserId as string;
     const organizationId = (data.organizationId as string | undefined) ?? null;
+    // Phase 8.
+    const academyId = (data.academyId as string | undefined) ?? null;
+    const role = (data.role as string | undefined) ?? null;
     const action = data.action as string;
     const targetType = data.targetType as string;
     const targetId = data.targetId as string;
@@ -74,11 +77,13 @@ export class AuditLogEntriesRepository {
 
     await tx.$executeRaw`
       INSERT INTO "audit_log_entries"
-        ("id", "actor_user_id", "organization_id", "action", "target_type", "target_id", "target_label", "context")
+        ("id", "actor_user_id", "organization_id", "academy_id", "role", "action", "target_type", "target_id", "target_label", "context")
       VALUES (
         ${id},
         ${actorUserId},
         ${organizationId},
+        ${academyId},
+        ${role},
         ${action},
         ${targetType},
         ${targetId},

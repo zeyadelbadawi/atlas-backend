@@ -34,6 +34,16 @@ import { ProvisioningOrchestratorService } from './services/provisioning-orchest
 import { SubdomainAvailabilityService } from './services/subdomain-availability.service';
 import { ProvisioningRequestsRepository } from './repositories/provisioning-requests.repository';
 import { ProvisioningStepsRepository } from './repositories/provisioning-steps.repository';
+// Phase 8 — the auto-support-case-on-repeated-failure feature
+// (`ProvisioningOrchestratorService`) reuses these two repositories
+// verbatim, never a second support-case write path. Provided directly
+// here (both are plain, stateless classes with no constructor
+// dependencies of their own) rather than importing `PlatformModule` —
+// `PlatformModule` already imports `ProvisioningModule`, so the reverse
+// import would be a real module-DAG cycle, the exact thing this module's
+// own header comment already documents avoiding.
+import { SupportCasesRepository } from '../platform/repositories/support-cases.repository';
+import { SupportCaseMessagesRepository } from '../platform/repositories/support-case-messages.repository';
 import { ProvisioningProducer } from './queue/provisioning.producer';
 import { ProvisioningProcessor } from './queue/provisioning.processor';
 import { PROVISIONING_QUEUE } from './queue/provisioning.types';
@@ -73,6 +83,8 @@ import { PROVISIONING_QUEUE } from './queue/provisioning.types';
     ProvisioningStepsRepository,
     ProvisioningProducer,
     ProvisioningProcessor,
+    SupportCasesRepository,
+    SupportCaseMessagesRepository,
   ],
   exports: [
     // Phase P15 — `PlatformAcademiesService` needs the same
