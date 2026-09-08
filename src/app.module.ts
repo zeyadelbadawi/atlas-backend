@@ -29,7 +29,6 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 import { DatabaseModule } from './database/prisma.module';
 import { RedisModule } from './redis/redis.module';
-import { RedisService } from './redis/redis.service';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './identity/identity.module';
 import { TenancyModule } from './tenancy/tenancy.module';
@@ -74,15 +73,36 @@ import { SearchModule } from './search/search.module';
     // Phase 7 — was `forRoot` with NestJS's default in-memory storage,
     // correct for exactly one instance and silently wrong the moment a
     // second instance/process joins (each would enforce its own
-    // independent counter). Backed by the same shared Redis connection
-    // (`RedisService`) every other cross-cutting concern here already
-    // uses, not a second connection.
+    // independent counter).
+    //
+    // Confirmed against real production logs — was originally wired as
+    // `new ThrottlerStorageRedisService(redisService.getClient())`,
+    // reusing `RedisService`'s shared connection. That looked right but
+    // isn't: `RedisModule`'s `onModuleInit` (where `RedisService` actually
+    // creates its client) runs during Nest's lifecycle-hook phase, which
+    // is *after* this factory already ran as part of provider
+    // instantiation — so `getClient()` returned `undefined` here, every
+    // time. `ThrottlerStorageRedisService`'s constructor then silently
+    // treated that `undefined` as "connection options" and created its
+    // own brand-new ioredis client with no config at all, defaulting to
+    // 127.0.0.1:6379 — invisible in dev/CI purely because Redis also
+    // happens to be on localhost there. Fixed by building this storage's
+    // connection directly from config instead of depending on another
+    // provider's post-init state.
     ThrottlerModule.forRootAsync({
-      inject: [RedisService],
-      useFactory: (redisService: RedisService) => ({
-        throttlers: [{ ttl: 60_000, limit: 120 }],
-        storage: new ThrottlerStorageRedisService(redisService.getClient()),
-      }),
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => {
+        const redis = configService.getOrThrow<RedisConfig>('redis');
+        const redisUrl = new URL(redis.url);
+        return {
+          throttlers: [{ ttl: 60_000, limit: 120 }],
+          storage: new ThrottlerStorageRedisService({
+            host: redisUrl.hostname,
+            port: Number(redisUrl.port || 6379),
+            password: redisUrl.password || undefined,
+          }),
+        };
+      },
     }),
     BullModule.forRootAsync({
       inject: [ConfigService],
