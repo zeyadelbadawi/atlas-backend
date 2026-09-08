@@ -89,11 +89,29 @@ import { SearchModule } from './search/search.module';
       useFactory: (configService: ConfigService) => {
         const redis = configService.getOrThrow<RedisConfig>('redis');
         const app = configService.getOrThrow<AppConfig>('app');
+        // Phase 7 — was `{ url: redis.url, maxRetriesPerRequest: null }`.
+        // ioredis's `RedisOptions` has no `url` field; an unrecognized key
+        // is silently ignored, so this connected to ioredis's *default*
+        // 127.0.0.1:6379 rather than wherever `REDIS_URL` actually points
+        // — invisible in every environment this app had run in so far
+        // (local dev, CI, e2e), because Redis has always incidentally
+        // been on localhost there too. Real production is the first
+        // environment where it isn't (a compose service named `redis`,
+        // with a password) — confirmed via a genuine, continuous
+        // ECONNREFUSED-to-127.0.0.1 error stream once actually deployed.
+        // Parsed into real `host`/`port`/`password` fields instead, which
+        // `RedisOptions` does define.
+        const redisUrl = new URL(redis.url);
         return {
           // BullMQ requires its own connection with `maxRetriesPerRequest:
           // null` — deliberately separate from `RedisService`'s
           // connectivity-check client, not a shared instance.
-          connection: { url: redis.url, maxRetriesPerRequest: null },
+          connection: {
+            host: redisUrl.hostname,
+            port: Number(redisUrl.port || 6379),
+            password: redisUrl.password || undefined,
+            maxRetriesPerRequest: null,
+          },
           // Test runs get their own Redis key namespace (`bull:` vs.
           // `bull-test:`), never the default shared with a real dev/prod
           // instance. Discovered during the Organization Management
