@@ -9,6 +9,11 @@ set -a; source .env; set +a
 echo "==> Pulling latest images"
 docker compose pull
 
+echo "==> Starting postgres + redis first (migrations need a live
+    database — --no-deps alone won't start them on a fresh stack)"
+docker compose up -d postgres redis
+docker compose up --wait postgres redis
+
 echo "==> Running database migrations (one-off, against the superuser
     connection Prisma CLI needs for DDL — the app itself always connects
     as atlas_app, never this)"
