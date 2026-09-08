@@ -30,6 +30,7 @@ import { IdentityModule } from '../identity/identity.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { CommunityModule } from '../community/community.module';
 import { PlansController } from './controllers/plans.controller';
+import { PublicPlansController } from './controllers/public-plans.controller';
 import { AddOnsController } from './controllers/add-ons.controller';
 import { TrialPolicyController } from './controllers/trial-policy.controller';
 import { TenantSubscriptionController } from './controllers/tenant-subscription.controller';
@@ -80,6 +81,7 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
   ],
   controllers: [
     PlansController,
+    PublicPlansController,
     AddOnsController,
     TrialPolicyController,
     TenantSubscriptionController,
