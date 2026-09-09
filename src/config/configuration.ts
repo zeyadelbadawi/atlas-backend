@@ -95,6 +95,18 @@ export interface IdentityConfig {
   readonly jwtAccessTtlSeconds: number;
   readonly refreshTokenTtlDays: number;
   readonly passwordResetTokenTtlMinutes: number;
+  /** Phase 10.1 — verification-link lifetime. Longer than a password reset: a signup email is often opened hours later, and the token is single-use and low-value on its own. */
+  readonly emailVerificationTokenTtlMinutes: number;
+  /**
+   * Phase 10.1 — whether registration performs the DNS deliverability
+   * lookup. The disposable-domain list is unaffected and always applies.
+   *
+   * Off in `test` by default: the suite registers accounts at
+   * `@atlas.test`, a reserved TLD (RFC 2606) that by definition has no
+   * DNS, and making tests depend on live DNS would make them slow, flaky
+   * and broken on an offline CI runner. On everywhere else.
+   */
+  readonly emailDeliverabilityCheckEnabled: boolean;
   readonly signInRateLimit: { readonly max: number; readonly windowSeconds: number };
   readonly passwordResetRateLimit: {
     readonly max: number;
@@ -162,6 +174,11 @@ export default () => {
     jwtAccessTtlSeconds: Number(env.JWT_ACCESS_TTL_SECONDS ?? 900),
     refreshTokenTtlDays: Number(env.REFRESH_TOKEN_TTL_DAYS ?? 30),
     passwordResetTokenTtlMinutes: Number(env.PASSWORD_RESET_TOKEN_TTL_MINUTES ?? 45),
+    emailVerificationTokenTtlMinutes: Number(
+      env.EMAIL_VERIFICATION_TOKEN_TTL_MINUTES ?? 1440,
+    ),
+    emailDeliverabilityCheckEnabled:
+      env.EMAIL_DELIVERABILITY_CHECK_ENABLED ?? nodeEnv !== 'test',
     signInRateLimit: {
       max: Number(env.AUTH_SIGNIN_RATE_LIMIT_MAX ?? 10),
       windowSeconds: Number(env.AUTH_SIGNIN_RATE_LIMIT_WINDOW_SECONDS ?? 900),

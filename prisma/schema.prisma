@@ -84,12 +84,19 @@ model User {
   /// Validated server-side (not schema-enforced) — see `PreferencesService`.
   preferences     Json              @default("{}")
   status          UserAccountStatus @default(active)
+  /// Phase 10.1 — when this address was proven able to receive mail.
+  /// Null means unverified. Nullable rather than a boolean with a default
+  /// so pre-existing accounts stay honestly "not yet proven" instead of
+  /// being retroactively claimed as verified, and so the moment of
+  /// verification is itself auditable.
+  emailVerifiedAt DateTime?         @map("email_verified_at")
   lastSignInAt    DateTime?         @map("last_sign_in_at")
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 
   refreshTokens                                 RefreshToken[]
   passwordResetTokens                           PasswordResetToken[]
+  emailVerificationTokens                       EmailVerificationToken[]
   ownedOrganizations                            Organization[]                           @relation("OrganizationOwner")
   organizationMemberships                       OrganizationMembership[]
   academyMemberships                            AcademyMember[]
@@ -175,6 +182,29 @@ model RefreshToken {
 
 /// Backs `PasswordResetRequest`/`PasswordResetConfirmation`. Single-use,
 /// short-lived, hashed at rest — same rationale as `RefreshToken`.
+/// Phase 10.1 — proof that the address on an account can actually receive
+/// mail. Structurally identical to `PasswordResetToken` on purpose: same
+/// hashed-token-at-rest discipline, same single-use `usedAt` marker, same
+/// expiry semantics. Reusing a proven shape rather than inventing a
+/// second one.
+model EmailVerificationToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Only the SHA-256 of the emailed token is stored — a database
+  /// disclosure never yields a usable verification link.
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  /// Set on first successful use. A second attempt with the same token
+  /// finds it already used and is refused — this is what makes replay
+  /// impossible.
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("email_verification_tokens")
+}
+
 model PasswordResetToken {
   id        String    @id @default(uuid())
   userId    String    @map("user_id")

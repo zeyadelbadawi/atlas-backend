@@ -24,6 +24,8 @@ import type { EmailConfig } from '../config/configuration';
 import { UsersRepository } from './repositories/users.repository';
 import { RefreshTokensRepository } from './repositories/refresh-tokens.repository';
 import { PasswordResetTokensRepository } from './repositories/password-reset-tokens.repository';
+import { EmailVerificationTokensRepository } from './repositories/email-verification-tokens.repository';
+import { EmailRiskService } from './services/email-risk.service';
 import { SignInRateLimitGuard } from './guards/signin-rate-limit.guard';
 import { PasswordResetRateLimitGuard } from './guards/password-reset-rate-limit.guard';
 import { RegisterRateLimitGuard } from './guards/register-rate-limit.guard';
@@ -78,6 +80,8 @@ import { TenancyModule } from '../tenancy/tenancy.module';
     UsersRepository,
     RefreshTokensRepository,
     PasswordResetTokensRepository,
+    EmailVerificationTokensRepository,
+    EmailRiskService,
     SignInRateLimitGuard,
     PasswordResetRateLimitGuard,
     RegisterRateLimitGuard,

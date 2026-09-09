@@ -9,6 +9,8 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
     jwtAccessTtlSeconds: 900,
     refreshTokenTtlDays: 30,
     passwordResetTokenTtlMinutes: 45,
+    emailVerificationTokenTtlMinutes: 1440,
+    emailDeliverabilityCheckEnabled: false,
     signInRateLimit: { max: 10, windowSeconds: 900 },
     passwordResetRateLimit: { max: 5, windowSeconds: 3600 },
     registerRateLimit: { max: 5, windowSeconds: 3600 },

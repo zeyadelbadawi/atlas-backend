@@ -3,9 +3,12 @@
  * §21 Phase P1). Controllers stay thin; every business rule lives here.
  */
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -37,6 +40,11 @@ import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer
 import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
+import { EmailRiskService } from './email-risk.service';
+import { EmailVerificationTokensRepository } from '../repositories/email-verification-tokens.repository';
+import { EMAIL_PROVIDER } from './email-provider.interface';
+import type { EmailProvider } from './email-provider.interface';
+import { emailDomain } from '../../plans/utils/trial-subject.util';
 
 /** A value nobody can ever sign in with — see `getDummyHash()`. */
 const DUMMY_PASSWORD = 'atlas-p1-dummy-password-for-timing-safety-only';
@@ -55,6 +63,8 @@ export interface SessionRequestContext {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   /**
    * Lazily computed, cached Argon2id hash of a value nobody can sign in
    * with. Verified against on every "user not found" sign-in attempt so
@@ -85,6 +95,9 @@ export class AuthService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly sessionRevocationService: SessionRevocationService,
+    private readonly emailRiskService: EmailRiskService,
+    private readonly emailVerificationTokensRepository: EmailVerificationTokensRepository,
+    @Inject(EMAIL_PROVIDER) private readonly emailProvider: EmailProvider,
   ) {}
 
   /**
@@ -152,6 +165,25 @@ export class AuthService {
       });
     }
 
+    // Phase 10.1 — disposable/undeliverable addresses are refused here,
+    // on the server, for every caller. The frontend may also check, but
+    // this is the enforcement point: calling the API directly must not
+    // bypass it.
+    //
+    // The rejection is deliberately GENERIC. Reporting whether the domain
+    // was on the throwaway list or simply had no mail exchanger would
+    // tell an abuser precisely how to adapt, so both map to one message.
+    const emailRisk = await this.emailRiskService.evaluate(email);
+    if (!emailRisk.acceptable) {
+      this.logger.log(
+        { reason: emailRisk.reason, domain: emailDomain(email) },
+        'Registration refused — address is not an acceptable, deliverable mailbox.',
+      );
+      throw new BadRequestException({
+        messageKey: 'errors.auth.emailNotAcceptable',
+      });
+    }
+
     // Validated BEFORE the account is created — a bad/unknown academyId
     // must never leave an orphaned user record behind.
     const academyId = await this.resolveRegistrationAcademyId(input.academyId);
@@ -176,6 +208,85 @@ export class AuthService {
         }),
       );
     }
+
+    // Best-effort by design. The account exists and is usable; failing
+    // the whole registration because an SMTP provider had a bad minute
+    // would be a worse outcome than an unverified account the user can
+    // re-trigger verification for at any time.
+    await this.sendEmailVerification(user.id, email);
+  }
+
+  /**
+   * Issues a fresh verification token and emails it.
+   *
+   * Any previously outstanding token for this user is invalidated first,
+   * so only the most recent link ever works — a user who requests
+   * verification twice cannot leave a second live token behind.
+   */
+  private async sendEmailVerification(userId: string, email: string): Promise<void> {
+    try {
+      const identity = this.configService.getOrThrow<IdentityConfig>('identity');
+      const rawToken = generateOpaqueToken();
+
+      await this.emailVerificationTokensRepository.invalidateAllForUser(userId);
+      await this.emailVerificationTokensRepository.create({
+        userId,
+        tokenHash: hashOpaqueToken(rawToken),
+        expiresAt: new Date(
+          Date.now() + identity.emailVerificationTokenTtlMinutes * 60 * 1000,
+        ),
+      });
+
+      await this.emailProvider.sendEmailVerification(email, rawToken);
+    } catch (error) {
+      // Logged WITHOUT the token — the raw value must never reach a log
+      // sink, since it is a live credential until used or expired.
+      this.logger.warn(
+        { userId, error: error instanceof Error ? error.message : error },
+        'Could not send the verification email; the account exists and verification can be re-requested.',
+      );
+    }
+  }
+
+  /**
+   * Completes verification.
+   *
+   * Single-use and replay-proof: the token is claimed with a conditional
+   * UPDATE that only matches a row which is unexpired and not yet used,
+   * so a replayed link matches zero rows and is refused. Two concurrent
+   * submissions of the same link resolve the same way — Postgres
+   * serialises the update and only one can observe `usedAt` still null.
+   *
+   * Failures are deliberately indistinguishable: unknown, expired,
+   * already-used and malformed tokens all produce the same error, so the
+   * endpoint cannot be used to probe which tokens exist.
+   */
+  async verifyEmail(rawToken: string): Promise<void> {
+    const claimed = await this.emailVerificationTokensRepository.claim(
+      hashOpaqueToken(rawToken),
+    );
+
+    if (!claimed) {
+      throw new BadRequestException({
+        messageKey: 'errors.auth.invalidVerificationToken',
+      });
+    }
+
+    await this.usersRepository.markEmailVerified(claimed.userId, new Date());
+  }
+
+  /**
+   * Re-sends verification for the signed-in account.
+   *
+   * Always reports success, even when the account is already verified —
+   * the caller is authenticated, so there is nothing to disclose, and a
+   * uniform response keeps the client simple. Rate limiting lives on the
+   * controller: this is an endpoint that sends mail on demand.
+   */
+  async resendEmailVerification(userId: string): Promise<void> {
+    const user = await this.usersRepository.findById(userId);
+    if (!user || user.emailVerifiedAt) return;
+    await this.sendEmailVerification(user.id, user.email);
   }
 
   async signIn(input: {

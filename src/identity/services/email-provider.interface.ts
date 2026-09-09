@@ -24,6 +24,8 @@ export interface TransactionalEmailInput {
 
 export interface EmailProvider {
   sendPasswordResetEmail(to: string, rawToken: string): Promise<void>;
+  /** Phase 10.1 — proves the address can receive mail. `rawToken` is a live credential: never log it. */
+  sendEmailVerification(to: string, rawToken: string): Promise<void>;
   sendTransactionalEmail(input: TransactionalEmailInput): Promise<void>;
 }
 

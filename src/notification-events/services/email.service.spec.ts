@@ -6,6 +6,7 @@ describe('EmailService', () => {
     const send = jest.fn().mockResolvedValue(undefined);
     const provider: EmailProvider = {
       sendPasswordResetEmail: jest.fn(),
+      sendEmailVerification: jest.fn(),
       sendTransactionalEmail: send,
     };
     const service = new EmailService(provider);
@@ -23,6 +24,7 @@ describe('EmailService', () => {
   it('never throws when the underlying provider rejects — master plan §21 P17: "Email provider failure must not corrupt the primary business transaction"', async () => {
     const provider: EmailProvider = {
       sendPasswordResetEmail: jest.fn(),
+      sendEmailVerification: jest.fn(),
       sendTransactionalEmail: jest
         .fn()
         .mockRejectedValue(new Error('provider unreachable')),

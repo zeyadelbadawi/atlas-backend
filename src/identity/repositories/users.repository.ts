@@ -60,6 +60,14 @@ export class UsersRepository {
     return this.prisma.user.update({ where: { id }, data: { passwordHash } });
   }
 
+  /** Phase 10.1 — records that this address proved it can receive mail. */
+  markEmailVerified(id: string, verifiedAt: Date): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data: { emailVerifiedAt: verifiedAt },
+    });
+  }
+
   touchLastSignInAt(id: string): Promise<User> {
     return this.prisma.user.update({ where: { id }, data: { lastSignInAt: new Date() } });
   }

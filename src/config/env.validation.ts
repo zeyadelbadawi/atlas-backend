@@ -115,6 +115,23 @@ const EnvSchema = z.object({
   // Password reset token TTL — master plan §5.1/§8: "short-lived (e.g. 30-60 min)".
   PASSWORD_RESET_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(45),
 
+  // Phase 10.1 — email-verification link lifetime. Deliberately much
+  // longer than a password reset (24h vs 45m): a signup email is
+  // routinely opened hours later, and unlike a reset link this token
+  // grants no account access on its own — it only marks an address as
+  // deliverable. It is still single-use and still expires.
+  EMAIL_VERIFICATION_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(1440),
+
+  // Phase 10.1 — whether registration performs the DNS deliverability
+  // lookup. Left unset it follows NODE_ENV (off in `test`, on everywhere
+  // else); see `IdentityConfig.emailDeliverabilityCheckEnabled`. The
+  // disposable-domain list is a separate, local check and is NEVER
+  // disabled by this flag.
+  EMAIL_DELIVERABILITY_CHECK_ENABLED: z
+    .union([z.literal('true'), z.literal('false')])
+    .transform((value) => value === 'true')
+    .optional(),
+
   // Redis-backed sign-in rate limiting (master plan §8 "Brute-force
   // protection", §16). Per-IP and per-account, both windows independently
   // configurable. Defaults are a reasonable starting point, not a tuned

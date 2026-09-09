@@ -21,6 +21,7 @@ import { SignInDto } from '../dto/sign-in.dto';
 import { RefreshTokenDto } from '../dto/refresh-token.dto';
 import { PasswordResetRequestDto } from '../dto/password-reset-request.dto';
 import { PasswordResetConfirmDto } from '../dto/password-reset-confirm.dto';
+import { VerifyEmailDto } from '../dto/verify-email.dto';
 import type {
   AuthenticationResponseContract,
   TokenRefreshResponseContract,
@@ -85,6 +86,35 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async signOut(@CurrentAuthContext() auth: AuthContext): Promise<void> {
     await this.authService.signOut(auth.userId, auth.sessionId);
+  }
+
+  /**
+   * Phase 10.1 — completes email verification.
+   *
+   * Public by design: the emailed token is the only credential, and its
+   * recipient is by definition not signed in yet. Strictly single-use
+   * underneath — a replayed token matches zero rows and is refused with
+   * the same generic error as an unknown or expired one, so this endpoint
+   * cannot be used to probe which tokens exist.
+   */
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  async verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
+    await this.authService.verifyEmail(dto.token);
+  }
+
+  /**
+   * Phase 10.1 — re-sends verification for the signed-in account.
+   *
+   * Rate-limited with the same guard as password-reset requests: this
+   * endpoint sends mail on demand, which is exactly the shape that gets
+   * abused as a free mail relay if left open.
+   */
+  @Post('verify-email/resend')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(JwtAuthGuard, PasswordResetRateLimitGuard)
+  async resendEmailVerification(@CurrentAuthContext() auth: AuthContext): Promise<void> {
+    await this.authService.resendEmailVerification(auth.userId);
   }
 
   /**

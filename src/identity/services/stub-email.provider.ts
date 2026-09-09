@@ -44,6 +44,23 @@ export class StubEmailProvider implements EmailProvider {
     return this.lastPasswordResetTokens.get(normalizeEmail(email));
   }
 
+  /** Phase 10.1 — same posture as `sendPasswordResetEmail`: record for tests, never transmit. */
+  private readonly lastEmailVerificationTokens = new Map<string, string>();
+
+  async sendEmailVerification(to: string, rawToken: string): Promise<void> {
+    const normalized = normalizeEmail(to);
+    this.lastEmailVerificationTokens.set(normalized, rawToken);
+    this.logger.log(
+      { to: maskEmail(normalized) },
+      'Stub email provider: verification email would be sent (no real provider configured)',
+    );
+  }
+
+  /** Test-only accessor — never called from any controller/HTTP path. */
+  peekLastEmailVerificationToken(email: string): string | undefined {
+    return this.lastEmailVerificationTokens.get(normalizeEmail(email));
+  }
+
   /** Phase P17 — same "log an attempt, never fail, never expose real content over HTTP" posture as `sendPasswordResetEmail`, extended to the generic transactional-email surface. Keeps the last sent input per address for test assertions, mirroring `peekLastPasswordResetToken`. */
   private readonly lastTransactionalEmails = new Map<string, TransactionalEmailInput>();
 

@@ -43,6 +43,17 @@ export class ResendEmailProvider implements EmailProvider {
     });
   }
 
+  async sendEmailVerification(to: string, rawToken: string): Promise<void> {
+    await this.sendTransactionalEmail({
+      to,
+      subject: 'Verify your Atlas email address',
+      text:
+        `Welcome to Atlas.\n\n` +
+        `Verification token: ${rawToken}\n\n` +
+        `If you did not create an Atlas account, you can safely ignore this email.`,
+    });
+  }
+
   async sendTransactionalEmail(input: TransactionalEmailInput): Promise<void> {
     const email = this.configService.getOrThrow<EmailConfig>('email');
     // `validateEnv`'s own cross-field check already guarantees
