@@ -9,7 +9,9 @@ import {
   TENANT_USAGE_RECOMPUTE_QUEUE,
 } from './tenant-usage-recompute.types';
 
-@Processor(TENANT_USAGE_RECOMPUTE_QUEUE, { concurrency: TENANT_USAGE_RECOMPUTE_CONCURRENCY })
+@Processor(TENANT_USAGE_RECOMPUTE_QUEUE, {
+  concurrency: TENANT_USAGE_RECOMPUTE_CONCURRENCY,
+})
 export class TenantUsageRecomputeProcessor extends WorkerHost {
   private readonly logger = new Logger(TenantUsageRecomputeProcessor.name);
 

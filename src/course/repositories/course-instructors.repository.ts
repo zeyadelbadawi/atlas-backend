@@ -55,6 +55,8 @@ export class CourseInstructorsRepository {
     courseId: string,
     userId: string,
   ): Promise<CourseInstructor> {
-    return tx.courseInstructor.delete({ where: { courseId_userId: { courseId, userId } } });
+    return tx.courseInstructor.delete({
+      where: { courseId_userId: { courseId, userId } },
+    });
   }
 }

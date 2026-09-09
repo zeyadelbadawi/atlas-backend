@@ -55,10 +55,13 @@ export class CourseDiscoveryService {
     // `CoursesRepository.countSectionsAndLessonsBatch`'s doc comment: this
     // is the endpoint whose per-course N+1 version actually blew Prisma's
     // interactive-transaction timeout once the cross-academy catalog grew.
-    const { sectionCounts, lessonCounts } = await this.tenancyContextService.runInUserContext(
-      userId,
-      (tx) => this.coursesRepository.countSectionsAndLessonsBatch(tx, items.map((course) => course.id)),
-    );
+    const { sectionCounts, lessonCounts } =
+      await this.tenancyContextService.runInUserContext(userId, (tx) =>
+        this.coursesRepository.countSectionsAndLessonsBatch(
+          tx,
+          items.map((course) => course.id),
+        ),
+      );
     const withStats = items.map((course) =>
       toCourseResponse(course, {
         totalSections: sectionCounts.get(course.id) ?? 0,

@@ -261,9 +261,11 @@ describe('Announcements (e2e)', () => {
       .expect(403);
   });
 
-  it('one academy cannot author, read, or update another academy\'s academy-wide announcements', async () => {
-    const { owner: ownerA, academy: academyA } = await seedManagedCourse('ann-academy-iso-a');
-    const { owner: ownerB, academy: academyB } = await seedManagedCourse('ann-academy-iso-b');
+  it("one academy cannot author, read, or update another academy's academy-wide announcements", async () => {
+    const { owner: ownerA, academy: academyA } =
+      await seedManagedCourse('ann-academy-iso-a');
+    const { owner: ownerB, academy: academyB } =
+      await seedManagedCourse('ann-academy-iso-b');
 
     const createdA = await request(app.getHttpServer())
       .post(`/academies/${academyA.id}/announcements`)
@@ -283,7 +285,9 @@ describe('Announcements (e2e)', () => {
       .get(`/academies/${academyB.id}/announcements`)
       .set('Authorization', `Bearer ${ownerB.accessToken}`)
       .expect(200);
-    expect(listB.body.items.map((a: { id: string }) => a.id)).not.toContain(createdA.body.id);
+    expect(listB.body.items.map((a: { id: string }) => a.id)).not.toContain(
+      createdA.body.id,
+    );
 
     // B's owner cannot update A's announcement even by guessing its id.
     await request(app.getHttpServer())

@@ -120,7 +120,10 @@ describe('Public Website Runtime (e2e)', () => {
     const page = await request(app.getHttpServer())
       .get(`/public/websites/${academy.id}/pages/landing`)
       .expect(200);
-    expect(page.body.sections[0].config.title).toEqual({ en: 'Welcome to landing', ar: '' });
+    expect(page.body.sections[0].config.title).toEqual({
+      en: 'Welcome to landing',
+      ar: '',
+    });
   });
 
   it('SCENARIO 6: a draft website configuration (never published) is unreachable through any public URL, by any guessing strategy', async () => {
@@ -329,7 +332,7 @@ describe('Public Website Runtime (e2e)', () => {
   // submissions.
   // -------------------------------------------------------------------
 
-  it('GET :academyId/statistics returns real, live counts scoped to that one Academy — never another Academy\'s, never revenue', async () => {
+  it("GET :academyId/statistics returns real, live counts scoped to that one Academy — never another Academy's, never revenue", async () => {
     const { academy: academyA, org: orgA } = await seedManagedAcademy('pub-stats-a');
     await seedActiveSubscriptionForOrg(admin, orgA.id, 'pub-stats-a');
     await seedCourse(admin, academyA.id, `pub-stats-a-published-${Date.now()}`, {
@@ -370,14 +373,14 @@ describe('Public Website Runtime (e2e)', () => {
     expect(statsA.body).not.toHaveProperty('revenue');
   });
 
-  it('a manipulated/unknown academyId on the statistics endpoint returns public not-found, never another Academy\'s data', async () => {
+  it("a manipulated/unknown academyId on the statistics endpoint returns public not-found, never another Academy's data", async () => {
     const response = await request(app.getHttpServer()).get(
       '/public/websites/00000000-0000-0000-0000-000000000000/statistics',
     );
     expect(response.status).toBe(404);
   });
 
-  it('GET :academyId/identity returns the real, combined Academy name/logo/contact — never another Academy\'s', async () => {
+  it("GET :academyId/identity returns the real, combined Academy name/logo/contact — never another Academy's", async () => {
     const { academy: academyA } = await seedManagedAcademy('pub-identity-a');
     await admin.academy.update({
       where: { id: academyA.id },
@@ -404,9 +407,11 @@ describe('Public Website Runtime (e2e)', () => {
     expect(response.status).toBe(404);
   });
 
-  it('POST :academyId/contact persists a real submission (never a fake success), readable/triageable only by that Academy\'s own staff, and never crosses into another Academy', async () => {
-    const { owner: ownerA, academy: academyA } = await seedManagedAcademy('pub-contact-a');
-    const { owner: ownerB, academy: academyB } = await seedManagedAcademy('pub-contact-b');
+  it("POST :academyId/contact persists a real submission (never a fake success), readable/triageable only by that Academy's own staff, and never crosses into another Academy", async () => {
+    const { owner: ownerA, academy: academyA } =
+      await seedManagedAcademy('pub-contact-a');
+    const { owner: ownerB, academy: academyB } =
+      await seedManagedAcademy('pub-contact-b');
 
     const submitted = await request(app.getHttpServer())
       .post(`/public/websites/${academyA.id}/contact`)
@@ -427,7 +432,9 @@ describe('Public Website Runtime (e2e)', () => {
       .get(`/academies/${academyA.id}/contact-submissions`)
       .set('Authorization', `Bearer ${ownerA.accessToken}`)
       .expect(200);
-    expect(listA.body.items.map((s: { id: string }) => s.id)).toContain(submitted.body.id);
+    expect(listA.body.items.map((s: { id: string }) => s.id)).toContain(
+      submitted.body.id,
+    );
 
     const triaged = await request(app.getHttpServer())
       .patch(`/academies/${academyA.id}/contact-submissions/${submitted.body.id}`)

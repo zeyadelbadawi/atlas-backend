@@ -31,7 +31,9 @@ function collectLocalizedLeaves(
 ): Array<{ path: string; leaf: { en: string; ar: string } }> {
   if (isLocalizedTextLike(value)) return [{ path, leaf: value }];
   if (Array.isArray(value)) {
-    return value.flatMap((entry, index) => collectLocalizedLeaves(entry, `${path}[${index}]`));
+    return value.flatMap((entry, index) =>
+      collectLocalizedLeaves(entry, `${path}[${index}]`),
+    );
   }
   if (typeof value === 'object' && value !== null) {
     return Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) =>
@@ -44,14 +46,18 @@ function collectLocalizedLeaves(
 describe('Website Template Registry', () => {
   it('registers exactly one template per real theme key, in the same order', () => {
     const templates = listWebsiteTemplates();
-    expect(templates.map((template) => template.themeKey)).toEqual([...WEBSITE_THEME_KEYS]);
+    expect(templates.map((template) => template.themeKey)).toEqual([
+      ...WEBSITE_THEME_KEYS,
+    ]);
   });
 
   it('every template includes the 4 shared support pages plus its own Home', () => {
     for (const template of listWebsiteTemplates()) {
       const coreTypes = template.pages.map((page) => page.coreType);
       expect(coreTypes).toContain('home');
-      expect(coreTypes).toEqual(expect.arrayContaining(['about', 'courses', 'faqs', 'contact']));
+      expect(coreTypes).toEqual(
+        expect.arrayContaining(['about', 'courses', 'faqs', 'contact']),
+      );
       // No `courseDetails` template — it renders `CourseDetailsTemplate`, never CMS sections.
       expect(coreTypes).not.toContain('courseDetails');
     }
@@ -81,7 +87,9 @@ describe('Website Template Registry', () => {
           const leaves = collectLocalizedLeaves(section.starterContent, '');
           for (const { path, leaf } of leaves) {
             if (!leaf.ar.trim()) {
-              failures.push(`${template.themeKey}/${page.coreType}/${section.type}${path ? `.${path}` : ''}`);
+              failures.push(
+                `${template.themeKey}/${page.coreType}/${section.type}${path ? `.${path}` : ''}`,
+              );
             }
           }
         }
@@ -91,13 +99,20 @@ describe('Website Template Registry', () => {
   });
 
   it('never fabricates a static value for a section type that already supports live data — `featuredCourses`/`statistics`/`instructors`/`contact` always resolve their dynamic config from `dynamicDefaults`, `starterContent` never overrides it with a hardcoded number', () => {
-    const dynamicTypes = new Set(['featuredCourses', 'statistics', 'instructors', 'contact']);
+    const dynamicTypes = new Set([
+      'featuredCourses',
+      'statistics',
+      'instructors',
+      'contact',
+    ]);
     for (const template of listWebsiteTemplates()) {
       for (const page of template.pages) {
         for (const section of page.sections as readonly WebsiteTemplateSection[]) {
           if (!dynamicTypes.has(section.type)) continue;
           if (section.type === 'statistics') {
-            const items = (section.dynamicDefaults?.items ?? []) as Array<{ metric?: string }>;
+            const items = (section.dynamicDefaults?.items ?? []) as Array<{
+              metric?: string;
+            }>;
             for (const item of items) {
               expect(item.metric).toBeDefined();
             }

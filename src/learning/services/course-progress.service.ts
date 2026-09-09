@@ -66,10 +66,11 @@ export class CourseProgressService {
         .map((lesson) => ({ id: lesson.id, sectionId: section.id })),
     );
 
-    const existingRows = await this.courseProgressRepository.findLessonProgressForEnrollment(
-      tx,
-      enrollment.id,
-    );
+    const existingRows =
+      await this.courseProgressRepository.findLessonProgressForEnrollment(
+        tx,
+        enrollment.id,
+      );
     const existingByLessonId = new Map(existingRows.map((row) => [row.lessonId, row]));
     const missingLessons = curriculumLessons.filter(
       (lesson) => !existingByLessonId.has(lesson.id),
@@ -96,12 +97,15 @@ export class CourseProgressService {
 
     await this.courseProgressRepository.createManyLessonProgress(tx, newRows);
 
-    const mergedRows = await this.courseProgressRepository.findLessonProgressForEnrollment(
-      tx,
-      enrollment.id,
-    );
+    const mergedRows =
+      await this.courseProgressRepository.findLessonProgressForEnrollment(
+        tx,
+        enrollment.id,
+      );
     const totalLessons = curriculumLessons.length;
-    const completedLessons = mergedRows.filter((row) => row.status === 'completed').length;
+    const completedLessons = mergedRows.filter(
+      (row) => row.status === 'completed',
+    ).length;
     const completionState = deriveCompletionState(completedLessons, totalLessons);
     const currentLesson = mergedRows.find((row) => row.status !== 'completed');
 

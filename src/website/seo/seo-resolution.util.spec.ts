@@ -1,5 +1,9 @@
 import { resolveCourseSeo, resolvePageSeo } from './seo-resolution.util';
-import type { WebsitePageInput, WebsitePageSeoInput, WebsiteSeoConfigInput } from './seo.types';
+import type {
+  WebsitePageInput,
+  WebsitePageSeoInput,
+  WebsiteSeoConfigInput,
+} from './seo.types';
 
 const fallback = {
   title: 'Acme Academy',
@@ -25,19 +29,32 @@ function page(overrides: PageOverrides = {}, visible = true): WebsitePageInput {
     canonicalPath: overrides.canonicalPath,
     indexable: overrides.indexable,
     ...(overrides.metaTitle !== undefined ? { metaTitle: en(overrides.metaTitle) } : {}),
-    ...(overrides.metaDescription !== undefined ? { metaDescription: en(overrides.metaDescription) } : {}),
+    ...(overrides.metaDescription !== undefined
+      ? { metaDescription: en(overrides.metaDescription) }
+      : {}),
     ...(overrides.ogTitle !== undefined ? { ogTitle: en(overrides.ogTitle) } : {}),
-    ...(overrides.ogDescription !== undefined ? { ogDescription: en(overrides.ogDescription) } : {}),
+    ...(overrides.ogDescription !== undefined
+      ? { ogDescription: en(overrides.ogDescription) }
+      : {}),
   };
   return { slug: 'about', visible, seo };
 }
 
-function config(overrides: { metaTitle?: string; metaDescription?: string; ogImage?: string; robotsIndexable?: boolean } = {}): { seo: WebsiteSeoConfigInput } {
+function config(
+  overrides: {
+    metaTitle?: string;
+    metaDescription?: string;
+    ogImage?: string;
+    robotsIndexable?: boolean;
+  } = {},
+): { seo: WebsiteSeoConfigInput } {
   const seo: WebsiteSeoConfigInput = {
     ogImage: overrides.ogImage,
     robotsIndexable: overrides.robotsIndexable,
     ...(overrides.metaTitle !== undefined ? { metaTitle: en(overrides.metaTitle) } : {}),
-    ...(overrides.metaDescription !== undefined ? { metaDescription: en(overrides.metaDescription) } : {}),
+    ...(overrides.metaDescription !== undefined
+      ? { metaDescription: en(overrides.metaDescription) }
+      : {}),
   };
   return { seo };
 }
@@ -119,7 +136,12 @@ describe('resolvePageSeo — precedence hierarchy', () => {
     const withNeither = resolvePageSeo(page(), config(), fallback, 'en');
     expect(withNeither.ogImage).toBeUndefined();
 
-    const withGlobal = resolvePageSeo(page(), config({ ogImage: 'https://x/global.png' }), fallback, 'en');
+    const withGlobal = resolvePageSeo(
+      page(),
+      config({ ogImage: 'https://x/global.png' }),
+      fallback,
+      'en',
+    );
     expect(withGlobal.ogImage).toBe('https://x/global.png');
 
     const withOverride = resolvePageSeo(
@@ -152,17 +174,32 @@ describe('resolvePageSeo — precedence hierarchy', () => {
   });
 
   it('indexable respects an explicit `false` page override (boolean `??`, not `||`)', () => {
-    const result = resolvePageSeo({ ...page(), seo: { ...page().seo, indexable: false } }, config(), fallback, 'en');
+    const result = resolvePageSeo(
+      { ...page(), seo: { ...page().seo, indexable: false } },
+      config(),
+      fallback,
+      'en',
+    );
     expect(result.indexable).toBe(false);
   });
 
   it('indexable falls through to the Global robotsIndexable when the page has no explicit value', () => {
-    const result = resolvePageSeo(page(), config({ robotsIndexable: false }), fallback, 'en');
+    const result = resolvePageSeo(
+      page(),
+      config({ robotsIndexable: false }),
+      fallback,
+      'en',
+    );
     expect(result.indexable).toBe(false);
   });
 
   it('a HIDDEN page is never indexable, regardless of any override', () => {
-    const result = resolvePageSeo({ ...page({}, false), seo: { ...page().seo, indexable: true } }, config(), fallback, 'en');
+    const result = resolvePageSeo(
+      { ...page({}, false), seo: { ...page().seo, indexable: true } },
+      config(),
+      fallback,
+      'en',
+    );
     expect(result.indexable).toBe(false);
   });
 
@@ -174,7 +211,11 @@ describe('resolvePageSeo — precedence hierarchy', () => {
 
   it('resolves the Arabic side when given locale "ar", falling back to English when Arabic is blank', () => {
     const result = resolvePageSeo(
-      { slug: 'about', visible: true, seo: { metaTitle: { en: 'English Title', ar: 'العنوان بالعربية' } } },
+      {
+        slug: 'about',
+        visible: true,
+        seo: { metaTitle: { en: 'English Title', ar: 'العنوان بالعربية' } },
+      },
       config(),
       fallback,
       'ar',
@@ -217,12 +258,22 @@ describe('resolveCourseSeo', () => {
   });
 
   it('falls back to description when shortDescription is absent', () => {
-    const result = resolveCourseSeo({ ...baseCourse, description: 'Long description' }, config(), fallback, 'en');
+    const result = resolveCourseSeo(
+      { ...baseCourse, description: 'Long description' },
+      config(),
+      fallback,
+      'en',
+    );
     expect(result.description).toBe('Long description');
   });
 
   it('falls back to Global metaDescription when the course has neither', () => {
-    const result = resolveCourseSeo(baseCourse, config({ metaDescription: 'Global' }), fallback, 'en');
+    const result = resolveCourseSeo(
+      baseCourse,
+      config({ metaDescription: 'Global' }),
+      fallback,
+      'en',
+    );
     expect(result.description).toBe('Global');
   });
 
@@ -239,12 +290,23 @@ describe('resolveCourseSeo', () => {
 
   it('is indexable only when status=published AND visibility=public', () => {
     expect(resolveCourseSeo(baseCourse, config(), fallback, 'en').indexable).toBe(true);
-    expect(resolveCourseSeo({ ...baseCourse, status: 'draft' }, config(), fallback, 'en').indexable).toBe(false);
-    expect(resolveCourseSeo({ ...baseCourse, visibility: 'private' }, config(), fallback, 'en').indexable).toBe(false);
+    expect(
+      resolveCourseSeo({ ...baseCourse, status: 'draft' }, config(), fallback, 'en')
+        .indexable,
+    ).toBe(false);
+    expect(
+      resolveCourseSeo({ ...baseCourse, visibility: 'private' }, config(), fallback, 'en')
+        .indexable,
+    ).toBe(false);
   });
 
   it('a publicly reachable course still respects Global robotsIndexable=false', () => {
-    const result = resolveCourseSeo(baseCourse, config({ robotsIndexable: false }), fallback, 'en');
+    const result = resolveCourseSeo(
+      baseCourse,
+      config({ robotsIndexable: false }),
+      fallback,
+      'en',
+    );
     expect(result.indexable).toBe(false);
   });
 
@@ -257,7 +319,12 @@ describe('resolveCourseSeo', () => {
     );
     expect(withThumbnail.ogImage).toBe('https://x/course.png');
 
-    const withoutThumbnail = resolveCourseSeo(baseCourse, config({ ogImage: 'https://x/global.png' }), fallback, 'en');
+    const withoutThumbnail = resolveCourseSeo(
+      baseCourse,
+      config({ ogImage: 'https://x/global.png' }),
+      fallback,
+      'en',
+    );
     expect(withoutThumbnail.ogImage).toBe('https://x/global.png');
   });
 });

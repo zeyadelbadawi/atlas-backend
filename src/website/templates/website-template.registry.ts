@@ -11,9 +11,15 @@ import { premiumAcademyTemplate } from './premium-academy.template';
 import { corporateLearningTemplate } from './corporate-learning.template';
 import { minimalEditorialTemplate } from './minimal-editorial.template';
 import { boldCreativeTemplate } from './bold-creative.template';
-import type { WebsiteTemplateDefinition, WebsiteTemplateThemeKey } from './website-template.types';
+import type {
+  WebsiteTemplateDefinition,
+  WebsiteTemplateThemeKey,
+} from './website-template.types';
 
-const WEBSITE_TEMPLATE_REGISTRY: Record<WebsiteTemplateThemeKey, WebsiteTemplateDefinition> = {
+const WEBSITE_TEMPLATE_REGISTRY: Record<
+  WebsiteTemplateThemeKey,
+  WebsiteTemplateDefinition
+> = {
   'modern-education': modernEducationTemplate,
   'premium-academy': premiumAcademyTemplate,
   'corporate-learning': corporateLearningTemplate,
@@ -21,7 +27,9 @@ const WEBSITE_TEMPLATE_REGISTRY: Record<WebsiteTemplateThemeKey, WebsiteTemplate
   'bold-creative': boldCreativeTemplate,
 };
 
-export function getWebsiteTemplate(themeKey: WebsiteTemplateThemeKey): WebsiteTemplateDefinition {
+export function getWebsiteTemplate(
+  themeKey: WebsiteTemplateThemeKey,
+): WebsiteTemplateDefinition {
   return WEBSITE_TEMPLATE_REGISTRY[themeKey];
 }
 

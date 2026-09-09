@@ -17,10 +17,7 @@ import type { AddOnResponse } from '../dto/add-on.contract';
 import { toTrialPolicyResponse } from '../dto/trial-policy.contract';
 import type { TrialPolicyResponse } from '../dto/trial-policy.contract';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
-import {
-  DEFAULT_PAGE,
-  DEFAULT_PAGE_SIZE,
-} from '../../common/dto/collection-query.dto';
+import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 

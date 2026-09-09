@@ -203,22 +203,21 @@ export class SubscriptionSweepService {
     // Cursor-paginated, capped fan-out (Phase 4.5.2) — see this class's
     // own doc comment and the two constants' doc comments for why.
     for (;;) {
-      const remaining = SUBSCRIPTION_SWEEP_MAX_RECOMPUTE_PER_TICK - recomputeEnqueuedCount;
+      const remaining =
+        SUBSCRIPTION_SWEEP_MAX_RECOMPUTE_PER_TICK - recomputeEnqueuedCount;
       if (remaining <= 0) {
         reachedPerTickCeiling = true;
         break;
       }
 
       const page = await withTransientRetry(() =>
-        this.tenancyContextService.runInUserContext(
-          platformOwner.id,
-          (tx) =>
-            this.organizationsRepository.findStaleUsageOrganizationIds(
-              tx,
-              staleBefore,
-              cursor,
-              Math.min(remaining, SUBSCRIPTION_SWEEP_QUERY_PAGE_SIZE),
-            ),
+        this.tenancyContextService.runInUserContext(platformOwner.id, (tx) =>
+          this.organizationsRepository.findStaleUsageOrganizationIds(
+            tx,
+            staleBefore,
+            cursor,
+            Math.min(remaining, SUBSCRIPTION_SWEEP_QUERY_PAGE_SIZE),
+          ),
         ),
       );
       if (page.length === 0) {

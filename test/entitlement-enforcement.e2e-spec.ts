@@ -281,7 +281,9 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
           .expect(403);
         expect(rejected.body.error.messageKey).toBe('errors.academy.insufficientRole');
 
-        const academyCount = await admin.academy.count({ where: { organizationId: org.id } });
+        const academyCount = await admin.academy.count({
+          where: { organizationId: org.id },
+        });
         expect(academyCount).toBe(0);
       },
     );

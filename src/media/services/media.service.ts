@@ -197,9 +197,10 @@ export class MediaService {
     return this.performUpload(academyId, organizationId, payload, buffer, kind);
   }
 
-  private parseAndValidate(
-    payload: UploadMediaAssetDto,
-  ): { buffer: Buffer; kind: NonNullable<ReturnType<typeof detectFileKind>> } {
+  private parseAndValidate(payload: UploadMediaAssetDto): {
+    buffer: Buffer;
+    kind: NonNullable<ReturnType<typeof detectFileKind>>;
+  } {
     const { buffer } = parseDataUrl(payload.dataUrl);
     assertWithinSizeLimit(buffer, this.storageConfig.maxUploadBytes);
 

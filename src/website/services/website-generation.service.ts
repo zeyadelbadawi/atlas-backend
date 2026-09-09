@@ -47,7 +47,12 @@ import { WebsitePagesRepository } from '../repositories/website-pages.repository
 import { WebsiteBootstrapService, CORE_PAGE_DEFAULTS } from './website-bootstrap.service';
 import { getWebsiteTemplate } from '../templates/website-template.registry';
 import { sectionInstanceArraySchema } from '../validation/section-config.schemas';
-import { interpolate, interpolateLocalized, lt, type TemplateInterpolationContext } from '../templates/template-content.util';
+import {
+  interpolate,
+  interpolateLocalized,
+  lt,
+  type TemplateInterpolationContext,
+} from '../templates/template-content.util';
 import type { LocalizedTextLike } from '../utils/localized-text.util';
 import type {
   SectionType,
@@ -99,7 +104,7 @@ const EMPTY_MODE_MINIMUMS: Partial<Record<SectionType, Record<string, unknown>>>
   about: {
     title: lt('About {{academyName}}', 'نبذة عن {{academyName}}'),
     body: lt(
-      "Tell your students about your academy here.",
+      'Tell your students about your academy here.',
       'أخبر طلابك عن أكاديميتك هنا.',
     ),
   },
@@ -153,12 +158,18 @@ export class WebsiteGenerationService {
     };
 
     if (mode === 'complete' && section.starterContent) {
-      return { ...base, ...(deepInterpolate(section.starterContent, context) as Record<string, unknown>) };
+      return {
+        ...base,
+        ...(deepInterpolate(section.starterContent, context) as Record<string, unknown>),
+      };
     }
 
     const minimal = EMPTY_MODE_MINIMUMS[section.type];
     if (minimal) {
-      return { ...base, ...(deepInterpolate(minimal, context) as Record<string, unknown>) };
+      return {
+        ...base,
+        ...(deepInterpolate(minimal, context) as Record<string, unknown>),
+      };
     }
 
     return base;
@@ -184,7 +195,9 @@ export class WebsiteGenerationService {
       // always runs before 'theme' — see `executeThemeStep`'s own doc
       // comment) — defensive, never a hard failure of the provisioning
       // request itself.
-      this.logger.warn(`WebsiteGenerationService.generate called for unknown academyId=${academyId}`);
+      this.logger.warn(
+        `WebsiteGenerationService.generate called for unknown academyId=${academyId}`,
+      );
       return { pagesCreated: 0, pagesSkipped: 0 };
     }
 
@@ -211,7 +224,11 @@ export class WebsiteGenerationService {
     // label is valid, simply not yet wired) and patched in Pass 2, once
     // every page's real id is known.
     for (const templatePage of template.pages) {
-      const existing = await this.websitePagesRepository.findCoreByType(tx, academyId, templatePage.coreType);
+      const existing = await this.websitePagesRepository.findCoreByType(
+        tx,
+        academyId,
+        templatePage.coreType,
+      );
       if (existing) {
         pageIdByCoreType.set(templatePage.coreType, existing.id);
         pagesSkipped += 1;
@@ -235,7 +252,9 @@ export class WebsiteGenerationService {
         this.logger.error(
           `Website template '${themeKey}' produced an invalid '${templatePage.coreType}' page: ${validated.error.message}`,
         );
-        throw new Error(`Invalid generated section configuration for theme '${themeKey}'`);
+        throw new Error(
+          `Invalid generated section configuration for theme '${themeKey}'`,
+        );
       }
 
       try {
@@ -256,7 +275,11 @@ export class WebsiteGenerationService {
         if (!isUniqueConstraintViolation(error)) throw error;
         // Another concurrent/redelivered attempt just created this exact
         // page — genuinely idempotent, not a real conflict.
-        const raced = await this.websitePagesRepository.findCoreByType(tx, academyId, templatePage.coreType);
+        const raced = await this.websitePagesRepository.findCoreByType(
+          tx,
+          academyId,
+          templatePage.coreType,
+        );
         if (raced) {
           pageIdByCoreType.set(templatePage.coreType, raced.id);
           pagesSkipped += 1;
@@ -272,7 +295,13 @@ export class WebsiteGenerationService {
     for (const templatePage of template.pages) {
       const pageId = pageIdByCoreType.get(templatePage.coreType);
       if (!pageId || !freshlyCreatedPageIds.has(pageId)) continue;
-      await this.resolveCtaTargets(tx, academyId, pageId, templatePage.sections, pageIdByCoreType);
+      await this.resolveCtaTargets(
+        tx,
+        academyId,
+        pageId,
+        templatePage.sections,
+        pageIdByCoreType,
+      );
     }
 
     await this.generateNavigation(tx, academyId, pageIdByCoreType);
@@ -296,25 +325,27 @@ export class WebsiteGenerationService {
     const page = await this.websitePagesRepository.findById(tx, academyId, pageId);
     if (!page) return;
 
-    const sections = (page.sections as unknown as Array<{ id: string; config: Record<string, unknown> }>).map(
-      (instance, index) => {
-        const templateSection = templateSections[index];
-        if (!templateSection?.ctaTargets) return instance;
+    const sections = (
+      page.sections as unknown as Array<{ id: string; config: Record<string, unknown> }>
+    ).map((instance, index) => {
+      const templateSection = templateSections[index];
+      if (!templateSection?.ctaTargets) return instance;
 
-        const config = { ...instance.config };
-        for (const [field, target] of Object.entries(templateSection.ctaTargets)) {
-          const cta = config[field] as Record<string, unknown> | undefined;
-          if (!cta) continue;
-          config[field] =
-            target === 'signIn' || target === 'signUp'
-              ? { ...cta, authAction: target }
-              : { ...cta, pageId: pageIdByCoreType.get(target) };
-        }
-        return { ...instance, config };
-      },
-    );
+      const config = { ...instance.config };
+      for (const [field, target] of Object.entries(templateSection.ctaTargets)) {
+        const cta = config[field] as Record<string, unknown> | undefined;
+        if (!cta) continue;
+        config[field] =
+          target === 'signIn' || target === 'signUp'
+            ? { ...cta, authAction: target }
+            : { ...cta, pageId: pageIdByCoreType.get(target) };
+      }
+      return { ...instance, config };
+    });
 
-    await this.websitePagesRepository.update(tx, pageId, { sections: sections as unknown as Prisma.InputJsonValue });
+    await this.websitePagesRepository.update(tx, pageId, {
+      sections: sections as unknown as Prisma.InputJsonValue,
+    });
   }
 
   /**
@@ -332,15 +363,26 @@ export class WebsiteGenerationService {
     academyId: string,
     pageIdByCoreType: ReadonlyMap<WebsiteTemplateCorePageType, string>,
   ): Promise<void> {
-    const configuration = await this.websiteConfigurationRepository.findByAcademyId(tx, academyId);
+    const configuration = await this.websiteConfigurationRepository.findByAcademyId(
+      tx,
+      academyId,
+    );
     if (!configuration || (configuration.navigation as unknown[]).length > 0) return;
 
-    const navPages: readonly WebsiteTemplateCorePageType[] = ['about', 'courses', 'faqs', 'contact'];
+    const navPages: readonly WebsiteTemplateCorePageType[] = [
+      'about',
+      'courses',
+      'faqs',
+      'contact',
+    ];
     const navigation = navPages
       .filter((coreType) => pageIdByCoreType.has(coreType))
       .map((coreType, index) => ({
         id: randomUUID(),
-        label: lt(CORE_PAGE_DEFAULTS[coreType].title, CORE_PAGE_DEFAULTS[coreType].titleAr),
+        label: lt(
+          CORE_PAGE_DEFAULTS[coreType].title,
+          CORE_PAGE_DEFAULTS[coreType].titleAr,
+        ),
         pageId: pageIdByCoreType.get(coreType)!,
         order: index,
       }));
@@ -363,18 +405,33 @@ export class WebsiteGenerationService {
     context: TemplateInterpolationContext,
     pageIdByCoreType: ReadonlyMap<WebsiteTemplateCorePageType, string>,
   ): Promise<void> {
-    const configuration = await this.websiteConfigurationRepository.findByAcademyId(tx, academyId);
+    const configuration = await this.websiteConfigurationRepository.findByAcademyId(
+      tx,
+      academyId,
+    );
     if (!configuration) return;
 
-    const footer = configuration.footer as { groups: unknown[]; socialLinks: unknown[]; copyrightText?: unknown };
+    const footer = configuration.footer as {
+      groups: unknown[];
+      socialLinks: unknown[];
+      copyrightText?: unknown;
+    };
     const footerUntouched = (footer.groups?.length ?? 0) === 0 && !footer.copyrightText;
     if (footerUntouched) {
-      const navPages: readonly WebsiteTemplateCorePageType[] = ['about', 'courses', 'faqs', 'contact'];
+      const navPages: readonly WebsiteTemplateCorePageType[] = [
+        'about',
+        'courses',
+        'faqs',
+        'contact',
+      ];
       const links = navPages
         .filter((coreType) => pageIdByCoreType.has(coreType))
         .map((coreType) => ({
           id: randomUUID(),
-          label: lt(CORE_PAGE_DEFAULTS[coreType].title, CORE_PAGE_DEFAULTS[coreType].titleAr),
+          label: lt(
+            CORE_PAGE_DEFAULTS[coreType].title,
+            CORE_PAGE_DEFAULTS[coreType].titleAr,
+          ),
           pageId: pageIdByCoreType.get(coreType)!,
         }));
 

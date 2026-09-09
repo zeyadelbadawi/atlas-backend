@@ -69,10 +69,11 @@ export class EnrollmentsService {
           take: pageSize,
           academyId: query.academyId,
         });
-        const progressByEnrollmentId = await this.courseProgressRepository.findManyByEnrollmentIds(
-          tx,
-          result.items.map((enrollment) => enrollment.id),
-        );
+        const progressByEnrollmentId =
+          await this.courseProgressRepository.findManyByEnrollmentIds(
+            tx,
+            result.items.map((enrollment) => enrollment.id),
+          );
         return { ...result, progressByEnrollmentId };
       });
 

@@ -209,15 +209,14 @@ export class PublicWebsiteService {
     const organizationId = await this.resolveOrganizationId(academyId);
     if (!organizationId) return null;
 
-    const [courses, students, instructors] = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) =>
+    const [courses, students, instructors] =
+      await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
         Promise.all([
           this.coursesRepository.countPublished(tx, academyId),
           this.academyStudentsRepository.countForAcademy(tx, academyId),
           this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
         ]),
-    );
+      );
 
     return { courses, students, instructors };
   }
@@ -265,10 +264,13 @@ export class PublicWebsiteService {
         }),
     );
 
-    const { sectionCounts, lessonCounts } = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) => this.coursesRepository.countSectionsAndLessonsBatch(tx, items.map((course) => course.id)),
-    );
+    const { sectionCounts, lessonCounts } =
+      await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+        this.coursesRepository.countSectionsAndLessonsBatch(
+          tx,
+          items.map((course) => course.id),
+        ),
+      );
     const withStats = items.map((course) =>
       toCourseResponse(course, {
         totalSections: sectionCounts.get(course.id) ?? 0,
@@ -276,7 +278,10 @@ export class PublicWebsiteService {
       }),
     );
 
-    return { items: withStats, pagination: buildPaginationMeta(page, pageSize, totalItems) };
+    return {
+      items: withStats,
+      pagination: buildPaginationMeta(page, pageSize, totalItems),
+    };
   }
 
   /**
@@ -294,19 +299,25 @@ export class PublicWebsiteService {
    * itself is cross-academy by design, matching `discoverCourse`'s use of
    * it) rather than trusting the caller's `academyId` alone.
    */
-  async getPublicCourse(academyId: string, courseId: string): Promise<CourseResponse | null> {
+  async getPublicCourse(
+    academyId: string,
+    courseId: string,
+  ): Promise<CourseResponse | null> {
     const organizationId = await this.resolveOrganizationId(academyId);
     if (!organizationId) return null;
 
-    const result = await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      const course = await this.coursesRepository.findPublishedById(tx, courseId);
-      if (!course || course.academyId !== academyId) return null;
-      const [totalSections, totalLessons] = await Promise.all([
-        this.coursesRepository.countSections(tx, courseId),
-        this.coursesRepository.countLessons(tx, courseId),
-      ]);
-      return { course, totalSections, totalLessons };
-    });
+    const result = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        const course = await this.coursesRepository.findPublishedById(tx, courseId);
+        if (!course || course.academyId !== academyId) return null;
+        const [totalSections, totalLessons] = await Promise.all([
+          this.coursesRepository.countSections(tx, courseId),
+          this.coursesRepository.countLessons(tx, courseId),
+        ]);
+        return { course, totalSections, totalLessons };
+      },
+    );
     if (!result) return null;
 
     return toCourseResponse(result.course, {
@@ -333,7 +344,10 @@ export class PublicWebsiteService {
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
       const course = await this.coursesRepository.findPublishedById(tx, courseId);
       if (!course || course.academyId !== academyId) return null;
-      const sections = await this.courseSectionsRepository.findManyForCourse(tx, courseId);
+      const sections = await this.courseSectionsRepository.findManyForCourse(
+        tx,
+        courseId,
+      );
       return toPublicCourseCurriculumResponse(sections);
     });
   }

@@ -21,7 +21,11 @@
  * that only ever happens server-side (the theme "look" has no such
  * writer — the client just picks a key).
  */
-import type { SECTION_TYPES, WEBSITE_CORE_PAGE_TYPES, WEBSITE_THEME_KEYS } from '../constants/website.constants';
+import type {
+  SECTION_TYPES,
+  WEBSITE_CORE_PAGE_TYPES,
+  WEBSITE_THEME_KEYS,
+} from '../constants/website.constants';
 
 export type WebsiteTemplateThemeKey = (typeof WEBSITE_THEME_KEYS)[number];
 export type WebsiteTemplateCorePageType = (typeof WEBSITE_CORE_PAGE_TYPES)[number];

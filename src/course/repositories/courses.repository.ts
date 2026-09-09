@@ -183,8 +183,12 @@ export class CoursesRepository {
     ]);
 
     return {
-      sectionCounts: new Map(sectionGroups.map((group) => [group.courseId, group._count._all])),
-      lessonCounts: new Map(lessonGroups.map((group) => [group.courseId, group._count._all])),
+      sectionCounts: new Map(
+        sectionGroups.map((group) => [group.courseId, group._count._all]),
+      ),
+      lessonCounts: new Map(
+        lessonGroups.map((group) => [group.courseId, group._count._all]),
+      ),
     };
   }
 

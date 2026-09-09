@@ -24,7 +24,7 @@ export const minimalEditorialTemplate: WebsiteTemplateDefinition = {
             title: lt('{{academyName}}', '{{academyName}}'),
             description: lt(
               'Courses worth your attention, nothing else.',
-              'دورات تستحق اهتمامك، ولا شيء غير ذلك.'
+              'دورات تستحق اهتمامك، ولا شيء غير ذلك.',
             ),
             cta: { label: lt('View Courses', 'عرض الدورات') },
           },
@@ -38,7 +38,13 @@ export const minimalEditorialTemplate: WebsiteTemplateDefinition = {
         },
         {
           type: 'featuredCourses',
-          dynamicDefaults: { mode: 'latest', layout: 'grid', count: 4, showPrice: true, showInstructor: false },
+          dynamicDefaults: {
+            mode: 'latest',
+            layout: 'grid',
+            count: 4,
+            showPrice: true,
+            showInstructor: false,
+          },
           starterContent: {
             title: lt('Courses', 'الدورات'),
           },

@@ -13,7 +13,14 @@
  * `@IsNotEmpty()` for required fields — see `RegisterDto`'s comment
  * (identity module): the other decorators silently skip `undefined`.
  */
-import { IsArray, IsISO8601, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsArray,
+  IsISO8601,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateBlogPostDto {
   @IsOptional()

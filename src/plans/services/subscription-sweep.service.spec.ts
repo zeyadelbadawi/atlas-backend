@@ -25,6 +25,8 @@ import { OrganizationsRepository } from '../../tenancy/repositories/organization
 import { SubscriptionExpiryService } from './subscription-expiry.service';
 import { TenantUsageRecomputeProducer } from '../queue/tenant-usage-recompute.producer';
 import { TenantUsageSweepCursorRepository } from '../repositories/tenant-usage-sweep-cursor.repository';
+import { AnnouncementsRepository } from '../../community/repositories/announcements.repository';
+import { BlogPostsRepository } from '../../community/repositories/blog-posts.repository';
 import { SUBSCRIPTION_SWEEP_QUERY_PAGE_SIZE } from '../queue/subscription-sweep.types';
 
 type OrgIdRow = { id: string };
@@ -47,6 +49,8 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
   let tenantUsageRecomputeProducer: { enqueueOne: jest.Mock };
   let usersRepository: { findFirstPlatformOwnerId: jest.Mock };
   let subscriptionExpiryService: { expireDueTrials: jest.Mock };
+  let announcementsRepository: { publishDueScheduled: jest.Mock };
+  let blogPostsRepository: { publishDueScheduled: jest.Mock };
 
   beforeEach(async () => {
     organizationsRepository = { findStaleUsageOrganizationIds: jest.fn() };
@@ -56,6 +60,15 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
       findFirstPlatformOwnerId: jest.fn().mockResolvedValue({ id: 'platform-owner-1' }),
     };
     subscriptionExpiryService = { expireDueTrials: jest.fn().mockResolvedValue(0) };
+    // Phase 6 added scheduled-content publishing as the sweep's third
+    // responsibility (`run()` calls both of these alongside the usage
+    // scan). They are stubbed rather than asserted on because this file
+    // covers the CURSOR control flow only — but they must be PROVIDED,
+    // and returning a real count keeps the stub faithful to
+    // `publishDueScheduled`'s actual `Promise<number>` contract rather
+    // than handing the service back an `undefined` it never expects.
+    announcementsRepository = { publishDueScheduled: jest.fn().mockResolvedValue(0) };
+    blogPostsRepository = { publishDueScheduled: jest.fn().mockResolvedValue(0) };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -75,13 +88,15 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
         { provide: SubscriptionExpiryService, useValue: subscriptionExpiryService },
         { provide: TenantUsageRecomputeProducer, useValue: tenantUsageRecomputeProducer },
         { provide: TenantUsageSweepCursorRepository, useValue: sweepCursorRepository },
+        { provide: AnnouncementsRepository, useValue: announcementsRepository },
+        { provide: BlogPostsRepository, useValue: blogPostsRepository },
       ],
     }).compile();
 
     service = moduleRef.get(SubscriptionSweepService);
   });
 
-  it('reads the persisted cursor at the start of the tick and passes it as the scan\'s starting point — the exact behavior Failure 1 lacked', async () => {
+  it("reads the persisted cursor at the start of the tick and passes it as the scan's starting point — the exact behavior Failure 1 lacked", async () => {
     sweepCursorRepository.read.mockResolvedValue('previously-persisted-cursor');
     organizationsRepository.findStaleUsageOrganizationIds.mockResolvedValueOnce(page([]));
 
@@ -133,7 +148,9 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
 
     await service.run();
 
-    expect(organizationsRepository.findStaleUsageOrganizationIds).toHaveBeenCalledTimes(3);
+    expect(organizationsRepository.findStaleUsageOrganizationIds).toHaveBeenCalledTimes(
+      3,
+    );
     // Progress persisted after page 1 (its own last id), after page 2
     // (its own last id), and finally `null` once the partial third page
     // proves the real end of the table was reached — three writes total,
@@ -193,10 +210,13 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
   it('a transient P2028 on a page fetch is retried with the SAME cursor, never skipping or double-enqueuing an organization', async () => {
     jest.useFakeTimers();
     try {
-      const p2028 = new Prisma.PrismaClientKnownRequestError('Transaction already closed', {
-        code: 'P2028',
-        clientVersion: '5.22.0',
-      });
+      const p2028 = new Prisma.PrismaClientKnownRequestError(
+        'Transaction already closed',
+        {
+          code: 'P2028',
+          clientVersion: '5.22.0',
+        },
+      );
       sweepCursorRepository.read.mockResolvedValue(undefined);
       organizationsRepository.findStaleUsageOrganizationIds
         .mockRejectedValueOnce(p2028)
@@ -207,10 +227,14 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
       await jest.runAllTimersAsync();
       await runPromise;
 
-      expect(organizationsRepository.findStaleUsageOrganizationIds).toHaveBeenCalledTimes(3);
+      expect(organizationsRepository.findStaleUsageOrganizationIds).toHaveBeenCalledTimes(
+        3,
+      );
       // Every retried attempt used the exact same (still-unadvanced) cursor.
       for (let i = 1; i <= 3; i++) {
-        expect(organizationsRepository.findStaleUsageOrganizationIds).toHaveBeenNthCalledWith(
+        expect(
+          organizationsRepository.findStaleUsageOrganizationIds,
+        ).toHaveBeenNthCalledWith(
           i,
           undefined,
           expect.any(Date),
@@ -231,20 +255,27 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
   it('a non-transient error on a page fetch is never retried — it propagates on the very first attempt', async () => {
     const genuineError = new Error('a real, non-transient bug');
     sweepCursorRepository.read.mockResolvedValue(undefined);
-    organizationsRepository.findStaleUsageOrganizationIds.mockRejectedValueOnce(genuineError);
+    organizationsRepository.findStaleUsageOrganizationIds.mockRejectedValueOnce(
+      genuineError,
+    );
 
     await expect(service.run()).rejects.toThrow('a real, non-transient bug');
-    expect(organizationsRepository.findStaleUsageOrganizationIds).toHaveBeenCalledTimes(1);
+    expect(organizationsRepository.findStaleUsageOrganizationIds).toHaveBeenCalledTimes(
+      1,
+    );
     expect(tenantUsageRecomputeProducer.enqueueOne).not.toHaveBeenCalled();
   });
 
   it('exhausting all retry attempts on a persistent P2028 propagates the error rather than silently giving up', async () => {
     jest.useFakeTimers();
     try {
-      const p2028 = new Prisma.PrismaClientKnownRequestError('Transaction already closed', {
-        code: 'P2028',
-        clientVersion: '5.22.0',
-      });
+      const p2028 = new Prisma.PrismaClientKnownRequestError(
+        'Transaction already closed',
+        {
+          code: 'P2028',
+          clientVersion: '5.22.0',
+        },
+      );
       sweepCursorRepository.read.mockResolvedValue(undefined);
       organizationsRepository.findStaleUsageOrganizationIds.mockRejectedValue(p2028);
 
@@ -255,7 +286,9 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
       await jest.runAllTimersAsync();
       await expect(runPromise).rejects.toThrow('Transaction already closed');
       // Exactly 6 attempts (the bounded retry count) — never an unbounded/infinite retry loop.
-      expect(organizationsRepository.findStaleUsageOrganizationIds).toHaveBeenCalledTimes(6);
+      expect(organizationsRepository.findStaleUsageOrganizationIds).toHaveBeenCalledTimes(
+        6,
+      );
     } finally {
       jest.useRealTimers();
     }

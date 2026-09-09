@@ -14,7 +14,10 @@ import {
   MIN_SUBDOMAIN_LENGTH,
   SUBDOMAIN_REGEX,
 } from './provisioning.constants';
-import { WEBSITE_SETUP_MODES, WEBSITE_THEME_KEYS } from '../../website/constants/website.constants';
+import {
+  WEBSITE_SETUP_MODES,
+  WEBSITE_THEME_KEYS,
+} from '../../website/constants/website.constants';
 
 export class CreateProvisioningRequestDto {
   @IsNotEmpty()

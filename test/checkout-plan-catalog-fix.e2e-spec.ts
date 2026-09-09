@@ -189,7 +189,7 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
     expect(response.body.error.retryable).toBe(false);
   });
 
-  it('a new organization\'s default trial plan is a real, priced, customer-facing plan — never a fixture', async () => {
+  it("a new organization's default trial plan is a real, priced, customer-facing plan — never a fixture", async () => {
     // Reproduces the SECOND bug this investigation found: before the fix,
     // `findDefaultTrialPlan` had no `displayOrder` floor either, so every
     // brand-new organization silently trialed on whichever fixture plan
@@ -214,15 +214,20 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
     });
 
     expect(subscription).not.toBeNull();
-    expect((REAL_PLAN_KEYS as readonly string[])).toContain(subscription!.plan.key);
-    const pricing = subscription!.plan.pricing as { amount?: number; currency?: string } | null;
+    expect(REAL_PLAN_KEYS as readonly string[]).toContain(subscription!.plan.key);
+    const pricing = subscription!.plan.pricing as {
+      amount?: number;
+      currency?: string;
+    } | null;
     expect(pricing?.amount).toBeDefined();
     expect(pricing?.currency).toBeTruthy();
   });
 
   it('a plan reported via /plans/:key that is archived never appears in the checkout-eligible catalog, and checkout against it fails as a real plan-not-found, not a silent success', async () => {
     const { user, org } = await newAccountWithOrg('checkout-archived');
-    const archived: Plan = await seedPlan(admin, 'archived-checkout-plan', { status: 'archived' });
+    const archived: Plan = await seedPlan(admin, 'archived-checkout-plan', {
+      status: 'archived',
+    });
 
     const response = await request(app.getHttpServer())
       .post(`/organizations/${org.id}/checkouts`)

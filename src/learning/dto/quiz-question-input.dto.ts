@@ -32,7 +32,11 @@ import {
   MAX_QUIZ_QUESTION_PROMPT_LENGTH,
 } from './learning.constants';
 
-const QUIZ_QUESTION_TYPE_VALUES = ['single_choice', 'multiple_choice', 'true_false'] as const;
+const QUIZ_QUESTION_TYPE_VALUES = [
+  'single_choice',
+  'multiple_choice',
+  'true_false',
+] as const;
 
 export class QuizQuestionOptionInputDto {
   @IsNotEmpty()

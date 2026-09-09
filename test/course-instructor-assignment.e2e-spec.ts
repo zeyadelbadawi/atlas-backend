@@ -168,7 +168,9 @@ describe('Instructor <-> Course Assignment (e2e) — Phase 3', () => {
       .expect(200);
 
     await request(app.getHttpServer())
-      .delete(`/academies/${academy.id}/courses/${course.id}/instructors/${instructor.userId}`)
+      .delete(
+        `/academies/${academy.id}/courses/${course.id}/instructors/${instructor.userId}`,
+      )
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(204);
 
@@ -186,13 +188,15 @@ describe('Instructor <-> Course Assignment (e2e) — Phase 3', () => {
       .get('/instructor/courses')
       .set('Authorization', `Bearer ${instructor.accessToken}`)
       .expect(200);
-    expect(teaching.body.items.map((c: { courseId: string }) => c.courseId)).not.toContain(
-      course.id,
-    );
+    expect(
+      teaching.body.items.map((c: { courseId: string }) => c.courseId),
+    ).not.toContain(course.id);
 
     // Removing twice is a genuine 404 (no row to remove), not a silent success.
     await request(app.getHttpServer())
-      .delete(`/academies/${academy.id}/courses/${course.id}/instructors/${instructor.userId}`)
+      .delete(
+        `/academies/${academy.id}/courses/${course.id}/instructors/${instructor.userId}`,
+      )
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(404);
   }, 20000);

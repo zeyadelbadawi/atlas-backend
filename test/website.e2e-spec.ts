@@ -247,7 +247,10 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       authAction: 'signUp',
     });
     expect(withAuthPages.body.header.authPages).toMatchObject({
-      signIn: { title: { en: 'Welcome back', ar: '' }, subtitle: { en: 'Sign in to continue learning', ar: '' } },
+      signIn: {
+        title: { en: 'Welcome back', ar: '' },
+        subtitle: { en: 'Sign in to continue learning', ar: '' },
+      },
       signUp: { title: { en: 'Join us', ar: '' } },
     });
 
@@ -259,7 +262,10 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       label: { en: 'Sign Up', ar: '' },
       authAction: 'signUp',
     });
-    expect(fetched.body.header.authPages.signIn.title).toEqual({ en: 'Welcome back', ar: '' });
+    expect(fetched.body.header.authPages.signIn.title).toEqual({
+      en: 'Welcome back',
+      ar: '',
+    });
   });
 
   it('a footer social link with a real label persists; an empty label is rejected (documents the constraint the "Add link" UI must satisfy)', async () => {
@@ -367,7 +373,10 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .send({ sections: validSections })
       .expect(200);
     expect(updated.body.sections).toHaveLength(1);
-    expect(updated.body.sections[0].config.title).toEqual({ en: 'Welcome to our academy', ar: '' });
+    expect(updated.body.sections[0].config.title).toEqual({
+      en: 'Welcome to our academy',
+      ar: '',
+    });
 
     // Unregistered section type.
     await request(app.getHttpServer())

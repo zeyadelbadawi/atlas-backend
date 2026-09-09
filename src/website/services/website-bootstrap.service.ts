@@ -55,7 +55,11 @@ export const CORE_PAGE_DEFAULTS: Record<
   courses: { title: 'Courses', titleAr: 'الدورات', slug: 'courses' },
   faqs: { title: 'FAQs', titleAr: 'الأسئلة الشائعة', slug: 'faqs' },
   contact: { title: 'Contact', titleAr: 'تواصل معنا', slug: 'contact' },
-  courseDetails: { title: 'Course Details', titleAr: 'تفاصيل الدورة', slug: 'course-details' },
+  courseDetails: {
+    title: 'Course Details',
+    titleAr: 'تفاصيل الدورة',
+    slug: 'course-details',
+  },
 };
 
 function isUniqueConstraintViolation(error: unknown): boolean {

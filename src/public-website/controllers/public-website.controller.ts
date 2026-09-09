@@ -128,7 +128,10 @@ export class PublicWebsiteController {
     @Param('academyId') academyId: string,
     @Param('courseId') courseId: string,
   ): Promise<readonly PublicCourseCurriculumSectionResponse[]> {
-    const curriculum = await this.publicWebsiteService.getPublicCourseCurriculum(academyId, courseId);
+    const curriculum = await this.publicWebsiteService.getPublicCourseCurriculum(
+      academyId,
+      courseId,
+    );
     if (!curriculum) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return curriculum;
   }
@@ -140,7 +143,10 @@ export class PublicWebsiteController {
     @Param('academyId') academyId: string,
     @Body() body: SubmitContactMessageDto,
   ): Promise<ContactSubmissionResponse> {
-    const submission = await this.publicWebsiteService.submitContactMessage(academyId, body);
+    const submission = await this.publicWebsiteService.submitContactMessage(
+      academyId,
+      body,
+    );
     if (!submission) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return submission;
   }

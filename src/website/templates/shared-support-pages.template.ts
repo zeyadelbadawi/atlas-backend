@@ -22,7 +22,7 @@ export function buildSharedSupportPages(): readonly WebsiteTemplatePage[] {
             title: lt('About {{academyName}}', 'نبذة عن {{academyName}}'),
             body: lt(
               "Welcome to {{academyName}}. We're dedicated to helping our students learn new skills, grow their expertise, and achieve their goals through high-quality courses and expert instruction.",
-              'مرحبًا بكم في {{academyName}}. نحن ملتزمون بمساعدة طلابنا على اكتساب مهارات جديدة وتطوير خبراتهم وتحقيق أهدافهم من خلال دورات عالية الجودة وتعليم احترافي.'
+              'مرحبًا بكم في {{academyName}}. نحن ملتزمون بمساعدة طلابنا على اكتساب مهارات جديدة وتطوير خبراتهم وتحقيق أهدافهم من خلال دورات عالية الجودة وتعليم احترافي.',
             ),
           },
         },
@@ -33,12 +33,18 @@ export function buildSharedSupportPages(): readonly WebsiteTemplatePage[] {
       sections: [
         {
           type: 'featuredCourses',
-          dynamicDefaults: { mode: 'latest', layout: 'grid', count: 9, showPrice: true, showInstructor: true },
+          dynamicDefaults: {
+            mode: 'latest',
+            layout: 'grid',
+            count: 9,
+            showPrice: true,
+            showInstructor: true,
+          },
           starterContent: {
             title: lt('Our Courses', 'دوراتنا'),
             description: lt(
               'Explore our full range of courses and find the right one for you.',
-              'استكشف مجموعتنا الكاملة من الدورات واختر الأنسب لك.'
+              'استكشف مجموعتنا الكاملة من الدورات واختر الأنسب لك.',
             ),
           },
         },
@@ -54,18 +60,24 @@ export function buildSharedSupportPages(): readonly WebsiteTemplatePage[] {
             items: [
               {
                 id: 'faq-enroll',
-                question: lt('How do I enroll in a course?', 'كيف يمكنني التسجيل في دورة؟'),
+                question: lt(
+                  'How do I enroll in a course?',
+                  'كيف يمكنني التسجيل في دورة؟',
+                ),
                 answer: lt(
                   "Create an account, browse our course catalog, and click enroll on the course you'd like to join.",
-                  'أنشئ حسابًا، تصفّح كتالوج الدورات، ثم انقر على زر التسجيل في الدورة التي ترغب بالانضمام إليها.'
+                  'أنشئ حسابًا، تصفّح كتالوج الدورات، ثم انقر على زر التسجيل في الدورة التي ترغب بالانضمام إليها.',
                 ),
               },
               {
                 id: 'faq-experience',
-                question: lt('Do I need any prior experience?', 'هل أحتاج إلى خبرة سابقة؟'),
+                question: lt(
+                  'Do I need any prior experience?',
+                  'هل أحتاج إلى خبرة سابقة؟',
+                ),
                 answer: lt(
                   "Most of our courses are designed for learners of all levels — check each course's own description for specific requirements.",
-                  'معظم دوراتنا مصممة لمتعلمين من جميع المستويات، يرجى مراجعة وصف كل دورة للاطلاع على متطلباتها الخاصة.'
+                  'معظم دوراتنا مصممة لمتعلمين من جميع المستويات، يرجى مراجعة وصف كل دورة للاطلاع على متطلباتها الخاصة.',
                 ),
               },
             ],
@@ -83,7 +95,7 @@ export function buildSharedSupportPages(): readonly WebsiteTemplatePage[] {
             title: lt('Get in Touch', 'تواصل معنا'),
             description: lt(
               "Have a question? We'd love to hear from you.",
-              'هل لديك سؤال؟ يسعدنا التواصل معك.'
+              'هل لديك سؤال؟ يسعدنا التواصل معك.',
             ),
           },
         },

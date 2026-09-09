@@ -294,7 +294,9 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     expect(final.status).toBe('ready');
     expect(final.websiteSetupMode).toBe('complete');
 
-    const pages = await admin.websitePage.findMany({ where: { academyId: final.academyId } });
+    const pages = await admin.websitePage.findMany({
+      where: { academyId: final.academyId },
+    });
     const byCoreType = Object.fromEntries(pages.map((page) => [page.coreType, page]));
 
     // The 4 shared support pages + Home all exist — never zero sections.
@@ -303,7 +305,10 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       expect((byCoreType[coreType]!.sections as unknown[]).length).toBeGreaterThan(0);
     }
 
-    const homeSections = byCoreType.home!.sections as Array<{ type: string; config: Record<string, unknown> }>;
+    const homeSections = byCoreType.home!.sections as Array<{
+      type: string;
+      config: Record<string, unknown>;
+    }>;
     const hero = homeSections.find((section) => section.type === 'hero');
     expect(hero).toBeTruthy();
     const heroTitle = hero!.config.title as { en: string; ar: string };
@@ -316,7 +321,10 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     // Statistics is generated with a LIVE metric, never a hardcoded number — a brand-new Academy has 0 courses/students/instructors.
     const statistics = homeSections.find((section) => section.type === 'statistics');
     expect(statistics).toBeTruthy();
-    const items = statistics!.config.items as Array<{ metric?: string; value: { en: string } }>;
+    const items = statistics!.config.items as Array<{
+      metric?: string;
+      value: { en: string };
+    }>;
     expect(items.every((item) => !!item.metric)).toBe(true);
 
     // Hero's CTA target was resolved to the REAL Courses page id (ctaTargets → pageId), not left dangling.
@@ -324,7 +332,9 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     expect(cta?.pageId).toBe(byCoreType.courses!.id);
 
     // Navigation + footer + header CTA were generated too (structure/polish, §6 of the specification).
-    const configuration = await admin.websiteConfiguration.findUnique({ where: { academyId: final.academyId } });
+    const configuration = await admin.websiteConfiguration.findUnique({
+      where: { academyId: final.academyId },
+    });
     expect((configuration?.navigation as unknown[]).length).toBeGreaterThan(0);
     const footer = configuration?.footer as { groups: unknown[] };
     expect(footer.groups.length).toBeGreaterThan(0);
@@ -357,7 +367,10 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       where: { academyId: final.academyId, coreType: 'home' },
     });
     expect(homePage).toBeTruthy();
-    const sections = homePage!.sections as Array<{ type: string; config: Record<string, unknown> }>;
+    const sections = homePage!.sections as Array<{
+      type: string;
+      config: Record<string, unknown>;
+    }>;
     expect(sections.length).toBeGreaterThan(0);
 
     const hero = sections.find((section) => section.type === 'hero');
@@ -368,7 +381,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
 
   // --- 3e. Phase 6 — idempotency / non-destructive re-generation --------------
 
-  it('3e: re-running generation for an already-generated Academy never overwrites an Owner\'s real edit', async () => {
+  it("3e: re-running generation for an already-generated Academy never overwrites an Owner's real edit", async () => {
     const { owner, org } = await arrangeOrg('idempotent-gen');
     const subdomain = uniqueSubdomain('idempotent-gen');
     const created = await request(app.getHttpServer())
@@ -387,12 +400,21 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     const academyId = final.academyId as string;
 
     // Simulate an Owner's real edit to the generated Home page.
-    const homePage = await admin.websitePage.findFirst({ where: { academyId, coreType: 'home' } });
-    const editedSections = (homePage!.sections as Array<{ type: string; config: Record<string, unknown> }>).map(
-      (section) =>
-        section.type === 'hero'
-          ? { ...section, config: { ...section.config, title: { en: 'My Own Edited Title', ar: 'عنواني المعدّل' } } }
-          : section,
+    const homePage = await admin.websitePage.findFirst({
+      where: { academyId, coreType: 'home' },
+    });
+    const editedSections = (
+      homePage!.sections as Array<{ type: string; config: Record<string, unknown> }>
+    ).map((section) =>
+      section.type === 'hero'
+        ? {
+            ...section,
+            config: {
+              ...section.config,
+              title: { en: 'My Own Edited Title', ar: 'عنواني المعدّل' },
+            },
+          }
+        : section,
     );
     await admin.websitePage.update({
       where: { id: homePage!.id },
@@ -409,16 +431,23 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       websiteGenerationService.generate(tx, academyId, 'premium-academy', 'complete'),
     );
 
-    const afterRegeneration = await admin.websitePage.findFirst({ where: { academyId, coreType: 'home' } });
-    const heroAfter = (afterRegeneration!.sections as Array<{ type: string; config: Record<string, unknown> }>).find(
-      (section) => section.type === 'hero',
-    );
+    const afterRegeneration = await admin.websitePage.findFirst({
+      where: { academyId, coreType: 'home' },
+    });
+    const heroAfter = (
+      afterRegeneration!.sections as Array<{
+        type: string;
+        config: Record<string, unknown>;
+      }>
+    ).find((section) => section.type === 'hero');
     const titleAfter = heroAfter!.config.title as { en: string; ar: string };
     expect(titleAfter.en).toBe('My Own Edited Title');
     expect(titleAfter.ar).toBe('عنواني المعدّل');
 
     // No duplicate page was created either.
-    const homePagesCount = await admin.websitePage.count({ where: { academyId, coreType: 'home' } });
+    const homePagesCount = await admin.websitePage.count({
+      where: { academyId, coreType: 'home' },
+    });
     expect(homePagesCount).toBe(1);
   });
 

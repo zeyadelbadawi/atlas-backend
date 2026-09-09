@@ -15,7 +15,10 @@
  * Published lessons only, same rule `CourseContentService` already
  * applies for enrolled students.
  */
-import type { CourseLesson as PrismaCourseLesson, CourseSection as PrismaCourseSection } from '@prisma/client';
+import type {
+  CourseLesson as PrismaCourseLesson,
+  CourseSection as PrismaCourseSection,
+} from '@prisma/client';
 
 export interface PublicCourseCurriculumLessonResponse {
   readonly id: string;

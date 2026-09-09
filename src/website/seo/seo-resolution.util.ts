@@ -45,7 +45,10 @@
  * "UNRESOLVED... no live UI consumer" (see prior revisions of this file's
  * doc comment).
  */
-import { PUBLIC_WEBSITE_LOCALES, type PublicWebsiteLocale } from '../constants/locale.constants';
+import {
+  PUBLIC_WEBSITE_LOCALES,
+  type PublicWebsiteLocale,
+} from '../constants/locale.constants';
 import { resolveLocalizedText } from '../utils/localized-text.util';
 import type {
   CourseSeoInput,
@@ -84,8 +87,12 @@ export function resolvePageSeo(
       : 'fallback';
 
   const pageMetaDescription = resolveLocalizedText(page.seo.metaDescription, locale);
-  const globalMetaDescription = resolveLocalizedText(configuration.seo.metaDescription, locale);
-  const description = pageMetaDescription || globalMetaDescription || fallback.description;
+  const globalMetaDescription = resolveLocalizedText(
+    configuration.seo.metaDescription,
+    locale,
+  );
+  const description =
+    pageMetaDescription || globalMetaDescription || fallback.description;
   const descriptionSource: ResolvedSeoMetadata['descriptionSource'] = pageMetaDescription
     ? 'override'
     : globalMetaDescription

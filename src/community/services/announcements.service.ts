@@ -327,10 +327,11 @@ export class AnnouncementsService {
     const page = query?.page ?? DEFAULT_PAGE;
     const pageSize = query?.pageSize ?? DEFAULT_PAGE_SIZE;
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      const { items, totalItems } = await this.announcementsRepository.findManyForPlatform(tx, {
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      });
+      const { items, totalItems } =
+        await this.announcementsRepository.findManyForPlatform(tx, {
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        });
       return {
         items: items.map((a) => toAnnouncementResponse(a, a.author.name)),
         pagination: buildPaginationMeta(page, pageSize, totalItems),

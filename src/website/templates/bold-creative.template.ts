@@ -22,10 +22,13 @@ export const boldCreativeTemplate: WebsiteTemplateDefinition = {
           ctaTargets: { cta: 'courses' },
           starterContent: {
             eyebrow: lt('Make Something Real', 'اصنع شيئًا حقيقيًا'),
-            title: lt('Create, Build, and Stand Out at {{academyName}}', 'أبدع وابنِ وتميّز مع {{academyName}}'),
+            title: lt(
+              'Create, Build, and Stand Out at {{academyName}}',
+              'أبدع وابنِ وتميّز مع {{academyName}}',
+            ),
             description: lt(
               'Hands-on courses for makers, designers, and creators who want more than theory.',
-              'دورات عملية للمبدعين والمصممين وصنّاع المحتوى الذين يبحثون عن أكثر من مجرد النظرية.'
+              'دورات عملية للمبدعين والمصممين وصنّاع المحتوى الذين يبحثون عن أكثر من مجرد النظرية.',
             ),
             cta: { label: lt('See What You Can Learn', 'اكتشف ما يمكنك تعلّمه') },
           },
@@ -36,13 +39,19 @@ export const boldCreativeTemplate: WebsiteTemplateDefinition = {
             title: lt('Learn by Doing', 'تعلّم من خلال الممارسة'),
             body: lt(
               'At {{academyName}}, every course is built around making real things — not just watching, but doing. That’s how skills that actually stick get built.',
-              'في {{academyName}}، كل دورة مبنية حول صنع أشياء حقيقية — ليس فقط المشاهدة، بل الممارسة الفعلية. هكذا تُبنى المهارات التي تدوم.'
+              'في {{academyName}}، كل دورة مبنية حول صنع أشياء حقيقية — ليس فقط المشاهدة، بل الممارسة الفعلية. هكذا تُبنى المهارات التي تدوم.',
             ),
           },
         },
         {
           type: 'featuredCourses',
-          dynamicDefaults: { mode: 'latest', layout: 'carousel', count: 4, showPrice: true, showInstructor: true },
+          dynamicDefaults: {
+            mode: 'latest',
+            layout: 'carousel',
+            count: 4,
+            showPrice: true,
+            showInstructor: true,
+          },
           starterContent: {
             title: lt('Start Creating', 'ابدأ الإبداع'),
           },
@@ -68,13 +77,19 @@ export const boldCreativeTemplate: WebsiteTemplateDefinition = {
               {
                 id: 'feature-projects',
                 title: lt('Real Projects', 'مشاريع حقيقية'),
-                description: lt('Build a portfolio, not just a certificate.', 'ابنِ معرض أعمال، لا مجرد شهادة.'),
+                description: lt(
+                  'Build a portfolio, not just a certificate.',
+                  'ابنِ معرض أعمال، لا مجرد شهادة.',
+                ),
                 icon: 'Sparkles',
               },
               {
                 id: 'feature-creators',
                 title: lt('Taught by Creators', 'يُقدَّم من قبل مبدعين'),
-                description: lt('Instructors who make a living doing this work.', 'مدرّبون يعملون فعليًا في هذا المجال.'),
+                description: lt(
+                  'Instructors who make a living doing this work.',
+                  'مدرّبون يعملون فعليًا في هذا المجال.',
+                ),
                 icon: 'Video',
               },
             ],

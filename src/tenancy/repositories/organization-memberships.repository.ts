@@ -66,7 +66,10 @@ export class OrganizationMembershipsRepository {
    * sets `isPrimary: true` must clear prior primaries first, in the same
    * transaction.
    */
-  clearPrimaryForUser(tx: Prisma.TransactionClient, userId: string): Promise<Prisma.BatchPayload> {
+  clearPrimaryForUser(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<Prisma.BatchPayload> {
     return tx.organizationMembership.updateMany({
       where: { userId, isPrimary: true },
       data: { isPrimary: false },

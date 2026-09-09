@@ -117,7 +117,7 @@ describe('Phase 10 session security (e2e) — P10-SEC-001..014', () => {
     expect(aliceIds.filter((id: string) => bobIds.includes(id))).toHaveLength(0);
   });
 
-  it('P10-SEC-002 — organization/academy membership never exposes another user\'s sessions', async () => {
+  it("P10-SEC-002 — organization/academy membership never exposes another user's sessions", async () => {
     // There is deliberately no endpoint that accepts a user id at all:
     // `GET /auth/sessions` is scoped entirely by the bearer token, so
     // there is no parameter an attacker could point elsewhere. The
@@ -170,7 +170,7 @@ describe('Phase 10 session security (e2e) — P10-SEC-001..014', () => {
       .expect(401);
   });
 
-  it('P10-SEC-005 — a revoked session\'s ACCESS token is refused on the very next request', async () => {
+  it("P10-SEC-005 — a revoked session's ACCESS token is refused on the very next request", async () => {
     const email = await registerUser('p10-005');
     const laptop = await signInAs(email, CHROME_MAC);
     const desktop = await signInAs(email, FIREFOX_WINDOWS);
@@ -189,7 +189,7 @@ describe('Phase 10 session security (e2e) — P10-SEC-001..014', () => {
     await listSessions(desktop.accessToken).expect(401);
   });
 
-  it('P10-SEC-006 — one user cannot revoke another user\'s session', async () => {
+  it("P10-SEC-006 — one user cannot revoke another user's session", async () => {
     const victimEmail = await registerUser('p10-006-victim');
     const attackerEmail = await registerUser('p10-006-attacker');
     const victim = await signInAs(victimEmail, CHROME_MAC);

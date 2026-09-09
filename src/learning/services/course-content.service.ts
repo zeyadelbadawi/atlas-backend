@@ -58,7 +58,10 @@ export class CourseContentService {
         userId,
         courseId,
       );
-      const sections = await this.courseSectionsRepository.findManyForCourse(tx, courseId);
+      const sections = await this.courseSectionsRepository.findManyForCourse(
+        tx,
+        courseId,
+      );
       const items = sections
         .map((section) => ({
           ...section,
