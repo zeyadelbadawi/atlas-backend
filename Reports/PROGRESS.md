@@ -3151,12 +3151,42 @@ an explicit "not tracked here" state. Reporting `0` there would have been
 a fabricated figure dressed as a real one.
 
 **Testing** — new `phase8-support-audit-dashboard-tenant-isolation.
-e2e-spec.ts`, P8-TENANT-001..011, all 11 required scenarios, 10/10
-passing against real Postgres/Redis. The suite found two real defects
-before any deploy: the missing message-insert RLS policy above, and a
-`createAutoSupportCase` call that was documented as best-effort but not
-actually wrapped — an escape there would have failed the BullMQ job and
-retried a request whose state had already committed correctly.
+e2e-spec.ts`, P8-TENANT-001..011 (plus 004b, added later — see below),
+11/11 passing against real Postgres/Redis. The suite found two real
+defects before any deploy: the missing message-insert RLS policy above,
+and a `createAutoSupportCase` call that was documented as best-effort but
+not actually wrapped — an escape there would have failed the BullMQ job
+and retried a request whose state had already committed correctly.
+
+**Two further defects found only in production browser verification**,
+neither reproducible locally, both fixed and redeployed:
+
+1. *An Academy Manager could read the organization-wide dashboard.*
+   `OrganizationMembershipGuard` proves the caller has *a* membership —
+   which a Manager legitimately has (`AcademiesService.addManager` creates
+   one). Membership alone was enough to reach
+   `GET /organizations/:id/dashboard`. Invisible in the verification org
+   (one academy, so both scopes report identical numbers), but with two
+   academies a Manager of Academy A would have read aggregates spanning
+   Academy B — precisely what Decision 2 forbids at the API layer. The
+   route now also requires `tenant.dashboard.view`, the real
+   owner-exclusive string already in `ORGANIZATION_OWNER_PERMISSIONS` and
+   deliberately absent from the manager set. P8-TENANT-004b reproduces the
+   two-academy conditions the production org could not.
+   This also surfaced that `seedOrganizationWithOwner` had always created
+   fixture owners with an EMPTY `permissions` array — harmless while
+   nothing read that column, unrepresentative the moment something does.
+   It now grants `ORGANIZATION_OWNER_PERMISSIONS`, matching
+   `OrganizationsService.create`.
+
+2. *The dashboard showed "no workspace selected" to an owner who had one*
+   (frontend). `useDashboardScope` read `activeOrganizationId` from
+   `PlatformProvider`, which deliberately never restores that value on
+   mount — it is set only by an explicit organization SWITCH, so it is
+   undefined for every user who simply signed in, which is every user with
+   one organization. It now falls back to the user's real primary (else
+   first) membership, the same resolution
+   `SessionService.selectPrimaryOrganization` already uses.
 
 **Pre-existing conditions confirmed unchanged by this phase** (each
 verified by stashing this work and re-running against clean `main` in the
