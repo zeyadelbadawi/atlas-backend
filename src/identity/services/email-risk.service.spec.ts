@@ -17,8 +17,13 @@ jest.mock('node:dns/promises', () => ({
   resolve6: jest.fn(),
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const dns = require('node:dns/promises') as {
+// Imported normally and then cast to the mocked shape — `jest.mock` above
+// is hoisted, so by the time this binding is used it already refers to
+// the mock. Avoids a `require()` call, which this project's lint config
+// forbids.
+import * as dnsPromises from 'node:dns/promises';
+
+const dns = dnsPromises as unknown as {
   resolveMx: jest.Mock;
   resolve4: jest.Mock;
   resolve6: jest.Mock;
