@@ -87,7 +87,7 @@ export class WebsitePagesService {
     }
   }
 
-  /** Phase 1 (Extended Scope, dependency A) — see `WebsiteConfigurationService.assertIsMember`'s doc comment for why reads need this and writes already had it. */
+  /** Phase 1 (Extended Scope, dependency A), narrowed to the managing tier in Phase 9 — see `WebsiteConfigurationService.assertIsMember`'s doc comment for both changes and why an Instructor must be refused here. */
   private async assertIsMember(
     tx: Prisma.TransactionClient,
     academyId: string,
@@ -98,7 +98,7 @@ export class WebsitePagesService {
       academyId,
       userId,
     );
-    if (!membership) {
+    if (!membership || !MANAGING_ROLES.has(membership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
   }

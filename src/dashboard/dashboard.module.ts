@@ -31,10 +31,19 @@ import { BillingModule } from '../billing/billing.module';
 import { DashboardController } from './controllers/dashboard.controller';
 import { DashboardService } from './services/dashboard.service';
 import { DashboardMetricsRepository } from './repositories/dashboard-metrics.repository';
+// Phase 9 — the Client Owner's student progress rollup (roadmap CO11).
+import { StudentAnalyticsController } from './controllers/student-analytics.controller';
+import { StudentAnalyticsService } from './services/student-analytics.service';
+import { StudentAnalyticsRepository } from './repositories/student-analytics.repository';
 
 @Module({
   imports: [AuthCoreModule, TenancyModule, AcademyModule, PlansModule, BillingModule],
-  controllers: [DashboardController],
-  providers: [DashboardService, DashboardMetricsRepository],
+  controllers: [DashboardController, StudentAnalyticsController],
+  providers: [
+    DashboardService,
+    DashboardMetricsRepository,
+    StudentAnalyticsService,
+    StudentAnalyticsRepository,
+  ],
 })
 export class DashboardModule {}

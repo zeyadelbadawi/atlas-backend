@@ -234,7 +234,7 @@ describe('Academy tenant isolation (e2e) — P3-TENANT-001..010', () => {
     }
   });
 
-  it('P3-TENANT-010: organization membership alone is never sufficient to WRITE — an org member with no academy_members row is denied PATCH; a random academy id is also rejected', async () => {
+  it('P3-TENANT-010: organization membership alone is never sufficient to read OR write an Academy — an org member with no academy_members row is denied both; a random academy id is also rejected', async () => {
     const owner = await signUpAndSignIn(app, 't010-owner');
     const orgMemberOnly = await signUpAndSignIn(app, 't010-org-member-only');
     const org = await seedOrganizationWithOwner(admin, owner.userId, 't010-org');
@@ -244,10 +244,26 @@ describe('Academy tenant isolation (e2e) — P3-TENANT-001..010', () => {
     const academy = await seedAcademy(admin, org.id, 't010-a');
     await seedAcademyMember(admin, academy.id, owner.userId);
 
-    // Read is allowed — org membership alone governs read visibility.
+    // Read is ALSO denied, as of Phase 9 (roadmap finding I1). This is a
+    // deliberate, documented tightening of P3's original contract, which
+    // let organization membership alone govern Academy read visibility.
+    // That rule admitted an Instructor to the Academy Overview, and Phase
+    // 9's acceptance criterion requires a real 403 there through a direct
+    // API call rather than a hidden navigation link — so
+    // `AcademiesService.getById` now requires the same managing tier
+    // (`owner`/`administrator`/`manager`) every Academy WRITE already
+    // required, and this org-member-only caller no longer qualifies
+    // either. See that method's own doc comment.
     await request(app.getHttpServer())
       .get(`/academies/${academy.id}`)
       .set('Authorization', `Bearer ${orgMemberOnly.accessToken}`)
+      .expect(403);
+
+    // The academy's real owner is unaffected — the read is restricted,
+    // not broken.
+    await request(app.getHttpServer())
+      .get(`/academies/${academy.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(200);
 
     // Write is denied — org membership is explicitly NOT assumed to imply

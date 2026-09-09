@@ -30,7 +30,17 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-que
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { Prisma } from '@prisma/client';
 
-const AUTHORING_ROLES = ['owner', 'administrator', 'manager', 'instructor', 'staff'];
+/**
+ * Phase 9 (roadmap finding I1) removed `'instructor'` from this set. The
+ * Blog is one of the three surfaces the roadmap identified as still
+ * leaking to Instructors, and its acceptance criterion requires a real
+ * 403 through a direct API call, not just a hidden navigation link — so
+ * the matching `blog.view` string was dropped from
+ * `ORGANIZATION_INSTRUCTOR_PERMISSIONS` at the same time. `'staff'` is
+ * deliberately kept: staff are an academy's content/administrative
+ * people and were never named as leaking.
+ */
+const AUTHORING_ROLES = ['owner', 'administrator', 'manager', 'staff'];
 
 @Injectable()
 export class BlogPostsService {
@@ -181,9 +191,10 @@ export class BlogPostsService {
   ): Promise<BlogPostResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
       await this.assertOwnsPost(tx, userId, id);
-      const scheduledAt = payload.scheduledAt !== undefined
-        ? this.assertValidScheduledAt(payload.scheduledAt)
-        : undefined;
+      const scheduledAt =
+        payload.scheduledAt !== undefined
+          ? this.assertValidScheduledAt(payload.scheduledAt)
+          : undefined;
       const updated = await this.blogPostsRepository.update(tx, id, {
         title: payload.title,
         slug: payload.slug,
@@ -193,7 +204,12 @@ export class BlogPostsService {
         category: payload.category,
         tags: payload.tags ? [...payload.tags] : undefined,
         scheduledAt,
-        status: payload.scheduledAt !== undefined ? (scheduledAt ? 'scheduled' : 'draft') : undefined,
+        status:
+          payload.scheduledAt !== undefined
+            ? scheduledAt
+              ? 'scheduled'
+              : 'draft'
+            : undefined,
         metaTitle: payload.metaTitle,
         metaDescription: payload.metaDescription,
         ogImage: payload.ogImage,

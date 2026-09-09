@@ -82,10 +82,16 @@ export class WebsiteConfigurationService {
    * one gap `assertCanManage` (write-only) never closed: `AcademyScopeGuard`
    * only proves organization membership, so before this check a Manager
    * assigned to Academy A could read Academy B's website configuration
-   * merely because both share an Organization. Any real academy role
-   * (not just the managing tier) is sufficient to read — matching
-   * `academies_academy_member_select`'s own "any real membership" RLS
-   * precedent for the Academy record itself.
+   * merely because both share an Organization.
+   *
+   * Phase 9 (roadmap finding I1) narrowed it further. Requiring "any real
+   * academy role" still admitted an Instructor, and the roadmap's
+   * acceptance criterion is that an Instructor receives a 403 on the
+   * Website surface through a direct API call, not merely a hidden link.
+   * Website reads now require the same managing tier every website WRITE
+   * already required, so an Instructor is refused consistently on both.
+   * The method keeps its name because its job — "is this caller entitled
+   * to this academy's website at all" — is unchanged; only the tier moved.
    */
   private async assertIsMember(
     tx: Prisma.TransactionClient,
@@ -97,7 +103,7 @@ export class WebsiteConfigurationService {
       academyId,
       userId,
     );
-    if (!membership) {
+    if (!membership || !MANAGING_ROLES.has(membership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
   }

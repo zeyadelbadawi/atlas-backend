@@ -104,10 +104,26 @@ export const ORGANIZATION_MANAGER_PERMISSIONS: readonly string[] = [
  * `assertCanAuthorCourseContent`/`can_author_course_content()` (RLS),
  * which an Instructor still fails for any course they are not personally
  * assigned to, even with this permission string present.
+ *
+ * Phase 9 (roadmap finding I1, "instructor restrictions — remaining
+ * leaks") removed three strings this set used to carry: `academy.view`,
+ * `academy.website.view` and `blog.view`. They gated the Academy
+ * Overview, Website and Blog surfaces, none of which an Instructor has
+ * any product reason to reach — the Instructor's own surface is the
+ * Teaching Dashboard and their assigned courses.
+ *
+ * Removing them here only stops the frontend RENDERING those routes.
+ * That was never sufficient on its own, and Phase 9's acceptance
+ * criterion is explicit that a direct API call must also fail, so the
+ * matching server-side checks were tightened in the same phase:
+ * `AcademiesService.getById` (Academy Overview) now requires the
+ * managing tier, the three website services' read paths were raised from
+ * "any academy member" to that same tier, and `BlogPostsService`'s
+ * `AUTHORING_ROLES` no longer lists `instructor`. This list and those
+ * checks must be kept in step — a string removed here without its
+ * server-side counterpart is a hidden link, not a closed door.
  */
 export const ORGANIZATION_INSTRUCTOR_PERMISSIONS: readonly string[] = [
-  'academy.view',
-  'academy.website.view',
   'quiz.manage',
   'assignment.manage',
   'instructor.dashboard.view',
@@ -119,7 +135,6 @@ export const ORGANIZATION_INSTRUCTOR_PERMISSIONS: readonly string[] = [
   'announcement.view',
   'forum.view',
   'forum.thread.create',
-  'blog.view',
 ] as const;
 
 /**

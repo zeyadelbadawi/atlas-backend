@@ -168,10 +168,32 @@ export class AcademiesService {
     };
   }
 
-  async getById(academyId: string, organizationId: string): Promise<AcademyResponse> {
+  /**
+   * Academy Overview. Phase 9 (roadmap finding I1) added the
+   * `assertCanManage` check: `AcademyScopeGuard` proves only ORGANIZATION
+   * membership, which an Instructor legitimately has, so before this an
+   * Instructor could read the Academy Overview through a direct API call
+   * even once the frontend stopped rendering the link. Phase 9's
+   * acceptance criterion requires a real 403 there, not a hidden link.
+   *
+   * The managing tier (`owner`/`administrator`/`manager`) is the same set
+   * every Academy WRITE already required — this raises the read to match,
+   * rather than inventing a new tier. Verified before making the change
+   * that no Instructor surface consumes this endpoint: the Teaching
+   * Dashboard and My Courses resolve their own course-scoped data and
+   * never call `GET /academies/:id`.
+   */
+  async getById(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+  ): Promise<AcademyResponse> {
     const academy = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) => this.academiesRepository.findById(tx, academyId),
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        return this.academiesRepository.findById(tx, academyId);
+      },
     );
 
     if (!academy) {
@@ -202,7 +224,9 @@ export class AcademiesService {
               userId,
             );
           if (!actingMembership || !CREATES_ACADEMY_ROLES.has(actingMembership.role)) {
-            throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+            throw new ForbiddenException({
+              messageKey: 'errors.academy.insufficientRole',
+            });
           }
 
           // Phase 2 (Decision 4) — the live, write-time entitlement
@@ -353,9 +377,25 @@ export class AcademiesService {
     await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
   }
 
+  /**
+   * Academy Members. Phase 9 (roadmap: "`AcademiesService.getMembers`
+   * currently lacks the correct role restriction even though the frontend
+   * hides the link from Instructor") added the `assertCanManage` check —
+   * this method previously took no `userId` at all and performed no role
+   * check whatsoever, so any organization member reaching
+   * `AcademyScopeGuard` could list an academy's full staff roster (names
+   * and email addresses) through a direct API call.
+   *
+   * Students are unaffected by this change and were never able to reach
+   * it: a Student is an `academy_students` row and holds no
+   * `organization_memberships` row at all, so `AcademyScopeGuard` already
+   * refuses them one layer earlier. Both facts are asserted by this
+   * phase's own tests rather than assumed.
+   */
   async getMembers(
     academyId: string,
     organizationId: string,
+    userId: string,
     query: CollectionQueryDto,
   ): Promise<PaginatedResult<AcademyMemberResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
@@ -363,11 +403,13 @@ export class AcademiesService {
 
     const { items, totalItems } = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) =>
-        this.academyMembersRepository.findManyForAcademy(tx, academyId, {
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        return this.academyMembersRepository.findManyForAcademy(tx, academyId, {
           skip: (page - 1) * pageSize,
           take: pageSize,
-        }),
+        });
+      },
     );
 
     return {
@@ -749,18 +791,22 @@ export class AcademiesService {
     // (RLS) requires a real `app.current_user_id` (`is_academy_moderator`),
     // unlike `academy_members`' own tenant-only backstop; a plain
     // `runInTenantContext` would leave that setting unset.
-    return this.tenancyContextService.runInTenantAndUserContext(organizationId, userId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const { items, totalItems } = await this.contactSubmissionsRepository.findManyForAcademy(
-        tx,
-        academyId,
-        { skip: (page - 1) * pageSize, take: pageSize },
-      );
-      return {
-        items: items.map(toContactSubmissionResponse),
-        pagination: buildPaginationMeta(page, pageSize, totalItems),
-      };
-    });
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const { items, totalItems } =
+          await this.contactSubmissionsRepository.findManyForAcademy(tx, academyId, {
+            skip: (page - 1) * pageSize,
+            take: pageSize,
+          });
+        return {
+          items: items.map(toContactSubmissionResponse),
+          pagination: buildPaginationMeta(page, pageSize, totalItems),
+        };
+      },
+    );
   }
 
   /** Phase 6 — staff triage (mark read/archived); never re-opens the public write path. */
@@ -775,19 +821,26 @@ export class AcademiesService {
     // (RLS) requires a real `app.current_user_id` (`is_academy_moderator`)
     // in BOTH its `USING` and `WITH CHECK`; see `getContactSubmissions`'s
     // identical doc comment.
-    return this.tenancyContextService.runInTenantAndUserContext(organizationId, userId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      const existing = await this.contactSubmissionsRepository.findById(tx, submissionId);
-      if (!existing || existing.academyId !== academyId) {
-        throw new NotFoundException({ messageKey: 'errors.notFound' });
-      }
-      const updated = await this.contactSubmissionsRepository.updateStatus(
-        tx,
-        submissionId,
-        body.status,
-      );
-      return toContactSubmissionResponse(updated);
-    });
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.contactSubmissionsRepository.findById(
+          tx,
+          submissionId,
+        );
+        if (!existing || existing.academyId !== academyId) {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        const updated = await this.contactSubmissionsRepository.updateStatus(
+          tx,
+          submissionId,
+          body.status,
+        );
+        return toContactSubmissionResponse(updated);
+      },
+    );
   }
 
   /** Enforces the write-authorization rule documented on `AcademyScopeGuard`: organization membership alone is never sufficient to write. */

@@ -59,6 +59,7 @@ import { CourseProgressController } from './controllers/course-progress.controll
 import { QuizzesController } from './controllers/quizzes.controller';
 import { AssignmentsController } from './controllers/assignments.controller';
 import { CourseContentController } from './controllers/course-content.controller';
+import { StudentResultsController } from './controllers/student-results.controller';
 import { CourseDiscoveryService } from './services/course-discovery.service';
 import { EnrollmentsService } from './services/enrollments.service';
 import { CourseProgressService } from './services/course-progress.service';
@@ -69,9 +70,18 @@ import { EnrollmentsRepository } from './repositories/enrollments.repository';
 import { CourseProgressRepository } from './repositories/course-progress.repository';
 import { QuizzesRepository } from './repositories/quizzes.repository';
 import { AssignmentsRepository } from './repositories/assignments.repository';
+import { StudentResultsService } from './services/student-results.service';
+import { StudentResultsRepository } from './repositories/student-results.repository';
 
 @Module({
-  imports: [AuthCoreModule, TenancyModule, CourseModule, AcademyModule, PlansModule, MediaModule],
+  imports: [
+    AuthCoreModule,
+    TenancyModule,
+    CourseModule,
+    AcademyModule,
+    PlansModule,
+    MediaModule,
+  ],
   controllers: [
     CourseDiscoveryController,
     EnrollmentsController,
@@ -79,6 +89,8 @@ import { AssignmentsRepository } from './repositories/assignments.repository';
     QuizzesController,
     AssignmentsController,
     CourseContentController,
+    // Phase 9 — the student-facing "My Results" surface.
+    StudentResultsController,
   ],
   providers: [
     CourseDiscoveryService,
@@ -87,10 +99,12 @@ import { AssignmentsRepository } from './repositories/assignments.repository';
     QuizzesService,
     AssignmentsService,
     CourseContentService,
+    StudentResultsService,
     EnrollmentsRepository,
     CourseProgressRepository,
     QuizzesRepository,
     AssignmentsRepository,
+    StudentResultsRepository,
   ],
   exports: [EnrollmentsService, EnrollmentsRepository],
 })

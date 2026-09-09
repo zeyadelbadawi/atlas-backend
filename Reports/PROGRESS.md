@@ -3215,7 +3215,114 @@ accumulation under a 6-suite `--runInBand` run, and an `afterAll`
 teardown timeout in `courses.e2e-spec.ts` in which no individual test
 failed.
 
+## Phase 9 — Student & Instructor Experience Polish (2026-09-09)
+
+Roadmap phase (`ATLAS_PRODUCTION_ROADMAP.md` §10). Closes I1 (instructor
+restrictions — remaining leaks), CO11 (student analytics), ST6 (student
+dashboard) and G10 (contextual help). No migration, no schema change, no
+RLS change — this phase is authorization tightening plus two new
+read-only aggregations.
+
+**Instructor leaks (I1).** The audit confirmed all three surfaces the
+roadmap named were reachable by an Instructor through a direct API call,
+each for a different reason:
+- Academy Overview — `AcademiesService.getById` performed no role check at
+  all beyond `AcademyScopeGuard`, which proves only ORGANIZATION
+  membership.
+- Website — all three website services gated reads on `assertIsMember`
+  ("any real academy role"), which an Instructor satisfies.
+- Blog — `BlogPostsService.AUTHORING_ROLES` literally listed
+  `'instructor'`.
+All three now require the managing tier
+(`owner`/`administrator`/`manager`) — the same set every corresponding
+WRITE already required — and the matching `academy.view`,
+`academy.website.view` and `blog.view` strings were removed from
+`ORGANIZATION_INSTRUCTOR_PERMISSIONS` so the navigation stops rendering
+them too. Removing the strings alone would have been a hidden link, not a
+closed door; the constants file now says so explicitly.
+
+Blog READS are deliberately unchanged: `getPosts`/`getPost` serve
+published content through RLS and are legitimately readable by students
+and instructors alike. The roadmap's concern is the Blog management
+surface, which is what `AUTHORING_ROLES` gates.
+
+**Academy Members (I1).** `getMembers` took no `userId` and performed no
+role check whatsoever — any organization member reaching the guard could
+list an academy's full staff roster with names and email addresses. It
+now requires the managing tier. Students were never able to reach it (a
+Student holds an `academy_students` row and no organization membership, so
+the guard refuses them a layer earlier); this phase asserts that rather
+than assuming it.
+
+**Deliberate contract change.** P3's original rule — "Academy READ access
+is governed by ORGANIZATION membership" — is what admitted the Instructor,
+so it had to change. `P3-TENANT-010` previously asserted that an
+org-member-with-no-academy-row could READ an academy; it now asserts they
+are denied, with the reasoning recorded inline. This is an intentional,
+documented tightening, not a silent one.
+
+**My Results (ST6).** `StudentMyLearningPage` already covered progress, so
+the real gap was assessment OUTCOMES. New `GET /learning/results` returns
+the caller's own quiz scores and assignment grades grouped by their own
+enrolments, with progress carried alongside from the same materialized
+`CourseProgress` the My Learning page reads. No student id is accepted
+anywhere on the path — it comes from the session — and the underlying
+tables are already restricted by their own `*_self_select` RLS policies.
+`averageQuizScore` is `null`, never `0`, when nothing is scored.
+
+**Student analytics (CO11).** New `GET organizations/:id/student-analytics`
+and `GET academies/:id/student-analytics`, authorized identically to the
+Phase 8 dashboard (owner-exclusive `tenant.dashboard.view` for the
+organization scope; real `academy_members` row for the academy scope), so
+a Manager cannot read organization-wide or sibling-academy analytics. The
+existing `AnalyticsController`/`PlatformMetricsController` are
+Platform-Owner-only and were deliberately NOT reused or relaxed.
+
+All three metrics are computed from real rows, with the exact rule stated
+in `student-analytics.contract.ts`:
+- funnel: `enrolled` (real seats) ⊇ `started` (`completedLessons > 0`) ⊇
+  `completed` (`completionState = 'completed'`). "Started" means a
+  completed lesson because Atlas records no course-opened event.
+- cohort trends: monthly series over real `enrolledAt`/`completedAt`;
+  months with no activity are explicit zeros, and null `enrolledAt` rows
+  are excluded rather than attributed to an invented date.
+- at-risk: a deterministic rule with three named reasons
+  (`no_progress`, `stalled` after 14 days, `failing_quiz`), and every row
+  carries the reasons that fired so the UI can always explain the flag.
+Explicitly NOT measured, because Atlas records no such events: engagement
+score, predicted completion, time-spent, login recency.
+
+**Contextual help (G10).** A `FieldHelp` component on the existing Tooltip
+primitive, applied to seven consequential fields only; fields that already
+had a `FormDescription` were left alone.
+
+**Testing.** New `phase9-instructor-student-analytics.e2e-spec.ts`,
+P9-AUTH-001..012, all 12 required scenarios, 11/11 passing.
+
+**Two defects the suite caught before deploy**: `Enrollment` has no
+`academy` relation (only the denormalized scalar), so the organization
+scope filter had to reach the organization through `course.academy` —
+Prisma rejected the wrong shape outright rather than silently
+mis-scoping; and one of this suite's own assertions was wrong, scanning
+serialized JSON for `"91"`, which also matches by chance inside a UUID.
+Isolation was correct; the assertion was not, and is now written against
+the parsed score fields.
+
+**Pre-existing, unrelated to Phase 9** (unchanged and separately
+verified): ~600 prettier-only lint findings in untouched files; backend CI
+red on that same debt since Phase 7; the frontend's 7 `website/*`
+typecheck errors and 1 `LearningLayout` lint error; the 429 rate-limit
+artifact when many e2e suites run in one `--runInBand` batch (the global
+throttler is in-memory, so `flushRateLimitKeys` cannot clear it).
+
+**Known limitation, not introduced here**: a student enrolled in a course
+that is not `published`+`public` cannot read that course row at all — the
+only course RLS path a student has is `courses_public_discovery_select`.
+My Learning already had this constraint and My Results inherits it. If a
+course is unpublished after enrolment, both pages lose it. Out of Phase 9
+scope to redesign course RLS; recorded here rather than worked around.
+
 ## Next phase
 
-Phase 9 (Student & Instructor Experience Polish) per
+Phase 10 (Session Security & Hardening) per
 `ATLAS_PRODUCTION_ROADMAP.md` — not started.

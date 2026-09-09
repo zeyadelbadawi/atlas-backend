@@ -71,7 +71,11 @@ export class AcademiesController {
   @UseGuards(AcademyScopeGuard)
   async getById(@Req() request: Request): Promise<AcademyResponse> {
     const { academyId, organizationId } = request.academyContext!;
-    return this.academiesService.getById(academyId, organizationId);
+    return this.academiesService.getById(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+    );
   }
 
   @Patch(':id')
@@ -123,7 +127,12 @@ export class AcademiesController {
     @Query() query: CollectionQueryDto,
   ): Promise<PaginatedResult<AcademyMemberResponse>> {
     const { academyId, organizationId } = request.academyContext!;
-    return this.academiesService.getMembers(academyId, organizationId, query);
+    return this.academiesService.getMembers(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      query,
+    );
   }
 
   @Post(':id/members')
