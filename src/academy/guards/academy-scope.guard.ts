@@ -48,6 +48,14 @@ export interface AcademyContext {
   readonly organizationId: string;
   readonly organizationMembershipId: string;
   readonly organizationRole: string;
+  /**
+   * The caller's real organization-membership permission strings (Phase 8)
+   * — already read from the database by this guard's own membership
+   * lookup, so exposing them here costs no extra query and saves every
+   * consumer from re-fetching the same row. Mirrors what
+   * `OrganizationMembershipGuard` has always put on `tenantContext`.
+   */
+  readonly organizationPermissions: readonly string[];
 }
 
 declare module 'express-serve-static-core' {
@@ -102,6 +110,7 @@ export class AcademyScopeGuard implements CanActivate {
       organizationId,
       organizationMembershipId: membership.id,
       organizationRole: membership.role,
+      organizationPermissions: membership.permissions,
     };
     return true;
   }

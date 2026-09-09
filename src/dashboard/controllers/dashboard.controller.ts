@@ -56,10 +56,27 @@ export class DashboardController {
     return this.dashboardService.getForOrganization(organizationId);
   }
 
+  /**
+   * `AcademyScopeGuard` resolves and proves the academy belongs to an
+   * organization the caller is a member of — but organization membership
+   * is exactly what a Manager of a DIFFERENT academy in the same
+   * organization also has. The real academy-membership check therefore
+   * lives in `DashboardService.getForAcademy`; see its doc comment. The
+   * organization's own owner is exempted (they may read any of their
+   * academies), identified by the same real `tenant.dashboard.view`
+   * permission the organization route above requires.
+   */
   @Get('academies/:id/dashboard')
   @UseGuards(AcademyScopeGuard)
   async getForAcademy(@Req() request: Request): Promise<DashboardOverviewResponse> {
-    const { academyId, organizationId } = request.academyContext!;
-    return this.dashboardService.getForAcademy(organizationId, academyId);
+    const { academyId, organizationId, organizationPermissions } =
+      request.academyContext!;
+
+    return this.dashboardService.getForAcademy(
+      organizationId,
+      academyId,
+      request.authContext!.userId,
+      organizationPermissions.includes(ORGANIZATION_DASHBOARD_PERMISSION),
+    );
   }
 }

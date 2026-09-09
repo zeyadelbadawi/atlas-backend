@@ -270,6 +270,24 @@ describe('Phase 8 support/audit/dashboard tenant isolation (e2e) — P8-TENANT-0
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(200);
     expect(ownerView.body.counts.courses).toBe(3);
+
+    // The other half of Decision 2: a Manager of Academy A must not be
+    // able to read Academy B's dashboard either. `AcademyScopeGuard`
+    // alone would allow it — its own doc comment states that Academy READ
+    // access is governed by ORGANIZATION membership, which this Manager
+    // legitimately has — so the dashboard route checks real academy
+    // membership on top of it.
+    const siblingAttempt = await request(app.getHttpServer())
+      .get(`/academies/${academyB.id}/dashboard`)
+      .set('Authorization', `Bearer ${manager.accessToken}`);
+    expect(siblingAttempt.status).toBe(403);
+
+    // The owner, who is a real member of every academy they created, is
+    // still free to read either one.
+    await request(app.getHttpServer())
+      .get(`/academies/${academyB.id}/dashboard`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
   });
 
   it('P8-TENANT-005: a direct API call with another tenant’s id is refused (no frontend involved)', async () => {

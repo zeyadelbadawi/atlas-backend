@@ -20,10 +20,11 @@
  * activity from real `audit_log_entries` rows. Nothing here is
  * hardcoded, sampled, estimated, or placeholder.
  */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
+import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { OrganizationPaymentSettingsRepository } from '../../billing/repositories/organization-payment-settings.repository';
 import { TenantSubscriptionService } from '../../plans/services/tenant-subscription.service';
 import {
@@ -46,6 +47,7 @@ export class DashboardService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly dashboardMetricsRepository: DashboardMetricsRepository,
     private readonly academiesRepository: AcademiesRepository,
+    private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly organizationPaymentSettingsRepository: OrganizationPaymentSettingsRepository,
     private readonly tenantSubscriptionService: TenantSubscriptionService,
   ) {}
@@ -60,11 +62,38 @@ export class DashboardService {
    * always arrives from `AcademyScopeGuard`, which has already proved it
    * belongs to `organizationId`; this method never accepts one from a
    * request body or query string.
+   *
+   * `AcademyScopeGuard` is deliberately not sufficient on its own here.
+   * Its own doc comment is explicit that Academy READ access is governed
+   * by ORGANIZATION membership — which is right for the endpoints it was
+   * built for, but would let a Manager of Academy A read Academy B's
+   * dashboard, since both sit under the same organization. Decision 2
+   * forbids exactly that ("A Manager assigned to Academy A ... must never
+   * see, access, or manage Academy B or Academy C ... enforced at the
+   * backend/API/database authorization level"). So this method
+   * additionally requires the caller to be either a real member of THIS
+   * academy (`academy_members`) or the organization's own owner — the
+   * same two-tier rule `AcademiesService.assertCanManage` already applies
+   * to Academy writes, applied here to this aggregate read. The shared
+   * guard is left untouched, so no other phase's endpoints change
+   * behavior.
    */
-  getForAcademy(
+  async getForAcademy(
     organizationId: string,
     academyId: string,
+    userId: string,
+    isOrganizationOwner: boolean,
   ): Promise<DashboardOverviewResponse> {
+    if (!isOrganizationOwner) {
+      const membership = await this.tenancyContextService.runInTenantContext(
+        organizationId,
+        (tx) => this.academyMembersRepository.findForUserInAcademy(tx, academyId, userId),
+      );
+      if (!membership) {
+        throw new ForbiddenException({ messageKey: 'errors.tenancy.notAMember' });
+      }
+    }
+
     return this.build({ organizationId, academyId });
   }
 
