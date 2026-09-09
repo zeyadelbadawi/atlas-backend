@@ -123,6 +123,9 @@ model User {
   supportCasesRequested                         SupportCase[]
   /// Phase P17 — Notifications, Email & Search (master plan §5/§21).
   notifications                                 Notification[]
+  /// Phase 10.1 — Free-Trial anti-abuse. SetNull, never Cascade: deleting
+  /// the user must not erase the fact that a trial was consumed.
+  trialRedemptions                              TrialRedemption[]                        @relation("TrialRedeemer")
 
   @@index([status])
   @@map("users")
@@ -240,6 +243,9 @@ model Organization {
   CourseOrder          CourseOrder[]
   /// Phase P14 — Provisioning Orchestration (master plan §5.11/§21).
   provisioningRequests ProvisioningRequest[]
+  /// Phase 10.1 — Free-Trial anti-abuse. SetNull, never Cascade: deleting
+  /// the organization must not erase the redemption it consumed.
+  trialRedemptions     TrialRedemption[]
   /// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21).
   auditLogEntries      AuditLogEntry[]
   supportCases         SupportCase[]
@@ -623,6 +629,49 @@ model TenantUsageSweepCursor {
 /// (there is no natural single-row DB constraint for a Prisma model with a
 /// generated `id`, so `TrialPolicyRepository` always reads/writes the one
 /// earliest-created row rather than trusting a hardcoded id).
+/// Durable record that a Free Trial has been consumed by one subject.
+///
+/// THE ENFORCEMENT MECHANISM IS THE UNIQUE INDEX on `subject_hash`, not
+/// application code. Two concurrent organization-creation requests for
+/// the same subject both attempt the INSERT; Postgres serialises them and
+/// exactly one wins, so a race cannot produce two trials no matter how
+/// the callers interleave. Application code only has to interpret the
+/// unique-violation error, never to hold a lock.
+///
+/// WHY IT SURVIVES DELETION. `organization_id` and `redeemed_by_user_id`
+/// are nullable with ON DELETE SET NULL rather than CASCADE. Deleting the
+/// organization or the user erases the link but never the redemption, so
+/// "delete everything and sign up again" cannot reset eligibility. This
+/// row is the one piece of state that must outlive the entities it
+/// references.
+///
+/// PRIVACY. `subject_hash` is a salted SHA-256 digest of the canonical
+/// email — see `trial-subject.util.ts`. The address itself is never
+/// stored. `ip_address`/`user_agent` are retained as forensic risk
+/// signals ONLY; nothing in the eligibility decision reads them, because
+/// blocking on a shared address would lock out everyone behind one
+/// company NAT or mobile carrier.
+model TrialRedemption {
+  id             String        @id @default(uuid())
+  /// Salted digest of the canonical email. UNIQUE — this is the constraint that makes trial farming fail.
+  subjectHash    String        @unique @map("subject_hash")
+  /// The organization that consumed the trial. Null once that organization is deleted; the redemption itself remains.
+  organizationId String?       @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  /// The user who redeemed it. Null once that user is deleted.
+  redeemedByUserId String?     @map("redeemed_by_user_id")
+  redeemedByUser   User?       @relation("TrialRedeemer", fields: [redeemedByUserId], references: [id], onDelete: SetNull)
+  redeemedAt     DateTime      @default(now()) @map("redeemed_at")
+  trialEndsAt    DateTime?     @map("trial_ends_at")
+  /// Forensic signals only — never consulted by the eligibility decision.
+  ipAddress      String?       @map("ip_address")
+  userAgent      String?       @map("user_agent")
+
+  @@index([organizationId])
+  @@index([redeemedByUserId])
+  @@map("trial_redemptions")
+}
+
 model TrialPolicy {
   id           String   @id @default(uuid())
   enabled      Boolean  @default(true)

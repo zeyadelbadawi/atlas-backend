@@ -26,6 +26,8 @@ import type { Prisma } from '@prisma/client';
 import { TrialPolicyRepository } from '../repositories/trial-policy.repository';
 import { PlansRepository } from '../repositories/plans.repository';
 import { TenantSubscriptionsRepository } from '../repositories/tenant-subscriptions.repository';
+import { TrialEligibilityService } from './trial-eligibility.service';
+import type { TrialClaimContext } from './trial-eligibility.service';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -37,11 +39,22 @@ export class OrganizationSubscriptionBootstrapService {
     private readonly trialPolicyRepository: TrialPolicyRepository,
     private readonly plansRepository: PlansRepository,
     private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
+    private readonly trialEligibilityService: TrialEligibilityService,
   ) {}
 
+  /**
+   * @param ownerUserId  The creating user. Their email is the trial
+   *                     SUBJECT (see `TrialEligibilityService`) and is
+   *                     read here, through the caller's own `tx`, rather
+   *                     than accepted from the caller — the subject of a
+   *                     trial claim must come from the database, never
+   *                     from anything a request could influence.
+   */
   async bootstrapTrialSubscription(
     tx: Prisma.TransactionClient,
     organizationId: string,
+    ownerUserId: string,
+    context?: TrialClaimContext,
   ): Promise<void> {
     const [trialPolicy, plan] = await Promise.all([
       this.trialPolicyRepository.findSingleton(),
@@ -75,7 +88,42 @@ export class OrganizationSubscriptionBootstrapService {
     // than this service inventing a second "no trial" status this schema
     // does not have.
     const durationDays = trialPolicy.enabled ? trialPolicy.durationDays : 0;
-    const trialEndsAt = new Date(Date.now() + durationDays * MS_PER_DAY);
+    const requestedTrialEndsAt = new Date(Date.now() + durationDays * MS_PER_DAY);
+
+    // Phase 10.1 — the trial is no longer unconditional. Claiming it is
+    // an atomic INSERT against a UNIQUE index inside THIS transaction, so
+    // a concurrent second organization-creation for the same subject
+    // cannot also win, and a later failure in this transaction rolls the
+    // redemption back rather than burning the user's one trial.
+    const owner = await tx.user.findUniqueOrThrow({
+      where: { id: ownerUserId },
+      select: { id: true, email: true },
+    });
+
+    const claim = await this.trialEligibilityService.claimTrial(tx, {
+      email: owner.email,
+      organizationId,
+      userId: owner.id,
+      trialEndsAt: requestedTrialEndsAt,
+      context,
+    });
+
+    // A refused claim still creates the subscription — it just creates it
+    // ALREADY EXPIRED, by reusing the exact `trialEndsAt = now` shape
+    // this service already produces when a Platform Owner has switched
+    // trials off. That reuse is deliberate: `isTrialPeriodOver` and every
+    // downstream entitlement check already handle it correctly, so no new
+    // subscription status has to be invented and no existing consumer has
+    // to learn about a second "no trial" concept. The organization is
+    // created normally; it simply has no usable trial.
+    const trialEndsAt = claim.granted ? requestedTrialEndsAt : new Date();
+
+    if (!claim.granted) {
+      this.logger.log(
+        { organizationId, reason: claim.reason },
+        'Organization created without a Free Trial — the subject has already redeemed one.',
+      );
+    }
 
     await this.tenantSubscriptionsRepository.create(tx, {
       organizationId,

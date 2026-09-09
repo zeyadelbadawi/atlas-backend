@@ -85,6 +85,46 @@ function scrub(value: unknown, depth = 0): unknown {
 }
 
 /**
+ * Strips credential material from an event before it leaves the process.
+ *
+ * Exported (rather than living inline in `Sentry.init`) purely so it can
+ * be unit-tested directly: "no secrets reach Sentry" is a claim that has
+ * to be provable on demand, not asserted once by inspection. See
+ * `sentry.spec.ts`.
+ */
+export function scrubEvent(event: ErrorEvent): ErrorEvent {
+  // Headers first — `authorization` is the single most likely place for
+  // a live access token to escape.
+  if (event.request?.headers) {
+    const headers: Record<string, string> = {};
+    for (const [name, headerValue] of Object.entries(event.request.headers)) {
+      headers[name] = SENSITIVE_HEADERS.has(name.toLowerCase()) ? CENSOR : headerValue;
+    }
+    event.request.headers = headers;
+  }
+
+  if (event.request?.data !== undefined) {
+    event.request.data = scrub(event.request.data);
+  }
+
+  // Query strings and cookies are dropped wholesale rather than scrubbed:
+  // neither is needed to diagnose an error, and a token smuggled through
+  // an unexpected query parameter would otherwise slip past a
+  // key-name-based filter.
+  if (event.request) {
+    delete event.request.cookies;
+    delete event.request.query_string;
+  }
+
+  if (event.extra) event.extra = scrub(event.extra) as Record<string, unknown>;
+  if (event.contexts) {
+    event.contexts = scrub(event.contexts) as typeof event.contexts;
+  }
+
+  return event;
+}
+
+/**
  * Initialises Sentry if — and only if — a DSN is configured.
  *
  * @returns whether error reporting is active, so the caller can log the
@@ -103,39 +143,8 @@ export function initializeSentry(): boolean {
     // Never attach IPs, cookies or headers automatically. Anything useful
     // is added deliberately below, after scrubbing.
     sendDefaultPii: false,
-    beforeSend(event: ErrorEvent, _hint: EventHint): ErrorEvent | null {
-      // Headers first — `authorization` is the single most likely place
-      // for a live access token to escape.
-      if (event.request?.headers) {
-        const headers: Record<string, string> = {};
-        for (const [name, headerValue] of Object.entries(event.request.headers)) {
-          headers[name] = SENSITIVE_HEADERS.has(name.toLowerCase())
-            ? CENSOR
-            : headerValue;
-        }
-        event.request.headers = headers;
-      }
-
-      if (event.request?.data !== undefined) {
-        event.request.data = scrub(event.request.data);
-      }
-
-      // Query strings and cookies are dropped wholesale rather than
-      // scrubbed: neither is needed to diagnose an error, and a token
-      // smuggled through an unexpected query parameter would otherwise
-      // slip past a key-name-based filter.
-      if (event.request) {
-        delete event.request.cookies;
-        delete event.request.query_string;
-      }
-
-      if (event.extra) event.extra = scrub(event.extra) as Record<string, unknown>;
-      if (event.contexts) {
-        event.contexts = scrub(event.contexts) as typeof event.contexts;
-      }
-
-      return event;
-    },
+    beforeSend: (event: ErrorEvent, _hint: EventHint): ErrorEvent | null =>
+      scrubEvent(event),
   });
 
   return true;

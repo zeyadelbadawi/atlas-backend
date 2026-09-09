@@ -40,6 +40,10 @@
 import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import {
+  resolveClientIp,
+  resolveUserAgent,
+} from '../../identity/utils/request-metadata.util';
 import { SaasLevelCallerGuard } from '../../tenancy/guards/saas-level-caller.guard';
 import { OrganizationsService } from '../../tenancy/services/organizations.service';
 import { OrganizationSubscriptionBootstrapService } from '../services/organization-subscription-bootstrap.service';
@@ -66,7 +70,17 @@ export class OrganizationsController {
       request.authContext!.userId,
       payload,
       (tx, created) =>
-        this.subscriptionBootstrapService.bootstrapTrialSubscription(tx, created.id),
+        this.subscriptionBootstrapService.bootstrapTrialSubscription(
+          tx,
+          created.id,
+          request.authContext!.userId,
+          // Forensic only — recorded on the redemption, never consulted
+          // when deciding eligibility. See `TrialEligibilityService`.
+          {
+            ipAddress: resolveClientIp(request),
+            userAgent: resolveUserAgent(request),
+          },
+        ),
     );
 
     // A real (all-zero) `tenant_usage` row from the very first moment,
