@@ -40,10 +40,6 @@
 import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
-import {
-  resolveClientIp,
-  resolveUserAgent,
-} from '../../identity/utils/request-metadata.util';
 import { SaasLevelCallerGuard } from '../../tenancy/guards/saas-level-caller.guard';
 import { OrganizationsService } from '../../tenancy/services/organizations.service';
 import { OrganizationSubscriptionBootstrapService } from '../services/organization-subscription-bootstrap.service';
@@ -69,18 +65,12 @@ export class OrganizationsController {
     const organization = await this.organizationsService.create(
       request.authContext!.userId,
       payload,
+      // Phase 10.2 — creates the subscription ROW only, and grants NO
+      // trial. A trial is now something the user explicitly starts from
+      // the Plans page; see `OrganizationSubscriptionBootstrapService`'s
+      // own doc comment for why the old automatic grant was removed.
       (tx, created) =>
-        this.subscriptionBootstrapService.bootstrapTrialSubscription(
-          tx,
-          created.id,
-          request.authContext!.userId,
-          // Forensic only — recorded on the redemption, never consulted
-          // when deciding eligibility. See `TrialEligibilityService`.
-          {
-            ipAddress: resolveClientIp(request),
-            userAgent: resolveUserAgent(request),
-          },
-        ),
+        this.subscriptionBootstrapService.bootstrapSubscription(tx, created.id),
     );
 
     // A real (all-zero) `tenant_usage` row from the very first moment,

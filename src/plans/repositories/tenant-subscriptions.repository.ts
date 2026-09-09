@@ -127,16 +127,85 @@ export class TenantSubscriptionsRepository {
     data: {
       readonly organizationId: string;
       readonly planId: string;
-      readonly trialEndsAt: Date;
+      /** `null` for a new Organization — Phase 10.2 grants no trial on creation. */
+      readonly trialEndsAt: Date | null;
+      /** Explicit since Phase 10.2. Was hardcoded to `'trialing'` back when every new Organization was auto-granted a trial. */
+      readonly status: TenantSubscription['status'];
     },
   ): Promise<TenantSubscription> {
     return tx.tenantSubscription.create({
       data: {
         organizationId: data.organizationId,
         planId: data.planId,
-        status: 'trialing',
+        status: data.status,
         trialEndsAt: data.trialEndsAt,
       },
+    });
+  }
+
+  /**
+   * Phase 10.2 — starts a trial on an existing subscription row.
+   *
+   * Guarded by `status: { in: ['expired', 'cancelled'] }` and
+   * `trialEndsAt: null`, so it can only ever move a subscription that has
+   * never had a trial. A row already `trialing`, `active`, or one whose
+   * trial has already been set matches zero rows and reports `false` —
+   * meaning this is safe to call concurrently even before the redemption
+   * claim is considered.
+   *
+   * @returns whether this call actually started the trial.
+   */
+  async startTrial(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    planId: string,
+    trialEndsAt: Date,
+  ): Promise<boolean> {
+    const result = await tx.tenantSubscription.updateMany({
+      where: {
+        organizationId,
+        trialEndsAt: null,
+        status: { in: ['expired', 'cancelled'] },
+      },
+      data: { planId, status: 'trialing', trialEndsAt },
+    });
+    return result.count === 1;
+  }
+
+  /**
+   * Phase 10.2 — ends a trial immediately on cancellation.
+   *
+   * `trialEndsAt` is deliberately LEFT IN PLACE rather than nulled: it is
+   * the historical record of when the trial would have run out, and
+   * clearing it would also make the row look eligible to `startTrial`
+   * again. Status alone ends access, since `cancelled` is already in
+   * `INACTIVE_STATUSES`.
+   */
+  async markTrialCancelled(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<void> {
+    await tx.tenantSubscription.updateMany({
+      where: { organizationId, status: 'trialing' },
+      data: { status: 'cancelled' },
+    });
+  }
+
+  /**
+   * Phase 10.2 — schedules a paid subscription to end at the close of the
+   * period the customer has already paid for.
+   *
+   * Sets `cancelAtPeriodEnd` rather than flipping status immediately:
+   * cancelling must never forfeit time already purchased. The existing
+   * expiry sweep is what eventually transitions the row.
+   */
+  async markPaidCancelAtPeriodEnd(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<void> {
+    await tx.tenantSubscription.updateMany({
+      where: { organizationId, status: { in: ['active', 'past_due', 'grace_period'] } },
+      data: { cancelAtPeriodEnd: true },
     });
   }
 

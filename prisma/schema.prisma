@@ -133,6 +133,8 @@ model User {
   /// Phase 10.1 — Free-Trial anti-abuse. SetNull, never Cascade: deleting
   /// the user must not erase the fact that a trial was consumed.
   trialRedemptions                              TrialRedemption[]                        @relation("TrialRedeemer")
+  /// Phase 10.2 — cancellations this user performed.
+  subscriptionCancellations                     SubscriptionCancellation[]               @relation("SubscriptionCanceller")
 
   @@index([status])
   @@map("users")
@@ -276,6 +278,8 @@ model Organization {
   /// Phase 10.1 — Free-Trial anti-abuse. SetNull, never Cascade: deleting
   /// the organization must not erase the redemption it consumed.
   trialRedemptions     TrialRedemption[]
+  /// Phase 10.2 — trial/subscription cancellations for this organization.
+  cancellations        SubscriptionCancellation[]
   /// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21).
   auditLogEntries      AuditLogEntry[]
   supportCases         SupportCase[]
@@ -700,6 +704,55 @@ model TrialRedemption {
   @@index([organizationId])
   @@index([redeemedByUserId])
   @@map("trial_redemptions")
+}
+
+/// What was cancelled — a trial or a paid subscription. Recorded
+/// explicitly rather than inferred later from subscription status, which
+/// changes over time and would make historical rows ambiguous.
+enum SubscriptionCancellationKind {
+  trial
+  paid
+
+  @@map("subscription_cancellation_kind")
+}
+
+/// Phase 10.2 — a record of one cancellation, with the reason the user
+/// gave.
+///
+/// IDEMPOTENCY IS ENFORCED BY THE DATABASE. `organization_id` is UNIQUE
+/// per kind, so a double-click, a retried request, or two concurrent
+/// cancellations produce exactly one row: the second INSERT conflicts and
+/// the service treats that as "already cancelled" rather than erroring.
+/// No application-level lock is involved.
+///
+/// CANCELLING NEVER RESTORES TRIAL ELIGIBILITY. This table is entirely
+/// separate from `trial_redemptions`, and nothing here deletes or
+/// modifies a redemption — a cancelled trial stays redeemed forever.
+model SubscriptionCancellation {
+  id             String                       @id @default(uuid())
+  organizationId String                       @map("organization_id")
+  organization   Organization                 @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           SubscriptionCancellationKind
+  /// A short, closed-vocabulary reason code chosen by the user (validated
+  /// server-side against a fixed list) — not free text, so it can be
+  /// aggregated on the admin dashboard.
+  reason         String
+  /// Optional free-text elaboration. NEVER required to cancel: making
+  /// feedback mandatory turns a cancellation into a hostage negotiation.
+  feedback       String?
+  /// Who performed it. Retained for admin visibility and audit
+  /// correlation; SetNull so deleting the user does not erase the record.
+  cancelledByUserId String?                   @map("cancelled_by_user_id")
+  cancelledByUser   User?                     @relation("SubscriptionCanceller", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
+  cancelledAt    DateTime                     @default(now()) @map("cancelled_at")
+  /// When access actually ends. For a trial this is immediate; for a paid
+  /// subscription it is the end of the paid period already purchased —
+  /// cancelling must never silently forfeit time the customer paid for.
+  effectiveAt    DateTime                     @map("effective_at")
+
+  @@unique([organizationId, kind])
+  @@index([cancelledAt(sort: Desc)])
+  @@map("subscription_cancellations")
 }
 
 model TrialPolicy {

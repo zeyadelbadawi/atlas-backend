@@ -65,12 +65,42 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     return signIn.body.accessToken;
   }
 
-  /** Not `async` on purpose — returning supertest's chainable builder keeps `.expect(201)` available at the call sites. */
-  function createOrganization(accessToken: string, name: string) {
-    return request(app.getHttpServer())
+  /**
+   * Creates an Organization and then EXPLICITLY attempts to redeem a
+   * trial for it.
+   *
+   * Phase 10.2 removed the automatic trial that used to come with
+   * Organization creation, so "create a workspace and try to get a trial"
+   * is now two calls rather than one. Every anti-abuse assertion in this
+   * file is unchanged and still means exactly what it did before — the
+   * only difference is that the trial is now asked for, which is the
+   * whole point of the new product flow.
+   *
+   * The returned shape mirrors a supertest response so the call sites
+   * below keep reading `.body.id`.
+   */
+  async function createOrganization(
+    accessToken: string,
+    name: string,
+  ): Promise<{ status: number; body: { id: string; name: string } }> {
+    const created = await request(app.getHttpServer())
       .post('/organizations')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name });
+      .send({ name })
+      .expect(201);
+
+    // Explicit, confirmed redemption. A refusal here is a normal business
+    // outcome (200 with `started: false`), not an error — the assertions
+    // check whether a USABLE trial resulted.
+    await request(app.getHttpServer())
+      .post(`/organizations/${created.body.id}/subscription/trial`)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ confirm: true });
+
+    return {
+      status: created.status,
+      body: { id: created.body.id, name: created.body.name },
+    };
   }
 
   /**
@@ -89,7 +119,7 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
 
   it('P101-TRIAL-001 — the first organization for a fresh subject receives a real trial', async () => {
     const token = await signUp(uniqueTestEmail('t001'));
-    const org = await createOrganization(token, `T001 ${Date.now()}`).expect(201);
+    const org = await createOrganization(token, `T001 ${Date.now()}`);
 
     expect(await hasUsableTrial(org.body.id)).toBe(true);
   });
@@ -98,9 +128,9 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     // The exact abuse that succeeded before Phase 10.1.
     const token = await signUp(uniqueTestEmail('t002'));
 
-    const first = await createOrganization(token, `T002 a ${Date.now()}`).expect(201);
-    const second = await createOrganization(token, `T002 b ${Date.now()}`).expect(201);
-    const third = await createOrganization(token, `T002 c ${Date.now()}`).expect(201);
+    const first = await createOrganization(token, `T002 a ${Date.now()}`);
+    const second = await createOrganization(token, `T002 b ${Date.now()}`);
+    const third = await createOrganization(token, `T002 c ${Date.now()}`);
 
     expect(await hasUsableTrial(first.body.id)).toBe(true);
     expect(await hasUsableTrial(second.body.id)).toBe(false);
@@ -113,9 +143,9 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     // implementation, where a unique violation aborted the caller's
     // transaction and the organization was never created at all.
     const token = await signUp(uniqueTestEmail('t003'));
-    await createOrganization(token, `T003 a ${Date.now()}`).expect(201);
+    await createOrganization(token, `T003 a ${Date.now()}`);
 
-    const second = await createOrganization(token, `T003 b ${Date.now()}`).expect(201);
+    const second = await createOrganization(token, `T003 b ${Date.now()}`);
 
     expect(second.body.id).toBeTruthy();
     expect(second.body.name).toContain('T003 b');
@@ -132,10 +162,10 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     // The false-positive guard. Anti-abuse that blocks legitimate new
     // customers is worse than no anti-abuse at all.
     const firstToken = await signUp(uniqueTestEmail('t004-a'));
-    await createOrganization(firstToken, `T004 a ${Date.now()}`).expect(201);
+    await createOrganization(firstToken, `T004 a ${Date.now()}`);
 
     const secondToken = await signUp(uniqueTestEmail('t004-b'));
-    const org = await createOrganization(secondToken, `T004 b ${Date.now()}`).expect(201);
+    const org = await createOrganization(secondToken, `T004 b ${Date.now()}`);
 
     expect(await hasUsableTrial(org.body.id)).toBe(true);
   });
@@ -153,16 +183,11 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     expect(trialSubjectHash(alias)).toBe(trialSubjectHash(base));
 
     const baseToken = await signUp(base);
-    const baseOrg = await createOrganization(baseToken, `T005 base ${Date.now()}`).expect(
-      201,
-    );
+    const baseOrg = await createOrganization(baseToken, `T005 base ${Date.now()}`);
     expect(await hasUsableTrial(baseOrg.body.id)).toBe(true);
 
     const aliasToken = await signUp(alias);
-    const aliasOrg = await createOrganization(
-      aliasToken,
-      `T005 alias ${Date.now()}`,
-    ).expect(201);
+    const aliasOrg = await createOrganization(aliasToken, `T005 alias ${Date.now()}`);
     expect(await hasUsableTrial(aliasOrg.body.id)).toBe(false);
   });
 
@@ -180,13 +205,11 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     expect(trialSubjectHash(dotted)).toBe(trialSubjectHash(plain));
 
     const plainToken = await signUp(plain);
-    const plainOrg = await createOrganization(plainToken, `T006 a ${stamp}`).expect(201);
+    const plainOrg = await createOrganization(plainToken, `T006 a ${stamp}`);
     expect(await hasUsableTrial(plainOrg.body.id)).toBe(true);
 
     const dottedToken = await signUp(dotted);
-    const dottedOrg = await createOrganization(dottedToken, `T006 b ${stamp}`).expect(
-      201,
-    );
+    const dottedOrg = await createOrganization(dottedToken, `T006 b ${stamp}`);
     expect(await hasUsableTrial(dottedOrg.body.id)).toBe(false);
   });
 
@@ -223,9 +246,9 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     const token = await signUp(email);
     const stamp = Date.now();
 
-    await createOrganization(token, `T009 a ${stamp}`).expect(201);
-    await createOrganization(token, `T009 b ${stamp}`).expect(201);
-    await createOrganization(token, `T009 c ${stamp}`).expect(201);
+    await createOrganization(token, `T009 a ${stamp}`);
+    await createOrganization(token, `T009 b ${stamp}`);
+    await createOrganization(token, `T009 c ${stamp}`);
 
     const rows = await admin.trialRedemption.findMany({
       where: { subjectHash: trialSubjectHash(email) },
@@ -237,7 +260,7 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     // "Delete everything and start again" must not reset eligibility.
     const email = uniqueTestEmail('t010');
     const token = await signUp(email);
-    const org = await createOrganization(token, `T010 ${Date.now()}`).expect(201);
+    const org = await createOrganization(token, `T010 ${Date.now()}`);
     expect(await hasUsableTrial(org.body.id)).toBe(true);
 
     await admin.organization.delete({ where: { id: org.body.id } });
@@ -250,14 +273,14 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     expect(redemption?.organizationId).toBeNull();
 
     // And the subject still cannot get another trial.
-    const again = await createOrganization(token, `T010 again ${Date.now()}`).expect(201);
+    const again = await createOrganization(token, `T010 again ${Date.now()}`);
     expect(await hasUsableTrial(again.body.id)).toBe(false);
   });
 
   it('P101-TRIAL-011 — the redemption survives deletion of the USER who redeemed it', async () => {
     const email = uniqueTestEmail('t011');
     const token = await signUp(email);
-    const org = await createOrganization(token, `T011 ${Date.now()}`).expect(201);
+    const org = await createOrganization(token, `T011 ${Date.now()}`);
 
     const user = await admin.user.findUniqueOrThrow({ where: { email } });
     // The application has no account-deletion endpoint, and the database
@@ -281,9 +304,7 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     // again with the same address.
     const email = uniqueTestEmail('t012');
     const firstToken = await signUp(email);
-    const firstOrg = await createOrganization(firstToken, `T012 a ${Date.now()}`).expect(
-      201,
-    );
+    const firstOrg = await createOrganization(firstToken, `T012 a ${Date.now()}`);
     expect(await hasUsableTrial(firstOrg.body.id)).toBe(true);
 
     const user = await admin.user.findUniqueOrThrow({ where: { email } });
@@ -298,10 +319,7 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
 
     // Same address, brand-new account, brand-new user id.
     const secondToken = await signUp(email);
-    const secondOrg = await createOrganization(
-      secondToken,
-      `T012 b ${Date.now()}`,
-    ).expect(201);
+    const secondOrg = await createOrganization(secondToken, `T012 b ${Date.now()}`);
     expect(await hasUsableTrial(secondOrg.body.id)).toBe(false);
   });
 
@@ -312,7 +330,7 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     const token = await signUp(uniqueTestEmail('t013'));
     const stamp = Date.now();
 
-    const first = await createOrganization(token, `T013 a ${stamp}`).expect(201);
+    const first = await createOrganization(token, `T013 a ${stamp}`);
     expect(await hasUsableTrial(first.body.id)).toBe(true);
 
     const evasive = await request(app.getHttpServer())
@@ -325,6 +343,19 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
       .send({ name: `T013 evasive ${stamp}` })
       .expect(201);
 
+    // Explicitly ask for a trial from the "new device", on a new IP, with
+    // cookies cleared. The refusal must come anyway.
+    const attempt = await request(app.getHttpServer())
+      .post(`/organizations/${evasive.body.id}/subscription/trial`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('User-Agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) Safari/604.1')
+      .set('X-Forwarded-For', '203.0.113.77')
+      .set('CF-Connecting-IP', '198.51.100.42')
+      .set('Cookie', '')
+      .send({ confirm: true })
+      .expect(200);
+
+    expect(attempt.body.started).toBe(false);
     expect(await hasUsableTrial(evasive.body.id)).toBe(false);
   });
 
@@ -335,7 +366,7 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
     const token = await signUp(uniqueTestEmail('t014'));
     const stamp = Date.now();
 
-    await createOrganization(token, `T014 a ${stamp}`).expect(201);
+    await createOrganization(token, `T014 a ${stamp}`);
 
     const forged = await request(app.getHttpServer())
       .post('/organizations')
@@ -383,6 +414,21 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
       .send({ name: `T015 b ${stamp}` })
       .expect(201);
 
+    // Both colleagues explicitly redeem, from the same source address and
+    // the same user agent. Neither may be refused because of the other.
+    for (const [token, orgId] of [
+      [colleagueA, orgA.body.id],
+      [colleagueB, orgB.body.id],
+    ] as const) {
+      await request(app.getHttpServer())
+        .post(`/organizations/${orgId}/subscription/trial`)
+        .set('Authorization', `Bearer ${token}`)
+        .set('CF-Connecting-IP', sharedIp)
+        .set('User-Agent', sharedAgent)
+        .send({ confirm: true })
+        .expect(200);
+    }
+
     expect(await hasUsableTrial(orgA.body.id)).toBe(true);
     expect(await hasUsableTrial(orgB.body.id)).toBe(true);
   });
@@ -390,7 +436,7 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
   it('P101-TRIAL-016 — the redemption record stores no email address in the clear', async () => {
     const email = uniqueTestEmail('t016');
     const token = await signUp(email);
-    await createOrganization(token, `T016 ${Date.now()}`).expect(201);
+    await createOrganization(token, `T016 ${Date.now()}`);
 
     const row = await admin.trialRedemption.findUniqueOrThrow({
       where: { subjectHash: trialSubjectHash(email) },
@@ -423,7 +469,7 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
   it('P101-TRIAL-018 — an expired trial cannot be re-redeemed by making another organization', async () => {
     const email = uniqueTestEmail('t018');
     const token = await signUp(email);
-    const first = await createOrganization(token, `T018 a ${Date.now()}`).expect(201);
+    const first = await createOrganization(token, `T018 a ${Date.now()}`);
 
     // Force the trial to have run out, exactly as the expiry sweep would.
     await admin.tenantSubscription.update({
@@ -431,7 +477,7 @@ describe('Phase 10.1 Free-Trial anti-abuse (e2e) — P101-TRIAL-001..018', () =>
       data: { trialEndsAt: new Date(Date.now() - 86_400_000), status: 'expired' },
     });
 
-    const second = await createOrganization(token, `T018 b ${Date.now()}`).expect(201);
+    const second = await createOrganization(token, `T018 b ${Date.now()}`);
     expect(await hasUsableTrial(second.body.id)).toBe(false);
   });
 });

@@ -44,6 +44,7 @@ import { SubscriptionExpiryService } from './services/subscription-expiry.servic
 import { SubscriptionSweepService } from './services/subscription-sweep.service';
 import { OrganizationSubscriptionBootstrapService } from './services/organization-subscription-bootstrap.service';
 import { TrialEligibilityService } from './services/trial-eligibility.service';
+import { TrialRedemptionService } from './services/trial-redemption.service';
 import { PlansRepository } from './repositories/plans.repository';
 import { AddOnsRepository } from './repositories/add-ons.repository';
 import { TrialPolicyRepository } from './repositories/trial-policy.repository';
@@ -102,6 +103,7 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     SubscriptionSweepService,
     OrganizationSubscriptionBootstrapService,
     TrialEligibilityService,
+    TrialRedemptionService,
     PlansRepository,
     AddOnsRepository,
     TrialPolicyRepository,

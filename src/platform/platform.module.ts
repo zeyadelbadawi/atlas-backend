@@ -29,6 +29,8 @@ import { OrganizationsController } from './controllers/organizations.controller'
 import { PlatformAcademiesController } from './controllers/platform-academies.controller';
 import { PlatformUsersController } from './controllers/platform-users.controller';
 import { AuditLogController } from './controllers/audit-log.controller';
+import { AdminSubscriptionsController } from './controllers/admin-subscriptions.controller';
+import { AdminSubscriptionsService } from './services/admin-subscriptions.service';
 import { SupportCasesController } from './controllers/support-cases.controller';
 import { TenantSupportCasesController } from './controllers/tenant-support-cases.controller';
 import { PlatformSettingsController } from './controllers/platform-settings.controller';
@@ -57,6 +59,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     ProvisioningModule,
   ],
   controllers: [
+    AdminSubscriptionsController,
     OrganizationsController,
     PlatformAcademiesController,
     PlatformUsersController,
@@ -66,6 +69,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     PlatformSettingsController,
   ],
   providers: [
+    AdminSubscriptionsService,
     OrganizationsAccessGuard,
     PlatformOrganizationsService,
     PlatformAcademiesService,
