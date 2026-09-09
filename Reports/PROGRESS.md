@@ -3179,6 +3179,19 @@ neither reproducible locally, both fixed and redeployed:
    It now grants `ORGANIZATION_OWNER_PERMISSIONS`, matching
    `OrganizationsService.create`.
 
+   Investigating that led straight to the other half of the same gap: a
+   Manager could also read a specific SIBLING academy's dashboard.
+   `AcademyScopeGuard`'s own doc comment states that Academy READ access is
+   governed by ORGANIZATION membership — correct for the endpoints it was
+   built for, where writes are separately gated by `assertCanManage`, but
+   wrong for an aggregate read like this one. `getForAcademy` now also
+   requires a real `academy_members` row for that academy (or organization
+   ownership). The shared guard is untouched, so no other phase's endpoints
+   change behavior. This half could NOT be reproduced against production:
+   the verification organization is on the Starter plan, whose real
+   entitlement limit of one academy correctly refused a second — so it was
+   reproduced and fixed under the e2e suite instead.
+
 2. *The dashboard showed "no workspace selected" to an owner who had one*
    (frontend). `useDashboardScope` read `activeOrganizationId` from
    `PlatformProvider`, which deliberately never restores that value on
