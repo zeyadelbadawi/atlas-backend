@@ -39,6 +39,7 @@ import {
   PROVISIONING_AUTO_SUPPORT_CASE_FAILURE_THRESHOLD,
   PROVISIONING_STEP_ORDER,
 } from '../src/provisioning/dto/provisioning.constants';
+import { ORGANIZATION_MANAGER_PERMISSIONS } from '../src/tenancy/constants/organization-permissions.constants';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -222,6 +223,53 @@ describe('Phase 8 support/audit/dashboard tenant isolation (e2e) — P8-TENANT-0
     // Both of their own academies' courses — never the third one.
     expect(response.body.counts.courses).toBe(2);
     expect(response.body.counts.academies).toBe(2);
+  });
+
+  it('P8-TENANT-004b: an Academy Manager is refused the ORGANIZATION dashboard, so a sibling Academy never leaks', async () => {
+    const owner = await signUpAndSignIn(app, 'p8t004b-owner');
+    const manager = await signUpAndSignIn(app, 'p8t004b-manager');
+    const org = await seedOrganizationWithOwner(admin, owner.userId, 'p8t004b-org');
+    const academyA = await seedManagedAcademy(admin, org.id, owner.userId, 'p8t004b-a');
+    const academyB = await seedManagedAcademy(admin, org.id, owner.userId, 'p8t004b-b');
+
+    // A real Manager of academy A only — with the real manager permission
+    // set, exactly as `AcademiesService.addManager` grants it.
+    await admin.organizationMembership.create({
+      data: {
+        organizationId: org.id,
+        userId: manager.userId,
+        role: 'manager',
+        permissions: [...ORGANIZATION_MANAGER_PERMISSIONS],
+      },
+    });
+    await seedAcademyMember(admin, academyA.id, manager.userId, 'manager');
+
+    await seedCourse(admin, academyA.id, 'p8t004b-a-course');
+    await seedCourse(admin, academyB.id, 'p8t004b-b-course-1');
+    await seedCourse(admin, academyB.id, 'p8t004b-b-course-2');
+
+    // The Manager holds a real organization membership, so
+    // `OrganizationMembershipGuard` alone would have let them through and
+    // handed back org-wide counts spanning academy B. The additional
+    // owner-permission check is what refuses it.
+    const orgAttempt = await request(app.getHttpServer())
+      .get(`/organizations/${org.id}/dashboard`)
+      .set('Authorization', `Bearer ${manager.accessToken}`);
+    expect(orgAttempt.status).toBe(403);
+
+    // Their OWN academy still works, and reports only academy A's course.
+    const own = await request(app.getHttpServer())
+      .get(`/academies/${academyA.id}/dashboard`)
+      .set('Authorization', `Bearer ${manager.accessToken}`)
+      .expect(200);
+    expect(own.body.counts.courses).toBe(1);
+
+    // And the owner is unaffected — still sees the whole organization.
+    const ownerView = await request(app.getHttpServer())
+      .get(`/organizations/${org.id}/dashboard`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(ownerView.body.counts.courses).toBe(3);
   });
 
   it('P8-TENANT-005: a direct API call with another tenant’s id is refused (no frontend involved)', async () => {

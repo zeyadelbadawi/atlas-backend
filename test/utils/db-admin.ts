@@ -12,6 +12,7 @@
  * `PrismaService`, still connected as the restricted role throughout.
  */
 import { PrismaClient, Prisma } from '@prisma/client';
+import { ORGANIZATION_OWNER_PERMISSIONS } from '../../src/tenancy/constants/organization-permissions.constants';
 
 export function createAdminPrisma(): PrismaClient {
   const url = process.env.DATABASE_URL;
@@ -34,7 +35,19 @@ export async function seedOrganizationWithOwner(
     },
   });
   await admin.organizationMembership.create({
-    data: { organizationId: org.id, userId: ownerId, role: 'owner', isPrimary: true },
+    data: {
+      organizationId: org.id,
+      userId: ownerId,
+      role: 'owner',
+      isPrimary: true,
+      // Matches `OrganizationsService.create`'s own real grant exactly.
+      // Previously omitted, which left every fixture owner with an empty
+      // `permissions` array — harmless while nothing read that column, but
+      // silently unrepresentative of a real owner the moment anything
+      // does (Phase 8's organization dashboard is the first endpoint to
+      // check it, and would have refused a fixture owner it should allow).
+      permissions: [...ORGANIZATION_OWNER_PERMISSIONS],
+    },
   });
   return org;
 }
@@ -129,7 +142,11 @@ export async function seedPlan(
     features?: Record<string, boolean>;
     status?: 'active' | 'archived';
     /** Pass `null` explicitly to create a deliberately unpriced fixture (e.g. to test `pricingUnavailable` itself). Omit for the realistic default. */
-    pricing?: { amount: number; currency: string; billingCycle?: 'monthly' | 'yearly' } | null;
+    pricing?: {
+      amount: number;
+      currency: string;
+      billingCycle?: 'monthly' | 'yearly';
+    } | null;
   } = {},
 ) {
   const key = `${keyLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -163,7 +180,11 @@ export async function seedPlan(
       pricing:
         overrides.pricing === null
           ? Prisma.JsonNull
-          : overrides.pricing ?? { amount: 49, currency: 'USD', billingCycle: 'monthly' },
+          : (overrides.pricing ?? {
+              amount: 49,
+              currency: 'USD',
+              billingCycle: 'monthly',
+            }),
     },
   });
 }
