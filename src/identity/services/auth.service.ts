@@ -9,11 +9,18 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import type { User } from '@prisma/client';
 import type { IdentityConfig } from '../../config/configuration';
 import { UsersRepository } from '../repositories/users.repository';
 import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
+import { deriveDeviceLabel } from '../utils/request-metadata.util';
+import { SessionRevocationService } from './session-revocation.service';
+import {
+  toUserSessionResponse,
+  type UserSessionResponse,
+} from '../dto/user-session.contract';
 import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
 import { PasswordHasherService } from './password-hasher.service';
 import { AccessTokenService } from './access-token.service';
@@ -33,6 +40,18 @@ import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-st
 
 /** A value nobody can ever sign in with — see `getDummyHash()`. */
 const DUMMY_PASSWORD = 'atlas-p1-dummy-password-for-timing-safety-only';
+
+/**
+ * Real request metadata for the session being created or refreshed —
+ * resolved server-side from headers by `request-metadata.util.ts`, never
+ * taken from a request body. Optional throughout so non-HTTP callers
+ * (tests, future background flows) can issue a session without inventing
+ * an IP or user agent.
+ */
+export interface SessionRequestContext {
+  readonly ipAddress?: string;
+  readonly userAgent?: string;
+}
 
 @Injectable()
 export class AuthService {
@@ -65,6 +84,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly tenancyContextService: TenancyContextService,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
+    private readonly sessionRevocationService: SessionRevocationService,
   ) {}
 
   /**
@@ -161,6 +181,7 @@ export class AuthService {
   async signIn(input: {
     email: string;
     password: string;
+    context?: SessionRequestContext;
   }): Promise<AuthenticationResponseContract> {
     const email = normalizeEmail(input.email);
     const user = await this.usersRepository.findByEmail(email);
@@ -184,7 +205,42 @@ export class AuthService {
       throw new ForbiddenException({ messageKey: 'errors.auth.accountSuspended' });
     }
 
-    const session = await this.issueSession(user);
+    // =====================================================================
+    // 2FA INSERTION POINT (Phase 10, Decision 7 — "2FA-ready architecture")
+    // =====================================================================
+    // This is the single, deliberate place a future second-factor
+    // challenge belongs, and it is positioned here for a specific reason:
+    // the password and the account's status have both been proven, but
+    // NOTHING has been issued yet. `issueSession` below is what mints the
+    // access token, the refresh token and the session row; until it runs,
+    // the caller holds no credential of any kind.
+    //
+    // A future implementation replaces this comment with, in effect:
+    //
+    //     if (await this.secondFactorService.isEnrolled(user.id)) {
+    //       return this.secondFactorService.challenge(user);   // no session
+    //     }
+    //
+    // returning a "second factor required" result carrying only a
+    // short-lived challenge reference, and the eventual verify step calls
+    // `issueSession(user, input.context)` once the factor succeeds. That
+    // is why the insertion point is here rather than inside
+    // `issueSession` (which must stay the one place a session is minted,
+    // shared with the future verify path) or in the controller (which
+    // must not learn how authentication decides things).
+    //
+    // Everything the future check needs is already in scope: the resolved
+    // `user`, and `input.context` for device/IP-aware step-up rules.
+    // Nothing here is speculative scaffolding — no interface, no config
+    // flag, no dead branch — per this phase's own instruction to create
+    // only the insertion point and its documentation.
+    //
+    // DELIBERATELY NOT IMPLEMENTED IN PHASE 10: OTP/TOTP, SMS,
+    // authenticator enrolment, recovery or backup codes, QR setup, and
+    // any 2FA UI. Decision 7 defers all of it.
+    // =====================================================================
+
+    const session = await this.issueSession(user, input.context);
     await this.usersRepository.touchLastSignInAt(user.id);
 
     return session;
@@ -195,7 +251,10 @@ export class AuthService {
    * `RefreshTokensRepository.rotate`'s doc comment for the concurrency
    * guarantee this relies on.
    */
-  async refresh(rawRefreshToken: string): Promise<TokenRefreshResponseContract> {
+  async refresh(
+    rawRefreshToken: string,
+    context?: SessionRequestContext,
+  ): Promise<TokenRefreshResponseContract> {
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     const presentedHash = hashOpaqueToken(rawRefreshToken);
 
@@ -208,6 +267,13 @@ export class AuthService {
     const result = await this.refreshTokensRepository.rotate(presentedHash, {
       tokenHash: newHash,
       expiresAt,
+      // Phase 10 — re-read from the LIVE request so `lastUsedAt` reflects
+      // real session activity and a moved/upgraded client updates its own
+      // row. `rotate` falls back to the claimed row's values when a
+      // client sends no User-Agent, so a refresh never blanks these out.
+      ipAddress: context?.ipAddress,
+      userAgent: context?.userAgent,
+      deviceLabel: deriveDeviceLabel(context?.userAgent),
     });
 
     if (!result) {
@@ -218,9 +284,18 @@ export class AuthService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
     }
 
+    // Phase 10 — `sid` is the SESSION id, never the refresh-token row id.
+    // This previously carried `created.id`, which changes on every
+    // rotation, and that was a genuine hole rather than a cosmetic one:
+    // `JwtAuthGuard` looks the `sid` up on the revocation denylist, so an
+    // access token minted by a refresh carried a `sid` no revocation could
+    // ever match, and the session stayed usable for the token's full
+    // lifetime after the user revoked it. Carrying the family id forward
+    // is also what lets the session list mark the caller's own row
+    // `isCurrent` after the token has rotated.
     const accessToken = this.accessTokenService.issue({
       sub: result.created.userId,
-      sid: result.created.id,
+      sid: result.created.sessionId,
     });
 
     return {
@@ -237,8 +312,55 @@ export class AuthService {
    * possible given the frontend sends no refresh token on sign-out.
    * Idempotent: revoking an already-gone session is still a success.
    */
+  /**
+   * Phase 10 — the caller's own active sessions. `userId` always comes
+   * from the verified access token at the controller, never from input,
+   * and the repository query is scoped by it, so this cannot return
+   * another user's rows.
+   */
+  async listSessions(
+    userId: string,
+    currentSessionId: string,
+  ): Promise<readonly UserSessionResponse[]> {
+    const rows = await this.refreshTokensRepository.findActiveSessionsForUser(userId);
+    return rows.map((row) => toUserSessionResponse(row, currentSessionId));
+  }
+
+  /**
+   * Phase 10 — revokes one of the caller's own sessions, immediately.
+   *
+   * Two steps, in this order and both required:
+   *   1. Revoke every row in the rotation family, scoped by `userId`.
+   *      This is durable and stops the session ever refreshing again.
+   *   2. Add the session to the revocation denylist, which is what stops
+   *      an ALREADY-ISSUED access token on the very next request. Without
+   *      it, revocation would not take effect until the token expired,
+   *      and the roadmap's acceptance criterion would be unmet.
+   *
+   * A session id that does not belong to this user revokes zero rows and
+   * raises the same not-found as one that never existed, so the endpoint
+   * cannot be used to probe whether another user's session id is real.
+   */
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    const revoked = await this.refreshTokensRepository.revokeSessionForUser(
+      sessionId,
+      userId,
+    );
+
+    if (revoked === 0) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+
+    await this.sessionRevocationService.markRevoked(sessionId);
+  }
+
   async signOut(userId: string, sessionId: string): Promise<void> {
-    await this.refreshTokensRepository.revokeByIdForUser(sessionId, userId);
+    // Phase 10 — `sid` is now the SESSION id, so revoke the whole
+    // rotation family rather than a single row, and deny the access token
+    // immediately. Before this, signing out left the current access token
+    // usable for the rest of its lifetime.
+    await this.refreshTokensRepository.revokeSessionForUser(sessionId, userId);
+    await this.sessionRevocationService.markRevoked(sessionId);
   }
 
   /**
@@ -323,7 +445,16 @@ export class AuthService {
     );
   }
 
-  private async issueSession(user: User): Promise<AuthenticationResponseContract> {
+  /**
+   * The ONE place a session is minted. Kept single deliberately: the
+   * future second-factor verify path (see the 2FA insertion point in
+   * `signIn`) must issue sessions through exactly this method rather than
+   * duplicating token creation.
+   */
+  private async issueSession(
+    user: User,
+    context?: SessionRequestContext,
+  ): Promise<AuthenticationResponseContract> {
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     const rawRefreshToken = generateOpaqueToken();
     const tokenHash = hashOpaqueToken(rawRefreshToken);
@@ -331,15 +462,28 @@ export class AuthService {
       Date.now() + identity.refreshTokenTtlDays * 24 * 60 * 60 * 1000,
     );
 
+    // Phase 10 — a new device session begins here. Every later rotation
+    // copies this id forward, so it identifies the DEVICE for the whole
+    // life of the session rather than one link in the rotation chain.
+    const sessionId = randomUUID();
+
     const refreshToken = await this.refreshTokensRepository.create({
       userId: user.id,
       tokenHash,
       expiresAt,
+      sessionId,
+      ipAddress: context?.ipAddress,
+      userAgent: context?.userAgent,
+      deviceLabel: deriveDeviceLabel(context?.userAgent),
     });
 
     const accessToken = this.accessTokenService.issue({
       sub: user.id,
-      sid: refreshToken.id,
+      // `sid` is the stable session id, not the row id. For sessions
+      // created before Phase 10 the migration backfilled `session_id` to
+      // the row's own id, so tokens issued under the old scheme keep
+      // resolving to the same session.
+      sid: refreshToken.sessionId,
     });
 
     const organizationMemberships =

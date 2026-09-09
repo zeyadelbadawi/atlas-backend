@@ -5,6 +5,7 @@
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { randomUUID } from 'node:crypto';
 import { createTestApp, uniqueRawTokenFixture, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { hashOpaqueToken } from '../src/identity/utils/opaque-token.util';
@@ -86,6 +87,8 @@ describe('POST /auth/refresh (e2e)', () => {
     await prisma.refreshToken.create({
       data: {
         userId: user.id,
+        // Phase 10 — every row now carries a device-session id.
+        sessionId: randomUUID(),
         tokenHash: hashOpaqueToken(rawToken),
         expiresAt: new Date(Date.now() - 1000), // already expired
       },
@@ -110,6 +113,8 @@ describe('POST /auth/refresh (e2e)', () => {
     await prisma.refreshToken.create({
       data: {
         userId: user.id,
+        // Phase 10 — every row now carries a device-session id.
+        sessionId: randomUUID(),
         tokenHash: hashOpaqueToken(rawToken),
         expiresAt: new Date(Date.now() + 60_000),
         revokedAt: new Date(),

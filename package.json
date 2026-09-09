@@ -50,6 +50,7 @@
     "@nestjs/terminus": "^10.2.3",
     "@nestjs/throttler": "^6.2.1",
     "@prisma/client": "^5.20.0",
+    "@sentry/node": "^8.55.2",
     "argon2": "^0.41.1",
     "bullmq": "^5.13.2",
     "class-transformer": "^0.5.1",
@@ -58,11 +59,11 @@
     "ioredis": "^5.4.1",
     "nestjs-pino": "^4.1.0",
     "pino-http": "^10.3.0",
+    "prisma": "^5.20.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "sharp": "^0.33.5",
-    "zod": "^3.23.8",
-    "prisma": "^5.20.0"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.5",

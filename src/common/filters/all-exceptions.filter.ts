@@ -16,6 +16,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import * as Sentry from '@sentry/node';
 import { Logger } from 'nestjs-pino';
 import type { FieldViolation, NormalizedApiErrorResponse } from '../dto/api-error.dto';
 import { isRetryableKind, mapStatusToErrorKind } from './error-kind.util';
@@ -57,6 +58,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
         { requestId, status, exception: this.describe(exception) },
         'Unhandled exception',
       );
+      // Phase 10 — report genuine server faults to Sentry, and only
+      // those. 4xx responses are deliberately excluded: a wrong password
+      // or a 404 is normal traffic, and reporting them would bury real
+      // faults under noise while burning quota. `requestId` is attached
+      // so an alert can be traced straight back to the log line above.
+      //
+      // No-ops when Sentry was never initialised (no DSN), so this is
+      // safe unconditionally. Payload scrubbing happens in `beforeSend`.
+      Sentry.withScope((scope) => {
+        if (requestId) scope.setTag('requestId', requestId);
+        scope.setTag('status', String(status));
+        Sentry.captureException(exception);
+      });
     } else {
       this.logger.warn({ requestId, status, messageKey }, 'Request failed');
     }

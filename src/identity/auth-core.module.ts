@@ -14,11 +14,25 @@
  * independently and the module graph stays a clean DAG:
  * `AuthCoreModule ← IdentityModule`, `AuthCoreModule ← TenancyModule`,
  * `TenancyModule ← IdentityModule` (one direction only).
+ *
+ * Phase 10 added `SessionRevocationService` (and the
+ * `RefreshTokensRepository` it falls back to) here rather than in
+ * `IdentityModule`, because `JwtAuthGuard` — which lives here and is
+ * consumed by every module — now depends on it to reject revoked
+ * sessions. Both dependencies keep this module dependency-free in the
+ * sense that matters: `PrismaModule` and `RedisModule` are both
+ * `@Global()`, so nothing new is imported and the DAG above is
+ * unchanged. `IdentityModule` continues to provide its own
+ * `RefreshTokensRepository` instance for its own use; these are stateless
+ * repositories over a shared client, so a second instance is not a second
+ * source of truth.
  */
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { AccessTokenService } from './services/access-token.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { SessionRevocationService } from './services/session-revocation.service';
+import { RefreshTokensRepository } from './repositories/refresh-tokens.repository';
 
 @Module({
   imports: [
@@ -26,7 +40,12 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
     // (reads `IdentityConfig` itself) — one place owns JWT configuration.
     JwtModule.register({}),
   ],
-  providers: [AccessTokenService, JwtAuthGuard],
-  exports: [AccessTokenService, JwtAuthGuard],
+  providers: [
+    AccessTokenService,
+    JwtAuthGuard,
+    SessionRevocationService,
+    RefreshTokensRepository,
+  ],
+  exports: [AccessTokenService, JwtAuthGuard, SessionRevocationService],
 })
 export class AuthCoreModule {}

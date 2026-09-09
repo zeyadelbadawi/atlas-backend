@@ -30,6 +30,17 @@ export interface RedisConfig {
   readonly url: string;
 }
 
+/**
+ * Phase 10 — error monitoring. `dsn` is `undefined` when unconfigured,
+ * and that is a supported, fully-functional state: `initializeSentry`
+ * no-ops and nothing is ever transmitted.
+ */
+export interface ObservabilityConfig {
+  readonly sentryDsn?: string;
+  readonly sentryTracesSampleRate: number;
+  readonly sentryEnvironment: string;
+}
+
 /** Phase P8 — Media Library & Object Storage configuration (master plan §13, ADR-005). */
 export interface MediaStorageConfig {
   readonly endpoint: string;
@@ -137,6 +148,15 @@ export default () => {
     url: env.REDIS_URL,
   };
 
+  const observability: ObservabilityConfig = {
+    // An empty string is normalised to `undefined` so a deployment can
+    // disable reporting by blanking the variable, without having to
+    // remove it from its environment file.
+    sentryDsn: env.SENTRY_DSN ? env.SENTRY_DSN : undefined,
+    sentryTracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE ?? 0),
+    sentryEnvironment: env.SENTRY_ENVIRONMENT ?? nodeEnv,
+  };
+
   const identity: IdentityConfig = {
     jwtAccessSecret: env.JWT_ACCESS_SECRET,
     jwtAccessTtlSeconds: Number(env.JWT_ACCESS_TTL_SECONDS ?? 900),
@@ -202,6 +222,7 @@ export default () => {
     app,
     database,
     redis,
+    observability,
     identity,
     media,
     platformDomain,

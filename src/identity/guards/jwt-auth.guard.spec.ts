@@ -1,6 +1,14 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import type { AccessTokenService } from '../services/access-token.service';
+import type { SessionRevocationService } from '../services/session-revocation.service';
+
+/** Phase 10 — the guard now consults session revocation. Default: nothing revoked, so these tests keep asserting the token-shape behaviour they were written for. */
+function revocationService(isRevoked = false): SessionRevocationService {
+  return {
+    isRevoked: jest.fn(async () => isRevoked),
+  } as unknown as SessionRevocationService;
+}
 
 function buildContext(headerValue: string | undefined): {
   context: ExecutionContext;
@@ -24,40 +32,54 @@ function buildContext(headerValue: string | undefined): {
 }
 
 describe('JwtAuthGuard', () => {
-  it('rejects a request with no Authorization header', () => {
+  it('rejects a request with no Authorization header', async () => {
     const accessTokenService = { verify: jest.fn() } as unknown as AccessTokenService;
-    const guard = new JwtAuthGuard(accessTokenService);
+    const guard = new JwtAuthGuard(accessTokenService, revocationService());
     const { context } = buildContext(undefined);
-    expect(() => guard.canActivate(context)).toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
     expect(accessTokenService.verify).not.toHaveBeenCalled();
   });
 
-  it('rejects a header that is not a Bearer token', () => {
+  it('rejects a header that is not a Bearer token', async () => {
     const accessTokenService = { verify: jest.fn() } as unknown as AccessTokenService;
-    const guard = new JwtAuthGuard(accessTokenService);
+    const guard = new JwtAuthGuard(accessTokenService, revocationService());
     const { context } = buildContext('Basic abc123');
-    expect(() => guard.canActivate(context)).toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
   });
 
-  it('rejects when verify() throws', () => {
+  it('rejects when verify() throws', async () => {
     const accessTokenService = {
       verify: jest.fn(() => {
         throw new Error('invalid signature');
       }),
     } as unknown as AccessTokenService;
-    const guard = new JwtAuthGuard(accessTokenService);
+    const guard = new JwtAuthGuard(accessTokenService, revocationService());
     const { context } = buildContext('Bearer some.jwt.token');
-    expect(() => guard.canActivate(context)).toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
   });
 
-  it('attaches authContext and allows the request through on a valid token', () => {
+  it('attaches authContext and allows the request through on a valid token', async () => {
     const accessTokenService = {
       verify: jest.fn(() => ({ sub: 'user-1', sid: 'session-1' })),
     } as unknown as AccessTokenService;
-    const guard = new JwtAuthGuard(accessTokenService);
+    const guard = new JwtAuthGuard(accessTokenService, revocationService());
     const { context, request } = buildContext('Bearer valid.jwt.token');
 
-    expect(guard.canActivate(context)).toBe(true);
+    await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(request.authContext).toEqual({ userId: 'user-1', sessionId: 'session-1' });
+  });
+
+  it('Phase 10 — rejects a cryptographically VALID token whose session was revoked', async () => {
+    // The whole point of the revocation check: this token verifies
+    // perfectly, so signature-and-expiry alone would let it through.
+    const accessTokenService = {
+      verify: jest.fn(() => ({ sub: 'user-1', sid: 'revoked-session' })),
+    } as unknown as AccessTokenService;
+    const guard = new JwtAuthGuard(accessTokenService, revocationService(true));
+    const { context, request } = buildContext('Bearer valid.jwt.token');
+
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    // And no auth context is attached, so nothing downstream can act on it.
+    expect(request.authContext).toBeUndefined();
   });
 });

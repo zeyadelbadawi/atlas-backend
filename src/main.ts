@@ -9,6 +9,13 @@
  * a business one), and OpenAPI documentation (master plan §10 "Docs").
  */
 import 'reflect-metadata';
+// Phase 10 — must run before any instrumented module is imported, which
+// is why it sits above every other import but `reflect-metadata`. No-ops
+// entirely when `SENTRY_DSN` is unset; see `observability/sentry.ts`.
+import { initializeSentry } from './observability/sentry';
+
+const sentryEnabled = initializeSentry();
+
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
@@ -49,6 +56,28 @@ async function bootstrap(): Promise<void> {
   const mediaConfig = configService.getOrThrow<MediaStorageConfig>('media');
   const bodyLimitBytes = mediaConfig.maxUploadBytes * 3;
   app.useBodyParser('json', { limit: bodyLimitBytes });
+
+  /**
+   * Phase 10 — trust the reverse proxy in front of us, but only it.
+   *
+   * Without this, Express reports the immediate socket peer as
+   * `request.ip`, which in production is Caddy on the compose network.
+   * Every per-IP rate limiter (`signin-rate-limit.guard.ts`,
+   * `register-rate-limit.guard.ts`, `password-reset-rate-limit.guard.ts`
+   * and the global `ThrottlerGuard`) keys on `request.ip`, so all of them
+   * were bucketing every visitor on the planet into a single shared
+   * counter — the exact "accidental global lockout" shape this phase's
+   * own hardening review calls out, since one abusive client could
+   * exhaust the budget for everyone.
+   *
+   * The value is a trust LIST, never `true`. `true` would trust the
+   * leftmost `X-Forwarded-For` entry from any caller, letting a client
+   * forge its own address and evade or poison rate limiting.
+   * Loopback/link-local/unique-local covers exactly the private ranges a
+   * sidecar proxy occupies (Docker's bridge network included) and nothing
+   * routable from outside.
+   */
+  app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 
   app.use(helmet());
 
@@ -121,6 +150,14 @@ async function bootstrap(): Promise<void> {
 
   await app.listen(config.port);
   logger.log(`Atlas backend listening on port ${config.port} (${config.nodeEnv})`);
+  // Stated explicitly at boot so an operator can tell at a glance whether
+  // error reporting is actually on, rather than assuming it is because
+  // the code exists.
+  logger.log(
+    sentryEnabled
+      ? 'Sentry error reporting: ENABLED'
+      : 'Sentry error reporting: DISABLED (no SENTRY_DSN configured)',
+  );
 }
 
 bootstrap().catch((error: unknown) => {

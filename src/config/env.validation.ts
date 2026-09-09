@@ -68,6 +68,30 @@ const EnvSchema = z.object({
 
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 
+  // --- Phase 10 — Error monitoring (Sentry) ---
+  // Deliberately OPTIONAL, unlike DATABASE_URL/REDIS_URL. Error reporting
+  // is not connectivity-critical: with no DSN configured the integration
+  // disables itself completely and the app runs exactly as before, which
+  // is what keeps local development, CI and any self-hosted deployment
+  // from needing a Sentry project just to boot.
+  //
+  // A malformed DSN, on the other hand, IS rejected at boot. A
+  // silently-broken monitoring pipeline is worse than none, because it
+  // looks configured while reporting nothing.
+  SENTRY_DSN: z
+    .string()
+    .refine((value) => value === '' || /^https:\/\/[^@]+@[^/]+\/\d+$/.test(value), {
+      message:
+        'SENTRY_DSN must be a Sentry DSN of the form https://<key>@<host>/<project-id>, or be omitted entirely to disable error reporting.',
+    })
+    .optional(),
+
+  /** Fraction of transactions sampled for performance monitoring. `0` (the default) keeps tracing off, so configuring a DSN alone never silently starts sending performance data or incurring quota. */
+  SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
+
+  /** Distinguishes production from staging in the Sentry UI. Falls back to NODE_ENV when unset. */
+  SENTRY_ENVIRONMENT: z.string().optional(),
+
   // --- Phase P1 — Identity, Auth & Sessions (master plan §8, §21 P1) ---
   // Access-token signing secret. Required, no default — a JWT secret is
   // exactly the kind of connectivity/security-critical value P0's env
