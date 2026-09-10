@@ -97,6 +97,8 @@ model User {
   refreshTokens                                 RefreshToken[]
   passwordResetTokens                           PasswordResetToken[]
   emailVerificationTokens                       EmailVerificationToken[]
+  twoFactor                                     UserTwoFactor?
+  twoFactorRecoveryCodes                        TwoFactorRecoveryCode[]
   ownedOrganizations                            Organization[]                           @relation("OrganizationOwner")
   organizationMemberships                       OrganizationMembership[]
   academyMemberships                            AcademyMember[]
@@ -184,6 +186,56 @@ model RefreshToken {
 
 /// Backs `PasswordResetRequest`/`PasswordResetConfirmation`. Single-use,
 /// short-lived, hashed at rest — same rationale as `RefreshToken`.
+/// Phase 10.3 — a user's TOTP second factor.
+///
+/// ENFORCEMENT HANGS ON `confirmedAt`, NOT ON THE ROW EXISTING. Setup
+/// creates the row with a secret but leaves `confirmedAt` null, and 2FA
+/// is NOT enforced in that state. Until the user has proved they can
+/// generate a correct code, requiring one at sign-in would lock them out
+/// of their own account over a mis-scanned QR code.
+///
+/// THE SECRET IS ENCRYPTED AT REST with AES-256-GCM under a key derived
+/// specifically for this purpose — see `TotpSecretCipher`. It is never
+/// stored, logged, or returned in plaintext after the one-time setup
+/// response that the user needs in order to enrol.
+model UserTwoFactor {
+  userId          String    @id @map("user_id")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// AES-256-GCM ciphertext of the base32 TOTP secret. Never plaintext.
+  encryptedSecret String    @map("encrypted_secret")
+  /// Null until the user proves they can produce a valid code. 2FA is enforced only once this is set.
+  confirmedAt     DateTime? @map("confirmed_at")
+  /// Phase 10.3 — REPLAY PROTECTION. The TOTP time step of the last
+  /// accepted code. A code is rejected unless its time step is strictly
+  /// greater, so the same six digits can never be used twice even inside
+  /// their own 30-second validity window.
+  lastTimeStep    Int?      @map("last_time_step")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@map("user_two_factor")
+}
+
+/// Phase 10.3 — single-use recovery codes.
+///
+/// Stored HASHED, exactly like a password: a database disclosure must not
+/// hand over a working second factor. The plaintext codes are shown to
+/// the user exactly once, at generation, and are unrecoverable afterwards
+/// — regenerating is the only remedy for losing them.
+model TwoFactorRecoveryCode {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the normalised code. Unique so the same code can never exist twice.
+  codeHash  String    @unique @map("code_hash")
+  /// Set on first use. Single-use is enforced by a conditional UPDATE, not by deletion, so the audit trail survives.
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, usedAt])
+  @@map("two_factor_recovery_codes")
+}
+
 /// Phase 10.1 — proof that the address on an account can actually receive
 /// mail. Structurally identical to `PasswordResetToken` on purpose: same
 /// hashed-token-at-rest discipline, same single-use `usedAt` marker, same

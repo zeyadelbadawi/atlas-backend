@@ -32,6 +32,7 @@ import { normalizeEmail } from '../utils/email.util';
 import { toCurrentUser } from '../dto/contracts';
 import type {
   AuthenticationResponseContract,
+  AuthenticationSessionContract,
   TokenRefreshResponseContract,
 } from '../dto/contracts';
 import { PasswordResetEmailProducer } from '../queue/password-reset-email.producer';
@@ -41,6 +42,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { EmailRiskService } from './email-risk.service';
+import { TwoFactorService } from './two-factor.service';
 import { EmailVerificationTokensRepository } from '../repositories/email-verification-tokens.repository';
 import { EMAIL_PROVIDER } from './email-provider.interface';
 import type { EmailProvider } from './email-provider.interface';
@@ -97,6 +99,7 @@ export class AuthService {
     private readonly sessionRevocationService: SessionRevocationService,
     private readonly emailRiskService: EmailRiskService,
     private readonly emailVerificationTokensRepository: EmailVerificationTokensRepository,
+    private readonly twoFactorService: TwoFactorService,
     @Inject(EMAIL_PROVIDER) private readonly emailProvider: EmailProvider,
   ) {}
 
@@ -317,43 +320,58 @@ export class AuthService {
     }
 
     // =====================================================================
-    // 2FA INSERTION POINT (Phase 10, Decision 7 — "2FA-ready architecture")
+    // SECOND FACTOR (Phase 10.3 — implements what Phase 10 deferred)
     // =====================================================================
-    // This is the single, deliberate place a future second-factor
-    // challenge belongs, and it is positioned here for a specific reason:
-    // the password and the account's status have both been proven, but
-    // NOTHING has been issued yet. `issueSession` below is what mints the
-    // access token, the refresh token and the session row; until it runs,
-    // the caller holds no credential of any kind.
+    // Positioned exactly where Phase 10's insertion point was, and for
+    // the same reason: the password and the account status have both been
+    // proven, but NOTHING has been issued yet. `issueSession` below is
+    // what mints the access token, the refresh token and the session row.
+    // Returning here means the caller holds no credential of any kind —
+    // only a challenge reference that authenticates nothing.
     //
-    // A future implementation replaces this comment with, in effect:
-    //
-    //     if (await this.secondFactorService.isEnrolled(user.id)) {
-    //       return this.secondFactorService.challenge(user);   // no session
-    //     }
-    //
-    // returning a "second factor required" result carrying only a
-    // short-lived challenge reference, and the eventual verify step calls
-    // `issueSession(user, input.context)` once the factor succeeds. That
-    // is why the insertion point is here rather than inside
-    // `issueSession` (which must stay the one place a session is minted,
-    // shared with the future verify path) or in the controller (which
-    // must not learn how authentication decides things).
-    //
-    // Everything the future check needs is already in scope: the resolved
-    // `user`, and `input.context` for device/IP-aware step-up rules.
-    // Nothing here is speculative scaffolding — no interface, no config
-    // flag, no dead branch — per this phase's own instruction to create
-    // only the insertion point and its documentation.
-    //
-    // DELIBERATELY NOT IMPLEMENTED IN PHASE 10: OTP/TOTP, SMS,
-    // authenticator enrolment, recovery or backup codes, QR setup, and
-    // any 2FA UI. Decision 7 defers all of it.
+    // The challenge is completed by `POST /auth/2fa/verify`, which calls
+    // `issueSessionForVerifiedUser` — so `issueSession` remains the one
+    // and only place a session is minted, shared by both paths.
+    if (await this.twoFactorService.isEnforcedFor(user.id)) {
+      const challenge = await this.twoFactorService.createChallenge(user.id);
+      return {
+        twoFactorRequired: true,
+        challengeId: challenge.challengeId,
+        expiresIn: challenge.expiresIn,
+      };
+    }
     // =====================================================================
 
     const session = await this.issueSession(user, input.context);
     await this.usersRepository.touchLastSignInAt(user.id);
 
+    return session;
+  }
+
+  /**
+   * Phase 10.3 — completes a 2FA challenge and issues the real session.
+   *
+   * The user id comes from `TwoFactorService.completeChallenge`, which
+   * resolved it from the server-side challenge record — never from
+   * anything the caller supplied. This is the second and only other
+   * caller of `issueSession`, so session minting stays in one place.
+   */
+  async completeTwoFactorSignIn(
+    challengeId: string,
+    input: { token?: string; recoveryCode?: string },
+    context?: SessionRequestContext,
+  ): Promise<AuthenticationSessionContract> {
+    const userId = await this.twoFactorService.completeChallenge(challengeId, input);
+
+    const user = await this.usersRepository.findById(userId);
+    if (!user) {
+      // The account vanished between password and second factor. Same
+      // generic failure as a bad code — nothing is disclosed.
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
+    }
+
+    const session = await this.issueSession(user, context);
+    await this.usersRepository.touchLastSignInAt(user.id);
     return session;
   }
 
@@ -565,7 +583,7 @@ export class AuthService {
   private async issueSession(
     user: User,
     context?: SessionRequestContext,
-  ): Promise<AuthenticationResponseContract> {
+  ): Promise<AuthenticationSessionContract> {
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     const rawRefreshToken = generateOpaqueToken();
     const tokenHash = hashOpaqueToken(rawRefreshToken);

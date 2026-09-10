@@ -7,6 +7,11 @@ module.exports = {
   transform: {
     '^.+\\.(t|j)s$': 'ts-jest',
   },
+  // `otplib` v13 and its `@scure`/`@noble` crypto dependencies ship
+  // ESM-only entry points, which Jest cannot parse under the default
+  // "never transform node_modules" rule. Transforming just those packages
+  // is narrower and safer than switching the whole suite to native ESM.
+  transformIgnorePatterns: ['node_modules/(?!(otplib|@otplib|@scure|@noble)/)'],
   collectCoverageFrom: ['**/*.(t|j)s'],
   coverageDirectory: '../coverage',
   testEnvironment: 'node',

@@ -26,6 +26,9 @@ import { RefreshTokensRepository } from './repositories/refresh-tokens.repositor
 import { PasswordResetTokensRepository } from './repositories/password-reset-tokens.repository';
 import { EmailVerificationTokensRepository } from './repositories/email-verification-tokens.repository';
 import { EmailRiskService } from './services/email-risk.service';
+import { TwoFactorService } from './services/two-factor.service';
+import { TotpSecretCipher } from './services/totp-secret-cipher.service';
+import { TwoFactorController } from './controllers/two-factor.controller';
 import { SignInRateLimitGuard } from './guards/signin-rate-limit.guard';
 import { PasswordResetRateLimitGuard } from './guards/password-reset-rate-limit.guard';
 import { RegisterRateLimitGuard } from './guards/register-rate-limit.guard';
@@ -45,7 +48,10 @@ import { TenancyModule } from '../tenancy/tenancy.module';
     // stays a clean DAG — no `forwardRef` needed.
     TenancyModule,
   ],
-  controllers: [AuthController, UsersController],
+  // `TwoFactorController` is listed before `AuthController` so its
+  // `/auth/2fa/*` routes are registered ahead of any broader `/auth/*`
+  // pattern — Nest matches in declaration order.
+  controllers: [TwoFactorController, AuthController, UsersController],
   providers: [
     AuthService,
     UsersService,
@@ -82,6 +88,8 @@ import { TenancyModule } from '../tenancy/tenancy.module';
     PasswordResetTokensRepository,
     EmailVerificationTokensRepository,
     EmailRiskService,
+    TwoFactorService,
+    TotpSecretCipher,
     SignInRateLimitGuard,
     PasswordResetRateLimitGuard,
     RegisterRateLimitGuard,

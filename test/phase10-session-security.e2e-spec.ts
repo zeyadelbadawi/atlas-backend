@@ -343,36 +343,36 @@ describe('Phase 10 session security (e2e) — P10-SEC-001..014', () => {
     expect(remaining.body[0].isCurrent).toBe(true);
   });
 
-  it('P10-SEC-012 — the 2FA insertion point exists, is documented, and issues nothing before it', async () => {
-    // Phase 10 explicitly DEFERS 2FA. This is a structural test: it
-    // guards the insertion point's position rather than any behaviour,
-    // because the one thing that would make a future 2FA implementation
-    // unsafe is the hook drifting to AFTER tokens are already issued.
+  it('P10-SEC-012 — the second-factor check still sits BEFORE any session is issued', async () => {
+    // Phase 10 shipped only a documented insertion point here and
+    // deferred 2FA; Phase 10.3 replaced it with a real implementation.
+    // The assertion that mattered then still matters now, and is the
+    // reason this test survived the change: the check must run BEFORE
+    // `issueSession`, so a challenged sign-in has never handed out a
+    // usable token pair. A refactor that moved it after issuance would
+    // leave 2FA looking functional while providing no protection.
     const source = readFileSync(
       join(__dirname, '..', 'src', 'identity', 'services', 'auth.service.ts'),
       'utf8',
     );
 
-    expect(source).toContain('2FA INSERTION POINT');
-
-    const insertionPoint = source.indexOf('2FA INSERTION POINT');
     const signInStart = source.indexOf('async signIn(');
+    const secondFactorCheck = source.indexOf('isEnforcedFor(', signInStart);
     const issueSessionCall = source.indexOf('this.issueSession(', signInStart);
 
     expect(signInStart).toBeGreaterThan(-1);
-    expect(insertionPoint).toBeGreaterThan(signInStart);
-    // The hook must sit BEFORE any session is issued, so a future
-    // implementation can interrupt sign-in without having already handed
-    // out a usable token pair.
-    expect(insertionPoint).toBeLessThan(issueSessionCall);
+    expect(secondFactorCheck).toBeGreaterThan(signInStart);
+    expect(secondFactorCheck).toBeLessThan(issueSessionCall);
 
-    // And no 2FA is actually enforced yet: a correct password alone still
-    // completes sign-in.
+    // Behavioural half: an account WITHOUT 2FA is unaffected — a correct
+    // password alone still completes sign-in exactly as before.
     const email = await registerUser('p10-012');
-    await request(app.getHttpServer())
+    const response = await request(app.getHttpServer())
       .post('/auth/sign-in')
       .send({ email, password: PASSWORD })
       .expect(200);
+    expect(response.body.accessToken).toBeTruthy();
+    expect(response.body.twoFactorRequired).toBeFalsy();
   });
 
   it('P10-SEC-013 — sign-in rate limiting still applies and is not globally shared', async () => {

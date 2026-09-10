@@ -44,12 +44,38 @@ export interface CurrentUserResponse {
   readonly lastSignInAt?: string;
 }
 
-export interface AuthenticationResponseContract {
+export interface AuthenticationSessionContract {
   readonly accessToken: string;
   readonly refreshToken?: string;
   readonly expiresIn: number;
   readonly user: CurrentUserResponse;
+  /** Absent on a real session. Present and `true` only on the challenge variant below. */
+  readonly twoFactorRequired?: false;
 }
+
+/**
+ * Phase 10.3 — the response when a correct password is not enough.
+ *
+ * Deliberately carries NO token of any kind. `challengeId` is an opaque
+ * reference to a short-lived Redis entry that only
+ * `POST /auth/2fa/verify` accepts; it authenticates nothing and cannot be
+ * sent as a bearer token anywhere. A client that mistakes it for one gets
+ * a 401 from every protected route.
+ */
+export interface TwoFactorChallengeContract {
+  readonly twoFactorRequired: true;
+  readonly challengeId: string;
+  /** Seconds until the challenge expires and the user must sign in again. */
+  readonly expiresIn: number;
+}
+
+/**
+ * A sign-in either establishes a session or demands a second factor.
+ * Modelled as a union so a caller cannot read `accessToken` off a
+ * challenge response without the compiler objecting.
+ */
+export type AuthenticationResponseContract =
+  AuthenticationSessionContract | TwoFactorChallengeContract;
 
 export interface TokenRefreshResponseContract {
   readonly accessToken: string;

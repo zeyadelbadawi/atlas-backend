@@ -9,12 +9,13 @@
  * network. No account recreation and no client-side evasion were even
  * required — the hole was pure server-side logic.
  *
- * WHAT "BLOCKED" MEANS HERE. A refused trial does NOT refuse the
- * organization. The organization is created normally; it simply receives
- * an already-expired `trialEndsAt`, reusing the exact shape the codebase
- * already produces when a Platform Owner disables trials. So these tests
- * assert on whether the trial is USABLE, not on whether the request
- * succeeded — asserting a 4xx would be testing the wrong thing.
+ * WHAT "BLOCKED" MEANS HERE. A refused trial does NOT refuse anything
+ * else. The organization is created normally and the redemption request
+ * itself returns 200 — with `started: false` — because "you have already
+ * used your trial" is an ordinary business outcome, not an error. The
+ * subscription simply keeps `trialEndsAt: null`. So these tests assert on
+ * whether a USABLE trial resulted, never on a 4xx status, which would be
+ * testing the wrong thing.
  *
  * WHAT IS DELIBERATELY NOT ASSERTED. That two accounts belong to one
  * human. No technical system can establish that from network or device
