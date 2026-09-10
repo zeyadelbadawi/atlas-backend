@@ -18,7 +18,6 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -108,8 +107,16 @@ export class TwoFactorController {
     );
   }
 
-  /** Turns 2FA off. Requires the password — a session alone is not enough. */
-  @Delete()
+  /**
+   * Turns 2FA off. Requires the password — a session alone is not enough.
+   *
+   * POST rather than DELETE because this carries a body (the password),
+   * and DELETE-with-a-body is inconsistently supported: some proxies and
+   * HTTP clients strip it, which would silently turn "wrong password"
+   * into "no password supplied". A security control must not depend on
+   * intermediary behaviour.
+   */
+  @Post('disable')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(JwtAuthGuard)
   async disable(

@@ -427,7 +427,7 @@ describe('Phase 10.3 two-factor authentication (e2e) — P103-2FA-001..020', () 
     const enrolled = await enrol(uniqueTestEmail('p103-018'));
 
     await request(app.getHttpServer())
-      .delete('/auth/2fa')
+      .post('/auth/2fa/disable')
       .set('Authorization', `Bearer ${enrolled.token}`)
       .send({ password: 'not-the-password' })
       .expect(401);
@@ -437,7 +437,7 @@ describe('Phase 10.3 two-factor authentication (e2e) — P103-2FA-001..020', () 
     expect(stillChallenged.body.twoFactorRequired).toBe(true);
 
     await request(app.getHttpServer())
-      .delete('/auth/2fa')
+      .post('/auth/2fa/disable')
       .set('Authorization', `Bearer ${enrolled.token}`)
       .send({ password: PASSWORD })
       .expect(204);
