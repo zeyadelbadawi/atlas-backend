@@ -31,6 +31,8 @@ import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-rec
 import { AcademiesRepository } from '../repositories/academies.repository';
 import { AcademyMembersRepository } from '../repositories/academy-members.repository';
 import { ContactSubmissionsRepository } from '../repositories/contact-submissions.repository';
+import { SubdomainAllocationsRepository } from '../../domain/repositories/subdomain-allocations.repository';
+import { PlatformDomainConfigurationRepository } from '../../domain/repositories/platform-domain-configuration.repository';
 import { toAcademyResponse } from '../dto/academy.contract';
 import type { AcademyResponse, AcademyAddressResponse } from '../dto/academy.contract';
 import { toAcademyMemberResponse } from '../dto/academy-member.contract';
@@ -121,6 +123,8 @@ export class AcademiesService {
     private readonly entitlementEnforcementService: EntitlementEnforcementService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
     private readonly contactSubmissionsRepository: ContactSubmissionsRepository,
+    private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
+    private readonly platformDomainConfigurationRepository: PlatformDomainConfigurationRepository,
   ) {}
 
   /**
@@ -208,8 +212,26 @@ export class AcademiesService {
     await this.assertSlugAvailable(payload.organizationId, payload.slug);
 
     const academy = await this.withSlugConflictHandling(() =>
-      this.tenancyContextService.runInTenantContext(
+      // Phase 10.4 — tenant AND user context, not tenant alone.
+      //
+      // The `subdomain_allocations_insert` RLS policy requires
+      // `is_academy_member(academy_id, app.current_user_id)` (added in
+      // P21). Under a tenant-only context `app.current_user_id` is unset,
+      // so the allocation below is refused with a bare
+      // "new row violates row-level security policy" and the whole
+      // Academy creation fails. `ProvisioningOrchestratorService` already
+      // ran its own allocation under a tenant+user context for exactly
+      // this reason; this makes the two paths agree.
+      //
+      // Setting the acting user is strictly more precise, not more
+      // permissive: it is the same user the method already authorises
+      // above, and every other policy in this transaction is either
+      // organization-scoped (unaffected) or membership-scoped (satisfied
+      // by the `academy_members` row created below, before the
+      // allocation).
+      this.tenancyContextService.runInTenantAndUserContext(
         payload.organizationId,
+        userId,
         async (tx) => {
           // Phase 5 — WHO may create an Academy at all, checked first and
           // independent of the entitlement check below (see
@@ -266,6 +288,44 @@ export class AcademiesService {
             academy: { connect: { id: created.id } },
             user: { connect: { id: userId } },
             role: 'owner',
+          });
+
+          // THE PUBLIC WEBSITE'S HOSTNAME ALLOCATION.
+          //
+          // Without this row, `resolve_public_hostname` finds nothing and
+          // the Academy's public site answers "not found" at
+          // `{slug}.{baseDomain}` — even though DNS, TLS and origin
+          // routing are all working perfectly. That was a real, live
+          // production defect: of five Academies, only the two created
+          // through `ProvisioningOrchestratorService` (which allocates
+          // its own subdomain as a separate step) had an allocation. The
+          // three created through THIS method — the ordinary "New
+          // Academy" flow — had none, and their public sites were dead.
+          //
+          // Allocating here rather than in a second place is what makes
+          // the two creation paths agree: provisioning's own step checks
+          // `findByAcademyId` first and returns `completed` when a row
+          // already exists, so it simply becomes a no-op rather than a
+          // conflicting duplicate.
+          //
+          // The subdomain IS the slug. `assertSlugAvailable` above and
+          // the `subdomain_allocations` unique index enforce the same
+          // uniqueness from two directions, and `subdomain_is_taken`
+          // already treats the two namespaces as one.
+          const platformDomain =
+            await this.platformDomainConfigurationRepository.findSingleton();
+
+          await this.subdomainAllocationsRepository.create(tx, {
+            academyId: created.id,
+            subdomain: created.slug,
+            status: 'assigned',
+            // Null when no platform base domain is configured (local and
+            // early environments). The allocation is still recorded, so
+            // resolution by bare label keeps working and configuring the
+            // domain later needs no backfill.
+            fullHost: platformDomain.baseDomain
+              ? `${created.slug}.${platformDomain.baseDomain}`
+              : null,
           });
 
           // Phase P15 retroactive audit coverage (master plan §21 P15's

@@ -51,6 +51,8 @@ import { AcademyMembersRepository } from './repositories/academy-members.reposit
 import { ContactSubmissionsRepository } from './repositories/contact-submissions.repository';
 import { AcademyOrganizationScopeGuard } from './guards/academy-organization-scope.guard';
 import { AcademyScopeGuard } from './guards/academy-scope.guard';
+import { SubdomainAllocationsRepository } from '../domain/repositories/subdomain-allocations.repository';
+import { PlatformDomainConfigurationRepository } from '../domain/repositories/platform-domain-configuration.repository';
 
 @Module({
   imports: [AuthCoreModule, TenancyModule, IdentityModule, PlansModule],
@@ -59,6 +61,19 @@ import { AcademyScopeGuard } from './guards/academy-scope.guard';
     AcademiesRepository,
     AcademyMembersRepository,
     ContactSubmissionsRepository,
+    // Phase 10.4 — Academy creation now allocates the Academy's public
+    // subdomain in the same transaction (see `AcademiesService.create`).
+    //
+    // Registered DIRECTLY rather than by importing `DomainModule`:
+    // `DomainModule` already imports `AcademyModule`, so importing it back
+    // is a genuine module cycle (Nest fails to construct it). Both classes
+    // are stateless wrappers over the `@Global()` `PrismaService`, so a
+    // second instance is equivalent to the first — the same approach
+    // `AuthCoreModule`/`IdentityModule` already take with
+    // `RefreshTokensRepository`. A `forwardRef` pair would work too, but
+    // would add real coupling to avoid a problem that does not exist here.
+    SubdomainAllocationsRepository,
+    PlatformDomainConfigurationRepository,
     AcademiesService,
     AcademyOrganizationScopeGuard,
     AcademyScopeGuard,
