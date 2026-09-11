@@ -782,6 +782,40 @@ export class ProvisioningOrchestratorService {
     }
     const academyId = request.academyId;
 
+    /*
+     * READ THE PLATFORM CONFIG BEFORE OPENING THE TENANT TRANSACTION.
+     *
+     * This used to be called from INSIDE the `runTenantAsRequester`
+     * callback. `findSingleton` is an `upsert` on the pooled
+     * `PrismaService` client, not on `tx`, so it had to acquire a SECOND
+     * connection while the interactive transaction was still holding the
+     * first one open and idle. That is the classic connection-pool
+     * starvation shape: under real concurrency every pooled connection can
+     * be held by a transaction that is itself blocked waiting for a
+     * connection to become free, and the interactive transactions then age
+     * out. It surfaced exactly that way — a retried provisioning request
+     * dying on `subdomainAllocation.create` with "Transaction not found.
+     * Transaction ID is invalid, refers to an old closed transaction",
+     * because the transaction had already expired while this upsert waited.
+     *
+     * `withTransientRetry` wraps this step and correctly classifies that
+     * error as transient, but retrying could not help: each attempt
+     * re-entered the same nest and re-created the same contention.
+     *
+     * Hoisting it out is also the more correct shape on its own terms.
+     * This is platform-global configuration, not tenant data — it has no
+     * business being read under a tenant RLS context — and because the
+     * upsert never ran on `tx`, it was never covered by the transaction it
+     * appeared to sit in: a rollback would not have undone it. The
+     * transaction that remains is now exactly the two writes that must be
+     * atomic, and holds no connection while waiting on anything else.
+     */
+    const platformDomainConfig =
+      await this.platformDomainConfigurationRepository.findSingleton();
+    const fullHost = platformDomainConfig.baseDomain
+      ? `${request.requestedSubdomain}.${platformDomainConfig.baseDomain}`
+      : null;
+
     return this.runTenantAsRequester(
       organizationId,
       request.requestedByUserId,
@@ -791,12 +825,6 @@ export class ProvisioningOrchestratorService {
           academyId,
         );
         if (existing) return { result: 'completed' as const };
-
-        const platformDomainConfig =
-          await this.platformDomainConfigurationRepository.findSingleton();
-        const fullHost = platformDomainConfig.baseDomain
-          ? `${request.requestedSubdomain}.${platformDomainConfig.baseDomain}`
-          : null;
 
         try {
           await this.subdomainAllocationsRepository.create(tx, {

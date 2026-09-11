@@ -361,5 +361,9 @@ describe('POST /organizations (e2e) — Phase P19', () => {
     );
     expect(usage.academies).toBe(0);
     expect(usage.students).toBe(0);
-  }, 15000); // before it ever gets the full 10s to observe the worker's result. // eventually-successful async wait could be killed by Jest itself // `waitForAsync` budget above — without this override, a real, // Jest's own default per-test timeout (5000ms) is shorter than the
+    // Jest's own default per-test timeout (5000ms) is shorter than the
+    // `waitForAsync` budget above — without this override, a real,
+    // eventually-successful async wait could be killed by Jest itself
+    // before it ever gets the full 10s to observe the worker's result.
+  }, 15000);
 });

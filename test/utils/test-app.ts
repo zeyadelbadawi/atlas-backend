@@ -36,6 +36,44 @@ export interface TestApp {
   readonly flushRateLimitKeys: () => Promise<void>;
 }
 
+/**
+ * Removes every key under the test queue prefix.
+ *
+ * `bull-test` is what `AppModule` sets for `app.isTest`, precisely so test
+ * queue state never touches a real dev or production queue — see its own
+ * comment there. Deleted in batches because a run's accumulated backlog
+ * reaches six figures, and `DEL` with that many arguments at once is
+ * neither necessary nor kind to Redis.
+ */
+async function flushTestQueues(redisService: RedisService): Promise<void> {
+  const client = redisService.getClient();
+  let cursor = '0';
+  do {
+    const [next, keys] = await client.scan(cursor, 'MATCH', 'bull-test:*', 'COUNT', 1000);
+    cursor = next;
+    /*
+     * Repeat/scheduler bookkeeping is deliberately KEPT. Deleting it makes
+     * `SubscriptionSweepScheduler.onApplicationBootstrap` register the
+     * repeatable job as brand new on the very next boot, which schedules a
+     * tick that is immediately due — so every spec file would start by
+     * running a full subscription sweep. That sweep fans out one
+     * `tenant-usage-recompute` job per stale organization, and on a
+     * long-lived shared dev database (30,219 organizations here, from
+     * months of e2e runs that never clean up) that is thousands of jobs
+     * competing for the same nine-connection Prisma pool as the spec's own
+     * requests. The recompute's interactive transaction then expires
+     * against its 5s ceiling before its first query runs — "Transaction
+     * already closed ... however 5445 ms passed since the start" — even
+     * though the underlying SQL measures 0.1ms.
+     *
+     * Preserving these keys leaves the sweep on its real 15-minute
+     * cadence, which no single spec file is long enough to hit.
+     */
+    const disposable = keys.filter((key) => !key.includes('repeat'));
+    if (disposable.length > 0) await client.del(...disposable);
+  } while (cursor !== '0');
+}
+
 export async function createTestApp(): Promise<TestApp> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>();
@@ -50,11 +88,70 @@ export async function createTestApp(): Promise<TestApp> {
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
+
+  /*
+   * DISCARD QUEUE STATE LEFT BEHIND BY PREVIOUS E2E RUNS, BEFORE THE
+   * WORKERS START.
+   *
+   * Every e2e run enqueues real jobs (creating an Organization enqueues a
+   * `tenant-usage-recompute`, the subscription sweep enqueues one per
+   * organization, and so on) and then closes the app when the spec file
+   * ends — long before those queues have drained. Nothing ever removed the
+   * remainder, so across many runs against this shared Redis the backlog
+   * only grew: measured at 166,309 waiting `tenant-usage-recompute` jobs
+   * when this was written.
+   *
+   * BullMQ is FIFO, and this queue drains at roughly 137 jobs/sec
+   * (`TENANT_USAGE_RECOMPUTE_CONCURRENCY`'s own benchmark), so a job
+   * enqueued by a test landed behind about twenty minutes of someone
+   * else's leftovers. `organizations.e2e-spec.ts`'s "a new Organization
+   * gets a real tenant_usage row shortly after creation" then failed its
+   * 10s wait — not because the behaviour it asserts was broken, but
+   * because its job had not been reached yet. The same backlog also makes
+   * `app.close()` slow, since it waits on in-flight jobs.
+   *
+   * The `bull-test:` prefix exists exactly so test queue state is separate
+   * from anything real, which is what makes clearing it safe here. Jobs a
+   * spec enqueues during its own run are untouched — this only ever runs
+   * at bootstrap, before the spec has done anything.
+   *
+   * It has to run AFTER `app.init()`: `RedisService` constructs its client
+   * in `onModuleInit`, so before init there is no connection to issue the
+   * scan on. The workers are therefore already consuming by this point,
+   * which is harmless — anything they pick up in that window is stale
+   * leftover work, and clearing the queue underneath them is exactly what
+   * is wanted.
+   */
   await app.init();
+
+  await flushTestQueues(moduleRef.get(RedisService));
 
   const flushRateLimitKeys = async (): Promise<void> => {
     const client = moduleRef.get(RedisService).getClient();
-    const keys = await client.keys('ratelimit:*');
+    /*
+     * TWO independent rate limiters guard this application, and this helper
+     * used to clear only one of them.
+     *
+     * `ratelimit:*` is `AuthRateLimiterService`, the per-IP sign-in limiter.
+     * The GLOBAL `ThrottlerGuard` registered in `AppModule` (120 requests /
+     * 60s, `APP_GUARD`, every route) keeps its counters in an entirely
+     * different namespace — `nestjs-throttler-storage-redis` writes
+     * `{<hash>:<throttler-name>}:hits` — so it was never flushed here at
+     * all. With `maxWorkers: 1`, every spec file in the run shares one
+     * localhost IP and therefore one 120-request budget, and any file that
+     * polls an endpoint (provisioning status, worker results) exhausts it
+     * and starts collecting 429s in tests that have nothing to do with rate
+     * limiting.
+     *
+     * This does not weaken the throttler: it stays enabled for every
+     * request in every spec, and is asserted where it is the subject under
+     * test. It removes cross-file counter accumulation, which is exactly
+     * what the comment below already claimed this helper did.
+     */
+    const keys = [
+      ...(await client.keys('ratelimit:*')),
+      ...(await client.keys('{*}:hits')),
+    ];
     if (keys.length > 0) await client.del(...keys);
   };
 
@@ -133,6 +230,9 @@ export async function waitFor<T>(
  * doc comment describes for password-reset — just against Postgres
  * instead of an in-memory stub.
  */
+/** Upper bound on the backoff below — see `waitForAsync`. */
+const MAX_POLL_INTERVAL_MS = 250;
+
 export async function waitForAsync<T>(
   check: () => Promise<T | undefined>,
   {
@@ -141,12 +241,29 @@ export async function waitForAsync<T>(
   }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
+  let delay = intervalMs;
   for (;;) {
     const value = await check();
     if (value !== undefined) return value;
     if (Date.now() >= deadline) {
       throw new Error(`waitForAsync: condition was never met within ${timeoutMs}ms`);
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    /*
+     * Back off rather than polling at a fixed 25ms for the whole budget.
+     * Most `check`s here are HTTP requests, and a flat interval spent up to
+     * 400 of them against a single endpoint inside one 10s wait — more than
+     * three times the global `ThrottlerGuard` allowance (120 requests /
+     * 60s), so a test could exhaust its own budget purely by waiting and
+     * then fail on a 429 that has nothing to do with what it asserts. No
+     * real client polls a status endpoint forty times a second.
+     *
+     * The FIRST poll is still immediate and the second still lands at
+     * `intervalMs`, so a condition that resolves quickly — which is nearly
+     * all of them — is detected exactly as fast as before. Only a genuinely
+     * long wait slows its polling, and the cap keeps worst-case detection
+     * latency well under a second.
+     */
+    delay = Math.min(delay * 2, MAX_POLL_INTERVAL_MS);
   }
 }

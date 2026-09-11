@@ -676,6 +676,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     // `attemptNumber` advanced and it is no longer `running`), AND the
     // request as a whole has reached ready/failed/cancelled.
     const preRetryAcademyAttemptNumber = stepsByKey.academy.attemptNumber;
+    const preRetryFailedAt = failed.failedAt;
     const resumed = await waitForAsync(async () => {
       const body = await getRequest(owner, org.id, created.id);
       const academyStep = body.steps.find(
@@ -685,8 +686,28 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       const academyStepResolved =
         academyStep.attemptNumber > preRetryAcademyAttemptNumber &&
         academyStep.status !== 'running';
-      const requestResolved = ['ready', 'failed', 'cancelled'].includes(body.status);
-      return academyStepResolved && requestResolved ? body : undefined;
+      /*
+       * `failed` is NOT usable on its own as "the retry has concluded".
+       * `retryRequest` deliberately only enqueues a job — it does not clear
+       * `status` or `failedAt` (see its own implementation) — so between
+       * the retry being accepted and the worker transitioning the request,
+       * `status` still reads `failed` from the PREVIOUS attempt. Treating
+       * that as a concluded new outcome is how this test used to observe a
+       * stale verdict: the academy step had genuinely re-executed and
+       * completed, the request was still momentarily carrying the old
+       * `failed`, both halves of the condition were satisfied at once, and
+       * the wait returned before the remaining steps had run.
+       *
+       * `failedAt` is what separates the two: a retry that genuinely fails
+       * again stamps a NEW one, so a real re-failure is still observed
+       * promptly and still fails the assertion below — this waits for the
+       * right event, it does not tolerate a wrong one.
+       */
+      const reachedNewTerminal =
+        body.status === 'ready' ||
+        body.status === 'cancelled' ||
+        (body.status === 'failed' && body.failedAt !== preRetryFailedAt);
+      return academyStepResolved && reachedNewTerminal ? body : undefined;
     });
     expect(resumed.status).toBe('ready');
     expect(resumed.academyId).toBeTruthy();
