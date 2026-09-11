@@ -64,6 +64,29 @@ export class PublicWebsiteCacheService {
     await this.setJson(hostnameKey(hostname), value, HOSTNAME_TTL_SECONDS);
   }
 
+  /**
+   * Phase 10.6 — drops a cached hostname resolution immediately.
+   *
+   * Needed because deleting an Academy has to take its public website
+   * offline NOW, not whenever the 60-second cache happens to expire.
+   * Without this the site kept serving after deletion — the customer
+   * deletes their Academy, watches the site stay up, and reasonably
+   * concludes the deletion did not work.
+   *
+   * A Redis failure is swallowed: the database change has already
+   * committed and is authoritative, so the worst case degrades to the
+   * old behaviour of the entry ageing out on its own.
+   */
+  async invalidateHostnameResolution(hostnames: readonly string[]): Promise<void> {
+    const keys = hostnames.filter(Boolean).map((hostname) => hostnameKey(hostname));
+    if (keys.length === 0) return;
+    try {
+      await this.redisService.getClient().del(...keys);
+    } catch {
+      // Best effort — see this method's own doc comment.
+    }
+  }
+
   async getConfiguration<T>(
     academyId: string,
     configVersion: number,

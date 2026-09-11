@@ -33,6 +33,7 @@ import { AcademyMembersRepository } from '../repositories/academy-members.reposi
 import { ContactSubmissionsRepository } from '../repositories/contact-submissions.repository';
 import { SubdomainAllocationsRepository } from '../../domain/repositories/subdomain-allocations.repository';
 import { PlatformDomainConfigurationRepository } from '../../domain/repositories/platform-domain-configuration.repository';
+import { PublicWebsiteCacheService } from '../../public-website/services/public-website-cache.service';
 import { toAcademyResponse } from '../dto/academy.contract';
 import type { AcademyResponse, AcademyAddressResponse } from '../dto/academy.contract';
 import { toAcademyMemberResponse } from '../dto/academy-member.contract';
@@ -52,6 +53,7 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../dto/list-query.dto';
 import type { CollectionQueryDto, ListAcademiesQueryDto } from '../dto/list-query.dto';
 import type { CreateAcademyDto } from '../dto/create-academy.dto';
 import type { UpdateAcademyDto } from '../dto/update-academy.dto';
+import type { AcademyArchiveReason } from '../dto/delete-academy.dto';
 import type { UpdateAcademyBrandingDto } from '../dto/update-academy-branding.dto';
 import type { AddAcademyManagerDto } from '../dto/add-academy-manager.dto';
 import type { AddAcademyInstructorDto } from '../dto/add-academy-instructor.dto';
@@ -108,6 +110,15 @@ const GRANTS_MANAGER_ROLES = new Set(['owner']);
  */
 const CREATES_ACADEMY_ROLES = new Set(['owner']);
 
+/**
+ * What the caller may record when deleting an Academy. Both fields are
+ * optional: deletion must never depend on answering an exit survey.
+ */
+export interface ArchiveAcademyInput {
+  readonly reason?: AcademyArchiveReason;
+  readonly feedback?: string;
+}
+
 @Injectable()
 export class AcademiesService {
   constructor(
@@ -125,6 +136,7 @@ export class AcademiesService {
     private readonly contactSubmissionsRepository: ContactSubmissionsRepository,
     private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
     private readonly platformDomainConfigurationRepository: PlatformDomainConfigurationRepository,
+    private readonly publicWebsiteCacheService: PublicWebsiteCacheService,
   ) {}
 
   /**
@@ -421,15 +433,54 @@ export class AcademiesService {
   }
 
   /** `DELETE /academies/:id` — soft-archive via status transition, never a SQL DELETE (no DELETE RLS policy exists on `academies` at all). */
+  /**
+   * Deletes an Academy.
+   *
+   * Deletion is ARCHIVAL, and deliberately so: `academies` has no DELETE
+   * RLS policy, because courses, enrolments, orders and revenue-ledger
+   * entries reference the row and destroying it would take a customer's
+   * financial history with it. What the customer actually asked for still
+   * happens — the public website goes offline immediately and the plan's
+   * academy allowance is released.
+   *
+   * `input` is optional so the plain `DELETE /academies/:id` transport,
+   * which carries no body, keeps working unchanged.
+   */
   async archive(
     academyId: string,
     organizationId: string,
     userId: string,
+    input: ArchiveAcademyInput = {},
   ): Promise<void> {
-    await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      await this.academiesRepository.update(tx, academyId, { status: 'archived' });
-    });
+    const archived = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        return this.academiesRepository.update(tx, academyId, {
+          status: 'archived',
+          archivedAt: new Date(),
+          archiveReason: input.reason ?? null,
+          archiveFeedback: input.feedback?.trim() || null,
+        });
+      },
+    );
+
+    // Phase 10.6 — take the public website offline IMMEDIATELY.
+    //
+    // `resolve_public_hostname` now refuses archived Academies, but the
+    // resolution is also cached in Redis for 60 seconds. Without this the
+    // deleted Academy's site kept serving for up to a minute — the
+    // customer deletes it, watches the site stay up, and reasonably
+    // concludes deletion did not work.
+    //
+    // Both hostname forms the resolver accepts are dropped: the bare slug
+    // and the fully-qualified host, since either could be the cached key.
+    const platformDomain =
+      await this.platformDomainConfigurationRepository.findSingleton();
+    await this.publicWebsiteCacheService.invalidateHostnameResolution([
+      archived.slug,
+      platformDomain.baseDomain ? `${archived.slug}.${platformDomain.baseDomain}` : '',
+    ]);
 
     // Phase 2 — an archived academy frees its entire quota footprint
     // (academies/instructors/staff/courses/students/storage all drop) —

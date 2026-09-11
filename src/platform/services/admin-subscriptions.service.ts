@@ -213,26 +213,23 @@ export class AdminSubscriptionsService {
   /**
    * Organizations that redeemed a trial and currently hold a paid status.
    *
-   * Deliberately a two-step count rather than a join: `trial_redemptions`
-   * intentionally nulls `organization_id` when an organization is
-   * deleted, so a join would silently drop those rows and quietly
-   * understate the denominator elsewhere.
+   * A single aggregate join rather than loading every redemption id into
+   * memory and passing them back as an `IN (...)` list. The first version
+   * did exactly that, and it timed out against a database with ~17k
+   * academies — an operations dashboard must not get slower as the
+   * platform succeeds.
+   *
+   * `INNER JOIN` naturally skips redemptions whose organization was
+   * deleted (`organization_id` is set to NULL rather than cascading), so
+   * no explicit null-handling is needed.
    */
   private async countConvertedTrials(tx: Prisma.TransactionClient): Promise<number> {
-    const redeemedOrgIds = await tx.trialRedemption.findMany({
-      where: { organizationId: { not: null } },
-      select: { organizationId: true },
-    });
-
-    if (redeemedOrgIds.length === 0) return 0;
-
-    return tx.tenantSubscription.count({
-      where: {
-        organizationId: {
-          in: redeemedOrgIds.map((row) => row.organizationId as string),
-        },
-        status: { in: ['active', 'past_due', 'grace_period'] },
-      },
-    });
+    const rows = await tx.$queryRawUnsafe<{ count: bigint }[]>(
+      `SELECT count(*)::bigint AS count
+         FROM trial_redemptions tr
+         JOIN tenant_subscriptions ts ON ts.organization_id = tr.organization_id
+        WHERE ts.status IN ('active', 'past_due', 'grace_period')`,
+    );
+    return Number(rows[0]?.count ?? 0);
   }
 }

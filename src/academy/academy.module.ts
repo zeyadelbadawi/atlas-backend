@@ -53,6 +53,7 @@ import { AcademyOrganizationScopeGuard } from './guards/academy-organization-sco
 import { AcademyScopeGuard } from './guards/academy-scope.guard';
 import { SubdomainAllocationsRepository } from '../domain/repositories/subdomain-allocations.repository';
 import { PlatformDomainConfigurationRepository } from '../domain/repositories/platform-domain-configuration.repository';
+import { PublicWebsiteCacheService } from '../public-website/services/public-website-cache.service';
 
 @Module({
   imports: [AuthCoreModule, TenancyModule, IdentityModule, PlansModule],
@@ -74,6 +75,12 @@ import { PlatformDomainConfigurationRepository } from '../domain/repositories/pl
     // would add real coupling to avoid a problem that does not exist here.
     SubdomainAllocationsRepository,
     PlatformDomainConfigurationRepository,
+    // Registered directly for the same reason as the two above: importing
+    // `PublicWebsiteModule` here would add a module edge only to reach a
+    // stateless Redis wrapper. Archiving needs it to drop the cached
+    // hostname resolution so a deleted Academy's site goes offline at
+    // once rather than 60 seconds later.
+    PublicWebsiteCacheService,
     AcademiesService,
     AcademyOrganizationScopeGuard,
     AcademyScopeGuard,

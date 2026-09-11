@@ -26,6 +26,7 @@ import { RefreshTokensRepository } from './repositories/refresh-tokens.repositor
 import { PasswordResetTokensRepository } from './repositories/password-reset-tokens.repository';
 import { EmailVerificationTokensRepository } from './repositories/email-verification-tokens.repository';
 import { EmailRiskService } from './services/email-risk.service';
+import { AccountDeletionService } from './services/account-deletion.service';
 import { TwoFactorService } from './services/two-factor.service';
 import { TotpSecretCipher } from './services/totp-secret-cipher.service';
 import { TwoFactorController } from './controllers/two-factor.controller';
@@ -88,6 +89,7 @@ import { TenancyModule } from '../tenancy/tenancy.module';
     PasswordResetTokensRepository,
     EmailVerificationTokensRepository,
     EmailRiskService,
+    AccountDeletionService,
     TwoFactorService,
     TotpSecretCipher,
     SignInRateLimitGuard,

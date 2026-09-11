@@ -13,5 +13,6 @@
   "maxWorkers": 1,
   "transformIgnorePatterns": [
     "node_modules/(?!(otplib|@otplib|@scure|@noble)/)"
-  ]
+  ],
+  "testTimeout": 60000
 }

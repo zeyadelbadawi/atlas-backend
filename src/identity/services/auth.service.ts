@@ -313,6 +313,19 @@ export class AuthService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
 
+    // Phase 10.6 — a deleted account can never sign in again.
+    //
+    // Checked BEFORE suspension and reported as ordinary invalid
+    // credentials rather than as a distinct "this account was deleted"
+    // error: the address is anonymised at deletion, so confirming that a
+    // deleted account once existed here would leak more than it helps.
+    // The password hash is also replaced with a value no password can
+    // produce, so this check is the second of two independent barriers,
+    // not the only one.
+    if (user.status === 'deleted') {
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
+    }
+
     // Suspension is only ever revealed to someone who already proved they
     // know the correct password — no enumeration signal added.
     if (user.status === 'suspended') {

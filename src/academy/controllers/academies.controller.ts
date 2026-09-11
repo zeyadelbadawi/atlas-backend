@@ -28,8 +28,8 @@ import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { AcademyOrganizationScopeGuard } from '../guards/academy-organization-scope.guard';
 import { AcademyScopeGuard } from '../guards/academy-scope.guard';
 import { AcademiesService } from '../services/academies.service';
-import { CreateAcademyDto } from '../dto/create-academy.dto';
 import { UpdateAcademyDto } from '../dto/update-academy.dto';
+import { DeleteAcademyDto } from '../dto/delete-academy.dto';
 import { UpdateAcademyBrandingDto } from '../dto/update-academy-branding.dto';
 import { AddAcademyManagerDto } from '../dto/add-academy-manager.dto';
 import { AddAcademyInstructorDto } from '../dto/add-academy-instructor.dto';
@@ -57,15 +57,28 @@ export class AcademiesController {
     return this.academiesService.list(query);
   }
 
-  @Post()
-  @UseGuards(AcademyOrganizationScopeGuard)
-  async create(
-    @Req() request: Request,
-    @Body() body: CreateAcademyDto,
-  ): Promise<AcademyResponse> {
-    // `request.authContext` is guaranteed set — `JwtAuthGuard` runs first.
-    return this.academiesService.create(request.authContext!.userId, body);
-  }
+  // ---------------------------------------------------------------------
+  // THERE IS DELIBERATELY NO `POST /academies` ROUTE.
+  //
+  // Academy Provisioning (`POST /organizations/:id/provisioning-requests`)
+  // is the single authoritative way a user creates an Academy. This route
+  // used to be a second, parallel entry point into
+  // `AcademiesService.create`, and having two paths caused a real
+  // production outage: only the provisioning path allocated the
+  // Academy's public subdomain, so every Academy created through this
+  // route had a dead public website (three of five in production).
+  //
+  // `AcademiesService.create` still exists and is still used — but only
+  // as an INTERNAL step of the provisioning orchestrator, which owns the
+  // full sequence: entitlement check, Academy row, owner membership,
+  // subdomain allocation, and public-website setup. Removing the route
+  // rather than the method is what keeps that logic reusable while
+  // leaving exactly one way in.
+  //
+  // Removing the route is also the actual enforcement. Hiding the button
+  // in the frontend would leave the endpoint reachable by anyone willing
+  // to send the request themselves.
+  // ---------------------------------------------------------------------
 
   @Get(':id')
   @UseGuards(AcademyScopeGuard)
@@ -108,6 +121,14 @@ export class AcademiesController {
     );
   }
 
+  /**
+   * Deletes an Academy without recording a reason.
+   *
+   * Kept because it is the RESTful shape and existing callers use it. It
+   * and `POST :id/delete` below run the identical service method — one
+   * implementation behind two transports, not two behaviours that could
+   * drift apart.
+   */
   @Delete(':id')
   @HttpCode(204)
   @UseGuards(AcademyScopeGuard)
@@ -117,6 +138,36 @@ export class AcademiesController {
       academyId,
       organizationId,
       request.authContext!.userId,
+    );
+  }
+
+  /**
+   * Deletes an Academy AND records why.
+   *
+   * A separate POST route rather than a body on the DELETE: request
+   * bodies on DELETE have no defined semantics, intermediaries are
+   * permitted to drop them, and Atlas's own frontend HTTP client types
+   * `delete` without a body. The explicit `confirm: true` in the payload
+   * also means an accidental empty request cannot take a public website
+   * offline.
+   *
+   * Authorization is identical to the DELETE above — the same
+   * `AcademyScopeGuard`, and `archive`'s own `assertCanManage` inside the
+   * transaction. This route is a different shape, never a weaker door.
+   */
+  @Post(':id/delete')
+  @HttpCode(204)
+  @UseGuards(AcademyScopeGuard)
+  async deleteWithReason(
+    @Req() request: Request,
+    @Body() body: DeleteAcademyDto,
+  ): Promise<void> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.academiesService.archive(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      { reason: body.reason, feedback: body.feedback },
     );
   }
 

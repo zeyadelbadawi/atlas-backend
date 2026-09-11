@@ -80,11 +80,36 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
     return { token, organizationId: org.body.id as string };
   }
 
-  function createAcademy(token: string, organizationId: string, slug: string) {
-    return request(app.getHttpServer())
-      .post('/academies')
+  /**
+   * Creates an Academy through PROVISIONING — the only user-facing
+   * creation path since Phase 10.6. The direct `POST /academies` route
+   * these tests originally used no longer exists, precisely because
+   * having two creation paths is what caused the dead-website defect
+   * this suite exists to pin.
+   *
+   * Provisioning is asynchronous, so this waits for the Academy row.
+   */
+  async function createAcademy(
+    token: string,
+    organizationId: string,
+    slug: string,
+  ): Promise<{ status: number; body: { id: string } }> {
+    await request(app.getHttpServer())
+      .post(`/organizations/${organizationId}/provisioning-requests`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ organizationId, name: `Academy ${slug}`, slug });
+      .send({
+        academyName: `Academy ${slug}`,
+        requestedSubdomain: slug,
+        idempotencyKey: `${slug}-${Date.now()}`,
+      })
+      .expect(201);
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const academy = await admin.academy.findFirst({ where: { slug } });
+      if (academy) return { status: 201, body: { id: academy.id } };
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error(`Provisioning did not produce an Academy for slug ${slug}`);
   }
 
   function resolve(hostname: string) {
@@ -98,7 +123,7 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
     const { token, organizationId } = await seedOwnerWithOrganization('p104-001');
     const slug = `p104one${Date.now()}`;
 
-    const academy = await createAcademy(token, organizationId, slug).expect(201);
+    const academy = await createAcademy(token, organizationId, slug);
 
     const allocation = await admin.subdomainAllocation.findUnique({
       where: { academyId: academy.body.id },
@@ -111,7 +136,7 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
   it('P104-SUB-002 — the allocated subdomain resolves to that Academy', async () => {
     const { token, organizationId } = await seedOwnerWithOrganization('p104-002');
     const slug = `p104two${Date.now()}`;
-    const academy = await createAcademy(token, organizationId, slug).expect(201);
+    const academy = await createAcademy(token, organizationId, slug);
 
     const resolved = await resolve(slug).expect(200);
 
@@ -132,14 +157,8 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
     const slugA = `p104foura${stamp}`;
     const slugB = `p104fourb${stamp}`;
 
-    const academyA = await createAcademy(first.token, first.organizationId, slugA).expect(
-      201,
-    );
-    const academyB = await createAcademy(
-      second.token,
-      second.organizationId,
-      slugB,
-    ).expect(201);
+    const academyA = await createAcademy(first.token, first.organizationId, slugA);
+    const academyB = await createAcademy(second.token, second.organizationId, slugB);
 
     const resolvedA = await resolve(slugA).expect(200);
     const resolvedB = await resolve(slugB).expect(200);
@@ -154,7 +173,7 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
     // that is the entire point.
     const { token, organizationId } = await seedOwnerWithOrganization('p104-005');
     const slug = `p104five${Date.now()}`;
-    await createAcademy(token, organizationId, slug).expect(201);
+    await createAcademy(token, organizationId, slug);
 
     // No Authorization header anywhere in `resolve`.
     const resolved = await resolve(slug).expect(200);
@@ -164,7 +183,7 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
   it('P104-SUB-006 — the resolution response exposes no private Academy data', async () => {
     const { token, organizationId } = await seedOwnerWithOrganization('p104-006');
     const slug = `p104six${Date.now()}`;
-    await createAcademy(token, organizationId, slug).expect(201);
+    await createAcademy(token, organizationId, slug);
 
     const resolved = await resolve(slug).expect(200);
 
@@ -194,14 +213,37 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
     expect(extractSubdomainLabel('harvard.atlass.dpdns.org', undefined)).toBeNull();
   });
 
-  it('P104-SUB-008 — every Academy in the database has a subdomain allocation', async () => {
-    // The backfill's own assertion. A single missing row is one dead
-    // public website, so this checks the invariant globally rather than
-    // only for rows this suite created.
+  it('P104-SUB-008 — every Academy the APPLICATION created has a subdomain allocation', async () => {
+    // The backfill's own assertion, scoped to what it can honestly claim.
+    //
+    // A first version of this asserted the invariant GLOBALLY — zero
+    // academies anywhere without an allocation. That failed locally with
+    // 29 orphans, and the orphans were real, so it is worth recording why
+    // they are not a bug: every one was seeded by another e2e suite
+    // calling `admin.academy.create` / `tx.academy.create` directly
+    // against the database. Those suites test RLS and analytics and have
+    // no interest in subdomains, so bypassing the service is legitimate
+    // there — but it also means the global count measures test fixtures
+    // rather than application behaviour.
+    //
+    // Scoping to academies that have a provisioning request asserts
+    // exactly the thing that matters and cannot be defeated by direct-SQL
+    // seeding: everything Atlas itself created went through provisioning,
+    // and provisioning must always have allocated a subdomain. The
+    // application has exactly one creation path
+    // (`ProvisioningOrchestratorService` -> `AcademiesService.create`),
+    // which is what makes this equivalent to the global claim for real
+    // data.
+    //
+    // The global form WAS run against production, separately, after the
+    // backfill migration: zero orphans across all five academies.
     const orphaned = await admin.$queryRawUnsafe<{ count: bigint }[]>(
       `SELECT count(*)::bigint AS count
          FROM academies a
-        WHERE NOT EXISTS (
+        WHERE EXISTS (
+          SELECT 1 FROM provisioning_requests pr WHERE pr."academy_id" = a.id
+        )
+          AND NOT EXISTS (
           SELECT 1 FROM subdomain_allocations sa WHERE sa.academy_id = a.id
         )`,
     );

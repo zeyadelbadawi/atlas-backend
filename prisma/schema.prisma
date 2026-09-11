@@ -56,6 +56,9 @@ enum UserAccountStatus {
   active
   invited
   suspended
+  /// Phase 10.6 — self-deleted. Irreversible, and distinct from
+  /// `suspended` (which is administrator-driven and can be undone).
+  deleted
 
   @@map("user_account_status")
 }
@@ -90,6 +93,11 @@ model User {
   /// being retroactively claimed as verified, and so the moment of
   /// verification is itself auditable.
   emailVerifiedAt DateTime?         @map("email_verified_at")
+  /// Phase 10.6 — when the user deleted their own account. Null while live.
+  deletedAt       DateTime?         @map("deleted_at")
+  /// Optional closed-vocabulary reason, and optional free text. Neither is ever required to delete.
+  deletionReason  String?           @map("deletion_reason")
+  deletionFeedback String?          @map("deletion_feedback")
   lastSignInAt    DateTime?         @map("last_sign_in_at")
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
@@ -433,6 +441,17 @@ model Academy {
   address        Json?
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  /// Phase 10.6 — why the owner deleted this Academy. Atlas's delete IS
+  /// archival (there is deliberately no DELETE RLS policy on this table),
+  /// so the reason lives on the row rather than in a separate tombstone.
+  /// Null for an Academy that is not archived, and for one archived
+  /// before this was recorded.
+  archivedAt       DateTime? @map("archived_at")
+  /// Closed vocabulary, validated by the DTO. Never free text.
+  archiveReason    String?   @map("archive_reason")
+  /// Optional free text the owner chose to leave. Never required.
+  archiveFeedback  String?   @map("archive_feedback")
 
   members              AcademyMember[]
   students             AcademyStudent[]
