@@ -45,6 +45,7 @@ import { AuthCoreModule } from '../identity/auth-core.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { AcademyModule } from '../academy/academy.module';
 import { PlansModule } from '../plans/plans.module';
+import { PublicMediaController } from './controllers/public-media.controller';
 import { MediaController } from './controllers/media.controller';
 import { MediaService } from './services/media.service';
 import { MediaAssetsRepository } from './repositories/media-assets.repository';
@@ -62,7 +63,7 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
     PlansModule,
     BullModule.registerQueue({ name: MEDIA_PROCESSING_QUEUE }),
   ],
-  controllers: [MediaController],
+  controllers: [MediaController, PublicMediaController],
   providers: [
     MediaService,
     MediaAssetsRepository,

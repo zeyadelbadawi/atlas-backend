@@ -39,6 +39,11 @@ const REAL_PNG_BASE64 =
 const REAL_PNG_DATA_URL = `data:image/png;base64,${REAL_PNG_BASE64}`;
 const REAL_PNG_BYTE_LENGTH = Buffer.from(REAL_PNG_BASE64, 'base64').length;
 
+/** See the note at the first call site — the test app has no global prefix. */
+function stripApiPrefix(url: string): string {
+  return url.replace(/^\/api\/v1/, '');
+}
+
 describe('Media Library (e2e)', () => {
   let app: INestApplication;
   let admin: PrismaClient;
@@ -96,13 +101,29 @@ describe('Media Library (e2e)', () => {
     expect(uploaded.body.url).toContain(academy.id);
     expect(uploaded.body.id).toBeTruthy();
 
-    // Durable in the real object store — a direct HTTP GET against the
-    // returned URL (MinIO's own HTTP endpoint) returns the real bytes,
-    // not a fabricated success.
-    const objectResponse = await fetch(uploaded.body.url);
-    expect(objectResponse.status).toBe(200);
-    const objectBytes = Buffer.from(await objectResponse.arrayBuffer());
-    expect(Buffer.compare(objectBytes, Buffer.from(REAL_PNG_BASE64, 'base64'))).toBe(0);
+    /*
+      THE URL THE FRONTEND IS GIVEN MUST ACTUALLY RETURN THE IMAGE.
+
+      This used to `fetch()` the returned URL directly, because it used to
+      be an absolute link to the object store. In production that link
+      pointed at R2's S3 API endpoint, which answers an unsigned browser
+      request with `400 InvalidArgument: Authorization` — so the old
+      assertion passed against MinIO while real uploads rendered as broken
+      images for customers. Atlas now serves its own media and the URL is
+      relative, so this asks the APPLICATION for it, which is the request a
+      browser actually makes.
+
+      `createTestApp` deliberately does not replay `main.ts`'s
+      `setGlobalPrefix`/`enableVersioning` (see its own doc comment), so the
+      `/api/v1` the real deployment adds is stripped here.
+    */
+    const objectResponse = await request(app.getHttpServer())
+      .get(stripApiPrefix(uploaded.body.url))
+      .expect(200);
+    expect(objectResponse.headers['content-type']).toContain('image/png');
+    expect(
+      Buffer.compare(objectResponse.body, Buffer.from(REAL_PNG_BASE64, 'base64')),
+    ).toBe(0);
 
     // Real DB metadata row, storage key scoped under the academy.
     const row = await admin.mediaAsset.findUniqueOrThrow({
@@ -260,5 +281,129 @@ describe('Media Library (e2e)', () => {
     expect(archivedList.body.items.map((a: { id: string }) => a.id)).toContain(
       uploaded.body.id,
     );
+  });
+
+  // ---------------------------------------------------------------------
+  // The public serving route — the half that was actually broken.
+  // ---------------------------------------------------------------------
+
+  describe('public media serving', () => {
+    async function uploadPng(label: string) {
+      const { owner, academy } = await seedManagedAcademy(label);
+      const uploaded = await request(app.getHttpServer())
+        .post(`/academies/${academy.id}/media`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          fileName: 'logo.png',
+          mimeType: 'image/png',
+          sizeBytes: REAL_PNG_BYTE_LENGTH,
+          dataUrl: REAL_PNG_DATA_URL,
+        })
+        .expect(201);
+      return { owner, academy, asset: uploaded.body };
+    }
+
+    /*
+     * A public Academy website is rendered for anonymous visitors, so its
+     * logo and hero images have to load with no session at all. This is the
+     * request a real visitor's browser makes.
+     */
+    it('serves an image to an anonymous caller, with the right content type', async () => {
+      const { asset } = await uploadPng('media-serve-anon');
+
+      const response = await request(app.getHttpServer())
+        .get(stripApiPrefix(asset.url))
+        .expect(200);
+
+      expect(response.headers['content-type']).toContain('image/png');
+      expect(response.headers['cache-control']).toContain('immutable');
+      expect(response.headers['x-content-type-options']).toBe('nosniff');
+      expect(Buffer.compare(response.body, Buffer.from(REAL_PNG_BASE64, 'base64'))).toBe(
+        0,
+      );
+    });
+
+    it('returns a URL the browser can use, not a storage endpoint', async () => {
+      const { asset, academy } = await uploadPng('media-serve-shape');
+
+      expect(asset.url).toBe(
+        `/api/v1/public/media/academies/${academy.id}/${asset.id}.png`,
+      );
+      // The exact failure mode that shipped: an S3 API host in a URL a
+      // browser is expected to load.
+      expect(asset.url).not.toContain('r2.cloudflarestorage.com');
+      expect(asset.url).not.toContain('amazonaws.com');
+    });
+
+    /*
+     * Existing rows carry the old, unusable absolute URL in their `url`
+     * column. The response derives it from `storageKey` instead, so they
+     * are corrected without a data migration — which is the reason the
+     * schema keeps the two fields separate in the first place.
+     */
+    it('corrects an asset whose stored url column holds the old broken value', async () => {
+      const { owner, academy, asset } = await uploadPng('media-serve-legacy');
+
+      // Exactly what every asset uploaded before this fix has in the
+      // database: an absolute S3-endpoint URL no browser can load.
+      await admin.mediaAsset.update({
+        where: { id: asset.id },
+        data: {
+          url: 'https://example-account.r2.cloudflarestorage.com/bucket/whatever.png',
+        },
+      });
+
+      const reread = await request(app.getHttpServer())
+        .get(`/academies/${academy.id}/media/${asset.id}`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+
+      // Derived from `storageKey`, so the stale column never reaches a client.
+      expect(reread.body.url).toBe(
+        `/api/v1/public/media/academies/${academy.id}/${asset.id}.png`,
+      );
+      expect(reread.body.url).not.toContain('r2.cloudflarestorage.com');
+
+      // And it really serves.
+      await request(app.getHttpServer()).get(stripApiPrefix(reread.body.url)).expect(200);
+    });
+
+    it('refuses a path that is not an academy-scoped uuid object', async () => {
+      const { academy } = await uploadPng('media-serve-traversal');
+
+      // Traversal attempts and non-uuid names never become a storage read.
+      await request(app.getHttpServer())
+        .get(`/public/media/academies/${academy.id}/..%2F..%2Fsecret.png`)
+        .expect(400);
+      await request(app.getHttpServer())
+        .get(`/public/media/academies/not-a-uuid/${academy.id}.png`)
+        .expect(400);
+      await request(app.getHttpServer())
+        .get(`/public/media/academies/${academy.id}/${academy.id}.exe`)
+        .expect(400);
+    });
+
+    it('404s an object that does not exist, rather than failing loudly', async () => {
+      const { academy } = await uploadPng('media-serve-missing');
+      await request(app.getHttpServer())
+        .get(
+          `/public/media/academies/${academy.id}/11111111-2222-3333-4444-555555555555.png`,
+        )
+        .expect(404);
+    });
+
+    /*
+     * Serving is by storage key, and keys are namespaced by the real
+     * academy id at upload time — so one academy's path can never address
+     * another's object even though the route itself is public.
+     */
+    it("cannot reach another academy's object through this academy's path", async () => {
+      const a = await uploadPng('media-serve-iso-a');
+      const b = await uploadPng('media-serve-iso-b');
+
+      await request(app.getHttpServer())
+        .get(`/public/media/academies/${a.academy.id}/${b.asset.id}.png`)
+        .expect(404);
+    });
   });
 });
