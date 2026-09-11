@@ -116,6 +116,37 @@ export class WebsitePagesRepository {
     return tx.websitePage.update({ where: { id }, data });
   }
 
+  /**
+   * The same update, but only if the row is still at `expectedVersion`.
+   *
+   * WHY A SEPARATE METHOD RATHER THAN A CHECK IN THE SERVICE. The service
+   * does read the version first, and that read is what produces a useful
+   * error message. But a read followed by a write is two statements, and
+   * between them another transaction can commit — the classic
+   * check-then-act race, which is exactly the bug this whole mechanism
+   * exists to prevent. Putting `version` in the WHERE clause makes the
+   * database itself the arbiter: at most one of two concurrent savers can
+   * match, and the loser updates zero rows.
+   *
+   * `updateMany` rather than `update` deliberately: `update` throws `P2025`
+   * for a non-match, which is indistinguishable from "the page was
+   * deleted". A count of zero is unambiguous, and the caller turns it into
+   * the same conflict the pre-check would have raised.
+   */
+  async updateIfVersionMatches(
+    tx: Prisma.TransactionClient,
+    id: string,
+    expectedVersion: number,
+    data: Prisma.WebsitePageUncheckedUpdateInput,
+  ): Promise<WebsitePage | null> {
+    const result = await tx.websitePage.updateMany({
+      where: { id, version: expectedVersion },
+      data,
+    });
+    if (result.count === 0) return null;
+    return tx.websitePage.findUniqueOrThrow({ where: { id } });
+  }
+
   delete(tx: Prisma.TransactionClient, id: string): Promise<WebsitePage> {
     return tx.websitePage.delete({ where: { id } });
   }

@@ -1,0 +1,31 @@
+-- Optimistic concurrency for CMS page editing.
+--
+-- THE LOST UPDATE THIS PREVENTS. `website_pages.sections` is the whole
+-- composition of a page in one JSONB column. Two admins open the same page,
+-- both load the same sections, both save: the second write replaces the
+-- first wholesale and the first admin's work is gone with no error, no
+-- warning and nothing in any log to show it happened. The window is not
+-- theoretical — composing a page is slow, deliberate work, and an Academy
+-- with an owner and a manager is the ordinary case, not the edge one.
+--
+-- WHY AN INTEGER VERSION AND NOT `updated_at`. A timestamp looks like a
+-- free version token but is not one: Postgres timestamps can compare equal
+-- for two writes inside the same transaction or the same clock tick, the
+-- value is not monotonic across an NTP adjustment, and round-tripping it
+-- through JSON and back invites precision loss that silently turns "stale"
+-- into "current". An integer that only ever increments has none of those
+-- failure modes and is trivially comparable.
+--
+-- WHY IT MATCHES `website_configurations.config_version`. That column
+-- already exists and already increments on every configuration write, so
+-- this is the same idea the codebase already settled on, extended to the
+-- resource that actually needed it. Keeping the shape identical means one
+-- mechanism to understand rather than two that nearly agree.
+--
+-- BACKFILL. `DEFAULT 1` plus `NOT NULL` gives every existing row version 1
+-- immediately, which is correct: no client currently holds a version for
+-- any of these rows, so the first save after this migration compares 1
+-- against 1 and proceeds. Nobody is locked out of their own page by the
+-- upgrade, and no data is rewritten.
+ALTER TABLE "website_pages"
+  ADD COLUMN "version" INTEGER NOT NULL DEFAULT 1;

@@ -145,6 +145,7 @@ model User {
   trialRedemptions                              TrialRedemption[]                        @relation("TrialRedeemer")
   /// Phase 10.2 — cancellations this user performed.
   subscriptionCancellations                     SubscriptionCancellation[]               @relation("SubscriptionCanceller")
+  websitePagesLastEdited                        WebsitePage[]                            @relation("WebsitePageUpdatedBy")
 
   @@index([status])
   @@map("users")
@@ -1918,6 +1919,17 @@ model WebsitePage {
   visible   Boolean              @default(true)
   seo       Json
   sections  Json
+  /// Optimistic-concurrency token. Incremented on every write and compared
+  /// on every update — a save carrying a stale value is refused rather than
+  /// silently overwriting whoever saved in between. Mirrors
+  /// `website_configurations.config_version`, deliberately.
+  version   Int                  @default(1)
+  /// Who saved this page last — so a save conflict can name them instead of
+  /// telling the loser of the race to go hunting. Nullable: rows that
+  /// predate the column have no honest value, and NULL renders as the
+  /// neutral wording rather than attributing the change to nobody.
+  updatedById String?            @map("updated_by_id")
+  updatedBy   User?              @relation("WebsitePageUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   createdAt DateTime             @default(now()) @map("created_at")
   updatedAt DateTime             @updatedAt @map("updated_at")
 

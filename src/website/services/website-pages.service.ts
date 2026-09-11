@@ -37,6 +37,9 @@ import { AcademyMembersRepository } from '../../academy/repositories/academy-mem
 import { WebsitePagesRepository } from '../repositories/website-pages.repository';
 import { WebsiteBootstrapService } from './website-bootstrap.service';
 import { SectionReferenceValidatorService } from './section-reference-validator.service';
+import { StaleResourceVersionException } from '../../concurrency/errors/stale-resource-version.exception';
+import { EditingPresenceService } from '../../concurrency/services/editing-presence.service';
+import type { EditingParticipant } from '../../concurrency/services/editing-presence.service';
 import {
   toWebsitePageResponse,
   type WebsitePageResponse,
@@ -70,6 +73,7 @@ export class WebsitePagesService {
     private readonly websiteBootstrapService: WebsiteBootstrapService,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly sectionReferenceValidatorService: SectionReferenceValidatorService,
+    private readonly editingPresenceService: EditingPresenceService,
   ) {}
 
   private async assertCanManage(
@@ -216,7 +220,53 @@ export class WebsitePagesService {
         );
         if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-        const data: Prisma.WebsitePageUpdateInput = {};
+        /*
+         * OPTIMISTIC CONCURRENCY.
+         *
+         * `sections` is the entire composition of a page in one column, so
+         * a save is always a full replace. Two admins editing the same page
+         * — an ordinary situation for an Academy with an owner and a
+         * manager — meant the second save silently destroyed the first,
+         * with no error and nothing anywhere to show it had happened.
+         *
+         * The check happens INSIDE the same transaction as the write, and
+         * the write itself is conditional on the version as well (see
+         * `WebsitePagesRepository.update`). Checking here alone would leave
+         * a window between the read and the update; the conditional write
+         * is what actually closes it, and this check is what turns a lost
+         * race into a useful message instead of a silent no-op.
+         *
+         * `expectedVersion` is OPTIONAL on the DTO. A caller that does not
+         * send one is not opting out of safety — it is a caller that
+         * predates this field (a script, an older tab) and gets the old
+         * last-write-wins behaviour rather than a hard failure it has no
+         * way to satisfy. Every Atlas editor sends it.
+         */
+        if (
+          payload.expectedVersion !== undefined &&
+          payload.expectedVersion !== existing.version
+        ) {
+          const editor = existing.updatedById
+            ? await tx.user.findUnique({
+                where: { id: existing.updatedById },
+                select: { name: true },
+              })
+            : null;
+
+          throw new StaleResourceVersionException({
+            submittedVersion: payload.expectedVersion,
+            currentVersion: existing.version,
+            lastEditedByName: editor?.name,
+            lastEditedAt: existing.updatedAt.toISOString(),
+          });
+        }
+
+        const data: Prisma.WebsitePageUncheckedUpdateInput = {
+          // Every save moves the token forward and records who moved it, so
+          // the next conflict can name a person rather than a mystery.
+          version: { increment: 1 },
+          updatedById: userId,
+        };
 
         if (payload.title !== undefined) {
           data.title = payload.title;
@@ -251,7 +301,47 @@ export class WebsitePagesService {
         }
 
         try {
-          const updated = await this.websitePagesRepository.update(tx, pageId, data);
+          // Unconditional only when the caller sent no version at all (see
+          // the note above on why that stays permitted). Otherwise the
+          // version goes into the WHERE clause so the database decides the
+          // race, not the gap between our read and our write.
+          if (payload.expectedVersion === undefined) {
+            const updated = await this.websitePagesRepository.update(tx, pageId, data);
+            return toWebsitePageResponse(updated);
+          }
+
+          const updated = await this.websitePagesRepository.updateIfVersionMatches(
+            tx,
+            pageId,
+            payload.expectedVersion,
+            data,
+          );
+
+          if (!updated) {
+            // The pre-check passed and this still matched nothing, so
+            // somebody committed in between. Same conflict, same shape —
+            // the client cannot tell which of the two paths produced it,
+            // and should not need to.
+            const current = await this.websitePagesRepository.findById(
+              tx,
+              academyId,
+              pageId,
+            );
+            const editor = current?.updatedById
+              ? await tx.user.findUnique({
+                  where: { id: current.updatedById },
+                  select: { name: true },
+                })
+              : null;
+
+            throw new StaleResourceVersionException({
+              submittedVersion: payload.expectedVersion,
+              currentVersion: current?.version ?? payload.expectedVersion,
+              lastEditedByName: editor?.name,
+              lastEditedAt: current?.updatedAt.toISOString(),
+            });
+          }
+
           return toWebsitePageResponse(updated);
         } catch (error) {
           if (isUniqueConstraintViolation(error)) {
@@ -261,6 +351,78 @@ export class WebsitePagesService {
         }
       },
     );
+  }
+
+  /**
+   * Announces (or refreshes) this user's editing session on a page and
+   * returns everyone ELSE currently editing it.
+   *
+   * AUTHORISED EXACTLY LIKE A SAVE, on purpose. Presence records a real
+   * person's name and role against a real resource, and returns the names
+   * and roles of other staff — so it has to be behind the same door as
+   * editing itself, not a weaker one. Anyone who could not save this page
+   * cannot announce themselves on it, cannot learn who is working on it,
+   * and cannot use it to confirm that an academy or page id exists: the
+   * page is resolved inside the academy's own tenant context first, so a
+   * cross-academy id is a 404 before presence is ever touched.
+   *
+   * The role reported to colleagues is the caller's real
+   * `academy_members.role`, read here rather than accepted from the
+   * request — a client cannot announce itself as an owner.
+   */
+  async heartbeatEditingSession(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    pageId: string,
+  ): Promise<readonly EditingParticipant[]> {
+    const { role, name } = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+
+        const page = await this.websitePagesRepository.findById(tx, academyId, pageId);
+        if (!page) throw new NotFoundException({ messageKey: 'errors.notFound' });
+
+        const membership = await this.academyMembersRepository.findForUserInAcademy(
+          tx,
+          academyId,
+          userId,
+        );
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          select: { name: true },
+        });
+        return { role: membership?.role ?? 'member', name: user?.name ?? '' };
+      },
+    );
+
+    return this.editingPresenceService.heartbeat('website-page', pageId, {
+      userId,
+      name,
+      role,
+    });
+  }
+
+  /** Ends this user's editing session immediately. Same authorisation as the heartbeat. */
+  async releaseEditingSession(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    pageId: string,
+  ): Promise<void> {
+    await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const page = await this.websitePagesRepository.findById(tx, academyId, pageId);
+        if (!page) throw new NotFoundException({ messageKey: 'errors.notFound' });
+      },
+    );
+
+    await this.editingPresenceService.release('website-page', pageId, userId);
   }
 
   async delete(

@@ -38,7 +38,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const request = ctx.getRequest<Request>();
     const requestId = request.requestId;
 
-    const { status, messageKey, code, violations } = this.resolve(exception);
+    const { status, messageKey, code, violations, details } = this.resolve(exception);
     const kind = mapStatusToErrorKind(status);
 
     const body: NormalizedApiErrorResponse = {
@@ -48,6 +48,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         code,
         status,
         violations,
+        details,
         requestId,
         retryable: isRetryableKind(kind),
       },
@@ -78,11 +79,25 @@ export class AllExceptionsFilter implements ExceptionFilter {
     response.status(status).json(body);
   }
 
+  /** Keeps only primitive entries, so `details` can never become a channel for objects an exception happened to be carrying. */
+  private toDetails(
+    value: unknown,
+  ): Readonly<Record<string, string | number | boolean>> | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const entries = Object.entries(value as Record<string, unknown>).filter(
+      ([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean',
+    );
+    return entries.length > 0
+      ? (Object.fromEntries(entries) as Record<string, string | number | boolean>)
+      : undefined;
+  }
+
   private resolve(exception: unknown): {
     status: number;
     messageKey: string;
     code?: string;
     violations?: readonly FieldViolation[];
+    details?: Readonly<Record<string, string | number | boolean>>;
   } {
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
@@ -116,6 +131,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
           messageKey: payload.messageKey,
           code: payload.code,
           violations: payload.violations,
+          // Forwarded only because the thrower asked for it by name — see
+          // `NormalizedApiError.details`.
+          details: this.toDetails(payload.details),
         };
       }
 
@@ -135,6 +153,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     messageKey: string;
     code?: string;
     violations?: readonly FieldViolation[];
+    details?: unknown;
   } {
     return (
       typeof payload === 'object' &&

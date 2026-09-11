@@ -24,6 +24,7 @@ import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { AcademyModule } from '../academy/academy.module';
+import { ConcurrencyModule } from '../concurrency/concurrency.module';
 import { CourseModule } from '../course/course.module';
 import { WebsiteController } from './controllers/website.controller';
 import { WebsiteContentController } from './controllers/website-content.controller';
@@ -39,7 +40,13 @@ import { WebsiteFaqEntriesRepository } from './repositories/website-faq-entries.
 import { WebsiteTestimonialEntriesRepository } from './repositories/website-testimonial-entries.repository';
 
 @Module({
-  imports: [AuthCoreModule, TenancyModule, AcademyModule, CourseModule],
+  imports: [
+    AuthCoreModule,
+    TenancyModule,
+    AcademyModule,
+    CourseModule,
+    ConcurrencyModule,
+  ],
   controllers: [WebsiteController, WebsiteContentController],
   providers: [
     WebsiteConfigurationService,

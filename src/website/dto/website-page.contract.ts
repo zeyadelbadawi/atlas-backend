@@ -11,6 +11,8 @@ export interface WebsitePageResponse {
   readonly visible: boolean;
   readonly seo: Record<string, unknown>;
   readonly sections: readonly unknown[];
+  /** Optimistic-concurrency token — send it back on update to be told about a conflict instead of causing one. */
+  readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -26,6 +28,7 @@ export function toWebsitePageResponse(page: PrismaWebsitePage): WebsitePageRespo
     visible: page.visible,
     seo: page.seo as Record<string, unknown>,
     sections: page.sections as unknown[],
+    version: page.version,
     createdAt: page.createdAt.toISOString(),
     updatedAt: page.updatedAt.toISOString(),
   };

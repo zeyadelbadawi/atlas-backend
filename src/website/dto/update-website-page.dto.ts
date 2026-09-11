@@ -12,11 +12,13 @@
 import {
   IsArray,
   IsBoolean,
+  IsInt,
   IsObject,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 import {
@@ -50,4 +52,18 @@ export class UpdateWebsitePageDto {
   @IsOptional()
   @IsArray()
   readonly sections?: unknown[];
+
+  /**
+   * The `version` this edit was based on.
+   *
+   * Optional so that a caller predating this field is not hard-failed on a
+   * token it has no way to supply — it simply keeps the old
+   * last-write-wins behaviour. Every Atlas editor sends it, and when it IS
+   * sent a mismatch is refused with a 409 rather than overwriting whoever
+   * saved in between. See `WebsitePagesService.update`.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  readonly expectedVersion?: number;
 }

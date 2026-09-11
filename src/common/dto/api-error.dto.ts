@@ -43,6 +43,21 @@ export interface NormalizedApiError {
   readonly code?: string;
   readonly status?: number;
   readonly violations?: readonly FieldViolation[];
+  /**
+   * Structured, machine-readable context for errors where knowing WHAT
+   * went wrong is not enough to recover from it.
+   *
+   * OPT-IN, never a spread of the thrown payload. Only an exception that
+   * deliberately sets `details` gets anything forwarded, because
+   * reflecting arbitrary exception internals into an HTTP response is how
+   * internals leak. The first user is the save-conflict response, which
+   * has to carry the current version — without it a client is told it
+   * lost a race and given no way to rejoin.
+   *
+   * Values are primitives only: this is a contract for clients, not a
+   * debugging channel.
+   */
+  readonly details?: Readonly<Record<string, string | number | boolean>>;
   readonly requestId?: string;
   readonly retryable: boolean;
 }
