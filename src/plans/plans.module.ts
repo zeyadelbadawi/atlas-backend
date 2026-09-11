@@ -39,6 +39,8 @@ import { PlansService } from './services/plans.service';
 import { TenantSubscriptionService } from './services/tenant-subscription.service';
 import { EntitlementService } from './services/entitlement.service';
 import { EntitlementEnforcementService } from './services/entitlement-enforcement.service';
+import { SubscriptionAccessService } from './services/subscription-access.service';
+import { PublicHostnameResolutionRepository } from '../public-website/repositories/public-hostname-resolution.repository';
 import { TenantUsageRecomputeService } from './services/tenant-usage-recompute.service';
 import { SubscriptionExpiryService } from './services/subscription-expiry.service';
 import { SubscriptionSweepService } from './services/subscription-sweep.service';
@@ -98,6 +100,10 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     TenantSubscriptionService,
     EntitlementService,
     EntitlementEnforcementService,
+    SubscriptionAccessService,
+    // Resolves `:academyId` to its Organization for the global
+    // subscription interceptor — ownership only, never authorisation.
+    PublicHostnameResolutionRepository,
     TenantUsageRecomputeService,
     SubscriptionExpiryService,
     SubscriptionSweepService,
@@ -122,6 +128,10 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     // plan-limited write path (`AcademiesService.create`, course
     // creation, instructor grants, enrollment, media upload) now calls.
     EntitlementEnforcementService,
+    // The global `SubscriptionAccessInterceptor` resolves this, so it has
+    // to be visible outside this module even though nothing else imports
+    // it directly.
+    SubscriptionAccessService,
     TenantUsageRecomputeService,
     // Phase 2 — the real reactive trigger every academy/course/enrollment/
     // media write path now calls after a change that affects usage, so

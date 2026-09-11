@@ -30,9 +30,10 @@ import { PublicWebsiteController } from './controllers/public-website.controller
 import { PublicWebsiteService } from './services/public-website.service';
 import { PublicWebsiteCacheService } from './services/public-website-cache.service';
 import { PublicHostnameResolutionRepository } from './repositories/public-hostname-resolution.repository';
+import { PlansModule } from '../plans/plans.module';
 
 @Module({
-  imports: [TenancyModule, WebsiteModule, AcademyModule, CourseModule],
+  imports: [PlansModule, TenancyModule, WebsiteModule, AcademyModule, CourseModule],
   controllers: [PublicWebsiteController],
   providers: [
     PublicWebsiteService,

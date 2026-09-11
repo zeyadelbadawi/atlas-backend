@@ -15,7 +15,7 @@
  * per-domain-module.
  */
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
@@ -26,6 +26,7 @@ import { validateEnv } from './config/env.validation';
 import type { AppConfig, RedisConfig } from './config/configuration';
 import { buildPinoOptions } from './common/logging/pino-options.factory';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { SubscriptionAccessInterceptor } from './plans/interceptors/subscription-access.interceptor';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 import { DatabaseModule } from './database/prisma.module';
 import { RedisModule } from './redis/redis.module';
@@ -182,6 +183,15 @@ import { DashboardModule } from './dashboard/dashboard.module';
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    /*
+      Runs after every guard, so the tenant context it reads has already
+      been verified. An expired tenant keeps full READ access and every
+      billing/support/recovery route; what it loses is the ability to
+      mutate its own tenant data. See the interceptor's own doc comment for
+      why this is not a guard and why it engages only where a tenant scope
+      exists.
+    */
+    { provide: APP_INTERCEPTOR, useClass: SubscriptionAccessInterceptor },
   ],
 })
 export class AppModule implements NestModule {

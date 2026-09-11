@@ -42,6 +42,7 @@ import {
 import type { TenantSubscriptionResponse } from '../dto/tenant-subscription.contract';
 import type { TenantAddOnResponse } from '../dto/tenant-add-on.contract';
 import type { TenantUsageResponse } from '../dto/tenant-usage.contract';
+import { AllowInactiveSubscription } from '../decorators/allow-inactive-subscription.decorator';
 
 /**
  * The billing authorization marker for every mutating route below.
@@ -75,6 +76,14 @@ interface CancellationResponse {
   readonly effectiveAt: string;
 }
 
+/**
+ * ALLOWED WHILE A SUBSCRIPTION IS INACTIVE.
+ *
+ * Starting a trial, changing plan and cancelling all have to work while
+ * a subscription is inactive — these are the controls that END that
+ * state.
+ */
+@AllowInactiveSubscription()
 @Controller('organizations')
 @UseGuards(JwtAuthGuard, OrganizationMembershipGuard)
 export class TenantSubscriptionController {

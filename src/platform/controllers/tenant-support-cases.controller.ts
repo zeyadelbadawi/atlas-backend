@@ -45,7 +45,16 @@ import type {
   SupportCaseSummaryResponse,
 } from '../dto/support-case.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { AllowInactiveSubscription } from '../../plans/decorators/allow-inactive-subscription.decorator';
 
+/**
+ * ALLOWED WHILE A SUBSCRIPTION IS INACTIVE.
+ *
+ * A customer whose subscription lapsed is exactly the customer most
+ * likely to need support. Locking them out of the ticket form is how a
+ * billing problem becomes a churn event.
+ */
+@AllowInactiveSubscription()
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class TenantSupportCasesController {

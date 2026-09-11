@@ -63,6 +63,7 @@ import type { PublicWebsiteStatisticsResponse } from '../dto/public-statistics.c
 import type { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
 import type { AcademyIdentityResponse } from '../dto/public-identity.contract';
 import type { AcademyAddressResponse } from '../../academy/dto/academy.contract';
+import { SubscriptionAccessService } from '../../plans/services/subscription-access.service';
 import {
   toContactSubmissionResponse,
   type ContactSubmissionResponse,
@@ -85,6 +86,8 @@ export class PublicWebsiteService {
     private readonly coursesRepository: CoursesRepository,
     private readonly courseSectionsRepository: CourseSectionsRepository,
     private readonly academiesRepository: AcademiesRepository,
+    // Decides whether this tenant may be served publicly at all.
+    private readonly subscriptionAccessService: SubscriptionAccessService,
     configService: ConfigService,
   ) {
     this.baseDomain =
@@ -125,8 +128,50 @@ export class PublicWebsiteService {
     return response;
   }
 
+  /**
+   * The Organization that owns this Academy — or `null` when its website
+   * must not be served.
+   *
+   * WHY THE SUBSCRIPTION CHECK LIVES HERE. This is the single choke point
+   * every public read already passes through (`getPublishedWebsite`,
+   * `getPublishedPages`, the page-by-slug read), so one check covers all of
+   * them and there is no fourth read that could be added later and quietly
+   * miss it.
+   *
+   * WHY `null` RATHER THAN AN ERROR. Returning nothing produces exactly the
+   * same 404 an unpublished site already produces, which the public runtime
+   * already renders as the Coming Soon page. A visitor therefore sees a
+   * professional holding page, never a server error — and, importantly,
+   * never learns anything about the Academy's billing. That a business has
+   * not paid is between Atlas and that business; publishing it on their own
+   * domain, in front of their own customers, would be a real harm done to
+   * them by their supplier.
+   *
+   * The hostname itself keeps resolving. The domain stays technically
+   * healthy, exactly as the unknown/unavailable/expired distinction
+   * requires — this changes what is SERVED, not whether the address works.
+   */
   private async resolveOrganizationId(academyId: string): Promise<string | null> {
-    return this.publicHostnameResolutionRepository.resolveAcademyOrganization(academyId);
+    const organizationId =
+      await this.publicHostnameResolutionRepository.resolveAcademyOrganization(academyId);
+    if (!organizationId) return null;
+
+    return (await this.isServingEligible(organizationId)) ? organizationId : null;
+  }
+
+  /**
+   * Cached because this is the highest-traffic surface in the product and
+   * the answer changes a handful of times per tenant per year. A payment
+   * invalidates it explicitly rather than waiting out the TTL.
+   */
+  private async isServingEligible(organizationId: string): Promise<boolean> {
+    const cached = await this.cacheService.getServingEligibility(organizationId);
+    if (cached !== undefined) return cached;
+
+    const eligible =
+      await this.subscriptionAccessService.isServingEligible(organizationId);
+    await this.cacheService.setServingEligibility(organizationId, eligible);
+    return eligible;
   }
 
   async getPublishedWebsite(

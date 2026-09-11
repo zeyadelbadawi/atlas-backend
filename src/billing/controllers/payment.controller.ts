@@ -32,7 +32,14 @@ import type { PaymentResponse } from '../dto/payment.contract';
 import type { PaymentIntentResponse } from '../dto/payment-intent.contract';
 import type { TenantInvoiceResponse } from '../dto/tenant-invoice.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { AllowInactiveSubscription } from '../../plans/decorators/allow-inactive-subscription.decorator';
 
+/**
+ * ALLOWED WHILE A SUBSCRIPTION IS INACTIVE.
+ *
+ * Submitting a payment and its proof is the recovery path itself.
+ */
+@AllowInactiveSubscription()
 @Controller('organizations')
 @UseGuards(JwtAuthGuard, OrganizationMembershipGuard)
 export class PaymentController {

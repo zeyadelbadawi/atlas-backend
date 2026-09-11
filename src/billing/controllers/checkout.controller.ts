@@ -11,7 +11,15 @@ import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-m
 import { CheckoutService } from '../services/checkout.service';
 import { CreateCheckoutDto } from '../dto/create-checkout.dto';
 import type { CheckoutResponse } from '../dto/checkout.contract';
+import { AllowInactiveSubscription } from '../../plans/decorators/allow-inactive-subscription.decorator';
 
+/**
+ * ALLOWED WHILE A SUBSCRIPTION IS INACTIVE.
+ *
+ * Checkout is how a lapsed tenant starts paying. Gating it on having
+ * paid would be a closed loop.
+ */
+@AllowInactiveSubscription()
 @Controller('organizations')
 @UseGuards(JwtAuthGuard, OrganizationMembershipGuard)
 export class CheckoutController {

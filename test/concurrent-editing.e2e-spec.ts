@@ -289,7 +289,10 @@ describe('Concurrent CMS editing (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.id}`)
       .set('Authorization', `Bearer ${manager.accessToken}`)
-      .send({ title: 'Written while another editor is present', expectedVersion: loaded.body.version })
+      .send({
+        title: 'Written while another editor is present',
+        expectedVersion: loaded.body.version,
+      })
       .expect(200);
   });
 

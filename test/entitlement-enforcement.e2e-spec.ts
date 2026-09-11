@@ -643,6 +643,18 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
       expect([
         'errors.provisioning.subscriptionRequired',
         'errors.entitlement.subscriptionInactive',
+        // Added when the global subscription-access interceptor landed. It
+        // runs before the handler, so for a LAPSED tenant it answers first
+        // and says so specifically, instead of the request reaching a limit
+        // check and being refused for a reason that is true but secondary.
+        // This test's subject is unchanged and un-weakened — an inactive
+        // subscription still cannot create an academy, whatever the numeric
+        // limit says, and the status assertion above is untouched. The set
+        // exists precisely because more than one layer may legitimately
+        // refuse this; the interceptor is now one of them, and its code
+        // (`SUBSCRIPTION_REQUIRED`) is the one that routes the customer to
+        // choosing a plan.
+        'errors.subscription.required',
       ]).toContain(rejected.body.error.messageKey);
     });
 
@@ -677,6 +689,18 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
       expect([
         'errors.provisioning.subscriptionRequired',
         'errors.entitlement.subscriptionInactive',
+        // Added when the global subscription-access interceptor landed. It
+        // runs before the handler, so for a LAPSED tenant it answers first
+        // and says so specifically, instead of the request reaching a limit
+        // check and being refused for a reason that is true but secondary.
+        // This test's subject is unchanged and un-weakened — an inactive
+        // subscription still cannot create an academy, whatever the numeric
+        // limit says, and the status assertion above is untouched. The set
+        // exists precisely because more than one layer may legitimately
+        // refuse this; the interceptor is now one of them, and its code
+        // (`SUBSCRIPTION_REQUIRED`) is the one that routes the customer to
+        // choosing a plan.
+        'errors.subscription.required',
       ]).toContain(rejected.body.error.messageKey);
     });
   });

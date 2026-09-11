@@ -51,10 +51,12 @@ import type { RejectPaymentDto } from '../dto/reject-payment.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
+import { PublicWebsiteCacheService } from '../../public-website/services/public-website-cache.service';
 
 @Injectable()
 export class PlatformPaymentService {
   constructor(
+    private readonly publicWebsiteCacheService: PublicWebsiteCacheService,
     private readonly tenancyContextService: TenancyContextService,
     private readonly organizationMembershipsRepository: OrganizationMembershipsRepository,
     private readonly organizationsRepository: OrganizationsRepository,
@@ -182,6 +184,19 @@ export class PlatformPaymentService {
         );
         return toPaymentResponse(final!);
       },
+    );
+
+    /*
+      AFTER COMMIT, never inside the transaction. An approved payment can
+      turn a tenant from not-serving to serving, and the public runtime
+      caches that answer for a minute. Clearing it inside the transaction
+      would open a window where a concurrent public request re-populates
+      the cache by reading the PRE-COMMIT state — re-caching "expired" for
+      a full TTL on a tenant who has just paid, which is precisely the
+      customer least willing to wait.
+    */
+    await this.publicWebsiteCacheService.invalidateServingEligibility(
+      payment.organizationId,
     );
 
     if (recipientUserId && notifiedAmountValues) {

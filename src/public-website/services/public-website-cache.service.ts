@@ -38,6 +38,20 @@ import { Injectable } from '@nestjs/common';
 import { RedisService } from '../../redis/redis.service';
 
 const HOSTNAME_TTL_SECONDS = 60;
+
+/**
+ * How long a tenant's public-serving eligibility is trusted.
+ *
+ * Short, and for a commercial reason rather than a technical one: the
+ * public site is the highest-traffic surface Atlas has, and re-reading a
+ * subscription row on every page view of every Academy is a real cost for a
+ * value that changes a handful of times in a tenant's lifetime. A minute of
+ * lag after an expiry is harmless — nobody is defrauded by sixty more
+ * seconds of a website that was already paid for — whereas a minute of lag
+ * after a PAYMENT is not, so the write path invalidates this explicitly
+ * rather than waiting it out.
+ */
+const SUBSCRIPTION_SERVING_TTL_SECONDS = 60;
 const CONTENT_TTL_SECONDS = 300;
 
 function hostnameKey(hostname: string): string {
@@ -46,6 +60,10 @@ function hostnameKey(hostname: string): string {
 
 function configKey(academyId: string, configVersion: number): string {
   return `public:config:v1:${academyId}:${configVersion}`;
+}
+
+function servingKey(organizationId: string): string {
+  return `public:serving:v1:${organizationId}`;
 }
 
 function pagesKey(academyId: string, configVersion: number): string {
@@ -77,6 +95,24 @@ export class PublicWebsiteCacheService {
    * committed and is authoritative, so the worst case degrades to the
    * old behaviour of the entry ageing out on its own.
    */
+  /** Whether this Organization's tenants may currently be served publicly. */
+  async getServingEligibility(organizationId: string): Promise<boolean | undefined> {
+    return this.getJson<boolean>(servingKey(organizationId));
+  }
+
+  async setServingEligibility(organizationId: string, eligible: boolean): Promise<void> {
+    await this.setJson(
+      servingKey(organizationId),
+      eligible,
+      SUBSCRIPTION_SERVING_TTL_SECONDS,
+    );
+  }
+
+  /** Called the moment a subscription changes, so a tenant who just paid is served again immediately. */
+  async invalidateServingEligibility(organizationId: string): Promise<void> {
+    await this.redisService.getClient().del(servingKey(organizationId));
+  }
+
   async invalidateHostnameResolution(hostnames: readonly string[]): Promise<void> {
     const keys = hostnames.filter(Boolean).map((hostname) => hostnameKey(hostname));
     if (keys.length === 0) return;

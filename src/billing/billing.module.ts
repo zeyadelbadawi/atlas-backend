@@ -88,6 +88,7 @@ import { ManualTransferProvider } from './providers/manual-transfer.provider';
 import { PaymentWebhookProducer } from './queue/payment-webhook.producer';
 import { PaymentWebhookProcessor } from './queue/payment-webhook.processor';
 import { PAYMENT_WEBHOOK_QUEUE } from './queue/payment-webhook.types';
+import { PublicWebsiteCacheService } from '../public-website/services/public-website-cache.service';
 
 @Module({
   imports: [
@@ -108,6 +109,9 @@ import { PAYMENT_WEBHOOK_QUEUE } from './queue/payment-webhook.types';
     PlatformAtlasPaymentProviderController,
   ],
   providers: [
+    // A thin Redis wrapper, provided directly rather than by importing the
+    // public-website module — the same precedent `AcademyModule` already sets.
+    PublicWebsiteCacheService,
     CheckoutService,
     PaymentService,
     PlatformPaymentService,
