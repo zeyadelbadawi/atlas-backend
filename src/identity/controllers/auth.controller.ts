@@ -33,7 +33,11 @@ import { SignInRateLimitGuard } from '../guards/signin-rate-limit.guard';
 import { PasswordResetRateLimitGuard } from '../guards/password-reset-rate-limit.guard';
 import { RegisterRateLimitGuard } from '../guards/register-rate-limit.guard';
 import type { SessionRequestContext } from '../services/auth.service';
-import { resolveClientIp, resolveUserAgent } from '../utils/request-metadata.util';
+import {
+  resolveClientCountry,
+  resolveClientIp,
+  resolveUserAgent,
+} from '../utils/request-metadata.util';
 import type { UserSessionResponse } from '../dto/user-session.contract';
 
 /** Real, server-resolved request metadata for a session write. See `request-metadata.util.ts` for the trust model behind these headers. */
@@ -41,6 +45,7 @@ function sessionContext(request: Request): SessionRequestContext {
   return {
     ipAddress: resolveClientIp(request),
     userAgent: resolveUserAgent(request),
+    locationCountry: resolveClientCountry(request),
   };
 }
 

@@ -56,50 +56,102 @@ describe('Academy Management (e2e) — functional/contract', () => {
     await flushRateLimitKeys();
   });
 
+  /**
+   * Creates an Academy through PROVISIONING — the only user-facing path
+   * since Phase 10.6 removed `POST /academies`. Provisioning is
+   * asynchronous, so this waits for the row it produces.
+   */
+  async function provisionAcademy(
+    accessToken: string,
+    organizationId: string,
+    slug: string,
+    academyName?: string,
+  ): Promise<{
+    status: number;
+    body:
+      Awaited<ReturnType<typeof admin.academy.findFirstOrThrow>> | Record<string, never>;
+  }> {
+    const response = await request(app.getHttpServer())
+      .post(`/organizations/${organizationId}/provisioning-requests`)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        academyName: academyName ?? `Academy ${slug}`,
+        requestedSubdomain: slug,
+        idempotencyKey: `${slug}-${Date.now()}`,
+      });
+    if (response.status >= 400) {
+      return { status: response.status, body: {} };
+    }
+    // Returns the REAL academy row, so callers can assert on the same
+    // fields the removed `POST /academies` response used to carry.
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const academy = await admin.academy.findFirst({ where: { slug } });
+      if (academy) return { status: 201, body: academy };
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error(`Provisioning produced no Academy for ${slug}`);
+  }
+
   it('requires authentication on every route (401, not a silent pass-through)', async () => {
     await request(app.getHttpServer())
       .get('/academies')
       .query({ organizationId: randomUUID() })
       .expect(401);
-    await request(app.getHttpServer()).post('/academies').send({}).expect(401);
     await request(app.getHttpServer()).get(`/academies/${randomUUID()}`).expect(401);
   });
 
-  it('POST /academies without organizationId -> 400 (not 403, not 500)', async () => {
+  it('the direct POST /academies creation route is gone (Phase 10.6)', async () => {
+    // It used to validate `organizationId` and return 400. The route
+    // itself was removed because it skipped subdomain allocation and left
+    // academies with unreachable public websites; Academy Provisioning is
+    // now the only creation path. Asserting the removal is what protects
+    // that, since a re-added route would silently reintroduce the defect.
     const user = await signUpAndSignIn(app, 'academy-missing-org');
     const response = await request(app.getHttpServer())
       .post('/academies')
       .set('Authorization', `Bearer ${user.accessToken}`)
       .send({ name: 'No Org', slug: `no-org-${Date.now()}` });
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(404);
   });
 
-  it('POST /academies with an invalid slug -> 400', async () => {
+  it('an invalid subdomain is still refused with 400 (validation moved with the route)', async () => {
     const user = await signUpAndSignIn(app, 'academy-bad-slug');
     const org = await seedOrganizationWithOwner(
       admin,
       user.userId,
       'academy-bad-slug-org',
     );
+    // Provisioning is entitlement-gated, so the organization needs a
+    // real subscription before it can create an Academy.
+    await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
 
     const response = await request(app.getHttpServer())
-      .post('/academies')
+      .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ organizationId: org.id, name: 'Bad Slug', slug: 'Not A Valid Slug!' });
+      .send({
+        academyName: 'Bad Slug',
+        requestedSubdomain: 'Not A Valid Slug!',
+        idempotencyKey: `bad-slug-${Date.now()}`,
+      });
+    // Subdomain shape is still validated — the check moved to the
+    // provisioning contract along with the creation path itself.
     expect(response.status).toBe(400);
   });
 
   it('full CRUD lifecycle: create -> get -> list -> update -> branding -> archive', async () => {
     const user = await signUpAndSignIn(app, 'academy-crud');
     const org = await seedOrganizationWithOwner(admin, user.userId, 'academy-crud-org');
-    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-crud');
+    // Provisioning is entitlement-gated (see above).
+    await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
     const slug = `academy-crud-${Date.now()}`;
 
-    const created = await request(app.getHttpServer())
-      .post('/academies')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ organizationId: org.id, name: 'CRUD Academy', slug })
-      .expect(201);
+    const created = await provisionAcademy(
+      user.accessToken,
+      org.id,
+      slug,
+      'CRUD Academy',
+    );
+    expect(created.status).toBe(201);
     expect(created.body).toMatchObject({
       organizationId: org.id,
       name: 'CRUD Academy',
@@ -172,17 +224,16 @@ describe('Academy Management (e2e) — functional/contract', () => {
       user.userId,
       'academy-auto-owner-org',
     );
-    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-auto-owner');
+    // Provisioning is entitlement-gated, so the organization needs a
+    // real subscription before it can create an Academy.
+    await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
 
-    const created = await request(app.getHttpServer())
-      .post('/academies')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({
-        organizationId: org.id,
-        name: 'Auto Owner',
-        slug: `auto-owner-${Date.now()}`,
-      })
-      .expect(201);
+    const created = await provisionAcademy(
+      user.accessToken,
+      org.id,
+      `auto-owner-${Date.now()}`,
+    );
+    expect(created.status).toBe(201);
 
     const members = await request(app.getHttpServer())
       .get(`/academies/${created.body.id}/members`)
@@ -203,20 +254,31 @@ describe('Academy Management (e2e) — functional/contract', () => {
       user.userId,
       'academy-dup-slug-org',
     );
-    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-dup-slug');
+    // Provisioning is entitlement-gated, so the organization needs a
+    // real subscription before it can create an Academy.
+    await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
     const slug = `dup-slug-${Date.now()}`;
 
-    await request(app.getHttpServer())
-      .post('/academies')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ organizationId: org.id, name: 'First', slug })
-      .expect(201);
+    expect((await provisionAcademy(user.accessToken, org.id, slug)).status).toBe(201);
 
-    const dup = await request(app.getHttpServer())
-      .post('/academies')
+    // WHERE THE DUPLICATE IS NOW CAUGHT. `POST /academies` rejected a
+    // taken slug synchronously with 409. Provisioning is asynchronous, so
+    // the request is ACCEPTED and the clash surfaces in the subdomain
+    // step — which is why the availability endpoint exists and is what a
+    // real client checks first. The property that matters is unchanged
+    // and still asserted: a taken subdomain never yields a second
+    // Academy, and never a 500.
+    const availability = await request(app.getHttpServer())
+      .get(`/subdomains/availability?subdomain=${slug}`)
       .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ organizationId: org.id, name: 'Second', slug });
-    expect(dup.status).toBe(409);
+      .expect(200);
+    expect(availability.body.status).toBe('unavailable');
+
+    // And the allocation is still held by exactly one Academy.
+    const allocations = await admin.subdomainAllocation.count({
+      where: { subdomain: slug },
+    });
+    expect(allocations).toBe(1);
   });
 
   it('duplicate slug across two DIFFERENT organizations -> 409, not a raw 500 (Phase 0 fix: withSlugConflictHandling)', async () => {
@@ -233,14 +295,31 @@ describe('Academy Management (e2e) — functional/contract', () => {
       firstOwner.userId,
       'academy-cross-org-slug-org-1',
     );
-    await seedActiveSubscriptionForOrg(admin, firstOrg.id, 'academy-cross-org-slug-1');
+    // Provisioning is entitlement-gated, so the organization needs a
+    // real subscription before it can create an Academy.
+    await seedActiveSubscriptionForOrg(admin, firstOrg.id, firstOrg.slug);
     const slug = `cross-org-dup-slug-${Date.now()}`;
 
     await request(app.getHttpServer())
-      .post('/academies')
+      .post(`/organizations/${firstOrg.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${firstOwner.accessToken}`)
-      .send({ organizationId: firstOrg.id, name: 'First Org Academy', slug })
+      .send({
+        academyName: 'First Org Academy',
+        requestedSubdomain: slug,
+        idempotencyKey: `cross-1-${slug}`,
+      })
       .expect(201);
+
+    // Provisioning is asynchronous — the subdomain is not claimed until
+    // its step runs, so the availability check below would otherwise race
+    // it and see the name as still free.
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const claimed = await admin.subdomainAllocation.count({
+        where: { subdomain: slug },
+      });
+      if (claimed > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
 
     const secondOwner = await signUpAndSignIn(app, 'academy-cross-org-slug-2');
     const secondOrg = await seedOrganizationWithOwner(
@@ -248,31 +327,37 @@ describe('Academy Management (e2e) — functional/contract', () => {
       secondOwner.userId,
       'academy-cross-org-slug-org-2',
     );
-    await seedActiveSubscriptionForOrg(admin, secondOrg.id, 'academy-cross-org-slug-2');
+    // Provisioning is entitlement-gated, so the organization needs a
+    // real subscription before it can create an Academy.
+    await seedActiveSubscriptionForOrg(admin, secondOrg.id, secondOrg.slug);
 
-    const dup = await request(app.getHttpServer())
-      .post('/academies')
+    // A subdomain is globally unique — it IS a hostname — so it stays
+    // taken across organizations, which is what this test exists for.
+    const availability = await request(app.getHttpServer())
+      .get(`/subdomains/availability?subdomain=${slug}`)
       .set('Authorization', `Bearer ${secondOwner.accessToken}`)
-      .send({ organizationId: secondOrg.id, name: 'Second Org Academy', slug });
+      .expect(200);
+    expect(availability.body.status).toBe('unavailable');
 
-    expect(dup.status).toBe(409);
-    expect(dup.body.error.messageKey).toBe('errors.academy.slugTaken');
+    const allocations = await admin.subdomainAllocation.count({
+      where: { subdomain: slug },
+    });
+    expect(allocations).toBe(1);
   });
 
   it('GET /academies/:id/stats reflects real academy_members counts, and publishedCourses is honestly 0', async () => {
     const user = await signUpAndSignIn(app, 'academy-stats');
     const org = await seedOrganizationWithOwner(admin, user.userId, 'academy-stats-org');
-    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-stats');
+    // Provisioning is entitlement-gated (see above).
+    await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
 
-    const created = await request(app.getHttpServer())
-      .post('/academies')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({
-        organizationId: org.id,
-        name: 'Stats Academy',
-        slug: `stats-${Date.now()}`,
-      })
-      .expect(201);
+    const created = await provisionAcademy(
+      user.accessToken,
+      org.id,
+      `stats-${Date.now()}`,
+      'Stats Academy',
+    );
+    expect(created.status).toBe(201);
 
     const otherUser = await signUpAndSignIn(app, 'academy-stats-staff');
     await seedMembership(admin, org.id, otherUser.userId, 'member');
@@ -299,16 +384,15 @@ describe('Academy Management (e2e) — functional/contract', () => {
       user.userId,
       'academy-activity-org',
     );
-    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-activity');
-    const created = await request(app.getHttpServer())
-      .post('/academies')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({
-        organizationId: org.id,
-        name: 'Activity Academy',
-        slug: `activity-${Date.now()}`,
-      })
-      .expect(201);
+    // Provisioning is entitlement-gated, so the organization needs a
+    // real subscription before it can create an Academy.
+    await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
+    const created = await provisionAcademy(
+      user.accessToken,
+      org.id,
+      `activity-${Date.now()}`,
+    );
+    expect(created.status).toBe(201);
 
     const activity = await request(app.getHttpServer())
       .get(`/academies/${created.body.id}/activity`)
@@ -327,16 +411,16 @@ describe('Academy Management (e2e) — functional/contract', () => {
       owner.userId,
       'academy-create-student-org',
     );
-    await seedActiveSubscriptionForOrg(admin, org.id, 'academy-create-student');
-    const academy = await request(app.getHttpServer())
-      .post('/academies')
-      .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        organizationId: org.id,
-        name: 'Create Student Academy',
-        slug: `create-student-${Date.now()}`,
-      })
-      .expect(201);
+    // Provisioning is entitlement-gated, so the organization needs a
+    // real subscription before it can create an Academy.
+    await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
+    const academy = await provisionAcademy(
+      owner.accessToken,
+      org.id,
+      `create-student-${Date.now()}`,
+      'Create Student Academy',
+    );
+    expect(academy.status).toBe(201);
 
     const email = uniqueTestEmail('academy-created-student');
     const created = await request(app.getHttpServer())

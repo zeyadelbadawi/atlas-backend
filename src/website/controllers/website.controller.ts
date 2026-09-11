@@ -73,6 +73,23 @@ export class WebsiteController {
     );
   }
 
+  /**
+   * Takes the public website offline.
+   *
+   * Deliberately the same shape and the same guard as `publish` above —
+   * unpublishing removes a customer's site from the internet, so it must
+   * not be reachable by anyone who could not have published it.
+   */
+  @Post(':id/website/unpublish')
+  async unpublish(@Req() request: Request): Promise<WebsiteConfigurationResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.websiteConfigurationService.unpublishConfiguration(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+    );
+  }
+
   @Get(':id/website/pages')
   async getPages(
     @Req() request: Request,

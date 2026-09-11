@@ -180,8 +180,17 @@ model RefreshToken {
   ipAddress   String?   @map("ip_address")
   /// Raw `User-Agent` header, stored verbatim and parsed for display only.
   userAgent   String?   @map("user_agent")
-  /// Real last activity for this session: set at sign-in and updated on
-  /// every refresh. Never a frontend-supplied or render-time value.
+  /// ISO 3166-1 alpha-2 country, resolved from Cloudflare's `CF-IPCountry`
+  /// edge header. Null when Cloudflare did not supply a usable country
+  /// (local development, or its `XX`/`T1` sentinels) — honestly unknown
+  /// rather than guessed. Deliberately country-only: Atlas has no
+  /// trustworthy city source, and inventing one is worse than saying
+  /// nothing.
+  locationCountry String? @map("location_country") @db.VarChar(2)
+  /// Real last activity for this session: set at sign-in, on every
+  /// refresh, and — since Phase 11.10 — coalesced from ordinary
+  /// authenticated request activity. Never a frontend-supplied or
+  /// render-time value.
   lastUsedAt  DateTime? @map("last_used_at")
   expiresAt   DateTime  @map("expires_at")
   revokedAt   DateTime? @map("revoked_at")

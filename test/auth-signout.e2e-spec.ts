@@ -54,7 +54,17 @@ describe('POST /auth/sign-out (e2e)', () => {
       .expect(200);
   });
 
-  it('is idempotent — signing out twice never errors', async () => {
+  it('signing out twice is safe: the second attempt is refused, never a partial state', async () => {
+    // REWRITTEN FOR PHASE 10. This previously asserted a second sign-out
+    // returns 200. That was true before `JwtAuthGuard` started checking
+    // the session-revocation denylist; now the first sign-out genuinely
+    // kills the session, so presenting the same access token again is an
+    // authentication failure — which is the WHOLE POINT of revocation and
+    // must not be relaxed back to 200 to make a test green.
+    //
+    // The property that actually matters is preserved and still asserted:
+    // a repeated sign-out never errors in a way that leaves the session
+    // half-revoked. It is refused cleanly, and the session stays dead.
     const email = uniqueTestEmail('signout-twice');
     const password = 'correct-horse-battery';
     await request(app.getHttpServer())
@@ -70,10 +80,20 @@ describe('POST /auth/sign-out (e2e)', () => {
       .post('/auth/sign-out')
       .set('Authorization', `Bearer ${signIn.body.accessToken}`)
       .expect(200);
+
+    // The session is genuinely gone, so the same token no longer
+    // authenticates anything — sign-out included.
     await request(app.getHttpServer())
       .post('/auth/sign-out')
       .set('Authorization', `Bearer ${signIn.body.accessToken}`)
-      .expect(200);
+      .expect(401);
+
+    // And it stays dead: no partial revocation, no route that still
+    // accepts it.
+    await request(app.getHttpServer())
+      .get('/users/me')
+      .set('Authorization', `Bearer ${signIn.body.accessToken}`)
+      .expect(401);
   });
 
   it('rejects sign-out without an access token', async () => {

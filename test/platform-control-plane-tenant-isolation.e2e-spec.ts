@@ -239,18 +239,33 @@ describe('Platform Owner Control Plane — tenant isolation & audit coverage (e2
       const org = await seedOrganizationWithOwner(admin, tenantOwner.userId, 'h2-org');
       await seedActiveSubscriptionForOrg(admin, org.id, 'h2-org');
 
-      const created = await request(app.getHttpServer())
-        .post('/academies')
+      // UPDATED IN PHASE 10.6. `POST /academies` no longer exists —
+      // Academy Provisioning is the only creation path, because the
+      // direct route skipped subdomain allocation and left academies with
+      // unreachable public websites. The assertion is unchanged in
+      // substance: the BUSINESS MUTATION writes the audit entry, not an
+      // audit endpoint. Only the way an Academy gets created has moved.
+      const slug = `h2-academy-${Date.now()}`;
+      await request(app.getHttpServer())
+        .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${tenantOwner.accessToken}`)
         .send({
-          organizationId: org.id,
-          name: `H2 Academy ${Date.now()}`,
-          slug: `h2-academy-${Date.now()}`,
+          academyName: `H2 Academy ${Date.now()}`,
+          requestedSubdomain: slug,
+          idempotencyKey: `h2-${slug}`,
         })
         .expect(201);
 
+      // Provisioning is asynchronous; wait for the Academy it creates.
+      let academyId: string | undefined;
+      for (let attempt = 0; attempt < 40 && !academyId; attempt += 1) {
+        academyId = (await admin.academy.findFirst({ where: { slug } }))?.id;
+        if (!academyId) await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      expect(academyId).toBeTruthy();
+
       const entry = await admin.auditLogEntry.findFirst({
-        where: { targetType: 'academy', targetId: created.body.id },
+        where: { targetType: 'academy', targetId: academyId },
       });
       expect(entry).toBeTruthy();
       expect(entry?.action).toBe('academy.created');

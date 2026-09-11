@@ -192,22 +192,25 @@ describe('POST /organizations (e2e) — Phase P19', () => {
   // longer the correct behavior for a fresh organization — it is now only
   // reachable for an organization whose subscription was later removed
   // entirely (see the dedicated regression test after #8).
-  it('7: a brand-new organization immediately has a real trialing subscription whose trialEndsAt matches the real TrialPolicy.durationDays, no card required', async () => {
+  it('7: a brand-new organization does NOT auto-start a trial, and an explicit trial honours the real TrialPolicy.durationDays', async () => {
+    // REWRITTEN IN PHASE 11. This test previously asserted that creating
+    // an Organization immediately produced a `trialing` subscription.
+    // Phase 10.2 deliberately removed that: a Free Trial is now something
+    // a customer explicitly starts from the Plans page, because silently
+    // consuming someone's one trial the moment they create an
+    // Organization is both surprising and the mechanism that made trial
+    // farming trivial. The assertion below is the CURRENT intended
+    // behaviour, not a relaxation of the old one — it checks both halves:
+    // no trial on creation, and a correct trial when actually requested.
     const client = await signUpAndSignIn('org-create-trial');
 
-    // `trial_policy` is a real, platform-wide, mutable singleton (its own
-    // `PATCH /trial-policy` e2e coverage, `plans-catalog.e2e-spec.ts`,
-    // legitimately changes it to prove the write persists) — this test
-    // reads whatever the CURRENT real value is, immediately around
-    // creation, rather than assuming a specific number: proving
-    // Organization creation genuinely consults the live policy (Decision
-    // 6's own architecture), not merely that some hardcoded constant
-    // happens to match a value this test also hardcodes.
+    // `trial_policy` is a real, platform-wide, mutable singleton, so this
+    // reads whatever the CURRENT value is rather than hardcoding a number
+    // that a concurrent suite could invalidate.
     const policyBefore = await request(app.getHttpServer())
       .get('/trial-policy')
       .set('Authorization', `Bearer ${client.accessToken}`)
       .expect(200);
-    const beforeCreate = Date.now();
 
     const created = await request(app.getHttpServer())
       .post('/organizations')
@@ -215,19 +218,34 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       .send({ name: uniqueOrgName('Trial Org') })
       .expect(201);
 
+    // Half one: creation alone grants nothing.
+    const onCreation = await request(app.getHttpServer())
+      .get(`/organizations/${created.body.id}/subscription`)
+      .set('Authorization', `Bearer ${client.accessToken}`)
+      .expect(200);
+    expect(onCreation.body.status).not.toBe('trialing');
+    expect(onCreation.body.trialEndsAt).toBeFalsy();
+
+    const beforeStart = Date.now();
+    await request(app.getHttpServer())
+      .post(`/organizations/${created.body.id}/subscription/trial`)
+      .set('Authorization', `Bearer ${client.accessToken}`)
+      .send({ confirm: true })
+      .expect(200);
+
     const policyAfter = await request(app.getHttpServer())
       .get('/trial-policy')
       .set('Authorization', `Bearer ${client.accessToken}`)
       .expect(200);
-    // A concurrent PATCH from a different suite landing exactly inside
-    // this narrow window is the one real non-determinism a shared,
-    // platform-wide singleton can introduce — skip rather than
-    // false-fail on the rare occasion the policy visibly changed between
-    // the two reads bracketing creation.
+    // A concurrent PATCH from another suite landing inside this window is
+    // the one real non-determinism a shared singleton introduces — skip
+    // rather than false-fail on the rare occasion it visibly changed.
     if (policyAfter.body.durationDays !== policyBefore.body.durationDays) {
       return;
     }
 
+    // Half two: once started, the trial reflects the LIVE policy, proving
+    // the duration is consulted rather than hardcoded.
     const response = await request(app.getHttpServer())
       .get(`/organizations/${created.body.id}/subscription`)
       .set('Authorization', `Bearer ${client.accessToken}`)
@@ -240,10 +258,7 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       ? policyBefore.body.durationDays
       : 0;
     const trialEndsAtMs = new Date(response.body.trialEndsAt).getTime();
-    const expectedMs = beforeCreate + expectedDurationDays * 24 * 60 * 60 * 1000;
-    // A few seconds of tolerance for real request/test latency — never
-    // exact-to-the-millisecond, but always exactly the policy's real
-    // duration out from creation time, never a placeholder.
+    const expectedMs = beforeStart + expectedDurationDays * 24 * 60 * 60 * 1000;
     expect(Math.abs(trialEndsAtMs - expectedMs)).toBeLessThan(10_000);
 
     // Real row, real plan — never a fabricated response-only default.
@@ -254,7 +269,12 @@ describe('POST /organizations (e2e) — Phase P19', () => {
     expect(row?.planId).toBeTruthy();
   });
 
-  it('8: provisioning succeeds immediately for a brand-new organization on its real trial — no card, no manual step', async () => {
+  it('8: provisioning succeeds on a started trial — and is REFUSED before one is started', async () => {
+    // REWRITTEN IN PHASE 11, for the same reason as test 7: Organization
+    // creation no longer auto-starts a trial, so "immediately" is no
+    // longer the contract. The substance is kept — provisioning needs no
+    // card and no manual step — and the entitlement boundary the old
+    // version silently depended on is now asserted explicitly.
     const client = await signUpAndSignIn('org-create-trial-provisioning');
 
     const created = await request(app.getHttpServer())
@@ -262,6 +282,24 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       .set('Authorization', `Bearer ${client.accessToken}`)
       .send({ name: uniqueOrgName('Trial Provisioning Org') })
       .expect(201);
+
+    // No entitlement yet: provisioning is refused rather than quietly
+    // creating an Academy the plan does not allow.
+    const refused = await request(app.getHttpServer())
+      .post(`/organizations/${created.body.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${client.accessToken}`)
+      .send({
+        academyName: 'Too Early Academy',
+        requestedSubdomain: `too-early-${Date.now()}`,
+        idempotencyKey: `too-early-idem-${Date.now()}`,
+      });
+    expect([402, 403, 409]).toContain(refused.status);
+
+    await request(app.getHttpServer())
+      .post(`/organizations/${created.body.id}/subscription/trial`)
+      .set('Authorization', `Bearer ${client.accessToken}`)
+      .send({ confirm: true })
+      .expect(200);
 
     const response = await request(app.getHttpServer())
       .post(`/organizations/${created.body.id}/provisioning-requests`)

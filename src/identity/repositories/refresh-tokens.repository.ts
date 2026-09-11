@@ -16,6 +16,7 @@ export interface CreateRefreshTokenInput {
   readonly sessionId: string;
   readonly ipAddress?: string;
   readonly userAgent?: string;
+  readonly locationCountry?: string;
 }
 
 /** One device session: the rotation family's newest row, plus when the family began. */
@@ -24,6 +25,7 @@ export interface SessionSummaryRow {
   readonly deviceLabel: string | null;
   readonly ipAddress: string | null;
   readonly userAgent: string | null;
+  readonly locationCountry: string | null;
   readonly lastUsedAt: Date | null;
   readonly expiresAt: Date;
   readonly createdAt: Date;
@@ -45,6 +47,7 @@ export class RefreshTokensRepository {
         sessionId: input.sessionId,
         ipAddress: input.ipAddress,
         userAgent: input.userAgent,
+        locationCountry: input.locationCountry,
         // A brand-new session's last activity is its creation — a real
         // timestamp for a real event, not a placeholder.
         lastUsedAt: new Date(),
@@ -89,6 +92,22 @@ export class RefreshTokensRepository {
    * Scoped by `userId` in the query itself; the service never passes a
    * user id it did not take from the verified access token.
    */
+  /**
+   * Flushes a session's activity timestamp to Postgres.
+   *
+   * Called only when `SessionActivityService`'s per-session lease says an
+   * interval has elapsed — never on every request. Scoped to the live row
+   * of the rotation family; `updateMany` rather than `update` because a
+   * session whose row was revoked between the lease and this write should
+   * quietly match nothing rather than throw.
+   */
+  async touchSessionActivity(sessionId: string): Promise<void> {
+    await this.prisma.refreshToken.updateMany({
+      where: { sessionId, revokedAt: null },
+      data: { lastUsedAt: new Date() },
+    });
+  }
+
   async findActiveSessionsForUser(userId: string): Promise<SessionSummaryRow[]> {
     const now = new Date();
     const live = await this.prisma.refreshToken.findMany({
@@ -112,6 +131,7 @@ export class RefreshTokensRepository {
       deviceLabel: row.deviceLabel,
       ipAddress: row.ipAddress,
       userAgent: row.userAgent,
+      locationCountry: row.locationCountry,
       lastUsedAt: row.lastUsedAt,
       expiresAt: row.expiresAt,
       createdAt: row.createdAt,
@@ -215,6 +235,10 @@ export class RefreshTokensRepository {
           deviceLabel: newToken.deviceLabel ?? claimed.deviceLabel,
           userAgent: newToken.userAgent ?? claimed.userAgent,
           ipAddress: newToken.ipAddress ?? claimed.ipAddress,
+          // Carried forward when the new request did not resolve one, so
+          // a refresh from a context without Cloudflare (a health probe,
+          // a test) never erases a country already known for the session.
+          locationCountry: newToken.locationCountry ?? claimed.locationCountry,
           // Real activity: this refresh actually happened, now.
           lastUsedAt: now,
         },

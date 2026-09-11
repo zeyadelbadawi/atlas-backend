@@ -22,7 +22,7 @@
  * codebase being server-resolved from the authenticated actor, not the
  * request body.
  */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { SupportCasesRepository } from '../repositories/support-cases.repository';
@@ -325,6 +325,99 @@ export class SupportCasesService {
       items: items.map(toSupportCaseSummaryResponse),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
     };
+  }
+
+  /**
+   * Phase 11.8 — a requester reading their OWN ticket, with its thread.
+   *
+   * The tenant side could create and list tickets but had no way to read
+   * one, so a customer could file a ticket and never see the reply. This
+   * is the read half of that gap; `postRequesterReply` below is the write
+   * half.
+   *
+   * ISOLATION IS THE DATABASE'S JOB, NOT A CHECK HERE. Running in the
+   * caller's user context means `support_cases_requester_select` and
+   * `support_case_messages_requester_select` scope both reads to rows
+   * this exact person requested. Another tenant's case id — or a
+   * colleague's in the same organization — simply does not exist from
+   * this connection, and surfaces as the 404 below rather than as a 403
+   * that would confirm the id is real.
+   */
+  async getMyCase(userId: string, caseId: string): Promise<SupportCaseDetailResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const supportCase = await this.loadCaseOrThrow(tx, caseId);
+      const messages = await this.supportCaseMessagesRepository.findManyForCase(
+        tx,
+        caseId,
+      );
+      return toSupportCaseDetailResponse(supportCase, messages);
+    });
+  }
+
+  /**
+   * Phase 11.8 — the requester's own reply, continuing the conversation.
+   *
+   * `authorRole` is hard-coded to `'requester'` here, and
+   * `support_case_messages_requester_insert` independently refuses any
+   * other value from a tenant connection — so a customer cannot fabricate
+   * an official Atlas reply in their own thread even if this line were
+   * ever changed. Two independent enforcement points for the same rule,
+   * deliberately.
+   *
+   * A CLOSED TICKET DOES NOT ACCEPT REPLIES. `closed` is the terminal
+   * state in `SUPPORT_CASE_STATUSES`; allowing writes into it would mean
+   * a customer types a reply, sees it accepted, and nobody is looking at
+   * that ticket any more. They are told to open a new one instead.
+   * `resolved` deliberately still accepts replies — that is exactly the
+   * "actually, this is not fixed" case, and it reopens the conversation.
+   */
+  async postRequesterReply(
+    userId: string,
+    caseId: string,
+    payload: PostSupportCaseReplyDto,
+  ): Promise<SupportCaseDetailResponse> {
+    const requester = await this.usersRepository.findById(userId);
+    if (!requester) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const supportCase = await this.loadCaseOrThrow(tx, caseId);
+
+      if (supportCase.status === 'closed') {
+        throw new ConflictException({
+          messageKey: 'errors.support.caseClosed',
+        });
+      }
+
+      await this.supportCaseMessagesRepository.create(tx, {
+        caseId,
+        authorName: requester.name,
+        authorRole: 'requester',
+        body: payload.body,
+      });
+
+      // Moves `updatedAt`, which is what orders the agent's queue —
+      // without it a customer's reply would never surface to support.
+      // `touchAsRequester`, not `touch`: a requester has no UPDATE policy
+      // on `support_cases`, by design. See that method's doc comment.
+      const touched = await this.supportCasesRepository.touchAsRequester(tx, caseId);
+
+      await this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: userId,
+        organizationId: supportCase.organizationId ?? undefined,
+        action: 'support_case.replied',
+        targetType: 'support_case',
+        targetId: caseId,
+        targetLabel: supportCase.subject,
+      });
+
+      const messages = await this.supportCaseMessagesRepository.findManyForCase(
+        tx,
+        caseId,
+      );
+      return toSupportCaseDetailResponse(touched, messages);
+    });
   }
 
   private async loadCaseOrThrow(

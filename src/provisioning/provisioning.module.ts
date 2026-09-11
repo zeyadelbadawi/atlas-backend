@@ -43,6 +43,7 @@ import { ProvisioningStepsRepository } from './repositories/provisioning-steps.r
 // import would be a real module-DAG cycle, the exact thing this module's
 // own header comment already documents avoiding.
 import { SupportCasesRepository } from '../platform/repositories/support-cases.repository';
+import { OrganizationMembershipsRepository } from '../tenancy/repositories/organization-memberships.repository';
 import { SupportCaseMessagesRepository } from '../platform/repositories/support-case-messages.repository';
 import { ProvisioningProducer } from './queue/provisioning.producer';
 import { ProvisioningProcessor } from './queue/provisioning.processor';
@@ -85,6 +86,9 @@ import { PROVISIONING_QUEUE } from './queue/provisioning.types';
     ProvisioningProcessor,
     SupportCasesRepository,
     SupportCaseMessagesRepository,
+    // Phase 11 security fix — `ProvisioningRequestsService` now refuses a
+    // non-Owner synchronously, which needs the membership lookup.
+    OrganizationMembershipsRepository,
   ],
   exports: [
     // Phase P15 — `PlatformAcademiesService` needs the same

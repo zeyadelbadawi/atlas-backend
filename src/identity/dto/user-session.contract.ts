@@ -32,6 +32,16 @@ export interface UserSessionResponse {
   /** The raw user agent, for a user who wants the precise detail behind the label. */
   readonly userAgent?: string;
   readonly ipAddress?: string;
+  /**
+   * ISO 3166-1 alpha-2 country, from Cloudflare's edge. A CODE, not a
+   * name: the client turns it into a localized country name with
+   * `Intl.DisplayNames`, so "EG" reads as "Egypt" in English and "مصر" in
+   * Arabic without the server shipping a translation table.
+   *
+   * Country only — Atlas has no trustworthy city source and does not
+   * guess one. Absent means genuinely unknown, and the UI says so.
+   */
+  readonly locationCountry?: string;
   /** When the user actually signed in on this device — the first row of the rotation family, not the latest rotation. */
   readonly startedAt: string;
   /** Real last activity: sign-in, or the most recent token refresh. */
@@ -53,6 +63,7 @@ export function toUserSessionResponse(
     deviceLabel: row.deviceLabel ?? deriveDeviceLabel(row.userAgent ?? undefined),
     userAgent: row.userAgent ?? undefined,
     ipAddress: row.ipAddress ?? undefined,
+    locationCountry: row.locationCountry ?? undefined,
     startedAt: row.startedAt.toISOString(),
     lastUsedAt: row.lastUsedAt?.toISOString(),
     expiresAt: row.expiresAt.toISOString(),

@@ -219,4 +219,44 @@ export class WebsiteConfigurationService {
       },
     );
   }
+
+  /**
+   * Takes the public website offline again.
+   *
+   * WHY `draft` AND NOT A NEW STATUS. `WebsiteConfigurationRepository`'s
+   * public read filters on `status: 'published'` in the WHERE clause, so
+   * returning the configuration to `draft` is precisely what makes the
+   * public site stop serving — there is no second flag to keep in sync,
+   * and no state the resolver would not already understand.
+   *
+   * WHY `publishedAt` IS KEPT. It records when the site was last
+   * published, which stays true after unpublishing and is useful to show.
+   * It is NOT what the public runtime reads — `status` is — so leaving it
+   * cannot accidentally keep a site online.
+   *
+   * Authorization is identical to publishing: unpublishing takes a
+   * customer's website off the internet, so it cannot be the easier of
+   * the two operations.
+   */
+  async unpublishConfiguration(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+  ): Promise<WebsiteConfigurationResponse> {
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+
+        const updated = await this.websiteConfigurationRepository.update(tx, academyId, {
+          status: 'draft',
+          lastPublishError: Prisma.JsonNull,
+          configVersion: { increment: 1 },
+        });
+        return toWebsiteConfigurationResponse(updated);
+      },
+    );
+  }
 }

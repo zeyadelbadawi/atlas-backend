@@ -19,6 +19,7 @@ import type { IdentityConfig } from '../../config/configuration';
 import { UsersRepository } from '../repositories/users.repository';
 import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
 import { deriveDeviceLabel } from '../utils/request-metadata.util';
+import { SessionActivityService } from './session-activity.service';
 import { SessionRevocationService } from './session-revocation.service';
 import {
   toUserSessionResponse,
@@ -61,6 +62,12 @@ const DUMMY_PASSWORD = 'atlas-p1-dummy-password-for-timing-safety-only';
 export interface SessionRequestContext {
   readonly ipAddress?: string;
   readonly userAgent?: string;
+  /**
+   * ISO 3166-1 alpha-2, from Cloudflare's edge. Absent in local
+   * development and wherever Cloudflare reported no usable country —
+   * never substituted with a guess.
+   */
+  readonly locationCountry?: string;
 }
 
 @Injectable()
@@ -96,6 +103,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly tenancyContextService: TenancyContextService,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
+    private readonly sessionActivityService: SessionActivityService,
     private readonly sessionRevocationService: SessionRevocationService,
     private readonly emailRiskService: EmailRiskService,
     private readonly emailVerificationTokensRepository: EmailVerificationTokensRepository,
@@ -414,6 +422,7 @@ export class AuthService {
       // row. `rotate` falls back to the claimed row's values when a
       // client sends no User-Agent, so a refresh never blanks these out.
       ipAddress: context?.ipAddress,
+      locationCountry: context?.locationCountry,
       userAgent: context?.userAgent,
       deviceLabel: deriveDeviceLabel(context?.userAgent),
     });
@@ -465,7 +474,23 @@ export class AuthService {
     currentSessionId: string,
   ): Promise<readonly UserSessionResponse[]> {
     const rows = await this.refreshTokensRepository.findActiveSessionsForUser(userId);
-    return rows.map((row) => toUserSessionResponse(row, currentSessionId));
+
+    // Phase 11.10 — Redis holds activity from ordinary authenticated
+    // requests, which is fresher than the column (that is only flushed
+    // every few minutes, by design). Take whichever is later: Redis when
+    // it has a value, the persisted column otherwise, so a Redis flush or
+    // restart degrades to a slightly older timestamp instead of losing
+    // activity altogether.
+    const recent = await this.sessionActivityService.getRecentActivity(
+      rows.map((row) => row.sessionId),
+    );
+
+    return rows.map((row) => {
+      const fromRedis = recent.get(row.sessionId);
+      const stored = row.lastUsedAt;
+      const freshest = fromRedis && (!stored || fromRedis > stored) ? fromRedis : stored;
+      return toUserSessionResponse({ ...row, lastUsedAt: freshest }, currentSessionId);
+    });
   }
 
   /**
@@ -615,6 +640,7 @@ export class AuthService {
       expiresAt,
       sessionId,
       ipAddress: context?.ipAddress,
+      locationCountry: context?.locationCountry,
       userAgent: context?.userAgent,
       deviceLabel: deriveDeviceLabel(context?.userAgent),
     });

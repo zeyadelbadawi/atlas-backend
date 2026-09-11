@@ -84,6 +84,34 @@ export class SupportCasesRepository {
   }
 
   /** Bumps `updatedAt` without changing `status` — used when a reply is posted, matching the frontend's own `updatedAt` field semantics ("last activity," not "last status change"). */
+  /**
+   * Bumps a case's activity timestamp AS THE REQUESTER.
+   *
+   * Goes through `touch_support_case_for_requester` (SECURITY DEFINER)
+   * rather than a plain `update`, because a requester has no UPDATE
+   * policy on `support_cases` — and deliberately should not get one:
+   * RLS is row-scoped, so any policy permissive enough to allow this
+   * would also let a customer rewrite their ticket's `status`, `subject`
+   * and `requester_email`. The function changes `updated_at` and nothing
+   * else, only on a case the caller personally requested.
+   *
+   * The read afterwards goes through the ordinary requester SELECT
+   * policy, so it still cannot return someone else's row.
+   */
+  async touchAsRequester(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<SupportCaseWithOrganization> {
+    await tx.$executeRaw`SELECT touch_support_case_for_requester(${id})`;
+    const touched = await this.findById(tx, id);
+    if (!touched) {
+      // Unreachable in practice — the caller has already loaded this case
+      // under the same policy — but never an assertion.
+      throw new Error(`Support case ${id} disappeared while being touched.`);
+    }
+    return touched;
+  }
+
   touch(tx: Prisma.TransactionClient, id: string): Promise<SupportCaseWithOrganization> {
     return tx.supportCase.update({
       where: { id },

@@ -114,3 +114,45 @@ export function deriveDeviceLabel(userAgent: string | undefined): string | undef
   if (browser && platform) return `${browser} on ${platform}`;
   return browser ?? platform;
 }
+
+/**
+ * Cloudflare's non-country sentinel values for `CF-IPCountry`.
+ *
+ * `XX` means Cloudflare could not determine a country; `T1` means the
+ * request arrived over Tor. Neither is a place, and storing either would
+ * make the UI display a country code that is not one.
+ */
+const CLOUDFLARE_NON_COUNTRY_CODES = new Set(['XX', 'T1']);
+
+/**
+ * The visitor's country, as reported by Cloudflare's edge.
+ *
+ * WHY THIS IS TRUSTWORTHY AND AN IP LOOKUP WOULD NOT BE. Cloudflare
+ * resolves the country at the edge that actually terminated the
+ * connection, and the header reaches this service over the same
+ * unreachable-from-outside path as `CF-Connecting-IP` (see this file's
+ * trust-model note). It is the same signal Cloudflare uses for its own
+ * country-based firewall rules.
+ *
+ * WHY COUNTRY AND NOT CITY. There is no city-level source available:
+ * `CF-IPCity` is Enterprise-only, and commercial IP-to-city databases are
+ * estimates that are frequently wrong by hundreds of kilometres on mobile
+ * networks. Showing a confidently wrong city on a security screen is
+ * worse than showing none, because it makes a legitimate session look
+ * foreign — or a hostile one look local.
+ *
+ * Returns `undefined` rather than a placeholder when absent, so the
+ * session list can say "Location unavailable" honestly.
+ */
+export function resolveClientCountry(request: Request): string | undefined {
+  const raw = firstHeaderValue(request, 'cf-ipcountry');
+  if (!raw) return undefined;
+
+  const code = raw.toUpperCase();
+  // Exactly two letters: anything else is not an ISO 3166-1 alpha-2 code,
+  // and is discarded rather than stored and rendered.
+  if (!/^[A-Z]{2}$/.test(code)) return undefined;
+  if (CLOUDFLARE_NON_COUNTRY_CODES.has(code)) return undefined;
+
+  return code;
+}

@@ -29,6 +29,7 @@ import {
 import type { Request } from 'express';
 import { AccessTokenService } from '../services/access-token.service';
 import { SessionRevocationService } from '../services/session-revocation.service';
+import { SessionActivityService } from '../services/session-activity.service';
 
 export interface AuthContext {
   readonly userId: string;
@@ -49,6 +50,7 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly accessTokenService: AccessTokenService,
     private readonly sessionRevocationService: SessionRevocationService,
+    private readonly sessionActivityService: SessionActivityService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -81,6 +83,16 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     request.authContext = { userId: claims.sub, sessionId: claims.sid };
+
+    // Phase 11.10 — ordinary authenticated activity keeps "Last active"
+    // honest. This is fire-and-forget on purpose: the response must not
+    // wait on telemetry, and a failure here must never turn a working
+    // request into an error. `recordActivity` writes to Redis every time
+    // and returns true only when the per-session lease says it is time to
+    // flush to Postgres — at most once every few minutes per session, so
+    // this is not a write on every request.
+    void this.sessionActivityService.trackRequest(claims.sid);
+
     return true;
   }
 }

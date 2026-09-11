@@ -15,6 +15,12 @@
  * `AuthCoreModule ← IdentityModule`, `AuthCoreModule ← TenancyModule`,
  * `TenancyModule ← IdentityModule` (one direction only).
  *
+ * Phase 11.10 added `SessionActivityService` for the same reason:
+ * `JwtAuthGuard` records real request activity so the Active Sessions
+ * list's "Last active" reflects use rather than token rotation. It
+ * depends only on `RedisModule`, which is `@Global()`, so the DAG below
+ * is unchanged.
+ *
  * Phase 10 added `SessionRevocationService` (and the
  * `RefreshTokensRepository` it falls back to) here rather than in
  * `IdentityModule`, because `JwtAuthGuard` — which lives here and is
@@ -32,6 +38,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { AccessTokenService } from './services/access-token.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { SessionRevocationService } from './services/session-revocation.service';
+import { SessionActivityService } from './services/session-activity.service';
 import { RefreshTokensRepository } from './repositories/refresh-tokens.repository';
 
 @Module({
@@ -44,8 +51,14 @@ import { RefreshTokensRepository } from './repositories/refresh-tokens.repositor
     AccessTokenService,
     JwtAuthGuard,
     SessionRevocationService,
+    SessionActivityService,
     RefreshTokensRepository,
   ],
-  exports: [AccessTokenService, JwtAuthGuard, SessionRevocationService],
+  exports: [
+    AccessTokenService,
+    JwtAuthGuard,
+    SessionRevocationService,
+    SessionActivityService,
+  ],
 })
 export class AuthCoreModule {}

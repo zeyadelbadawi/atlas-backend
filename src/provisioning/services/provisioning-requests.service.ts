@@ -17,9 +17,15 @@
  * `PROVISIONING_STATUS_POLL_INTERVAL_MS` polling loop is what actually
  * observes progress.
  */
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
 import { PaymentsRepository } from '../../billing/repositories/payments.repository';
 import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
 import { SubdomainAllocationsRepository } from '../../domain/repositories/subdomain-allocations.repository';
@@ -59,7 +65,38 @@ export class ProvisioningRequestsService {
     private readonly domainConnectionsRepository: DomainConnectionsRepository,
     private readonly provisioningProducer: ProvisioningProducer,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly organizationMembershipsRepository: OrganizationMembershipsRepository,
   ) {}
+
+  /**
+   * Only an Organization OWNER may start provisioning.
+   *
+   * Mirrors `AcademiesService`'s `CREATES_ACADEMY_ROLES` exactly. Read
+   * inside the tenant context so the membership lookup is itself
+   * RLS-scoped — a caller cannot be granted a role they do not hold by
+   * pointing at another organization.
+   */
+  private async assertCanCreateAcademy(
+    organizationId: string,
+    userId: string,
+  ): Promise<void> {
+    const membership = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      (tx) =>
+        this.organizationMembershipsRepository.findForUserInOrganization(
+          tx,
+          organizationId,
+          userId,
+        ),
+    );
+
+    if (!membership || membership.role !== 'owner') {
+      throw new ForbiddenException({
+        messageKey: 'errors.academy.insufficientRole',
+      });
+    }
+  }
 
   async createRequest(
     organizationId: string,
@@ -71,6 +108,25 @@ export class ProvisioningRequestsService {
         messageKey: 'errors.provisioning.subdomainReserved',
       });
     }
+
+    // SECURITY — creating an Academy is OWNER-ONLY, and that must be
+    // decided HERE, not eight asynchronous steps later.
+    //
+    // Found by the Phase 11 security pass: `OrganizationMembershipGuard`
+    // proves the caller belongs to the organization but says nothing
+    // about their ROLE, so a Manager or an Instructor could submit a
+    // provisioning request and receive 201. No Academy was ever created —
+    // `AcademiesService.create` enforces the same owner-only rule inside
+    // the orchestrator — but the refusal arrived asynchronously, on a
+    // request row the caller was never entitled to create, and the API
+    // told them "accepted". An authorization boundary that only holds in
+    // a background worker is one refactor away from not holding at all.
+    //
+    // Same `MANAGING/CREATES_ACADEMY_ROLES` rule as the orchestrator's
+    // own check, applied synchronously. The orchestrator's check is
+    // deliberately NOT removed: two independent enforcement points for
+    // one rule is the point.
+    await this.assertCanCreateAcademy(organizationId, userId);
 
     const request = await this.tenancyContextService.runInTenantContext(
       organizationId,
@@ -100,9 +156,26 @@ export class ProvisioningRequestsService {
             tx,
             organizationId,
           );
+        // A LAPSED TRIAL IS NOT AN ACTIVE ONE. `status === 'trialing'`
+        // alone was accepted here, so an organization whose trial had
+        // already ended could still start provisioning — the refusal
+        // arrived asynchronously, from `EntitlementEnforcementService`
+        // inside the orchestrator, after the API had already answered
+        // 201. The scheduled sweep normally flips a lapsed trial to
+        // `expired`, but "normally" is doing too much work in an
+        // authorization check: between the trial ending and the sweep
+        // running, this gate was open. Checking `trialEndsAt` directly
+        // closes that window rather than depending on a background job
+        // having run.
+        const trialHasLapsed =
+          subscription?.status === 'trialing' &&
+          subscription.trialEndsAt !== null &&
+          subscription.trialEndsAt.getTime() <= Date.now();
+
         if (
           !subscription ||
-          (subscription.status !== 'active' && subscription.status !== 'trialing')
+          (subscription.status !== 'active' && subscription.status !== 'trialing') ||
+          trialHasLapsed
         ) {
           throw new ConflictException({
             messageKey: 'errors.provisioning.subscriptionRequired',

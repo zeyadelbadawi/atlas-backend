@@ -1,4 +1,5 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { SessionActivityService } from '../services/session-activity.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import type { AccessTokenService } from '../services/access-token.service';
 import type { SessionRevocationService } from '../services/session-revocation.service';
@@ -31,10 +32,28 @@ function buildContext(headerValue: string | undefined): {
   return { context, request };
 }
 
+/**
+ * Activity recording is fire-and-forget telemetry the guard performs
+ * after authenticating. These stubs keep it inert so the tests stay about
+ * authentication — and `recordActivity` resolving false means the
+ * database is never touched from a unit test.
+ */
+const activityService = () =>
+  ({
+    trackRequest: jest.fn().mockResolvedValue(undefined),
+    recordActivity: jest.fn().mockResolvedValue(false),
+    getRecentActivity: jest.fn().mockResolvedValue(new Map()),
+    forget: jest.fn().mockResolvedValue(undefined),
+  }) as unknown as SessionActivityService;
+
 describe('JwtAuthGuard', () => {
   it('rejects a request with no Authorization header', async () => {
     const accessTokenService = { verify: jest.fn() } as unknown as AccessTokenService;
-    const guard = new JwtAuthGuard(accessTokenService, revocationService());
+    const guard = new JwtAuthGuard(
+      accessTokenService,
+      revocationService(),
+      activityService(),
+    );
     const { context } = buildContext(undefined);
     await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
     expect(accessTokenService.verify).not.toHaveBeenCalled();
@@ -42,7 +61,11 @@ describe('JwtAuthGuard', () => {
 
   it('rejects a header that is not a Bearer token', async () => {
     const accessTokenService = { verify: jest.fn() } as unknown as AccessTokenService;
-    const guard = new JwtAuthGuard(accessTokenService, revocationService());
+    const guard = new JwtAuthGuard(
+      accessTokenService,
+      revocationService(),
+      activityService(),
+    );
     const { context } = buildContext('Basic abc123');
     await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
   });
@@ -53,7 +76,11 @@ describe('JwtAuthGuard', () => {
         throw new Error('invalid signature');
       }),
     } as unknown as AccessTokenService;
-    const guard = new JwtAuthGuard(accessTokenService, revocationService());
+    const guard = new JwtAuthGuard(
+      accessTokenService,
+      revocationService(),
+      activityService(),
+    );
     const { context } = buildContext('Bearer some.jwt.token');
     await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
   });
@@ -62,7 +89,11 @@ describe('JwtAuthGuard', () => {
     const accessTokenService = {
       verify: jest.fn(() => ({ sub: 'user-1', sid: 'session-1' })),
     } as unknown as AccessTokenService;
-    const guard = new JwtAuthGuard(accessTokenService, revocationService());
+    const guard = new JwtAuthGuard(
+      accessTokenService,
+      revocationService(),
+      activityService(),
+    );
     const { context, request } = buildContext('Bearer valid.jwt.token');
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -75,7 +106,11 @@ describe('JwtAuthGuard', () => {
     const accessTokenService = {
       verify: jest.fn(() => ({ sub: 'user-1', sid: 'revoked-session' })),
     } as unknown as AccessTokenService;
-    const guard = new JwtAuthGuard(accessTokenService, revocationService(true));
+    const guard = new JwtAuthGuard(
+      accessTokenService,
+      revocationService(true),
+      activityService(),
+    );
     const { context, request } = buildContext('Bearer valid.jwt.token');
 
     await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
