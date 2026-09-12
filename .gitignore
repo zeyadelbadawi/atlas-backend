@@ -31,3 +31,6 @@ prisma/*.db
 .claude/settings.local.json
 testsprite_tests/tmp/
 testsprite_tests/tmp/config.json
+
+# Machine-local handover companion — credential LOCATIONS, never committed.
+ATLAS_HANDOVER_SECRETS.local.md
