@@ -412,7 +412,22 @@ describe('LMS Authoring (e2e) — Phase 4', () => {
         dataUrl: TINY_PNG_DATA_URL,
       })
       .expect(201);
-    expect(uploaded.body.url).toEqual(expect.stringContaining('http'));
+    /*
+     * A RELATIVE url, not an absolute one. This assertion used to demand
+     * `stringContaining('http')`, which encoded the very defect that was
+     * fixed: the stored "public URL" pointed at R2's S3 API endpoint, which
+     * requires a SigV4 signature, so every `<img src>` rendered broken.
+     * Atlas serves its own media now, and a relative path is what makes it
+     * resolve on the dashboard, on academy subdomains and on connected
+     * custom domains without any per-origin configuration.
+     *
+     * Submission attachments share the media pipeline by design, so they
+     * get the same URL shape — which is why this suite noticed.
+     */
+    expect(uploaded.body.url).toMatch(
+      /^\/api\/v1\/public\/media\/academies\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.png$/,
+    );
+    expect(uploaded.body.url).not.toContain('r2.cloudflarestorage.com');
     expect(uploaded.body.type).toBe('image');
 
     // Real R2/`media_assets` row — never base64-in-database.
