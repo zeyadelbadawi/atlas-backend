@@ -54,13 +54,15 @@ export class UpdateWebsitePageDto {
   readonly sections?: unknown[];
 
   /**
-   * The `version` this edit was based on.
+   * The `version` this edit was based on. REQUIRED — a mismatch is refused
+   * with a 409 rather than overwriting whoever saved in between.
    *
-   * Optional so that a caller predating this field is not hard-failed on a
-   * token it has no way to supply — it simply keeps the old
-   * last-write-wins behaviour. Every Atlas editor sends it, and when it IS
-   * sent a mismatch is refused with a 409 rather than overwriting whoever
-   * saved in between. See `WebsitePagesService.update`.
+   * Still `@IsOptional()` here, and that is deliberate rather than a
+   * leftover: the requirement is enforced in `WebsitePagesService.update`
+   * so the refusal can be a specific, actionable message instead of a
+   * field-level validation violation. A concurrency token is not something
+   * the user typed, so attaching an error to it would surface on a form
+   * control that does not exist. See that service for the full reasoning.
    */
   @IsOptional()
   @IsInt()

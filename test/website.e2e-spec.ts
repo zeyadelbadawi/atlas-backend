@@ -63,6 +63,27 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     return { owner, org, academy };
   }
 
+  /**
+   * The page's current concurrency token.
+   *
+   * `expectedVersion` is required on every page update (see
+   * `WebsitePagesService.update` for why the old lenient path was closed), and
+   * these tests are not about concurrency — they are about entitlement,
+   * isolation and validation. Reading the version immediately before each
+   * write keeps them focused on what they actually assert, instead of
+   * bookkeeping a counter that every earlier write in the test moves.
+   */
+  async function pageVersion(
+    academyId: string,
+    pageId: string,
+    token: string,
+  ): Promise<number> {
+    const res = await request(app.getHttpServer())
+      .get(`/academies/${academyId}/website/pages/${pageId}`)
+      .set('Authorization', `Bearer ${token}`);
+    return res.body.version as number;
+  }
+
   it('GET configuration lazily bootstraps a draft configuration and the six core pages on first read', async () => {
     const { owner, academy } = await seedManagedAcademy('bootstrap');
 
@@ -349,6 +370,98 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .expect(400);
   });
 
+  /*
+   * ARABIC IS OPTIONAL, INCLUDING BY BEING ABSENT.
+   *
+   * The editor labels its Arabic inputs "العربية • اختياري" (optional) and
+   * omits a translation the user never touched. The schema used to accept
+   * `ar: ''` but reject a MISSING `ar` with "Required", so filling in only
+   * English — exactly what the form invites — could not be saved. Verified
+   * against production before the fix: `{en: 'T'}` was refused, `{en: 'T',
+   * ar: ''}` succeeded, which is the same intent expressed two ways.
+   */
+  it('accepts a section whose Arabic translation was never written', async () => {
+    const { owner, academy } = await seedManagedAcademy('ar-optional');
+    const created = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/website/pages`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ title: 'English only', slug: 'english-only' })
+      .expect(201);
+
+    const englishOnly = [
+      {
+        id: 'sec-en-only',
+        type: 'about',
+        enabled: true,
+        visibility: { desktop: true, tablet: true, mobile: true },
+        // No `ar` key at all, on a REQUIRED localized field.
+        config: { title: { en: 'About us' }, body: { en: 'We teach things.' } },
+      },
+    ];
+
+    const saved = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        sections: englishOnly,
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
+      .expect(200);
+
+    // Stored as the empty translation, the same shape a legacy bare string
+    // widens to — so every reader downstream is unaffected.
+    expect(saved.body.sections[0].config.title).toEqual({
+      en: 'About us',
+      ar: '',
+    });
+    expect(saved.body.sections[0].config.body).toEqual({
+      en: 'We teach things.',
+      ar: '',
+    });
+  });
+
+  /* English is the one language that IS required, and still is. */
+  it('still refuses a section with no English content', async () => {
+    const { owner, academy } = await seedManagedAcademy('en-required');
+    const created = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/website/pages`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ title: 'Needs English', slug: 'needs-english' })
+      .expect(201);
+
+    const refused = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        sections: [
+          {
+            id: 'sec-no-en',
+            type: 'about',
+            enabled: true,
+            visibility: { desktop: true, tablet: true, mobile: true },
+            config: { title: { en: '', ar: 'عنوان' }, body: { en: '', ar: 'نص' } },
+          },
+        ],
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
+      .expect(400);
+
+    // And it says WHICH field, so the editor can name the section.
+    const fields = refused.body.error.violations.map(
+      (v: { field: string }) => v.field,
+    );
+    expect(fields).toContain('0.config.title.en');
+    expect(fields).toContain('0.config.body.en');
+  });
+
   it('a well-formed sections array persists; a malformed or unregistered section type is rejected server-side', async () => {
     const { owner, academy } = await seedManagedAcademy('sections');
     const created = await request(app.getHttpServer())
@@ -370,7 +483,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     const updated = await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: validSections })
+      .send({ sections: validSections, expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(200);
     expect(updated.body.sections).toHaveLength(1);
     expect(updated.body.sections[0].config.title).toEqual({
@@ -382,8 +495,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        sections: [
+      .send({ sections: [
           {
             id: 'sec-x',
             type: 'maliciousInjectedType',
@@ -391,16 +503,14 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { html: '<script>alert(1)</script>' },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(400);
 
     // Missing required field for a registered type.
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        sections: [
+      .send({ sections: [
           {
             id: 'sec-y',
             type: 'hero',
@@ -408,23 +518,21 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: {},
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(400);
 
     // Duplicate section ids within one page.
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: [...validSections, { ...validSections[0] }] })
+      .send({ sections: [...validSections, { ...validSections[0] }], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(400);
 
     // A CTA URL using a disallowed scheme is rejected (stored-XSS boundary).
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        sections: [
+      .send({ sections: [
           {
             id: 'sec-cta',
             type: 'cta',
@@ -435,8 +543,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
               cta: { label: 'Go', url: 'javascript:alert(1)' },
             },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(400);
   });
 
@@ -477,13 +584,13 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: baseSection([realCourse.id]) })
+      .send({ sections: baseSection([realCourse.id]), expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(200);
 
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: baseSection(['fabricated-course-id']) })
+      .send({ sections: baseSection(['fabricated-course-id']), expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(400);
 
     // A real course, but owned by a DIFFERENT academy — must never be
@@ -491,7 +598,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: baseSection([otherAcademyCourse.id]) })
+      .send({ sections: baseSection([otherAcademyCourse.id]), expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(400);
   });
 
@@ -518,8 +625,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        sections: [
+      .send({ sections: [
           {
             id: 'sec-faq',
             type: 'faq',
@@ -534,8 +640,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { items: [], libraryEntryIds: [testimonialEntry.body.id] },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(200);
 
     // Draft entries (never published) are still legitimate references —
@@ -548,8 +653,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        sections: [
+      .send({ sections: [
           {
             id: 'sec-faq-draft',
             type: 'faq',
@@ -557,15 +661,13 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { items: [], libraryEntryIds: [draftFaqEntry.body.id] },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(200);
 
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        sections: [
+      .send({ sections: [
           {
             id: 'sec-faq-bad',
             type: 'faq',
@@ -573,15 +675,13 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { items: [], libraryEntryIds: ['fabricated-faq-id'] },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(400);
 
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        sections: [
+      .send({ sections: [
           {
             id: 'sec-testimonials-bad',
             type: 'testimonials',
@@ -589,8 +689,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { items: [], libraryEntryIds: ['fabricated-testimonial-id'] },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(400);
   });
 
@@ -621,7 +720,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections })
+      .send({ sections, expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
       .expect(200);
 
     const reordered = await request(app.getHttpServer())
@@ -681,14 +780,14 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     const toggled = await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${homePage.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ visible: false })
+      .send({ visible: false, expectedVersion: await pageVersion(academy.id, homePage.id, owner.accessToken) })
       .expect(200);
     expect(toggled.body.visible).toBe(false);
 
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${courseDetailsPage.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ visible: false })
+      .send({ visible: false, expectedVersion: await pageVersion(academy.id, courseDetailsPage.id, owner.accessToken) })
       .expect(403);
   });
 

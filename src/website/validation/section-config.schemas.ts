@@ -73,13 +73,36 @@ export function coerceLegacyLocalized(value: unknown): unknown {
   return typeof value === 'string' ? { en: value, ar: '' } : value;
 }
 
-/** `en` is required non-empty (the one always-complete language); `ar` may be empty — an incomplete translation degrades to `en` at render time, it never blocks a save. */
+/*
+ * ARABIC IS OPTIONAL, AND THAT HAS TO INCLUDE BEING ABSENT.
+ *
+ * Both schemas below used to declare `ar` as a plain required key that was
+ * merely allowed to be an empty string. Empty was fine; MISSING was a hard
+ * validation error — and the editor omits a translation the user never
+ * touched, which is the normal case for an academy that writes in English
+ * first. The result, reproduced in production: fill in the English title
+ * and body exactly as the form invites (its Arabic fields are labelled
+ * "العربية • اختياري", Arabic • optional, with "لم تتم الترجمة بعد"
+ * underneath), press Save, and the save is refused.
+ *
+ * The intent was never in doubt — the comment on `localizedRequired` said
+ * "`ar` may be empty ... it never blocks a save", and
+ * `coerceLegacyLocalized` right above widens a bare legacy string to
+ * `{en, ar: ''}`. Both say a missing Arabic translation means an empty
+ * one. `.default('')` is what makes the schema say it too, and it keeps
+ * the parsed shape exactly as before, so every reader downstream still
+ * gets a `{en, ar}` pair and nothing else changes.
+ */
+const optionalArabic = (maxLength: number) =>
+  z.string().max(maxLength, 'validation:maxLength').default('');
+
+/** `en` is required non-empty (the one always-complete language); `ar` may be empty or absent — an incomplete translation degrades to `en` at render time, it never blocks a save. */
 export const localizedRequired = (maxLength: number) =>
   z.preprocess(
     coerceLegacyLocalized,
     z.object({
       en: z.string().min(1, 'validation:required').max(maxLength, 'validation:maxLength'),
-      ar: z.string().max(maxLength, 'validation:maxLength'),
+      ar: optionalArabic(maxLength),
     }),
   );
 
@@ -88,8 +111,8 @@ export const localizedOptional = (maxLength: number) =>
   z.preprocess(
     coerceLegacyLocalized,
     z.object({
-      en: z.string().max(maxLength, 'validation:maxLength'),
-      ar: z.string().max(maxLength, 'validation:maxLength'),
+      en: z.string().max(maxLength, 'validation:maxLength').default(''),
+      ar: optionalArabic(maxLength),
     }),
   );
 

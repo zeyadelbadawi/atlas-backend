@@ -63,6 +63,22 @@ describe('CMS Content Library tenant isolation (e2e) — P10-TENANT-001..006', (
     return { owner, academy };
   }
 
+  /**
+   * The page's current concurrency token. `expectedVersion` is required on
+   * every page update; these tests are about tenant isolation, so they read
+   * the version rather than track it.
+   */
+  async function pageVersion(
+    academyId: string,
+    pageId: string,
+    token: string,
+  ): Promise<number> {
+    const res = await request(app.getHttpServer())
+      .get(`/academies/${academyId}/website/pages/${pageId}`)
+      .set('Authorization', `Bearer ${token}`);
+    return res.body.version as number;
+  }
+
   it("P10-TENANT-001: Organization B cannot read Organization A's FAQ entry by direct id", async () => {
     const { owner: ownerA, academy: academyA } = await seedManagedAcademy('t10-001-a');
     const created = await request(app.getHttpServer())
@@ -188,8 +204,7 @@ describe('CMS Content Library tenant isolation (e2e) — P10-TENANT-001..006', (
     await request(app.getHttpServer())
       .patch(`/academies/${academyA.id}/website/pages/${page.body.id}`)
       .set('Authorization', `Bearer ${ownerA.accessToken}`)
-      .send({
-        sections: [
+      .send({ sections: [
           {
             id: 'sec-faq-cross',
             type: 'faq',
@@ -197,8 +212,7 @@ describe('CMS Content Library tenant isolation (e2e) — P10-TENANT-001..006', (
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { items: [], libraryEntryIds: [faqB.body.id] },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academyA.id, page.body.id, ownerA.accessToken) })
       .expect(400);
   });
 });

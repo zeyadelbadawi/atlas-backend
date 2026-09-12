@@ -209,17 +209,38 @@ describe('Concurrent CMS editing (e2e)', () => {
     expect(after.body.version).toBe(version + 1);
   });
 
-  it('a save that omits expectedVersion still works, for callers predating the field', async () => {
+  /*
+   * This test used to assert the OPPOSITE — that a version-less save still
+   * succeeded, "for callers predating the field". That leniency was
+   * justified by the claim that every Atlas caller sent the token, and an
+   * audit found that claim false: the SEO dialog (which replaces the whole
+   * `seo` object) and the pages-list visibility toggle both omitted it, so
+   * a second admin saving a stale SEO dialog silently destroyed the first
+   * one's work through exactly this hole.
+   *
+   * The token is now required. Nothing legitimate needs the old path: this
+   * endpoint has no external contract (Swagger is disabled in production),
+   * nothing but the HTTP route reaches the service, and every Atlas caller
+   * sends it.
+   */
+  it('a save that omits expectedVersion is refused, not silently applied', async () => {
     const { owner, academy, page } = await seedSharedAcademy('cc-legacy');
 
-    const updated = await request(app.getHttpServer())
+    const refused = await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({ title: 'No token supplied' })
-      .expect(200);
+      .expect(400);
 
-    // The token still advances, so the next versioned save is accurate.
-    expect(updated.body.version).toBe(page.version + 1);
+    // Actionable and specific, not a field-level validation violation on a
+    // control the user never filled in.
+    expect(refused.body.error.messageKey).toBe('errors.website.versionRequired');
+    expect(refused.body.error.violations).toBeUndefined();
+
+    // The write did not happen: same title, same version, nothing consumed.
+    const after = await loadPage(academy.id, page.id, owner.accessToken);
+    expect(after.body.title).toBe(page.title);
+    expect(after.body.version).toBe(page.version);
   });
 
   // --- B, C. Presence -------------------------------------------------------

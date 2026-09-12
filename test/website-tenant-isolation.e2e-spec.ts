@@ -64,6 +64,22 @@ describe('Website Builder tenant isolation (e2e) — P9-TENANT-001..006', () => 
     return { owner, academy };
   }
 
+  /**
+   * The page's current concurrency token. `expectedVersion` is required on
+   * every page update; these tests are about tenant isolation, so they read
+   * the version rather than track it.
+   */
+  async function pageVersion(
+    academyId: string,
+    pageId: string,
+    token: string,
+  ): Promise<number> {
+    const res = await request(app.getHttpServer())
+      .get(`/academies/${academyId}/website/pages/${pageId}`)
+      .set('Authorization', `Bearer ${token}`);
+    return res.body.version as number;
+  }
+
   it("P9-TENANT-001: Organization B cannot read Organization A's website configuration by addressing Academy A's real id", async () => {
     const { owner: ownerA, academy: academyA } = await seedManagedAcademy('t9-001-a');
     await request(app.getHttpServer())
@@ -116,7 +132,10 @@ describe('Website Builder tenant isolation (e2e) — P9-TENANT-001..006', () => 
     await request(app.getHttpServer())
       .patch(`/academies/${academyB.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${ownerB.accessToken}`)
-      .send({ title: 'hijacked' })
+      // A literal, not a read: Academy B cannot read this page either, so
+      // fetching the version here would send `undefined` and prove nothing.
+      // Tenancy must reject this before the version is ever consulted.
+      .send({ title: 'hijacked', expectedVersion: 1 })
       .expect(404);
 
     await request(app.getHttpServer())
@@ -164,8 +183,7 @@ describe('Website Builder tenant isolation (e2e) — P9-TENANT-001..006', () => 
     await request(app.getHttpServer())
       .patch(`/academies/${academyA.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${ownerA.accessToken}`)
-      .send({
-        sections: [
+      .send({ sections: [
           {
             id: 'sec-cross',
             type: 'featuredCourses',
@@ -181,8 +199,7 @@ describe('Website Builder tenant isolation (e2e) — P9-TENANT-001..006', () => 
               showInstructor: true,
             },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academyA.id, created.body.id, ownerA.accessToken) })
       .expect(400);
   });
 

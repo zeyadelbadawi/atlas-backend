@@ -81,8 +81,7 @@ describe('Public Website Runtime (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academyId}/website/pages/${page.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        visible: true,
+      .send({ visible: true,
         sections: [
           {
             id: 'sec-hero',
@@ -91,8 +90,7 @@ describe('Public Website Runtime (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { title: `Welcome to ${slug}` },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academyId, page.body.id, owner.accessToken) })
       .expect(200);
 
     await request(app.getHttpServer())
@@ -101,6 +99,27 @@ describe('Public Website Runtime (e2e)', () => {
       .expect(201);
 
     return page.body.id as string;
+  }
+
+  /**
+   * The page's current concurrency token.
+   *
+   * `expectedVersion` is required on every page update (see
+   * `WebsitePagesService.update` for why the old lenient path was closed), and
+   * these tests are not about concurrency — they are about entitlement,
+   * isolation and validation. Reading the version immediately before each
+   * write keeps them focused on what they actually assert, instead of
+   * bookkeeping a counter that every earlier write in the test moves.
+   */
+  async function pageVersion(
+    academyId: string,
+    pageId: string,
+    token: string,
+  ): Promise<number> {
+    const res = await request(app.getHttpServer())
+      .get(`/academies/${academyId}/website/pages/${pageId}`)
+      .set('Authorization', `Bearer ${token}`);
+    return res.body.version as number;
   }
 
   it('a published, visible page is publicly accessible with the exact expected content', async () => {
@@ -139,8 +158,7 @@ describe('Public Website Runtime (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        visible: true,
+      .send({ visible: true,
         sections: [
           {
             id: 'sec-hero',
@@ -149,8 +167,7 @@ describe('Public Website Runtime (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { title: 'SECRET DRAFT CONTENT' },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academy.id, page.body.id, owner.accessToken) })
       .expect(200);
 
     // Known academy id, known page id, known slug, guessed slug — every
@@ -193,8 +210,7 @@ describe('Public Website Runtime (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({
-        visible: false,
+      .send({ visible: false,
         sections: [
           {
             id: 'sec-hero',
@@ -203,8 +219,7 @@ describe('Public Website Runtime (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { title: 'HIDDEN SECRET CONTENT' },
           },
-        ],
-      })
+        ], expectedVersion: await pageVersion(academy.id, page.body.id, owner.accessToken) })
       .expect(200);
     await request(app.getHttpServer())
       .post(`/academies/${academy.id}/website/publish`)

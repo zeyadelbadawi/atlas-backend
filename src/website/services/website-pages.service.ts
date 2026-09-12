@@ -26,6 +26,7 @@
  * anything is persisted.
  */
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -236,12 +237,39 @@ export class WebsitePagesService {
          * is what actually closes it, and this check is what turns a lost
          * race into a useful message instead of a silent no-op.
          *
-         * `expectedVersion` is OPTIONAL on the DTO. A caller that does not
-         * send one is not opting out of safety — it is a caller that
-         * predates this field (a script, an older tab) and gets the old
-         * last-write-wins behaviour rather than a hard failure it has no
-         * way to satisfy. Every Atlas editor sends it.
+         * `expectedVersion` IS NOW REQUIRED, and the audit that changed
+         * that is worth recording, because the previous reasoning was
+         * sound but rested on a false premise.
+         *
+         * It used to be optional so a caller predating the field would get
+         * the old last-write-wins behaviour rather than a hard failure it
+         * could not satisfy, and the comment here asserted that "every
+         * Atlas editor sends it". That was not true. Tracing every caller
+         * found the section editor sending it and TWO others not: the SEO
+         * dialog, which replaces the whole `seo` object — so a second
+         * admin saving a stale dialog silently discarded the first one's
+         * title and description — and the visibility toggle on the pages
+         * list. The kindness of accepting a version-less write was being
+         * paid for by whoever's work got destroyed by one.
+         *
+         * Requiring it is safe here specifically because this endpoint has
+         * no external contract to break: Swagger is disabled in
+         * production (`main.ts`), nothing but the HTTP route calls the
+         * service, and every Atlas caller now sends the token.
+         *
+         * The refusal is deliberately NOT a DTO-level validation error. A
+         * missing concurrency token is not a field the user typed, so a
+         * `violations: [{field: 'expectedVersion'}]` response would attach
+         * an error to a form control that does not exist. It is refused
+         * here instead, with a message that tells the one caller this can
+         * still happen to — a tab loaded before this deployed — to reload.
          */
+        if (payload.expectedVersion === undefined) {
+          throw new BadRequestException({
+            messageKey: 'errors.website.versionRequired',
+          });
+        }
+
         if (
           payload.expectedVersion !== undefined &&
           payload.expectedVersion !== existing.version
@@ -301,15 +329,10 @@ export class WebsitePagesService {
         }
 
         try {
-          // Unconditional only when the caller sent no version at all (see
-          // the note above on why that stays permitted). Otherwise the
-          // version goes into the WHERE clause so the database decides the
-          // race, not the gap between our read and our write.
-          if (payload.expectedVersion === undefined) {
-            const updated = await this.websitePagesRepository.update(tx, pageId, data);
-            return toWebsitePageResponse(updated);
-          }
-
+          // The version goes into the WHERE clause so the DATABASE decides
+          // the race, not the gap between our read above and this write.
+          // There is no unconditional path any more — a version-less
+          // request was refused before we got here.
           const updated = await this.websitePagesRepository.updateIfVersionMatches(
             tx,
             pageId,

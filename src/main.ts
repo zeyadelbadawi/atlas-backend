@@ -22,6 +22,7 @@ import { ConfigService } from '@nestjs/config';
 import { Logger, LoggerErrorInterceptor } from 'nestjs-pino';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import helmet from 'helmet';
+import { HELMET_OPTIONS } from './common/security/helmet.options';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { throwClassValidatorViolations } from './common/validation/class-validator-violations.util';
@@ -79,7 +80,10 @@ async function bootstrap(): Promise<void> {
    */
   app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 
-  app.use(helmet());
+  // Security headers. HSTS is pinned rather than left on helmet's
+  // default because the edge no longer sends a competing copy — see
+  // `common/security/helmet.options.ts` for the whole story.
+  app.use(helmet(HELMET_OPTIONS));
 
   // Phase 7 — production serves the platform's main domain, every academy's
   // `{slug}.{baseDomain}` subdomain, and (eventually) connected custom
