@@ -26,9 +26,33 @@ export interface PlanResponse {
   readonly limits: PlanResourceLimits;
   readonly features: PlanFeatures;
   readonly pricing?: PlanPricingMetadataResponse;
+  /**
+   * Phase 11 — whether this plan may be taken as a Free Trial.
+   *
+   * FOR DISPLAY ONLY. The frontend uses it to decide whether to render a
+   * "Try free" CTA instead of "Select this plan"; it is never the control.
+   * `TrialRedemptionService.startTrial` re-reads the same column and
+   * refuses regardless of what any client believed.
+   */
+  readonly trialEligible: boolean;
+  /** Days this plan's trial runs, resolved against the platform default. Absent when the plan is not trialable. */
+  readonly trialDurationDays?: number;
 }
 
-export function toPlanResponse(plan: PrismaPlan): PlanResponse {
+export function toPlanResponse(
+  plan: PrismaPlan,
+  /**
+   * The platform-wide default, used when a plan does not override it.
+   * Passed in rather than read here so this stays a pure mapper, and so
+   * the caller makes exactly one policy read for a whole catalog page
+   * instead of one per plan.
+   */
+  defaultTrialDurationDays?: number,
+): PlanResponse {
+  const trialDurationDays = plan.trialEligible
+    ? (plan.trialDurationDays ?? defaultTrialDurationDays)
+    : undefined;
+
   return {
     id: plan.id,
     key: plan.key,
@@ -39,5 +63,7 @@ export function toPlanResponse(plan: PrismaPlan): PlanResponse {
     limits: plan.limits as unknown as PlanResourceLimits,
     features: plan.features as unknown as PlanFeatures,
     pricing: (plan.pricing as PlanPricingMetadataResponse | null) ?? undefined,
+    trialEligible: plan.trialEligible,
+    ...(trialDurationDays === undefined ? {} : { trialDurationDays }),
   };
 }

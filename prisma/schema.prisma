@@ -564,8 +564,28 @@ enum PlanStatus {
 }
 
 /// Matches `TenantSubscriptionStatus` (`tenant.types.ts`) exactly — 7 states.
+/// Phase 11 — the lifecycle now distinguishes three states that were
+/// previously all collapsed into `expired`, which is why a brand-new
+/// Organization was being told its subscription had ended.
+///
+///   `no_plan`       — created, never chose a plan, never had a trial.
+///                     A NEW CUSTOMER, not a lapsed one. The only state
+///                     from which a Free Trial may be started.
+///   `trial_expired` — a Free Trial ran its course. Distinct from
+///                     `expired` because the recovery action differs:
+///                     "continue with the plan you were trialing", not
+///                     "your subscription has ended".
+///   `expired`       — a PAID subscription genuinely lapsed.
+///
+/// Collapsing these was not a labelling problem. `no_plan` and `expired`
+/// were the same row shape (`status='expired'`, `trial_ends_at IS NULL`),
+/// so no amount of frontend copy could tell them apart — and
+/// `markExpired` nulled `trial_ends_at`, making a finished trial
+/// indistinguishable from an Organization created five seconds ago.
 enum TenantSubscriptionStatus {
+  no_plan
   trialing
+  trial_expired
   active
   past_due
   paused
@@ -604,6 +624,21 @@ model Plan {
   /// checkout/payment flow in this phase (`PlanPricingMetadata`'s own doc
   /// comment: "Prompt 7... owns the real pricing strategy").
   pricing      Json?
+  /// Phase 11 — whether THIS plan may be taken as a Free Trial.
+  ///
+  /// The business rule ("Starter and Growth yes, Enterprise no") lives
+  /// HERE, as catalog data, and nowhere else. It is deliberately not a
+  /// list of plan keys in application code: adding a fourth plan and
+  /// deciding it is trialable must be a configuration change, not a code
+  /// change across the frontend and backend. Defaults to `false` so a
+  /// newly inserted plan is never accidentally trialable — the safe
+  /// direction to fail for a revenue rule.
+  trialEligible Boolean   @default(false) @map("trial_eligible")
+  /// Optional per-plan override of `TrialPolicy.durationDays`. Null means
+  /// "use the platform default", which is the normal case — the column
+  /// exists so a future plan can offer a different-length trial without
+  /// another migration or a second policy mechanism.
+  trialDurationDays Int?  @map("trial_duration_days")
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 

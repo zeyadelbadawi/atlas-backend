@@ -33,22 +33,29 @@ export class PlansService {
   async getPlans(query: CollectionQueryDto): Promise<PaginatedResult<PlanResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
-    const { items, totalItems } = await this.plansRepository.findManyPaginated(
-      (page - 1) * pageSize,
-      pageSize,
-    );
+    const [{ items, totalItems }, policy] = await Promise.all([
+      this.plansRepository.findManyPaginated((page - 1) * pageSize, pageSize),
+      this.trialPolicyRepository.findSingleton(),
+    ]);
     return {
-      items: items.map(toPlanResponse),
+      // An explicit arrow, never a bare `.map(toPlanResponse)`: `map`
+      // passes the INDEX as the second argument, which this mapper now
+      // reads as the default trial duration — the catalog would have
+      // advertised "0-day", "1-day", "2-day" trials down the page.
+      items: items.map((plan) => toPlanResponse(plan, policy.durationDays)),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
     };
   }
 
   async getPlanByKey(key: string): Promise<PlanResponse> {
-    const plan = await this.plansRepository.findByKey(key);
+    const [plan, policy] = await Promise.all([
+      this.plansRepository.findByKey(key),
+      this.trialPolicyRepository.findSingleton(),
+    ]);
     if (!plan) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
-    return toPlanResponse(plan);
+    return toPlanResponse(plan, policy.durationDays);
   }
 
   async getAddOns(): Promise<AddOnResponse[]> {

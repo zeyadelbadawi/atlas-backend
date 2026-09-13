@@ -19,16 +19,26 @@
  */
 import { Controller, Get } from '@nestjs/common';
 import { PlansRepository } from '../repositories/plans.repository';
+import { TrialPolicyRepository } from '../repositories/trial-policy.repository';
 import { toPlanResponse } from '../dto/plan.contract';
 import type { PlanResponse } from '../dto/plan.contract';
 
 @Controller('public/plans')
 export class PublicPlansController {
-  constructor(private readonly plansRepository: PlansRepository) {}
+  constructor(
+    private readonly plansRepository: PlansRepository,
+    private readonly trialPolicyRepository: TrialPolicyRepository,
+  ) {}
 
   @Get()
   async list(): Promise<PlanResponse[]> {
-    const plans = await this.plansRepository.findAll();
-    return plans.map(toPlanResponse);
+    const [plans, policy] = await Promise.all([
+      this.plansRepository.findAll(),
+      this.trialPolicyRepository.findSingleton(),
+    ]);
+    // An explicit arrow, never a bare `.map(toPlanResponse)` — `map` would
+    // pass each element's INDEX as the default trial duration. See
+    // `PlansService.getPlans` for the same note.
+    return plans.map((plan) => toPlanResponse(plan, policy.durationDays));
   }
 }

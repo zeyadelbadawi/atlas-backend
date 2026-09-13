@@ -76,8 +76,18 @@ const COUNT_LIMIT_FIELDS: Record<
   courses: 'courses',
 };
 
-/** Statuses under which a plan-limited write is never permitted, regardless of the numeric limit — an inactive subscription has no entitlement to consume, full stop. */
-const INACTIVE_STATUSES = new Set(['expired', 'cancelled']);
+/**
+ * Statuses under which a plan-limited write is never permitted, regardless
+ * of the numeric limit — an inactive subscription has no entitlement to
+ * consume, full stop.
+ *
+ * Phase 11 adds the two states split out of the old overloaded `expired`.
+ * Both were already refused before this change (they WERE `expired`), so
+ * naming them here preserves the exact enforcement behaviour rather than
+ * altering it — the split was for communication, and this set is the
+ * proof that it cost nothing in gating.
+ */
+const INACTIVE_STATUSES = new Set(['expired', 'cancelled', 'no_plan', 'trial_expired']);
 
 @Injectable()
 export class EntitlementEnforcementService {

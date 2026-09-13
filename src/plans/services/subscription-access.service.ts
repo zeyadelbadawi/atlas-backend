@@ -41,18 +41,74 @@ import { PublicHostnameResolutionRepository } from '../../public-website/reposit
 export const SUBSCRIPTION_INACTIVE_STATUSES: ReadonlySet<string> = new Set([
   'expired',
   'cancelled',
+  // Phase 11. A finished trial genuinely ends administrative access, so it
+  // belongs here beside the other two. `no_plan` deliberately does NOT —
+  // it is a customer who has not started yet rather than one who has
+  // stopped, and refusing their setup mutations would lock them out of the
+  // onboarding that precedes ever paying (see `assertHasAccess`).
+  'trial_expired',
 ]);
 
 /** The one machine-readable code the frontend switches on to show the subscription-required experience. */
 export const SUBSCRIPTION_REQUIRED_CODE = 'SUBSCRIPTION_REQUIRED';
 
+/**
+ * THE canonical lifecycle vocabulary (Phase 11) — one name per state the
+ * product actually distinguishes, derived server-side and mirrored by the
+ * frontend's `SubscriptionLifecycle` rather than re-derived there.
+ *
+ * `no_plan` and `trial_expired` and `expired` are three different
+ * situations with three different recovery actions, and flattening them
+ * is the bug this vocabulary exists to make impossible to reintroduce:
+ *
+ *   no_plan        -> "choose a plan to get started"   (new customer)
+ *   trial_expired  -> "continue with <the plan you trialed>"
+ *   expired        -> "your subscription has ended"    (was a payer)
+ *   cancelled_active -> "your subscription ends on <date>" (still working)
+ */
+export type SubscriptionLifecycle =
+  | 'no_organization'
+  | 'no_plan'
+  | 'trialing'
+  | 'trial_expired'
+  | 'active'
+  | 'cancelled_active'
+  | 'expired';
+
 export interface SubscriptionAccessState {
   readonly hasAccess: boolean;
+  /** The authoritative lifecycle state. Always present. */
+  readonly lifecycle: SubscriptionLifecycle;
   /** Present when access is refused — what the UI explains to the customer. */
-  readonly reason?: 'no_subscription' | 'expired' | 'trial_ended';
+  readonly reason?: 'no_subscription' | 'no_plan' | 'expired' | 'trial_ended';
   readonly status?: string;
   readonly trialEndsAt?: Date | null;
   readonly currentPeriodEnd?: Date | null;
+  /** Days left in an active trial — 0 on its final day, never negative. */
+  readonly trialDaysRemaining?: number;
+}
+
+/** Statuses under which a real, working paid subscription exists. */
+const LIVE_PAID_STATUSES: ReadonlySet<string> = new Set([
+  'active',
+  'past_due',
+  'grace_period',
+  'paused',
+]);
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Whole days left before `endsAt`, floored at 0.
+ *
+ * `Math.ceil` so that any part of a day still counts as a day: a trial
+ * with six hours left says "1 day", never "0 days" while it is still
+ * working. Already-past dates give 0 rather than a negative number, so no
+ * caller has to guard against "-3 days left".
+ */
+function daysRemaining(endsAt: Date | null, now: Date): number {
+  if (!endsAt) return 0;
+  return Math.max(0, Math.ceil((endsAt.getTime() - now.getTime()) / MS_PER_DAY));
 }
 
 @Injectable()
@@ -77,7 +133,9 @@ export class SubscriptionAccessService {
    */
   async isServingEligible(organizationId: string): Promise<boolean> {
     const state = await this.getAccessState(organizationId);
-    return state.hasAccess || state.reason === 'no_subscription';
+    return (
+      state.hasAccess || state.reason === 'no_subscription' || state.reason === 'no_plan'
+    );
   }
 
   /**
@@ -119,13 +177,35 @@ export class SubscriptionAccessService {
       (tx) => this.tenantSubscriptionsRepository.findByOrganizationId(tx, organizationId),
     );
 
+    const now = new Date();
+
+    // No row at all. Still reachable for organizations created before the
+    // bootstrap service existed, so it keeps its own honest answer rather
+    // than being folded into `no_plan`.
     if (!subscription) {
-      return { hasAccess: false, reason: 'no_subscription' };
+      return { hasAccess: false, lifecycle: 'no_plan', reason: 'no_subscription' };
     }
 
-    if (isTrialPeriodOver(subscription, new Date())) {
+    // A NEW CUSTOMER, NOT A LAPSED ONE. Checked before anything else so
+    // that no later branch can reclassify it — this is precisely the
+    // state that used to fall through into `expired`.
+    if (subscription.status === 'no_plan') {
       return {
         hasAccess: false,
+        lifecycle: 'no_plan',
+        reason: 'no_plan',
+        status: subscription.status,
+      };
+    }
+
+    // Either the sweep has already flipped the row, or it has not yet and
+    // the clock says otherwise. Both are the same answer to the customer,
+    // and checking the clock as well is what closes the window between a
+    // trial ending and the scheduled sweep noticing.
+    if (subscription.status === 'trial_expired' || isTrialPeriodOver(subscription, now)) {
+      return {
+        hasAccess: false,
+        lifecycle: 'trial_expired',
         reason: 'trial_ended',
         status: subscription.status,
         trialEndsAt: subscription.trialEndsAt,
@@ -135,6 +215,7 @@ export class SubscriptionAccessService {
     if (SUBSCRIPTION_INACTIVE_STATUSES.has(subscription.status)) {
       return {
         hasAccess: false,
+        lifecycle: 'expired',
         reason: 'expired',
         status: subscription.status,
         trialEndsAt: subscription.trialEndsAt,
@@ -142,8 +223,26 @@ export class SubscriptionAccessService {
       };
     }
 
+    if (subscription.status === 'trialing') {
+      return {
+        hasAccess: true,
+        lifecycle: 'trialing',
+        status: subscription.status,
+        trialEndsAt: subscription.trialEndsAt,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+        trialDaysRemaining: daysRemaining(subscription.trialEndsAt, now),
+      };
+    }
+
+    // CANCELLED BUT STILL PAID FOR is not expired, and must not be shown
+    // as such: the customer bought this time and keeps it until
+    // `currentPeriodEnd`. The expiry sweep is what eventually ends it.
+    const isCancelledButActive =
+      subscription.cancelAtPeriodEnd && LIVE_PAID_STATUSES.has(subscription.status);
+
     return {
       hasAccess: true,
+      lifecycle: isCancelledButActive ? 'cancelled_active' : 'active',
       status: subscription.status,
       trialEndsAt: subscription.trialEndsAt,
       currentPeriodEnd: subscription.currentPeriodEnd,
@@ -182,7 +281,10 @@ export class SubscriptionAccessService {
   async assertHasAccess(organizationId: string): Promise<void> {
     const state = await this.getAccessState(organizationId);
     if (state.hasAccess) return;
-    if (state.reason === 'no_subscription') return;
+    // "Never subscribed" is not "lapsed" — see this method's doc comment.
+    // `no_plan` is the modelled form of exactly that case since Phase 11;
+    // `no_subscription` remains for rows predating the bootstrap service.
+    if (state.reason === 'no_subscription' || state.reason === 'no_plan') return;
 
     throw new ForbiddenException({
       code: SUBSCRIPTION_REQUIRED_CODE,

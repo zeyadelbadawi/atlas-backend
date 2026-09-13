@@ -42,6 +42,7 @@ import {
 import type { TenantSubscriptionResponse } from '../dto/tenant-subscription.contract';
 import type { TenantAddOnResponse } from '../dto/tenant-add-on.contract';
 import type { TenantUsageResponse } from '../dto/tenant-usage.contract';
+import type { SubscriptionLifecycleResponse } from '../dto/subscription-lifecycle.contract';
 import { AllowInactiveSubscription } from '../decorators/allow-inactive-subscription.decorator';
 
 /**
@@ -95,6 +96,25 @@ export class TenantSubscriptionController {
   @Get(':id/subscription')
   async getSubscription(@Param('id') id: string): Promise<TenantSubscriptionResponse> {
     return this.tenantSubscriptionService.getSubscription(id);
+  }
+
+  /**
+   * Phase 11 — the authoritative lifecycle state driving the dashboard,
+   * the sidebar and the recovery screens.
+   *
+   * Readable by any member of the organization, not just billing owners:
+   * an Instructor whose organization's trial ended needs the UI to
+   * explain why their screens are gated, and refusing them this read
+   * would leave them staring at a dead end. It exposes no amount, no
+   * payment method and no invoice — only the state and the plan name the
+   * customer is already looking at everywhere else.
+   */
+  @Get(':id/subscription/lifecycle')
+  async getLifecycle(
+    @Param('id') id: string,
+    @Req() request: Request,
+  ): Promise<SubscriptionLifecycleResponse> {
+    return this.tenantSubscriptionService.getLifecycle(id, request.authContext!.userId);
   }
 
   @Get(':id/usage')

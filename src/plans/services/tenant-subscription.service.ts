@@ -23,6 +23,11 @@ import { toTenantAddOnResponse } from '../dto/tenant-add-on.contract';
 import type { TenantAddOnResponse } from '../dto/tenant-add-on.contract';
 import { toTenantUsageResponse } from '../dto/tenant-usage.contract';
 import type { TenantUsageResponse } from '../dto/tenant-usage.contract';
+import { SubscriptionAccessService } from './subscription-access.service';
+import { TrialEligibilityService } from './trial-eligibility.service';
+import { TrialPolicyRepository } from '../repositories/trial-policy.repository';
+import { toPlanResponse } from '../dto/plan.contract';
+import type { SubscriptionLifecycleResponse } from '../dto/subscription-lifecycle.contract';
 import type {
   EntitlementAddOnInput,
   PlanFeatures,
@@ -37,7 +42,74 @@ export class TenantSubscriptionService {
     private readonly tenantAddOnsRepository: TenantAddOnsRepository,
     private readonly tenantUsageRepository: TenantUsageRepository,
     private readonly entitlementService: EntitlementService,
+    private readonly subscriptionAccessService: SubscriptionAccessService,
+    private readonly trialEligibilityService: TrialEligibilityService,
+    private readonly trialPolicyRepository: TrialPolicyRepository,
   ) {}
+
+  /**
+   * The authoritative lifecycle state for this Organization (Phase 11).
+   *
+   * Assembles, but decides nothing of its own: the state comes from
+   * `SubscriptionAccessService` (the same service the request interceptor
+   * enforces with) and the trial availability from
+   * `TrialEligibilityService`'s read-only describe. Adding a second
+   * interpretation here is exactly the drift this endpoint exists to end.
+   */
+  async getLifecycle(
+    organizationId: string,
+    actorUserId: string,
+  ): Promise<SubscriptionLifecycleResponse> {
+    const [state, policy] = await Promise.all([
+      this.subscriptionAccessService.getAccessState(organizationId),
+      this.trialPolicyRepository.findSingleton(),
+    ]);
+
+    const subscription = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.tenantSubscriptionsRepository.findByOrganizationId(tx, organizationId),
+    );
+
+    // Trial availability is an ACCOUNT-level fact, not an organization
+    // one — creating a second workspace must not restore it — so it is
+    // read against the acting user's own mailbox, in their own context.
+    const trialAvailable = policy.enabled
+      ? await this.tenancyContextService.runInUserContext(actorUserId, async (tx) => {
+          const user = await tx.user.findUniqueOrThrow({
+            where: { id: actorUserId },
+            select: { email: true },
+          });
+          const { eligible } = await this.trialEligibilityService.describeEligibility(
+            tx,
+            user.email,
+          );
+          return eligible;
+        })
+      : false;
+
+    // In `no_plan` the row's `plan_id` is a NOT-NULL placeholder, not a
+    // choice the customer made. Omitting it here is what stops every
+    // downstream surface from announcing a plan they do not have.
+    const plan =
+      subscription && state.lifecycle !== 'no_plan'
+        ? toPlanResponse(subscription.plan, policy.durationDays)
+        : undefined;
+
+    return {
+      lifecycle: state.lifecycle,
+      hasAccess: state.hasAccess,
+      ...(state.status ? { status: state.status } : {}),
+      ...(plan ? { plan } : {}),
+      ...(state.trialEndsAt ? { trialEndsAt: state.trialEndsAt.toISOString() } : {}),
+      ...(state.trialDaysRemaining === undefined
+        ? {}
+        : { trialDaysRemaining: state.trialDaysRemaining }),
+      ...(state.currentPeriodEnd
+        ? { currentPeriodEnd: state.currentPeriodEnd.toISOString() }
+        : {}),
+      trialAvailable,
+    };
+  }
 
   async getSubscription(organizationId: string): Promise<TenantSubscriptionResponse> {
     const subscription = await this.tenancyContextService.runInTenantContext(

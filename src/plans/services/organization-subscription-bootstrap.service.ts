@@ -21,14 +21,22 @@
  *      seen what they are trialling.
  *
  * WHAT A NEW ORGANIZATION GETS INSTEAD: a subscription row with
- * `status: 'expired'` and `trialEndsAt: null`. That is not a new concept
- * — `expired` is already in `INACTIVE_STATUSES`
- * (`entitlement-enforcement.service.ts`), so every existing entitlement
- * check already treats it correctly as "no usable entitlement" without
- * any change. Creating the row up front (rather than leaving the
- * organization subscription-less) preserves the original reason this
- * service exists: downstream code can rely on a subscription always
- * being present, and never has to special-case a missing one.
+ * `status: 'no_plan'` and `trialEndsAt: null`. Creating the row up front
+ * (rather than leaving the organization subscription-less) preserves the
+ * original reason this service exists: downstream code can rely on a
+ * subscription always being present, and never has to special-case a
+ * missing one.
+ *
+ * WHY `no_plan` AND NOT `expired` (Phase 11). This service used to write
+ * `expired`, chosen because it was already in every INACTIVE_STATUSES set
+ * and therefore gated correctly for free. It gated correctly and
+ * COMMUNICATED disastrously: the row it produced was identical to a
+ * genuinely lapsed paid subscription, so the product could only ever tell
+ * a brand-new customer "your subscription has ended" about a workspace
+ * they had just created. `no_plan` is in the same inactive sets — nothing
+ * about enforcement changes — but it is a state the product can speak
+ * about honestly, and it is the ONLY state a Free Trial may start from
+ * (see `TenantSubscriptionsRepository.startTrial`).
  *
  * Trials are now redeemed exclusively by `TrialRedemptionService.startTrial`.
  */
@@ -74,12 +82,14 @@ export class OrganizationSubscriptionBootstrapService {
 
     await this.tenantSubscriptionsRepository.create(tx, {
       organizationId,
+      // A PLACEHOLDER, not a choice the customer has made. `plan_id` is
+      // NOT NULL on this table, so a row must reference something; while
+      // `status` is `no_plan` this value carries no entitlement and no
+      // surface may present it as "your plan". It is replaced the moment
+      // a trial starts or a payment succeeds.
       planId: plan.id,
-      // No trial. `trialEndsAt: null` + `status: 'expired'` is the
-      // existing, already-handled representation of "no usable
-      // entitlement yet" — see this class's own doc comment.
       trialEndsAt: null,
-      status: 'expired',
+      status: 'no_plan',
     });
   }
 }

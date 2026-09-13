@@ -112,6 +112,35 @@ export class TenantSubscriptionsRepository {
   }
 
   /**
+   * Phase 11 — ends a TRIAL that has run its course.
+   *
+   * Replaces the previous `markExpired` call in the trial sweep, which
+   * set `status='expired', trialEndsAt=null` and in doing so destroyed
+   * the only two facts the recovery screen needs: that what ended was a
+   * trial, and when. A customer whose trial lapsed then saw the same
+   * "your subscription has ended" as a lapsed payer, with no way to offer
+   * "continue with the plan you were trialing".
+   *
+   * `trialEndsAt` is deliberately PRESERVED. It is the historical record
+   * of when the trial ran out, and keeping it also means this row can
+   * never match `startTrial` again (which requires `trialEndsAt: null`) —
+   * so preserving history and preventing a second trial are the same
+   * mechanism, not two that could drift apart.
+   *
+   * `planId` is untouched: it is the plan that was trialed, and it is
+   * what makes the recovery CTA specific.
+   */
+  markTrialExpired(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<TenantSubscription> {
+    return tx.tenantSubscription.update({
+      where: { organizationId },
+      data: { status: 'trial_expired' },
+    });
+  }
+
+  /**
    * Phase 2 — the ONE place a brand-new Organization's real trial
    * subscription row is created (`OrganizationSubscriptionBootstrapService`,
    * called from `OrganizationsService.create`'s `onCreated` hook, inside
@@ -146,12 +175,23 @@ export class TenantSubscriptionsRepository {
   /**
    * Phase 10.2 — starts a trial on an existing subscription row.
    *
-   * Guarded by `status: { in: ['expired', 'cancelled'] }` and
-   * `trialEndsAt: null`, so it can only ever move a subscription that has
-   * never had a trial. A row already `trialing`, `active`, or one whose
-   * trial has already been set matches zero rows and reports `false` —
-   * meaning this is safe to call concurrently even before the redemption
-   * claim is considered.
+   * Guarded by `status: 'no_plan'` and `trialEndsAt: null`, so it can only
+   * ever move a subscription that has never had a plan or a trial. A row
+   * already `trialing`, `active`, `trial_expired`, `cancelled` or
+   * `expired` matches zero rows and reports `false` — meaning this is safe
+   * to call concurrently even before the redemption claim is considered.
+   *
+   * NARROWED IN PHASE 11 from `status IN ('expired','cancelled')`. That
+   * older predicate was written when `expired` was also what a brand-new
+   * Organization got, so it had to accept `expired` in order for any trial
+   * to start at all. With `no_plan` modelling the new-customer state
+   * directly, accepting `expired`/`cancelled` would now mean something
+   * quite different and quite wrong: a customer whose PAID subscription
+   * lapsed, or who cancelled one, could take a free trial afterwards. The
+   * account-level redemption record usually stops that anyway, but relying
+   * on it would be relying on a second mechanism to cover this one's
+   * mistake. A trial is for a customer who has never had a plan, and that
+   * is now exactly what the predicate says.
    *
    * @returns whether this call actually started the trial.
    */
@@ -165,7 +205,7 @@ export class TenantSubscriptionsRepository {
       where: {
         organizationId,
         trialEndsAt: null,
-        status: { in: ['expired', 'cancelled'] },
+        status: 'no_plan',
       },
       data: { planId, status: 'trialing', trialEndsAt },
     });

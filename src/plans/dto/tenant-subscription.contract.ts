@@ -25,12 +25,13 @@ export interface TenantSubscriptionResponse {
 
 export function toTenantSubscriptionResponse(
   subscription: PrismaTenantSubscription & { plan: PrismaPlan },
+  defaultTrialDurationDays?: number,
 ): TenantSubscriptionResponse {
   return {
     organizationId: subscription.organizationId,
     status: subscription.status,
     planId: subscription.planId,
-    plan: toPlanResponse(subscription.plan),
+    plan: toPlanResponse(subscription.plan, defaultTrialDurationDays),
     trialEndsAt: subscription.trialEndsAt?.toISOString(),
     graceEndsAt: subscription.graceEndsAt?.toISOString(),
     currentPeriodStart: subscription.currentPeriodStart?.toISOString(),

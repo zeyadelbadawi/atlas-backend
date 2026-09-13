@@ -127,7 +127,28 @@ export class TrialRedemptionService {
       throw new ForbiddenException({ messageKey: 'errors.entitlement.noPlanAvailable' });
     }
 
-    const trialEndsAt = new Date(Date.now() + trialPolicy.durationDays * MS_PER_DAY);
+    /*
+      PER-PLAN ELIGIBILITY, READ FROM THE CATALOG (Phase 11).
+
+      Enterprise is not a self-service trial tier. That rule is a column on
+      the plan, not a comparison against a plan key here — so making a
+      future plan trialable is an UPDATE, not a deploy, and there is
+      exactly one place to change it. Enforced server-side because the
+      frontend's copy of this flag is display only: without this check a
+      caller could POST the Enterprise plan id directly and trial unlimited
+      everything for free.
+    */
+    if (!plan.trialEligible) {
+      throw new ForbiddenException({
+        messageKey: 'errors.entitlement.planNotTrialEligible',
+        code: 'PLAN_NOT_TRIAL_ELIGIBLE',
+      });
+    }
+
+    // Per-plan duration when the catalog specifies one, the platform
+    // default otherwise. Neither "3" nor any plan name appears here.
+    const durationDays = plan.trialDurationDays ?? trialPolicy.durationDays;
+    const trialEndsAt = new Date(Date.now() + durationDays * MS_PER_DAY);
 
     return this.tenancyContextService
       .runInTenantAndUserContext(organizationId, actorUserId, async (tx) => {
@@ -177,7 +198,9 @@ export class TrialRedemptionService {
           context: {
             planKey: plan.key,
             trialEndsAt: trialEndsAt.toISOString(),
-            durationDays: trialPolicy.durationDays,
+            // The duration actually applied, which may be the plan's own
+            // override rather than the platform default.
+            durationDays,
           },
         });
 

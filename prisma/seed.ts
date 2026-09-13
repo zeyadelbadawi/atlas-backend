@@ -317,8 +317,9 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         backup: false,
       },
       pricing: { amount: 0, currency: 'USD', billingCycle: 'monthly' },
+      trialEligible: true,
     },
-    update: {},
+    update: { trialEligible: true },
   });
 
   const growth = await prisma.plan.upsert({
@@ -352,8 +353,9 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         backup: false,
       },
       pricing: { amount: 79, currency: 'USD', billingCycle: 'monthly' },
+      trialEligible: true,
     },
-    update: {},
+    update: { trialEligible: true },
   });
 
   await prisma.plan.upsert({
@@ -387,8 +389,9 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         backup: true,
       },
       pricing: { amount: 299, currency: 'USD', billingCycle: 'monthly' },
+      trialEligible: false,
     },
-    update: {},
+    update: { trialEligible: false },
   });
 
   const extraAcademyAddOn = await prisma.addOn.upsert({

@@ -53,8 +53,16 @@ export class SubscriptionExpiryService {
     );
 
     for (const subscription of due) {
+      // `markTrialExpired`, not `markExpired` (Phase 11): what ran out
+      // here is a TRIAL, and the row must keep saying so. The old call
+      // flattened these into the same `expired` a lapsed payer gets and
+      // nulled `trialEndsAt` on the way, leaving the recovery screen with
+      // nothing specific to offer.
       await this.tenancyContextService.runInUserContext(platformOwner.id, (tx) =>
-        this.tenantSubscriptionsRepository.markExpired(tx, subscription.organizationId),
+        this.tenantSubscriptionsRepository.markTrialExpired(
+          tx,
+          subscription.organizationId,
+        ),
       );
     }
 
