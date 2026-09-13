@@ -50,7 +50,14 @@ ADD COLUMN     "failure_reason" TEXT,
 ADD COLUMN     "installed_at" TIMESTAMP(3),
 ADD COLUMN     "status" "tenant_add_on_status" NOT NULL DEFAULT 'enabled',
 ADD COLUMN     "uninstalled_at" TIMESTAMP(3),
-ADD COLUMN     "updated_at" TIMESTAMP(3) NOT NULL;
+-- DEFAULT is load-bearing, not cosmetic. `ADD COLUMN ... NOT NULL` with no
+-- default ABORTS on a table that already has rows, and `tenant_add_ons`
+-- holds a row for every add-on any tenant has ever activated. The generated
+-- DDL was safe only against the empty local table it was diffed against;
+-- on production it would have failed the whole deploy. Existing rows get
+-- the migration timestamp, which is the honest answer for "when was this
+-- row last touched" given the column did not exist before now.
+ADD COLUMN     "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
 -- AlterTable
 ALTER TABLE "users" DROP COLUMN "search_vector";
