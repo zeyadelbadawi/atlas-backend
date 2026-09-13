@@ -64,9 +64,17 @@ import type { TenantUsageCounts } from '../repositories/tenant-usage.repository'
  * are byte-precise, not integer-count limits, and go through
  * {@link EntitlementEnforcementService.assertStorageWithinLimit} instead
  * (see that method's own doc comment for why).
+ *
+ * `recordedSessions` (Phase 12) is excluded for a different reason: it is
+ * not in `tenant_usage` at all. Its usage is the count of
+ * `live_session_recordings` rows that have actually consumed quota, which
+ * must be read and incremented inside ONE serialized transaction to stay
+ * concurrency-safe — see `RecordingQuotaService`. Counting it from the
+ * cached snapshot would reintroduce exactly the check-then-insert race
+ * that service exists to close.
  */
 const COUNT_LIMIT_FIELDS: Record<
-  Exclude<PlanLimitKey, 'generalStorage' | 'videoStorage'>,
+  Exclude<PlanLimitKey, 'generalStorage' | 'videoStorage' | 'recordedSessions'>,
   keyof TenantUsageCounts
 > = {
   academies: 'academies',
@@ -111,7 +119,10 @@ export class EntitlementEnforcementService {
   async assertWithinLimit(
     tx: Prisma.TransactionClient,
     organizationId: string,
-    limitKey: Exclude<PlanLimitKey, 'generalStorage' | 'videoStorage'>,
+    limitKey: Exclude<
+      PlanLimitKey,
+      'generalStorage' | 'videoStorage' | 'recordedSessions'
+    >,
     additionalAmount = 1,
   ): Promise<void> {
     const entitlements = await this.loadActiveEntitlements(tx, organizationId);

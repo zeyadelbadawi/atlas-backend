@@ -35,6 +35,7 @@ import { IdentityModule } from './identity/identity.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { AcademyModule } from './academy/academy.module';
 import { PlansModule } from './plans/plans.module';
+import { LiveSessionsModule } from './live-sessions/live-sessions.module';
 import { CourseModule } from './course/course.module';
 import { LearningModule } from './learning/learning.module';
 import { InstructorModule } from './instructor/instructor.module';
@@ -162,6 +163,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
     IdentityModule,
     AcademyModule,
     PlansModule,
+    // Phase 12 — Live Sessions add-on (Zoom).
+    LiveSessionsModule,
     CourseModule,
     LearningModule,
     InstructorModule,

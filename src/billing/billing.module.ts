@@ -162,6 +162,11 @@ import { PublicWebsiteCacheService } from '../public-website/services/public-web
     OrganizationPaymentSettingsService,
     OrganizationPaymentSettingsRepository,
     OrganizationGatewayCredentialsRepository,
+    // Phase 12 — the Live Sessions add-on stores Zoom credentials at
+    // rest and must use THIS AES-256-GCM seam, not a second one. This
+    // is the whole reason the service is a single documented place:
+    // a parallel implementation is how key handling drifts.
+    CredentialEncryptionService,
   ],
 })
 export class BillingModule {}

@@ -302,6 +302,9 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         courses: 5,
         generalStorage: 2,
         videoStorage: 2,
+        // Live Sessions add-on: how many sessions may be RECORDED.
+        // Unrecorded sessions are unlimited and gated by the feature flag.
+        recordedSessions: 3,
       },
       features: {
         cms: true,
@@ -315,6 +318,7 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         themes: true,
         multipleThemes: false,
         backup: false,
+        liveSessions: false,
       },
       pricing: { amount: 0, currency: 'USD', billingCycle: 'monthly' },
       trialEligible: true,
@@ -338,6 +342,7 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         courses: 50,
         generalStorage: 20,
         videoStorage: 20,
+        recordedSessions: 10,
       },
       features: {
         cms: true,
@@ -351,6 +356,7 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         themes: true,
         multipleThemes: true,
         backup: false,
+        liveSessions: false,
       },
       pricing: { amount: 79, currency: 'USD', billingCycle: 'monthly' },
       trialEligible: true,
@@ -374,6 +380,7 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         courses: 'unlimited',
         generalStorage: 'unlimited',
         videoStorage: 'unlimited',
+        recordedSessions: 'unlimited',
       },
       features: {
         cms: true,
@@ -387,11 +394,71 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         themes: true,
         multipleThemes: true,
         backup: true,
+        liveSessions: false,
       },
       pricing: { amount: 299, currency: 'USD', billingCycle: 'monthly' },
       trialEligible: false,
     },
     update: { trialEligible: false },
+  });
+
+  // ---------------------------------------------------------------------
+  // Phase 12 — make sure the Live Sessions entitlement keys exist on every
+  // plan, including catalogs seeded before this phase.
+  //
+  // The `upsert`s above only write `limits`/`features` on their CREATE
+  // path, so an existing plan row would otherwise keep a JSON blob with no
+  // `recordedSessions` and no `liveSessions` — and a missing key reads as
+  // `undefined`, which is neither "unlimited" nor "0" and would make the
+  // quota arithmetic meaningless. `||` merges at the top level and leaves
+  // every other key untouched, so this is safe to re-run and never
+  // clobbers a deployment's own tuned values for the keys it does not name.
+  // ---------------------------------------------------------------------
+  const RECORDED_SESSION_ALLOWANCE: Record<string, number | 'unlimited'> = {
+    starter: 3,
+    growth: 10,
+    enterprise: 'unlimited',
+  };
+
+  for (const [planKey, allowance] of Object.entries(RECORDED_SESSION_ALLOWANCE)) {
+    await prisma.$executeRaw`
+      UPDATE "plans"
+         SET "limits" = "limits" || ${JSON.stringify({ recordedSessions: allowance })}::jsonb,
+             -- The capability itself stays FALSE on the plan: it is granted
+             -- by activating the add-on, never bundled silently.
+             "features" = "features" || '{"liveSessions": false}'::jsonb
+       WHERE "key" = ${planKey}
+    `;
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 12 — the Live Sessions add-on.
+  //
+  // A FEATURE-EFFECT add-on: activating it turns on the `liveSessions`
+  // capability through the mechanism `AddOnFeatureEffect` already provided,
+  // rather than a bespoke install flag. The recording ALLOWANCE is separate
+  // and lives on the plan (`recordedSessions`), because normal sessions are
+  // unlimited and only recording is metered.
+  //
+  // `pricing` marks it paid; a free add-on is simply one with no amount.
+  // Compatible with every current tier — Starter and Growth differ in how
+  // many sessions they may record, not in whether they may run any.
+  // ---------------------------------------------------------------------
+  await prisma.addOn.upsert({
+    where: { key: 'live-sessions' },
+    create: {
+      key: 'live-sessions',
+      name: 'Live Sessions',
+      description:
+        'Run live classes inside your courses with Zoom, with attendance tracking and optional recording.',
+      effect: { type: 'feature', featureKey: 'liveSessions' },
+      compatiblePlanKeys: ['starter', 'growth', 'enterprise'],
+      pricing: { amount: 29, currency: 'USD', billingCycle: 'monthly' },
+    },
+    update: {
+      effect: { type: 'feature', featureKey: 'liveSessions' },
+      compatiblePlanKeys: ['starter', 'growth', 'enterprise'],
+    },
   });
 
   const extraAcademyAddOn = await prisma.addOn.upsert({

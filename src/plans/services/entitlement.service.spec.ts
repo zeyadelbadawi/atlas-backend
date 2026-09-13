@@ -34,6 +34,7 @@ const BASE_LIMITS: PlanResourceLimits = {
   courses: 20,
   generalStorage: 10,
   videoStorage: 10,
+  recordedSessions: 0,
 };
 
 const BASE_FEATURES: PlanFeatures = {
@@ -48,6 +49,7 @@ const BASE_FEATURES: PlanFeatures = {
   themes: true,
   multipleThemes: false,
   backup: false,
+  liveSessions: false,
 };
 
 function buildPlan(overrides: Partial<EntitlementPlanInput> = {}): EntitlementPlanInput {

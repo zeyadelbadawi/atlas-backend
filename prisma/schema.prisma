@@ -147,6 +147,11 @@ model User {
   subscriptionCancellations                     SubscriptionCancellation[]               @relation("SubscriptionCanceller")
   websitePagesLastEdited                        WebsitePage[]                            @relation("WebsitePageUpdatedBy")
 
+  /// Phase 12 — Live Sessions add-on.
+  liveProviderConnections AcademyLiveProviderConnection[] @relation("LiveProviderConnector")
+  hostedLiveSessions      LiveSession[]                   @relation("LiveSessionHost")
+  liveSessionParticipants LiveSessionParticipant[]        @relation("LiveSessionParticipant")
+
   @@index([status])
   @@map("users")
 }
@@ -489,6 +494,10 @@ model Academy {
   auditLogEntries      AuditLogEntry[]
   supportCases         SupportCase[]
 
+  /// Phase 12 — Live Sessions add-on.
+  liveProviderConnection AcademyLiveProviderConnection?
+  liveSessions           LiveSession[]
+
   @@index([organizationId, status])
   @@map("academies")
 }
@@ -705,17 +714,56 @@ model TenantSubscription {
 /// Organization-scoped — mirrors `TenantAddOn` (`tenant.types.ts`). No
 /// activation endpoint exists in P4 (no payment provider) — same
 /// no-creation-endpoint precedent as `TenantSubscription` above.
+/// Phase 12 — the add-on lifecycle.
+///
+/// INSTALLED IS NOT ENABLED, and neither is ENTITLED. A tenant may install
+/// an add-on, disable it temporarily without losing its configuration, and
+/// re-enable it later; separately, the PLAN decides whether they are
+/// entitled to it at all. Collapsing these into one boolean is what makes
+/// "why can't I use this?" unanswerable — see `AddOnAccessService`, which
+/// reports which of the conditions actually failed.
+///
+/// `installing`/`uninstalling` exist because provisioning an add-on can do
+/// real work (creating provider records, importing state) that may fail
+/// partway; `failed` is terminal-but-retryable and keeps `failureReason`
+/// so the UI can say what went wrong rather than showing a dead toggle.
+enum TenantAddOnStatus {
+  installing
+  installed
+  enabled
+  disabled
+  uninstalling
+  uninstalled
+  failed
+
+  @@map("tenant_add_on_status")
+}
+
 model TenantAddOn {
   id             String       @id @default(uuid())
   organizationId String       @map("organization_id")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   addOnId        String       @map("add_on_id")
   addOn          AddOn        @relation(fields: [addOnId], references: [id])
+  /// Defaults to `enabled` so every row that existed before the lifecycle
+  /// was introduced keeps behaving exactly as it did — those rows WERE
+  /// active by definition, since activation was all the table could
+  /// express. Only ENABLED rows contribute their effect to entitlements.
+  status         TenantAddOnStatus @default(enabled)
+  /// Why an `installing`/`uninstalling` transition failed. Provider-agnostic
+  /// summary only — never a raw provider payload or credential.
+  failureReason  String?      @map("failure_reason")
   activatedAt    DateTime     @default(now()) @map("activated_at")
+  installedAt    DateTime?    @map("installed_at")
+  enabledAt      DateTime?    @map("enabled_at")
+  disabledAt     DateTime?    @map("disabled_at")
+  uninstalledAt  DateTime?    @map("uninstalled_at")
   createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
   @@unique([organizationId, addOnId])
   @@index([organizationId])
+  @@index([organizationId, status])
   @@map("tenant_add_ons")
 }
 
@@ -1031,6 +1079,9 @@ model Course {
   /// Phase P13 — Course Commerce (master plan §23).
   orders        CourseOrder[]
 
+  /// Phase 12 — Live Sessions as a first-class course activity.
+  liveSessions LiveSession[]
+
   @@unique([academyId, slug])
   @@index([academyId, status, visibility])
   @@index([status, visibility])
@@ -1078,6 +1129,9 @@ model CourseSection {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   lessons CourseLesson[]
+
+  /// Phase 12 — Live Sessions placed in this unit.
+  liveSessions LiveSession[]
 
   @@index([courseId, order])
   @@map("course_sections")
@@ -1829,6 +1883,9 @@ model MediaAsset {
   height     Int?
   createdAt  DateTime         @default(now()) @map("created_at")
   updatedAt  DateTime         @updatedAt @map("updated_at")
+
+  /// Phase 12 — set when this asset was imported from a session recording.
+  liveSessionRecordingFiles LiveSessionRecordingFile[]
 
   @@index([academyId, status, type])
   @@map("media_assets")
@@ -3519,4 +3576,376 @@ model Notification {
   @@unique([userId, dedupeKey])
   @@index([userId, isRead, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 — Live Sessions add-on (Zoom).
+//
+// A Live Session is a FIRST-CLASS COURSE ACTIVITY, not a page that links
+// out to Zoom. It sits in the curriculum beside Lesson/Quiz/Assignment and
+// follows their established shape exactly: `course_id` required (direct
+// scoping without a join, master plan §5.3), `section_id` OPTIONAL (the
+// same placement model `quizzes`/`assignments` already use), and an
+// `order` so it can be sequenced within its unit (the one thing only
+// `course_lessons` had, and the reason a session could otherwise never sit
+// "between lesson 2 and the quiz").
+//
+// `academy_id` is denormalized onto every table below for the same reason
+// `enrollments` already carries it: RLS resolves the tenant transitively
+// through `academies.organization_id`, and a denormalized academy id keeps
+// those policies a single join deep instead of three.
+//
+// WHAT IS DELIBERATELY NOT HERE: any provider credential. Secrets live
+// encrypted in `academy_live_provider_connections.encrypted_credentials`
+// via the existing `CredentialEncryptionService` (AES-256-GCM) — the same
+// one seam `organization_gateway_credentials` already uses. No new crypto,
+// no second secret store.
+// ---------------------------------------------------------------------------
+
+/// The live-meeting providers Atlas can speak to. Zoom is the only one
+/// today; the enum exists so a second provider is a catalog addition
+/// rather than a schema migration across every table below.
+enum LiveProviderKey {
+  zoom
+
+  @@map("live_provider_key")
+}
+
+/// Health of an academy's provider connection.
+///
+/// `expired` and `revoked` are separate from `error` on purpose: the first
+/// two are recoverable by reconnecting and the UI can say so precisely,
+/// while `error` covers a provider that is reachable but unhappy.
+enum LiveProviderConnectionStatus {
+  not_connected
+  connected
+  expired
+  revoked
+  error
+
+  @@map("live_provider_connection_status")
+}
+
+/// One academy's connection to one live-meeting provider.
+///
+/// ACADEMY-SCOPED, NOT GLOBAL. Two academies under the same organization
+/// may hold entirely separate Zoom accounts, and one academy's credentials
+/// must never authorize a meeting for another. `academy_id` is UNIQUE, so a
+/// single academy cannot accumulate competing connections for one provider.
+model AcademyLiveProviderConnection {
+  id          String                       @id @default(uuid())
+  academyId   String                       @unique @map("academy_id")
+  academy     Academy                      @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  providerKey LiveProviderKey              @default(zoom) @map("provider_key")
+  status      LiveProviderConnectionStatus @default(not_connected)
+  /// AES-256-GCM ciphertext produced by `CredentialEncryptionService` —
+  /// the identical `base64(iv).base64(tag).base64(ciphertext)` envelope
+  /// `organization_gateway_credentials.encrypted_config` stores. NEVER
+  /// decrypted outside a server-side provider adapter, and never present
+  /// in any response DTO.
+  encryptedCredentials String?             @map("encrypted_credentials")
+  /// The provider's own non-secret account identifier, kept in the clear
+  /// so a webhook can be resolved to this academy without decrypting
+  /// anything. Not a credential.
+  externalAccountId    String?             @map("external_account_id")
+  /// Provider-agnostic success/failure summary only — never a raw provider
+  /// error payload (§16, mirroring `lastTestResult` on gateway credentials).
+  lastCheckResult      Json?               @map("last_check_result")
+  lastCheckedAt        DateTime?           @map("last_checked_at")
+  connectedByUserId    String?             @map("connected_by_user_id")
+  connectedByUser      User?               @relation("LiveProviderConnector", fields: [connectedByUserId], references: [id], onDelete: SetNull)
+  connectedAt          DateTime?           @map("connected_at")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+
+  @@index([providerKey, externalAccountId])
+  @@map("academy_live_provider_connections")
+}
+
+/// A Live Session's lifecycle.
+///
+/// Mirrors the draft/published split `course_lessons`/`quizzes`/
+/// `assignments` already use, extended with the states a scheduled
+/// real-time event genuinely has. `scheduled` is the published-but-not-yet
+/// -started state; `failed` means the provider could not create or start
+/// the meeting and is retryable.
+enum LiveSessionStatus {
+  draft
+  scheduled
+  live
+  ended
+  cancelled
+  failed
+
+  @@map("live_session_status")
+}
+
+model LiveSession {
+  id          String            @id @default(uuid())
+  courseId    String            @map("course_id")
+  course      Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  /// Optional unit placement — the same model `quizzes`/`assignments` use.
+  sectionId   String?           @map("section_id")
+  section     CourseSection?    @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  /// Denormalized for RLS and cross-academy isolation; set at creation
+  /// from the course's own academy and never changed afterwards.
+  academyId   String            @map("academy_id")
+  academy     Academy           @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  /// Ordering within the unit, matching `course_lessons.order`.
+  order       Int               @default(0)
+  status      LiveSessionStatus @default(draft)
+  scheduledStartAt DateTime     @map("scheduled_start_at")
+  scheduledEndAt   DateTime     @map("scheduled_end_at")
+  /// The instructor who hosts. A real Atlas user, so host authority is an
+  /// Atlas fact rather than a provider-side display name.
+  hostUserId  String            @map("host_user_id")
+  hostUser    User              @relation("LiveSessionHost", fields: [hostUserId], references: [id])
+  /// ATLAS IS AUTHORITATIVE FOR RECORDING, AND IT IS OFF BY DEFAULT.
+  /// A provider account whose own default is "record everything" must
+  /// never produce an Atlas recording while this is false — the webhook
+  /// handler checks this column before importing anything.
+  recordingEnabled Boolean      @default(false) @map("recording_enabled")
+  providerKey      LiveProviderKey @default(zoom) @map("provider_key")
+  /// The provider's meeting identifier. Not a secret, and the key a
+  /// webhook is resolved through.
+  providerMeetingId String?     @map("provider_meeting_id")
+  startedAt        DateTime?    @map("started_at")
+  endedAt          DateTime?    @map("ended_at")
+  cancelledAt      DateTime?    @map("cancelled_at")
+  /// Provider-agnostic reason a session failed. Never a raw payload.
+  failureReason    String?      @map("failure_reason")
+  createdByUserId  String?      @map("created_by_user_id")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  participants LiveSessionParticipant[]
+  attendance   LiveSessionAttendanceInterval[]
+  recording    LiveSessionRecording?
+
+  @@index([courseId, sectionId, order])
+  @@index([academyId, status, scheduledStartAt])
+  @@index([providerKey, providerMeetingId])
+  @@map("live_sessions")
+}
+
+/// THE DETERMINISTIC ATLAS↔PROVIDER IDENTITY MAP.
+///
+/// Attendance must never be matched by display name or email similarity —
+/// two students called "Ahmed" would silently merge, and a participant who
+/// renames themselves in the provider UI would corrupt the record. Instead
+/// Atlas mints an opaque `participant_key` per (session, user) when a join
+/// is authorized, hands it to the provider as the participant's identity,
+/// and resolves webhook events back through it. Exact, or unmatched —
+/// never approximate.
+///
+/// `provider_participant_id` is recorded when the provider reports one,
+/// purely as a reconciliation aid for post-session reports. It is NOT the
+/// identity: it is provider-assigned, can differ between the live event
+/// stream and the after-the-fact report, and is meaningless across sessions.
+model LiveSessionParticipant {
+  id             String      @id @default(uuid())
+  liveSessionId  String      @map("live_session_id")
+  liveSession    LiveSession @relation(fields: [liveSessionId], references: [id], onDelete: Cascade)
+  userId         String      @map("user_id")
+  user           User        @relation("LiveSessionParticipant", fields: [userId], references: [id], onDelete: Cascade)
+  academyId      String      @map("academy_id")
+  /// Opaque, unguessable, unique across all sessions. This is the identity.
+  participantKey String      @unique @map("participant_key")
+  /// Provider-assigned id, for reconciliation only — never the identity.
+  providerParticipantId String? @map("provider_participant_id")
+  role           String      @default("attendee")
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  attendance LiveSessionAttendanceInterval[]
+
+  @@unique([liveSessionId, userId])
+  @@index([liveSessionId])
+  @@map("live_session_participants")
+}
+
+/// Where one attendance interval came from.
+///
+/// `sdk_event` is deliberately the WEAKEST source and never the only one
+/// trusted: a browser can stop sending events by closing a laptop lid.
+/// `provider_webhook` is the live authoritative stream; `provider_report`
+/// is the post-session reconciliation that corrects it; `manual` is an
+/// explicit human override, always visibly marked as such.
+enum LiveAttendanceSource {
+  sdk_event
+  provider_webhook
+  provider_report
+  manual
+
+  @@map("live_attendance_source")
+}
+
+/// ONE JOIN→LEAVE INTERVAL. Attendance is interval-based, never a boolean:
+/// a student who joins three times has three rows, and total participation
+/// is their sum — which is the only way "attended 6 of 45 minutes" can be
+/// distinguished from "attended throughout".
+///
+/// `left_at` is nullable while a participant is still in the meeting.
+model LiveSessionAttendanceInterval {
+  id            String      @id @default(uuid())
+  liveSessionId String      @map("live_session_id")
+  liveSession   LiveSession @relation(fields: [liveSessionId], references: [id], onDelete: Cascade)
+  participantId String      @map("participant_id")
+  participant   LiveSessionParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  academyId     String      @map("academy_id")
+  joinedAt      DateTime    @map("joined_at")
+  leftAt        DateTime?   @map("left_at")
+  source        LiveAttendanceSource
+  /// Idempotency key derived from the provider event, so a duplicate or
+  /// replayed webhook cannot create a second identical interval.
+  eventKey      String?     @unique @map("event_key")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@index([liveSessionId, participantId, joinedAt])
+  @@map("live_session_attendance_intervals")
+}
+
+/// Recording lifecycle, separate from recording POLICY
+/// (`live_sessions.recording_enabled`) and from QUOTA consumption.
+///
+/// Conflating the three is how a checkbox ends up costing a customer a
+/// recorded session they never got: ticking the box sets policy, the
+/// provider actually starting to record is the business event that
+/// consumes quota, and `available` is only reached once files exist.
+enum LiveSessionRecordingStatus {
+  requested
+  processing
+  available
+  failed
+
+  @@map("live_session_recording_status")
+}
+
+/// AT MOST ONE PER SESSION — `live_session_id` is UNIQUE, and that is what
+/// makes the quota count recorded SESSIONS rather than recording files. A
+/// provider that produces three files for one meeting creates three
+/// `live_session_recording_files` rows under this single row, consuming
+/// exactly one unit of `recordedSessions`.
+///
+/// `quota_consumed_at` records WHEN the business event happened. It is set
+/// in the same transaction that passes the limit check, so a retry or a
+/// duplicate provider event finds it already set and does not charge twice.
+model LiveSessionRecording {
+  id              String                     @id @default(uuid())
+  liveSessionId   String                     @unique @map("live_session_id")
+  liveSession     LiveSession                @relation(fields: [liveSessionId], references: [id], onDelete: Cascade)
+  academyId       String                     @map("academy_id")
+  /// Denormalized so the quota count is a single-table scan per organization.
+  organizationId  String                     @map("organization_id")
+  status          LiveSessionRecordingStatus @default(requested)
+  providerRecordingId String?                @map("provider_recording_id")
+  /// Set exactly once, in the transaction that passed the limit check.
+  quotaConsumedAt DateTime?                  @map("quota_consumed_at")
+  failureReason   String?                    @map("failure_reason")
+  startedAt       DateTime?                  @map("started_at")
+  availableAt     DateTime?                  @map("available_at")
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+
+  files LiveSessionRecordingFile[]
+
+  @@index([organizationId, quotaConsumedAt])
+  @@index([academyId, status])
+  @@map("live_session_recordings")
+}
+
+/// One provider recording FILE, imported into the academy's existing media
+/// library. Many files may belong to one recording; none of them
+/// individually consume quota.
+///
+/// `media_asset_id` is nullable while the import is still in flight, and
+/// the row is keyed by `provider_file_id` so a duplicate webhook cannot
+/// import the same file twice.
+model LiveSessionRecordingFile {
+  id             String               @id @default(uuid())
+  recordingId    String               @map("recording_id")
+  recording      LiveSessionRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  academyId      String               @map("academy_id")
+  providerFileId String               @map("provider_file_id")
+  /// The imported asset in the EXISTING academy media library — never a
+  /// second, parallel media store.
+  mediaAssetId   String?              @map("media_asset_id")
+  mediaAsset     MediaAsset?          @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  fileType       String?              @map("file_type")
+  sizeBytes      BigInt?              @map("size_bytes")
+  importedAt     DateTime?            @map("imported_at")
+  createdAt      DateTime             @default(now()) @map("created_at")
+
+  @@unique([recordingId, providerFileId])
+  @@map("live_session_recording_files")
+}
+
+/// A SHORT-LIVED, SINGLE-USE AUTHORIZATION TO JOIN ONE SESSION.
+///
+/// Atlas never hands a student a provider credential or a raw meeting URL.
+/// When a join is authorized, this row is minted bound to exactly one
+/// (session, user, role) with an expiry, and redeemed once. An expired or
+/// already-redeemed grant is refused, so a captured link cannot be replayed
+/// or forwarded to a classmate.
+///
+/// This does NOT claim to stop a determined person from screen-recording or
+/// relaying what they see — no software can. It makes the JOIN itself
+/// non-transferable, which is the part that is actually enforceable.
+model LiveSessionJoinGrant {
+  id            String   @id @default(uuid())
+  liveSessionId String   @map("live_session_id")
+  userId        String   @map("user_id")
+  academyId     String   @map("academy_id")
+  /// Hash of the opaque token handed to the client — the token itself is
+  /// never stored, matching the refresh-token precedent in this codebase.
+  tokenHash     String   @unique @map("token_hash")
+  role          String   @default("attendee")
+  expiresAt     DateTime @map("expires_at")
+  redeemedAt    DateTime? @map("redeemed_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([liveSessionId, userId])
+  @@index([expiresAt])
+  @@map("live_session_join_grants")
+}
+
+/// Provider events, recorded BEFORE they are acted on.
+///
+/// Exactly the pattern `payment_webhook_events` already established:
+/// verify the signature, persist with a UNIQUE provider event id so a
+/// duplicate delivery is a no-op, then process. An event that cannot be
+/// resolved to a known session is stored `unmatched` rather than dropped,
+/// because silent discard is indistinguishable from a bug.
+enum LiveProviderEventStatus {
+  received
+  processed
+  unmatched
+  failed
+
+  @@map("live_provider_event_status")
+}
+
+model LiveProviderEvent {
+  id              String                  @id @default(uuid())
+  providerKey     LiveProviderKey         @default(zoom) @map("provider_key")
+  /// The provider's own event id. UNIQUE — this is what makes redelivery
+  /// idempotent at the database rather than in application code.
+  providerEventId String                  @unique @map("provider_event_id")
+  eventType       String                  @map("event_type")
+  status          LiveProviderEventStatus @default(received)
+  /// Resolved from stored provider identifiers, never from a tenant id
+  /// supplied in the request body.
+  academyId       String?                 @map("academy_id")
+  liveSessionId   String?                 @map("live_session_id")
+  /// Non-sensitive extract only — never the raw payload, never signatures.
+  summary         Json?
+  failureReason   String?                 @map("failure_reason")
+  receivedAt      DateTime                @default(now()) @map("received_at")
+  processedAt     DateTime?               @map("processed_at")
+
+  @@index([status, receivedAt])
+  @@index([liveSessionId])
+  @@map("live_provider_events")
 }
