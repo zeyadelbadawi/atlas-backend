@@ -25,6 +25,10 @@ export const EMAIL_TEMPLATE_KEYS = [
   'platform_payment_rejected',
   'support_case_reply',
   'password_changed',
+  // Phase 12 — a session recording finished processing. Sent to the HOST
+  // only; students are not emailed, because attending a session does not
+  // grant access to its recording.
+  'live_session_recording_available',
 ] as const;
 
 export type EmailTemplateKey = (typeof EMAIL_TEMPLATE_KEYS)[number];
@@ -38,6 +42,10 @@ function str(values: Record<string, unknown>, key: string, fallback = ''): strin
 }
 
 const TEMPLATES: Record<EmailTemplateKey, TemplateRenderer> = {
+  live_session_recording_available: (v) => ({
+    subject: 'Your session recording is ready',
+    text: `The recording for "${str(v, 'title')}" has finished processing and is now in your academy's media library.`,
+  }),
   provisioning_completed: (v) => ({
     subject: 'Your academy is ready',
     text: `Good news — "${str(v, 'academyName')}" has finished provisioning and is ready to use.`,

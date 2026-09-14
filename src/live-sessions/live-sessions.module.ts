@@ -30,9 +30,13 @@
  * seam that makes adding one cheap when it happens.
  */
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
 import { AuthCoreModule } from '../identity/auth-core.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { AcademyModule } from '../academy/academy.module';
+// `UsersRepository` — resolving a platform-owner id for the one
+// deliberately cross-tenant, system-initiated read (webhook attribution).
+import { IdentityModule } from '../identity/identity.module';
 import { PlansModule } from '../plans/plans.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { BillingModule } from '../billing/billing.module';
@@ -44,17 +48,45 @@ import { AddOnAccessService } from './services/add-on-access.service';
 import { RecordingQuotaService } from './services/recording-quota.service';
 import { LiveSessionAccessService } from './services/live-session-access.service';
 import { ZoomProvider } from './providers/zoom.provider';
+import { LiveProviderConnectionController } from './controllers/live-provider-connection.controller';
+import { LiveProviderWebhookController } from './controllers/live-provider-webhook.controller';
+import { StudentLiveSessionsController } from './controllers/student-live-sessions.controller';
+import { LiveProviderConnectionService } from './services/live-provider-connection.service';
+import { RecordingImportService } from './services/recording-import.service';
+import { LiveSessionNotificationsService } from './services/live-session-notifications.service';
+import { LiveProviderEventsRepository } from './repositories/live-provider-events.repository';
+import { LiveProviderEventProducer } from './queue/live-provider-event.producer';
+import { LiveProviderEventProcessor } from './queue/live-provider-event.processor';
+import { LIVE_PROVIDER_EVENT_QUEUE } from './queue/live-provider-event.types';
+import { MediaModule } from '../media/media.module';
+import { NotificationEventsModule } from '../notification-events/notification-events.module';
 
 @Module({
   imports: [
     AuthCoreModule,
     TenancyModule,
     AcademyModule,
+    IdentityModule,
     PlansModule,
     AuditLogModule,
     BillingModule,
+    // Recording import goes through the EXISTING media pipeline, never a
+    // second storage path.
+    MediaModule,
+    // Notifications reuse the existing fan-out, never a second delivery
+    // system.
+    NotificationEventsModule,
+    // Provider events are processed off the request thread, mirroring
+    // `payment-webhook`.
+    BullModule.registerQueue({ name: LIVE_PROVIDER_EVENT_QUEUE }),
   ],
-  controllers: [LiveSessionsController, AddOnsLifecycleController],
+  controllers: [
+    LiveSessionsController,
+    AddOnsLifecycleController,
+    LiveProviderConnectionController,
+    LiveProviderWebhookController,
+    StudentLiveSessionsController,
+  ],
   providers: [
     LiveSessionService,
     AttendanceService,
@@ -62,6 +94,12 @@ import { ZoomProvider } from './providers/zoom.provider';
     RecordingQuotaService,
     LiveSessionAccessService,
     ZoomProvider,
+    LiveProviderConnectionService,
+    RecordingImportService,
+    LiveSessionNotificationsService,
+    LiveProviderEventsRepository,
+    LiveProviderEventProducer,
+    LiveProviderEventProcessor,
   ],
   exports: [
     // Exported so the learning surface can ask "may this student join?"

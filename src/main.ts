@@ -29,6 +29,7 @@ import { throwClassValidatorViolations } from './common/validation/class-validat
 import type { AppConfig } from './config/configuration';
 import type { MediaStorageConfig } from './config/configuration';
 import type { PlatformDomainRuntimeConfig } from './config/configuration';
+import type { IncomingMessage } from 'node:http';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -56,7 +57,33 @@ async function bootstrap(): Promise<void> {
   // payload landing within a few percent of a tightly-margined limit).
   const mediaConfig = configService.getOrThrow<MediaStorageConfig>('media');
   const bodyLimitBytes = mediaConfig.maxUploadBytes * 3;
-  app.useBodyParser('json', { limit: bodyLimitBytes });
+  /*
+    Phase 12 — the Live Sessions webhook needs the RAW request bytes.
+
+    Zoom signs the exact body it sent, so a signature can only be verified
+    against those bytes. `JSON.stringify(parsedBody)` is NOT byte-identical
+    to what arrived (key order, whitespace, unicode escaping all differ),
+    so verifying against a re-serialized object would fail intermittently
+    and unpredictably — the worst kind of security bug, because it looks
+    like it works.
+
+    Captured ONLY for the webhook path: holding a second copy of every
+    request body in memory for the sake of one endpoint would be a real
+    cost for no benefit, and media uploads here are megabytes.
+  */
+  const LIVE_WEBHOOK_PATH = '/api/v1/live-sessions/webhook';
+  app.useBodyParser('json', {
+    limit: bodyLimitBytes,
+    verify: (
+      request: IncomingMessage & { rawBody?: Buffer },
+      _res: unknown,
+      buffer: Buffer,
+    ) => {
+      if (request.url && request.url.startsWith(LIVE_WEBHOOK_PATH)) {
+        request.rawBody = Buffer.from(buffer);
+      }
+    },
+  });
 
   /**
    * Phase 10 — trust the reverse proxy in front of us, but only it.

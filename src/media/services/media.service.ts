@@ -197,6 +197,60 @@ export class MediaService {
     return this.performUpload(academyId, organizationId, payload, buffer, kind);
   }
 
+  /**
+   * Phase 12 — imports bytes Atlas fetched itself (a Zoom session
+   * recording) into the academy's existing media library.
+   *
+   * The third entry point beside `upload` and `uploadForSubmission`, and
+   * it exists for the same reason that one does: the CALLER has already
+   * done its own authorization, and everything after that — the storage
+   * write, the `MediaAsset` row, the processing enqueue, the usage
+   * recompute — must be IDENTICAL, so an imported recording becomes a
+   * real, quota-counted asset visible in the Media Library like any other
+   * upload. A second storage path for recordings would be exactly the
+   * parallel media library this must not become.
+   *
+   * NO USER AUTHORIZATION CHECK HERE, deliberately: the caller is the
+   * webhook worker acting on a provider event, with no signed-in user.
+   * Its authority comes from the verified provider signature and from the
+   * session's own academy, both established before this is reached. The
+   * storage-entitlement check below still runs, because an academy out of
+   * storage must not be pushed over by an automated import.
+   */
+  async importFromBuffer(
+    academyId: string,
+    organizationId: string,
+    input: {
+      readonly buffer: Buffer;
+      readonly fileName: string;
+      readonly altText?: string;
+    },
+  ): Promise<MediaAssetResponse> {
+    assertWithinSizeLimit(input.buffer, this.storageConfig.maxUploadBytes);
+
+    const kind = detectFileKind(input.buffer);
+    if (!kind) {
+      throw new BadRequestException({ messageKey: 'errors.media.unsupportedFileType' });
+    }
+
+    await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+      this.entitlementEnforcementService.assertStorageWithinLimit(
+        tx,
+        organizationId,
+        kind.assetType === 'video' ? 'videoStorage' : 'generalStorage',
+        input.buffer.length,
+      ),
+    );
+
+    return this.performUpload(
+      academyId,
+      organizationId,
+      { fileName: input.fileName, altText: input.altText } as UploadMediaAssetDto,
+      input.buffer,
+      kind,
+    );
+  }
+
   private parseAndValidate(payload: UploadMediaAssetDto): {
     buffer: Buffer;
     kind: NonNullable<ReturnType<typeof detectFileKind>>;
