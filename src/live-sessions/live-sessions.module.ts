@@ -58,6 +58,11 @@ import { LiveProviderEventsRepository } from './repositories/live-provider-event
 import { LiveProviderEventProducer } from './queue/live-provider-event.producer';
 import { LiveProviderEventProcessor } from './queue/live-provider-event.processor';
 import { LIVE_PROVIDER_EVENT_QUEUE } from './queue/live-provider-event.types';
+import { LiveSessionProvisioningService } from './services/live-session-provisioning.service';
+import { LiveSessionSweepService } from './services/live-session-sweep.service';
+import { LiveSessionSweepProcessor } from './queue/live-session-sweep.processor';
+import { LiveSessionSweepScheduler } from './queue/live-session-sweep.scheduler';
+import { LIVE_SESSION_SWEEP_QUEUE } from './queue/live-session-sweep.types';
 import { MediaModule } from '../media/media.module';
 import { NotificationEventsModule } from '../notification-events/notification-events.module';
 
@@ -79,6 +84,9 @@ import { NotificationEventsModule } from '../notification-events/notification-ev
     // Provider events are processed off the request thread, mirroring
     // `payment-webhook`.
     BullModule.registerQueue({ name: LIVE_PROVIDER_EVENT_QUEUE }),
+    // Starting-soon reminders and attendance reconciliation, on the ONE
+    // recurring-job mechanism this codebase already uses.
+    BullModule.registerQueue({ name: LIVE_SESSION_SWEEP_QUEUE }),
   ],
   controllers: [
     LiveSessionsController,
@@ -100,6 +108,10 @@ import { NotificationEventsModule } from '../notification-events/notification-ev
     LiveProviderEventsRepository,
     LiveProviderEventProducer,
     LiveProviderEventProcessor,
+    LiveSessionProvisioningService,
+    LiveSessionSweepService,
+    LiveSessionSweepProcessor,
+    LiveSessionSweepScheduler,
   ],
   exports: [
     // Exported so the learning surface can ask "may this student join?"

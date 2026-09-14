@@ -337,6 +337,39 @@ export class LiveProviderConnectionService {
   }
 
   /**
+   * Maps an academy to its organization.
+   *
+   * WHY THIS NEEDS ITS OWN PATH. The student-facing endpoints run in USER
+   * context so RLS can independently agree the caller may see the session.
+   * A student has no policy granting them `academies`, so reading the
+   * organization through a nested relation returns null and Prisma fails
+   * the whole query — which is exactly how this was found, as a 500 on
+   * every student's session page during end-to-end testing.
+   *
+   * Resolved instead through the SAME platform-owner, SELECT-only
+   * mechanism webhook attribution uses. The alternative — letting students
+   * read `academies` — would widen RLS for every student on the platform
+   * to fix one lookup of a non-sensitive mapping.
+   *
+   * The caller must already have established that this user may see the
+   * session; this answers "which tenant owns it", never "may they".
+   */
+  async resolveOrganizationForAcademy(academyId: string): Promise<string | null> {
+    const platformOwner = await this.usersRepository.findFirstPlatformOwnerId();
+    if (!platformOwner) {
+      this.logger.error('No platform owner exists — academy tenancy cannot be resolved.');
+      return null;
+    }
+    return this.tenancyContextService.runInUserContext(platformOwner.id, async (tx) => {
+      const academy = await tx.academy.findUnique({
+        where: { id: academyId },
+        select: { organizationId: true },
+      });
+      return academy?.organizationId ?? null;
+    });
+  }
+
+  /**
    * The endpoint-validation handshake arrives BEFORE any meeting exists,
    * so it cannot be attributed by meeting id.
    *

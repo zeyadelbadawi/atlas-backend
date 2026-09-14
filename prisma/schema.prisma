@@ -3714,6 +3714,18 @@ model LiveSession {
   startedAt        DateTime?    @map("started_at")
   endedAt          DateTime?    @map("ended_at")
   cancelledAt      DateTime?    @map("cancelled_at")
+  /// When the starting-soon reminder was sent for the CURRENT scheduled
+  /// time. Cleared on reschedule, so a moved class earns a new reminder
+  /// rather than reusing the old one's "already sent" mark.
+  startingSoonNotifiedAt DateTime? @map("starting_soon_notified_at")
+  /// When the provider's post-session report was successfully applied.
+  /// The sweep skips anything already reconciled, which is what makes it
+  /// safe to run every few minutes.
+  attendanceReconciledAt DateTime? @map("attendance_reconciled_at")
+  /// Bounded retries for a report the provider never makes available —
+  /// without this, a session whose report 404s forever would be retried
+  /// on every tick for the life of the platform.
+  reconciliationAttempts Int      @default(0) @map("reconciliation_attempts")
   /// Provider-agnostic reason a session failed. Never a raw payload.
   failureReason    String?      @map("failure_reason")
   createdByUserId  String?      @map("created_by_user_id")

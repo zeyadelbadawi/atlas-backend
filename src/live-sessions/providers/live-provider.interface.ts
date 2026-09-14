@@ -115,6 +115,16 @@ export interface LiveProviderAdapter {
   ): Promise<MeetingJoinSignature>;
 
   /**
+   * A token that lets the HOST start a meeting.
+   *
+   * Required because Atlas creates meetings that cannot be joined before
+   * the host arrives; without it the host is queued like everybody else
+   * and the session never opens. Minted per join, given only to a verified
+   * host, never persisted.
+   */
+  fetchHostZak(credentials: LiveProviderCredentials): Promise<string>;
+
+  /**
    * Post-session participant report — the AUTHORITATIVE attendance source.
    *
    * Live webhooks are the fast path and can be lost or reordered; this is

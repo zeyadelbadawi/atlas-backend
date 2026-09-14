@@ -39,6 +39,7 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { LiveSessionService } from '../services/live-session.service';
+import { LiveSessionProvisioningService } from '../services/live-session-provisioning.service';
 import { AttendanceService } from '../services/attendance.service';
 import { AddOnAccessService } from '../services/add-on-access.service';
 import { RecordingQuotaService } from '../services/recording-quota.service';
@@ -69,6 +70,7 @@ export class LiveSessionsController {
     private readonly tenancyContextService: TenancyContextService,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly liveSessionService: LiveSessionService,
+    private readonly provisioningService: LiveSessionProvisioningService,
     private readonly attendanceService: AttendanceService,
     private readonly addOnAccessService: AddOnAccessService,
     private readonly recordingQuotaService: RecordingQuotaService,
@@ -196,6 +198,19 @@ export class LiveSessionsController {
     const { academyId, organizationId } = request.academyContext!;
     const actorUserId = request.authContext!.userId;
 
+    /*
+      READ THE TIMES BEFORE THE WRITE.
+
+      "Was this a reschedule?" is only answerable by comparing against what
+      the session said a moment ago — afterwards the old time is gone.
+      Answering it wrongly means either announcing a reschedule that did
+      not happen, or staying silent about one that did.
+    */
+    const before = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.liveSessionService.getById(tx, academyId, liveSessionId),
+    );
+
     const updated = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actorUserId,
@@ -238,7 +253,92 @@ export class LiveSessionsController {
       },
     );
 
+    /*
+      THE PROVIDER IS UPDATED AFTER THE ATLAS TRANSACTION COMMITS, never
+      inside it — an external HTTP call inside a transaction pins a
+      database connection for as long as Zoom takes to answer.
+
+      Atlas is authoritative either way: if the provider call fails, the
+      Atlas change stands and the refusal is reported. A cancelled session
+      is refused at join time by Atlas's own eligibility check, whatever
+      still exists at Zoom.
+    */
+    if (updated.status === 'cancelled' && before.status !== 'cancelled') {
+      await this.provisioningService.applyCancellation({
+        academyId,
+        organizationId,
+        liveSessionId,
+      });
+    } else if (updated.providerMeetingId) {
+      const scheduleChanged =
+        updated.scheduledStartAt.getTime() !== before.scheduledStartAt.getTime() ||
+        updated.scheduledEndAt.getTime() !== before.scheduledEndAt.getTime();
+
+      await this.provisioningService.applyUpdate({
+        academyId,
+        organizationId,
+        liveSessionId,
+        scheduleChanged,
+      });
+    }
+
     return toLiveSessionResponse(updated);
+  }
+
+  /**
+   * Publishes a session — the transition that creates the real meeting.
+   *
+   * Separate from `PATCH` on purpose. Everything else on this controller
+   * edits an Atlas row; this one has an EXTERNAL side effect (a meeting
+   * appears in the academy's Zoom account) and can fail for reasons that
+   * have nothing to do with the request body — no connection, an expired
+   * credential, an exhausted recording allowance. Folding that into a
+   * general-purpose update would make every field edit a potential
+   * provider call, and would hide the one action an instructor should take
+   * deliberately.
+   */
+  @Post(':id/live-sessions/:liveSessionId/publish')
+  async publish(
+    @Req() request: Request,
+    @Param('liveSessionId') liveSessionId: string,
+  ): Promise<LiveSessionResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    const actorUserId = request.authContext!.userId;
+
+    await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+      this.assertCanManage(tx, academyId, actorUserId),
+    );
+
+    const result = await this.provisioningService.publish({
+      academyId,
+      organizationId,
+      liveSessionId,
+    });
+
+    const session = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      actorUserId,
+      async (tx) => {
+        // Only a genuine first publish is audited. A retried request that
+        // found the session already provisioned did not change anything,
+        // and logging it as a publish would misreport the history.
+        if (!result.alreadyPublished) {
+          await this.auditLogWriterService.write(tx, {
+            actorUserId,
+            organizationId,
+            action: 'live_session.published',
+            targetType: 'live_session',
+            targetId: liveSessionId,
+            // No provider meeting id, no credentials — the audit log
+            // records the business fact, not the provider's internals.
+            context: {},
+          });
+        }
+        return this.liveSessionService.getById(tx, academyId, liveSessionId);
+      },
+    );
+
+    return toLiveSessionResponse(session);
   }
 
   /** Curriculum reordering — moving a session within or between units. */

@@ -233,6 +233,35 @@ export class ZoomProvider implements LiveProviderAdapter {
     };
   }
 
+  /**
+   * The host's ZAK — what actually lets a host START a meeting.
+   *
+   * WHY THIS IS NOT OPTIONAL. Atlas creates meetings with
+   * `join_before_host: false`, so the room stays shut until the host
+   * opens it. A Meeting SDK client joining with role 1 but no ZAK is not
+   * treated as the host: it lands in "waiting for the host to start this
+   * meeting" — and because nobody may join before the host, the entire
+   * session is unreachable for everyone. The ZAK is the difference between
+   * a class that happens and a class that does not.
+   *
+   * Meetings are created under `/users/me/meetings`, so `me` IS the host
+   * this token must belong to — the same Zoom identity in both calls.
+   *
+   * THIS IS A CREDENTIAL. It authorizes starting meetings as that user,
+   * so it is minted per join, returned only to a verified host, and never
+   * stored, logged, or included in any student-facing response.
+   */
+  async fetchHostZak(credentials: LiveProviderCredentials): Promise<string> {
+    const result = await this.call<{ token?: string }>(
+      credentials,
+      '/users/me/token?type=zak',
+    );
+    if (!result?.token) {
+      throw new Error('Zoom did not return a host start token');
+    }
+    return result.token;
+  }
+
   async fetchParticipantIntervals(
     credentials: LiveProviderCredentials,
     providerMeetingId: string,

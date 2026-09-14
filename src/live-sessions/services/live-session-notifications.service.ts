@@ -40,6 +40,46 @@ const LIVE_SESSION_NOTIFICATION_TYPE = 'activity';
 
 type LiveSessionEvent = 'scheduled' | 'rescheduled' | 'cancelled' | 'starting_soon';
 
+/**
+ * Events whose dedupe key must include the time being announced.
+ *
+ * `scheduled` and `cancelled` each happen once in a session's life, so the
+ * session id alone identifies them. The other two are ABOUT a specific
+ * time, and keying them on the session alone is silently wrong:
+ *
+ *   rescheduled  — an instructor who moves a class to Tuesday and then
+ *                  again to Wednesday would have the second announcement
+ *                  swallowed as a duplicate, leaving every student holding
+ *                  the Tuesday time. The reschedule nobody heard about is
+ *                  exactly the one that matters.
+ *   starting_soon— the reminder belongs to the occurrence. After a
+ *                  reschedule the session genuinely deserves a second
+ *                  reminder, for the new time.
+ *
+ * Including the start instant makes both correct without weakening
+ * deduplication: a RETRIED job announces the same time and is still
+ * collapsed to one notification, which is what dedupe is actually for.
+ */
+const TIME_SPECIFIC_EVENTS: ReadonlySet<LiveSessionEvent> = new Set([
+  'rescheduled',
+  'starting_soon',
+]);
+
+function dedupeKeyFor(
+  args: {
+    readonly liveSessionId: string;
+    readonly scheduledStartAt: Date;
+    readonly event: LiveSessionEvent;
+  },
+  studentId: string,
+): string {
+  const base = `live-session:${args.liveSessionId}:${args.event}`;
+  const occurrence = TIME_SPECIFIC_EVENTS.has(args.event)
+    ? `:${args.scheduledStartAt.getTime()}`
+    : '';
+  return `${base}${occurrence}:${studentId}`;
+}
+
 @Injectable()
 export class LiveSessionNotificationsService {
   constructor(
@@ -93,9 +133,7 @@ export class LiveSessionNotificationsService {
         },
         actionUrl: `/dashboard/learning/courses/${args.courseId}`,
         actionLabelKey: 'notifications:liveSession.action.openCourse',
-        // One notification per person per session per event, whatever
-        // happens to the job that produced it.
-        dedupeKey: `live-session:${args.liveSessionId}:${args.event}:${enrollment.studentId}`,
+        dedupeKey: dedupeKeyFor(args, enrollment.studentId),
       });
     }
   }
