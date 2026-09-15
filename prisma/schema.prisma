@@ -664,6 +664,21 @@ model Plan {
 }
 
 /// Platform-owned catalog entity — mirrors `AddOn` (`plan.types.ts`).
+/// Platform-Owner-controlled publication state of an add-on in the customer
+/// Add-ons Store. DISTINCT from `TenantAddOnStatus`, which is a single
+/// Academy/Organization's installation lifecycle — this is the central
+/// catalog visibility/availability, one value per add-on for all tenants.
+enum AddOnCatalogStatus {
+  /// Not listed in the customer store; not installable.
+  draft
+  /// Listed and marked "Coming Soon"; not installable.
+  coming_soon
+  /// Listed and installable, subject to the usual entitlement/access rules.
+  published
+
+  @@map("add_on_catalog_status")
+}
+
 model AddOn {
   id                 String   @id @default(uuid())
   key                String   @unique
@@ -675,6 +690,13 @@ model AddOn {
   effect             Json
   compatiblePlanKeys String[] @default([]) @map("compatible_plan_keys")
   pricing            Json?
+  /// Customer-store publication state, controlled by Platform Owners via the
+  /// Add-ons Management page. New add-ons default to `draft` (not exposed
+  /// until a Platform Owner publishes them).
+  catalogStatus      AddOnCatalogStatus @default(draft) @map("catalog_status")
+  /// Optimistic-concurrency token for catalog-status changes, following the
+  /// repo's `version` + `stale_resource_version` convention.
+  version            Int      @default(0)
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 

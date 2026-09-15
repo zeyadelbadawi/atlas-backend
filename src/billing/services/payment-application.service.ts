@@ -29,7 +29,6 @@ import { PlansRepository } from '../../plans/repositories/plans.repository';
 import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
 import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
 import { TenantAddOnsRepository } from '../../plans/repositories/tenant-add-ons.repository';
-import { isAddOnDeferred } from '../../live-sessions/constants/deferred-add-ons.constants';
 
 function addPeriod(start: Date, billingCycle: SubscriptionBillingCycle | null): Date {
   const end = new Date(start);
@@ -138,15 +137,15 @@ export class PaymentApplicationService {
     }
 
     // add_on
-    // Defense in depth: even a checkout frozen before the add-on was
-    // deferred must not activate a deferred add-on. Checkout creation
-    // already refuses these, so reaching here means a stale/frozen order —
-    // skip activation rather than open a deferred capability.
-    if (isAddOnDeferred(checkout.targetKey)) {
+    const addOn = await this.addOnsRepository.findByKey(checkout.targetKey);
+
+    // Defense in depth: even a checkout frozen while the add-on was still
+    // published must not activate it if it has since been unpublished
+    // (draft/coming_soon). Checkout creation already refuses non-published
+    // add-ons, so reaching here means a stale/frozen order.
+    if (addOn && addOn.catalogStatus !== 'published') {
       throw new ForbiddenException({ messageKey: 'errors.addOns.comingSoon' });
     }
-
-    const addOn = await this.addOnsRepository.findByKey(checkout.targetKey);
     if (!addOn) {
       throw new NotFoundException({ messageKey: 'errors.checkout.addOnNoLongerExists' });
     }

@@ -42,32 +42,40 @@ the backend handoff for re-enabling it after the external Zoom approvals land.
 - Unit: **803 tests / 65 suites** pass (`npx jest`).
 - Real-PostgreSQL RLS/security e2e: `platform-zoom-operations` **18/18**,
   `live-provider-deauthorization` **9/9**.
-- Deferral enforcement unit spec: `add-ons-lifecycle.deferred.spec.ts` **6/6**.
+- Catalog-status enforcement unit spec: `add-ons-lifecycle.catalog-status.spec.ts` (install/enable refused for coming_soon/draft; uninstall still allowed).
 - Typecheck / lint / build: clean.
 - Live API (dev): install/enable of `live-sessions` → **403
   `errors.addOns.comingSoon`**; a non-deferred add-on still installs (200);
   customer status endpoint reports `addOn.usable=false, reason="coming_soon"`.
 
 ## 4. Current deferred enforcement (the exact code path)
-Single source of truth: `src/live-sessions/constants/deferred-add-ons.constants.ts`
-→ `DEFERRED_ADD_ON_KEYS = { 'live-sessions' }` + `isAddOnDeferred(key)`.
+**Single source of truth (as of P51): the database.** `add_ons.catalog_status`
+(`draft | coming_soon | published`) is authoritative; Live Sessions is
+`coming_soon`. There is no longer any constant or frontend mirror — the old
+`deferred-add-ons.constants.ts` / `isAddOnDeferred` and the frontend
+`config/deferred-add-ons.ts` were removed. A Platform Owner changes the state
+from the Add-ons Management page (see `SAAS_OWNER_ADD_ONS_MANAGEMENT.md`).
 
-Three enforcement points consult it; **all customer paths fail closed**:
+Enforcement is "not `published`" (i.e. `draft` or `coming_soon`) and **all
+customer paths fail closed**:
 1. **Use** — `AddOnAccessService.describe` returns
-   `{ usable:false, reason:'coming_soon' }` for a deferred key, before any
-   subscription/entitlement/installation check. Every customer
-   create/publish/join/provision path runs through this (via
+   `{ usable:false, reason:'coming_soon' }` when the catalog add-on is not
+   `published`, before any subscription/entitlement/installation check. Every
+   customer create/publish/join/provision path runs through this (via
    `LiveSessionAccessService`), so it is blocked even for a tenant that
    already holds an installed row.
 2. **Install / enable** — `AddOnsLifecycleController.transition` throws
-   `ForbiddenException(errors.addOns.comingSoon)` for install/enable of a
-   deferred key (disable/uninstall stay allowed so a tenant can back out).
+   `ForbiddenException(errors.addOns.comingSoon)` for install/enable when the
+   add-on is not `published` (disable/uninstall stay allowed so a tenant can
+   back out).
 3. **Purchase** — `CheckoutService.createCheckout` refuses to create an
-   add-on checkout for a deferred key, and `PaymentApplicationService`
+   add-on checkout unless `published`, and `PaymentApplicationService`
    refuses to activate one (defense-in-depth for any pre-frozen order).
+4. **Catalog visibility** — `draft` add-ons are omitted from the customer
+   catalog entirely; `coming_soon` is listed with `comingSoon:true`.
 
 Request flow: customer request → JWT auth → org membership + billing
-permission → **deferred check** → blocked (403), or (for use) not-usable.
+permission → **catalog-status check** → blocked (403), or (for use) not-usable.
 
 The catalog surfaces expose `comingSoon` (`GET /add-ons` and
 `GET /organizations/:id/add-ons/catalog`) so the store renders "Coming Soon".
@@ -105,7 +113,8 @@ untouched. The deferral only ADDS deny paths; it removes no control.
 1. External: Anonymous Join decision resolved; domain validation approved;
    Marketplace review complete.
 2. Confirm production `ZOOM_*` env present and correct.
-3. Remove `'live-sessions'` from `DEFERRED_ADD_ON_KEYS` (the single switch).
+3. Publish Live Sessions from the Add-ons Management page (or set
+   `add_ons.catalog_status = 'published'` for `live-sessions`) — the single switch.
 4. Deploy; verify install/enable/purchase now succeed and `describe` reports
    usable for an entitled+installed tenant.
 5. Real end-to-end: OAuth connect → meeting create → webhook delivery →
@@ -113,7 +122,8 @@ untouched. The deferral only ADDS deny paths; it removes no control.
 6. Security re-check (guards + RLS unchanged). Final launch approval.
 
 ## 9. Rollback / disable strategy
-The deferred set IS the kill switch. To keep or return the feature to
-disabled, ensure `'live-sessions' ∈ DEFERRED_ADD_ON_KEYS` and deploy — every
-customer install/enable/purchase/use path fails closed again with no data
-change. No separate mechanism was introduced.
+`add_ons.catalog_status` IS the kill switch. To keep or return the feature to
+disabled, set `live-sessions` back to `coming_soon` (or `draft`) — from the
+Add-ons Management page or directly — and every customer
+install/enable/purchase/use path fails closed again with no data change. No
+separate mechanism was introduced.

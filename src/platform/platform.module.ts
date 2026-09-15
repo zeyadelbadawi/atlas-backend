@@ -37,6 +37,7 @@ import { AdminSubscriptionsService } from './services/admin-subscriptions.servic
 import { SupportCasesController } from './controllers/support-cases.controller';
 import { TenantSupportCasesController } from './controllers/tenant-support-cases.controller';
 import { PlatformSettingsController } from './controllers/platform-settings.controller';
+import { PlatformAddOnsController } from './controllers/platform-add-ons.controller';
 import { OrganizationsAccessGuard } from './guards/organizations-access.guard';
 import { PlatformOrganizationsService } from './services/platform-organizations.service';
 import { PlatformAcademiesService } from './services/platform-academies.service';
@@ -44,6 +45,7 @@ import { PlatformUsersService } from './services/platform-users.service';
 import { AuditLogService } from './services/audit-log.service';
 import { SupportCasesService } from './services/support-cases.service';
 import { PlatformSettingsService } from './services/platform-settings.service';
+import { PlatformAddOnsService } from './services/platform-add-ons.service';
 import { PlatformUsersRepository } from './repositories/platform-users.repository';
 import { SupportCasesRepository } from './repositories/support-cases.repository';
 import { SupportCaseMessagesRepository } from './repositories/support-case-messages.repository';
@@ -72,6 +74,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     SupportCasesController,
     TenantSupportCasesController,
     PlatformSettingsController,
+    PlatformAddOnsController,
   ],
   providers: [
     AdminSubscriptionsService,
@@ -83,6 +86,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     AuditLogService,
     SupportCasesService,
     PlatformSettingsService,
+    PlatformAddOnsService,
     PlatformUsersRepository,
     SupportCasesRepository,
     SupportCaseMessagesRepository,

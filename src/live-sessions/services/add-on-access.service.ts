@@ -41,7 +41,6 @@ import type {
   EntitlementAddOnInput,
   PlanFeatureKey,
 } from '../../plans/dto/entitlement.types';
-import { isAddOnDeferred } from '../constants/deferred-add-ons.constants';
 
 /** The catalog key of the Live Sessions add-on. Data, resolved at runtime — never a hardcoded capability. */
 export const LIVE_SESSIONS_ADD_ON_KEY = 'live-sessions';
@@ -102,16 +101,6 @@ export class AddOnAccessService {
     addOnKey: string,
     featureKey: PlanFeatureKey,
   ): Promise<AddOnAccessState> {
-    // COMING SOON / DEFERRED. An add-on whose customer launch is deferred is
-    // never usable by a tenant — regardless of subscription, entitlement, or
-    // an install row that may already exist — so every customer create,
-    // publish, join and provisioning path fails closed here at the single
-    // access choke point. Removing the key from `DEFERRED_ADD_ON_KEYS`
-    // re-opens it. Platform-owner monitoring does not go through this method.
-    if (isAddOnDeferred(addOnKey)) {
-      return { usable: false, reason: 'coming_soon', entitled: false };
-    }
-
     const subscription = await this.tenantSubscriptionsRepository.findByOrganizationId(
       tx,
       organizationId,
@@ -145,6 +134,17 @@ export class AddOnAccessService {
     const entitled = this.entitlementService.hasFeature(entitlements, featureKey);
 
     const catalogAddOn = await this.addOnsRepository.findByKey(addOnKey);
+
+    // CATALOG PUBLICATION STATE is authoritative and backend-owned. An add-on
+    // that is not `published` (draft or coming_soon) is never usable by a
+    // tenant — regardless of subscription, entitlement, or an install row that
+    // may already exist — so every customer create/publish/join/provision path
+    // fails closed here at the single access choke point. A Platform Owner
+    // publishing it via the Add-ons Management page is what re-opens it.
+    if (catalogAddOn && catalogAddOn.catalogStatus !== 'published') {
+      return { usable: false, reason: 'coming_soon', entitled };
+    }
+
     const installation = catalogAddOn
       ? await this.tenantAddOnsRepository.findOne(tx, organizationId, catalogAddOn.id)
       : null;

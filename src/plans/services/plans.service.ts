@@ -59,8 +59,13 @@ export class PlansService {
   }
 
   async getAddOns(): Promise<AddOnResponse[]> {
+    // Customer-facing catalog: DRAFT add-ons are never listed. Draft is a
+    // Platform-Owner-only catalog state; the Add-ons Management page reads
+    // the full catalog through its own platform endpoint.
     const addOns = await this.addOnsRepository.findAll();
-    return addOns.map(toAddOnResponse);
+    return addOns
+      .filter((addOn) => addOn.catalogStatus !== 'draft')
+      .map(toAddOnResponse);
   }
 
   async getAddOnByKey(key: string): Promise<AddOnResponse> {

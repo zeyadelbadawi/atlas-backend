@@ -36,7 +36,6 @@ import type {
   CheckoutSnapshotResponse,
 } from '../dto/checkout.contract';
 import type { CreateCheckoutDto } from '../dto/create-checkout.dto';
-import { isAddOnDeferred } from '../../live-sessions/constants/deferred-add-ons.constants';
 
 function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
@@ -206,11 +205,11 @@ export class CheckoutService {
     if (!addOn) {
       throw new NotFoundException({ messageKey: 'errors.checkout.addOnNotFound' });
     }
-    // COMING SOON. A deferred add-on cannot be purchased — refuse before a
-    // checkout is ever frozen, so the payment/activation path is never
-    // reached. This is the purchase-flow twin of the install/enable guard
-    // in AddOnsLifecycleController; both consult `DEFERRED_ADD_ON_KEYS`.
-    if (isAddOnDeferred(addOn.key)) {
+    // CATALOG PUBLICATION STATE. Only a `published` add-on can be purchased
+    // — refuse before a checkout is ever frozen, so the payment/activation
+    // path is never reached. Twin of the install/enable guard in
+    // AddOnsLifecycleController; both read the authoritative catalog status.
+    if (addOn.catalogStatus !== 'published') {
       throw new ForbiddenException({ messageKey: 'errors.addOns.comingSoon' });
     }
     const pricing = this.resolvePricingOrThrow(addOn.pricing, input.billingCycle);

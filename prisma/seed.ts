@@ -454,6 +454,10 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       effect: { type: 'feature', featureKey: 'liveSessions' },
       compatiblePlanKeys: ['starter', 'growth', 'enterprise'],
       pricing: { amount: 29, currency: 'USD', billingCycle: 'monthly' },
+      // Implemented but not yet launched to customers: it is listed in the
+      // store as "Coming Soon" and cannot be installed until a Platform
+      // Owner publishes it from Add-ons Management. Never auto-published.
+      catalogStatus: 'coming_soon',
     },
     update: {
       effect: { type: 'feature', featureKey: 'liveSessions' },
@@ -470,6 +474,7 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       effect: { type: 'limit', limitKey: 'academies', amount: 2 },
       compatiblePlanKeys: ['starter', 'growth'],
       pricing: { amount: 15, currency: 'USD', billingCycle: 'monthly' },
+      catalogStatus: 'published',
     },
     update: {},
   });
@@ -483,6 +488,7 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       effect: { type: 'feature', featureKey: 'analyticsAdvanced' },
       compatiblePlanKeys: ['growth'],
       pricing: { amount: 25, currency: 'USD', billingCycle: 'monthly' },
+      catalogStatus: 'published',
     },
     update: {},
   });

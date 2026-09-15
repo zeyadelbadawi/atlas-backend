@@ -38,7 +38,6 @@ import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
 import { TenantAddOnsRepository } from '../../plans/repositories/tenant-add-ons.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { AddOnAccessService } from '../services/add-on-access.service';
-import { isAddOnDeferred } from '../constants/deferred-add-ons.constants';
 
 /** Owner-exclusive, matching `TenantSubscriptionController`'s own gate. */
 const BILLING_MANAGE_PERMISSION = 'tenant.subscription.view';
@@ -74,7 +73,11 @@ export class AddOnsLifecycleController {
    */
   @Get(':id/add-ons/catalog')
   async catalog(@Param('id') organizationId: string) {
-    const catalog = await this.addOnsRepository.findAll();
+    // Customers never see DRAFT add-ons. Draft is a Platform-Owner-only
+    // catalog state; published + coming_soon are the customer-visible ones.
+    const catalog = (await this.addOnsRepository.findAll()).filter(
+      (addOn) => addOn.catalogStatus !== 'draft',
+    );
 
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
       const installed = await this.tenantAddOnsRepository.findAllForOrganization(
@@ -96,9 +99,10 @@ export class AddOnsLifecycleController {
           // `free` is simply "no price attached" — the same catalog
           // decides it, so no separate flag can drift out of step.
           isFree: !addOn.pricing,
-          // Implemented but customer launch deferred — the store shows a
+          catalogStatus: addOn.catalogStatus,
+          // Derived from the authoritative catalog status: the store shows a
           // "Coming Soon" state and hides install. Enforced server-side too.
-          comingSoon: isAddOnDeferred(addOn.key),
+          comingSoon: addOn.catalogStatus === 'coming_soon',
           installStatus: install?.status ?? 'uninstalled',
           failureReason: install?.failureReason ?? undefined,
         };
@@ -172,12 +176,16 @@ export class AddOnsLifecycleController {
     const addOn = await this.addOnsRepository.findByKey(addOnKey);
     if (!addOn) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-    // COMING SOON. Installing or enabling a deferred add-on is refused at
-    // the API boundary — a hidden button is not a control, so a forged or
-    // direct request is rejected here too. Disable/uninstall stay allowed so
-    // an existing tenant can always back out. Removing the key from
-    // `DEFERRED_ADD_ON_KEYS` re-opens install/enable.
-    if ((action === 'install' || action === 'enable') && isAddOnDeferred(addOnKey)) {
+    // CATALOG PUBLICATION STATE (backend-authoritative). Installing or
+    // enabling an add-on that is not `published` (draft or coming_soon) is
+    // refused at the API boundary — a hidden button is not a control, so a
+    // forged or direct request is rejected here too. Disable/uninstall stay
+    // allowed so an existing tenant can always back out. A Platform Owner
+    // publishing it re-opens install/enable.
+    if (
+      (action === 'install' || action === 'enable') &&
+      addOn.catalogStatus !== 'published'
+    ) {
       throw new ForbiddenException({ messageKey: 'errors.addOns.comingSoon' });
     }
 

@@ -6,7 +6,6 @@
 import type { AddOn as PrismaAddOn } from '@prisma/client';
 import type { AddOnEffect } from './entitlement.types';
 import type { PlanPricingMetadataResponse } from './plan.contract';
-import { isAddOnDeferred } from '../../live-sessions/constants/deferred-add-ons.constants';
 
 export interface AddOnResponse {
   readonly id: string;
@@ -18,6 +17,8 @@ export interface AddOnResponse {
   readonly pricing?: PlanPricingMetadataResponse;
   /** Implemented but customer launch deferred — show "Coming Soon", block purchase. */
   readonly comingSoon: boolean;
+  /** Authoritative catalog publication state (draft is never sent to customers). */
+  readonly catalogStatus: 'draft' | 'coming_soon' | 'published';
 }
 
 export function toAddOnResponse(addOn: PrismaAddOn): AddOnResponse {
@@ -29,6 +30,7 @@ export function toAddOnResponse(addOn: PrismaAddOn): AddOnResponse {
     effect: addOn.effect as unknown as AddOnEffect,
     compatiblePlanKeys: addOn.compatiblePlanKeys,
     pricing: (addOn.pricing as PlanPricingMetadataResponse | null) ?? undefined,
-    comingSoon: isAddOnDeferred(addOn.key),
+    comingSoon: addOn.catalogStatus === 'coming_soon',
+    catalogStatus: addOn.catalogStatus,
   };
 }
