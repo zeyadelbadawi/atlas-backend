@@ -25,20 +25,29 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { CourseCurriculumService } from '../services/course-curriculum.service';
+import { UnitCurriculumService } from '../services/unit-curriculum.service';
 import {
   CreateCourseSectionDto,
   UpdateCourseSectionDto,
 } from '../dto/course-section.dto';
 import { CreateCourseLessonDto, UpdateCourseLessonDto } from '../dto/course-lesson.dto';
 import { ReorderItemsDto } from '../dto/reorder-items.dto';
+import { AttachCurriculumItemDto } from '../dto/attach-curriculum-item.dto';
 import type { CourseSectionResponse } from '../dto/course-section.contract';
 import type { CourseLessonResponse } from '../dto/course-lesson.contract';
+import type {
+  AvailableCurriculumItemResponse,
+  CurriculumItemResponse,
+} from '../dto/curriculum-item.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('academies')
 @UseGuards(JwtAuthGuard, AcademyScopeGuard)
 export class CourseCurriculumController {
-  constructor(private readonly curriculumService: CourseCurriculumService) {}
+  constructor(
+    private readonly curriculumService: CourseCurriculumService,
+    private readonly unitCurriculumService: UnitCurriculumService,
+  ) {}
 
   @Get(':id/courses/:courseId/sections')
   async getSections(
@@ -192,6 +201,95 @@ export class CourseCurriculumController {
       academyId,
       organizationId,
       request.authContext!.userId,
+    );
+  }
+  // ---- Unified unit curriculum (P52) ----------------------------------
+  // ONE ordered sequence per unit composed from the existing content types.
+  // Static `.../items/*` routes precede any dynamic sibling, matching the
+  // ordering rule documented at the top of this controller.
+
+  @Get(':id/courses/:courseId/available-content')
+  async getAvailableContent(
+    @Req() request: Request,
+    @Param('courseId') courseId: string,
+  ): Promise<AvailableCurriculumItemResponse[]> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.unitCurriculumService.getAvailableContent(
+      courseId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+    );
+  }
+
+  @Get(':id/courses/:courseId/sections/:sectionId/items')
+  async getUnitItems(
+    @Req() request: Request,
+    @Param('courseId') courseId: string,
+    @Param('sectionId') sectionId: string,
+  ): Promise<CurriculumItemResponse[]> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.unitCurriculumService.getItems(
+      courseId,
+      sectionId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+    );
+  }
+
+  @Post(':id/courses/:courseId/sections/:sectionId/items/attach')
+  async attachUnitItem(
+    @Req() request: Request,
+    @Param('courseId') courseId: string,
+    @Param('sectionId') sectionId: string,
+    @Body() body: AttachCurriculumItemDto,
+  ): Promise<CurriculumItemResponse[]> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.unitCurriculumService.attachItem(
+      courseId,
+      sectionId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body,
+    );
+  }
+
+  @Post(':id/courses/:courseId/sections/:sectionId/items/detach')
+  async detachUnitItem(
+    @Req() request: Request,
+    @Param('courseId') courseId: string,
+    @Param('sectionId') sectionId: string,
+    @Body() body: AttachCurriculumItemDto,
+  ): Promise<CurriculumItemResponse[]> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.unitCurriculumService.detachItem(
+      courseId,
+      sectionId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body,
+    );
+  }
+
+  @Patch(':id/courses/:courseId/sections/:sectionId/items/order')
+  @HttpCode(204)
+  async reorderUnitItems(
+    @Req() request: Request,
+    @Param('courseId') courseId: string,
+    @Param('sectionId') sectionId: string,
+    @Body() body: ReorderItemsDto,
+  ): Promise<void> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.unitCurriculumService.reorderItems(
+      courseId,
+      sectionId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body,
     );
   }
 }

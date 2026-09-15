@@ -1157,6 +1157,10 @@ model CourseSection {
   /// Phase 12 — Live Sessions placed in this unit.
   liveSessions LiveSession[]
 
+  /// P52 — Quizzes/Assignments placed in this unit (SetNull on unit delete).
+  quizzes     Quiz[]
+  assignments Assignment[]
+
   @@index([courseId, order])
   @@map("course_sections")
 }
@@ -1391,11 +1395,18 @@ model Quiz {
   courseId     String     @map("course_id")
   course       Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
   sectionId    String?    @map("section_id")
+  /// Optional unit placement. Deleting a unit SetNulls this (the quiz
+  /// survives as a course-level quiz), never destroys the quiz.
+  section      CourseSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   title        String
   description  String?
   status       QuizStatus @default(draft)
   passingScore Int?       @map("passing_score")
   maxAttempts  Int?       @map("max_attempts")
+  /// Shared unit-curriculum ordinal (P52): one order space per unit across
+  /// lessons/quizzes/assignments/live-sessions. Meaningless when sectionId
+  /// is null (course-level, not placed in any unit).
+  order        Int        @default(0)
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
@@ -1403,6 +1414,7 @@ model Quiz {
   attempts  QuizAttempt[]
 
   @@index([courseId, status])
+  @@index([sectionId, order])
   @@map("quizzes")
 }
 
@@ -1502,6 +1514,9 @@ model Assignment {
   courseId          String           @map("course_id")
   course            Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
   sectionId         String?          @map("section_id")
+  /// Optional unit placement. Deleting a unit SetNulls this (the assignment
+  /// survives as a course-level assignment), never destroys the assignment.
+  section           CourseSection?   @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   lessonId          String?          @map("lesson_id")
   title             String
   description       String?
@@ -1509,12 +1524,15 @@ model Assignment {
   status            AssignmentStatus @default(draft)
   dueAt             DateTime?        @map("due_at")
   allowResubmission Boolean          @default(false) @map("allow_resubmission")
+  /// Shared unit-curriculum ordinal (P52) — see Quiz.order.
+  order             Int              @default(0)
   createdAt         DateTime         @default(now()) @map("created_at")
   updatedAt         DateTime         @updatedAt @map("updated_at")
 
   submissions AssignmentSubmission[]
 
   @@index([courseId, status])
+  @@index([sectionId, order])
   @@map("assignments")
 }
 

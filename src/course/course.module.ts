@@ -28,6 +28,7 @@ import { CoursesController } from './controllers/courses.controller';
 import { CourseCurriculumController } from './controllers/course-curriculum.controller';
 import { CoursesService } from './services/courses.service';
 import { CourseCurriculumService } from './services/course-curriculum.service';
+import { UnitCurriculumService } from './services/unit-curriculum.service';
 import { CoursesRepository } from './repositories/courses.repository';
 import { CourseCategoriesRepository } from './repositories/course-categories.repository';
 import { CourseSectionsRepository } from './repositories/course-sections.repository';
@@ -40,6 +41,7 @@ import { CourseInstructorsRepository } from './repositories/course-instructors.r
   providers: [
     CoursesService,
     CourseCurriculumService,
+    UnitCurriculumService,
     CoursesRepository,
     CourseCategoriesRepository,
     CourseSectionsRepository,

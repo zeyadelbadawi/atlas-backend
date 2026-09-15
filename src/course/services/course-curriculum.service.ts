@@ -66,7 +66,7 @@ export class CourseCurriculumService {
       },
     );
 
-    const items = sections.map(toCourseSectionResponse);
+    const items = sections.map((section) => toCourseSectionResponse(section));
     return {
       items,
       pagination: buildPaginationMeta(1, Math.max(items.length, 1), items.length),

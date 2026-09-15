@@ -62,12 +62,69 @@ export class CourseContentService {
         tx,
         courseId,
       );
-      const items = sections
-        .map((section) => ({
-          ...section,
-          lessons: section.lessons.filter((lesson) => lesson.status === 'published'),
-        }))
-        .map(toCourseSectionResponse);
+
+      // The unified, ordered curriculum (P52): published quizzes/assignments
+      // are merged with published lessons into ONE per-unit sequence, sorted
+      // by the shared unit ordinal. This is the SAME order the author sees;
+      // students never receive separate per-type lists. Live sessions are
+      // intentionally excluded here — the feature is deferred (Coming Soon),
+      // so no customer live-session item is ever surfaced to a student.
+      const [quizzes, assignments] = await Promise.all([
+        tx.quiz.findMany({
+          where: { courseId, status: 'published', sectionId: { not: null } },
+          select: { id: true, title: true, order: true, status: true, sectionId: true },
+        }),
+        tx.assignment.findMany({
+          where: { courseId, status: 'published', sectionId: { not: null } },
+          select: { id: true, title: true, order: true, status: true, sectionId: true },
+        }),
+      ]);
+
+      const items = sections.map((section) => {
+        const publishedLessons = section.lessons.filter(
+          (lesson) => lesson.status === 'published',
+        );
+        const unified = [
+          ...publishedLessons.map((l) => ({
+            id: l.id,
+            type: 'lesson' as const,
+            title: l.title,
+            order: l.order,
+            status: l.status,
+            sectionId: section.id,
+          })),
+          ...quizzes
+            .filter((q) => q.sectionId === section.id)
+            .map((q) => ({
+              id: q.id,
+              type: 'quiz' as const,
+              title: q.title,
+              order: q.order,
+              status: q.status,
+              sectionId: section.id,
+            })),
+          ...assignments
+            .filter((a) => a.sectionId === section.id)
+            .map((a) => ({
+              id: a.id,
+              type: 'assignment' as const,
+              title: a.title,
+              order: a.order,
+              status: a.status,
+              sectionId: section.id,
+            })),
+        ].sort(
+          (x, y) =>
+            x.order - y.order ||
+            x.type.localeCompare(y.type) ||
+            x.id.localeCompare(y.id),
+        );
+
+        return toCourseSectionResponse(
+          { ...section, lessons: publishedLessons },
+          unified,
+        );
+      });
 
       return {
         items,

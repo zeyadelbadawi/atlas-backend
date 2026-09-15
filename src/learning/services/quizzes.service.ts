@@ -361,7 +361,7 @@ export class QuizzesService {
       await this.quizzesRepository.update(tx, quizId, {
         title: payload.title,
         description: payload.description,
-        sectionId: payload.sectionId,
+        section: payload.sectionId ? { connect: { id: payload.sectionId } } : undefined,
         status: payload.status,
         passingScore: payload.passingScore,
         maxAttempts: payload.maxAttempts,

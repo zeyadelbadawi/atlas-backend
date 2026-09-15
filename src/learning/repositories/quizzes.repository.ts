@@ -169,7 +169,7 @@ export class QuizzesRepository {
         course: { connect: { id: courseId } },
         title: data.title,
         description: data.description,
-        sectionId: data.sectionId,
+        section: data.sectionId ? { connect: { id: data.sectionId } } : undefined,
         status: data.status,
         passingScore: data.passingScore,
         maxAttempts: data.maxAttempts,
