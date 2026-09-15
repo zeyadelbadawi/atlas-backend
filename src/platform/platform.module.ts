@@ -19,6 +19,7 @@ import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
 import { IdentityModule } from '../identity/identity.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { LiveSessionsModule } from '../live-sessions/live-sessions.module';
 import { AcademyModule } from '../academy/academy.module';
 import { PlansModule } from '../plans/plans.module';
 import { CourseModule } from '../course/course.module';
@@ -26,6 +27,8 @@ import { DomainModule } from '../domain/domain.module';
 import { WebsiteModule } from '../website/website.module';
 import { ProvisioningModule } from '../provisioning/provisioning.module';
 import { OrganizationsController } from './controllers/organizations.controller';
+import { PlatformZoomController } from './controllers/platform-zoom.controller';
+import { PlatformZoomService } from './services/platform-zoom.service';
 import { PlatformAcademiesController } from './controllers/platform-academies.controller';
 import { PlatformUsersController } from './controllers/platform-users.controller';
 import { AuditLogController } from './controllers/audit-log.controller';
@@ -57,11 +60,13 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     DomainModule,
     WebsiteModule,
     ProvisioningModule,
+    LiveSessionsModule,
   ],
   controllers: [
     AdminSubscriptionsController,
     OrganizationsController,
     PlatformAcademiesController,
+    PlatformZoomController,
     PlatformUsersController,
     AuditLogController,
     SupportCasesController,
@@ -73,6 +78,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     OrganizationsAccessGuard,
     PlatformOrganizationsService,
     PlatformAcademiesService,
+    PlatformZoomService,
     PlatformUsersService,
     AuditLogService,
     SupportCasesService,
