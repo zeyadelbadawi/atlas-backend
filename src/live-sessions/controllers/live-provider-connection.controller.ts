@@ -12,7 +12,6 @@
  * screenshot.
  */
 import {
-  Body,
   Controller,
   Delete,
   ForbiddenException,
@@ -28,10 +27,26 @@ import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { LiveProviderConnectionService } from '../services/live-provider-connection.service';
-import { ConnectZoomDto } from '../dto/connect-zoom.dto';
 
-/** Academy configuration, not course management. */
-const CONFIGURE_PERMISSION = 'academy.configure';
+/**
+ * Connection management is OWNER-ONLY.
+ *
+ * It used to be `academy.configure`, which a Manager holds — so a Manager
+ * could rebind the academy's Zoom account. Connecting, re-checking,
+ * disconnecting and changing the connected account all activate or
+ * deactivate Live Sessions for the whole academy and bind a CUSTOMER's
+ * Zoom account, which puts them in the owner-exclusive tier beside
+ * billing and add-on lifecycle rather than with day-to-day academy
+ * settings.
+ *
+ * `tenant.addon.view` is reused rather than a new string invented: it is
+ * already owner-exclusive (no `tenant.*` string appears in
+ * `ORGANIZATION_MANAGER_PERMISSIONS`) and it is already present on every
+ * existing owner membership. A new string would be absent from every
+ * stored `organization_memberships.permissions` row and would lock every
+ * current owner out until a backfill ran.
+ */
+const OWNER_CONNECT_PERMISSION = 'tenant.addon.view';
 
 @Controller('academies')
 @UseGuards(JwtAuthGuard, AcademyScopeGuard)
@@ -71,28 +86,12 @@ export class LiveProviderConnectionController {
     });
   }
 
-  @Post(':id/live-sessions/connection')
-  @HttpCode(HttpStatus.OK)
-  async connect(@Req() request: Request, @Body() body: ConnectZoomDto) {
-    const { academyId, organizationId } = request.academyContext!;
-    this.assertCanConfigure(request);
-
-    const connection = await this.connectionService.connect(
-      academyId,
-      organizationId,
-      request.authContext!.userId,
-      body,
-    );
-
-    return { status: connection.status, connectedAt: connection.connectedAt };
-  }
-
   /** Re-checks stored credentials against Zoom and records the result. */
   @Post(':id/live-sessions/connection/check')
   @HttpCode(HttpStatus.OK)
   async check(@Req() request: Request) {
     const { academyId, organizationId } = request.academyContext!;
-    this.assertCanConfigure(request);
+    this.assertOwner(request);
     return this.connectionService.checkHealth(academyId, organizationId);
   }
 
@@ -100,7 +99,7 @@ export class LiveProviderConnectionController {
   @HttpCode(HttpStatus.OK)
   async disconnect(@Req() request: Request) {
     const { academyId, organizationId } = request.academyContext!;
-    this.assertCanConfigure(request);
+    this.assertOwner(request);
 
     await this.connectionService.disconnect(
       academyId,
@@ -110,10 +109,10 @@ export class LiveProviderConnectionController {
     return { status: 'not_connected' as const };
   }
 
-  private assertCanConfigure(request: Request): void {
+  private assertOwner(request: Request): void {
     const permissions = request.academyContext?.organizationPermissions ?? [];
-    if (!permissions.includes(CONFIGURE_PERMISSION)) {
-      throw new ForbiddenException({ messageKey: 'errors.tenancy.notAMember' });
+    if (!permissions.includes(OWNER_CONNECT_PERMISSION)) {
+      throw new ForbiddenException({ messageKey: 'errors.forbidden' });
     }
   }
 }

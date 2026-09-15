@@ -31,29 +31,13 @@
  * provider call, and never placed in a DTO, a log line, or an exception
  * message.
  */
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { AcademyLiveProviderConnection } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
-import { CredentialEncryptionService } from '../../billing/utils/credential-encryption.util';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { ZoomProvider } from '../providers/zoom.provider';
-import type { LiveProviderCredentials } from '../providers/live-provider.interface';
-
-export interface ConnectZoomInput {
-  readonly accountId: string;
-  readonly clientId: string;
-  readonly clientSecret: string;
-  readonly sdkKey?: string;
-  readonly sdkSecret?: string;
-  readonly webhookSecretToken?: string;
-}
+import { ZoomOAuthService } from './zoom-oauth.service';
 
 @Injectable()
 export class LiveProviderConnectionService {
@@ -61,53 +45,60 @@ export class LiveProviderConnectionService {
 
   constructor(
     private readonly tenancyContextService: TenancyContextService,
-    private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly usersRepository: UsersRepository,
     private readonly zoomProvider: ZoomProvider,
+    private readonly zoomOAuthService: ZoomOAuthService,
   ) {}
 
   /**
-   * Connects (or reconnects) an academy's Zoom account.
+   * Completes an authorization: exchanges the code and stores the token
+   * set against the academy the STATE named.
    *
-   * VERIFIED BEFORE STORED. The credentials are exercised against Zoom
-   * first; a set that does not work is rejected rather than saved in a
-   * broken state that would only surface when a class was due to start.
-   * That also means a genuine Zoom outage is reported as a failed
-   * connection attempt rather than a silently unhealthy connection.
+   * WHAT THIS REPLACED. `connect()` used to accept an academy's own Zoom
+   * account id, client id and client secret from a form. Customers no
+   * longer create Zoom apps at all, so nothing is typed and nothing about
+   * Atlas's application is customer-specific — only the authorization is.
+   *
+   * THE ACADEMY COMES FROM THE STATE, NOT THE BROWSER. Both ids are
+   * resolved server-side from the stored OAuth state before this runs, so
+   * a returning callback cannot redirect an authorization onto a
+   * different tenant.
    */
-  async connect(
-    academyId: string,
-    organizationId: string,
-    actorUserId: string,
-    input: ConnectZoomInput,
-  ): Promise<AcademyLiveProviderConnection> {
-    const credentials: LiveProviderCredentials = {
-      accountId: input.accountId.trim(),
-      clientId: input.clientId.trim(),
-      clientSecret: input.clientSecret.trim(),
-      sdkKey: input.sdkKey?.trim() || undefined,
-      sdkSecret: input.sdkSecret?.trim() || undefined,
-      webhookSecretToken: input.webhookSecretToken?.trim() || undefined,
-    };
+  async completeOAuthConnection(args: {
+    readonly academyId: string;
+    readonly organizationId: string;
+    readonly actorUserId: string;
+    readonly code: string;
+  }): Promise<AcademyLiveProviderConnection> {
+    const { academyId, organizationId, actorUserId, code } = args;
 
-    const health = await this.zoomProvider.checkHealth(credentials);
-    if (!health.healthy) {
-      // A provider-agnostic reason only. Zoom's own error text can echo
-      // request context and must not reach the customer or the log.
-      throw new BadRequestException({
-        messageKey: 'errors.liveSessions.providerConnectionFailed',
-        code: 'PROVIDER_CONNECTION_FAILED',
-      });
+    const exchanged = await this.zoomOAuthService.exchangeCode(code);
+
+    /*
+      ONE ZOOM ACCOUNT, ONE ACADEMY.
+
+      Webhooks are attributed by the verified `account_id`, so two
+      academies sharing one Zoom account would make that mapping
+      ambiguous and could route an event into the wrong tenant. A partial
+      unique index enforces this in the database; checking here as well
+      turns a raw constraint violation into an answer the UI can explain.
+
+      Read under platform-owner context because the conflicting row may
+      belong to a DIFFERENT organization — which is precisely the case
+      worth catching.
+    */
+    const conflicting = await this.findLiveConnectionForAccount(exchanged.accountId);
+    if (conflicting && conflicting.academyId !== academyId) {
+      // Deliberately opaque to the browser: the caller turns this into a
+      // generic "already in use" result and never names the other tenant.
+      throw new Error('ACCOUNT_ALREADY_BOUND');
     }
 
-    const encrypted = this.credentialEncryptionService.encrypt(
-      JSON.stringify(credentials),
-    );
-
+    const encrypted = this.zoomOAuthService.encryptTokens(exchanged.tokens);
     const now = new Date();
 
-    const connection = await this.tenancyContextService.runInTenantAndUserContext(
+    return this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actorUserId,
       async (tx) => {
@@ -118,7 +109,15 @@ export class LiveProviderConnectionService {
             providerKey: 'zoom',
             status: 'connected',
             encryptedCredentials: encrypted,
-            externalAccountId: credentials.accountId,
+            externalAccountId: exchanged.accountId,
+            externalUserId: exchanged.userId,
+            externalUserEmail: exchanged.userEmail ?? null,
+            accessTokenExpiresAt: exchanged.accessTokenExpiresAt,
+            refreshTokenExpiresAt: exchanged.refreshTokenExpiresAt,
+            refreshTokenFingerprint: this.zoomOAuthService.fingerprint(
+              exchanged.tokens.refreshToken,
+            ),
+            grantedScopes: [...exchanged.scopes],
             connectedByUserId: actorUserId,
             connectedAt: now,
             lastCheckedAt: now,
@@ -127,7 +126,15 @@ export class LiveProviderConnectionService {
           update: {
             status: 'connected',
             encryptedCredentials: encrypted,
-            externalAccountId: credentials.accountId,
+            externalAccountId: exchanged.accountId,
+            externalUserId: exchanged.userId,
+            externalUserEmail: exchanged.userEmail ?? null,
+            accessTokenExpiresAt: exchanged.accessTokenExpiresAt,
+            refreshTokenExpiresAt: exchanged.refreshTokenExpiresAt,
+            refreshTokenFingerprint: this.zoomOAuthService.fingerprint(
+              exchanged.tokens.refreshToken,
+            ),
+            grantedScopes: [...exchanged.scopes],
             connectedByUserId: actorUserId,
             connectedAt: now,
             lastCheckedAt: now,
@@ -141,15 +148,45 @@ export class LiveProviderConnectionService {
           action: 'live_provider.connected',
           targetType: 'academy_live_provider_connection',
           targetId: saved.id,
-          // The account id is not a secret; nothing else is recorded.
-          context: { academyId, providerKey: 'zoom' },
+          // Non-secret identifiers only. No token, no scope secret, no
+          // authorization code.
+          context: {
+            academyId,
+            providerKey: 'zoom',
+            externalAccountId: exchanged.accountId,
+          },
         });
 
         return saved;
       },
     );
+  }
 
-    return connection;
+  /**
+   * Finds a LIVE connection already bound to a Zoom account, across every
+   * tenant.
+   *
+   * Cross-tenant and read-only, using the same platform-owner mechanism
+   * webhook attribution uses. `not_connected` rows are ignored on
+   * purpose: a disconnected academy keeps its account id for display, and
+   * must not block the same customer from binding it again.
+   */
+  private async findLiveConnectionForAccount(
+    externalAccountId: string,
+  ): Promise<{ academyId: string } | null> {
+    const platformOwner = await this.usersRepository.findFirstPlatformOwnerId();
+    if (!platformOwner) return null;
+
+    return this.tenancyContextService.runInUserContext(platformOwner.id, async (tx) => {
+      const row = await tx.academyLiveProviderConnection.findFirst({
+        where: {
+          externalAccountId,
+          status: { in: ['connected', 'reconnect_required', 'expired'] },
+        },
+        select: { academyId: true },
+      });
+      return row ?? null;
+    });
   }
 
   /**
@@ -183,8 +220,18 @@ export class LiveProviderConnectionService {
           where: { academyId },
           data: {
             status: 'not_connected',
+            // EVERY piece of token material goes. A disconnect that left
+            // a decryptable token behind would make "disconnect" a lie.
             encryptedCredentials: null,
-            externalAccountId: null,
+            refreshTokenFingerprint: null,
+            accessTokenExpiresAt: null,
+            refreshTokenExpiresAt: null,
+            grantedScopes: [],
+            externalUserId: null,
+            externalUserEmail: null,
+            // The account id is kept: the screen still says WHICH Zoom
+            // account was attached, and the partial unique index ignores
+            // disconnected rows so the same customer can rebind.
             connectedAt: null,
             lastCheckResult: undefined,
           },
@@ -220,23 +267,38 @@ export class LiveProviderConnectionService {
       return { healthy: false };
     }
 
-    const credentials = await this.decryptCredentials(connection);
-    const health = await this.zoomProvider.checkHealth(credentials);
+    let healthy = false;
+    try {
+      // Goes through the OAuth service so the check also exercises the
+      // REFRESH path — a connection whose access token has expired but
+      // whose refresh still works is genuinely healthy, and reporting it
+      // as broken would send an owner to re-authorize for nothing.
+      const accessToken = await this.zoomOAuthService.getAccessTokenForAcademy(
+        academyId,
+        organizationId,
+      );
+      const health = await this.zoomProvider.checkHealth(accessToken);
+      healthy = health.healthy;
+    } catch {
+      // `getAccessTokenForAcademy` has already moved the connection to
+      // `reconnect_required` if the authorization is genuinely dead, so
+      // nothing further is written here — overwriting that with a generic
+      // `expired` would lose the more precise state.
+      return { healthy: false };
+    }
 
     await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
       tx.academyLiveProviderConnection.update({
         where: { academyId },
         data: {
-          // `expired` rather than `error` when credentials stop working:
-          // the fix is reconnecting, and the UI says exactly that.
-          status: health.healthy ? 'connected' : 'expired',
+          status: healthy ? 'connected' : 'expired',
           lastCheckedAt: new Date(),
-          lastCheckResult: { healthy: health.healthy },
+          lastCheckResult: { healthy },
         },
       }),
     );
 
-    return { healthy: health.healthy };
+    return { healthy };
   }
 
   /**
@@ -397,29 +459,4 @@ export class LiveProviderConnectionService {
    * The plaintext exists only inside the caller's stack frame. No caller
    * in this codebase returns it, logs it, or puts it in an exception.
    */
-  async decryptCredentials(
-    connection: AcademyLiveProviderConnection,
-  ): Promise<LiveProviderCredentials> {
-    if (!connection.encryptedCredentials) {
-      throw new ForbiddenException({
-        messageKey: 'errors.liveSessions.providerNotConnected',
-      });
-    }
-    try {
-      return JSON.parse(
-        this.credentialEncryptionService.decrypt(connection.encryptedCredentials),
-      ) as LiveProviderCredentials;
-    } catch {
-      // A tampered or key-rotated ciphertext. Reported as a connection
-      // problem the academy can fix by reconnecting, never as a 500 with
-      // crypto internals attached.
-      this.logger.error(
-        { academyId: connection.academyId },
-        'Stored provider credentials could not be decrypted.',
-      );
-      throw new ForbiddenException({
-        messageKey: 'errors.liveSessions.providerNotConnected',
-      });
-    }
-  }
 }

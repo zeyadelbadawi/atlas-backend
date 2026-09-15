@@ -48,11 +48,10 @@ import {
 } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { PrismaService } from '../../database/prisma.service';
-import { LiveProviderConnectionService } from './live-provider-connection.service';
+import { ZoomOAuthService } from './zoom-oauth.service';
 import { LiveSessionNotificationsService } from './live-session-notifications.service';
 import { RecordingQuotaService } from './recording-quota.service';
 import { ZoomProvider } from '../providers/zoom.provider';
-import type { LiveProviderCredentials } from '../providers/live-provider.interface';
 
 /** Minutes, as the provider expects a meeting's duration. */
 function durationMinutes(startAt: Date, endAt: Date): number {
@@ -66,7 +65,7 @@ export class LiveSessionProvisioningService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenancyContextService: TenancyContextService,
-    private readonly connectionService: LiveProviderConnectionService,
+    private readonly zoomOAuthService: ZoomOAuthService,
     private readonly notifications: LiveSessionNotificationsService,
     private readonly recordingQuotaService: RecordingQuotaService,
     private readonly zoomProvider: ZoomProvider,
@@ -138,10 +137,10 @@ export class LiveSessionProvisioningService {
       }
     }
 
-    const credentials = await this.requireHealthyConnection(academyId);
+    const accessToken = await this.requireAccessToken(academyId, organizationId);
 
     // OUTSIDE any transaction — see the class comment.
-    const created = await this.zoomProvider.createMeeting(credentials, {
+    const created = await this.zoomProvider.createMeeting(accessToken, {
       topic: session.title,
       agenda: session.description ?? undefined,
       startAt: session.scheduledStartAt,
@@ -192,7 +191,7 @@ export class LiveSessionProvisioningService {
         // Somebody else published first. The meeting just created is now
         // an orphan and is cancelled rather than left running in the
         // academy's Zoom account.
-        await this.safeCancelAtProvider(credentials, created.providerMeetingId);
+        await this.safeCancelAtProvider(accessToken, created.providerMeetingId);
         const current = await this.tenancyContextService.runInTenantContext(
           organizationId,
           (tx) =>
@@ -209,7 +208,7 @@ export class LiveSessionProvisioningService {
     } catch (error) {
       // The commit failed after the meeting was created. Compensate, so a
       // failed publish does not accumulate meetings nobody can reach.
-      await this.safeCancelAtProvider(credentials, created.providerMeetingId);
+      await this.safeCancelAtProvider(accessToken, created.providerMeetingId);
       throw error;
     }
 
@@ -255,9 +254,9 @@ export class LiveSessionProvisioningService {
     if (!session?.providerMeetingId) return;
     if (session.status === 'cancelled' || session.status === 'ended') return;
 
-    const credentials = await this.requireHealthyConnection(academyId);
+    const accessToken = await this.requireAccessToken(academyId, organizationId);
 
-    await this.zoomProvider.updateMeeting(credentials, session.providerMeetingId, {
+    await this.zoomProvider.updateMeeting(accessToken, session.providerMeetingId, {
       topic: session.title,
       agenda: session.description ?? undefined,
       startAt: session.scheduledStartAt,
@@ -327,8 +326,8 @@ export class LiveSessionProvisioningService {
 
     if (session.providerMeetingId) {
       try {
-        const credentials = await this.requireHealthyConnection(academyId);
-        await this.zoomProvider.cancelMeeting(credentials, session.providerMeetingId);
+        const accessToken = await this.requireAccessToken(academyId, organizationId);
+        await this.zoomProvider.cancelMeeting(accessToken, session.providerMeetingId);
       } catch {
         this.logger.warn(
           { liveSessionId },
@@ -356,18 +355,22 @@ export class LiveSessionProvisioningService {
    * instructor can fix, so it is reported as its own message rather than
    * surfacing as a provider error later.
    */
-  private async requireHealthyConnection(
+  private async requireAccessToken(
     academyId: string,
-  ): Promise<LiveProviderCredentials> {
+    organizationId: string,
+  ): Promise<string> {
     const connection = await this.prisma.academyLiveProviderConnection.findUnique({
       where: { academyId },
+      select: { status: true },
     });
     if (!connection || connection.status !== 'connected') {
       throw new ForbiddenException({
         messageKey: 'errors.liveSessions.providerNotConnected',
       });
     }
-    return this.connectionService.decryptCredentials(connection);
+    // Refresh and rotation are the OAuth service's business, not this
+    // one's — every caller gets a token that is already valid.
+    return this.zoomOAuthService.getAccessTokenForAcademy(academyId, organizationId);
   }
 
   /**
@@ -377,11 +380,11 @@ export class LiveSessionProvisioningService {
    * it replace the original error would hide why the publish failed.
    */
   private async safeCancelAtProvider(
-    credentials: LiveProviderCredentials,
+    accessToken: string,
     providerMeetingId: string,
   ): Promise<void> {
     try {
-      await this.zoomProvider.cancelMeeting(credentials, providerMeetingId);
+      await this.zoomProvider.cancelMeeting(accessToken, providerMeetingId);
     } catch {
       // Logged without the provider payload; an orphaned meeting is an
       // operational annoyance, not a security or correctness problem.

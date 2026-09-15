@@ -10,7 +10,7 @@ import { Test } from '@nestjs/testing';
 import { LiveSessionProvisioningService } from './live-session-provisioning.service';
 import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
-import { LiveProviderConnectionService } from './live-provider-connection.service';
+import { ZoomOAuthService } from './zoom-oauth.service';
 import { LiveSessionNotificationsService } from './live-session-notifications.service';
 import { RecordingQuotaService } from './recording-quota.service';
 import { ZoomProvider } from '../providers/zoom.provider';
@@ -82,13 +82,9 @@ describe('LiveSessionProvisioningService.publish', () => {
           },
         },
         {
-          provide: LiveProviderConnectionService,
+          provide: ZoomOAuthService,
           useValue: {
-            decryptCredentials: jest.fn().mockResolvedValue({
-              accountId: 'a',
-              clientId: 'b',
-              clientSecret: 'c',
-            }),
+            getAccessTokenForAcademy: jest.fn().mockResolvedValue('access-token'),
           },
         },
         {
@@ -302,8 +298,10 @@ describe('LiveSessionProvisioningService.applyCancellation', () => {
           },
         },
         {
-          provide: LiveProviderConnectionService,
-          useValue: { decryptCredentials: jest.fn().mockResolvedValue({}) },
+          provide: ZoomOAuthService,
+          useValue: {
+            getAccessTokenForAcademy: jest.fn().mockResolvedValue('access-token'),
+          },
         },
         {
           provide: LiveSessionNotificationsService,

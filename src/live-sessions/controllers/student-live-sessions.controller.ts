@@ -34,7 +34,10 @@ import { IsString, MinLength } from 'class-validator';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { LiveSessionAccessService } from '../services/live-session-access.service';
+import { ConfigService } from '@nestjs/config';
 import { LiveProviderConnectionService } from '../services/live-provider-connection.service';
+import { ZoomOAuthService } from '../services/zoom-oauth.service';
+import type { ZoomConfig } from '../../config/configuration';
 import { ZoomProvider } from '../providers/zoom.provider';
 
 /**
@@ -69,7 +72,9 @@ export class StudentLiveSessionsController {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly accessService: LiveSessionAccessService,
+    private readonly configService: ConfigService,
     private readonly connectionService: LiveProviderConnectionService,
+    private readonly zoomOAuthService: ZoomOAuthService,
     private readonly zoomProvider: ZoomProvider,
   ) {}
 
@@ -290,8 +295,18 @@ export class StudentLiveSessionsController {
     }
 
     const isHost = redeemed.role === 'host';
-    const credentials = await this.connectionService.decryptCredentials(connection);
-    const signature = await this.zoomProvider.createJoinSignature(credentials, {
+    /*
+      SDK CREDENTIALS COME FROM ATLAS CONFIGURATION NOW, not from the
+      academy. Atlas owns the Meeting SDK application, so there is one
+      key/secret pair for the platform rather than one per customer.
+
+      NO SDK BEHAVIOUR CHANGES HERE: the signature is built exactly as
+      before, with the same claims, the same role binding and the same
+      `customer_key` identity. Only the source of the signing key moved,
+      which is what allows the per-academy credential form to be removed.
+    */
+    const sdkCredentials = this.configService.get<ZoomConfig>('zoom') ?? {};
+    const signature = await this.zoomProvider.createJoinSignature(sdkCredentials, {
       providerMeetingId: context.providerMeetingId,
       role: isHost ? 'host' : 'attendee',
       participantKey: participant.participantKey,
@@ -313,7 +328,12 @@ export class StudentLiveSessionsController {
     let hostToken: string | undefined;
     if (isHost) {
       try {
-        hostToken = await this.zoomProvider.fetchHostZak(credentials);
+        hostToken = await this.zoomProvider.fetchHostZak(
+          await this.zoomOAuthService.getAccessTokenForAcademy(
+            context.academyId,
+            context.organizationId,
+          ),
+        );
       } catch {
         // Never logged with the provider payload — this path handles a
         // credential.

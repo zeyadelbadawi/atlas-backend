@@ -18,7 +18,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { LiveSessionNotificationsService } from './live-session-notifications.service';
-import { LiveProviderConnectionService } from './live-provider-connection.service';
+import { ZoomOAuthService } from './zoom-oauth.service';
 import { AttendanceService } from './attendance.service';
 import { ZoomProvider } from '../providers/zoom.provider';
 import { MAX_RECONCILIATION_ATTEMPTS } from '../queue/live-session-sweep.types';
@@ -35,6 +35,7 @@ describe('LiveSessionSweepService', () => {
   let reconcileFromProviderReport: jest.Mock;
   let findUniqueConnection: jest.Mock;
   let findFirstPlatformOwnerId: jest.Mock;
+  let getAccessTokenForAcademy: jest.Mock;
 
   const dueSession = (over: Record<string, unknown> = {}) => ({
     id: 'session-1',
@@ -67,6 +68,7 @@ describe('LiveSessionSweepService', () => {
       .fn()
       .mockResolvedValue({ status: 'connected', encryptedCredentials: 'c' });
     findFirstPlatformOwnerId = jest.fn().mockResolvedValue({ id: 'owner-1' });
+    getAccessTokenForAcademy = jest.fn().mockResolvedValue('access-token');
 
     const tx = {
       liveSession: { findMany, updateMany, update },
@@ -94,8 +96,10 @@ describe('LiveSessionSweepService', () => {
           useValue: { notifyEnrolledStudents },
         },
         {
-          provide: LiveProviderConnectionService,
-          useValue: { decryptCredentials: jest.fn().mockResolvedValue({}) },
+          // Refresh and rotation belong to the OAuth service; the sweep
+          // only ever asks for a usable token.
+          provide: ZoomOAuthService,
+          useValue: { getAccessTokenForAcademy: getAccessTokenForAcademy },
         },
         { provide: AttendanceService, useValue: { reconcileFromProviderReport } },
         { provide: ZoomProvider, useValue: { fetchParticipantIntervals } },
@@ -275,6 +279,18 @@ describe('LiveSessionSweepService', () => {
     });
 
     /* A disconnected academy has nothing to reconcile against — not an error. */
+    /* A dead authorization is not an Atlas error — the tick continues. */
+    it('counts a failure when the authorization can no longer be refreshed', async () => {
+      withEndedCandidates([endedSession()]);
+      getAccessTokenForAcademy.mockRejectedValue(new Error('reconnect required'));
+
+      const result = await service.run(NOW);
+
+      expect(fetchParticipantIntervals).not.toHaveBeenCalled();
+      expect(result.reconciliationFailures).toBe(1);
+      expect(reconcileFromProviderReport).not.toHaveBeenCalled();
+    });
+
     it('skips a session whose academy disconnected the provider', async () => {
       withEndedCandidates([endedSession()]);
       findUniqueConnection.mockResolvedValue(null);

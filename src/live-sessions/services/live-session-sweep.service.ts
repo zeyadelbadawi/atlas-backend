@@ -37,7 +37,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { LiveSessionNotificationsService } from './live-session-notifications.service';
-import { LiveProviderConnectionService } from './live-provider-connection.service';
+import { ZoomOAuthService } from './zoom-oauth.service';
 import { AttendanceService } from './attendance.service';
 import { ZoomProvider } from '../providers/zoom.provider';
 import {
@@ -63,7 +63,7 @@ export class LiveSessionSweepService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly usersRepository: UsersRepository,
     private readonly notifications: LiveSessionNotificationsService,
-    private readonly connectionService: LiveProviderConnectionService,
+    private readonly zoomOAuthService: ZoomOAuthService,
     private readonly attendanceService: AttendanceService,
     private readonly zoomProvider: ZoomProvider,
   ) {}
@@ -251,9 +251,16 @@ export class LiveSessionSweepService {
           continue;
         }
 
-        const credentials = await this.connectionService.decryptCredentials(connection);
+        // A dead authorization simply means no report is available. The
+        // attempt is already counted, the webhook intervals stand, and
+        // the connection has already been moved to `reconnect_required`
+        // by the OAuth service — nothing to do here but move on.
+        const accessToken = await this.zoomOAuthService.getAccessTokenForAcademy(
+          session.academyId,
+          organizationId,
+        );
         const intervals = await this.zoomProvider.fetchParticipantIntervals(
-          credentials,
+          accessToken,
           session.providerMeetingId!,
         );
 

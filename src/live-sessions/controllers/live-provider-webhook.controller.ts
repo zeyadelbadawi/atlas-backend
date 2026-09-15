@@ -43,8 +43,9 @@ import {
 } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
 import type { Request } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { ZoomProvider } from '../providers/zoom.provider';
-import { LiveProviderConnectionService } from '../services/live-provider-connection.service';
+import type { ZoomConfig } from '../../config/configuration';
 import { LiveProviderEventsRepository } from '../repositories/live-provider-events.repository';
 import { LiveProviderEventProducer } from '../queue/live-provider-event.producer';
 import { extractZoomEvent } from '../utils/zoom-event.util';
@@ -67,11 +68,22 @@ export class LiveProviderWebhookController {
   private readonly logger = new Logger(LiveProviderWebhookController.name);
 
   constructor(
+    private readonly configService: ConfigService,
     private readonly zoomProvider: ZoomProvider,
-    private readonly connectionService: LiveProviderConnectionService,
     private readonly eventsRepository: LiveProviderEventsRepository,
     private readonly producer: LiveProviderEventProducer,
   ) {}
+
+  /**
+   * Atlas's ONE app-level webhook secret.
+   *
+   * Zoom issues a single Secret Token per application and signs events
+   * from every authorized customer account with it — so there is exactly
+   * one secret here, never a per-academy lookup.
+   */
+  private webhookSecretToken(): string | undefined {
+    return this.configService.get<ZoomConfig>('zoom')?.webhookSecretToken;
+  }
 
   @Post('webhook')
   @HttpCode(200)
@@ -114,35 +126,24 @@ export class LiveProviderWebhookController {
     }
 
     /*
-      CANDIDATE LOOKUP, NOT TRUST. The meeting id comes from an as-yet
-      unverified body, so it is used only to find which academy's secret
-      to check the signature with. If no connection matches, or the
-      signature does not verify under it, nothing is written.
+      SIGNATURE FIRST, TENANT SECOND — and that ordering is the whole
+      point of the app-level model.
+
+      Atlas owns ONE Zoom application, so Zoom issues ONE Secret Token and
+      signs every customer's events with it. That means the signature can
+      be checked before anything is looked up, which removes an entire
+      class of problem the per-academy design had: it needed to pick a
+      tenant's secret using a meeting id read from a body nobody had
+      authenticated yet. That pre-verification lookup is what created the
+      enumeration oracle an adversarial test caught (401 for meeting ids
+      Atlas tracks, 200 for ids it does not — enumerating other tenants'
+      meetings while holding no secret at all).
+
+      Now there is nothing to enumerate: an unsigned or forged request is
+      refused identically whether or not the meeting, account or tenant
+      exists, because no lookup has happened yet.
     */
-    const candidate = extracted.providerMeetingId
-      ? await this.connectionService.findConnectionForMeeting(extracted.providerMeetingId)
-      : await this.connectionService.findSoleConnectionForValidation();
-
-    /*
-      UNIFORM REFUSAL — this is a deliberate anti-enumeration measure.
-
-      An earlier version returned 200 here (nothing to verify against) and
-      401 below (signature mismatch). An adversarial test caught what that
-      difference actually is: an ORACLE. An attacker posting a forged
-      signature for guessed meeting ids would get 401 for ids Atlas tracks
-      and 200 for ids it does not — enumerating which Zoom meetings belong
-      to an Atlas tenant, across tenants, without holding any secret.
-
-      Both paths now refuse identically, so the response says only "I could
-      not authenticate this request" and nothing about who owns what.
-    */
-    if (!candidate) {
-      this.logger.warn('Webhook could not be attributed to a connection — refused.');
-      throw new UnauthorizedException({ messageKey: 'errors.unauthorized' });
-    }
-
-    const credentials = await this.connectionService.decryptCredentials(candidate);
-    const verified = this.zoomProvider.verifyWebhookSignature(credentials, {
+    const verified = this.zoomProvider.verifyWebhookSignature(this.webhookSecretToken(), {
       rawBody,
       signature,
       timestamp,
@@ -160,9 +161,13 @@ export class LiveProviderWebhookController {
       cannot be registered at all — it is part of the protocol, not an
       optional extra. Answered only AFTER the signature check, so an
       unauthenticated caller cannot use it as an oracle.
+
+      Under the app-level model this no longer needs a connection to
+      exist: the handshake happens when ATLAS registers its own endpoint,
+      long before any customer has authorized anything.
     */
     if (extracted.eventType === 'endpoint.url_validation' && extracted.plainToken) {
-      const encryptedToken = createHmac('sha256', credentials.webhookSecretToken ?? '')
+      const encryptedToken = createHmac('sha256', this.webhookSecretToken() ?? '')
         .update(extracted.plainToken)
         .digest('hex');
       return { plainToken: extracted.plainToken, encryptedToken };

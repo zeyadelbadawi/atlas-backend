@@ -65,6 +65,24 @@ export interface CloudflareConfig {
 }
 
 /** Phase P12 — Atlas Subscription Billing configuration (master plan §5.7, §16). */
+/**
+ * Atlas's OWN Zoom application configuration.
+ *
+ * Every field is optional because no real Zoom app exists in any Atlas
+ * environment yet, and the platform must run without one. `isOAuthReady`
+ * is the single predicate the rest of the code asks — no caller
+ * re-derives "do we have enough to start an authorization?" from the
+ * individual fields.
+ */
+export interface ZoomConfig {
+  readonly clientId?: string;
+  readonly clientSecret?: string;
+  readonly redirectUri?: string;
+  readonly webhookSecretToken?: string;
+  readonly sdkKey?: string;
+  readonly sdkSecret?: string;
+}
+
 export interface BillingConfig {
   readonly webhookSecret: string;
 }
@@ -214,6 +232,15 @@ export default () => {
     baseDomain: env.PLATFORM_BASE_DOMAIN || undefined,
   };
 
+  const zoom: ZoomConfig = {
+    clientId: env.ZOOM_OAUTH_CLIENT_ID || undefined,
+    clientSecret: env.ZOOM_OAUTH_CLIENT_SECRET || undefined,
+    redirectUri: env.ZOOM_OAUTH_REDIRECT_URI || undefined,
+    webhookSecretToken: env.ZOOM_WEBHOOK_SECRET_TOKEN || undefined,
+    sdkKey: env.ZOOM_SDK_KEY || undefined,
+    sdkSecret: env.ZOOM_SDK_SECRET || undefined,
+  };
+
   const cloudflare: CloudflareConfig = {
     apiToken: env.CLOUDFLARE_API_TOKEN || undefined,
     zoneId: env.CLOUDFLARE_ZONE_ID || undefined,
@@ -244,6 +271,7 @@ export default () => {
     media,
     platformDomain,
     cloudflare,
+    zoom,
     billing,
     paymentConfiguration,
     email,

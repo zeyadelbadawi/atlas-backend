@@ -149,6 +149,7 @@ model User {
 
   /// Phase 12 — Live Sessions add-on.
   liveProviderConnections AcademyLiveProviderConnection[] @relation("LiveProviderConnector")
+  liveProviderOAuthStates LiveProviderOAuthState[]         @relation("LiveProviderOAuthInitiator")
   hostedLiveSessions      LiveSession[]                   @relation("LiveSessionHost")
   liveSessionParticipants LiveSessionParticipant[]        @relation("LiveSessionParticipant")
 
@@ -496,6 +497,7 @@ model Academy {
 
   /// Phase 12 — Live Sessions add-on.
   liveProviderConnection AcademyLiveProviderConnection?
+  liveProviderOAuthStates LiveProviderOAuthState[]
   liveSessions           LiveSession[]
 
   @@index([organizationId, status])
@@ -3622,6 +3624,14 @@ enum LiveProviderConnectionStatus {
   expired
   revoked
   error
+  /// The stored authorization can no longer be refreshed — Zoom refresh
+  /// tokens expire after 90 days, the customer may have deauthorized the
+  /// app, or the authorizing Zoom user may be gone. Distinct from
+  /// `disconnected`: nobody at Atlas chose this, and the fix is a
+  /// re-authorization by the Organization Owner rather than a new setup.
+  /// Deliberately NOT `error`, which means "the last health check failed"
+  /// and may be transient.
+  reconnect_required
 
   @@map("live_provider_connection_status")
 }
@@ -3643,11 +3653,55 @@ model AcademyLiveProviderConnection {
   /// `organization_gateway_credentials.encrypted_config` stores. NEVER
   /// decrypted outside a server-side provider adapter, and never present
   /// in any response DTO.
+  /// AES-256-GCM ciphertext of the OAuth TOKEN SET (access token, refresh
+  /// token) — the same envelope and the same `CredentialEncryptionService`
+  /// seam as before. What changed is the CONTENT: Atlas no longer stores a
+  /// customer's Zoom client secret, because customers no longer create
+  /// Zoom apps. Atlas owns the app; this holds only the authorization a
+  /// customer granted it.
   encryptedCredentials String?             @map("encrypted_credentials")
-  /// The provider's own non-secret account identifier, kept in the clear
-  /// so a webhook can be resolved to this academy without decrypting
-  /// anything. Not a credential.
+  /// The Zoom `account_id` of the CUSTOMER's account. Non-secret, stored
+  /// in the clear, and the authoritative key a verified webhook is
+  /// resolved through — Zoom sends one app-level payload carrying
+  /// `payload.account_id`, and this is what maps it to an academy.
+  ///
+  /// UNIQUE among live connections: two academies binding the same Zoom
+  /// account would make that mapping ambiguous, and a webhook could then
+  /// be attributed to the wrong tenant. Enforced as a partial unique index
+  /// (see the P49 migration) so that disconnected rows, which keep the id
+  /// for display, do not block a legitimate rebind.
   externalAccountId    String?             @map("external_account_id")
+  /// When the current access token expires. Stored because a refresh must
+  /// happen BEFORE a provider call, not after it fails.
+  accessTokenExpiresAt DateTime?           @map("access_token_expires_at")
+  /// When the refresh token itself expires (Zoom: 90 days). Once past,
+  /// no refresh can succeed and only re-authorization recovers it.
+  refreshTokenExpiresAt DateTime?          @map("refresh_token_expires_at")
+  /// The scopes Zoom actually granted — which is not necessarily what was
+  /// requested. Stored so a missing capability is diagnosable without
+  /// guessing, and never decrypted to read.
+  grantedScopes        String[]            @default([]) @map("granted_scopes")
+  /// The Zoom USER who authorized, distinct from `connectedByUserId`
+  /// (the Atlas user who clicked Connect). Zoom OAuth tokens are
+  /// user-scoped, so meetings are created as this Zoom identity; keeping
+  /// it visible is what makes "the person who set this up has left"
+  /// diagnosable instead of mysterious.
+  externalUserId       String?             @map("external_user_id")
+  /// Display-only, for the connected-account panel. Never used for
+  /// identity matching — that is always `externalAccountId`.
+  externalUserEmail    String?             @map("external_user_email")
+  /// SHA-256 of the CURRENT refresh token.
+  ///
+  /// The rotation guard. Zoom invalidates the old refresh token the
+  /// instant it issues a new one, so two concurrent refreshes race: the
+  /// loser holds a token Zoom has already killed, and writing it second
+  /// would overwrite the live one and break the connection. The refresh
+  /// write is conditional on this column still matching the token the
+  /// refresh STARTED from, so a stale rotation writes nothing.
+  ///
+  /// A digest, never the token — the guard must not become a place a
+  /// credential sits in a WHERE clause.
+  refreshTokenFingerprint String?          @map("refresh_token_fingerprint")
   /// Provider-agnostic success/failure summary only — never a raw provider
   /// error payload (§16, mirroring `lastTestResult` on gateway credentials).
   lastCheckResult      Json?               @map("last_check_result")
@@ -3660,6 +3714,50 @@ model AcademyLiveProviderConnection {
 
   @@index([providerKey, externalAccountId])
   @@map("academy_live_provider_connections")
+}
+
+/// A single-use Zoom OAuth authorization state.
+///
+/// WHY THIS IS A TABLE AND NOT A SIGNED COOKIE OR A JWT. The callback
+/// arrives as a top-level browser navigation from Zoom, so anything
+/// relying on a SameSite cookie is fragile across the redirect. More
+/// importantly, the security property needed here is SINGLE USE, and that
+/// is a property of storage, not of a signature: a signed value proves
+/// authenticity but can be replayed forever. Consuming a row lets the
+/// database decide the race, the same way `live_session_join_grants`
+/// already does for student joins.
+///
+/// WHAT IT CARRIES, AND WHAT IT DELIBERATELY DOES NOT. The academy and
+/// the initiating user — both server-derived at authorize time and
+/// re-checked on callback — so the browser never gets to nominate which
+/// academy a returning authorization binds to. It holds NO secret: the
+/// state value itself is the only unguessable part, and it is stored as a
+/// HASH so a database reader cannot replay a live authorization.
+model LiveProviderOAuthState {
+  id           String   @id @default(uuid())
+  /// SHA-256 of the state value handed to Zoom. The plaintext exists only
+  /// in the redirect URL and is never persisted, matching how
+  /// `live_session_join_grants` stores `token_hash`.
+  stateHash    String   @unique @map("state_hash")
+  academyId    String   @map("academy_id")
+  academy      Academy  @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  organizationId String @map("organization_id")
+  /// The Atlas user who initiated. The callback must be completed by the
+  /// SAME user — an authorization started by an owner cannot be finished
+  /// by whoever else happens to open the callback URL.
+  userId       String   @map("user_id")
+  user         User     @relation("LiveProviderOAuthInitiator", fields: [userId], references: [id], onDelete: Cascade)
+  /// PKCE verifier, when used. Not a long-lived secret, but still never
+  /// returned anywhere.
+  codeVerifier String?  @map("code_verifier")
+  /// Set the moment the state is spent. A second callback with the same
+  /// state matches nothing and is refused.
+  consumedAt   DateTime? @map("consumed_at")
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("live_provider_oauth_states")
 }
 
 /// A Live Session's lifecycle.

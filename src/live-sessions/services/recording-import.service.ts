@@ -28,7 +28,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { MediaService } from '../../media/services/media.service';
-import { LiveProviderConnectionService } from './live-provider-connection.service';
+import { ZoomOAuthService } from './zoom-oauth.service';
 import { ZoomProvider } from '../providers/zoom.provider';
 
 /**
@@ -49,7 +49,7 @@ export class RecordingImportService {
     private readonly prisma: PrismaService,
     private readonly tenancyContextService: TenancyContextService,
     private readonly mediaService: MediaService,
-    private readonly connectionService: LiveProviderConnectionService,
+    private readonly zoomOAuthService: ZoomOAuthService,
     private readonly zoomProvider: ZoomProvider,
   ) {}
 
@@ -73,11 +73,28 @@ export class RecordingImportService {
       return { imported: 0, failed: 0 };
     }
 
-    const credentials = await this.connectionService.decryptCredentials(connection);
+    let accessToken: string;
+    try {
+      accessToken = await this.zoomOAuthService.getAccessTokenForAcademy(
+        academyId,
+        organizationId,
+      );
+    } catch {
+      // The authorization is gone or needs renewing. Recorded as a
+      // provider-agnostic reason and left retryable, exactly like a
+      // transient fetch failure — the recording is not lost, it is
+      // waiting for a reconnect.
+      await this.markRecordingFailed(
+        liveSessionId,
+        organizationId,
+        'provider_not_connected',
+      );
+      return { imported: 0, failed: 0 };
+    }
 
     let files;
     try {
-      files = await this.zoomProvider.fetchRecordingFiles(credentials, providerMeetingId);
+      files = await this.zoomProvider.fetchRecordingFiles(accessToken, providerMeetingId);
     } catch {
       // Provider-agnostic reason only. A transient Zoom failure leaves the
       // recording retryable rather than permanently broken.
@@ -132,7 +149,7 @@ export class RecordingImportService {
           throw new Error('file too large');
         }
 
-        const buffer = await this.download(file.downloadUrl, credentials.clientSecret);
+        const buffer = await this.download(file.downloadUrl, accessToken);
 
         const asset = await this.mediaService.importFromBuffer(
           academyId,
@@ -200,9 +217,13 @@ export class RecordingImportService {
   /**
    * Fetches one recording file.
    *
-   * Zoom's download URLs are bearer-authenticated; the token is sent as a
-   * header rather than appended as a query parameter, because query
-   * strings end up in proxy and access logs.
+   * Zoom's download URLs are bearer-authenticated with the SAME OAuth
+   * access token, sent as a header rather than appended as a query
+   * parameter, because query strings end up in proxy and access logs.
+   *
+   * It previously sent the academy's client SECRET here, which worked
+   * only because S2S conflated the two; under OAuth the access token is
+   * both correct and far less dangerous to hand to a download host.
    */
   private async download(url: string, token: string): Promise<Buffer> {
     const response = await fetch(url, {

@@ -9,19 +9,19 @@
  */
 import { createHmac } from 'node:crypto';
 import { ZoomProvider } from './zoom.provider';
-import type { LiveProviderCredentials } from './live-provider.interface';
+import type { MeetingSdkCredentials } from './live-provider.interface';
 
 const SECRET = 'webhook-secret-token';
 
+/**
+ * Meeting SDK credentials are ATLAS-OWNED now — one pair for the
+ * platform, read from configuration rather than from each academy.
+ */
 const credentials = (
-  over: Partial<LiveProviderCredentials> = {},
-): LiveProviderCredentials => ({
-  accountId: 'acc',
-  clientId: 'cid',
-  clientSecret: 'csecret',
+  over: Partial<MeetingSdkCredentials> = {},
+): MeetingSdkCredentials => ({
   sdkKey: 'sdk-key',
   sdkSecret: 'sdk-secret',
-  webhookSecretToken: SECRET,
   ...over,
 });
 
@@ -35,11 +35,16 @@ function sign(rawBody: string, timestamp: string, secret = SECRET): string {
 
 describe('ZoomProvider.verifyWebhookSignature', () => {
   const provider = new ZoomProvider();
+  /*
+   * ONE APP-LEVEL SECRET. Atlas owns the Zoom application, so Zoom signs
+   * every customer account's events with the same Secret Token — which is
+   * what lets the controller verify BEFORE looking up any tenant.
+   */
   const rawBody = '{"event":"meeting.started","payload":{"object":{"id":"1"}}}';
   const timestamp = '1789000000';
 
   it('accepts a genuine signature', () => {
-    const ok = provider.verifyWebhookSignature(credentials(), {
+    const ok = provider.verifyWebhookSignature(SECRET, {
       rawBody,
       timestamp,
       signature: sign(rawBody, timestamp),
@@ -49,7 +54,7 @@ describe('ZoomProvider.verifyWebhookSignature', () => {
 
   /* FORGERY. The attacker does not hold the secret. */
   it('REJECTS a forged signature', () => {
-    const ok = provider.verifyWebhookSignature(credentials(), {
+    const ok = provider.verifyWebhookSignature(SECRET, {
       rawBody,
       timestamp,
       signature: 'v0=' + 'a'.repeat(64),
@@ -61,7 +66,7 @@ describe('ZoomProvider.verifyWebhookSignature', () => {
   it('REJECTS a body modified after signing', () => {
     const signature = sign(rawBody, timestamp);
     const tampered = rawBody.replace('"id":"1"', '"id":"999"');
-    const ok = provider.verifyWebhookSignature(credentials(), {
+    const ok = provider.verifyWebhookSignature(SECRET, {
       rawBody: tampered,
       timestamp,
       signature,
@@ -71,7 +76,7 @@ describe('ZoomProvider.verifyWebhookSignature', () => {
 
   /* REPLAY ACROSS TIME. The timestamp is part of the signed material. */
   it('REJECTS a signature replayed with a different timestamp', () => {
-    const ok = provider.verifyWebhookSignature(credentials(), {
+    const ok = provider.verifyWebhookSignature(SECRET, {
       rawBody,
       timestamp: '1789999999',
       signature: sign(rawBody, timestamp),
@@ -79,28 +84,29 @@ describe('ZoomProvider.verifyWebhookSignature', () => {
     expect(ok).toBe(false);
   });
 
-  /* CROSS-TENANT. Signed with academy A's secret, checked with B's. */
-  it("REJECTS a signature made with a DIFFERENT academy's secret", () => {
-    const ok = provider.verifyWebhookSignature(credentials(), {
+  /* Signed with some other application's secret — still refused. */
+  it('REJECTS a signature made with a DIFFERENT secret', () => {
+    const ok = provider.verifyWebhookSignature(SECRET, {
       rawBody,
       timestamp,
-      signature: sign(rawBody, timestamp, 'another-academys-secret'),
+      signature: sign(rawBody, timestamp, 'a-different-apps-secret'),
     });
     expect(ok).toBe(false);
   });
 
   it('REJECTS when no webhook secret is configured, rather than accepting', () => {
-    const ok = provider.verifyWebhookSignature(
-      credentials({ webhookSecretToken: undefined }),
-      { rawBody, timestamp, signature: sign(rawBody, timestamp) },
-    );
+    const ok = provider.verifyWebhookSignature(undefined, {
+      rawBody,
+      timestamp,
+      signature: sign(rawBody, timestamp),
+    });
     expect(ok).toBe(false);
   });
 
   /* `timingSafeEqual` throws on unequal lengths; a short signature must be a clean false. */
   it('handles a malformed short signature without throwing', () => {
     expect(() =>
-      provider.verifyWebhookSignature(credentials(), {
+      provider.verifyWebhookSignature(SECRET, {
         rawBody,
         timestamp,
         signature: 'v0=short',
@@ -165,7 +171,7 @@ describe('ZoomProvider.createJoinSignature', () => {
     expect(result.expiresAt.getTime()).toBeLessThan(Date.now() + 60 * 60 * 1000);
   });
 
-  it('refuses when the academy has no Meeting SDK credentials', async () => {
+  it('refuses when Atlas has no Meeting SDK credentials configured', async () => {
     await expect(
       provider.createJoinSignature(
         credentials({ sdkKey: undefined, sdkSecret: undefined }),

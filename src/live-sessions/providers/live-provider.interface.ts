@@ -12,16 +12,18 @@
  * short-lived, and credentials never leave this layer at all.
  */
 
-/** Decrypted provider credentials. Exists only inside an adapter call, never in a DTO, a log, or a response. */
-export interface LiveProviderCredentials {
-  readonly accountId: string;
-  readonly clientId: string;
-  readonly clientSecret: string;
-  /** Meeting SDK credentials — separate from the server-to-server OAuth pair above. */
+/**
+ * Meeting SDK credentials.
+ *
+ * ATLAS-OWNED, not per-academy. Atlas owns the Meeting SDK application;
+ * these come from server configuration, never from a customer. Kept as
+ * their own type rather than folded into an access token because the SDK
+ * signature is a locally-computed JWT, not an API call — it needs a
+ * signing secret, not an authorization.
+ */
+export interface MeetingSdkCredentials {
   readonly sdkKey?: string;
   readonly sdkSecret?: string;
-  /** Verifies inbound webhook signatures. */
-  readonly webhookSecretToken?: string;
 }
 
 export interface CreateMeetingInput {
@@ -86,27 +88,21 @@ export interface LiveProviderAdapter {
   readonly key: 'zoom';
 
   /** Proves the credentials work, without mutating anything. */
-  checkHealth(credentials: LiveProviderCredentials): Promise<ProviderHealth>;
+  checkHealth(accessToken: string): Promise<ProviderHealth>;
 
-  createMeeting(
-    credentials: LiveProviderCredentials,
-    input: CreateMeetingInput,
-  ): Promise<CreatedMeeting>;
+  createMeeting(accessToken: string, input: CreateMeetingInput): Promise<CreatedMeeting>;
 
   updateMeeting(
-    credentials: LiveProviderCredentials,
+    accessToken: string,
     providerMeetingId: string,
     input: CreateMeetingInput,
   ): Promise<void>;
 
-  cancelMeeting(
-    credentials: LiveProviderCredentials,
-    providerMeetingId: string,
-  ): Promise<void>;
+  cancelMeeting(accessToken: string, providerMeetingId: string): Promise<void>;
 
   /** Mints the short-lived signature the embedded SDK needs for ONE join. */
   createJoinSignature(
-    credentials: LiveProviderCredentials,
+    credentials: MeetingSdkCredentials,
     args: {
       readonly providerMeetingId: string;
       readonly role: 'host' | 'attendee';
@@ -122,7 +118,7 @@ export interface LiveProviderAdapter {
    * and the session never opens. Minted per join, given only to a verified
    * host, never persisted.
    */
-  fetchHostZak(credentials: LiveProviderCredentials): Promise<string>;
+  fetchHostZak(accessToken: string): Promise<string>;
 
   /**
    * Post-session participant report — the AUTHORITATIVE attendance source.
@@ -132,12 +128,12 @@ export interface LiveProviderAdapter {
    * tallying.
    */
   fetchParticipantIntervals(
-    credentials: LiveProviderCredentials,
+    accessToken: string,
     providerMeetingId: string,
   ): Promise<readonly ProviderParticipantInterval[]>;
 
   fetchRecordingFiles(
-    credentials: LiveProviderCredentials,
+    accessToken: string,
     providerMeetingId: string,
   ): Promise<readonly ProviderRecordingFile[]>;
 
@@ -148,7 +144,8 @@ export interface LiveProviderAdapter {
    * shape. Implementations MUST use a timing-safe comparison.
    */
   verifyWebhookSignature(
-    credentials: LiveProviderCredentials,
+    /** Atlas's ONE app-level secret token — never a per-academy secret. */
+    secretToken: string | undefined,
     args: {
       readonly rawBody: string;
       readonly signature: string;

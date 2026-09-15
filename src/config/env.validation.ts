@@ -245,6 +245,36 @@ const EnvSchema = z.object({
   // mirrors it exactly rather than inventing a domain that doesn't exist.
   PLATFORM_BASE_DOMAIN: z.string().min(1).optional(),
 
+  // --- Zoom (Live Sessions add-on) ---
+  //
+  // ATLAS OWNS THE ZOOM APPLICATION. These are Atlas's own General OAuth
+  // app credentials, not a customer's — customers never create Zoom apps
+  // and never see these values. Every one of them is DELIBERATELY
+  // OPTIONAL, for the same reason `PLATFORM_BASE_DOMAIN` and the
+  // Cloudflare block are: no real Zoom application exists in any Atlas
+  // environment yet. The backend must boot, and every other feature must
+  // keep working, with Zoom entirely unconfigured — the Live Sessions
+  // connection screen then reports "not configured" honestly rather than
+  // the process refusing to start.
+  ZOOM_OAUTH_CLIENT_ID: z.string().min(1).optional(),
+  ZOOM_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+  // The redirect URI is configured EXPLICITLY rather than derived from a
+  // base domain. Zoom matches it byte-for-byte against the value
+  // registered in the Marketplace app, so a value assembled from parts is
+  // a silent-mismatch waiting to happen — one that fails only at the
+  // moment a real customer tries to connect.
+  ZOOM_OAUTH_REDIRECT_URI: z.string().url().optional(),
+  // ONE app-level secret for ALL customer accounts. Zoom issues a single
+  // Secret Token per application; webhook signatures are verified with it
+  // BEFORE any tenant is looked up.
+  ZOOM_WEBHOOK_SECRET_TOKEN: z.string().min(1).optional(),
+  // Meeting SDK app credentials — Atlas-owned, moved here from per-academy
+  // storage so the S2S credential form can be removed. No SDK BEHAVIOUR
+  // changes with this: the signature is built exactly as before, only the
+  // source of the key/secret moves.
+  ZOOM_SDK_KEY: z.string().min(1).optional(),
+  ZOOM_SDK_SECRET: z.string().min(1).optional(),
+
   // Real Cloudflare API credentials (master plan §21 P11: "real
   // Cloudflare API integration"). Deliberately OPTIONAL, unlike R2 above —
   // R2/MinIO always has a real, running endpoint even in local

@@ -3,12 +3,12 @@
  *
  * WHICH ZOOM PRODUCTS THIS USES, AND WHY.
  *
- *   * Server-to-Server OAuth for the REST API (meetings, reports,
- *     recordings). Chosen over user-level OAuth because the connection is
- *     ACADEMY-owned infrastructure, not one instructor's personal Zoom
- *     login — an instructor leaving must not take the academy's meetings
- *     with them. Tokens are minted per call from the account credentials
- *     and never persisted.
+ *   * The REST API (meetings, reports, recordings), called with an ACCESS
+ *     TOKEN this adapter is handed. Atlas owns the Zoom application and
+ *     each academy grants it an authorization; `ZoomOAuthService` holds
+ *     the token set and handles refresh and rotation. This file no longer
+ *     mints anything — an adapter that mints its own credentials is one
+ *     that can silently keep acting with a revoked authorization.
  *   * Meeting SDK for the embedded, Atlas-controlled join. Students never
  *     receive a Zoom URL; the browser gets a signature scoped to one
  *     meeting, one role, and a short validity.
@@ -18,19 +18,18 @@
  * `webhook-signature.util.ts` already follows. The secret never leaves the
  * server; only the signed, expiring artefact does.
  *
- * EXTERNAL PREREQUISITES (none of which this file can satisfy): a Zoom
- * account, a Server-to-Server OAuth app, a Meeting SDK app, and a webhook
- * secret token. Without real credentials every method here fails honestly
- * at the network boundary rather than pretending to succeed — see
- * `checkHealth`, which is what the connection screen calls.
+ * EXTERNAL PREREQUISITES (none of which this file can satisfy): Atlas's
+ * own General OAuth application, a Meeting SDK application, and the
+ * app-level webhook secret token. Without them every method here fails
+ * honestly at the network boundary rather than pretending to succeed.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
   CreateMeetingInput,
+  MeetingSdkCredentials,
   CreatedMeeting,
   LiveProviderAdapter,
-  LiveProviderCredentials,
   MeetingJoinSignature,
   ProviderHealth,
   ProviderParticipantInterval,
@@ -38,7 +37,6 @@ import type {
 } from './live-provider.interface';
 
 const ZOOM_API_BASE = 'https://api.zoom.us/v2';
-const ZOOM_OAUTH_URL = 'https://zoom.us/oauth/token';
 
 /** How long an SDK join signature stays valid. Short: it is used immediately. */
 const SDK_SIGNATURE_TTL_SECONDS = 60 * 10;
@@ -53,40 +51,21 @@ export class ZoomProvider implements LiveProviderAdapter {
   private readonly logger = new Logger(ZoomProvider.name);
 
   /**
-   * Exchanges account credentials for a short-lived access token.
+   * One authenticated Zoom REST call.
    *
-   * Minted per operation and deliberately NOT cached in this phase: a
-   * cache would need invalidation on credential rotation and revocation,
-   * and getting that subtly wrong means acting with a token the academy
-   * has already revoked. One extra round trip is the cheaper mistake.
+   * TAKES A TOKEN, NOT CREDENTIALS. Minting is no longer this adapter's
+   * job: Atlas owns the OAuth application, and `ZoomOAuthService` holds
+   * the token set, decides when a refresh is due, and handles rotation.
+   * This layer stays a plain HTTP client, which is what it should always
+   * have been — an adapter that mints its own credentials is an adapter
+   * that can silently act with a revoked one.
    */
-  private async getAccessToken(credentials: LiveProviderCredentials): Promise<string> {
-    const basic = Buffer.from(
-      `${credentials.clientId}:${credentials.clientSecret}`,
-    ).toString('base64');
-
-    const response = await fetch(
-      `${ZOOM_OAUTH_URL}?grant_type=account_credentials&account_id=${encodeURIComponent(credentials.accountId)}`,
-      { method: 'POST', headers: { Authorization: `Basic ${basic}` } },
-    );
-
-    if (!response.ok) {
-      // Status only. A Zoom error body can echo request context, and this
-      // line must never become the place a credential reaches the log.
-      throw new Error(`Zoom OAuth failed with status ${response.status}`);
-    }
-
-    const body = (await response.json()) as { access_token?: string };
-    if (!body.access_token) throw new Error('Zoom OAuth returned no access token');
-    return body.access_token;
-  }
-
   private async call<T>(
-    credentials: LiveProviderCredentials,
+    accessToken: string,
     path: string,
     init: { method: string; body?: unknown } = { method: 'GET' },
   ): Promise<T> {
-    const token = await this.getAccessToken(credentials);
+    const token = accessToken;
     const response = await fetch(`${ZOOM_API_BASE}${path}`, {
       method: init.method,
       headers: {
@@ -105,9 +84,9 @@ export class ZoomProvider implements LiveProviderAdapter {
     return (await response.json()) as T;
   }
 
-  async checkHealth(credentials: LiveProviderCredentials): Promise<ProviderHealth> {
+  async checkHealth(accessToken: string): Promise<ProviderHealth> {
     try {
-      await this.call(credentials, '/users/me');
+      await this.call(accessToken, '/users/me');
       return { healthy: true };
     } catch (error) {
       // A provider-agnostic summary is all that is stored or shown — the
@@ -121,11 +100,11 @@ export class ZoomProvider implements LiveProviderAdapter {
   }
 
   async createMeeting(
-    credentials: LiveProviderCredentials,
+    accessToken: string,
     input: CreateMeetingInput,
   ): Promise<CreatedMeeting> {
     const created = await this.call<{ id: number | string; join_url?: string }>(
-      credentials,
+      accessToken,
       '/users/me/meetings',
       {
         method: 'POST',
@@ -156,11 +135,11 @@ export class ZoomProvider implements LiveProviderAdapter {
   }
 
   async updateMeeting(
-    credentials: LiveProviderCredentials,
+    accessToken: string,
     providerMeetingId: string,
     input: CreateMeetingInput,
   ): Promise<void> {
-    await this.call(credentials, `/meetings/${providerMeetingId}`, {
+    await this.call(accessToken, `/meetings/${providerMeetingId}`, {
       method: 'PATCH',
       body: {
         topic: input.topic,
@@ -173,11 +152,8 @@ export class ZoomProvider implements LiveProviderAdapter {
     });
   }
 
-  async cancelMeeting(
-    credentials: LiveProviderCredentials,
-    providerMeetingId: string,
-  ): Promise<void> {
-    await this.call(credentials, `/meetings/${providerMeetingId}`, { method: 'DELETE' });
+  async cancelMeeting(accessToken: string, providerMeetingId: string): Promise<void> {
+    await this.call(accessToken, `/meetings/${providerMeetingId}`, { method: 'DELETE' });
   }
 
   /**
@@ -188,7 +164,7 @@ export class ZoomProvider implements LiveProviderAdapter {
    * the role is baked into a signature they cannot forge.
    */
   async createJoinSignature(
-    credentials: LiveProviderCredentials,
+    credentials: MeetingSdkCredentials,
     args: {
       readonly providerMeetingId: string;
       readonly role: 'host' | 'attendee';
@@ -198,7 +174,7 @@ export class ZoomProvider implements LiveProviderAdapter {
     const sdkKey = credentials.sdkKey;
     const sdkSecret = credentials.sdkSecret;
     if (!sdkKey || !sdkSecret) {
-      throw new Error('Zoom Meeting SDK credentials are not configured for this academy');
+      throw new Error('Zoom Meeting SDK credentials are not configured');
     }
 
     const issuedAt = Math.floor(Date.now() / 1000) - 30; // small clock skew allowance
@@ -251,9 +227,9 @@ export class ZoomProvider implements LiveProviderAdapter {
    * so it is minted per join, returned only to a verified host, and never
    * stored, logged, or included in any student-facing response.
    */
-  async fetchHostZak(credentials: LiveProviderCredentials): Promise<string> {
+  async fetchHostZak(accessToken: string): Promise<string> {
     const result = await this.call<{ token?: string }>(
-      credentials,
+      accessToken,
       '/users/me/token?type=zak',
     );
     if (!result?.token) {
@@ -263,7 +239,7 @@ export class ZoomProvider implements LiveProviderAdapter {
   }
 
   async fetchParticipantIntervals(
-    credentials: LiveProviderCredentials,
+    accessToken: string,
     providerMeetingId: string,
   ): Promise<readonly ProviderParticipantInterval[]> {
     // Zoom paginates this report; every page is followed so a long session
@@ -284,7 +260,7 @@ export class ZoomProvider implements LiveProviderAdapter {
           leave_time?: string;
         }[];
         next_page_token?: string;
-      }>(credentials, `/report/meetings/${providerMeetingId}/participants?${query}`);
+      }>(accessToken, `/report/meetings/${providerMeetingId}/participants?${query}`);
 
       for (const participant of page.participants ?? []) {
         if (!participant.join_time) continue;
@@ -304,7 +280,7 @@ export class ZoomProvider implements LiveProviderAdapter {
   }
 
   async fetchRecordingFiles(
-    credentials: LiveProviderCredentials,
+    accessToken: string,
     providerMeetingId: string,
   ): Promise<readonly ProviderRecordingFile[]> {
     const result = await this.call<{
@@ -314,7 +290,7 @@ export class ZoomProvider implements LiveProviderAdapter {
         file_size?: number;
         download_url?: string;
       }[];
-    }>(credentials, `/meetings/${providerMeetingId}/recordings`);
+    }>(accessToken, `/meetings/${providerMeetingId}/recordings`);
 
     return (result.recording_files ?? [])
       .filter((file) => Boolean(file.id))
@@ -334,14 +310,14 @@ export class ZoomProvider implements LiveProviderAdapter {
    * enough to reconstruct one given enough attempts.
    */
   verifyWebhookSignature(
-    credentials: LiveProviderCredentials,
+    secretToken: string | undefined,
     args: {
       readonly rawBody: string;
       readonly signature: string;
       readonly timestamp: string;
     },
   ): boolean {
-    const secret = credentials.webhookSecretToken;
+    const secret = secretToken;
     if (!secret) return false;
 
     const expected =
