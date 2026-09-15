@@ -41,6 +41,7 @@ import type {
   EntitlementAddOnInput,
   PlanFeatureKey,
 } from '../../plans/dto/entitlement.types';
+import { isAddOnDeferred } from '../constants/deferred-add-ons.constants';
 
 /** The catalog key of the Live Sessions add-on. Data, resolved at runtime — never a hardcoded capability. */
 export const LIVE_SESSIONS_ADD_ON_KEY = 'live-sessions';
@@ -57,7 +58,10 @@ export type AddOnBlockReason =
   | 'not_installed'
   | 'disabled'
   | 'installing'
-  | 'failed';
+  | 'failed'
+  // The add-on is implemented but its customer launch is deferred
+  // ("Coming Soon"); see `DEFERRED_ADD_ON_KEYS`.
+  | 'coming_soon';
 
 export interface AddOnAccessState {
   readonly usable: boolean;
@@ -98,6 +102,16 @@ export class AddOnAccessService {
     addOnKey: string,
     featureKey: PlanFeatureKey,
   ): Promise<AddOnAccessState> {
+    // COMING SOON / DEFERRED. An add-on whose customer launch is deferred is
+    // never usable by a tenant — regardless of subscription, entitlement, or
+    // an install row that may already exist — so every customer create,
+    // publish, join and provisioning path fails closed here at the single
+    // access choke point. Removing the key from `DEFERRED_ADD_ON_KEYS`
+    // re-opens it. Platform-owner monitoring does not go through this method.
+    if (isAddOnDeferred(addOnKey)) {
+      return { usable: false, reason: 'coming_soon', entitled: false };
+    }
+
     const subscription = await this.tenantSubscriptionsRepository.findByOrganizationId(
       tx,
       organizationId,

@@ -38,6 +38,7 @@ import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
 import { TenantAddOnsRepository } from '../../plans/repositories/tenant-add-ons.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { AddOnAccessService } from '../services/add-on-access.service';
+import { isAddOnDeferred } from '../constants/deferred-add-ons.constants';
 
 /** Owner-exclusive, matching `TenantSubscriptionController`'s own gate. */
 const BILLING_MANAGE_PERMISSION = 'tenant.subscription.view';
@@ -95,6 +96,9 @@ export class AddOnsLifecycleController {
           // `free` is simply "no price attached" — the same catalog
           // decides it, so no separate flag can drift out of step.
           isFree: !addOn.pricing,
+          // Implemented but customer launch deferred — the store shows a
+          // "Coming Soon" state and hides install. Enforced server-side too.
+          comingSoon: isAddOnDeferred(addOn.key),
           installStatus: install?.status ?? 'uninstalled',
           failureReason: install?.failureReason ?? undefined,
         };
@@ -167,6 +171,15 @@ export class AddOnsLifecycleController {
 
     const addOn = await this.addOnsRepository.findByKey(addOnKey);
     if (!addOn) throw new NotFoundException({ messageKey: 'errors.notFound' });
+
+    // COMING SOON. Installing or enabling a deferred add-on is refused at
+    // the API boundary — a hidden button is not a control, so a forged or
+    // direct request is rejected here too. Disable/uninstall stay allowed so
+    // an existing tenant can always back out. Removing the key from
+    // `DEFERRED_ADD_ON_KEYS` re-opens install/enable.
+    if ((action === 'install' || action === 'enable') && isAddOnDeferred(addOnKey)) {
+      throw new ForbiddenException({ messageKey: 'errors.addOns.comingSoon' });
+    }
 
     return this.tenancyContextService.runInTenantAndUserContext(
       organizationId,

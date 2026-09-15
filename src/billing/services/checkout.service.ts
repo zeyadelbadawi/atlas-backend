@@ -13,7 +13,12 @@
  * (`plans`/`add_ons`) and then frozen — nothing else in this codebase ever
  * recomputes it afterward (master plan §5.7).
  */
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Checkout } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -31,6 +36,7 @@ import type {
   CheckoutSnapshotResponse,
 } from '../dto/checkout.contract';
 import type { CreateCheckoutDto } from '../dto/create-checkout.dto';
+import { isAddOnDeferred } from '../../live-sessions/constants/deferred-add-ons.constants';
 
 function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
@@ -199,6 +205,13 @@ export class CheckoutService {
     const addOn = await this.addOnsRepository.findByKey(input.target.addOnKey);
     if (!addOn) {
       throw new NotFoundException({ messageKey: 'errors.checkout.addOnNotFound' });
+    }
+    // COMING SOON. A deferred add-on cannot be purchased — refuse before a
+    // checkout is ever frozen, so the payment/activation path is never
+    // reached. This is the purchase-flow twin of the install/enable guard
+    // in AddOnsLifecycleController; both consult `DEFERRED_ADD_ON_KEYS`.
+    if (isAddOnDeferred(addOn.key)) {
+      throw new ForbiddenException({ messageKey: 'errors.addOns.comingSoon' });
     }
     const pricing = this.resolvePricingOrThrow(addOn.pricing, input.billingCycle);
     return {
