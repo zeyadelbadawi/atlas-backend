@@ -71,7 +71,18 @@ async function bootstrap(): Promise<void> {
     request body in memory for the sake of one endpoint would be a real
     cost for no benefit, and media uploads here are megabytes.
   */
-  const LIVE_WEBHOOK_PATH = '/api/v1/live-sessions/webhook';
+  /*
+    Both Zoom-signed endpoints, and only these two.
+
+    P49d added the deauthorization notification endpoint, which Zoom signs
+    with the SAME app-level Secret Token and the same `x-zm-signature`
+    header as meeting events — so it needs the same exact bytes, for the
+    same reason, and it fails closed without them.
+  */
+  const ZOOM_SIGNED_PATHS = [
+    '/api/v1/live-sessions/webhook',
+    '/api/v1/live-sessions/deauthorization',
+  ];
   app.useBodyParser('json', {
     limit: bodyLimitBytes,
     verify: (
@@ -79,7 +90,8 @@ async function bootstrap(): Promise<void> {
       _res: unknown,
       buffer: Buffer,
     ) => {
-      if (request.url && request.url.startsWith(LIVE_WEBHOOK_PATH)) {
+      const url = request.url;
+      if (url && ZOOM_SIGNED_PATHS.some((path) => url.startsWith(path))) {
         request.rawBody = Buffer.from(buffer);
       }
     },

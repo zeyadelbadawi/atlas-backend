@@ -53,6 +53,8 @@ import { LiveProviderWebhookController } from './controllers/live-provider-webho
 import { StudentLiveSessionsController } from './controllers/student-live-sessions.controller';
 import { LiveProviderConnectionService } from './services/live-provider-connection.service';
 import { LiveProviderOAuthController } from './controllers/live-provider-oauth.controller';
+import { LiveProviderDeauthorizationController } from './controllers/live-provider-deauthorization.controller';
+import { LiveProviderDeauthorizationService } from './services/live-provider-deauthorization.service';
 import { ZoomOAuthService } from './services/zoom-oauth.service';
 import { RecordingImportService } from './services/recording-import.service';
 import { LiveSessionNotificationsService } from './services/live-session-notifications.service';
@@ -95,11 +97,13 @@ import { NotificationEventsModule } from '../notification-events/notification-ev
     AddOnsLifecycleController,
     LiveProviderConnectionController,
     LiveProviderOAuthController,
+    LiveProviderDeauthorizationController,
     LiveProviderWebhookController,
     StudentLiveSessionsController,
   ],
   providers: [
     LiveSessionService,
+    LiveProviderDeauthorizationService,
     AttendanceService,
     AddOnAccessService,
     RecordingQuotaService,
