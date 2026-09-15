@@ -184,7 +184,10 @@ export interface ZoomHealthIssueGroup {
   readonly severity: ZoomAttentionSeverity;
   readonly count: number;
   /** A few representative affected academies, for triage — never the full list. */
-  readonly samples: readonly { readonly academyId: string; readonly academyName: string }[];
+  readonly samples: readonly {
+    readonly academyId: string;
+    readonly academyName: string;
+  }[];
 }
 
 export interface ZoomHealthResponse {

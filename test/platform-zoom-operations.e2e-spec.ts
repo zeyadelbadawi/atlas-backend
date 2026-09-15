@@ -95,24 +95,43 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
       const revoked = await seedAcademy('zops-revoked', 'revoked');
       const never = await seedAcademy('zops-never', null);
 
-      const all = await service.listConnections(platformOwnerId, { pageSize: 100 });
-      const byId = new Map(all.items.map((i) => [i.academyId, i]));
+      // Scoped by each seeded org so the assertion is independent of how
+      // many academies other tests have accumulated in the shared dev DB.
+      const one = async (organizationId: string, academyId: string) =>
+        (
+          await service.listConnections(platformOwnerId, {
+            organizationId,
+            pageSize: 100,
+          })
+        ).items.find((i) => i.academyId === academyId);
 
-      expect(byId.get(connected.academy.id)?.status).toBe('connected');
-      expect(byId.get(revoked.academy.id)?.status).toBe('revoked');
+      expect((await one(connected.org.id, connected.academy.id))?.status).toBe(
+        'connected',
+      );
+      expect((await one(revoked.org.id, revoked.academy.id))?.status).toBe('revoked');
       // The row that would be invisible if the list were based on connections.
-      expect(byId.get(never.academy.id)?.status).toBe('not_connected');
+      expect((await one(never.org.id, never.academy.id))?.status).toBe('not_connected');
     });
 
     it('flags exactly the issue states', async () => {
       const revoked = await seedAcademy('zops-issue', 'revoked');
       const ok = await seedAcademy('zops-ok', 'connected');
 
-      const all = await service.listConnections(platformOwnerId, { pageSize: 100 });
-      const byId = new Map(all.items.map((i) => [i.academyId, i]));
+      const revokedRow = (
+        await service.listConnections(platformOwnerId, {
+          organizationId: revoked.org.id,
+          pageSize: 100,
+        })
+      ).items.find((i) => i.academyId === revoked.academy.id);
+      const okRow = (
+        await service.listConnections(platformOwnerId, {
+          organizationId: ok.org.id,
+          pageSize: 100,
+        })
+      ).items.find((i) => i.academyId === ok.academy.id);
 
-      expect(byId.get(revoked.academy.id)?.hasIssue).toBe(true);
-      expect(byId.get(ok.academy.id)?.hasIssue).toBe(false);
+      expect(revokedRow?.hasIssue).toBe(true);
+      expect(okRow?.hasIssue).toBe(false);
     });
 
     it('returns bounded overview aggregates', async () => {
@@ -153,7 +172,10 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
       const seeded = await seedAcademy('zops-secret', 'connected');
       const accountId = `acct-`;
 
-      const all = await service.listConnections(platformOwnerId, { pageSize: 100 });
+      const all = await service.listConnections(platformOwnerId, {
+        organizationId: seeded.org.id,
+        pageSize: 100,
+      });
       const row = all.items.find((i) => i.academyId === seeded.academy.id);
 
       expect(row?.maskedAccountId).toBeDefined();
@@ -229,21 +251,33 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
       const seeded = await seedAcademy('zops-rec', 'connected');
       // Seed a course + session + recording via admin (fixture arrangement).
       const course = await admin.course.create({
-        data: { academyId: seeded.academy.id, title: 'Rec Course', slug: `rc-${Date.now()}`},
+        data: {
+          academyId: seeded.academy.id,
+          title: 'Rec Course',
+          slug: `rc-${Date.now()}`,
+        },
       });
       const session = await admin.liveSession.create({
         data: {
-          courseId: course.id, academyId: seeded.academy.id, title: 'Rec Session',
-          status: 'ended', scheduledStartAt: new Date(Date.now()-7200e3),
-          scheduledEndAt: new Date(Date.now()-3600e3), hostUserId: seeded.owner.id,
-          recordingEnabled: true, endedAt: new Date(Date.now()-3600e3),
+          courseId: course.id,
+          academyId: seeded.academy.id,
+          title: 'Rec Session',
+          status: 'ended',
+          scheduledStartAt: new Date(Date.now() - 7200e3),
+          scheduledEndAt: new Date(Date.now() - 3600e3),
+          hostUserId: seeded.owner.id,
+          recordingEnabled: true,
+          endedAt: new Date(Date.now() - 3600e3),
         },
       });
       await admin.liveSessionRecording.create({
         data: {
-          liveSessionId: session.id, academyId: seeded.academy.id,
-          organizationId: seeded.org.id, status: 'available',
-          quotaConsumedAt: new Date(), availableAt: new Date(),
+          liveSessionId: session.id,
+          academyId: seeded.academy.id,
+          organizationId: seeded.org.id,
+          status: 'available',
+          quotaConsumedAt: new Date(),
+          availableAt: new Date(),
         },
       });
       const recs = await service.listRecordings(platformOwnerId, { pageSize: 100 });
@@ -257,17 +291,30 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
     it('derives attendance reconciliation state from stored fields', async () => {
       const seeded = await seedAcademy('zops-att', 'connected');
       const course = await admin.course.create({
-        data: { academyId: seeded.academy.id, title: 'Att Course', slug: `ac-${Date.now()}`},
+        data: {
+          academyId: seeded.academy.id,
+          title: 'Att Course',
+          slug: `ac-${Date.now()}`,
+        },
       });
       // ended + reconciled
       await admin.liveSession.create({
         data: {
-          courseId: course.id, academyId: seeded.academy.id, title: 'Reconciled', status: 'ended',
-          scheduledStartAt: new Date(Date.now()-7200e3), scheduledEndAt: new Date(Date.now()-3600e3),
-          hostUserId: seeded.owner.id, endedAt: new Date(Date.now()-3600e3), attendanceReconciledAt: new Date(),
+          courseId: course.id,
+          academyId: seeded.academy.id,
+          title: 'Reconciled',
+          status: 'ended',
+          scheduledStartAt: new Date(Date.now() - 7200e3),
+          scheduledEndAt: new Date(Date.now() - 3600e3),
+          hostUserId: seeded.owner.id,
+          endedAt: new Date(Date.now() - 3600e3),
+          attendanceReconciledAt: new Date(),
         },
       });
-      const att = await service.listAttendance(platformOwnerId, { academyId: seeded.academy.id, pageSize: 100 });
+      const att = await service.listAttendance(platformOwnerId, {
+        academyId: seeded.academy.id,
+        pageSize: 100,
+      });
       expect(att.items.some((a) => a.reconciliationState === 'reconciled')).toBe(true);
     });
 
@@ -281,8 +328,11 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
     it('lists only the five real Zoom audit actions in activity', async () => {
       const activity = await service.listActivity(platformOwnerId, { pageSize: 50 });
       const allowed = new Set([
-        'live_provider.connected', 'live_provider.disconnected', 'live_provider.deauthorized',
-        'live_session.created', 'live_session.published',
+        'live_provider.connected',
+        'live_provider.disconnected',
+        'live_provider.deauthorized',
+        'live_session.created',
+        'live_session.published',
       ]);
       expect(activity.items.every((a) => allowed.has(a.action))).toBe(true);
     });
@@ -295,11 +345,16 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
       expect(['number', 'string']).toContain(typeof detail!.recordings.quotaLimit);
       expect(detail!.connection.maskedAccountId).toContain('•');
       const serialized = JSON.stringify(detail);
-      expect(serialized).not.toMatch(/encryptedCredentials|refreshToken|accessToken|"ct"/);
+      expect(serialized).not.toMatch(
+        /encryptedCredentials|refreshToken|accessToken|"ct"/,
+      );
     });
 
     it('academy detail returns null for an unknown academy', async () => {
-      const detail = await service.getAcademyDetail(platformOwnerId, '00000000-0000-0000-0000-000000000000');
+      const detail = await service.getAcademyDetail(
+        platformOwnerId,
+        '00000000-0000-0000-0000-000000000000',
+      );
       expect(detail).toBeNull();
     });
 
@@ -307,16 +362,26 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
       const a = await seedAcademy('zops-p2rls-a', 'connected');
       const b = await seedAcademy('zops-p2rls-b', 'connected');
       const course = await admin.course.create({
-        data: { academyId: a.academy.id, title: 'X', slug: `x-${Date.now()}`},
+        data: { academyId: a.academy.id, title: 'X', slug: `x-${Date.now()}` },
       });
       const s2 = await admin.liveSession.create({
         data: {
-          courseId: course.id, academyId: a.academy.id, title: 'S', status: 'ended',
-          scheduledStartAt: new Date(), scheduledEndAt: new Date(), hostUserId: a.owner.id,
+          courseId: course.id,
+          academyId: a.academy.id,
+          title: 'S',
+          status: 'ended',
+          scheduledStartAt: new Date(),
+          scheduledEndAt: new Date(),
+          hostUserId: a.owner.id,
         },
       });
       await admin.liveSessionRecording.create({
-        data: { liveSessionId: s2.id, academyId: a.academy.id, organizationId: a.org.id, status: 'available' },
+        data: {
+          liveSessionId: s2.id,
+          academyId: a.academy.id,
+          organizationId: a.org.id,
+          status: 'available',
+        },
       });
       const leaked = await tenancyContext.runInTenantContext(b.org.id, (tx) =>
         tx.liveSessionRecording.findMany({ where: { academyId: a.academy.id } }),
@@ -324,5 +389,4 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
       expect(leaked).toEqual([]);
     });
   });
-
 });

@@ -110,7 +110,12 @@ export const ZOOM_RECORDING_STATUSES = [
 ] as const;
 
 /** Event processing states, mirroring `LiveProviderEventStatus`. */
-export const ZOOM_EVENT_STATUSES = ['received', 'processed', 'unmatched', 'failed'] as const;
+export const ZOOM_EVENT_STATUSES = [
+  'received',
+  'processed',
+  'unmatched',
+  'failed',
+] as const;
 
 export class PlatformZoomAttendanceQueryDto extends CollectionQueryDto {
   @IsOptional()

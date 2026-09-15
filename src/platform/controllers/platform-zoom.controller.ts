@@ -17,7 +17,14 @@
  * belong to the academy's own owner, not to an Atlas operator with a
  * button.
  */
-import { Controller, Get, NotFoundException, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
@@ -113,7 +120,10 @@ export class PlatformZoomController {
     @CurrentAuthContext() auth: AuthContext,
     @Param('academyId') academyId: string,
   ): Promise<ZoomAcademyDetail> {
-    const detail = await this.platformZoomService.getAcademyDetail(auth.userId, academyId);
+    const detail = await this.platformZoomService.getAcademyDetail(
+      auth.userId,
+      academyId,
+    );
     if (!detail) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return detail;
   }

@@ -525,7 +525,9 @@ export class PlatformZoomService {
       const stateWhere = this.attendanceStateWhere(query.state);
       const where: Prisma.LiveSessionWhereInput = {
         ...(query.academyId ? { academyId: query.academyId } : {}),
-        ...(query.organizationId ? { academy: { organizationId: query.organizationId } } : {}),
+        ...(query.organizationId
+          ? { academy: { organizationId: query.organizationId } }
+          : {}),
         ...stateWhere,
       };
 
@@ -643,7 +645,9 @@ export class PlatformZoomService {
               select: {
                 id: true,
                 title: true,
-                academy: { select: { name: true, organization: { select: { name: true } } } },
+                academy: {
+                  select: { name: true, organization: { select: { name: true } } },
+                },
               },
             },
             _count: { select: { files: true } },
@@ -720,20 +724,32 @@ export class PlatformZoomService {
 
       // Resolve academy/session labels for the page's rows in ONE query
       // each, not per row.
-      const academyIds = [...new Set(rows.map((r) => r.academyId).filter((x): x is string => !!x))];
-      const sessionIds = [...new Set(rows.map((r) => r.liveSessionId).filter((x): x is string => !!x))];
+      const academyIds = [
+        ...new Set(rows.map((r) => r.academyId).filter((x): x is string => !!x)),
+      ];
+      const sessionIds = [
+        ...new Set(rows.map((r) => r.liveSessionId).filter((x): x is string => !!x)),
+      ];
       const [academies, sessions] = await Promise.all([
         academyIds.length
-          ? tx.academy.findMany({ where: { id: { in: academyIds } }, select: { id: true, name: true } })
+          ? tx.academy.findMany({
+              where: { id: { in: academyIds } },
+              select: { id: true, name: true },
+            })
           : Promise.resolve([]),
         sessionIds.length
-          ? tx.liveSession.findMany({ where: { id: { in: sessionIds } }, select: { id: true, title: true } })
+          ? tx.liveSession.findMany({
+              where: { id: { in: sessionIds } },
+              select: { id: true, title: true },
+            })
           : Promise.resolve([]),
       ]);
       const academyName = new Map(academies.map((a) => [a.id, a.name]));
       const sessionTitle = new Map(sessions.map((sn) => [sn.id, sn.title]));
 
-      const byStatus = Object.fromEntries(statusGroups.map((g) => [g.status, g._count._all])) as Record<string, number>;
+      const byStatus = Object.fromEntries(
+        statusGroups.map((g) => [g.status, g._count._all]),
+      ) as Record<string, number>;
 
       const items = rows.map((r): ZoomEventRow => ({
         id: r.id,
@@ -756,7 +772,11 @@ export class PlatformZoomService {
           .sort((a, b) => b.count - a.count),
       };
 
-      return { items, pagination: buildPaginationMeta(page, pageSize, totalItems), health };
+      return {
+        items,
+        pagination: buildPaginationMeta(page, pageSize, totalItems),
+        health,
+      };
     });
   }
 
@@ -775,9 +795,9 @@ export class PlatformZoomService {
 
     return this.asPlatformOwner(platformOwnerId, async (tx) => {
       const sampleAcademies = async (where: Prisma.AcademyWhereInput) =>
-        (await tx.academy.findMany({ where, select: { id: true, name: true }, take: 5 })).map(
-          (a) => ({ academyId: a.id, academyName: a.name }),
-        );
+        (
+          await tx.academy.findMany({ where, select: { id: true, name: true }, take: 5 })
+        ).map((a) => ({ academyId: a.id, academyName: a.name }));
 
       const connectionIssue = (status: LiveProviderConnectionStatus) => ({
         where: { liveProviderConnection: { status } } as Prisma.AcademyWhereInput,
@@ -791,18 +811,42 @@ export class PlatformZoomService {
         count: number,
         where: Prisma.AcademyWhereInput,
       ) => {
-        if (count > 0) groups.push({ kind, severity, count, samples: await sampleAcademies(where) });
+        if (count > 0)
+          groups.push({ kind, severity, count, samples: await sampleAcademies(where) });
       };
 
       const [revoked, reconnect, expired, errored] = await Promise.all([
-        tx.academyLiveProviderConnection.count({ where: { providerKey: 'zoom', status: 'revoked' } }),
-        tx.academyLiveProviderConnection.count({ where: { providerKey: 'zoom', status: 'reconnect_required' } }),
-        tx.academyLiveProviderConnection.count({ where: { providerKey: 'zoom', status: 'expired' } }),
-        tx.academyLiveProviderConnection.count({ where: { providerKey: 'zoom', status: 'error' } }),
+        tx.academyLiveProviderConnection.count({
+          where: { providerKey: 'zoom', status: 'revoked' },
+        }),
+        tx.academyLiveProviderConnection.count({
+          where: { providerKey: 'zoom', status: 'reconnect_required' },
+        }),
+        tx.academyLiveProviderConnection.count({
+          where: { providerKey: 'zoom', status: 'expired' },
+        }),
+        tx.academyLiveProviderConnection.count({
+          where: { providerKey: 'zoom', status: 'error' },
+        }),
       ]);
-      await push('connection.revoked', 'critical', revoked, connectionIssue('revoked').where);
-      await push('connection.reconnect_required', 'critical', reconnect, connectionIssue('reconnect_required').where);
-      await push('connection.expired', 'warning', expired, connectionIssue('expired').where);
+      await push(
+        'connection.revoked',
+        'critical',
+        revoked,
+        connectionIssue('revoked').where,
+      );
+      await push(
+        'connection.reconnect_required',
+        'critical',
+        reconnect,
+        connectionIssue('reconnect_required').where,
+      );
+      await push(
+        'connection.expired',
+        'warning',
+        expired,
+        connectionIssue('expired').where,
+      );
       await push('connection.error', 'warning', errored, connectionIssue('error').where);
 
       const failedSessions = await tx.liveSession.count({ where: { status: 'failed' } });
@@ -827,7 +871,11 @@ export class PlatformZoomService {
         scheduledStartAt: { gte: now, lte: horizon },
         OR: [
           { providerMeetingId: null },
-          { academy: { liveProviderConnection: { status: { in: ISSUE_STATUS_FILTER() } } } },
+          {
+            academy: {
+              liveProviderConnection: { status: { in: ISSUE_STATUS_FILTER() } },
+            },
+          },
           { academy: { liveProviderConnection: { is: null } } },
         ],
       };
@@ -848,9 +896,16 @@ export class PlatformZoomService {
         });
       }
 
-      const failedEvents = await tx.liveProviderEvent.count({ where: { providerKey: 'zoom', status: 'failed' } });
+      const failedEvents = await tx.liveProviderEvent.count({
+        where: { providerKey: 'zoom', status: 'failed' },
+      });
       if (failedEvents > 0) {
-        groups.push({ kind: 'event.failed', severity: 'warning', count: failedEvents, samples: [] });
+        groups.push({
+          kind: 'event.failed',
+          severity: 'warning',
+          count: failedEvents,
+          samples: [],
+        });
       }
 
       // Ordered: critical first, then by size.
@@ -873,9 +928,10 @@ export class PlatformZoomService {
 
     return this.asPlatformOwner(platformOwnerId, async (tx) => {
       const where: Prisma.AuditLogEntryWhereInput = {
-        action: query.action && ZOOM_AUDIT_ACTIONS.includes(query.action)
-          ? query.action
-          : { in: [...ZOOM_AUDIT_ACTIONS] },
+        action:
+          query.action && ZOOM_AUDIT_ACTIONS.includes(query.action)
+            ? query.action
+            : { in: [...ZOOM_AUDIT_ACTIONS] },
         ...(query.academyId ? { academyId: query.academyId } : {}),
         ...(query.organizationId ? { organizationId: query.organizationId } : {}),
       };
@@ -957,8 +1013,14 @@ export class PlatformZoomService {
 
       const [sessionGroups, reconciled, pending, recGroups, atRiskRows, activityRows] =
         await Promise.all([
-          tx.liveSession.groupBy({ by: ['status'], where: { academyId }, _count: { _all: true } }),
-          tx.liveSession.count({ where: { academyId, attendanceReconciledAt: { not: null } } }),
+          tx.liveSession.groupBy({
+            by: ['status'],
+            where: { academyId },
+            _count: { _all: true },
+          }),
+          tx.liveSession.count({
+            where: { academyId, attendanceReconciledAt: { not: null } },
+          }),
           tx.liveSession.count({
             where: { academyId, status: 'ended', attendanceReconciledAt: null },
           }),
@@ -974,7 +1036,11 @@ export class PlatformZoomService {
               scheduledStartAt: { gte: now, lte: horizon },
               OR: [
                 { providerMeetingId: null },
-                { academy: { liveProviderConnection: { status: { in: ISSUE_STATUS_FILTER() } } } },
+                {
+                  academy: {
+                    liveProviderConnection: { status: { in: ISSUE_STATUS_FILTER() } },
+                  },
+                },
                 { academy: { liveProviderConnection: { is: null } } },
               ],
             },
@@ -997,8 +1063,12 @@ export class PlatformZoomService {
           }),
         ]);
 
-      const sess = Object.fromEntries(sessionGroups.map((g) => [g.status, g._count._all])) as Record<string, number>;
-      const rec = Object.fromEntries(recGroups.map((g) => [g.status, g._count._all])) as Record<string, number>;
+      const sess = Object.fromEntries(
+        sessionGroups.map((g) => [g.status, g._count._all]),
+      ) as Record<string, number>;
+      const rec = Object.fromEntries(
+        recGroups.map((g) => [g.status, g._count._all]),
+      ) as Record<string, number>;
       const conn = academy.liveProviderConnection;
       const check = conn?.lastCheckResult as { reason?: string } | null | undefined;
       const addOnStatus = academy.organization.addOns[0]?.status;
