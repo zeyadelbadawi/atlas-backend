@@ -37,6 +37,7 @@ if [ "${1:-}" = "--sync-env" ]; then
     done < <(printf '%s' "${ENV_FRAGMENT_B64}" | base64 -d)
     mv "$tmp" .env
     echo "==> Synced $(printf '%s' "${ENV_FRAGMENT_B64}" | base64 -d | grep -c '=') variable(s)"
+    ENV_SYNCED=1
   fi
 fi
 
@@ -59,6 +60,17 @@ docker compose run --rm --no-deps \
 
 echo "==> Starting/updating the stack"
 docker compose up -d --remove-orphans
+
+# Docker Compose does not reliably recreate a container when only the
+# CONTENTS of its env_file change (the service config and image are
+# unchanged), so a freshly-synced secret would sit in .env unread until
+# the next image change. When we actually rewrote .env above, force the
+# app container to be recreated so it picks the new value up. Scoped to
+# `backend` with --no-deps so postgres/redis are never bounced.
+if [ "${ENV_SYNCED:-0}" = "1" ]; then
+  echo "==> Env changed — force-recreating backend to load it"
+  docker compose up -d --force-recreate --no-deps backend
+fi
 
 echo "==> Waiting for backend health"
 for i in $(seq 1 30); do
