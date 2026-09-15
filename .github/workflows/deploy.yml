@@ -57,10 +57,31 @@ jobs:
       - name: Deploy to VPS
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          # The four Zoom production variables, from GitHub Secrets. Unset
+          # secrets arrive as empty strings and are filtered out below, so
+          # this step is a safe no-op until the secrets are populated.
+          ZOOM_OAUTH_CLIENT_ID: ${{ secrets.ZOOM_OAUTH_CLIENT_ID }}
+          ZOOM_OAUTH_CLIENT_SECRET: ${{ secrets.ZOOM_OAUTH_CLIENT_SECRET }}
+          ZOOM_OAUTH_REDIRECT_URI: ${{ secrets.ZOOM_OAUTH_REDIRECT_URI }}
+          ZOOM_WEBHOOK_SECRET_TOKEN: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+          # Build a base64 fragment of ONLY the non-empty Zoom vars. Kept
+          # in a variable and piped over ssh stdin — never on the command
+          # line (which would show in the VPS process list) and never
+          # echoed (base64 of a secret is not auto-masked by Actions).
+          FRAGMENT_B64=$(python3 - <<'PYEOF'
+          import os, base64
+          keys = [
+            'ZOOM_OAUTH_CLIENT_ID', 'ZOOM_OAUTH_CLIENT_SECRET',
+            'ZOOM_OAUTH_REDIRECT_URI', 'ZOOM_WEBHOOK_SECRET_TOKEN',
+          ]
+          lines = [f"{k}={os.environ[k]}" for k in keys if os.environ.get(k)]
+          print(base64.b64encode("\n".join(lines).encode()).decode() if lines else "")
+          PYEOF
+          )
+          printf '%s' "$FRAGMENT_B64" | ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'bash /opt/atlas/deploy.sh'
+            'bash /opt/atlas/deploy.sh --sync-env'

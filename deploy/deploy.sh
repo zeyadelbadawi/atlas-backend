@@ -4,6 +4,42 @@
 # deploy user's docker-group membership is what grants Docker access.
 set -euo pipefail
 cd /opt/atlas
+
+# --- P50: propagate CI-managed environment into /opt/atlas/.env ---
+#
+# The four Zoom production variables (client id/secret, redirect URI,
+# webhook secret token) are stored as GitHub Secrets and passed here,
+# base64-encoded, on stdin when the deploy workflow invokes this script
+# with `--sync-env`. This is the ONE authorized path for those values to
+# reach the VPS; nothing is hand-edited and nothing is printed.
+#
+# SAFE BY CONSTRUCTION:
+#   * Only NON-EMPTY values are ever sent (the workflow filters), so an
+#     unset secret can never blank out a working value.
+#   * The upsert works on a temp copy and atomically replaces .env, so a
+#     mid-write failure cannot leave a half-written file.
+#   * A key already present is replaced in place, never duplicated.
+#   * No value is ever echoed; the script does not run under `set -x`.
+#   * With no fragment on stdin the whole block is skipped and the deploy
+#     behaves exactly as before.
+if [ "${1:-}" = "--sync-env" ]; then
+  ENV_FRAGMENT_B64=$(cat)
+  if [ -n "${ENV_FRAGMENT_B64}" ]; then
+    echo "==> Syncing CI-managed environment into .env (values never printed)"
+    tmp=$(mktemp)
+    cp .env "$tmp"
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -z "$line" ] && continue
+      key=${line%%=*}
+      grep -v "^${key}=" "$tmp" > "${tmp}.2" 2>/dev/null || true
+      mv "${tmp}.2" "$tmp"
+      printf '%s\n' "$line" >> "$tmp"
+    done < <(printf '%s' "${ENV_FRAGMENT_B64}" | base64 -d)
+    mv "$tmp" .env
+    echo "==> Synced $(printf '%s' "${ENV_FRAGMENT_B64}" | base64 -d | grep -c '=') variable(s)"
+  fi
+fi
+
 set -a; source .env; set +a
 
 echo "==> Pulling latest images"
