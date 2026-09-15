@@ -22,11 +22,32 @@
  * codebase being server-resolved from the authenticated actor, not the
  * request body.
  */
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'node:crypto';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { SupportCasesRepository } from '../repositories/support-cases.repository';
 import { SupportCaseMessagesRepository } from '../repositories/support-case-messages.repository';
+import { SupportCaseMessageAttachmentsRepository } from '../repositories/support-case-message-attachments.repository';
+import {
+  MEDIA_STORAGE_PROVIDER,
+  type MediaStorageProvider,
+} from '../../media/storage/media-storage.interface';
+import {
+  assertWithinSizeLimit,
+  buildSupportAttachmentStorageKey,
+  detectFileKind,
+  parseDataUrl,
+  sanitizeFileName,
+} from '../../media/utils/file-validation.util';
+import type { MediaStorageConfig } from '../../config/configuration';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
 import {
@@ -41,20 +62,30 @@ import type { UpdateSupportCaseStatusDto } from '../dto/update-support-case-stat
 import type { PostSupportCaseReplyDto } from '../dto/post-support-case-reply.dto';
 import type { CreateSupportCaseDto } from '../dto/create-support-case.dto';
 import type { ListSupportCasesQueryDto } from '../dto/list-support-cases-query.dto';
+import type { SupportAttachmentInputDto } from '../dto/support-attachment.dto';
+import type { Prisma } from '@prisma/client';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 
 @Injectable()
 export class SupportCasesService {
+  private readonly storageConfig: MediaStorageConfig;
+
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly usersRepository: UsersRepository,
     private readonly supportCasesRepository: SupportCasesRepository,
     private readonly supportCaseMessagesRepository: SupportCaseMessagesRepository,
+    private readonly supportCaseMessageAttachmentsRepository: SupportCaseMessageAttachmentsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly notificationFanoutService: NotificationFanoutService,
-  ) {}
+    @Inject(MEDIA_STORAGE_PROVIDER)
+    private readonly storageProvider: MediaStorageProvider,
+    configService: ConfigService,
+  ) {
+    this.storageConfig = configService.getOrThrow<MediaStorageConfig>('media');
+  }
 
   async listCases(
     platformOwnerId: string,
@@ -90,7 +121,11 @@ export class SupportCasesService {
         tx,
         caseId,
       );
-      return toSupportCaseDetailResponse(supportCase, messages);
+      return toSupportCaseDetailResponse(
+        supportCase,
+        messages,
+        await this.findThreadAttachments(tx, messages),
+      );
     });
   }
 
@@ -138,7 +173,11 @@ export class SupportCasesService {
         tx,
         caseId,
       );
-      return toSupportCaseDetailResponse(updated, messages);
+      return toSupportCaseDetailResponse(
+        updated,
+        messages,
+        await this.findThreadAttachments(tx, messages),
+      );
     });
   }
 
@@ -208,7 +247,11 @@ export class SupportCasesService {
           tx,
           caseId,
         );
-        return toSupportCaseDetailResponse(touched, messages);
+        return toSupportCaseDetailResponse(
+          touched,
+          messages,
+          await this.findThreadAttachments(tx, messages),
+        );
       },
     );
 
@@ -258,6 +301,12 @@ export class SupportCasesService {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
 
+    // The case id an attachment's storage key needs does not exist until
+    // the row below is created, so the object write happens INSIDE the
+    // transaction's flow but keyed on the id we generate for the case
+    // first. Rather than restructure `create`, the attachment is stored
+    // after the case row exists and before the message row references it —
+    // see `storeAttachment`'s own note on ordering.
     return this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
@@ -271,12 +320,24 @@ export class SupportCasesService {
           requesterEmail: requester.email,
         });
 
-        await this.supportCaseMessagesRepository.create(tx, {
+        const firstMessage = await this.supportCaseMessagesRepository.create(tx, {
           caseId: created.id,
           authorName: requester.name,
           authorRole: 'requester',
           body: payload.description,
         });
+
+        if (payload.attachment) {
+          const stored = await this.storeAttachment(created.id, payload.attachment);
+          await this.supportCaseMessageAttachmentsRepository.create(tx, {
+            id: stored.id,
+            messageId: firstMessage.id,
+            fileName: stored.fileName,
+            storageKey: stored.storageKey,
+            mimeType: stored.mimeType,
+            sizeBytes: stored.sizeBytes,
+          });
+        }
 
         await this.auditLogWriterService.write(tx, {
           actorUserId: userId,
@@ -293,7 +354,11 @@ export class SupportCasesService {
           tx,
           created.id,
         );
-        return toSupportCaseDetailResponse(created, messages);
+        return toSupportCaseDetailResponse(
+          created,
+          messages,
+          await this.findThreadAttachments(tx, messages),
+        );
       },
     );
   }
@@ -350,7 +415,11 @@ export class SupportCasesService {
         tx,
         caseId,
       );
-      return toSupportCaseDetailResponse(supportCase, messages);
+      return toSupportCaseDetailResponse(
+        supportCase,
+        messages,
+        await this.findThreadAttachments(tx, messages),
+      );
     });
   }
 
@@ -390,12 +459,24 @@ export class SupportCasesService {
         });
       }
 
-      await this.supportCaseMessagesRepository.create(tx, {
+      const message = await this.supportCaseMessagesRepository.create(tx, {
         caseId,
         authorName: requester.name,
         authorRole: 'requester',
         body: payload.body,
       });
+
+      if (payload.attachment) {
+        const stored = await this.storeAttachment(caseId, payload.attachment);
+        await this.supportCaseMessageAttachmentsRepository.create(tx, {
+          id: stored.id,
+          messageId: message.id,
+          fileName: stored.fileName,
+          storageKey: stored.storageKey,
+          mimeType: stored.mimeType,
+          sizeBytes: stored.sizeBytes,
+        });
+      }
 
       // Moves `updatedAt`, which is what orders the agent's queue —
       // without it a customer's reply would never surface to support.
@@ -416,8 +497,132 @@ export class SupportCasesService {
         tx,
         caseId,
       );
-      return toSupportCaseDetailResponse(touched, messages);
+      return toSupportCaseDetailResponse(
+        touched,
+        messages,
+        await this.findThreadAttachments(tx, messages),
+      );
     });
+  }
+
+  /**
+   * P53 — validates an attachment's REAL bytes and writes them to object
+   * storage, returning what the row needs. Called BEFORE the database
+   * transaction that creates the message, deliberately:
+   *
+   *   - an invalid or oversized image must be refused before any row is
+   *     written, so a rejected upload never leaves a half-created ticket;
+   *   - and the storage write must not happen inside an open transaction,
+   *     which would hold a database connection for the duration of a
+   *     network round-trip to R2.
+   *
+   * The trade-off is an orphaned object if the transaction afterwards
+   * fails. That is the same direction `MediaService.performUpload` already
+   * chose (object first, row second) and it is the safe one: a stored byte
+   * range nothing references is invisible and costs storage, whereas a row
+   * pointing at bytes that were never written is a broken image in a
+   * customer's ticket.
+   *
+   * IMAGES ONLY. `detectFileKind`'s allowlist also covers PDF, but this
+   * feature is specified as image attachments, so anything that is not an
+   * image is refused here rather than silently accepted because the shared
+   * validator happened to permit it.
+   */
+  private async storeAttachment(
+    caseId: string,
+    input: SupportAttachmentInputDto,
+  ): Promise<{
+    readonly id: string;
+    readonly fileName: string;
+    readonly storageKey: string;
+    readonly mimeType: string;
+    readonly sizeBytes: bigint;
+  }> {
+    // Never the declared `mimeType`/`sizeBytes` — the decoded buffer is the
+    // only fact. Identical to `MediaService.parseAndValidate`, using the
+    // very same functions rather than a second copy of the rules.
+    const { buffer } = parseDataUrl(input.dataUrl);
+    assertWithinSizeLimit(buffer, this.storageConfig.maxUploadBytes);
+
+    const kind = detectFileKind(buffer);
+    if (!kind) {
+      throw new BadRequestException({ messageKey: 'errors.media.unsupportedFileType' });
+    }
+    if (kind.assetType !== 'image') {
+      throw new BadRequestException({ messageKey: 'errors.media.unsupportedFileType' });
+    }
+
+    const id = randomUUID();
+    const storageKey = buildSupportAttachmentStorageKey(caseId, kind.extension, id);
+    await this.storageProvider.putObject(storageKey, buffer, kind.mimeType);
+
+    return {
+      id,
+      fileName: sanitizeFileName(input.fileName),
+      storageKey,
+      mimeType: kind.mimeType,
+      sizeBytes: BigInt(buffer.length),
+    };
+  }
+
+  /** Loads a whole thread's attachments in one query — see `toSupportCaseDetailResponse`'s own note. */
+  private async findThreadAttachments(
+    tx: Prisma.TransactionClient,
+    messages: readonly { id: string }[],
+  ) {
+    return this.supportCaseMessageAttachmentsRepository.findManyForMessages(
+      tx,
+      messages.map((message) => message.id),
+    );
+  }
+
+  /**
+   * P53 — the authenticated read behind `GET /support-cases/attachments/:id`.
+   *
+   * ONE CONTEXT SERVES BOTH AUDIENCES, and that is the point.
+   * `runInUserContext(userId)` lets the database decide which policy
+   * applies: a requester matches
+   * `support_case_message_attachments_requester_select` (their own ticket
+   * only), a Platform Owner matches `..._platform_select` (every ticket),
+   * and anybody else matches neither. There is no `isPlatformOwner` branch
+   * in this method — adding one would be a second authorization decision
+   * that could disagree with the policies.
+   *
+   * A row the caller may not read is indistinguishable from one that does
+   * not exist: both surface as 404, never 403, matching `getMyCase`'s own
+   * documented rule that a 403 would confirm the id is real.
+   */
+  async getAttachmentBytes(
+    userId: string,
+    attachmentId: string,
+  ): Promise<{
+    readonly buffer: Buffer;
+    readonly mimeType: string;
+    readonly fileName: string;
+  }> {
+    const attachment = await this.tenancyContextService.runInUserContext(userId, (tx) =>
+      this.supportCaseMessageAttachmentsRepository.findByIdWithMessage(tx, attachmentId),
+    );
+
+    if (!attachment) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+
+    let buffer: Buffer;
+    try {
+      buffer = await this.storageProvider.getObject(attachment.storageKey);
+    } catch {
+      // A missing object is an ordinary stale reference, and surfacing the
+      // storage error would say more about the backend than a caller
+      // should learn — the same reasoning `PublicMediaController` applies.
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+
+    return {
+      buffer,
+      mimeType: attachment.mimeType,
+      fileName: attachment.fileName,
+    };
   }
 
   private async loadCaseOrThrow(

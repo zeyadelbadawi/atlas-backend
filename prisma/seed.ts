@@ -292,6 +292,14 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       key: 'starter',
       name: 'Starter',
       description: 'For a single academy just getting started.',
+      // P54 — bilingual catalog text, in the same `{ en, ar }` shape the
+      // website CMS already uses. Seeded here so a fresh dev database
+      // matches what the P54 migration backfills in an existing one.
+      nameLocalized: { en: 'Starter', ar: 'الأساسية' },
+      descriptionLocalized: {
+        en: 'For a single academy just getting started.',
+        ar: 'لأكاديمية واحدة في بداية الطريق.',
+      },
       status: 'active',
       displayOrder: 1,
       limits: {
@@ -332,6 +340,11 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       key: 'growth',
       name: 'Growth',
       description: 'For growing organizations running multiple academies.',
+      nameLocalized: { en: 'Growth', ar: 'النمو' },
+      descriptionLocalized: {
+        en: 'For growing organizations running multiple academies.',
+        ar: 'للمؤسسات المتنامية التي تدير عدة أكاديميات.',
+      },
       status: 'active',
       displayOrder: 2,
       limits: {
@@ -370,6 +383,11 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       key: 'enterprise',
       name: 'Enterprise',
       description: 'Unlimited scale for large organizations.',
+      nameLocalized: { en: 'Enterprise', ar: 'المؤسسات' },
+      descriptionLocalized: {
+        en: 'Unlimited scale for large organizations.',
+        ar: 'نطاق غير محدود للمؤسسات الكبيرة.',
+      },
       status: 'active',
       displayOrder: 3,
       limits: {

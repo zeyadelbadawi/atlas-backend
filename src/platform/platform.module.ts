@@ -26,6 +26,7 @@ import { CourseModule } from '../course/course.module';
 import { DomainModule } from '../domain/domain.module';
 import { WebsiteModule } from '../website/website.module';
 import { ProvisioningModule } from '../provisioning/provisioning.module';
+import { MediaModule } from '../media/media.module';
 import { OrganizationsController } from './controllers/organizations.controller';
 import { PlatformZoomController } from './controllers/platform-zoom.controller';
 import { PlatformZoomService } from './services/platform-zoom.service';
@@ -49,6 +50,7 @@ import { PlatformAddOnsService } from './services/platform-add-ons.service';
 import { PlatformUsersRepository } from './repositories/platform-users.repository';
 import { SupportCasesRepository } from './repositories/support-cases.repository';
 import { SupportCaseMessagesRepository } from './repositories/support-case-messages.repository';
+import { SupportCaseMessageAttachmentsRepository } from './repositories/support-case-message-attachments.repository';
 import { PlatformSettingsRepository } from './repositories/platform-settings.repository';
 
 @Module({
@@ -63,6 +65,9 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     WebsiteModule,
     ProvisioningModule,
     LiveSessionsModule,
+    // P53 — for `MEDIA_STORAGE_PROVIDER` only (support-ticket attachments
+    // reuse the one R2 client), never for `MediaService`.
+    MediaModule,
   ],
   controllers: [
     AdminSubscriptionsController,
@@ -90,6 +95,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     PlatformUsersRepository,
     SupportCasesRepository,
     SupportCaseMessagesRepository,
+    SupportCaseMessageAttachmentsRepository,
     PlatformSettingsRepository,
   ],
 })

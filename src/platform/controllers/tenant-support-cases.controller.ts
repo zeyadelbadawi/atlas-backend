@@ -23,16 +23,19 @@
  * guard ran, never a second authorization decision of its own.
  */
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  Header,
   Param,
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
@@ -156,4 +159,62 @@ export class TenantSupportCasesController {
       body,
     );
   }
+
+  /**
+   * P53 — serving a ticket attachment's bytes.
+   *
+   * AUTHENTICATED, UNLIKE `PublicMediaController`, and that difference is
+   * the whole security design. Academy logos and hero images are meant to
+   * be readable by anonymous visitors, so media rides an unguessable-URL
+   * capability. A support ticket is private to the one person who filed it
+   * — `support_cases_requester_select` says so — and a screenshot of that
+   * person's billing page or broken screen inherits that privacy. So this
+   * route carries `JwtAuthGuard` (established at the class level) and
+   * `getAttachmentBytes` resolves the row under the CALLER's own RLS
+   * context, where the requester and platform-owner policies decide.
+   *
+   * MOUNTED HERE, NOT UNDER `organizations/:id`/`academies/:id`, for the
+   * same reason `getMine` is: an attachment belongs to a person's ticket,
+   * not to whichever tenant they happen to be viewing — and a ticket filed
+   * from an academy they have since left must still open.
+   *
+   * ONE ROUTE FOR BOTH AUDIENCES. A Platform Owner reading a customer's
+   * ticket fetches the same path; `..._platform_select` is what grants it.
+   * A second agent-facing route would be a second authorization surface
+   * for one rule.
+   */
+  @Get('support-cases/attachments/:attachmentId')
+  // No caching. Media's immutable one-year cache is correct for public,
+  // capability-addressed bytes; a private attachment must not sit in a
+  // shared or disk cache after the session that fetched it ends.
+  @Header('Cache-Control', 'private, no-store')
+  async serveAttachment(
+    @Req() request: Request,
+    @Param('attachmentId') attachmentId: string,
+    @Res() response: Response,
+  ): Promise<void> {
+    if (!UUID_PATTERN.test(attachmentId)) {
+      throw new BadRequestException({ messageKey: 'errors.validation.failed' });
+    }
+
+    const { buffer, mimeType } = await this.supportCasesService.getAttachmentBytes(
+      request.authContext!.userId,
+      attachmentId,
+    );
+
+    response.setHeader('Content-Type', mimeType);
+    response.setHeader('Content-Length', buffer.byteLength);
+    // The stored `mimeType` is the one `detectFileKind` sniffed from the
+    // real bytes, never a client claim — but `nosniff` still stops a
+    // browser re-interpreting it, matching `PublicMediaController`.
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    // The file name is display-only and never addresses storage; it is not
+    // echoed into a header at all, so a crafted name cannot influence
+    // `Content-Disposition` parsing. The image renders inline.
+    response.end(buffer);
+  }
 }
+
+/** A v4 UUID — the shape of every attachment id. Matches `PublicMediaController`'s own parameter guard. */
+const UUID_PATTERN =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;

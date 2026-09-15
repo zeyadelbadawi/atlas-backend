@@ -71,6 +71,14 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
     MediaProcessingProducer,
     MediaProcessingProcessor,
   ],
-  exports: [MediaService],
+  // `MEDIA_STORAGE_PROVIDER` is exported (P53) so the support module can
+  // write ticket attachments through THE SAME R2 client and bucket rather
+  // than constructing a second one — the same "one seam, reused" move
+  // `BillingModule` already makes with `CredentialEncryptionService`.
+  // `MediaService` itself is deliberately NOT what support uses: its
+  // methods all create academy-scoped, quota-counted, library-visible
+  // `MediaAsset` rows, which is exactly what a private ticket attachment
+  // must not be (see the P53 migration's header).
+  exports: [MediaService, MEDIA_STORAGE_PROVIDER],
 })
 export class MediaModule {}

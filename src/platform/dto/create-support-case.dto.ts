@@ -16,11 +16,19 @@
  * there is no `PATCH priority` endpoint at all), matching "never invent
  * business behavior the frontend contract doesn't call for."
  */
-import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import {
   MAX_SUPPORT_DESCRIPTION_LENGTH,
   MAX_SUPPORT_SUBJECT_LENGTH,
 } from './support.constants';
+import { SupportAttachmentInputDto } from './support-attachment.dto';
 
 export class CreateSupportCaseDto {
   @IsNotEmpty()
@@ -32,4 +40,19 @@ export class CreateSupportCaseDto {
   @IsString()
   @MaxLength(MAX_SUPPORT_DESCRIPTION_LENGTH)
   readonly description!: string;
+
+  /**
+   * P53 — an optional image accompanying the ticket's first message.
+   *
+   * OPTIONAL, AND THE DESCRIPTION STAYS REQUIRED. An image is evidence for
+   * a message, never a replacement for one: a ticket that is nothing but a
+   * screenshot gives support no searchable subject and no statement of the
+   * problem. `@ValidateNested` + `@Type` are required for the global
+   * `ValidationPipe` (`forbidNonWhitelisted`) to actually descend into this
+   * object rather than accept any shape.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SupportAttachmentInputDto)
+  readonly attachment?: SupportAttachmentInputDto;
 }

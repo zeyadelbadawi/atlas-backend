@@ -140,6 +140,27 @@ export function buildStorageKey(
   return `academies/${academyId}/${id}.${extension}`;
 }
 
+/**
+ * The support-ticket counterpart of `buildStorageKey`, in this module on
+ * purpose: a support attachment is stored in the SAME bucket, validated by
+ * the SAME magic-byte allowlist and capped by the SAME size ceiling as
+ * every other upload — only its ownership model differs (see the P53
+ * migration). Keeping the key builders side by side is what stops a second
+ * storage convention from growing somewhere else.
+ *
+ * `caseId` is a real UUID the caller has already resolved through RLS, and
+ * `id` is a fresh `randomUUID()`. As with the academy form, no client
+ * string (filename, mime type) is ever concatenated into a key, so
+ * `../../` cannot be expressed.
+ */
+export function buildSupportAttachmentStorageKey(
+  caseId: string,
+  extension: string,
+  id: string,
+): string {
+  return `support-cases/${caseId}/${id}.${extension}`;
+}
+
 /** Display-only — never used to address storage. Strips path separators/control characters and caps length, matching the same defensive floor `class-validator`'s `@MaxLength` gives every other free-text field in this codebase. */
 export function sanitizeFileName(rawFileName: string): string {
   const stripped = rawFileName.replace(/[/\\\0]/g, '').trim();

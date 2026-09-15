@@ -24,3 +24,5 @@ Read it before changing anything here. In particular it covers:
 
 A machine-local companion, `ATLAS_HANDOVER_SECRETS.local.md`, records credential
 *locations* only. It is gitignored in both repos and must never be committed.
+
+> **Newest canonical entry point (15 Sep 2026):** `atlas-front/NEW_HANDOVER.md` — read it before `ATLAS_HANDOVER.md`.
