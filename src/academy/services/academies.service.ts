@@ -15,6 +15,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { AcademyMember, AcademyMemberRole } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
@@ -118,6 +119,34 @@ export interface ArchiveAcademyInput {
   readonly reason?: AcademyArchiveReason;
   readonly feedback?: string;
 }
+
+/**
+ * What one new academy member COSTS, by role (P62).
+ *
+ * TOTAL over `AcademyMemberRole` on purpose: adding a role to the enum
+ * without deciding what it consumes fails to compile, which is the only
+ * way this mapping stays correct. `null` means "consumes no plan seat" and
+ * is a decision, not an omission:
+ *
+ *   - `owner` is the academy's creator, already gated by the `academies`
+ *     limit that let the academy exist at all. Charging a second seat for
+ *     the same act would double-count one creation.
+ *   - `administrator`/`manager` are counted by neither `instructors` nor
+ *     `staff` in `TenantUsageRecomputeService.computeLiveCounts`, which
+ *     counts only the literally-matching role. Enforcing a limit here that
+ *     usage does not measure would refuse writes against a number no
+ *     dashboard could explain.
+ *
+ * `staff` maps to the `staff` limit even though no endpoint currently
+ * creates a staff member — see `createAcademyMember`.
+ */
+export const MEMBER_ROLE_LIMIT: Record<AcademyMemberRole, 'instructors' | 'staff' | null> = {
+  owner: null,
+  administrator: null,
+  manager: null,
+  instructor: 'instructors',
+  staff: 'staff',
+};
 
 @Injectable()
 export class AcademiesService {
@@ -296,9 +325,9 @@ export class AcademiesService {
           // Creator becomes the Academy's first `owner`-role member —
           // there is no standalone "add member" endpoint in P3 (see the
           // migration's doc comment on `academy_members_insert`).
-          await this.academyMembersRepository.create(tx, {
-            academy: { connect: { id: created.id } },
-            user: { connect: { id: userId } },
+          await this.createAcademyMember(tx, payload.organizationId, {
+            academyId: created.id,
+            userId,
             role: 'owner',
           });
 
@@ -629,9 +658,9 @@ export class AcademiesService {
           });
         }
 
-        const created = await this.academyMembersRepository.create(tx, {
-          academy: { connect: { id: academyId } },
-          user: { connect: { id: targetUser.id } },
+        const created = await this.createAcademyMember(tx, organizationId, {
+          academyId,
+          userId: targetUser.id,
           role: 'manager',
         });
 
@@ -740,16 +769,13 @@ export class AcademiesService {
         // every authorization/conflict check above (a caller who was
         // never allowed to grant this, or a target who is already a
         // member, gets that specific error first — a limit rejection
-        // only fires for an otherwise-legitimate grant).
-        await this.entitlementEnforcementService.assertWithinLimit(
-          tx,
-          organizationId,
-          'instructors',
-        );
-
-        const created = await this.academyMembersRepository.create(tx, {
-          academy: { connect: { id: academyId } },
-          user: { connect: { id: targetUser.id } },
+        // only fires for an otherwise-legitimate grant). The check itself
+        // now lives in `createAcademyMember`, keyed by role, so a future
+        // member path cannot forget it the way the `staff` limit was
+        // forgotten — the ORDERING it depends on is unchanged.
+        const created = await this.createAcademyMember(tx, organizationId, {
+          academyId,
+          userId: targetUser.id,
           role: 'instructor',
         });
 
@@ -1036,5 +1062,50 @@ export class AcademiesService {
     if (existing && existing.id !== excludeAcademyId) {
       throw new ConflictException({ messageKey: 'errors.academy.slugTaken' });
     }
+  }
+
+  /**
+   * THE ONLY WAY THIS SERVICE CREATES AN ACADEMY MEMBER (P62).
+   *
+   * Entitlement enforcement used to live at each call site, which meant it
+   * could be — and was — forgotten: `staff` had a plan limit, a usage
+   * counter and a dashboard row, and no check anywhere. Routing every
+   * creation through one method makes the check structural: a new member
+   * path cannot skip it without deliberately not using this.
+   *
+   * WHAT THIS DOES NOT DO. It does not invent a staff-creation endpoint.
+   * Nothing in Atlas creates a member with role `staff` today — the three
+   * real paths produce `owner`, `manager` and `instructor` — so the `staff`
+   * branch is unreachable until such a path exists, and correct the moment
+   * one does. That is the honest state: the limit was unenforceable rather
+   * than merely unenforced.
+   *
+   * Runs inside the caller's transaction, after their own authorization and
+   * conflict checks, so a caller who was never allowed to do this — or a
+   * target who is already a member — still gets that specific error first.
+   */
+  private async createAcademyMember(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    member: {
+      readonly academyId: string;
+      readonly userId: string;
+      readonly role: AcademyMemberRole;
+    },
+  ): Promise<AcademyMember> {
+    const limitKey = MEMBER_ROLE_LIMIT[member.role];
+    if (limitKey) {
+      await this.entitlementEnforcementService.assertWithinLimit(
+        tx,
+        organizationId,
+        limitKey,
+      );
+    }
+
+    return this.academyMembersRepository.create(tx, {
+      academy: { connect: { id: member.academyId } },
+      user: { connect: { id: member.userId } },
+      role: member.role,
+    });
   }
 }
