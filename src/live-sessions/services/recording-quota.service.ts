@@ -56,6 +56,7 @@ import type {
   EntitlementAddOnInput,
   LimitValue,
 } from '../../plans/dto/entitlement.types';
+import { resolveSubscriptionLimits } from '../../plans/utils/granted-limits.util';
 
 /** Stable codes the frontend switches on, matching the existing entitlement vocabulary. */
 export const RECORDING_QUOTA_EXCEEDED_CODE = 'RECORDING_QUOTA_EXCEEDED';
@@ -268,7 +269,11 @@ export class RecordingQuotaService {
       organizationId,
       {
         key: subscription.plan.key,
-        limits: subscription.plan.limits as never,
+        // P61 — `recordedSessions` is granted like every other limit, so
+        // it resolves the same way. The dedicated serialized quota
+        // mechanism below is untouched; only the ceiling it compares
+        // against now comes from the grant.
+        limits: resolveSubscriptionLimits(subscription) as never,
         features: subscription.plan.features as never,
       },
       addOnInputs,

@@ -83,6 +83,15 @@ export interface PlanLimitImpactResponse {
   readonly unmeasurableLimitKeys: readonly string[];
   /** Oldest usage-snapshot timestamp involved, so the UI can say how fresh this is. */
   readonly usageAsOf?: string;
+  /**
+   * P61 — subscribers whose entitlement was captured at purchase and is
+   * therefore NOT changed by this edit at all. Reported so the editor can
+   * say plainly how many customers this edit does not reach, instead of
+   * leaving the Platform Owner to assume it reaches everyone.
+   */
+  readonly protectedSubscriptions: number;
+  /** Subscribers still following the live catalog — the ones this edit does reach. */
+  readonly catalogFollowingSubscriptions: number;
 }
 
 /** `tenant_usage` column per measurable limit key. `recordedSessions` has none, on purpose. */
@@ -406,6 +415,16 @@ export class PlatformPlansService {
    * organization that ends up over a reduced limit keeps everything it has
    * and is simply refused the NEXT create. This endpoint exists so that
    * consequence is visible before saving instead of discovered afterwards.
+   *
+   * NARROWED BY P61, AND THIS IS THE HONEST PART. A subscription that
+   * recorded what it was granted is not affected by a catalog edit at all —
+   * its limits come from `granted_limits`, not from this plan row. Counting
+   * those customers as "affected" would have made the warning say something
+   * untrue: that the edit restricts people it cannot reach. Only
+   * subscribers still following the live catalog (no recorded grant) can be
+   * affected, so only they are inspected, and the protected count is
+   * reported alongside so the number is explainable rather than merely
+   * smaller.
    */
   async previewLimitImpact(
     platformOwnerId: string,
@@ -427,12 +446,28 @@ export class PlatformPlansService {
     if (!plan) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
     return this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
-      const subscriptions = await tx.tenantSubscription.findMany({
+      const allSubscriptions = await tx.tenantSubscription.findMany({
         where: { planId: plan.id },
-        select: { organizationId: true, organization: { select: { name: true } } },
+        select: {
+          organizationId: true,
+          grantedLimits: true,
+          organization: { select: { name: true } },
+        },
       });
+
+      // A recorded grant means this edit cannot change that customer's
+      // entitlement, so they are counted and then set aside — never
+      // inspected for "impact" they are structurally immune to.
+      const subscriptions = allSubscriptions.filter((s) => s.grantedLimits === null);
+      const protectedSubscriptions = allSubscriptions.length - subscriptions.length;
+
       if (subscriptions.length === 0) {
-        return { affected: [], unmeasurableLimitKeys: this.unmeasurableKeys(proposedLimits) };
+        return {
+          affected: [],
+          unmeasurableLimitKeys: this.unmeasurableKeys(proposedLimits),
+          protectedSubscriptions,
+          catalogFollowingSubscriptions: 0,
+        };
       }
 
       const usageRows = (await tx.tenantUsage.findMany({
@@ -470,6 +505,8 @@ export class PlatformPlansService {
         affected,
         unmeasurableLimitKeys: this.unmeasurableKeys(proposedLimits),
         usageAsOf: oldest ? oldest.toISOString() : undefined,
+        protectedSubscriptions,
+        catalogFollowingSubscriptions: subscriptions.length,
       };
     });
   }

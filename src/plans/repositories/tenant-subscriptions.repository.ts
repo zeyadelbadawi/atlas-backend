@@ -200,6 +200,7 @@ export class TenantSubscriptionsRepository {
     organizationId: string,
     planId: string,
     trialEndsAt: Date,
+    grantedLimits: Prisma.InputJsonValue,
   ): Promise<boolean> {
     const result = await tx.tenantSubscription.updateMany({
       where: {
@@ -207,7 +208,11 @@ export class TenantSubscriptionsRepository {
         trialEndsAt: null,
         status: 'no_plan',
       },
-      data: { planId, status: 'trialing', trialEndsAt },
+      // P61 — a trial IS an entitlement grant, so it records what it
+      // granted. Written in the SAME `updateMany` as `planId`, so the two
+      // are set by one statement and no window exists in which the
+      // subscription names a plan it has no grant for.
+      data: { planId, status: 'trialing', trialEndsAt, grantedLimits },
     });
     return result.count === 1;
   }
@@ -257,6 +262,13 @@ export class TenantSubscriptionsRepository {
       readonly billingCycle: TenantSubscription['billingCycle'];
       readonly currentPeriodStart: Date;
       readonly currentPeriodEnd: Date;
+      /**
+       * P61 — the plan's limits AT PURCHASE, frozen. Required, not
+       * optional: every path that reaches here is granting an entitlement,
+       * and one that forgot to record what it granted would silently leave
+       * the subscription following the catalog again.
+       */
+      readonly grantedLimits: Prisma.InputJsonValue;
     },
   ): Promise<TenantSubscription> {
     try {
@@ -264,6 +276,11 @@ export class TenantSubscriptionsRepository {
         where: { organizationId },
         data: {
           planId: data.planId,
+          // Set in the SAME statement as `planId` — an upgrade, a
+          // downgrade and a first purchase all move both facts together or
+          // neither, so the row can never name one plan while holding
+          // another's grant.
+          grantedLimits: data.grantedLimits,
           status: 'active',
           billingCycle: data.billingCycle,
           currentPeriodStart: data.currentPeriodStart,
@@ -286,6 +303,7 @@ export class TenantSubscriptionsRepository {
         data: {
           organizationId,
           planId: data.planId,
+          grantedLimits: data.grantedLimits,
           status: 'active',
           billingCycle: data.billingCycle,
           currentPeriodStart: data.currentPeriodStart,

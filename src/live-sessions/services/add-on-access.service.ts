@@ -32,6 +32,7 @@
  * screen, but no client answer is ever trusted.
  */
 import { ForbiddenException, Injectable } from '@nestjs/common';
+import { resolveSubscriptionLimits } from '../../plans/utils/granted-limits.util';
 import type { Prisma } from '@prisma/client';
 import { EntitlementService } from '../../plans/services/entitlement.service';
 import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
@@ -126,7 +127,11 @@ export class AddOnAccessService {
       organizationId,
       {
         key: subscription.plan.key,
-        limits: subscription.plan.limits as never,
+        // P61 — resolved through the one rule like every other read. This
+        // path only consults FEATURES (which are deliberately not
+        // snapshotted), but routing limits through the same helper keeps a
+        // single definition of "this subscription's limits" in the codebase.
+        limits: resolveSubscriptionLimits(subscription) as never,
         features: subscription.plan.features as never,
       },
       addOnInputs,

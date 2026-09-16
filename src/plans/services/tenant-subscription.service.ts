@@ -12,6 +12,7 @@
  * run; RLS proves it again, independently.
  */
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { resolveSubscriptionLimits } from '../utils/granted-limits.util';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { TenantSubscriptionsRepository } from '../repositories/tenant-subscriptions.repository';
 import { TenantAddOnsRepository } from '../repositories/tenant-add-ons.repository';
@@ -28,11 +29,7 @@ import { TrialEligibilityService } from './trial-eligibility.service';
 import { TrialPolicyRepository } from '../repositories/trial-policy.repository';
 import { toPlanResponse } from '../dto/plan.contract';
 import type { SubscriptionLifecycleResponse } from '../dto/subscription-lifecycle.contract';
-import type {
-  EntitlementAddOnInput,
-  PlanFeatures,
-  PlanResourceLimits,
-} from '../dto/entitlement.types';
+import type { EntitlementAddOnInput, PlanFeatures } from '../dto/entitlement.types';
 
 @Injectable()
 export class TenantSubscriptionService {
@@ -177,7 +174,11 @@ export class TenantSubscriptionService {
       organizationId,
       {
         key: subscription.plan.key,
-        limits: subscription.plan.limits as unknown as PlanResourceLimits,
+        // P61 — the Usage page must show the SAME number the write gate
+        // enforces. Reading the catalog here while enforcement read the
+        // grant is how a customer ends up being refused at a limit their
+        // own dashboard says they are under.
+        limits: resolveSubscriptionLimits(subscription),
         features: subscription.plan.features as unknown as PlanFeatures,
       },
       addOnInputs,

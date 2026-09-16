@@ -33,6 +33,18 @@ const TRIALABLE_PLAN = {
   status: 'active',
   trialEligible: true,
   trialDurationDays: null,
+  // P61 — a trial grants an entitlement, so the plan's limits are what the
+  // trial records as granted.
+  limits: {
+    academies: 1,
+    students: 25,
+    instructors: 2,
+    staff: 2,
+    courses: 5,
+    generalStorage: 5,
+    videoStorage: 5,
+    recordedSessions: 1,
+  },
 };
 
 const NON_TRIALABLE_PLAN = {
@@ -106,6 +118,10 @@ describe('TrialRedemptionService.startTrial', () => {
       ORG,
       TRIALABLE_PLAN.id,
       expect.any(Date),
+      // P61 — and it records WHAT the trial granted, captured from the plan
+      // as it stood at this moment, so a later catalog edit cannot shrink a
+      // trial the customer is actively evaluating.
+      TRIALABLE_PLAN.limits,
     );
   });
 

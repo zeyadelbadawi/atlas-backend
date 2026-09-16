@@ -216,6 +216,12 @@ export async function seedTenantSubscription(
       | 'cancelled'
       | 'expired';
     trialEndsAt?: Date;
+    /**
+     * P61 — the limits this subscription was GRANTED. Omit to model a
+     * pre-P61 row (no recorded grant → follows the live catalog), which is
+     * the fallback path every existing production row takes.
+     */
+    grantedLimits?: Record<string, number | 'unlimited'>;
   } = {},
 ) {
   return admin.tenantSubscription.create({
@@ -224,6 +230,7 @@ export async function seedTenantSubscription(
       planId,
       status: overrides.status ?? 'trialing',
       trialEndsAt: overrides.trialEndsAt,
+      grantedLimits: overrides.grantedLimits,
     },
   });
 }

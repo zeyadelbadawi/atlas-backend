@@ -21,6 +21,7 @@
  * to `Payment.status === 'succeeded'` afterward.
  */
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { limitsToGrant } from '../../plans/utils/granted-limits.util';
 import { Prisma } from '@prisma/client';
 import type { Checkout, Payment, SubscriptionBillingCycle } from '@prisma/client';
 import { CheckoutsRepository } from '../repositories/checkouts.repository';
@@ -128,6 +129,17 @@ export class PaymentApplicationService {
         checkout.organizationId,
         {
           planId: plan.id,
+          // P61 — freeze what this purchase grants, from the plan row this
+          // method just resolved. The money is already frozen on the
+          // Payment; this is its entitlement counterpart, so a later
+          // catalog edit cannot rewrite what the customer bought.
+          //
+          // An UPGRADE and a DOWNGRADE both land here, and both are
+          // intentional customer decisions: each one re-grants from the
+          // newly chosen plan. There is no grandfathering across a
+          // deliberate plan change — only across catalog edits the
+          // customer did not ask for.
+          grantedLimits: limitsToGrant(plan) as unknown as Prisma.InputJsonValue,
           billingCycle: checkout.billingCycle,
           currentPeriodStart: now,
           currentPeriodEnd: addPeriod(now, checkout.billingCycle),

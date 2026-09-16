@@ -41,6 +41,7 @@
  * error shape invented for Phase 2.
  */
 import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { resolveSubscriptionLimits } from '../utils/granted-limits.util';
 import type { Prisma } from '@prisma/client';
 import { TenantSubscriptionsRepository } from '../repositories/tenant-subscriptions.repository';
 import { TenantAddOnsRepository } from '../repositories/tenant-add-ons.repository';
@@ -54,7 +55,6 @@ import type {
   LimitValue,
   PlanFeatures,
   PlanLimitKey,
-  PlanResourceLimits,
 } from '../dto/entitlement.types';
 import type { TenantUsageCounts } from '../repositories/tenant-usage.repository';
 
@@ -125,9 +125,37 @@ export class EntitlementEnforcementService {
     >,
     additionalAmount = 1,
   ): Promise<void> {
+    // The ACTIVE-ENTITLEMENT half always runs, including for a zero-delta
+    // call: an expired or cancelled subscription may not perform the write
+    // at all, however little it consumes.
     const entitlements = await this.loadActiveEntitlements(tx, organizationId);
+
+    // A CALL THAT CONSUMES NOTHING IS NEVER REFUSED FOR CAPACITY.
+    //
+    // Callers pass 0 to mean "this write occupies no new unit of the
+    // limit" — `EnrollmentsService` does exactly that when the student is
+    // already counted, so a second or third course enrollment costs no
+    // extra seat. That intent used to be expressed only through the
+    // arithmetic below, and the arithmetic quietly lost it: the check is
+    // `used + additional > limit`, so once `used` exceeded `limit` the
+    // `+ 0` stopped mattering and every zero-delta call was refused too.
+    //
+    // `used > limit` is not a state a customer can reach by consuming —
+    // consumption is refused at the boundary. It is reached when the
+    // ceiling MOVES DOWN underneath them: a Platform Owner reduces the
+    // catalog limit (or a granted snapshot is absent and the catalog has
+    // since shrunk). Refusing zero-delta work in that state takes away
+    // something the customer already has rather than declining to sell
+    // them more, which is precisely what this service must never do.
+    //
+    // Returning here also skips a live count that could not change the
+    // answer.
+    if (additionalAmount <= 0) return;
+
     const limit = entitlements.limits[limitKey];
     if (limit === 'unlimited') return;
+
+    await this.lockSubscription(tx, organizationId);
 
     const counts = await this.tenantUsageRecomputeService.computeLiveCounts(
       tx,
@@ -135,6 +163,8 @@ export class EntitlementEnforcementService {
     );
     const used = counts[COUNT_LIMIT_FIELDS[limitKey]];
 
+    // Unchanged for real consumption: still the live count, still inside
+    // the caller's transaction, still strictly greater-than.
     this.assertNotReached(used + additionalAmount, limit, limitKey);
   }
 
@@ -160,6 +190,8 @@ export class EntitlementEnforcementService {
     const limit = entitlements.limits[storageKey];
     if (limit === 'unlimited') return;
 
+    await this.lockSubscription(tx, organizationId);
+
     const mediaType = storageKey === 'videoStorage' ? 'video' : undefined;
     const existing = await tx.mediaAsset.aggregate({
       where: {
@@ -175,6 +207,43 @@ export class EntitlementEnforcementService {
     const projectedGb = bytesToGb(existingBytes + additionalBytes);
 
     this.assertNotReached(projectedGb, limit, storageKey);
+  }
+
+  /**
+   * Serializes this organization's limit consumption.
+   *
+   * WHY THE SAME-TRANSACTION COUNT WAS NOT ENOUGH. Counting and inserting
+   * inside one transaction stops the count from going stale between the two
+   * statements, which is what this service's header describes. It does NOT
+   * stop two CONCURRENT transactions from both counting the same "2 of 2
+   * used", both concluding there is room for one more, and both inserting —
+   * PostgreSQL's default READ COMMITTED gives each its own snapshot, and
+   * neither sees the other's uncommitted row. A real-database concurrency
+   * test caught exactly that: four simultaneous enrollments against a
+   * 2-seat allowance produced 3 students.
+   *
+   * Locking the organization's `tenant_subscriptions` row makes the second
+   * transaction WAIT here instead of racing, so the count it then performs
+   * already includes the first one's committed insert.
+   *
+   * This is not a new mechanism: it is the identical serialization point
+   * `RecordingQuotaService.consumeForSession` already takes, on the same
+   * row, for the same check-then-insert shape. Every caller locks the same
+   * single row per organization, so there is no lock-ordering deadlock to
+   * reason about. `$queryRaw` because Prisma has no first-class `FOR
+   * UPDATE`; parameterized, never interpolated. No `::uuid` cast — Prisma
+   * maps `String` ids to TEXT here, and casting makes Postgres reject the
+   * comparison outright (see that service's own note on the same trap).
+   */
+  private async lockSubscription(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`
+      SELECT 1 FROM "tenant_subscriptions"
+      WHERE "organization_id" = ${organizationId}
+      FOR UPDATE
+    `;
   }
 
   private assertNotReached(
@@ -244,7 +313,11 @@ export class EntitlementEnforcementService {
       organizationId,
       {
         key: subscription.plan.key,
-        limits: subscription.plan.limits as unknown as PlanResourceLimits,
+        // P61 — the GRANT, not the catalog. A subscription that recorded
+        // what it was sold keeps it; one that never recorded a grant
+        // (every row predating P61) falls back to the catalog, exactly as
+        // it behaved before.
+        limits: resolveSubscriptionLimits(subscription),
         features: subscription.plan.features as unknown as PlanFeatures,
       },
       addOnInputs,

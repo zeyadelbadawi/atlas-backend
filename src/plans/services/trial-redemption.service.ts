@@ -22,6 +22,7 @@
  * without seeing this comment.
  */
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { limitsToGrant } from '../utils/granted-limits.util';
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { TrialPolicyRepository } from '../repositories/trial-policy.repository';
@@ -165,6 +166,11 @@ export class TrialRedemptionService {
           organizationId,
           plan.id,
           trialEndsAt,
+          // P61 — a trial grants a real entitlement, so it records what it
+          // granted. Without this, editing the catalog mid-trial would
+          // shrink a trial the customer is actively evaluating, which is
+          // the worst possible moment to move the goalposts.
+          limitsToGrant(plan) as unknown as Prisma.InputJsonValue,
         );
 
         if (!started) {

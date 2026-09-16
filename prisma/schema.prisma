@@ -733,6 +733,23 @@ model TenantSubscription {
   organization       Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   planId             String                    @map("plan_id")
   plan               Plan                      @relation(fields: [planId], references: [id])
+  /// P61 — the limits this subscription was actually GRANTED, captured at
+  /// the moment the entitlement was granted (paid activation or trial
+  /// start). A `PlanResourceLimits` object, the same shape and keys as
+  /// `Plan.limits`.
+  ///
+  /// `planId` says which plan; this says what that plan gave. They are
+  /// different facts, and only separating them stops a catalog edit from
+  /// retroactively rewriting a purchase — the money is already frozen on
+  /// the Payment row, and this is its entitlement counterpart.
+  ///
+  /// NULL means "no grant recorded — follow the live catalog", which is
+  /// exactly how every row behaved before P61. Deliberately not backfilled:
+  /// nothing in this database records what the catalog said when an older
+  /// subscription was bought, and a guessed value would be a fabricated
+  /// commercial fact. Resolved through `resolveSubscriptionLimits`, never
+  /// read raw.
+  grantedLimits      Json?                     @map("granted_limits")
   status             TenantSubscriptionStatus  @default(trialing)
   /// Present only while `status` is `'trialing'` — not schema-enforced
   /// (mirrors the frontend type's own comment), validated at the service

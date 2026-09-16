@@ -1,0 +1,41 @@
+-- P61 — what the customer actually bought.
+--
+-- THE PROBLEM THIS CLOSES. `tenant_subscriptions` recorded WHICH plan a
+-- customer is on and never WHAT THAT PURCHASE GRANTED, so entitlement was
+-- resolved by joining live to `plans`. A Platform Owner editing the catalog
+-- therefore rewrote, retroactively and silently, the entitlement of every
+-- existing subscriber: a customer who bought 50 students had 20 the instant
+-- the catalog said 20.
+--
+-- The asymmetry that made this obviously wrong: the MONEY was already
+-- snapshotted. `Payment.amount_minor_units` is frozen on the payment row and
+-- `checkouts.snapshot` freezes the advertised price, precisely so a later
+-- catalog edit cannot change what someone already paid. Only the thing they
+-- paid FOR was left floating.
+--
+-- NULLABLE, AND DELIBERATELY NOT BACKFILLED.
+--
+-- Existing rows have no recorded grant. There is no evidence anywhere in
+-- this database of what the catalog said when each of them was purchased —
+-- `plans` holds only current values, and no historical limit is reconstructible
+-- from `checkouts.snapshot` (it freezes displayName and price, never limits).
+-- Inventing a value would mean fabricating a commercial fact.
+--
+-- So NULL keeps its honest meaning: "no grant recorded — follow the catalog",
+-- which is byte-for-byte the behaviour those rows have today. Resolution is
+-- `granted_limits ?? plan.limits` (see `resolveSubscriptionLimits`). Every
+-- subscription created or activated from now on records its grant, so the
+-- population is correct going forward and never guessed backwards.
+--
+-- JSONB, matching `plans.limits`'s own storage of the identical
+-- `PlanResourceLimits` shape — the same keys, validated by the same
+-- `assertValidLimits`. Not a new table: there is exactly one grant per
+-- subscription and `tenant_subscriptions` is already keyed by
+-- `organization_id`, so a second table would add a join and a way for the
+-- two to disagree without adding a single fact.
+--
+-- REVERSIBLE. `DROP COLUMN granted_limits` restores the previous behaviour
+-- exactly, because the fallback means a row with no grant already behaves as
+-- if the column were absent.
+ALTER TABLE "tenant_subscriptions"
+  ADD COLUMN IF NOT EXISTS "granted_limits" JSONB;
