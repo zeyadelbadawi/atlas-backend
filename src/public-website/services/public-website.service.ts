@@ -44,6 +44,7 @@ import {
 } from '../utils/hostname-normalization.util';
 import type { HostnameResolutionResponse } from '../dto/hostname-resolution.contract';
 import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
+import { resolveCanonicalHost } from '../../domain/utils/canonical-host.util';
 // Phase 6 additions — see this file's own header comment.
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
@@ -118,11 +119,18 @@ export class PublicWebsiteService {
     );
     if (!resolved) return null;
 
+    const canonical = resolveCanonicalHost({
+      connectedCustomHostname: resolved.customHostname,
+      subdomainFullHost: null,
+      subdomainLabel: resolved.subdomain,
+      baseDomain: this.baseDomain,
+    });
     const response: HostnameResolutionResponse = {
       academyId: resolved.academyId,
       academyName: resolved.academyName,
       academySlug: resolved.academySlug,
       academyLogo: resolved.academyLogoUrl ?? undefined,
+      canonicalHost: canonical?.host,
     };
     await this.cacheService.setHostnameResolution(normalized, response);
     return response;

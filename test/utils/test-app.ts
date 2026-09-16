@@ -22,7 +22,7 @@
 import { ConfigService } from '@nestjs/config';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { Test } from '@nestjs/testing';
+import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RedisService } from '../../src/redis/redis.service';
@@ -74,8 +74,23 @@ async function flushTestQueues(redisService: RedisService): Promise<void> {
   } while (cursor !== '0');
 }
 
-export async function createTestApp(): Promise<TestApp> {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+/**
+ * P63 — an optional hook to swap ONE provider-shaped dependency for a test
+ * double (the real `CloudflareApiProvider` has no credentials in test and
+ * would only ever answer "not connected"). Everything else stays real:
+ * same `AppModule`, same Postgres, same RLS, same guards.
+ */
+export interface CreateTestAppOptions {
+  readonly overrides?: (builder: TestingModuleBuilder) => TestingModuleBuilder;
+}
+
+export async function createTestApp(
+  options: CreateTestAppOptions = {},
+): Promise<TestApp> {
+  const builder = Test.createTestingModule({ imports: [AppModule] });
+  const moduleRef = await (
+    options.overrides ? options.overrides(builder) : builder
+  ).compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>();
 
   const mediaConfig = moduleRef

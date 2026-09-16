@@ -26,6 +26,10 @@ export interface ResolvedPublicHostname {
   readonly academyName: string;
   readonly academySlug: string;
   readonly academyLogoUrl: string | null;
+  /** P63 — the connected custom hostname, when one exists. */
+  readonly customHostname: string | null;
+  /** P63 — the assigned subdomain label, when one exists. */
+  readonly subdomain: string | null;
 }
 
 interface ResolvePublicHostnameRow {
@@ -34,6 +38,8 @@ interface ResolvePublicHostnameRow {
   readonly academy_name: string;
   readonly academy_slug: string;
   readonly academy_logo_url: string | null;
+  readonly custom_hostname: string | null;
+  readonly subdomain: string | null;
 }
 
 @Injectable()
@@ -56,6 +62,8 @@ export class PublicHostnameResolutionRepository {
       academyName: row.academy_name,
       academySlug: row.academy_slug,
       academyLogoUrl: row.academy_logo_url,
+      customHostname: row.custom_hostname,
+      subdomain: row.subdomain,
     };
   }
 

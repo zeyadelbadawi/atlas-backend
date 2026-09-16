@@ -2331,9 +2331,31 @@ model DomainConnection {
   cdnStatus           CdnStatus                   @default(not_configured) @map("cdn_status")
   cdnProvider         InfrastructureProviderName? @map("cdn_provider")
   connectedAt         DateTime?                   @map("connected_at")
+  /// P63 — the provider's own id for this custom hostname (Cloudflare
+  /// Custom Hostname id). Lets re-check/disconnect address the exact
+  /// resource instead of searching by hostname; `null` when the provider
+  /// never accepted the hostname (e.g. no credentials configured).
+  providerHostnameId  String?                     @map("provider_hostname_id")
+  /// P63 — when Atlas last asked the provider about this hostname (manual
+  /// "check now", operator check, or the verification sweep). `null` until
+  /// the first check. What the customer and the Platform Owner see as
+  /// "last checked".
+  lastCheckedAt       DateTime?                   @map("last_checked_at")
+  /// P63 — a stable, non-sensitive error code for the latest failed check
+  /// (`provider_unavailable`, `provider_hostname_missing`, …). Never a raw
+  /// provider message, never a credential. `null` after a successful check.
+  lastCheckError      String?                     @map("last_check_error")
+  /// P63 — result of Atlas's own outbound HTTPS probe of the hostname
+  /// (`https://{hostname}/`): `true` reachable with a valid certificate,
+  /// `false` not reachable, `null` never probed. Real telemetry, not a
+  /// derived guess.
+  httpsReachable      Boolean?                    @map("https_reachable")
+  httpsCheckedAt      DateTime?                   @map("https_checked_at")
   createdAt           DateTime                    @default(now()) @map("created_at")
   updatedAt           DateTime                    @updatedAt @map("updated_at")
 
+  @@index([status])
+  @@index([lastCheckedAt])
   @@map("domain_connections")
 }
 

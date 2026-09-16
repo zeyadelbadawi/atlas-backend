@@ -9,7 +9,9 @@
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { ConfigService } from '@nestjs/config';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
+import type { PlatformDomainRuntimeConfig } from '../src/config/configuration';
 import {
   createAdminPrisma,
   seedAcademy,
@@ -252,20 +254,39 @@ describe('Domain management (e2e)', () => {
         .expect(403);
     });
 
-    it('a platform owner can update the platform domain configuration', async () => {
+    it('a platform owner can update the platform domain configuration — unless the deployment owns it (P63: then 409 and the environment value stays in force)', async () => {
       const owner = await signUpAndSignIn(app, 'pdom-owner');
       await admin.user.update({
         where: { id: owner.userId },
         data: { isPlatformOwner: true },
       });
+      const envBaseDomain = app
+        .get(ConfigService)
+        .get<PlatformDomainRuntimeConfig>('platformDomain')
+        ?.baseDomain?.toLowerCase();
 
       const response = await request(app.getHttpServer())
         .patch('/platform-domain')
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({ baseDomain: `atlas-test-${Date.now()}.dev` })
-        .expect(200);
-      expect(response.body.configured).toBe(true);
-      expect(response.body.baseDomain).toEqual(expect.any(String));
+        .expect(envBaseDomain ? 409 : 200);
+      if (envBaseDomain) {
+        expect(response.body.error.messageKey).toBe(
+          'errors.domain.baseDomainManagedByEnvironment',
+        );
+        const current = await request(app.getHttpServer())
+          .get('/platform-domain')
+          .set('Authorization', `Bearer ${owner.accessToken}`)
+          .expect(200);
+        expect(current.body).toMatchObject({
+          baseDomain: envBaseDomain,
+          source: 'environment',
+        });
+      } else {
+        expect(response.body.configured).toBe(true);
+        expect(response.body.baseDomain).toEqual(expect.any(String));
+        expect(response.body.source).toBe('database');
+      }
     });
   });
 

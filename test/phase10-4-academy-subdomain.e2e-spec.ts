@@ -188,8 +188,12 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
     const resolved = await resolve(slug).expect(200);
 
     // Exactly the fields the public runtime needs to bootstrap a site.
-    expect(Object.keys(resolved.body).sort()).toEqual(
-      ['academyId', 'academyName', 'academySlug'].sort(),
+    // P63 added `canonicalHost` — the public address the site advertises,
+    // present only when a base domain (or connected custom domain) exists.
+    const allowed = ['academyId', 'academyName', 'academySlug', 'canonicalHost'];
+    expect(Object.keys(resolved.body).every((key) => allowed.includes(key))).toBe(true);
+    expect(Object.keys(resolved.body)).toEqual(
+      expect.arrayContaining(['academyId', 'academyName', 'academySlug']),
     );
     const serialised = JSON.stringify(resolved.body);
     expect(serialised).not.toContain('organizationId');

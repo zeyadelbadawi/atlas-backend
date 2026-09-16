@@ -12,6 +12,9 @@
 export const HOSTNAME_REGEX =
   /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i;
 
+/** P63 — a hostname must not be an IPv4 literal (the hostname regex alone admits dotted quads). */
+export const NOT_IP_LITERAL_REGEX = /^(?!(\d{1,3}\.){3}\d{1,3}$)/;
+
 export const MAX_HOSTNAME_LENGTH = 253;
 export const MIN_HOSTNAME_LENGTH = 4;
 
@@ -55,3 +58,28 @@ export const CDN_STATUS_VALUES = [
 
 /** Matches `InfrastructureProviderName` (`domain.types.ts`) exactly. */
 export const INFRASTRUCTURE_PROVIDER_NAMES = ['cloudflare'] as const;
+
+/**
+ * P63 — stable, non-sensitive codes for `domain_connections.last_check_error`.
+ * The frontend maps each to copy in both languages; a raw provider
+ * message is never stored or shown.
+ */
+export const DOMAIN_CHECK_ERROR_CODES = [
+  /** No valid provider credentials — Atlas could not ask anyone. */
+  'provider_unavailable',
+  /** The provider holds no record of this hostname (never accepted, or since deleted). */
+  'provider_hostname_missing',
+  /** The provider request itself failed (network, 5xx, timeout). */
+  'provider_error',
+  /** The provider reports the hostname's DNS does not point at Atlas yet. */
+  'dns_not_pointing',
+] as const;
+export type DomainCheckErrorCode = (typeof DOMAIN_CHECK_ERROR_CODES)[number];
+
+/** Audit actions written by the domain capability (P63). */
+export const DOMAIN_AUDIT_ACTIONS = {
+  customDomainAdded: 'domain.custom_domain_added',
+  customDomainRemoved: 'domain.custom_domain_removed',
+  verificationChecked: 'domain.verification_checked',
+  platformCheck: 'domain.platform_check',
+} as const;
