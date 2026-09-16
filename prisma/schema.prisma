@@ -120,6 +120,9 @@ model User {
   quizAttempts                                  QuizAttempt[]
   assignmentSubmissions                         AssignmentSubmission[]                   @relation("SubmissionStudent")
   gradedSubmissions                             AssignmentSubmission[]                   @relation("SubmissionGrader")
+  /// P60 — courses this user created. `SetNull` on the course side, so
+  /// deleting the user leaves the courses standing with no recorded creator.
+  createdCourses                                Course[]                                 @relation("CourseCreator")
   announcements                                 Announcement[]
   blogPosts                                     BlogPost[]
   forumThreads                                  ForumThread[]
@@ -661,6 +664,10 @@ model Plan {
   /// exists so a future plan can offer a different-length trial without
   /// another migration or a second policy mechanism.
   trialDurationDays    Int?       @map("trial_duration_days")
+  /// P57 — optimistic-concurrency token for Platform-Owner plan edits.
+  /// Same column, same 409 `stale_resource_version` contract `website_pages`
+  /// established and `add_ons` adopted in P51 — never a second mechanism.
+  version              Int        @default(0)
   createdAt            DateTime   @default(now()) @map("created_at")
   updatedAt            DateTime   @updatedAt @map("updated_at")
 
@@ -1090,6 +1097,16 @@ model Course {
   academy                 Academy           @relation(fields: [academyId], references: [id], onDelete: Cascade)
   categoryId              String?           @map("category_id")
   category                CourseCategory?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  /// P60 — who created this course.
+  ///
+  /// A property of the course, so it lives on the course. Nullable because
+  /// it genuinely is unknown for rows created before this existed: the P60
+  /// backfill fills it ONLY where a `course.created` audit entry proves the
+  /// actor, and leaves the rest NULL rather than guessing at the academy
+  /// owner. `SetNull` matches every other "who did this" relation here —
+  /// deleting a user never deletes their academy's courses.
+  createdById             String?           @map("created_by_id")
+  createdBy               User?             @relation("CourseCreator", fields: [createdById], references: [id], onDelete: SetNull)
   title                   String
   slug                    String
   description             String?
@@ -1120,6 +1137,10 @@ model Course {
   @@unique([academyId, slug])
   @@index([academyId, status, visibility])
   @@index([status, visibility])
+  @@index([createdById])
+  /// P60 — the platform-wide course list sorts by recency across every
+  /// academy; neither existing index serves that.
+  @@index([createdAt(sort: Desc)])
   @@map("courses")
 }
 
@@ -3470,12 +3491,24 @@ model AuditLogEntry {
   /// bag (`Record<string, string | number | boolean | null>`), never a
   /// nested object, never a token/credential/password.
   context        Json?
+  /// P58 — structured before/after, `{field: {from, to}}`. Separate from
+  /// `context` (a flat scalar bag) so the writer can REDACT one known
+  /// shape rather than inspecting an arbitrary object. Null for every row
+  /// written before P58 and for any mutation with no recorded diff —
+  /// never backfilled, because inventing history is worse than admitting
+  /// it was not captured.
+  changes        Json?
+  /// P58 — non-identifying request metadata (request id, method, route,
+  /// outcome). Deliberately excludes anything credential-shaped.
+  requestContext Json?         @map("request_context")
   occurredAt     DateTime      @default(now()) @map("occurred_at")
 
   @@index([occurredAt(sort: Desc)])
   @@index([organizationId, occurredAt(sort: Desc)])
   @@index([academyId, occurredAt(sort: Desc)])
   @@index([targetType, targetId])
+  @@index([action, occurredAt(sort: Desc)])
+  @@index([actorUserId, occurredAt(sort: Desc)])
   @@map("audit_log_entries")
 }
 

@@ -11,7 +11,7 @@ import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { AuditLogService } from '../services/audit-log.service';
-import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
+import { ListAuditLogQueryDto } from '../dto/list-audit-log-query.dto';
 import type {
   AuditLogEntryDetailResponse,
   AuditLogEntrySummaryResponse,
@@ -26,7 +26,7 @@ export class AuditLogController {
   @Get()
   async list(
     @CurrentAuthContext() auth: AuthContext,
-    @Query() query: CollectionQueryDto,
+    @Query() query: ListAuditLogQueryDto,
   ): Promise<PaginatedResult<AuditLogEntrySummaryResponse>> {
     return this.auditLogService.listEntries(auth.userId, query);
   }

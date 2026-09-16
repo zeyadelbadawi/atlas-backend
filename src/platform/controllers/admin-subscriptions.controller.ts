@@ -1,5 +1,16 @@
 /**
- * AdminSubscriptionsController — `GET /platform/subscriptions/overview`.
+ * AdminSubscriptionsController — `GET /platform-subscriptions/overview`.
+ *
+ * ONE HYPHENATED SEGMENT, NOT `platform/subscriptions`. The resource was
+ * originally mounted with a slash, which made the page permanently
+ * unreachable: `resourcePath()` (frontend `services/api/request.utils.ts`)
+ * runs `encodeURIComponent` over every segment it is given, so a resource
+ * containing `/` became `platform%2Fsubscriptions` and every request 404'd.
+ * This was the only service of 49 whose resource carried a slash. Every
+ * sibling Platform-Owner surface already uses a single hyphenated segment
+ * (`platform-add-ons`, `platform-zoom`, `platform-academies`,
+ * `platform-users`, `platform-metrics`), so this now matches them rather
+ * than depending on the path builder tolerating a separator.
  *
  * AUTHORIZATION IS THE POINT OF THIS FILE. `PlatformOwnerGuard` checks
  * the acting user's real `is_platform_owner` column, re-read from the
@@ -25,7 +36,7 @@ import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { AdminSubscriptionsService } from '../services/admin-subscriptions.service';
 import type { AdminSubscriptionOverview } from '../dto/admin-subscription.contract';
 
-@Controller('platform/subscriptions')
+@Controller('platform-subscriptions')
 @UseGuards(JwtAuthGuard, PlatformOwnerGuard)
 export class AdminSubscriptionsController {
   constructor(private readonly adminSubscriptionsService: AdminSubscriptionsService) {}

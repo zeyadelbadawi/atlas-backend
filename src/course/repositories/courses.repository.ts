@@ -8,6 +8,7 @@ import type {
   Course,
   CourseCategory,
   CourseInstructor,
+  EnrollmentStatus,
   Prisma,
   User,
 } from '@prisma/client';
@@ -17,6 +18,45 @@ export type CourseWithRelations = Course & {
   category?: CourseCategory | null;
   instructors?: (CourseInstructor & { user: Pick<User, 'id' | 'name' | 'avatarUrl'> })[];
 };
+
+/**
+ * P60 — one row of the Platform Owner's cross-tenant course list.
+ *
+ * Carries the academy AND its organization because the whole point of the
+ * global list is that two courses in it may belong to different tenants;
+ * a row with only `academyId` would force the reader to look up which
+ * customer it belongs to. `createdBy` is nullable all the way through —
+ * see the `Course.createdBy` doc comment: unknown is a real, honest value
+ * here, not a loading state.
+ */
+export type PlatformCourseRow = Course & {
+  academy: {
+    id: string;
+    name: string;
+    organizationId: string;
+    organization: { id: string; name: string };
+  };
+  category: CourseCategory | null;
+  createdBy: Pick<User, 'id' | 'name' | 'email'> | null;
+  _count: { enrollments: number };
+};
+
+export type PlatformCourseDetailRow = PlatformCourseRow & {
+  instructors: (CourseInstructor & { user: Pick<User, 'id' | 'name' | 'avatarUrl'> })[];
+};
+
+export interface PlatformCourseListFilter {
+  readonly search?: string;
+  readonly status?: Course['status'];
+  readonly visibility?: Course['visibility'];
+  readonly pricingType?: Course['pricingType'];
+  readonly academyId?: string;
+  readonly organizationId?: string;
+  readonly sortBy?: 'title' | 'createdAt' | 'updatedAt' | 'publishedAt';
+  readonly sortDirection?: 'asc' | 'desc';
+  readonly skip: number;
+  readonly take: number;
+}
 
 export interface CourseListFilter {
   readonly search?: string;
@@ -34,6 +74,40 @@ export interface CourseListFilter {
 
 const INSTRUCTOR_INCLUDE = {
   include: { user: { select: { id: true, name: true, avatarUrl: true } } },
+} as const;
+
+/**
+ * P60 — the `EnrollmentStatus` values that mean a real student is taking
+ * (or has taken) the course. `available`/`pending`/`unavailable` are
+ * eligibility states, not participation.
+ */
+const ENROLLED_STATUSES: EnrollmentStatus[] = ['enrolled', 'completed'];
+
+/**
+ * P60 — what every platform-side course read pulls alongside the row.
+ * Defined once so the list and the detail can never drift into showing
+ * different owning-academy or creator information for the same course.
+ */
+const PLATFORM_COURSE_INCLUDE = {
+  academy: {
+    select: {
+      id: true,
+      name: true,
+      organizationId: true,
+      organization: { select: { id: true, name: true } },
+    },
+  },
+  category: true,
+  // Only the three fields the console renders. Never the whole `User` —
+  // that row carries the password hash and every auth field with it.
+  createdBy: { select: { id: true, name: true, email: true } },
+  // FILTERED deliberately. `EnrollmentStatus` also carries `available`,
+  // `pending` and `unavailable` — catalogue//eligibility states, not people
+  // taking the course. An unfiltered count would put a number under
+  // "Enrolled students" that no academy owner would recognise.
+  _count: {
+    select: { enrollments: { where: { status: { in: ENROLLED_STATUSES } } } },
+  },
 } as const;
 
 @Injectable()
@@ -114,6 +188,112 @@ export class CoursesRepository {
     ]);
 
     return { items, totalItems };
+  }
+
+  /**
+   * P60 — the Platform Owner's cross-tenant course list.
+   *
+   * NO `academyId` in the base `where`, which is the entire difference from
+   * `findManyForAcademy` above. Cross-tenant visibility comes from
+   * `courses_platform_select` (P15) and nothing else: call this ONLY inside
+   * `TenancyContextService.runInUserContext(platformOwnerId)`, where no
+   * `app.current_organization_id` is set, so the tenant policy cannot match
+   * and a non-owner sees zero rows even if they somehow reached this code.
+   * The guard on the controller and this policy have to agree independently.
+   *
+   * `search` spans title, slug, academy name and organization name, because
+   * an operator looking at a global list is as likely to be searching for
+   * "which courses does Acme have" as for a course by name.
+   */
+  async findManyAnyAcademy(
+    tx: Prisma.TransactionClient,
+    filter: PlatformCourseListFilter,
+  ): Promise<{ items: PlatformCourseRow[]; totalItems: number }> {
+    const search = filter.search?.trim();
+    const where: Prisma.CourseWhereInput = {
+      ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.visibility ? { visibility: filter.visibility } : {}),
+      ...(filter.pricingType ? { pricingType: filter.pricingType } : {}),
+      ...(filter.academyId ? { academyId: filter.academyId } : {}),
+      ...(filter.organizationId
+        ? { academy: { organizationId: filter.organizationId } }
+        : {}),
+      ...(search
+        ? {
+            OR: [
+              { title: { contains: search, mode: 'insensitive' as const } },
+              { slug: { contains: search, mode: 'insensitive' as const } },
+              {
+                academy: {
+                  is: { name: { contains: search, mode: 'insensitive' as const } },
+                },
+              },
+              {
+                academy: {
+                  is: {
+                    organization: {
+                      is: { name: { contains: search, mode: 'insensitive' as const } },
+                    },
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, totalItems] = await Promise.all([
+      tx.course.findMany({
+        where,
+        include: PLATFORM_COURSE_INCLUDE,
+        orderBy: { [filter.sortBy ?? 'createdAt']: filter.sortDirection ?? 'desc' },
+        skip: filter.skip,
+        take: filter.take,
+      }),
+      tx.course.count({ where }),
+    ]);
+
+    return { items, totalItems };
+  }
+
+  /** P60 — one course, from any tenant. Same RLS contract as `findManyAnyAcademy`. */
+  findByIdAnyAcademy(
+    tx: Prisma.TransactionClient,
+    courseId: string,
+  ): Promise<PlatformCourseDetailRow | null> {
+    return tx.course.findUnique({
+      where: { id: courseId },
+      include: { ...PLATFORM_COURSE_INCLUDE, instructors: INSTRUCTOR_INCLUDE },
+    }) as Promise<PlatformCourseDetailRow | null>;
+  }
+
+  /**
+   * P60 — enrollment outcomes for one course, as ONE grouped query.
+   *
+   * Returns the raw per-status counts rather than a pre-baked
+   * "enrolled/completed" pair so the caller decides what to name them —
+   * `EnrollmentStatus` is the existing vocabulary and this deliberately
+   * does not invent a second one on top of it.
+   */
+  async countEnrollmentsByStatus(
+    tx: Prisma.TransactionClient,
+    courseId: string,
+  ): Promise<Record<string, number>> {
+    const rows = await tx.enrollment.groupBy({
+      by: ['status'],
+      where: { courseId },
+      _count: { _all: true },
+    });
+    return Object.fromEntries(rows.map((row) => [row.status, row._count._all]));
+  }
+
+  /**
+   * P60 — paid access for one course, counted from `course_orders` (P13),
+   * the system that already owns "who paid for this course". Only `paid`
+   * orders count; a pending or failed checkout is not access.
+   */
+  countPaidOrders(tx: Prisma.TransactionClient, courseId: string): Promise<number> {
+    return tx.courseOrder.count({ where: { courseId, status: 'paid' } });
   }
 
   create(tx: Prisma.TransactionClient, data: Prisma.CourseCreateInput): Promise<Course> {

@@ -118,7 +118,10 @@ describe('Phase 10.2 trial flow, cancellation & admin (e2e) — P102-001..026', 
     const subscription = await subscriptionOf(org.body.id);
     expect(subscription).toBeTruthy();
     expect(subscription?.trialEndsAt).toBeNull();
-    expect(subscription?.status).toBe('expired');
+    // `no_plan`, not `expired` — commit 95683a7 deliberately separated
+    // "never had a plan" from "had one and it lapsed", because telling a
+    // brand-new organization its subscription had EXPIRED was the bug.
+    expect(subscription?.status).toBe('no_plan');
     expect(await hasUsableTrial(org.body.id)).toBe(false);
 
     // And nothing was consumed from the durable ledger.
@@ -595,13 +598,13 @@ describe('Phase 10.2 trial flow, cancellation & admin (e2e) — P102-001..026', 
 
     // An ordinary Organization Owner is NOT a platform admin.
     await request(app.getHttpServer())
-      .get('/platform/subscriptions/overview')
+      .get('/platform-subscriptions/overview')
       .set('Authorization', `Bearer ${token}`)
       .expect(403);
 
     // Unauthenticated is refused too.
     await request(app.getHttpServer())
-      .get('/platform/subscriptions/overview')
+      .get('/platform-subscriptions/overview')
       .expect(401);
 
     // A real platform owner sees real aggregates.
@@ -620,7 +623,7 @@ describe('Phase 10.2 trial flow, cancellation & admin (e2e) — P102-001..026', 
       .expect(200);
 
     const overview = await request(app.getHttpServer())
-      .get('/platform/subscriptions/overview')
+      .get('/platform-subscriptions/overview')
       .set('Authorization', `Bearer ${fresh.body.accessToken}`)
       .expect(200);
 

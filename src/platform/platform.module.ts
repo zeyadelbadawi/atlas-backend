@@ -39,6 +39,9 @@ import { SupportCasesController } from './controllers/support-cases.controller';
 import { TenantSupportCasesController } from './controllers/tenant-support-cases.controller';
 import { PlatformSettingsController } from './controllers/platform-settings.controller';
 import { PlatformAddOnsController } from './controllers/platform-add-ons.controller';
+import { PlatformCoursesController } from './controllers/platform-courses.controller';
+import { PlatformCoursesService } from './services/platform-courses.service';
+import { PlatformPlansController } from './controllers/platform-plans.controller';
 import { OrganizationsAccessGuard } from './guards/organizations-access.guard';
 import { PlatformOrganizationsService } from './services/platform-organizations.service';
 import { PlatformAcademiesService } from './services/platform-academies.service';
@@ -47,6 +50,8 @@ import { AuditLogService } from './services/audit-log.service';
 import { SupportCasesService } from './services/support-cases.service';
 import { PlatformSettingsService } from './services/platform-settings.service';
 import { PlatformAddOnsService } from './services/platform-add-ons.service';
+import { PlatformPlansService } from './services/platform-plans.service';
+import { PlanHistoryService } from './services/plan-history.service';
 import { PlatformUsersRepository } from './repositories/platform-users.repository';
 import { SupportCasesRepository } from './repositories/support-cases.repository';
 import { SupportCaseMessagesRepository } from './repositories/support-case-messages.repository';
@@ -80,6 +85,8 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     TenantSupportCasesController,
     PlatformSettingsController,
     PlatformAddOnsController,
+    PlatformPlansController,
+    PlatformCoursesController,
   ],
   providers: [
     AdminSubscriptionsService,
@@ -92,6 +99,9 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     SupportCasesService,
     PlatformSettingsService,
     PlatformAddOnsService,
+    PlatformPlansService,
+    PlatformCoursesService,
+    PlanHistoryService,
     PlatformUsersRepository,
     SupportCasesRepository,
     SupportCaseMessagesRepository,

@@ -148,6 +148,11 @@ export class CoursesService {
 
         const created = await this.coursesRepository.create(tx, {
           academy: { connect: { id: academyId } },
+          // P60 — record the creator at the moment of creation. Previously
+          // this was only recoverable from the audit entry written a few
+          // lines below, which made "who built this course" answerable for
+          // audited rows and unanswerable for the rest.
+          createdBy: { connect: { id: userId } },
           category: payload.categoryId
             ? { connect: { id: payload.categoryId } }
             : undefined,

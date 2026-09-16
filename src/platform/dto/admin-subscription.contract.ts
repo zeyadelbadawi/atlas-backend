@@ -57,7 +57,10 @@ export interface AdminSubscriptionOverview {
     readonly recent: readonly AdminCancellationRow[];
   };
 
+  /** Top plans by subscription count — bounded, see `PLAN_DISTRIBUTION_LIMIT`. */
   readonly plans: readonly AdminPlanDistributionRow[];
+  /** How many plans carry a subscription in total, including any not listed above. */
+  readonly totalPlansWithSubscriptions: number;
 
   /**
    * Atlas does not track subscription revenue: plan prices are catalog

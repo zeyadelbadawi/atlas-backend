@@ -84,6 +84,12 @@ export interface PlanResponse {
   readonly trialEligible: boolean;
   /** Days this plan's trial runs, resolved against the platform default. Absent when the plan is not trialable. */
   readonly trialDurationDays?: number;
+  /**
+   * P57 — optimistic-concurrency token. Exposed so the Platform-Owner plan
+   * editor can send it back as `expectedVersion`; a customer-facing client
+   * simply ignores it, exactly as it ignores `add_ons.version` today.
+   */
+  readonly version: number;
 }
 
 export function toPlanResponse(
@@ -113,6 +119,7 @@ export function toPlanResponse(
     features: plan.features as unknown as PlanFeatures,
     pricing: (plan.pricing as PlanPricingMetadataResponse | null) ?? undefined,
     trialEligible: plan.trialEligible,
+    version: plan.version,
     ...(trialDurationDays === undefined ? {} : { trialDurationDays }),
   };
 }

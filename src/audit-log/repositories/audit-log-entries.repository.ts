@@ -17,6 +17,10 @@ import type { AuditLogEntryWithRelations } from '../dto/audit-log.contract';
 const WITH_RELATIONS = {
   actor: { select: { id: true, name: true, email: true } },
   organization: { select: { id: true, name: true } },
+  // P58 — the Academy relation. `academy_id` was already stored on every
+  // Academy-scoped entry; without this include the response could only ever
+  // carry the raw id, never a name an operator can read.
+  academy: { select: { id: true, name: true } },
 } as const;
 
 export interface AuditLogEntryListFilter {
@@ -24,6 +28,29 @@ export interface AuditLogEntryListFilter {
   readonly sortDirection?: 'asc' | 'desc';
   readonly skip: number;
   readonly take: number;
+  /*
+    P58 — typed filters.
+
+    Every one of these is served by an index that already exists or was
+    added in the P58 migration: `action` and `actorUserId` each have an
+    `(column, occurred_at DESC)` index, `organizationId`/`academyId` had
+    theirs since Phase 8, `targetType` is covered by
+    `(target_type, target_id)`, and the date range walks
+    `occurred_at DESC`. None of these is a sequential scan.
+
+    Before this, the audit log accepted only the generic
+    `CollectionQueryDto` — page/pageSize/sortBy/sortDirection/search — so
+    "show me every plan pricing change" or "everything this operator did"
+    could not be asked at all, despite the data and the indexes being
+    present.
+  */
+  readonly action?: string;
+  readonly actorUserId?: string;
+  readonly targetType?: string;
+  readonly organizationId?: string;
+  readonly academyId?: string;
+  readonly occurredFrom?: Date;
+  readonly occurredTo?: Date;
 }
 
 @Injectable()
@@ -74,10 +101,20 @@ export class AuditLogEntriesRepository {
       data.context === undefined || data.context === null
         ? null
         : JSON.stringify(data.context);
+    // P58 — structured before/after and request metadata. Same raw-INSERT
+    // treatment as `context` for the same RLS-on-RETURNING reason above.
+    const changesJson =
+      data.changes === undefined || data.changes === null
+        ? null
+        : JSON.stringify(data.changes);
+    const requestContextJson =
+      data.requestContext === undefined || data.requestContext === null
+        ? null
+        : JSON.stringify(data.requestContext);
 
     await tx.$executeRaw`
       INSERT INTO "audit_log_entries"
-        ("id", "actor_user_id", "organization_id", "academy_id", "role", "action", "target_type", "target_id", "target_label", "context")
+        ("id", "actor_user_id", "organization_id", "academy_id", "role", "action", "target_type", "target_id", "target_label", "context", "changes", "request_context")
       VALUES (
         ${id},
         ${actorUserId},
@@ -88,7 +125,9 @@ export class AuditLogEntriesRepository {
         ${targetType},
         ${targetId},
         ${targetLabel},
-        ${contextJson}::jsonb
+        ${contextJson}::jsonb,
+        ${changesJson}::jsonb,
+        ${requestContextJson}::jsonb
       )
     `;
     return { id };
@@ -98,15 +137,37 @@ export class AuditLogEntriesRepository {
     tx: Prisma.TransactionClient,
     filter: AuditLogEntryListFilter,
   ): Promise<{ items: AuditLogEntryWithRelations[]; totalItems: number }> {
-    const where: Prisma.AuditLogEntryWhereInput = filter.search
-      ? {
-          OR: [
-            { action: { contains: filter.search, mode: 'insensitive' as const } },
-            { targetLabel: { contains: filter.search, mode: 'insensitive' as const } },
-            { targetType: { contains: filter.search, mode: 'insensitive' as const } },
-          ],
-        }
-      : {};
+    const conditions: Prisma.AuditLogEntryWhereInput[] = [];
+
+    if (filter.search) {
+      conditions.push({
+        OR: [
+          { action: { contains: filter.search, mode: 'insensitive' as const } },
+          { targetLabel: { contains: filter.search, mode: 'insensitive' as const } },
+          { targetType: { contains: filter.search, mode: 'insensitive' as const } },
+          // P58 — searching by the affected entity's id is how an operator
+          // actually traces "what happened to THIS thing".
+          { targetId: { equals: filter.search } },
+        ],
+      });
+    }
+    // Exact-match filters, each backed by an index (see the filter type).
+    if (filter.action) conditions.push({ action: filter.action });
+    if (filter.actorUserId) conditions.push({ actorUserId: filter.actorUserId });
+    if (filter.targetType) conditions.push({ targetType: filter.targetType });
+    if (filter.organizationId) conditions.push({ organizationId: filter.organizationId });
+    if (filter.academyId) conditions.push({ academyId: filter.academyId });
+    if (filter.occurredFrom || filter.occurredTo) {
+      conditions.push({
+        occurredAt: {
+          ...(filter.occurredFrom ? { gte: filter.occurredFrom } : {}),
+          ...(filter.occurredTo ? { lte: filter.occurredTo } : {}),
+        },
+      });
+    }
+
+    const where: Prisma.AuditLogEntryWhereInput =
+      conditions.length > 0 ? { AND: conditions } : {};
 
     const [items, totalItems] = await Promise.all([
       tx.auditLogEntry.findMany({

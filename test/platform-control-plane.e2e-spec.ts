@@ -250,16 +250,36 @@ describe('Platform Owner Control Plane — P15 (e2e)', () => {
       const org = await seedOrganizationWithOwner(admin, tenantOwner.userId, 'audit-org');
       await seedActiveSubscriptionForOrg(admin, org.id, 'audit-org');
       const academyName = `Audited Academy ${Date.now()}`;
+      const slug = `audited-academy-${Date.now()}`;
 
-      const created = await request(app.getHttpServer())
-        .post('/academies')
+      // Academy Provisioning is the ONLY creation path — the direct
+      // `POST /academies` route was removed in Phase 10.6 because it
+      // skipped subdomain allocation and left academies with unreachable
+      // public websites (`academies.e2e-spec.ts` asserts its removal).
+      // This test kept calling it and was therefore asserting against a
+      // 404, not against the audit behaviour it is named for.
+      await request(app.getHttpServer())
+        .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${tenantOwner.accessToken}`)
         .send({
-          organizationId: org.id,
-          name: academyName,
-          slug: `audited-academy-${Date.now()}`,
+          academyName,
+          requestedSubdomain: slug,
+          idempotencyKey: `${slug}-${Date.now()}`,
         })
         .expect(201);
+
+      // Provisioning completes asynchronously; poll for the real row.
+      let academyId: string | undefined;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const academy = await admin.academy.findFirst({ where: { slug } });
+        if (academy) {
+          academyId = academy.id;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      expect(academyId).toBeDefined();
+      const created = { body: { id: academyId } };
 
       const listRes = await request(app.getHttpServer())
         .get('/audit-log')

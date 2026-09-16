@@ -47,6 +47,108 @@ export interface AuditLogWriteInput {
   readonly targetId: string;
   readonly targetLabel?: string;
   readonly context?: Record<string, string | number | boolean | null>;
+  /**
+   * P58 — a structured `{field: {from, to}}` diff of what this mutation
+   * changed.
+   *
+   * SEPARATE FROM `context` ON PURPOSE. `context` is a flat scalar bag
+   * whose safety rests on reviewing each call site (see this file's header).
+   * A before/after diff is different in kind: it carries FIELD VALUES, and
+   * the whole point of it is to record values that were previously only in
+   * the database. That is exactly the shape that can accidentally capture a
+   * password hash, a TOTP secret or an encrypted credential — so unlike
+   * `context`, this one IS machine-scrubbed before it is written, by
+   * `redactChanges` below. Because the shape is known and narrow, the
+   * scrub is enforceable rather than a convention.
+   */
+  readonly changes?: Record<string, AuditFieldChange>;
+  /**
+   * P58 — non-identifying request metadata. Deliberately narrow: a request
+   * id, the method and route, and whether the action succeeded. No headers,
+   * no bodies, no tokens.
+   */
+  readonly requestContext?: AuditRequestContext;
+}
+
+/** One field's before/after. `unknown` because a plan's `limits` is an object while its `displayOrder` is a number. */
+export interface AuditFieldChange {
+  readonly from: unknown;
+  readonly to: unknown;
+}
+
+export interface AuditRequestContext {
+  readonly requestId?: string;
+  readonly method?: string;
+  readonly route?: string;
+  readonly outcome?: 'succeeded' | 'failed';
+}
+
+/**
+ * Field names whose VALUES must never reach the audit log, matched
+ * case-insensitively as substrings so `passwordHash`, `totpSecret`,
+ * `refreshToken` and `encryptedClientSecret` are all caught by their stem.
+ *
+ * Deliberately an allow-nothing list on the sensitive side rather than an
+ * allowlist of safe fields: a new sensitive column added later is caught by
+ * its name, whereas an allowlist would silently let it through. The
+ * replacement is a marker string, not removal, so the audit still records
+ * THAT the field changed — which is itself the security-relevant fact —
+ * without recording what it changed to.
+ */
+const REDACTED_FIELD_STEMS: readonly string[] = [
+  'password',
+  'secret',
+  'token',
+  'credential',
+  'privatekey',
+  'apikey',
+  'signature',
+  'totp',
+  'recoverycode',
+  'hash',
+  'salt',
+  'cipher',
+  'encrypted',
+];
+
+const REDACTED = '[redacted]';
+
+/** Scrubs a before/after diff. Exported for direct testing — this is a security boundary, not a formatting helper. */
+export function redactChanges(
+  changes: Record<string, AuditFieldChange>,
+): Record<string, AuditFieldChange> {
+  const out: Record<string, AuditFieldChange> = {};
+  for (const [field, change] of Object.entries(changes)) {
+    const lowered = field.toLowerCase();
+    if (REDACTED_FIELD_STEMS.some((stem) => lowered.includes(stem))) {
+      out[field] = { from: REDACTED, to: REDACTED };
+      continue;
+    }
+    out[field] = {
+      from: redactValue(change.from),
+      to: redactValue(change.to),
+    };
+  }
+  return out;
+}
+
+/**
+ * Recurses one level into object values, because a plan's `pricing` is
+ * `{amount, currency, billingCycle}` and a future audited object could
+ * nest a sensitive key inside it. Arrays and scalars pass through; depth is
+ * bounded so a pathological payload cannot spin here.
+ */
+function redactValue(value: unknown, depth = 0): unknown {
+  if (value === null || typeof value !== 'object' || depth > 3) return value;
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+    const lowered = key.toLowerCase();
+    out[key] = REDACTED_FIELD_STEMS.some((stem) => lowered.includes(stem))
+      ? REDACTED
+      : redactValue(inner, depth + 1);
+  }
+  return out;
 }
 
 @Injectable()
@@ -67,6 +169,15 @@ export class AuditLogWriterService {
       targetId: input.targetId,
       targetLabel: input.targetLabel,
       context: (input.context as Prisma.InputJsonValue | undefined) ?? undefined,
+      // Scrubbed here, at the single choke point every mutation in the
+      // backend already funnels through — never at the call sites, which
+      // would make the guarantee only as strong as the least careful one.
+      changes: input.changes
+        ? (redactChanges(input.changes) as unknown as Prisma.InputJsonValue)
+        : undefined,
+      requestContext:
+        (input.requestContext as unknown as Prisma.InputJsonValue | undefined) ??
+        undefined,
     });
   }
 

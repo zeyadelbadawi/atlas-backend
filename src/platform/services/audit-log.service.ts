@@ -8,6 +8,7 @@
  * comment for why reads and writes are deliberately split across two
  * modules.
  */
+import type { ListAuditLogQueryDto } from '../dto/list-audit-log-query.dto';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogEntriesRepository } from '../../audit-log/repositories/audit-log-entries.repository';
@@ -22,7 +23,6 @@ import type {
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
-import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 
 @Injectable()
 export class AuditLogService {
@@ -33,7 +33,7 @@ export class AuditLogService {
 
   async listEntries(
     platformOwnerId: string,
-    query: CollectionQueryDto,
+    query: ListAuditLogQueryDto,
   ): Promise<PaginatedResult<AuditLogEntrySummaryResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
@@ -46,6 +46,15 @@ export class AuditLogService {
           sortDirection: query.sortDirection,
           skip: (page - 1) * pageSize,
           take: pageSize,
+          // P58 — operational filters. Parsed to Date here rather than in
+          // the repository so the repository keeps taking domain types.
+          action: query.action,
+          actorUserId: query.actorUserId,
+          targetType: query.targetType,
+          organizationId: query.organizationId,
+          academyId: query.academyId,
+          occurredFrom: query.occurredFrom ? new Date(query.occurredFrom) : undefined,
+          occurredTo: query.occurredTo ? new Date(query.occurredTo) : undefined,
         }),
     );
 

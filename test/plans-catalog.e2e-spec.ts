@@ -158,6 +158,14 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
       { type: 'limit', limitKey: 'staff', amount: 2 },
       ['starter'],
     );
+    // `AddOn.catalogStatus` defaults to `draft`, and P51 made `GET /add-ons`
+    // a CUSTOMER-facing catalog that never lists drafts. A seeded add-on
+    // must therefore be published to appear here — before this, the test
+    // was asserting on an add-on the endpoint is correct to hide.
+    await admin.addOn.update({
+      where: { id: addOn.id },
+      data: { catalogStatus: 'published' },
+    });
 
     const response = await request(app.getHttpServer())
       .get('/add-ons')

@@ -37,6 +37,22 @@ import type {
 /** Cap on the recent-cancellations list. An operations view, not an export. */
 const RECENT_CANCELLATIONS_LIMIT = 25;
 
+/**
+ * How many plans the distribution reports (P60).
+ *
+ * The `plans` block is a DISTRIBUTION — "where are subscriptions
+ * concentrated" — not a browsable list, so it is bounded like
+ * `RECENT_CANCELLATIONS_LIMIT` rather than paginated: a pager over a
+ * summary chart would be a second, weaker way to browse the catalog that
+ * `GET /plans` already does properly.
+ *
+ * It needs a bound at all because nothing stops the catalog growing. Sorted
+ * by subscription count first, so the cut always falls on the plans that
+ * matter least, and `totalPlans` reports what was left out rather than
+ * letting the view imply the catalog is this size.
+ */
+const PLAN_DISTRIBUTION_LIMIT = 20;
+
 @Injectable()
 export class AdminSubscriptionsService {
   constructor(private readonly tenancyContextService: TenancyContextService) {}
@@ -198,7 +214,11 @@ export class AdminSubscriptionsService {
           planName: planById.get(row.planId)?.name ?? 'Unknown plan',
           subscriptions: row._count._all,
         }))
-        .sort((a, b) => b.subscriptions - a.subscriptions),
+        .sort((a, b) => b.subscriptions - a.subscriptions)
+        .slice(0, PLAN_DISTRIBUTION_LIMIT),
+
+      /** Total plans carrying at least one subscription, before the cut above. */
+      totalPlansWithSubscriptions: planGroups.length,
 
       /**
        * Atlas does not track subscription revenue — see this class's own
