@@ -23,7 +23,7 @@
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { createTestApp, uniqueTestEmail } from './utils/test-app';
+import { createTestApp, uniqueTestEmail, waitForAsync } from './utils/test-app';
 import {
   createAdminPrisma,
   seedOrganizationWithOwner,
@@ -368,5 +368,151 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
     await expect(assertStaffSeat(org.id)).rejects.toMatchObject({
       response: { code: 'ENTITLEMENT_SUBSCRIPTION_INACTIVE' },
     });
+  }, 60_000);
+
+  // =========================================================================
+  // ADOPTION vs ENTITLEMENT (P62-ADOPT-001..004)
+  //
+  // `ProvisioningOrchestratorService.tryAdoptExistingAcademy` triggers on ANY
+  // `ConflictException`, and an entitlement rejection IS one. On its face that
+  // looks like it could turn "you are over your academy limit" into "adopted
+  // an existing academy, request succeeded" — a silent wrong-resource success
+  // for a paying customer.
+  //
+  // It cannot, and the reason is an ordering guarantee rather than a type
+  // check: `AcademiesService.create` calls `assertSlugAvailable` as its FIRST
+  // statement, before opening any transaction and before the entitlement
+  // check. That helper runs `findBySlug(tx, slug)` under the organization's
+  // tenant context — the SAME query, under the SAME context, that adoption
+  // later uses to decide whether anything is adoptable.
+  //
+  // So the two conditions adoption would need are mutually exclusive by
+  // construction:
+  //
+  //   - if that query finds an academy, `slugTaken` is thrown FIRST and the
+  //     entitlement check is never reached;
+  //   - if the entitlement check throws, the same query already returned
+  //     nothing, so adoption finds nothing and declines.
+  //
+  // These tests pin that ordering. If someone ever moves `assertSlugAvailable`
+  // below the entitlement check, 001 fails — which is exactly when the
+  // misclassification would become real.
+  // =========================================================================
+
+  it('P62-ADOPT-001 — slug taken AND at the academy limit reports the SLUG conflict, not the limit', async () => {
+    // Both failure conditions hold at once. The slug check runs first, so the
+    // error adoption receives is a genuine slug conflict — the only kind it
+    // should ever act on.
+    const { owner, org } = await seedTenant('p62-adopt-order', { academies: 1 });
+    const existing = await seedAcademy(admin, org.id, 'p62-adopt-order-academy');
+
+    await expect(
+      academiesService.create(owner.userId, {
+        organizationId: org.id,
+        name: 'Duplicate',
+        slug: existing.slug,
+      }),
+    ).rejects.toMatchObject({ response: { messageKey: 'errors.academy.slugTaken' } });
+
+    // And nothing was created by the attempt.
+    expect(await admin.academy.count({ where: { organizationId: org.id } })).toBe(1);
+  }, 60_000);
+
+  it('P62-ADOPT-002 — at the limit with a FREE slug, the limit is reported and nothing is adoptable', async () => {
+    // The converse: the entitlement error is only ever thrown once the slug
+    // check has already confirmed no academy holds that slug, which is
+    // precisely why adoption declines.
+    const { owner, org } = await seedTenant('p62-adopt-free', { academies: 1 });
+    await seedAcademy(admin, org.id, 'p62-adopt-free-academy');
+    const freeSlug = `p62-adopt-free-unused-${Date.now()}`;
+
+    await expect(
+      academiesService.create(owner.userId, {
+        organizationId: org.id,
+        name: 'Second',
+        slug: freeSlug,
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'ENTITLEMENT_LIMIT_REACHED', values: { limitKey: 'academies' } },
+    });
+
+    // The lookup adoption would perform finds nothing — the mechanical reason
+    // an entitlement rejection can never be adopted away.
+    const adoptable = await admin.academy.findFirst({ where: { slug: freeSlug } });
+    expect(adoptable).toBeNull();
+    expect(await admin.academy.count({ where: { organizationId: org.id } })).toBe(1);
+  }, 60_000);
+
+  it('P62-ADOPT-003 — end to end, an over-limit provisioning request FAILS and adopts nothing', async () => {
+    // The customer-visible outcome, through the real asynchronous path:
+    // a truthful limit message, no academy, no silent success.
+    const { owner, org } = await seedTenant('p62-adopt-e2e', { academies: 1 });
+    await seedAcademy(admin, org.id, 'p62-adopt-e2e-academy');
+
+    const created = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({
+        academyName: 'Over Limit',
+        requestedSubdomain: `p62-adopt-e2e-${Date.now()}`,
+        idempotencyKey: `p62-adopt-e2e-${Date.now()}`,
+      })
+      .expect(201);
+
+    const settled = await waitForAsync(
+      async () => {
+        const row = await admin.provisioningRequest.findUnique({
+          where: { id: created.body.id as string },
+        });
+        return row && row.status === 'failed' ? row : undefined;
+      },
+      { timeoutMs: 20000 },
+    );
+
+    expect((settled.lastError as { messageKey?: string })?.messageKey).toBe(
+      'errors.entitlement.limitReached',
+    );
+    // Not adopted: no academy was attached to the failed request.
+    expect(settled.academyId).toBeNull();
+    expect(await admin.academy.count({ where: { organizationId: org.id } })).toBe(1);
+  }, 60_000);
+
+  it('P62-ADOPT-004 — a genuine slug conflict still adopts, and creates no second academy', async () => {
+    // The behaviour adoption exists for, unchanged: the crash-recovery shape,
+    // where an academy for this request already exists but the request never
+    // recorded it. Well within the academy limit, so entitlement plays no part.
+    const { owner, org } = await seedTenant('p62-adopt-recover', { academies: 5 });
+    // An explicit short slug: `requestedSubdomain` is capped at 50 chars and
+    // must match `SUBDOMAIN_REGEX`, which `seedAcademy`'s generated slug can
+    // exceed. The academy stands in for one this request created and then
+    // failed to record.
+    const slug = `p62rec${Date.now().toString(36)}`;
+    const orphan = await admin.academy.create({
+      data: { organizationId: org.id, name: 'Recovered', slug },
+    });
+
+    const created = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({
+        academyName: 'Recovered',
+        requestedSubdomain: orphan.slug,
+        idempotencyKey: `p62-adopt-recover-${Date.now()}`,
+      })
+      .expect(201);
+
+    const settled = await waitForAsync(
+      async () => {
+        const row = await admin.provisioningRequest.findUnique({
+          where: { id: created.body.id as string },
+        });
+        return row && row.academyId ? row : undefined;
+      },
+      { timeoutMs: 20000 },
+    );
+
+    // Adopted the existing academy rather than creating a duplicate.
+    expect(settled.academyId).toBe(orphan.id);
+    expect(await admin.academy.count({ where: { organizationId: org.id } })).toBe(1);
   }, 60_000);
 });

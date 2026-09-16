@@ -227,18 +227,42 @@ only the ceiling it compares against now resolves through the grant.
 
 ## Known limitations
 
-- **`staff` is measured and displayed but never enforced** at any write path.
-  Pre-existing; unchanged by P61; recorded here so it is not mistaken for a
-  P61 regression.
-- **Academy provisioning can exceed the `academies` limit under concurrency.**
-  Two simultaneous provisioning requests for one organization can each count
-  zero and both create, producing 2 academies on a 1-academy plan. Reproduced on
-  the **unmodified** pre-P61 codebase, so it is pre-existing and outside P61's
-  scope; `entitlement-enforcement.e2e-spec.ts`'s provisioning case is currently
-  red because of it. `ProvisioningOrchestratorService.tryAdoptExistingAcademy`
-  also treats *any* `ConflictException` as a slug conflict, which means a
-  genuine `ENTITLEMENT_LIMIT_REACHED` can be swallowed there. Both deserve their
-  own fix.
 - **Academy-side student account creation is not entitlement-gated** — only
   enrollment is. Creating student #31 succeeds; enrolling them is what the limit
   decides. Pre-existing.
+
+### Resolved in P62 (previously listed here)
+
+- **`staff` measured but not enforced.** Closed. Enforcement now lives in
+  `AcademiesService.createAcademyMember`, the single method this service creates
+  members through, keyed by `MEMBER_ROLE_LIMIT` (§12). Note the honest shape of
+  the original gap: no Atlas path creates a member with role `staff` at all, so
+  the limit was *unenforceable* rather than merely unenforced. No staff endpoint
+  was invented; the mapping gates one the moment it exists.
+
+- **"Academy provisioning can exceed the `academies` limit under concurrency."**
+  The measurement behind this claim was contaminated. A stale `dist/main` dev
+  server was consuming provisioning jobs from the same Redis queue as the test
+  app while running pre-P61 code with no row lock, so roughly half the jobs ran
+  on a build that could not enforce anything. With one consumer the provisioning
+  case passes consistently.
+
+  The underlying check-then-insert race is real, and §11's `FOR UPDATE` is what
+  closes it. `p62-entitlement-concurrency.e2e-spec.ts` now proves that directly
+  rather than relying on queue interleaving: remove the lock and a limit of 1
+  yields 2 academies and a limit of 3 yields 5; with it, N concurrent attempts
+  against a limit of L leave exactly min(N, L) rows.
+
+- **`tryAdoptExistingAcademy` treating any `ConflictException` as a slug
+  conflict.** Audited and found **not reachable**. `AcademiesService.create`
+  calls `assertSlugAvailable` as its first statement, before any transaction and
+  before the entitlement check, and that helper runs the SAME
+  `findBySlug(tx, slug)` query under the SAME tenant context that adoption later
+  uses. So the two conditions adoption would need are mutually exclusive by
+  construction: if the query finds an academy, `slugTaken` is thrown first and
+  the entitlement check is never reached; if the entitlement check throws, the
+  same query already returned nothing and adoption declines.
+
+  No code was changed. `P62-ADOPT-001..004` pin the ordering — moving
+  `assertSlugAvailable` below the entitlement check turns `P62-ADOPT-001` red,
+  which is exactly when the misclassification would become real.
