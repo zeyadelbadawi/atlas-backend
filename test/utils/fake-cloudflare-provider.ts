@@ -5,10 +5,12 @@
  * test advances), so the service under test behaves exactly as it would
  * against Cloudflare while the test controls what Cloudflare would say.
  */
-import type {
-  CloudflareCustomHostname,
-  CloudflareFallbackOrigin,
-  CloudflareProvider,
+import {
+  CloudflareProviderError,
+  type CloudflareCustomHostname,
+  type CloudflareFallbackOrigin,
+  type CloudflareProvider,
+  type CloudflareZoneFactsError,
 } from '../../src/domain/providers/cloudflare-provider.interface';
 
 interface FakeHostnameState {
@@ -28,6 +30,12 @@ export class FakeCloudflareProvider implements CloudflareProvider {
   zoneSslMode: string | null = 'full';
   /** When set, every hostname request throws — simulates a provider outage AFTER the token check passed. */
   outage = false;
+  /** When set, registration is REFUSED with this code/category (e.g. a token without custom-hostname permissions) while lookups still work. */
+  registrationRefusal: {
+    code: number;
+    category: 'permission' | 'not_enabled' | 'unknown';
+  } | null = null;
+  zoneFactsError: CloudflareZoneFactsError | null = null;
   readonly calls: string[] = [];
   private readonly hostnames = new Map<string, FakeHostnameState>();
   private sequence = 0;
@@ -35,6 +43,9 @@ export class FakeCloudflareProvider implements CloudflareProvider {
   reset(): void {
     this.connected = true;
     this.outage = false;
+    this.registrationRefusal = null;
+    this.zoneFactsError = null;
+    this.fallbackOrigin = { origin: 'customers.atlas-test.dev', status: 'active' };
     this.hostnames.clear();
     this.calls.length = 0;
   }
@@ -98,6 +109,12 @@ export class FakeCloudflareProvider implements CloudflareProvider {
     this.guard();
     const existing = this.hostnames.get(hostname);
     if (existing) return this.toResource(existing);
+    if (this.registrationRefusal) {
+      throw new CloudflareProviderError(
+        this.registrationRefusal.code,
+        this.registrationRefusal.category,
+      );
+    }
     this.sequence += 1;
     const state: FakeHostnameState = {
       id: `cfh_${this.sequence}`,
@@ -138,6 +155,10 @@ export class FakeCloudflareProvider implements CloudflareProvider {
     this.calls.push('fallbackOrigin');
     if (this.outage) return null;
     return this.fallbackOrigin;
+  }
+
+  getLastZoneFactsError(): CloudflareZoneFactsError | null {
+    return this.zoneFactsError;
   }
 
   async getZoneSslMode(): Promise<string | null> {

@@ -42,10 +42,7 @@ import { PublicWebsiteCacheService } from '../../public-website/services/public-
 import { SubdomainAllocationsRepository } from '../repositories/subdomain-allocations.repository';
 import { DomainConnectionsRepository } from '../repositories/domain-connections.repository';
 import { CLOUDFLARE_PROVIDER } from '../providers/cloudflare-provider.interface';
-import type {
-  CloudflareCustomHostname,
-  CloudflareProvider,
-} from '../providers/cloudflare-provider.interface';
+import type { CloudflareProvider } from '../providers/cloudflare-provider.interface';
 import { DomainCheckService } from './domain-check.service';
 import { PlatformDomainService } from './platform-domain.service';
 import {
@@ -180,28 +177,6 @@ export class DomainService {
     return this.toResponse(academyId, subdomain, domainConnection);
   }
 
-  /**
-   * Asks the provider to hold `hostname` for this zone. Returns the
-   * provider resource when it accepted (or already held) it, `null` when
-   * the provider is unavailable or refused — the row then records the
-   * customer's intent with no fabricated records.
-   */
-  private async registerWithProvider(
-    hostname: string,
-  ): Promise<CloudflareCustomHostname | null> {
-    const connected = await this.cloudflareProvider.verifyToken();
-    if (!connected) return null;
-    try {
-      return await this.cloudflareProvider.createCustomHostname(hostname);
-    } catch (error) {
-      this.logger.warn(
-        { error: error instanceof Error ? error.message : 'unknown' },
-        'Provider refused custom hostname registration',
-      );
-      return null;
-    }
-  }
-
   private async releaseFromProvider(existing: DomainConnection | null): Promise<void> {
     if (!existing?.hostname) return;
     const connected = await this.cloudflareProvider.verifyToken();
@@ -255,8 +230,6 @@ export class DomainService {
             await this.releaseFromProvider(existing);
           }
 
-          const providerResource = await this.registerWithProvider(payload.hostname);
-
           let domainConnection: DomainConnection;
           try {
             domainConnection = await this.domainConnectionsRepository.upsert(
@@ -264,25 +237,25 @@ export class DomainService {
               academyId,
               {
                 hostname: payload.hostname,
-                // A same-hostname resubmission keeps whatever verification
-                // progress the provider already reports; a new hostname
-                // starts from scratch.
+                // A same-hostname resubmission keeps the provider id and
+                // whatever verification progress the provider already
+                // reports; a new hostname starts from scratch. Registration
+                // itself happens in the check below — the single path.
                 status: 'verification_required',
-                verificationRecords: providerResource
-                  ? (providerResource.verificationRecords as unknown as Prisma.InputJsonValue)
-                  : sameHostname && existing?.verificationRecords
+                verificationRecords:
+                  sameHostname && existing?.verificationRecords
                     ? (existing.verificationRecords as Prisma.InputJsonValue)
                     : Prisma.JsonNull,
-                providerHostnameId:
-                  providerResource?.id ??
-                  (sameHostname ? existing?.providerHostnameId : null) ??
-                  null,
+                providerHostnameId: sameHostname
+                  ? (existing?.providerHostnameId ?? null)
+                  : null,
                 sslStatus: 'not_configured',
                 cdnStatus: 'not_configured',
-                cdnProvider: providerResource ? 'cloudflare' : null,
+                cdnProvider: null,
                 connectedAt: null,
                 lastCheckedAt: null,
-                lastCheckError: providerResource ? null : 'provider_unavailable',
+                lastCheckError: null,
+                lastProviderErrorCode: null,
                 httpsReachable: null,
                 httpsCheckedAt: null,
               },
@@ -294,16 +267,12 @@ export class DomainService {
             throw error;
           }
 
-          // A provider that already knows the hostname may already have it
-          // further along than "verification required" (e.g. the customer
-          // reconnected a domain they had set up before). Record reality.
-          if (providerResource) {
-            await this.domainCheckService.check(tx, domainConnection);
-            domainConnection = (await this.domainConnectionsRepository.findByAcademyId(
-              tx,
-              academyId,
-            ))!;
-          }
+          // Register with the provider and record what it says — the same
+          // check every later retry runs, so add and "Check now" cannot
+          // disagree, and a refusal is recorded with its reason instead of
+          // being mistaken for a vanished hostname later.
+          const outcome = await this.domainCheckService.check(tx, domainConnection);
+          domainConnection = outcome.after;
 
           await this.auditLogWriterService.write(tx, {
             actorUserId: userId,
@@ -314,7 +283,8 @@ export class DomainService {
             targetId: domainConnection.id,
             targetLabel: payload.hostname,
             context: {
-              providerAccepted: Boolean(providerResource),
+              providerRegistered: Boolean(domainConnection.providerHostnameId),
+              error: outcome.error,
               replacedHostname:
                 existing?.hostname && !sameHostname ? existing.hostname : null,
             },

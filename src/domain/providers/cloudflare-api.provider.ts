@@ -29,12 +29,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { CloudflareConfig } from '../../config/configuration';
-import type {
-  CloudflareCustomHostname,
-  CloudflareFallbackOrigin,
-  CloudflareProvider,
-  CloudflareVerificationRecord,
+import {
+  CloudflareProviderError,
+  type CloudflareCustomHostname,
+  type CloudflareFallbackOrigin,
+  type CloudflareProvider,
+  type CloudflareVerificationRecord,
+  type CloudflareZoneFactsError,
 } from './cloudflare-provider.interface';
+import type { ProviderErrorCategory } from '../constants/domain.constants';
 
 const CLOUDFLARE_API_BASE = 'https://api.cloudflare.com/client/v4';
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -114,10 +117,54 @@ function toCustomHostname(raw: CloudflareCustomHostnameRaw): CloudflareCustomHos
   };
 }
 
+/**
+ * Coarse classification of a Cloudflare refusal. Codes per Cloudflare's
+ * API: 9103/9106/9109/10000 are authentication/authorization failures
+ * (a token without the `SSL and Certificates: Edit` permission lands
+ * here); 1400-series custom-hostname codes phrase entitlement/enablement
+ * problems in the message; 1003/1004-style codes are hostname validation.
+ * Anything else is `unknown` — never silently treated as success.
+ */
+export function classifyCloudflareError(
+  errors: readonly CloudflareApiError[] | undefined,
+): { code: number | null; category: ProviderErrorCategory } {
+  const first = errors?.[0];
+  const code = typeof first?.code === 'number' ? first.code : null;
+  const text = (errors ?? [])
+    .map((e) => e.message ?? '')
+    .join(' ')
+    .toLowerCase();
+  if (code !== null && [9103, 9106, 9109, 10000, 10001].includes(code)) {
+    return { code, category: 'permission' };
+  }
+  if (/permission|not authorized|unauthorized|forbidden/.test(text)) {
+    return { code, category: 'permission' };
+  }
+  if (
+    /not enabled|not entitled|entitlement|upgrade|requires .*plan|cloudflare for saas/.test(
+      text,
+    )
+  ) {
+    return { code, category: 'not_enabled' };
+  }
+  if (/invalid hostname|hostname is invalid|not a valid|malformed/.test(text)) {
+    return { code, category: 'invalid_hostname' };
+  }
+  if (code === 971 || /rate limit|too many requests/.test(text)) {
+    return { code, category: 'rate_limited' };
+  }
+  return { code, category: 'unknown' };
+}
+
 @Injectable()
 export class CloudflareApiProvider implements CloudflareProvider {
   private readonly logger = new Logger(CloudflareApiProvider.name);
   private readonly config: CloudflareConfig;
+  private lastZoneFactsError: CloudflareZoneFactsError | null = null;
+
+  getLastZoneFactsError(): CloudflareZoneFactsError | null {
+    return this.lastZoneFactsError;
+  }
 
   constructor(configService: ConfigService) {
     this.config = configService.get<CloudflareConfig>('cloudflare') ?? {};
@@ -184,11 +231,16 @@ export class CloudflareApiProvider implements CloudflareProvider {
     const existing = await this.getCustomHostnameByHostname(hostname);
     if (existing) return existing;
 
+    const classified = classifyCloudflareError(body.errors);
     this.logger.warn(
-      { errors: body.errors?.map((e) => e.message) },
-      'Cloudflare custom hostname creation failed',
+      {
+        codes: body.errors?.map((e) => e.code),
+        category: classified.category,
+        messages: body.errors?.map((e) => e.message),
+      },
+      'Cloudflare custom hostname creation refused',
     );
-    throw new Error('Cloudflare custom hostname creation failed');
+    throw new CloudflareProviderError(classified.code, classified.category);
   }
 
   async getCustomHostnameByHostname(
@@ -231,7 +283,20 @@ export class CloudflareApiProvider implements CloudflareProvider {
       const body = await this.request<CloudflareFallbackOriginRaw>(
         `/zones/${this.config.zoneId}/custom_hostnames/fallback_origin`,
       );
-      if (!body.success || !body.result?.origin) return null;
+      if (!body.success) {
+        this.lastZoneFactsError = classifyCloudflareError(body.errors);
+        this.logger.warn(
+          {
+            codes: body.errors?.map((e) => e.code),
+            category: this.lastZoneFactsError.category,
+            messages: body.errors?.map((e) => e.message),
+          },
+          'Cloudflare fallback origin read refused',
+        );
+        return null;
+      }
+      this.lastZoneFactsError = null;
+      if (!body.result?.origin) return null;
       return { origin: body.result.origin, status: body.result.status ?? 'unknown' };
     } catch (error) {
       this.warn('Cloudflare fallback origin lookup failed', error);
@@ -245,7 +310,15 @@ export class CloudflareApiProvider implements CloudflareProvider {
       const body = await this.request<{ value?: string }>(
         `/zones/${this.config.zoneId}/settings/ssl`,
       );
-      if (!body.success || !body.result?.value) return null;
+      if (!body.success) {
+        const classified = classifyCloudflareError(body.errors);
+        this.logger.warn(
+          { codes: body.errors?.map((e) => e.code), category: classified.category },
+          'Cloudflare zone SSL mode read refused',
+        );
+        return null;
+      }
+      if (!body.result?.value) return null;
       return body.result.value;
     } catch (error) {
       this.warn('Cloudflare zone SSL mode lookup failed', error);

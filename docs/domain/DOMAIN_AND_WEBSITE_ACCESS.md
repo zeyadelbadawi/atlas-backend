@@ -68,15 +68,38 @@ created with `verification_required`, no records, and
 `last_check_error = provider_unavailable` — intent recorded, nothing
 simulated.
 
-**Check.** `DomainCheckService.check` (one implementation for the customer
-button, the operator button and the sweep) asks the provider (by id, then
-by hostname), maps status/SSL/CDN, sets `last_checked_at`, sets
-`last_check_error` to one of `provider_unavailable`,
-`provider_hostname_missing` (a previously connected domain becomes
-`disconnected`), `provider_error`, `dns_not_pointing`, and — only when the
-provider says the hostname is live — runs Atlas's own HTTPS probe and
-stores `https_reachable` / `https_checked_at`. Audits
+**Check.** `DomainCheckService.check` (one implementation for add, the
+customer button, the operator button and the sweep) first ENSURES the
+provider holds the hostname — when Atlas has no `provider_hostname_id` it
+registers it (idempotent at the provider) — then maps status/SSL/CDN, sets
+`last_checked_at`, and sets `last_check_error` to one of:
+
+| Code | Meaning | Whose problem |
+|---|---|---|
+| `provider_unavailable` | no valid provider credentials | Atlas |
+| `provider_registration_failed` | the provider REFUSED to register the hostname; `last_provider_error_code` holds the provider's numeric code (never a message) | Atlas (token permissions, Cloudflare for SaaS not enabled, …) |
+| `provider_hostname_missing` | Atlas has an id and the provider no longer has the resource; a connected domain becomes `disconnected` | provider/out-of-band |
+| `provider_error` | the request itself failed | transient |
+| `dns_not_pointing` | the provider reports the CNAME is not pointing at Atlas yet | customer |
+
+Only when the provider says the hostname is live does Atlas run its own
+HTTPS probe and store `https_reachable` / `https_checked_at`. Audits
 `domain.verification_checked` with status/SSL before→after.
+
+**P63c lesson (the `rawc.ae` case).** Before P63c, add recorded a refusal
+as `provider_unavailable` and the next check looked the hostname up, found
+nothing, and reported "the provider no longer has a record" — of a hostname
+it had never accepted — over an empty DNS table. Now every check is a
+registration attempt, refusals are classified and recorded with their
+code, and the response says whether DNS setup is genuinely possible:
+`dns.ready` with `dns.blockedReason` ∈ `provider_not_registered` |
+`routing_target_missing`. The customer UI shows a **blocked** step ("Atlas
+not ready", retry/change/disconnect) instead of DNS instructions.
+
+**Change domain.** The customer can change the hostname at any step before
+live (with a confirmation once live) — it is the same add endpoint: the
+old provider resource is released, the single row is replaced, no
+duplicate row or resource is left (`P63-DOM-019`).
 
 **Remove.** Releases the provider resource, resets every column (the table
 has no DELETE policy by design), audits `domain.custom_domain_removed`.
@@ -211,6 +234,8 @@ Migration `20261007000000_p63_domain_operations`: five nullable columns on
 extended `resolve_public_hostname` (DROP + CREATE: the OUT list changed).
 Migration `20261007010000_p63b_canonical_https_fallback`: the function's
 `custom_hostname` ignores a connected hostname whose last probe failed.
+Migration `20261007020000_p63c_provider_error_code`: nullable
+`last_provider_error_code`.
 Additive; NULL on every existing row means "never checked", exactly the
 prior behaviour. `prisma migrate diff` shows no domain drift (only the
 long-known raw-SQL `search_vector` items).

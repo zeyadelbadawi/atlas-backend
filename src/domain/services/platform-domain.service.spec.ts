@@ -29,6 +29,7 @@ function build(
       .fn()
       .mockResolvedValue({ origin: 'Customers.Atlas.dev', status: 'active' }),
     getZoneSslMode: jest.fn().mockResolvedValue('full'),
+    getLastZoneFactsError: jest.fn().mockReturnValue(null),
   };
   const config = {
     get: jest.fn().mockReturnValue({ baseDomain: envBaseDomain }),

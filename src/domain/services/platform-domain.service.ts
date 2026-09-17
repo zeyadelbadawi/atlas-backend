@@ -87,6 +87,11 @@ export class PlatformDomainService {
     readonly fetchedAt: number;
   };
 
+  /** Drops the cached zone facts so the next read asks the provider again (tests, and any future operator action that changes the zone). */
+  invalidateZoneFacts(): void {
+    this.zoneFacts = undefined;
+  }
+
   private async loadZoneFacts(
     fresh: boolean,
   ): Promise<NonNullable<typeof this.zoneFacts>> {
@@ -143,6 +148,7 @@ export class PlatformDomainService {
       this.cloudflareProvider.verifyToken(),
       this.loadZoneFacts(true),
     ]);
+    const zoneFactsError = this.cloudflareProvider.getLastZoneFactsError();
 
     const [baseProbe, wildcardProbe] = effective.baseDomain
       ? await Promise.all([
@@ -161,6 +167,11 @@ export class PlatformDomainService {
         ),
         fallbackOrigin: fallbackOrigin?.origin,
         fallbackOriginStatus: fallbackOrigin?.status,
+        providerErrorCode:
+          zoneFactsError?.code === null || zoneFactsError?.code === undefined
+            ? undefined
+            : String(zoneFactsError.code),
+        providerErrorCategory: zoneFactsError?.category,
         originSslMode: sslMode ?? undefined,
         originSslModeCompatible: sslMode
           ? ORIGIN_SSL_MODES_COMPATIBLE_WITH_INTERNAL_CERT.has(sslMode)

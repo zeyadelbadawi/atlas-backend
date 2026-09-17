@@ -19,7 +19,11 @@ import type {
   SubdomainAllocation as PrismaSubdomainAllocation,
 } from '@prisma/client';
 import type { CanonicalHostSource } from '../utils/canonical-host.util';
-import type { DomainCheckErrorCode } from '../constants/domain.constants';
+import type {
+  DomainCheckErrorCode,
+  DomainDnsBlockedReason,
+  ProviderErrorCategory,
+} from '../constants/domain.constants';
 
 export interface SubdomainAllocationResponse {
   readonly subdomain: string;
@@ -45,6 +49,10 @@ export interface DomainConnectionResponse {
   /** P63 — Atlas's own outbound HTTPS probe. Absent when never probed. */
   readonly httpsReachable?: boolean;
   readonly httpsCheckedAt?: string;
+  /** P63c — whether the provider currently holds this hostname (Atlas has its id). `false` means there is nothing for the customer to configure yet. */
+  readonly providerRegistered: boolean;
+  /** P63c — the provider's own numeric error code for the latest refusal, for operators. A number, never a message. */
+  readonly providerErrorCode?: string;
 }
 
 /** P63 — what the customer must configure at their DNS provider. */
@@ -58,6 +66,10 @@ export interface DomainDnsInstructionsResponse {
    */
   readonly cnameTarget?: string;
   readonly records: readonly DomainVerificationRecordResponse[];
+  /** P63c — `true` only when there is genuinely something for the customer to add: a CNAME target AND provider verification records. */
+  readonly ready: boolean;
+  /** P63c — why not, when `ready` is false. Always Atlas-side. */
+  readonly blockedReason?: DomainDnsBlockedReason;
 }
 
 export interface CanonicalHostResponse {
@@ -114,6 +126,27 @@ export function toDomainConnectionResponse(
       (connection.lastCheckError as DomainCheckErrorCode | null) ?? undefined,
     httpsReachable: connection.httpsReachable ?? undefined,
     httpsCheckedAt: connection.httpsCheckedAt?.toISOString(),
+    providerRegistered: Boolean(connection.providerHostnameId),
+    providerErrorCode: connection.lastProviderErrorCode ?? undefined,
+  };
+}
+
+function toDnsInstructions(
+  connection: PrismaDomainConnection,
+  cnameTarget: string | null,
+): DomainDnsInstructionsResponse {
+  const records = toVerificationRecords(connection);
+  const registered = Boolean(connection.providerHostnameId) && records.length > 0;
+  const blockedReason: DomainDnsBlockedReason | undefined = !registered
+    ? 'provider_not_registered'
+    : !cnameTarget
+      ? 'routing_target_missing'
+      : undefined;
+  return {
+    cnameTarget: cnameTarget ?? undefined,
+    records,
+    ready: blockedReason === undefined,
+    blockedReason,
   };
 }
 
@@ -137,10 +170,7 @@ export function toAcademyDomainConfigurationResponse(
     canonicalHost: canonicalHost ?? undefined,
     dns:
       customDomain && domainConnection
-        ? {
-            cnameTarget: cnameTarget ?? undefined,
-            records: toVerificationRecords(domainConnection),
-          }
+        ? toDnsInstructions(domainConnection, cnameTarget)
         : undefined,
     ssl: { status: domainConnection?.sslStatus ?? 'not_configured' },
     cdn: {
@@ -194,6 +224,9 @@ export interface PlatformDomainReadinessResponse {
     readonly ready: boolean;
     readonly fallbackOrigin?: string;
     readonly fallbackOriginStatus?: string;
+    /** P63c — why the provider refused the zone-facts read, when it did (e.g. a token without custom-hostname permissions). Code + category only. */
+    readonly providerErrorCode?: string;
+    readonly providerErrorCategory?: ProviderErrorCategory;
     /** Provider vocabulary (`off`/`flexible`/`full`/`strict`); absent when unknown. */
     readonly originSslMode?: string;
     /** `true` when the origin SSL mode is one Caddy's internal certificate can satisfy (`full`). `strict` would fail on every custom hostname. Absent when the mode is unknown. */

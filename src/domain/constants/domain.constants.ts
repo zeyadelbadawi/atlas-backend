@@ -67,7 +67,9 @@ export const INFRASTRUCTURE_PROVIDER_NAMES = ['cloudflare'] as const;
 export const DOMAIN_CHECK_ERROR_CODES = [
   /** No valid provider credentials — Atlas could not ask anyone. */
   'provider_unavailable',
-  /** The provider holds no record of this hostname (never accepted, or since deleted). */
+  /** The provider REFUSED to register this hostname (an Atlas-side provider configuration problem: token permissions, feature not enabled on the zone, …). Nothing for the customer to do; Atlas retries. */
+  'provider_registration_failed',
+  /** The provider previously held this hostname (Atlas has its id) and no longer does. */
   'provider_hostname_missing',
   /** The provider request itself failed (network, 5xx, timeout). */
   'provider_error',
@@ -75,6 +77,25 @@ export const DOMAIN_CHECK_ERROR_CODES = [
   'dns_not_pointing',
 ] as const;
 export type DomainCheckErrorCode = (typeof DOMAIN_CHECK_ERROR_CODES)[number];
+
+/** P63c — why the DNS step cannot be offered yet. Both are Atlas-side, never the customer's fault. */
+export const DOMAIN_DNS_BLOCKED_REASONS = [
+  /** The provider has not accepted the hostname, so there are no verification records to add. */
+  'provider_not_registered',
+  /** The zone has no fallback origin, so there is no CNAME target to point at. */
+  'routing_target_missing',
+] as const;
+export type DomainDnsBlockedReason = (typeof DOMAIN_DNS_BLOCKED_REASONS)[number];
+
+/** P63c — a coarse, customer-safe classification of a provider refusal. */
+export const PROVIDER_ERROR_CATEGORIES = [
+  'permission',
+  'not_enabled',
+  'invalid_hostname',
+  'rate_limited',
+  'unknown',
+] as const;
+export type ProviderErrorCategory = (typeof PROVIDER_ERROR_CATEGORIES)[number];
 
 /** Audit actions written by the domain capability (P63). */
 export const DOMAIN_AUDIT_ACTIONS = {

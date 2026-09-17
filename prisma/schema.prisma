@@ -2345,6 +2345,9 @@ model DomainConnection {
   /// (`provider_unavailable`, `provider_hostname_missing`, …). Never a raw
   /// provider message, never a credential. `null` after a successful check.
   lastCheckError      String?                     @map("last_check_error")
+  /// P63c — the provider's own numeric error code for the latest refused
+  /// registration/lookup (a number, never a message). `null` when none.
+  lastProviderErrorCode String?                   @map("last_provider_error_code")
   /// P63 — result of Atlas's own outbound HTTPS probe of the hostname
   /// (`https://{hostname}/`): `true` reachable with a valid certificate,
   /// `false` not reachable, `null` never probed. Real telemetry, not a

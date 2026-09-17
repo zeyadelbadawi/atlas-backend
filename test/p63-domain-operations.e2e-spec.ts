@@ -32,6 +32,7 @@ import { TenancyContextService } from '../src/tenancy/services/tenancy-context.s
 import { DomainConnectionsRepository } from '../src/domain/repositories/domain-connections.repository';
 import { CLOUDFLARE_PROVIDER } from '../src/domain/providers/cloudflare-provider.interface';
 import { DomainVerificationSweepService } from '../src/domain/services/domain-verification-sweep.service';
+import { PlatformDomainService } from '../src/domain/services/platform-domain.service';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -89,6 +90,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     await flushRateLimitKeys();
     cloudflare.reset();
     probe.reset();
+    app.get(PlatformDomainService, { strict: false }).invalidateZoneFacts();
   });
 
   async function seedManagedAcademy(label: string) {
@@ -194,7 +196,8 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     expect(secondRow.id).toBe(firstRow.id);
     expect(secondRow.providerHostnameId).toBe(firstRow.providerHostnameId);
     expect(second.body.dns.records).toEqual(first.body.dns.records);
-    expect(cloudflare.calls.filter((c) => c === `create:${hostname}`)).toHaveLength(2);
+    // The resubmission keeps the provider id, so the check looks it up by id: exactly one registration ever.
+    expect(cloudflare.calls.filter((c) => c === `create:${hostname}`)).toHaveLength(1);
     expect(cloudflare.calls.filter((c) => c.startsWith('delete:'))).toHaveLength(0);
   });
 
@@ -340,7 +343,12 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     const added = await addDomain(academy.id, owner.accessToken, hostname).expect(201);
     expect(added.body.customDomain.status).toBe('verification_required');
     expect(added.body.customDomain.lastCheckError).toBe('provider_unavailable');
-    expect(added.body.dns.records).toEqual([]);
+    expect(added.body.customDomain.providerRegistered).toBe(false);
+    expect(added.body.dns).toMatchObject({
+      ready: false,
+      blockedReason: 'provider_not_registered',
+      records: [],
+    });
     expect(added.body.dns.cnameTarget).toBe('customers.atlas-test.dev'); // the fake still answers the zone question
     const checked = await verify(academy.id, owner.accessToken).expect(201);
     expect(checked.body.customDomain.status).toBe('verification_required');
@@ -568,6 +576,114 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     });
   });
 
+  it('P63-DOM-016 — the rawc.ae case: the provider REFUSES registration; the row records the refusal with its code, DNS is honestly not ready, and a later check retries registration instead of calling the hostname "missing"', async () => {
+    const { owner, academy } = await seedManagedAcademy('p63-refused');
+    const hostname = `learn-${run}-016.example.com`;
+    cloudflare.registrationRefusal = { code: 10000, category: 'permission' };
+
+    const added = await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+    expect(added.body.customDomain).toMatchObject({
+      status: 'verification_required',
+      lastCheckError: 'provider_registration_failed',
+      providerRegistered: false,
+      providerErrorCode: '10000',
+    });
+    expect(added.body.dns).toMatchObject({
+      ready: false,
+      blockedReason: 'provider_not_registered',
+      records: [],
+    });
+    expect(cloudflare.has(hostname)).toBe(false);
+    expect(JSON.stringify(added.body)).not.toMatch(/token|secret|Authentication/i);
+
+    // Still refused: the same honest state, never "no longer has a record".
+    const stillRefused = await verify(academy.id, owner.accessToken).expect(201);
+    expect(stillRefused.body.customDomain.lastCheckError).toBe(
+      'provider_registration_failed',
+    );
+    expect(stillRefused.body.customDomain.providerRegistered).toBe(false);
+
+    // The provider configuration gets fixed: the very next check registers and moves on.
+    cloudflare.registrationRefusal = null;
+    const recovered = await verify(academy.id, owner.accessToken).expect(201);
+    expect(recovered.body.customDomain).toMatchObject({
+      status: 'verifying',
+      providerRegistered: true,
+    });
+    expect(recovered.body.customDomain.lastCheckError).toBeUndefined();
+    expect(recovered.body.customDomain.providerErrorCode).toBeUndefined();
+    expect(recovered.body.dns.ready).toBe(true);
+    expect(recovered.body.dns.records.length).toBeGreaterThanOrEqual(2);
+    expect(cloudflare.calls.filter((c) => c === `create:${hostname}`)).toHaveLength(3);
+    expect(cloudflare.has(hostname)).toBe(true);
+    const row = await admin.domainConnection.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    expect(row.providerHostnameId).toMatch(/^cfh_/);
+    expect(row.lastProviderErrorCode).toBeNull();
+  });
+
+  it('P63-DOM-017 — "no CNAME target" is reported as a routing blocker, not as something the customer must fix', async () => {
+    const { owner, academy } = await seedManagedAcademy('p63-noroute');
+    const hostname = `learn-${run}-017.example.com`;
+    cloudflare.fallbackOrigin = null;
+    app.get(PlatformDomainService, { strict: false }).invalidateZoneFacts();
+    const added = await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+    expect(added.body.customDomain.providerRegistered).toBe(true);
+    expect(added.body.dns).toMatchObject({
+      ready: false,
+      blockedReason: 'routing_target_missing',
+    });
+    expect(added.body.dns.cnameTarget).toBeUndefined();
+    expect(added.body.dns.records.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('P63-DOM-018 — the sweep retries a refused registration and succeeds once the provider allows it', async () => {
+    const sweep = app.get(DomainVerificationSweepService, { strict: false });
+    const { owner, academy } = await seedManagedAcademy('p63-refused-sweep');
+    const hostname = `learn-${run}-018.example.com`;
+    cloudflare.registrationRefusal = { code: 10000, category: 'permission' };
+    await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+    await admin.domainConnection.update({
+      where: { academyId: academy.id },
+      data: { lastCheckedAt: new Date(Date.now() - 60 * 60 * 1000) },
+    });
+    cloudflare.registrationRefusal = null;
+    await sweep.run();
+    const row = await admin.domainConnection.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    expect(row.providerHostnameId).toMatch(/^cfh_/);
+    expect(row.status).toBe('verifying');
+    expect(row.lastCheckError).toBeNull();
+  });
+
+  it('P63-DOM-019 — changing a wrongly entered pending domain: the old provider resource is released, no duplicate row, the new hostname starts clean; a resubmission of the same hostname changes nothing', async () => {
+    const { owner, academy } = await seedManagedAcademy('p63-change');
+    const wrong = `learn-${run}-019-wrong.example.com`;
+    const right = `learn-${run}-019-right.example.com`;
+    await addDomain(academy.id, owner.accessToken, wrong).expect(201);
+    const changed = await addDomain(academy.id, owner.accessToken, right).expect(201);
+    expect(changed.body.customDomain.hostname).toBe(right);
+    expect(changed.body.customDomain.providerRegistered).toBe(true);
+    expect(cloudflare.has(wrong)).toBe(false);
+    expect(cloudflare.has(right)).toBe(true);
+    expect(await admin.domainConnection.count({ where: { academyId: academy.id } })).toBe(
+      1,
+    );
+    expect(await admin.domainConnection.count({ where: { hostname: wrong } })).toBe(0);
+    const before = await admin.domainConnection.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    const same = await addDomain(academy.id, owner.accessToken, right).expect(201);
+    expect(same.body.customDomain.hostname).toBe(right);
+    const after = await admin.domainConnection.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    expect(after.providerHostnameId).toBe(before.providerHostnameId);
+    expect(cloudflare.calls.filter((c) => c.startsWith('delete:'))).toHaveLength(1);
+  });
+
   // --------------------------------------------------------- platform owner
 
   describe('Platform Owner domain operations', () => {
@@ -762,12 +878,17 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
       );
       if (!envBaseDomain) expect(readiness.body.source).not.toBe('environment');
       cloudflare.fallbackOrigin = null;
+      cloudflare.zoneFactsError = { code: 10000, category: 'permission' };
       const notReady = await request(app.getHttpServer())
         .get('/platform-domain/readiness')
         .set('Authorization', `Bearer ${platformOwner.accessToken}`)
         .expect(200);
       expect(notReady.body.customHostnames.ready).toBe(false);
       expect(notReady.body.customHostnames.fallbackOrigin).toBeUndefined();
+      expect(notReady.body.customHostnames).toMatchObject({
+        providerErrorCode: '10000',
+        providerErrorCategory: 'permission',
+      });
     });
   });
 

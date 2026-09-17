@@ -19,6 +19,8 @@
  * internal certificate, which `strict` refuses).
  */
 
+import type { ProviderErrorCategory } from '../constants/domain.constants';
+
 export interface CloudflareVerificationRecord {
   readonly type: string;
   readonly name: string;
@@ -45,6 +47,27 @@ export interface CloudflareFallbackOrigin {
   readonly status: string;
 }
 
+/**
+ * P63c — a provider refusal Atlas can classify and record safely: the
+ * provider's own numeric code and a coarse category. Deliberately carries
+ * no provider message (those can quote zone names, plans or tokens).
+ */
+export class CloudflareProviderError extends Error {
+  constructor(
+    readonly code: number | null,
+    readonly category: ProviderErrorCategory,
+  ) {
+    super(`cloudflare:${category}:${code ?? 'none'}`);
+    this.name = 'CloudflareProviderError';
+  }
+}
+
+/** The last refusal seen while reading zone facts (fallback origin / SSL mode), for the Platform Owner readiness view. */
+export interface CloudflareZoneFactsError {
+  readonly code: number | null;
+  readonly category: ProviderErrorCategory;
+}
+
 export const CLOUDFLARE_PROVIDER = Symbol('CLOUDFLARE_PROVIDER');
 
 export interface CloudflareProvider {
@@ -57,6 +80,8 @@ export interface CloudflareProvider {
    * IDEMPOTENT (P63): when Cloudflare already holds this hostname in the
    * zone, the existing resource is returned rather than an error, so a
    * repeated submission never loses the verification records.
+   * Throws `CloudflareProviderError` (code + category, no message) when
+   * the provider refuses; any other error means the request itself failed.
    */
   createCustomHostname(hostname: string): Promise<CloudflareCustomHostname>;
 
@@ -74,4 +99,7 @@ export interface CloudflareProvider {
 
   /** The zone's origin SSL mode (`off` / `flexible` / `full` / `strict`), or `null` when unavailable. Read-only. */
   getZoneSslMode(): Promise<string | null>;
+
+  /** Why the last zone-facts read was refused, if it was; `null` after a successful read. */
+  getLastZoneFactsError(): CloudflareZoneFactsError | null;
 }
