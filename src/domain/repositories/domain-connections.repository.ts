@@ -56,7 +56,7 @@ export interface DomainOperationsOverview {
   readonly withSubdomain: number;
   readonly withCustomDomain: number;
   readonly customConnected: number;
-  /** P63d — connected AND certificate active AND probe succeeded: the ones actually serving a website. */
+  /** P63d/P63e — connected AND Atlas's probe succeeded: the ones actually serving a website. */
   readonly customLive: number;
   readonly customAwaitingProvider: number;
   readonly customFailed: number;
@@ -131,11 +131,12 @@ export class DomainConnectionsRepository {
   /**
    * P63 — rows the verification sweep should re-ask the provider about:
    * still waiting on the provider and not checked since `awaitingBefore`;
-   * connected but NOT YET LIVE (certificate pending, or the last probe
-   * failed — P63d) on that same fast cadence, because the provider or the
-   * origin can still move them forward and a customer is waiting; or live
-   * and not checked since `connectedBefore` (a slower cadence that catches
-   * DNS that broke after connection). Never checked sorts first. Bounded.
+   * connected but NOT YET SETTLED (the provider's certificate pending, or
+   * the last probe failed — P63d/P63e) on that same fast cadence, because
+   * the provider or the origin can still move them forward and a customer
+   * is waiting; or settled and not checked since `connectedBefore` (a
+   * slower cadence that catches DNS that broke after connection). Never
+   * checked sorts first. Bounded.
    */
   findManyDueForVerificationSweep(
     tx: Prisma.TransactionClient,
@@ -310,12 +311,7 @@ export class DomainConnectionsRepository {
       tx.domainConnection.count({ where: hasCustom }),
       tx.domainConnection.count({ where: { ...hasCustom, status: 'connected' } }),
       tx.domainConnection.count({
-        where: {
-          ...hasCustom,
-          status: 'connected',
-          sslStatus: 'active',
-          httpsReachable: true,
-        },
+        where: { ...hasCustom, status: 'connected', httpsReachable: true },
       }),
       tx.domainConnection.count({
         where: { ...hasCustom, status: { in: [...DOMAIN_STATUSES_AWAITING_PROVIDER] } },

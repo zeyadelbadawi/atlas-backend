@@ -1,24 +1,27 @@
-import { isCustomDomainLive } from './domain-liveness.util';
+import { isCustomDomainLive, isCustomDomainSettled } from './domain-liveness.util';
 
-describe('isCustomDomainLive (P63d) — connected is not live', () => {
+describe('isCustomDomainLive / isCustomDomainSettled (P63d/P63e) — connected is not live', () => {
   const base = {
     status: 'connected',
     sslStatus: 'active',
     httpsReachable: true,
   } as const;
 
-  it('is live only when the provider says active, the certificate is active and the probe succeeded', () => {
+  it("is live when the provider says active and Atlas's probe got a trusted HTTPS answer", () => {
     expect(isCustomDomainLive(base)).toBe(true);
+    expect(isCustomDomainSettled(base)).toBe(true);
   });
 
-  it('is not live while the certificate is still pending, even if the hostname is connected and the probe passed', () => {
-    expect(isCustomDomainLive({ ...base, sslStatus: 'pending' })).toBe(false);
-    expect(isCustomDomainLive({ ...base, sslStatus: 'provisioning' })).toBe(false);
+  it("is live but NOT settled while the provider's own certificate is still pending (the customer's own proxy serves HTTPS)", () => {
+    expect(isCustomDomainLive({ ...base, sslStatus: 'pending' })).toBe(true);
+    expect(isCustomDomainSettled({ ...base, sslStatus: 'pending' })).toBe(false);
+    expect(isCustomDomainLive({ ...base, sslStatus: 'provisioning' })).toBe(true);
   });
 
-  it('is not live when the probe failed or never ran', () => {
+  it('is not live when the probe failed (e.g. the edge returned 525) or never ran', () => {
     expect(isCustomDomainLive({ ...base, httpsReachable: false })).toBe(false);
     expect(isCustomDomainLive({ ...base, httpsReachable: null })).toBe(false);
+    expect(isCustomDomainSettled({ ...base, httpsReachable: false })).toBe(false);
   });
 
   it('is never live in any other provider status, and never for a missing row', () => {

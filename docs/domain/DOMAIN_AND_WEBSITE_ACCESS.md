@@ -107,19 +107,32 @@ and "Connected". Two things were wrong.
    as `customDomain.live` on every response (customer read, Platform
    Owner row) and as the `customLive` overview counter:
 
-   > `status = connected` **and** `ssl_status = active` **and**
-   > `https_reachable = true`.
+   > `status = connected` **and** `https_reachable = true` — the provider
+   > says the hostname is active at its edge, AND Atlas's own probe got a
+   > trusted TLS handshake and a non-5xx answer.
+
+   The provider's own certificate state is deliberately NOT part of that
+   rule (P63e). The same `rawc.ae` test showed why: the customer's own
+   Cloudflare zone terminates TLS with its own trusted certificate and
+   forwards to Atlas, so visitors have a working HTTPS site while
+   Cloudflare for SaaS still reports Atlas's certificate as
+   `pending_validation` (the `_acme-challenge` TXT records it needs are
+   not the ones published). That domain is **live** — and the customer is
+   told, with the validation records kept visible, that Atlas's own
+   certificate is pending and HTTPS currently depends on their proxy.
+   `isCustomDomainSettled` = live AND `ssl_status = active` is what moves
+   a row to the slow sweep cadence.
 
    The customer lifecycle therefore has five positions — Connect,
    Configure DNS, Verification, **HTTPS**, Live — and a connected row is
-   `securing` (certificate/probe pending) or `https_failed` (probe failed,
-   or certificate failed/expired) until all three hold. DNS instructions
-   stay visible through those states because the certificate validation
-   TXT record may still be missing. The verification sweep re-checks
-   connected-but-not-live rows on the fast (5-minute) cadence, and the
-   tab re-reads the stored facts once a minute while a domain is in
-   progress (a database read; the provider is only asked by the sweep and
-   by "Check now", which is also offered right beside the HTTPS state).
+   `securing` (probe pending) or `https_failed` (probe failed, or
+   certificate failed/expired) until it is live. DNS instructions stay
+   visible through those states and while a live domain's certificate is
+   pending. The verification sweep re-checks connected-but-not-settled
+   rows on the fast (5-minute) cadence, and the tab re-reads the stored
+   facts once a minute while a domain is in progress (a database read; the
+   provider is only asked by the sweep and by "Check now", which is also
+   offered right beside the HTTPS state).
 
 Canonical-host selection is unchanged (`connected` and not
 `https_reachable = false`): with the probe fix, a domain the edge cannot
@@ -331,7 +344,7 @@ long-known raw-SQL `search_vector` items).
 | Cloudflare for SaaS fallback origin configured | VERIFIED 18 Sep 2026 — `proxy-fallback.atlass.dpdns.org`, `active` |
 | Zone origin SSL mode | NOT READABLE BY ATLAS — readiness `originSslModeState = permission_missing`, provider code 9109: the token lacks "Zone Settings: Read". The operator saw "Full" in the dashboard; Atlas reports it as not exposed, never as a value. Adding the permission to the token makes the row a live answer. |
 | Custom-hostname SNI answered by the origin | VERIFIED 18 Sep 2026 — `openssl s_client -servername rawc.ae` against the origin now returns the platform certificate (was TLS alert 80 before `fallback_sni`) |
-| End-to-end custom domain on a real customer hostname | PARTIALLY VERIFIED 18 Sep 2026 — `https://rawc.ae/` returns 200 with the Atlas app (was 525); the operator check records `https_status_code = 200`; Cloudflare's certificate for the custom hostname is still `pending` (its `_acme-challenge` TXT values in public DNS differ from the current validation records), so the domain is `connected`, not `live`, and the UI says "securing HTTPS" |
+| End-to-end custom domain on a real customer hostname | PARTIALLY VERIFIED 18 Sep 2026 — `https://rawc.ae/` returns 200 with the Atlas app (was 525); the operator check records `https_status_code = 200`; Cloudflare's certificate for the custom hostname is still `pending` (its `_acme-challenge` TXT values in public DNS differ from the current validation records), so the domain is live through the customer's own Cloudflare zone and the UI says "Live — Atlas certificate pending" with the validation records visible |
 
 No new environment variable is required. No new external service is
 introduced; the verification sweep is one more BullMQ repeatable on the

@@ -59,11 +59,14 @@ export interface DomainConnectionResponse {
   /** P63d — why the probe found the hostname unreachable; absent when reachable or never probed. */
   readonly httpsFailureReason?: HttpsFailureReason;
   /**
-   * P63d — the ONE answer to "does this domain serve the website?":
-   * provider `connected` AND certificate `active` AND Atlas's probe
-   * succeeded (`isCustomDomainLive`). `status = connected` alone is not
-   * live — the certificate may still be pending, the edge may be
-   * returning 525 — and the UI must never say "live" unless this is true.
+   * P63d/P63e — the ONE answer to "does this domain serve the website?":
+   * provider `connected` AND Atlas's own probe got a trusted TLS
+   * handshake and a non-5xx answer (`isCustomDomainLive`). `status =
+   * connected` alone is not live — the edge may be returning 525 — and the
+   * UI must never say "live" unless this is true. The provider's own
+   * certificate state (`sslStatus`) is reported alongside: a live domain
+   * whose Atlas-managed certificate is still pending is served over HTTPS
+   * by something outside Atlas (e.g. the customer's own proxy).
    */
   readonly live: boolean;
   /** P63c — whether the provider currently holds this hostname (Atlas has its id). `false` means there is nothing for the customer to configure yet. */

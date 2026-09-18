@@ -651,9 +651,12 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     const hostname = `learn-${run}-018.example.com`;
     cloudflare.registrationRefusal = { code: 10000, category: 'permission' };
     await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+    // Oldest-first: the shared dev database holds hundreds of stale rows
+    // from earlier runs, and the sweep caps each tick at 200 — an ancient
+    // timestamp puts this row at the head of the queue instead of behind them.
     await admin.domainConnection.update({
       where: { academyId: academy.id },
-      data: { lastCheckedAt: new Date(Date.now() - 60 * 60 * 1000) },
+      data: { lastCheckedAt: new Date('2000-01-01T00:00:00Z') },
     });
     cloudflare.registrationRefusal = null;
     await sweep.run();
@@ -752,18 +755,25 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     expect(overview.body.customLive).toBeLessThanOrEqual(overview.body.customConnected);
   });
 
-  it('P63-DOM-021 — a connected domain with a pending certificate is not live, is flagged for the sweep on the fast cadence, and the probe result never claims more than the edge showed', async () => {
+  it('P63-DOM-021 — a connected domain that answers over HTTPS is live even while the provider certificate is pending, stays on the fast sweep cadence until the certificate is active, then moves to the slow cadence', async () => {
     const { owner, academy } = await seedManagedAcademyWithSubdomain('p63-sslpending');
     const hostname = `learn-${run}-021.example.com`;
     await addDomain(academy.id, owner.accessToken, hostname).expect(201);
     cloudflare.setState(hostname, 'active', 'pending_issuance');
-    // Edge already answers (e.g. the customer's own zone terminates TLS) — reachable, but the certificate is not issued.
+    // The edge already answers with a trusted certificate (the rawc.ae case:
+    // the customer's own Cloudflare zone terminates TLS) — visitors have a
+    // working site, so it IS live, while the provider's own certificate is
+    // still pending and reported as such.
     const connected = await verify(academy.id, owner.accessToken).expect(201);
     expect(connected.body.customDomain).toMatchObject({
       status: 'connected',
       sslStatus: 'provisioning',
       httpsReachable: true,
-      live: false,
+      live: true,
+    });
+    expect(connected.body.canonicalHost).toEqual({
+      host: hostname,
+      source: 'custom_domain',
     });
 
     // Six minutes later the sweep picks it up on the FAST cadence (not the six-hour one).
@@ -786,7 +796,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
       .expect(200);
     expect(nowLive.body.customDomain.live).toBe(true);
 
-    // Live and checked a minute ago: the sweep leaves it alone (slow cadence).
+    // Settled (live AND certificate active): the slow cadence — the sweep leaves it alone.
     await admin.domainConnection.update({
       where: { academyId: academy.id },
       data: { lastCheckedAt: new Date(Date.now() - 6 * 60 * 1000) },

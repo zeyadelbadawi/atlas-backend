@@ -29,7 +29,7 @@ import {
   DOMAIN_VERIFICATION_SWEEP_MIN_AGE_MS,
 } from '../queue/domain-verification-sweep.types';
 import { resolveSubdomainHost } from '../utils/canonical-host.util';
-import { isCustomDomainLive } from '../utils/domain-liveness.util';
+import { isCustomDomainSettled } from '../utils/domain-liveness.util';
 
 export interface DomainVerificationSweepResult {
   readonly skipped: 'no_platform_owner' | 'provider_unavailable' | null;
@@ -110,10 +110,11 @@ export class DomainVerificationSweepService {
                 tx,
                 candidate.academyId,
               );
-              // Only a LIVE domain is on the slow cadence; a connected row
-              // still waiting on its certificate or failing its probe is
-              // re-checked as eagerly as a pending one (P63d).
-              const dueBefore = isCustomDomainLive(locked)
+              // Only a SETTLED domain (live AND the provider's certificate
+              // active) is on the slow cadence; a connected row still waiting
+              // on its certificate or failing its probe is re-checked as
+              // eagerly as a pending one (P63d/P63e).
+              const dueBefore = isCustomDomainSettled(locked)
                 ? connectedBefore
                 : checkedBefore;
               if (
