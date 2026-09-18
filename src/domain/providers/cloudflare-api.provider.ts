@@ -36,6 +36,7 @@ import {
   type CloudflareProvider,
   type CloudflareVerificationRecord,
   type CloudflareZoneFactsError,
+  type CloudflareZoneSslModeRead,
 } from './cloudflare-provider.interface';
 import type { ProviderErrorCategory } from '../constants/domain.constants';
 
@@ -304,8 +305,16 @@ export class CloudflareApiProvider implements CloudflareProvider {
     }
   }
 
-  async getZoneSslMode(): Promise<string | null> {
-    if (!this.isConfigured()) return null;
+  /**
+   * `GET /zones/{zone}/settings/ssl` needs the token permission
+   * "Zone Settings: Read" (or Write) — a permission the custom-hostname
+   * work itself never needs, so a token scoped exactly to custom hostnames
+   * is refused here. That refusal is reported, not swallowed: the Platform
+   * Owner sees "not exposed to Atlas — code N (token permissions)" instead
+   * of an unexplained warning, and the value is never guessed.
+   */
+  async getZoneSslMode(): Promise<CloudflareZoneSslModeRead> {
+    if (!this.isConfigured()) return { mode: null, error: null, requestFailed: false };
     try {
       const body = await this.request<{ value?: string }>(
         `/zones/${this.config.zoneId}/settings/ssl`,
@@ -316,13 +325,12 @@ export class CloudflareApiProvider implements CloudflareProvider {
           { codes: body.errors?.map((e) => e.code), category: classified.category },
           'Cloudflare zone SSL mode read refused',
         );
-        return null;
+        return { mode: null, error: classified, requestFailed: false };
       }
-      if (!body.result?.value) return null;
-      return body.result.value;
+      return { mode: body.result?.value ?? null, error: null, requestFailed: false };
     } catch (error) {
       this.warn('Cloudflare zone SSL mode lookup failed', error);
-      return null;
+      return { mode: null, error: null, requestFailed: true };
     }
   }
 }

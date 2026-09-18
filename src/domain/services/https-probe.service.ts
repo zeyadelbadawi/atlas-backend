@@ -4,10 +4,15 @@
  *
  * A provider status says what the provider believes; this is what a
  * visitor experiences. One bounded outbound `GET https://{hostname}/`:
- * a completed TLS handshake against a certificate Node trusts plus any
- * HTTP response means reachable. A handshake failure, DNS failure,
- * connection refusal or timeout means not reachable. Nothing is
- * inferred, and no response body is read.
+ * a completed TLS handshake against a certificate Node trusts plus a
+ * non-5xx HTTP response means reachable. A handshake failure, DNS
+ * failure, connection refusal or timeout means not reachable — and so
+ * does a 5xx (P63d): a production custom hostname completed the edge
+ * handshake and then answered every visitor with Cloudflare's 525
+ * ("origin handshake failed"); counting that as reachable advertised a
+ * dead site as live. The status code and a reason are recorded so the
+ * UI can say what actually happened. Nothing is inferred, and no
+ * response body is read.
  *
  * SSRF DISCIPLINE. The hostname is customer-controlled DNS, so:
  *   1. it is resolved FIRST (`dns.lookup`, all addresses), and if any
@@ -27,6 +32,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { lookup } from 'node:dns/promises';
 import { request as httpsRequest } from 'node:https';
 import { isPublicAddress, isIpLiteralHostname } from '../utils/outbound-address.util';
+import type { HttpsFailureReason } from '../constants/domain.constants';
 
 const PROBE_TIMEOUT_MS = 6_000;
 
@@ -35,6 +41,15 @@ export interface HttpsProbeResult {
   readonly checkedAt: Date;
   /** Why the probe was refused before any connection, when it was. */
   readonly refused?: 'ip_literal' | 'non_public_address' | 'unresolvable';
+  /** The HTTP status received, when a response arrived at all (also for a 5xx that made the probe fail). */
+  readonly statusCode?: number;
+  /** Why the hostname is not reachable, when it is not. Absent when reachable. */
+  readonly failure?: HttpsFailureReason;
+}
+
+/** A 5xx from the edge means the edge is up and the website behind it is not — that is not "reachable" for a visitor. */
+function isOriginFailureStatus(statusCode: number | undefined): boolean {
+  return statusCode !== undefined && statusCode >= 500;
 }
 
 @Injectable()
@@ -68,10 +83,19 @@ export class HttpsProbeService {
     const vetted = await this.resolveVettedAddress(hostname);
     if ('refused' in vetted) {
       this.logger.warn({ hostname, refused: vetted.refused }, 'HTTPS probe refused');
-      return { reachable: false, checkedAt, refused: vetted.refused };
+      return {
+        reachable: false,
+        checkedAt,
+        refused: vetted.refused,
+        failure: vetted.refused,
+      };
     }
 
-    const reachable = await new Promise<boolean>((resolve) => {
+    type Attempt =
+      | { readonly statusCode: number }
+      | { readonly failure: 'timeout' | 'tls_or_connection_failed' };
+    const attempt = await new Promise<Attempt>((resolve) => {
+      let timedOut = false;
       const req = httpsRequest(
         {
           host: hostname,
@@ -95,20 +119,36 @@ export class HttpsProbeService {
         },
         (res) => {
           res.resume(); // discard the body unread
-          resolve(true);
+          resolve({ statusCode: res.statusCode ?? 0 });
           req.destroy();
         },
       );
       req.on('timeout', () => {
+        timedOut = true;
         req.destroy(new Error('timeout'));
       });
       req.on('error', (error) => {
         this.logger.debug({ hostname, error: error.message }, 'HTTPS probe failed');
-        resolve(false);
+        resolve({ failure: timedOut ? 'timeout' : 'tls_or_connection_failed' });
       });
       req.end();
     });
 
-    return { reachable, checkedAt };
+    if ('failure' in attempt) {
+      return { reachable: false, checkedAt, failure: attempt.failure };
+    }
+    if (isOriginFailureStatus(attempt.statusCode)) {
+      this.logger.warn(
+        { hostname, statusCode: attempt.statusCode },
+        'HTTPS probe: the edge answered with a server error',
+      );
+      return {
+        reachable: false,
+        checkedAt,
+        statusCode: attempt.statusCode,
+        failure: 'origin_error',
+      };
+    }
+    return { reachable: true, checkedAt, statusCode: attempt.statusCode };
   }
 }

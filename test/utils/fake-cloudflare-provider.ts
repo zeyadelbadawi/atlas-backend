@@ -11,6 +11,7 @@ import {
   type CloudflareFallbackOrigin,
   type CloudflareProvider,
   type CloudflareZoneFactsError,
+  type CloudflareZoneSslModeRead,
 } from '../../src/domain/providers/cloudflare-provider.interface';
 
 interface FakeHostnameState {
@@ -28,6 +29,8 @@ export class FakeCloudflareProvider implements CloudflareProvider {
     status: 'active',
   };
   zoneSslMode: string | null = 'full';
+  /** When set, the SSL-mode read is REFUSED with this classified error (e.g. a token without "Zone Settings: Read"). */
+  zoneSslModeError: CloudflareZoneFactsError | null = null;
   /** When set, every hostname request throws — simulates a provider outage AFTER the token check passed. */
   outage = false;
   /** When set, registration is REFUSED with this code/category (e.g. a token without custom-hostname permissions) while lookups still work. */
@@ -45,6 +48,8 @@ export class FakeCloudflareProvider implements CloudflareProvider {
     this.outage = false;
     this.registrationRefusal = null;
     this.zoneFactsError = null;
+    this.zoneSslMode = 'full';
+    this.zoneSslModeError = null;
     this.fallbackOrigin = { origin: 'customers.atlas-test.dev', status: 'active' };
     this.hostnames.clear();
     this.calls.length = 0;
@@ -161,9 +166,12 @@ export class FakeCloudflareProvider implements CloudflareProvider {
     return this.zoneFactsError;
   }
 
-  async getZoneSslMode(): Promise<string | null> {
+  async getZoneSslMode(): Promise<CloudflareZoneSslModeRead> {
     this.calls.push('sslMode');
-    if (this.outage) return null;
-    return this.zoneSslMode;
+    if (this.outage) return { mode: null, error: null, requestFailed: true };
+    if (this.zoneSslModeError) {
+      return { mode: null, error: this.zoneSslModeError, requestFailed: false };
+    }
+    return { mode: this.zoneSslMode, error: null, requestFailed: false };
   }
 }

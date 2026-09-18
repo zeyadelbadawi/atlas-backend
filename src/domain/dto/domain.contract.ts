@@ -19,9 +19,12 @@ import type {
   SubdomainAllocation as PrismaSubdomainAllocation,
 } from '@prisma/client';
 import type { CanonicalHostSource } from '../utils/canonical-host.util';
+import { isCustomDomainLive } from '../utils/domain-liveness.util';
 import type {
   DomainCheckErrorCode,
   DomainDnsBlockedReason,
+  HttpsFailureReason,
+  OriginSslModeState,
   ProviderErrorCategory,
 } from '../constants/domain.constants';
 
@@ -46,9 +49,23 @@ export interface DomainConnectionResponse {
   readonly lastCheckedAt?: string;
   /** P63 — stable code for the latest failed check; absent after a successful one. */
   readonly lastCheckError?: DomainCheckErrorCode;
+  /** P63d — the provider's certificate state for this hostname (the same value as the top-level `ssl.status`, repeated here so a row on its own can say whether the certificate is issued). */
+  readonly sslStatus: PrismaDomainConnection['sslStatus'];
   /** P63 — Atlas's own outbound HTTPS probe. Absent when never probed. */
   readonly httpsReachable?: boolean;
   readonly httpsCheckedAt?: string;
+  /** P63d — the HTTP status the probe received, when a response arrived (a 5xx makes the probe fail and is reported here). */
+  readonly httpsStatusCode?: number;
+  /** P63d — why the probe found the hostname unreachable; absent when reachable or never probed. */
+  readonly httpsFailureReason?: HttpsFailureReason;
+  /**
+   * P63d — the ONE answer to "does this domain serve the website?":
+   * provider `connected` AND certificate `active` AND Atlas's probe
+   * succeeded (`isCustomDomainLive`). `status = connected` alone is not
+   * live — the certificate may still be pending, the edge may be
+   * returning 525 — and the UI must never say "live" unless this is true.
+   */
+  readonly live: boolean;
   /** P63c — whether the provider currently holds this hostname (Atlas has its id). `false` means there is nothing for the customer to configure yet. */
   readonly providerRegistered: boolean;
   /** P63c — the provider's own numeric error code for the latest refusal, for operators. A number, never a message. */
@@ -124,8 +141,13 @@ export function toDomainConnectionResponse(
     lastCheckedAt: connection.lastCheckedAt?.toISOString(),
     lastCheckError:
       (connection.lastCheckError as DomainCheckErrorCode | null) ?? undefined,
+    sslStatus: connection.sslStatus,
     httpsReachable: connection.httpsReachable ?? undefined,
     httpsCheckedAt: connection.httpsCheckedAt?.toISOString(),
+    httpsStatusCode: connection.httpsStatusCode ?? undefined,
+    httpsFailureReason:
+      (connection.httpsFailureReason as HttpsFailureReason | null) ?? undefined,
+    live: isCustomDomainLive(connection),
     providerRegistered: Boolean(connection.providerHostnameId),
     providerErrorCode: connection.lastProviderErrorCode ?? undefined,
   };
@@ -229,8 +251,19 @@ export interface PlatformDomainReadinessResponse {
     readonly providerErrorCategory?: ProviderErrorCategory;
     /** Provider vocabulary (`off`/`flexible`/`full`/`strict`); absent when unknown. */
     readonly originSslMode?: string;
-    /** `true` when the origin SSL mode is one Caddy's internal certificate can satisfy (`full`). `strict` would fail on every custom hostname. Absent when the mode is unknown. */
+    /** `true` when the origin SSL mode is one the origin's certificate can satisfy (`full`/`flexible`). `strict` would fail on every custom hostname. Absent when the mode is unknown. */
     readonly originSslModeCompatible?: boolean;
+    /**
+     * P63d — whether the mode could be read, and if not why: `read`,
+     * `permission_missing` (the token lacks the permission the provider's
+     * zone-settings endpoint needs — for Cloudflare, "Zone Settings: Read"),
+     * `provider_error`, or `unavailable` (no valid credentials). Lets the
+     * operator tell "not exposed to Atlas" from "misconfigured" from "the
+     * provider is down" — never collapsed into one warning.
+     */
+    readonly originSslModeState: OriginSslModeState;
+    /** P63d — the provider's numeric code for a refused SSL-mode read, when there was one. */
+    readonly originSslModeErrorCode?: string;
   };
   readonly platformHttps: {
     readonly baseDomainReachable?: boolean;

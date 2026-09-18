@@ -68,6 +68,16 @@ export interface CloudflareZoneFactsError {
   readonly category: ProviderErrorCategory;
 }
 
+/** P63d — the outcome of reading the zone's origin SSL mode: a value, or why there is none. */
+export interface CloudflareZoneSslModeRead {
+  /** `off` / `flexible` / `full` / `strict`, or `null` when it could not be read. */
+  readonly mode: string | null;
+  /** The provider's refusal when `mode` is null and the provider answered with an error; `null` when the read succeeded or the request itself failed. */
+  readonly error: CloudflareZoneFactsError | null;
+  /** `true` when the request itself failed (network, timeout) rather than being refused. */
+  readonly requestFailed: boolean;
+}
+
 export const CLOUDFLARE_PROVIDER = Symbol('CLOUDFLARE_PROVIDER');
 
 export interface CloudflareProvider {
@@ -97,8 +107,14 @@ export interface CloudflareProvider {
   /** The zone's fallback origin, or `null` when none is configured or the provider is unavailable. Read-only. */
   getFallbackOrigin(): Promise<CloudflareFallbackOrigin | null>;
 
-  /** The zone's origin SSL mode (`off` / `flexible` / `full` / `strict`), or `null` when unavailable. Read-only. */
-  getZoneSslMode(): Promise<string | null>;
+  /**
+   * The zone's origin SSL mode (`off` / `flexible` / `full` / `strict`).
+   * P63d: returns the value AND, when it could not be read, the provider's
+   * classified refusal — so "could not be read" can be told apart into
+   * "the token lacks Zone Settings: Read" versus "the provider failed".
+   * Never throws. Read-only.
+   */
+  getZoneSslMode(): Promise<CloudflareZoneSslModeRead>;
 
   /** Why the last zone-facts read was refused, if it was; `null` after a successful read. */
   getLastZoneFactsError(): CloudflareZoneFactsError | null;

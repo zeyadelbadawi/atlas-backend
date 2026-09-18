@@ -155,8 +155,10 @@ export class DomainCheckService {
     const nowConnected = mapped.status === 'connected';
 
     // The HTTPS probe is only meaningful once the provider says the
-    // hostname is live at the edge; before that, "unreachable" would just
-    // restate "not connected yet" and look like a second problem.
+    // hostname is active at the edge; before that, "unreachable" would just
+    // restate "not connected yet" and look like a second problem. Note that
+    // `connected` is NOT "live": the certificate may still be pending and
+    // the probe may fail — see `isCustomDomainLive`.
     const probe = nowConnected
       ? await this.httpsProbeService.probe(existing.hostname!)
       : null;
@@ -187,8 +189,18 @@ export class DomainCheckService {
         lastCheckError: error,
         lastProviderErrorCode: null,
         ...(probe
-          ? { httpsReachable: probe.reachable, httpsCheckedAt: probe.checkedAt }
-          : { httpsReachable: null, httpsCheckedAt: null }),
+          ? {
+              httpsReachable: probe.reachable,
+              httpsCheckedAt: probe.checkedAt,
+              httpsStatusCode: probe.statusCode ?? null,
+              httpsFailureReason: probe.failure ?? null,
+            }
+          : {
+              httpsReachable: null,
+              httpsCheckedAt: null,
+              httpsStatusCode: null,
+              httpsFailureReason: null,
+            }),
       },
     );
 
@@ -221,7 +233,13 @@ export class DomainCheckService {
           providerErrorCode === null ? null : String(providerErrorCode),
         ...(status === 'connected'
           ? {}
-          : { connectedAt: null, httpsReachable: null, httpsCheckedAt: null }),
+          : {
+              connectedAt: null,
+              httpsReachable: null,
+              httpsCheckedAt: null,
+              httpsStatusCode: null,
+              httpsFailureReason: null,
+            }),
       },
     );
     return this.outcome(existing, after, error);

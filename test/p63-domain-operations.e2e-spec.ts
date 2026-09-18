@@ -278,6 +278,11 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     expect(probe.probed).toEqual([hostname]);
     expect(connected.body.customDomain.httpsReachable).toBe(true);
     expect(connected.body.customDomain.httpsCheckedAt).toEqual(expect.any(String));
+    expect(connected.body.customDomain).toMatchObject({
+      sslStatus: 'active',
+      live: true,
+      httpsStatusCode: 200,
+    });
     expect(connected.body.canonicalHost).toEqual({
       host: hostname,
       source: 'custom_domain',
@@ -496,6 +501,8 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     expect(demoted.body.customDomain).toMatchObject({
       status: 'connected',
       httpsReachable: false,
+      httpsFailureReason: 'tls_or_connection_failed',
+      live: false,
     });
     // Back to the Atlas subdomain (or honestly no host when no base domain exists) — never the dead custom one.
     expect(demoted.body.canonicalHost).toEqual(subdomainHostFor(academy.slug));
@@ -685,6 +692,114 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
   });
 
   // --------------------------------------------------------- platform owner
+
+  it('P63-DOM-020 — the rawc.ae 525 case: the provider says active, the certificate is still pending and the edge answers 525 — the domain is connected but NOT live, the Atlas subdomain stays canonical, and the reason is recorded', async () => {
+    const { owner, academy } = await seedManagedAcademyWithSubdomain('p63-525');
+    const hostname = `learn-${run}-020.example.com`;
+    await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+
+    // Hostname active at the edge, certificate not yet issued, visitors get 525.
+    cloudflare.setState(hostname, 'active', 'pending_validation');
+    probe.setEdgeStatus(hostname, 525);
+    const connected = await verify(academy.id, owner.accessToken).expect(201);
+    expect(connected.body.customDomain).toMatchObject({
+      status: 'connected',
+      sslStatus: 'pending',
+      httpsReachable: false,
+      httpsStatusCode: 525,
+      httpsFailureReason: 'origin_error',
+      live: false,
+    });
+    expect(connected.body.ssl.status).toBe('pending');
+    // A dead custom domain is never advertised: the Atlas subdomain stays canonical.
+    expect(connected.body.canonicalHost).toEqual(subdomainHostFor(academy.slug));
+
+    // Certificate issued, but the origin path still broken: still not live.
+    cloudflare.setState(hostname, 'active', 'active');
+    const certOnly = await verify(academy.id, owner.accessToken).expect(201);
+    expect(certOnly.body.customDomain).toMatchObject({
+      sslStatus: 'active',
+      httpsReachable: false,
+      httpsStatusCode: 525,
+      live: false,
+    });
+
+    // Origin fixed: the edge answers 200 — now, and only now, live.
+    probe.setEdgeStatus(hostname, 200);
+    const live = await verify(academy.id, owner.accessToken).expect(201);
+    expect(live.body.customDomain).toMatchObject({
+      status: 'connected',
+      sslStatus: 'active',
+      httpsReachable: true,
+      httpsStatusCode: 200,
+      live: true,
+    });
+    expect(live.body.customDomain.httpsFailureReason).toBeUndefined();
+    expect(live.body.canonicalHost).toEqual({ host: hostname, source: 'custom_domain' });
+
+    // The Platform Owner sees the same truth on the row and in the overview.
+    const platformOwner = await seedPlatformOwner('p63-525-owner');
+    const row = await request(app.getHttpServer())
+      .get(`/platform-domains/${academy.id}`)
+      .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+      .expect(200);
+    expect(row.body.customDomain).toMatchObject({ live: true, sslStatus: 'active' });
+    const overview = await request(app.getHttpServer())
+      .get('/platform-domains/overview')
+      .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+      .expect(200);
+    expect(overview.body.customLive).toBeGreaterThanOrEqual(1);
+    expect(overview.body.customLive).toBeLessThanOrEqual(overview.body.customConnected);
+  });
+
+  it('P63-DOM-021 — a connected domain with a pending certificate is not live, is flagged for the sweep on the fast cadence, and the probe result never claims more than the edge showed', async () => {
+    const { owner, academy } = await seedManagedAcademyWithSubdomain('p63-sslpending');
+    const hostname = `learn-${run}-021.example.com`;
+    await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+    cloudflare.setState(hostname, 'active', 'pending_issuance');
+    // Edge already answers (e.g. the customer's own zone terminates TLS) — reachable, but the certificate is not issued.
+    const connected = await verify(academy.id, owner.accessToken).expect(201);
+    expect(connected.body.customDomain).toMatchObject({
+      status: 'connected',
+      sslStatus: 'provisioning',
+      httpsReachable: true,
+      live: false,
+    });
+
+    // Six minutes later the sweep picks it up on the FAST cadence (not the six-hour one).
+    await admin.domainConnection.update({
+      where: { academyId: academy.id },
+      data: { lastCheckedAt: new Date(Date.now() - 6 * 60 * 1000) },
+    });
+    cloudflare.setState(hostname, 'active', 'active');
+    const sweep = app.get(DomainVerificationSweepService, { strict: false });
+    const result = await sweep.run();
+    expect(result.skipped).toBeNull();
+    const row = await admin.domainConnection.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    expect(row.sslStatus).toBe('active');
+    expect(row.httpsReachable).toBe(true);
+    const nowLive = await request(app.getHttpServer())
+      .get(domainPath(academy.id))
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(nowLive.body.customDomain.live).toBe(true);
+
+    // Live and checked a minute ago: the sweep leaves it alone (slow cadence).
+    await admin.domainConnection.update({
+      where: { academyId: academy.id },
+      data: { lastCheckedAt: new Date(Date.now() - 6 * 60 * 1000) },
+    });
+    const before = (
+      await admin.domainConnection.findUniqueOrThrow({ where: { academyId: academy.id } })
+    ).updatedAt;
+    await sweep.run();
+    const after = await admin.domainConnection.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    expect(after.updatedAt).toEqual(before);
+  });
 
   describe('Platform Owner domain operations', () => {
     it('P63-OPS-001 — every operations endpoint is Platform Owner-only; an organization owner gets 403, anonymous gets 401', async () => {
@@ -888,6 +1003,34 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
       expect(notReady.body.customHostnames).toMatchObject({
         providerErrorCode: '10000',
         providerErrorCategory: 'permission',
+        originSslModeState: 'read',
+      });
+
+      // P63d — the SSL-mode read refused for lack of "Zone Settings: Read" is
+      // reported as exactly that, with the provider's code; the value is never invented.
+      cloudflare.zoneSslModeError = { code: 10000, category: 'permission' };
+      const notExposed = await request(app.getHttpServer())
+        .get('/platform-domain/readiness')
+        .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+        .expect(200);
+      expect(notExposed.body.customHostnames).toMatchObject({
+        originSslModeState: 'permission_missing',
+        originSslModeErrorCode: '10000',
+      });
+      expect(notExposed.body.customHostnames.originSslMode).toBeUndefined();
+      expect(notExposed.body.customHostnames.originSslModeCompatible).toBeUndefined();
+
+      // And a read value of `strict` is a misconfiguration, distinct from "unreadable".
+      cloudflare.zoneSslModeError = null;
+      cloudflare.zoneSslMode = 'strict';
+      const strict = await request(app.getHttpServer())
+        .get('/platform-domain/readiness')
+        .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+        .expect(200);
+      expect(strict.body.customHostnames).toMatchObject({
+        originSslModeState: 'read',
+        originSslMode: 'strict',
+        originSslModeCompatible: false,
       });
     });
   });

@@ -28,7 +28,9 @@ function build(
     getFallbackOrigin: jest
       .fn()
       .mockResolvedValue({ origin: 'Customers.Atlas.dev', status: 'active' }),
-    getZoneSslMode: jest.fn().mockResolvedValue('full'),
+    getZoneSslMode: jest
+      .fn()
+      .mockResolvedValue({ mode: 'full', error: null, requestFailed: false }),
     getLastZoneFactsError: jest.fn().mockReturnValue(null),
   };
   const config = {
@@ -129,6 +131,7 @@ describe('PlatformDomainService (P63) — one source of truth for the base domai
       fallbackOrigin: 'Customers.Atlas.dev',
       originSslMode: 'full',
       originSslModeCompatible: true,
+      originSslModeState: 'read',
     });
     expect(readiness.platformHttps).toMatchObject({
       baseDomainReachable: true,
@@ -139,12 +142,58 @@ describe('PlatformDomainService (P63) — one source of truth for the base domai
     expect(probe.probe).toHaveBeenCalledWith('atlas-wildcard-probe.atlass.dpdns.org');
 
     cloudflare.getFallbackOrigin.mockResolvedValueOnce(null);
-    cloudflare.getZoneSslMode.mockResolvedValueOnce('strict');
+    cloudflare.getZoneSslMode.mockResolvedValueOnce({
+      mode: 'strict',
+      error: null,
+      requestFailed: false,
+    });
     const notReady = await service.getReadiness();
     expect(notReady.customHostnames).toMatchObject({
       ready: false,
       originSslModeCompatible: false,
+      originSslModeState: 'read',
     });
     expect(notReady.customHostnames.fallbackOrigin).toBeUndefined();
+  });
+
+  it('P63d — an unreadable origin SSL mode is told apart: token permission, provider error, or no credentials — never guessed', async () => {
+    const { service, cloudflare } = build('atlass.dpdns.org', {
+      baseDomain: null,
+      configured: false,
+    });
+
+    // The token lacks "Zone Settings: Read": the value is not exposed to Atlas.
+    cloudflare.getZoneSslMode.mockResolvedValueOnce({
+      mode: null,
+      error: { code: 10000, category: 'permission' },
+      requestFailed: false,
+    });
+    const notExposed = await service.getReadiness();
+    expect(notExposed.customHostnames).toMatchObject({
+      originSslModeState: 'permission_missing',
+      originSslModeErrorCode: '10000',
+    });
+    expect(notExposed.customHostnames.originSslMode).toBeUndefined();
+    expect(notExposed.customHostnames.originSslModeCompatible).toBeUndefined();
+
+    // The request itself failed.
+    cloudflare.getZoneSslMode.mockResolvedValueOnce({
+      mode: null,
+      error: null,
+      requestFailed: true,
+    });
+    const failed = await service.getReadiness();
+    expect(failed.customHostnames.originSslModeState).toBe('provider_error');
+    expect(failed.customHostnames.originSslModeErrorCode).toBeUndefined();
+
+    // No valid credentials at all.
+    cloudflare.verifyToken.mockResolvedValueOnce(false);
+    cloudflare.getZoneSslMode.mockResolvedValueOnce({
+      mode: null,
+      error: null,
+      requestFailed: false,
+    });
+    const unavailable = await service.getReadiness();
+    expect(unavailable.customHostnames.originSslModeState).toBe('unavailable');
   });
 });

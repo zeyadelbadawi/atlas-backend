@@ -56,6 +56,8 @@ export interface DomainOperationsOverview {
   readonly withSubdomain: number;
   readonly withCustomDomain: number;
   readonly customConnected: number;
+  /** P63d — connected AND certificate active AND probe succeeded: the ones actually serving a website. */
+  readonly customLive: number;
   readonly customAwaitingProvider: number;
   readonly customFailed: number;
   readonly needingAttention: number;
@@ -128,10 +130,12 @@ export class DomainConnectionsRepository {
 
   /**
    * P63 — rows the verification sweep should re-ask the provider about:
-   * still waiting on the provider and not checked since `awaitingBefore`,
-   * or already connected and not checked since `connectedBefore` (a
-   * slower cadence that catches DNS that broke after connection). Never
-   * checked sorts first. Bounded.
+   * still waiting on the provider and not checked since `awaitingBefore`;
+   * connected but NOT YET LIVE (certificate pending, or the last probe
+   * failed — P63d) on that same fast cadence, because the provider or the
+   * origin can still move them forward and a customer is waiting; or live
+   * and not checked since `connectedBefore` (a slower cadence that catches
+   * DNS that broke after connection). Never checked sorts first. Bounded.
    */
   findManyDueForVerificationSweep(
     tx: Prisma.TransactionClient,
@@ -146,6 +150,15 @@ export class DomainConnectionsRepository {
           {
             status: { in: [...DOMAIN_STATUSES_AWAITING_PROVIDER] },
             OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: awaitingBefore } }],
+          },
+          {
+            status: 'connected',
+            OR: [{ sslStatus: { not: 'active' } }, { httpsReachable: { not: true } }],
+            AND: [
+              {
+                OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: awaitingBefore } }],
+              },
+            ],
           },
           {
             status: 'connected',
@@ -287,6 +300,7 @@ export class DomainConnectionsRepository {
       withSubdomain,
       withCustomDomain,
       customConnected,
+      customLive,
       customAwaitingProvider,
       customFailed,
       needingAttention,
@@ -295,6 +309,14 @@ export class DomainConnectionsRepository {
       tx.subdomainAllocation.count({ where: { status: 'assigned' } }),
       tx.domainConnection.count({ where: hasCustom }),
       tx.domainConnection.count({ where: { ...hasCustom, status: 'connected' } }),
+      tx.domainConnection.count({
+        where: {
+          ...hasCustom,
+          status: 'connected',
+          sslStatus: 'active',
+          httpsReachable: true,
+        },
+      }),
       tx.domainConnection.count({
         where: { ...hasCustom, status: { in: [...DOMAIN_STATUSES_AWAITING_PROVIDER] } },
       }),
@@ -315,6 +337,7 @@ export class DomainConnectionsRepository {
       withSubdomain,
       withCustomDomain,
       customConnected,
+      customLive,
       customAwaitingProvider,
       customFailed,
       needingAttention,

@@ -97,6 +97,41 @@ export const PROVIDER_ERROR_CATEGORIES = [
 ] as const;
 export type ProviderErrorCategory = (typeof PROVIDER_ERROR_CATEGORIES)[number];
 
+/**
+ * P63d — why Atlas's own HTTPS probe found a hostname unreachable. Stable,
+ * non-sensitive codes; the frontend maps each to copy in both languages.
+ */
+export const HTTPS_FAILURE_REASONS = [
+  /** Refused before dialling: the hostname is an IP literal. */
+  'ip_literal',
+  /** Refused before dialling: the hostname resolves to a non-public address. */
+  'non_public_address',
+  /** The hostname does not resolve. */
+  'unresolvable',
+  /** No usable answer within the probe's time budget. */
+  'timeout',
+  /** The TLS handshake or the TCP connection failed. */
+  'tls_or_connection_failed',
+  /** The edge answered with a 5xx (e.g. Cloudflare 52x): the edge is up, the origin path behind it is not. */
+  'origin_error',
+] as const;
+export type HttpsFailureReason = (typeof HTTPS_FAILURE_REASONS)[number];
+
+/**
+ * P63d — whether the zone's origin SSL mode could be read, and if not why.
+ * `read`: the provider returned a value; `permission_missing`: the token
+ * lacks the permission the endpoint needs (Cloudflare: "Zone Settings:
+ * Read"); `provider_error`: the request failed or was refused for another
+ * reason; `unavailable`: no valid provider credentials at all.
+ */
+export const ORIGIN_SSL_MODE_STATES = [
+  'read',
+  'permission_missing',
+  'provider_error',
+  'unavailable',
+] as const;
+export type OriginSslModeState = (typeof ORIGIN_SSL_MODE_STATES)[number];
+
 /** Audit actions written by the domain capability (P63). */
 export const DOMAIN_AUDIT_ACTIONS = {
   customDomainAdded: 'domain.custom_domain_added',

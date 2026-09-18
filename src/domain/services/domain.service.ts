@@ -258,6 +258,8 @@ export class DomainService {
                 lastProviderErrorCode: null,
                 httpsReachable: null,
                 httpsCheckedAt: null,
+                httpsStatusCode: null,
+                httpsFailureReason: null,
               },
             );
           } catch (error) {
@@ -347,8 +349,11 @@ export class DomainService {
               connectedAt: null,
               lastCheckedAt: null,
               lastCheckError: null,
+              lastProviderErrorCode: null,
               httpsReachable: null,
               httpsCheckedAt: null,
+              httpsStatusCode: null,
+              httpsFailureReason: null,
             },
           );
 

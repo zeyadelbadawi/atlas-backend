@@ -51,12 +51,12 @@ describe('HttpsProbeService (P63) — never connects to a non-public address', (
     let capturedOptions: Record<string, unknown> | undefined;
     requestMock.mockImplementation(((
       options: Record<string, unknown>,
-      onResponse: (res: { resume: () => void }) => void,
+      onResponse: (res: { resume: () => void; statusCode?: number }) => void,
     ) => {
       capturedOptions = options;
       const req = {
         on: jest.fn().mockReturnThis(),
-        end: jest.fn(() => onResponse({ resume: jest.fn() })),
+        end: jest.fn(() => onResponse({ resume: jest.fn(), statusCode: 200 })),
         destroy: jest.fn(),
       };
       return req;
@@ -64,7 +64,8 @@ describe('HttpsProbeService (P63) — never connects to a non-public address', (
 
     const service = new HttpsProbeService();
     const result = await service.probe('learn.example.com');
-    expect(result.reachable).toBe(true);
+    expect(result).toMatchObject({ reachable: true, statusCode: 200 });
+    expect(result.failure).toBeUndefined();
     expect(capturedOptions).toMatchObject({
       host: 'learn.example.com',
       servername: 'learn.example.com',
@@ -83,5 +84,76 @@ describe('HttpsProbeService (P63) — never connects to a non-public address', (
     const all = jest.fn();
     pinned('anything.example.com', { all: true }, all);
     expect(all).toHaveBeenCalledWith(null, [{ address: '104.21.42.225', family: 4 }]);
+  });
+
+  function respondWith(statusCode: number) {
+    requestMock.mockImplementation(((
+      _options: Record<string, unknown>,
+      onResponse: (res: { resume: () => void; statusCode?: number }) => void,
+    ) => ({
+      on: jest.fn().mockReturnThis(),
+      end: jest.fn(() => onResponse({ resume: jest.fn(), statusCode })),
+      destroy: jest.fn(),
+    })) as never);
+  }
+
+  it('P63d — a 5xx from the edge (Cloudflare 525: origin handshake failed) is NOT reachable, and says so', async () => {
+    lookupMock.mockResolvedValue([{ address: '104.21.42.225', family: 4 }] as never);
+    respondWith(525);
+    const service = new HttpsProbeService();
+    const result = await service.probe('rawc.example');
+    expect(result).toMatchObject({
+      reachable: false,
+      statusCode: 525,
+      failure: 'origin_error',
+    });
+  });
+
+  it('P63d — any non-5xx answer is reachable: the website (or its edge) answered the visitor', async () => {
+    lookupMock.mockResolvedValue([{ address: '104.21.42.225', family: 4 }] as never);
+    const service = new HttpsProbeService();
+    for (const statusCode of [200, 301, 404]) {
+      respondWith(statusCode);
+      const result = await service.probe('learn.example.com');
+      expect(result).toMatchObject({ reachable: true, statusCode });
+      expect(result.failure).toBeUndefined();
+    }
+  });
+
+  it('P63d — a handshake/connection failure and a timeout are recorded with distinct reasons', async () => {
+    lookupMock.mockResolvedValue([{ address: '104.21.42.225', family: 4 }] as never);
+    const service = new HttpsProbeService();
+
+    requestMock.mockImplementation((() => {
+      const handlers: Record<string, (arg?: unknown) => void> = {};
+      return {
+        on: jest.fn((event: string, handler: (arg?: unknown) => void) => {
+          handlers[event] = handler;
+          return undefined;
+        }),
+        end: jest.fn(() => handlers.error?.(new Error('handshake failure'))),
+        destroy: jest.fn(),
+      };
+    }) as never);
+    await expect(service.probe('learn.example.com')).resolves.toMatchObject({
+      reachable: false,
+      failure: 'tls_or_connection_failed',
+    });
+
+    requestMock.mockImplementation((() => {
+      const handlers: Record<string, (arg?: unknown) => void> = {};
+      const req: Record<string, unknown> = {};
+      req.on = jest.fn((event: string, handler: (arg?: unknown) => void) => {
+        handlers[event] = handler;
+        return req;
+      });
+      req.end = jest.fn(() => handlers.timeout?.());
+      req.destroy = jest.fn((error?: Error) => handlers.error?.(error));
+      return req;
+    }) as never);
+    await expect(service.probe('learn.example.com')).resolves.toMatchObject({
+      reachable: false,
+      failure: 'timeout',
+    });
   });
 });

@@ -2354,6 +2354,15 @@ model DomainConnection {
   /// derived guess.
   httpsReachable      Boolean?                    @map("https_reachable")
   httpsCheckedAt      DateTime?                   @map("https_checked_at")
+  /// P63d — the HTTP status the probe received (e.g. Cloudflare's 525 when
+  /// the edge could not complete the origin handshake). `null` when no
+  /// response arrived or the hostname was never probed. A 5xx is recorded
+  /// as NOT reachable: the edge answered, the website did not.
+  httpsStatusCode     Int?                        @map("https_status_code")
+  /// P63d — why the last probe found the hostname unreachable, as one of
+  /// `HTTPS_FAILURE_REASONS` (`origin_error`, `tls_failed`, …). `null` when
+  /// reachable or never probed.
+  httpsFailureReason  String?                     @map("https_failure_reason")
   createdAt           DateTime                    @default(now()) @map("created_at")
   updatedAt           DateTime                    @updatedAt @map("updated_at")
 

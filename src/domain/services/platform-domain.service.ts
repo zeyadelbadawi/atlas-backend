@@ -20,7 +20,9 @@ import { CLOUDFLARE_PROVIDER } from '../providers/cloudflare-provider.interface'
 import type {
   CloudflareFallbackOrigin,
   CloudflareProvider,
+  CloudflareZoneSslModeRead,
 } from '../providers/cloudflare-provider.interface';
+import type { OriginSslModeState } from '../constants/domain.constants';
 import { HttpsProbeService } from './https-probe.service';
 import {
   toPlatformDomainConfigurationResponse,
@@ -34,8 +36,25 @@ export interface EffectiveBaseDomain {
   readonly source?: PlatformBaseDomainSource;
 }
 
-/** Cloudflare origin SSL modes Caddy's `tls internal` catch-all can satisfy. `strict` demands a publicly trusted origin certificate for every custom hostname, which the origin does not hold. */
+/**
+ * Cloudflare origin SSL modes the origin can satisfy for a custom hostname.
+ * Caddy answers a custom hostname's SNI with the platform certificate
+ * (`fallback_sni`) — trusted, but issued for the platform name, not the
+ * customer's — which `full` and `flexible` accept and `strict` (hostname
+ * must match) refuses.
+ */
 const ORIGIN_SSL_MODES_COMPATIBLE_WITH_INTERNAL_CERT = new Set(['full', 'flexible']);
+
+/** P63d — turns a provider read into the four states the operator must be able to tell apart. */
+export function classifyOriginSslModeRead(
+  connected: boolean,
+  read: CloudflareZoneSslModeRead,
+): OriginSslModeState {
+  if (read.mode) return 'read';
+  if (!connected) return 'unavailable';
+  if (read.error?.category === 'permission') return 'permission_missing';
+  return 'provider_error';
+}
 
 /** How long zone facts (fallback origin, SSL mode) are reused before being re-read from the provider. */
 const ZONE_FACTS_TTL_MS = 5 * 60 * 1000;
@@ -83,7 +102,7 @@ export class PlatformDomainService {
    */
   private zoneFacts?: {
     readonly fallbackOrigin: CloudflareFallbackOrigin | null;
-    readonly sslMode: string | null;
+    readonly sslMode: CloudflareZoneSslModeRead;
     readonly fetchedAt: number;
   };
 
@@ -149,6 +168,7 @@ export class PlatformDomainService {
       this.loadZoneFacts(true),
     ]);
     const zoneFactsError = this.cloudflareProvider.getLastZoneFactsError();
+    const originSslModeState = classifyOriginSslModeRead(connected, sslMode);
 
     const [baseProbe, wildcardProbe] = effective.baseDomain
       ? await Promise.all([
@@ -172,10 +192,15 @@ export class PlatformDomainService {
             ? undefined
             : String(zoneFactsError.code),
         providerErrorCategory: zoneFactsError?.category,
-        originSslMode: sslMode ?? undefined,
-        originSslModeCompatible: sslMode
-          ? ORIGIN_SSL_MODES_COMPATIBLE_WITH_INTERNAL_CERT.has(sslMode)
+        originSslMode: sslMode.mode ?? undefined,
+        originSslModeCompatible: sslMode.mode
+          ? ORIGIN_SSL_MODES_COMPATIBLE_WITH_INTERNAL_CERT.has(sslMode.mode)
           : undefined,
+        originSslModeState,
+        originSslModeErrorCode:
+          sslMode.error?.code === null || sslMode.error?.code === undefined
+            ? undefined
+            : String(sslMode.error.code),
       },
       platformHttps: {
         baseDomainReachable: baseProbe?.reachable,

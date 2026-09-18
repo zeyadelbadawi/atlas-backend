@@ -1,6 +1,6 @@
 # Domain, subdomain & website access (P63)
 
-**Status: IMPLEMENTED · REAL-POSTGRESQL E2E · REAL CHROME (EN + AR/RTL) · see §12 for what is and is not production-verified.**
+**Status: IMPLEMENTED · REAL-POSTGRESQL E2E · REAL CHROME (EN + AR/RTL) · see §12 for what is and is not production-verified. P63d (18 Sep 2026) — see §3a "Live" and §7 — was driven by the first real production custom domain (`rawc.ae`).**
 
 This is the authority on how an Academy website is addressed, how a
 customer connects a custom domain, how Atlas verifies it, which address is
@@ -16,7 +16,7 @@ intended design that was not built.
 |---|---|---|---|
 | Atlas app | `atlass.dpdns.org` | `PLATFORM_BASE_DOMAIN` | Caddy (wildcard cert via Cloudflare DNS-01), behind Cloudflare proxy |
 | Academy subdomain | `{slug}.atlass.dpdns.org` | `subdomain_allocations` (`subdomain = academy.slug`) | same wildcard site block |
-| Custom domain | customer hostname | `domain_connections` | Cloudflare for SaaS custom hostname → fallback origin → Caddy `:443` catch-all (`tls internal`) |
+| Custom domain | customer hostname | `domain_connections` | Cloudflare for SaaS custom hostname → fallback origin → Caddy `:443` catch-all, answered with the platform certificate via the global `fallback_sni` (P63d) |
 
 `resolve_public_hostname(hostname, label)` — the one SECURITY DEFINER
 function for public resolution — matches a **connected** custom hostname
@@ -82,9 +82,64 @@ registers it (idempotent at the provider) — then maps status/SSL/CDN, sets
 | `provider_error` | the request itself failed | transient |
 | `dns_not_pointing` | the provider reports the CNAME is not pointing at Atlas yet | customer |
 
-Only when the provider says the hostname is live does Atlas run its own
-HTTPS probe and store `https_reachable` / `https_checked_at`. Audits
+Only when the provider says the hostname is active does Atlas run its own
+HTTPS probe and store `https_reachable` / `https_checked_at` and (P63d)
+`https_status_code` / `https_failure_reason`. Audits
 `domain.verification_checked` with status/SSL before→after.
+
+### 3a. "Live" is three facts, not one (P63d)
+
+The first real production custom domain exposed the gap: Cloudflare
+reported the custom hostname `active` (Atlas: `connected`), its
+certificate was still `pending_validation`, the edge answered every
+visitor with **525** — and the customer tab showed all four steps ticked
+and "Connected". Two things were wrong.
+
+1. **The probe counted a 525 as reachable.** It measured "TLS handshake
+   completed + any HTTP response". The edge's own certificate completes
+   the handshake even when the origin path behind it is broken. The probe
+   now records the HTTP status it received and treats any **5xx as not
+   reachable** with `https_failure_reason = origin_error` (other reasons:
+   `tls_or_connection_failed`, `timeout`, `unresolvable`,
+   `non_public_address`, `ip_literal`).
+2. **`connected` was rendered as "Live".** `isCustomDomainLive`
+   (`domain/utils/domain-liveness.util.ts`) is now the one rule, exposed
+   as `customDomain.live` on every response (customer read, Platform
+   Owner row) and as the `customLive` overview counter:
+
+   > `status = connected` **and** `ssl_status = active` **and**
+   > `https_reachable = true`.
+
+   The customer lifecycle therefore has five positions — Connect,
+   Configure DNS, Verification, **HTTPS**, Live — and a connected row is
+   `securing` (certificate/probe pending) or `https_failed` (probe failed,
+   or certificate failed/expired) until all three hold. DNS instructions
+   stay visible through those states because the certificate validation
+   TXT record may still be missing. The verification sweep re-checks
+   connected-but-not-live rows on the fast (5-minute) cadence, and the
+   tab re-reads the stored facts once a minute while a domain is in
+   progress (a database read; the provider is only asked by the sweep and
+   by "Check now", which is also offered right beside the HTTPS state).
+
+Canonical-host selection is unchanged (`connected` and not
+`https_reachable = false`): with the probe fix, a domain the edge cannot
+serve is demoted exactly as before, and a domain that works but whose
+provider certificate record is still pending keeps serving visitors.
+
+**Root cause of the 525 itself (origin).** For a custom hostname
+Cloudflare connects to the fallback origin with the **custom hostname as
+SNI** (and Host). Caddy's `:443 { tls internal }` catch-all holds no
+certificate for a customer's name and does not issue one for an arbitrary
+SNI, so it aborted the handshake (TLS alert 80, "no certificate
+available") — reproduced with `openssl s_client -servername rawc.ae`
+against the origin and locally in Docker. Fix: the global option
+`fallback_sni atlass.dpdns.org` in the frontend image's `Caddyfile`, so an
+unmatched SNI is served the platform certificate; Cloudflare's `full`
+origin SSL mode accepts a trusted certificate for a different name
+(`strict` would not — the readiness page reports the mode). Verified
+locally in Caddy 2.11 (handshake completes, catch-all serves the request
+by Host). Cloudflare's per-hostname "custom origin SNI" would be the
+provider-side alternative but is not available on the zone's plan.
 
 **P63c lesson (the `rawc.ae` case).** Before P63c, add recorded a refusal
 as `provider_unavailable` and the next check looked the hostname up, found
@@ -200,9 +255,16 @@ platform-owned hosts.
 
 Readiness reports live facts only: provider token valid, fallback origin
 present and `active` (⇒ custom domains routable), zone origin SSL mode and
-whether it is compatible with Caddy's internal certificate (`full`/
-`flexible` yes, `strict` no), and two live HTTPS probes of the base domain
-and a wildcard label. The UI is `/dashboard/platform/domain` ("Domains"):
+whether it is compatible with the origin's certificate (`full`/`flexible`
+yes, `strict` no), and two live HTTPS probes of the base domain and a
+wildcard label. P63d: the SSL-mode read carries an explicit
+`originSslModeState` — `read`, `permission_missing` (Cloudflare's
+`GET /zones/:id/settings/ssl` needs the token permission **Zone Settings:
+Read**, which a token scoped to custom hostnames does not have — the
+production case), `provider_error`, or `unavailable` — with the provider's
+code, so "not exposed to Atlas" is never shown as the same warning as
+"misconfigured" (`strict`) or "the provider is down". The value is never
+guessed from what an operator saw in the dashboard. The UI is `/dashboard/platform/domain` ("Domains"):
 base-domain card (read-only when environment-managed), readiness card,
 four real counters, and the operations table with filters, pagination,
 row → academy detail, and "Check now".
@@ -235,19 +297,23 @@ extended `resolve_public_hostname` (DROP + CREATE: the OUT list changed).
 Migration `20261007010000_p63b_canonical_https_fallback`: the function's
 `custom_hostname` ignores a connected hostname whose last probe failed.
 Migration `20261007020000_p63c_provider_error_code`: nullable
-`last_provider_error_code`.
+`last_provider_error_code`. Migration
+`20261007030000_p63d_https_probe_detail`: nullable `https_status_code`
+(INTEGER) and `https_failure_reason` (TEXT); rollback is dropping the two
+columns.
 Additive; NULL on every existing row means "never checked", exactly the
 prior behaviour. `prisma migrate diff` shows no domain drift (only the
 long-known raw-SQL `search_vector` items).
 
 ## 11. Tests
 
-- Unit: `canonical-host.util.spec.ts`, `platform-domain.service.spec.ts`,
-  `outbound-address.util.spec.ts`, `https-probe.service.spec.ts`,
+- Unit: `canonical-host.util.spec.ts`, `domain-liveness.util.spec.ts`,
+  `platform-domain.service.spec.ts`, `outbound-address.util.spec.ts`,
+  `https-probe.service.spec.ts` (5xx is unreachable; reasons),
   `cloudflare-status-mapper.spec.ts` (unchanged).
 - Real PostgreSQL e2e: `test/p63-domain-operations.e2e-spec.ts`
   (`P63-DOM-001..015`, `P63-RLS-001`, `P63-OPS-001..004`,
-  `P63-SWP-001..003`) with the stateful `FakeCloudflareProvider` and
+  `P63-SWP-001..003`, P63d `P63-DOM-020..021`) with the stateful `FakeCloudflareProvider` and
   `FakeHttpsProbe` substituted through `createTestApp({ overrides })`;
   the pre-existing `domain.e2e-spec.ts` and `rls-domain.e2e-spec.ts`
   still pass unchanged.
