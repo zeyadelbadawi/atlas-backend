@@ -20,6 +20,8 @@ interface FakeHostnameState {
   status: string;
   sslStatus: string;
   verificationErrors: string[];
+  /** Cloudflare returns no ownership/validation records once they are no longer needed. */
+  recordsWithheld: boolean;
 }
 
 export class FakeCloudflareProvider implements CloudflareProvider {
@@ -65,18 +67,20 @@ export class FakeCloudflareProvider implements CloudflareProvider {
       hostname: state.hostname,
       status: state.status,
       sslStatus: state.sslStatus,
-      verificationRecords: [
-        {
-          type: 'txt',
-          name: `_cf-custom-hostname.${state.hostname}`,
-          value: `own-${state.id}`,
-        },
-        {
-          type: 'TXT',
-          name: `_acme-challenge.${state.hostname}`,
-          value: `ssl-${state.id}`,
-        },
-      ],
+      verificationRecords: state.recordsWithheld
+        ? []
+        : [
+            {
+              type: 'txt',
+              name: `_cf-custom-hostname.${state.hostname}`,
+              value: `own-${state.id}`,
+            },
+            {
+              type: 'TXT',
+              name: `_acme-challenge.${state.hostname}`,
+              value: `ssl-${state.id}`,
+            },
+          ],
       verificationErrors: [...state.verificationErrors],
     };
   }
@@ -93,6 +97,13 @@ export class FakeCloudflareProvider implements CloudflareProvider {
     state.status = status;
     state.sslStatus = sslStatus;
     state.verificationErrors = verificationErrors;
+  }
+
+  /** Test control: the provider no longer returns verification records for this hostname (ownership verified, certificate issued). */
+  withholdRecords(hostname: string, withheld = true): void {
+    const state = this.hostnames.get(hostname);
+    if (!state) throw new Error(`fake cloudflare: unknown hostname ${hostname}`);
+    state.recordsWithheld = withheld;
   }
 
   /** Test control: pretend the hostname vanished from the zone (deleted out-of-band). */
@@ -127,6 +138,7 @@ export class FakeCloudflareProvider implements CloudflareProvider {
       status: 'pending',
       sslStatus: 'pending_validation',
       verificationErrors: [],
+      recordsWithheld: false,
     };
     this.hostnames.set(hostname, state);
     return this.toResource(state);

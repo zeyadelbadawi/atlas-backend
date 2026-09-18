@@ -24,6 +24,20 @@ export const DOMAIN_STATUSES_AWAITING_PROVIDER: readonly DomainStatus[] = [
   'verifying',
 ];
 
+/**
+ * P63f — statuses the verification sweep keeps re-asking the provider
+ * about on the fast cadence: everything still waiting on the provider,
+ * plus `failed`. A hostname the provider marked failed/moved (its CNAME
+ * stopped pointing at Atlas) comes back on its own once the customer fixes
+ * DNS — Cloudflare re-evaluates it — so Atlas must keep looking, not wait
+ * for a click. `disconnected` (the provider no longer holds the hostname)
+ * needs the customer to reconnect and is deliberately excluded.
+ */
+export const DOMAIN_STATUSES_SWEPT: readonly DomainStatus[] = [
+  ...DOMAIN_STATUSES_AWAITING_PROVIDER,
+  'failed',
+];
+
 /** Statuses that mean "the customer must do something" or "something went wrong". */
 export const DOMAIN_STATUSES_NEEDING_ATTENTION: readonly DomainStatus[] = [
   'verification_required',
@@ -130,7 +144,8 @@ export class DomainConnectionsRepository {
 
   /**
    * P63 — rows the verification sweep should re-ask the provider about:
-   * still waiting on the provider and not checked since `awaitingBefore`;
+   * still waiting on the provider — or failed (P63f) — and not checked
+   * since `awaitingBefore`;
    * connected but NOT YET SETTLED (the provider's certificate pending, or
    * the last probe failed — P63d/P63e) on that same fast cadence, because
    * the provider or the origin can still move them forward and a customer
@@ -149,7 +164,7 @@ export class DomainConnectionsRepository {
         hostname: { not: null },
         OR: [
           {
-            status: { in: [...DOMAIN_STATUSES_AWAITING_PROVIDER] },
+            status: { in: [...DOMAIN_STATUSES_SWEPT] },
             OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: awaitingBefore } }],
           },
           {

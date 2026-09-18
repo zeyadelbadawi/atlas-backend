@@ -86,7 +86,7 @@ export interface DomainDnsInstructionsResponse {
    */
   readonly cnameTarget?: string;
   readonly records: readonly DomainVerificationRecordResponse[];
-  /** P63c — `true` only when there is genuinely something for the customer to add: a CNAME target AND provider verification records. */
+  /** P63c — `true` only when there is genuinely something for the customer to add or keep: the provider holds the hostname AND there is a CNAME target. `records` may be empty once ownership/certificate validation is complete (P63f). */
   readonly ready: boolean;
   /** P63c — why not, when `ready` is false. Always Atlas-side. */
   readonly blockedReason?: DomainDnsBlockedReason;
@@ -161,7 +161,12 @@ function toDnsInstructions(
   cnameTarget: string | null,
 ): DomainDnsInstructionsResponse {
   const records = toVerificationRecords(connection);
-  const registered = Boolean(connection.providerHostnameId) && records.length > 0;
+  // P63f — "registered" is the provider holding the hostname, full stop.
+  // Once ownership is verified and the certificate issued, the provider
+  // returns NO verification records any more; the CNAME is still the one
+  // thing the customer must keep (and must restore when DNS breaks), so
+  // the instructions stay ready with just the CNAME row.
+  const registered = Boolean(connection.providerHostnameId);
   const blockedReason: DomainDnsBlockedReason | undefined = !registered
     ? 'provider_not_registered'
     : !cnameTarget

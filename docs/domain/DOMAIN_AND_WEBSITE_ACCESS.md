@@ -198,11 +198,37 @@ Queue `domain-verification-sweep`, one BullMQ repeatable every 10 minutes
 Runs under `runInUserContext(<first platform owner>)` through the P63
 `domain_connections_platform_update` policy. Candidates: rows awaiting the
 provider (`pending`/`verification_required`/`verifying`) not checked in 5
-minutes, and `connected` rows not checked in 6 hours (so DNS that breaks
-after connection stops being "connected" — and stops being canonical —
+minutes, and settled rows not checked in 1 hour — P63f, was 6 (so DNS that breaks
+after connection stops being "live" — and stops being canonical —
 without a click). Batches of 50 up to 200 per tick; each row in its own
 transaction; skips entirely (and logs why) when no platform owner exists
 or provider credentials are absent.
+
+### 5a. What the sweep covers (P63f)
+
+A second production test removed a live domain's CNAME and watched the
+dashboard. Three gaps, all closed:
+
+- **Failed rows were never re-checked.** Cloudflare marks a hostname
+  `moved` when its CNAME stops pointing at the zone (Atlas: `failed`,
+  `dns_not_pointing`) and re-evaluates it by itself once DNS is restored —
+  but the sweep only looked at rows awaiting the provider, so a failed
+  domain stayed failed until someone clicked. `DOMAIN_STATUSES_SWEPT` =
+  awaiting statuses + `failed`, on the fast cadence; the customer tab also
+  keeps re-reading in the attention state. `disconnected` stays excluded
+  (the provider no longer holds the hostname; the customer reconnects).
+- **Settled rows were re-checked every six hours.** Now every hour
+  (`DOMAIN_VERIFICATION_SWEEP_CONNECTED_RECHECK_MS`), so broken DNS on a
+  live domain is noticed within the hour.
+- **The DNS table vanished exactly when it was needed.** Once ownership
+  is verified and the certificate issued, Cloudflare returns no
+  verification records, and `dns.ready` treated "no records" as "not
+  registered" — so the failed-domain message said "make sure the CNAME
+  below exists" over an empty space. `ready` is now "the provider holds
+  the hostname AND there is a CNAME target"; `records` may be empty and the
+  table shows the CNAME row alone. `P63-DOM-022` covers the whole
+  round-trip (live → CNAME removed → failed with the CNAME shown → DNS
+  restored → the sweep brings it back to live, no click).
 
 ## 6. Canonical host
 

@@ -811,6 +811,62 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     expect(after.updatedAt).toEqual(before);
   });
 
+  it('P63-DOM-022 — the rawc.ae DNS-removal case: a live domain whose CNAME stops pointing at Atlas becomes failed with the CNAME instruction still shown (even with no provider records), the sweep keeps re-checking it, and it comes back on its own once DNS is restored', async () => {
+    const { owner, academy } = await seedManagedAcademyWithSubdomain('p63-dns-removed');
+    const hostname = `learn-${run}-022.example.com`;
+    await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+    cloudflare.setState(hostname, 'active', 'active');
+    cloudflare.withholdRecords(hostname);
+    const live = await verify(academy.id, owner.accessToken).expect(201);
+    expect(live.body.customDomain).toMatchObject({ status: 'connected', live: true });
+    // Verified and issued: no provider records any more — the CNAME is still
+    // the customer's to keep, so the instructions stay ready.
+    expect(live.body.customDomain.verificationRecords).toBeUndefined();
+    expect(live.body.dns).toMatchObject({
+      ready: true,
+      cnameTarget: 'customers.atlas-test.dev',
+      records: [],
+    });
+
+    // The customer deletes the CNAME: the provider marks the hostname moved.
+    cloudflare.setState(hostname, 'moved', 'active', [
+      'The CNAME record for this hostname does not point to the zone',
+    ]);
+    const broken = await verify(academy.id, owner.accessToken).expect(201);
+    expect(broken.body.customDomain).toMatchObject({
+      status: 'failed',
+      lastCheckError: 'dns_not_pointing',
+      live: false,
+    });
+    expect(broken.body.dns).toMatchObject({
+      ready: true,
+      cnameTarget: 'customers.atlas-test.dev',
+    });
+    expect(broken.body.canonicalHost).toEqual(subdomainHostFor(academy.slug));
+
+    // The customer restores DNS; nobody clicks. Six minutes later the sweep
+    // re-checks the FAILED row (P63f) and the provider says active again.
+    await admin.domainConnection.update({
+      where: { academyId: academy.id },
+      data: { lastCheckedAt: new Date('2000-01-01T00:00:00Z') },
+    });
+    cloudflare.setState(hostname, 'active', 'active');
+    const sweep = app.get(DomainVerificationSweepService, { strict: false });
+    const result = await sweep.run();
+    expect(result.skipped).toBeNull();
+    const row = await admin.domainConnection.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    expect(row.status).toBe('connected');
+    expect(row.lastCheckError).toBeNull();
+    const back = await request(app.getHttpServer())
+      .get(domainPath(academy.id))
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(back.body.customDomain.live).toBe(true);
+    expect(back.body.canonicalHost).toEqual({ host: hostname, source: 'custom_domain' });
+  });
+
   describe('Platform Owner domain operations', () => {
     it('P63-OPS-001 — every operations endpoint is Platform Owner-only; an organization owner gets 403, anonymous gets 401', async () => {
       const { owner, academy } = await seedManagedAcademy('p63-ops-authz');
