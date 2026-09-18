@@ -327,10 +327,11 @@ long-known raw-SQL `search_vector` items).
 | `PLATFORM_BASE_DOMAIN` in production | inferred `atlass.dpdns.org` (full-hostname public resolution works only with the suffix strip) |
 | Wildcard `*.atlass.dpdns.org` over HTTPS | VERIFIED by probe |
 | Caddy `:443` catch-all answers custom hostnames | VERIFIED in the Caddyfile; behaviour depends on Cloudflare's origin SSL mode |
-| Production Cloudflare token can manage custom hostnames | UNKNOWN — the readiness endpoint reports it |
-| Cloudflare for SaaS fallback origin configured | UNKNOWN — the readiness endpoint reports it; without it no custom domain can complete |
-| Zone origin SSL mode | UNKNOWN — the readiness endpoint reports it; `strict` would fail every custom hostname because the origin answers with an internal certificate |
-| End-to-end custom domain on a real customer hostname | NOT VERIFIED — requires a real hostname the operator controls |
+| Production Cloudflare token can manage custom hostnames | VERIFIED 18 Sep 2026 — readiness `provider.connected = true`, `rawc.ae` registered |
+| Cloudflare for SaaS fallback origin configured | VERIFIED 18 Sep 2026 — `proxy-fallback.atlass.dpdns.org`, `active` |
+| Zone origin SSL mode | NOT READABLE BY ATLAS — readiness `originSslModeState = permission_missing`, provider code 9109: the token lacks "Zone Settings: Read". The operator saw "Full" in the dashboard; Atlas reports it as not exposed, never as a value. Adding the permission to the token makes the row a live answer. |
+| Custom-hostname SNI answered by the origin | VERIFIED 18 Sep 2026 — `openssl s_client -servername rawc.ae` against the origin now returns the platform certificate (was TLS alert 80 before `fallback_sni`) |
+| End-to-end custom domain on a real customer hostname | PARTIALLY VERIFIED 18 Sep 2026 — `https://rawc.ae/` returns 200 with the Atlas app (was 525); the operator check records `https_status_code = 200`; Cloudflare's certificate for the custom hostname is still `pending` (its `_acme-challenge` TXT values in public DNS differ from the current validation records), so the domain is `connected`, not `live`, and the UI says "securing HTTPS" |
 
 No new environment variable is required. No new external service is
 introduced; the verification sweep is one more BullMQ repeatable on the
