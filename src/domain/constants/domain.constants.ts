@@ -76,6 +76,15 @@ export const DOMAIN_CHECK_ERROR_CODES = [
   /** The provider reports the hostname's DNS does not point at Atlas yet. */
   'dns_not_pointing',
 ] as const;
+
+/** P63g — reasons an add/replace request is refused before the provider is asked (customer-facing copy per code). */
+export const DOMAIN_HOSTNAME_REFUSALS = [
+  /** The hostname is the platform's own domain or a subdomain of it — those belong to Atlas and to Academies' own subdomains. */
+  'platform_domain',
+  /** The hostname is the platform's routing target (fallback origin). */
+  'routing_target',
+] as const;
+export type DomainHostnameRefusal = (typeof DOMAIN_HOSTNAME_REFUSALS)[number];
 export type DomainCheckErrorCode = (typeof DOMAIN_CHECK_ERROR_CODES)[number];
 
 /** P63c — why the DNS step cannot be offered yet. Both are Atlas-side, never the customer's fault. */
@@ -132,10 +141,43 @@ export const ORIGIN_SSL_MODE_STATES = [
 ] as const;
 export type OriginSslModeState = (typeof ORIGIN_SSL_MODE_STATES)[number];
 
-/** Audit actions written by the domain capability (P63). */
+/** P63g — why a provider release row exists. */
+export const DOMAIN_RELEASE_REASONS = [
+  'replaced',
+  'removed',
+  'archived',
+  'operator_release',
+] as const;
+export type DomainReleaseReason = (typeof DOMAIN_RELEASE_REASONS)[number];
+
+/** P63g — how a provider release concluded. */
+export const DOMAIN_RELEASE_OUTCOMES = ['deleted', 'not_found', 'reassigned'] as const;
+export type DomainReleaseOutcome = (typeof DOMAIN_RELEASE_OUTCOMES)[number];
+
+/**
+ * P63g — sweep backoff for rows whose checks keep failing: the first
+ * retries stay on the fast cadence, then the wait doubles per consecutive
+ * failure up to `DOMAIN_CHECK_BACKOFF_MAX_MS`. A successful check resets
+ * the counter. `attempt` is the number of consecutive failures so far.
+ */
+export const DOMAIN_CHECK_BACKOFF_BASE_MS = 5 * 60 * 1000;
+export const DOMAIN_CHECK_BACKOFF_MAX_MS = 24 * 60 * 60 * 1000;
+export function domainCheckBackoffMs(consecutiveFailures: number): number {
+  const free = 3; // the first three retries are not backed off at all
+  if (consecutiveFailures <= free) return DOMAIN_CHECK_BACKOFF_BASE_MS;
+  const exponent = Math.min(consecutiveFailures - free, 12);
+  return Math.min(
+    DOMAIN_CHECK_BACKOFF_BASE_MS * 2 ** exponent,
+    DOMAIN_CHECK_BACKOFF_MAX_MS,
+  );
+}
+
+/** Audit actions written by the domain capability (P63, P63g). */
 export const DOMAIN_AUDIT_ACTIONS = {
   customDomainAdded: 'domain.custom_domain_added',
   customDomainRemoved: 'domain.custom_domain_removed',
   verificationChecked: 'domain.verification_checked',
   platformCheck: 'domain.platform_check',
+  /** P63g — a Platform Owner released a hostname an Academy (typically archived) was holding. */
+  platformRelease: 'domain.platform_release',
 } as const;

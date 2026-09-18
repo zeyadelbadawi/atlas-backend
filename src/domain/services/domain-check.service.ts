@@ -1,7 +1,7 @@
 /**
- * DomainCheckService (P63, reworked P63c) — the ONE implementation of
- * "make sure the provider holds this hostname, ask what it currently
- * knows, and record the answer".
+ * DomainCheckService (P63, reworked P63c, hardened P63g) — the ONE
+ * implementation of "make sure the provider holds this hostname, ask what
+ * it currently knows, and record the answer".
  *
  * Three callers share it so they cannot drift:
  *   - the customer's "Check now" (`DomainService.verifyDomain`) and the
@@ -17,8 +17,23 @@
  * accepted. So a check now first ENSURES registration when Atlas holds no
  * provider id: every retry (button or sweep) is a fresh registration
  * attempt, and the moment the provider configuration is fixed the domain
- * moves forward on its own. Only a hostname the provider once held (Atlas
- * has its id) can ever be "missing".
+ * moves forward on its own.
+ *
+ * SELF-HEALING (P63g). A hostname the provider once held (Atlas has its
+ * id) and no longer does — deleted out of band, or lost because an
+ * earlier release ran before the database could refuse a change — is now
+ * RE-REGISTERED on the next check rather than reported "missing" forever.
+ * The row moves to whatever the fresh registration reports (normally
+ * `verifying` with fresh records), the transition is audited by the
+ * caller, and the customer is shown the records to keep. A transport
+ * failure while looking the hostname up is `provider_error`, never
+ * "missing": the provider must positively say the resource is gone.
+ *
+ * CERTIFICATE LIFECYCLE (P63g). Certificates are validated over HTTP,
+ * which the provider completes by itself — at issuance AND at every
+ * renewal — for any hostname whose traffic routes through it (exactly the
+ * CNAME setup the customer is instructed to create). A legacy resource
+ * still on TXT validation is migrated in place the first time it is seen.
  *
  * Runs INSIDE the caller's transaction with the row lock held. Never
  * throws for an ordinary "provider said no/unknown" — that is a state to
@@ -30,6 +45,7 @@ import { Prisma } from '@prisma/client';
 import type { DomainConnection } from '@prisma/client';
 import {
   CLOUDFLARE_PROVIDER,
+  CLOUDFLARE_SSL_METHOD,
   CloudflareProviderError,
 } from '../providers/cloudflare-provider.interface';
 import type {
@@ -48,6 +64,13 @@ export interface DomainCheckOutcome {
   /** Status OR HTTPS reachability moved — either can change which host is canonical, so the public hostname cache must be invalidated. */
   readonly canonicalMayHaveChanged: boolean;
   readonly error: DomainCheckErrorCode | null;
+  /** P63g — the provider had lost the hostname and it was registered afresh during this check. */
+  readonly reRegistered: boolean;
+}
+
+export interface DomainCheckOptions {
+  /** The caller has already verified the provider token during this run (the sweep does it once per tick — P63g). */
+  readonly providerVerified?: boolean;
 }
 
 /** Cloudflare phrases a "your CNAME is not pointing at us yet" verification error in a few ways; all mean the same actionable thing to a customer. */
@@ -58,8 +81,11 @@ function looksLikeDnsNotPointing(errors: readonly string[]): boolean {
 }
 
 type Located =
-  | { readonly kind: 'found'; readonly resource: CloudflareCustomHostname }
-  | { readonly kind: 'missing' }
+  | {
+      readonly kind: 'found';
+      readonly resource: CloudflareCustomHostname;
+      readonly reRegistered: boolean;
+    }
   | { readonly kind: 'refused'; readonly code: number | null }
   | { readonly kind: 'failed' };
 
@@ -75,10 +101,10 @@ export class DomainCheckService {
   ) {}
 
   /**
-   * Finds the provider resource for `existing`, registering it first when
-   * Atlas holds no provider id (never accepted, or accepted before Atlas
-   * recorded ids). Registration is idempotent at the provider (an existing
-   * hostname is returned, never duplicated).
+   * Finds the provider resource for `existing`, registering it when the
+   * provider does not hold it (never accepted, or lost since).
+   * Registration is idempotent at the provider (an existing hostname is
+   * returned, never duplicated).
    */
   private async locate(existing: DomainConnection): Promise<Located> {
     const hostname = existing.hostname!;
@@ -87,13 +113,23 @@ export class DomainCheckService {
         const byId = await this.cloudflareProvider.getCustomHostnameById(
           existing.providerHostnameId,
         );
-        if (byId) return { kind: 'found', resource: byId };
+        if (byId && byId.hostname.toLowerCase() === hostname) {
+          return { kind: 'found', resource: byId, reRegistered: false };
+        }
         const byHostname =
           await this.cloudflareProvider.getCustomHostnameByHostname(hostname);
-        return byHostname ? { kind: 'found', resource: byHostname } : { kind: 'missing' };
+        if (byHostname)
+          return { kind: 'found', resource: byHostname, reRegistered: false };
+        // Positively gone at the provider: register afresh (P63g).
+        const registered = await this.cloudflareProvider.createCustomHostname(hostname);
+        this.logger.warn(
+          { academyId: existing.academyId },
+          'Provider had lost the custom hostname; re-registered it',
+        );
+        return { kind: 'found', resource: registered, reRegistered: true };
       }
       const registered = await this.cloudflareProvider.createCustomHostname(hostname);
-      return { kind: 'found', resource: registered };
+      return { kind: 'found', resource: registered, reRegistered: false };
     } catch (error) {
       if (error instanceof CloudflareProviderError) {
         return { kind: 'refused', code: error.code };
@@ -109,6 +145,31 @@ export class DomainCheckService {
     }
   }
 
+  /** Legacy TXT-validated resources are moved to HTTP validation so renewals no longer need a customer action. Best effort; the check proceeds either way. */
+  private async ensureHttpValidation(resource: CloudflareCustomHostname): Promise<void> {
+    if (!resource.sslMethod || resource.sslMethod === CLOUDFLARE_SSL_METHOD) return;
+    try {
+      const updated = await this.cloudflareProvider.updateCustomHostnameSslMethod(
+        resource.id,
+        CLOUDFLARE_SSL_METHOD,
+      );
+      if (!updated) {
+        this.logger.warn(
+          { resourceId: resource.id },
+          'Could not migrate hostname to HTTP validation',
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        {
+          resourceId: resource.id,
+          error: error instanceof Error ? error.message : 'unknown',
+        },
+        'HTTP validation migration failed',
+      );
+    }
+  }
+
   /**
    * Ensures registration, re-checks `existing` (a locked, hostname-bearing
    * row) against the provider and persists the result. Returns both sides
@@ -118,10 +179,12 @@ export class DomainCheckService {
   async check(
     tx: Prisma.TransactionClient,
     existing: DomainConnection,
+    options: DomainCheckOptions = {},
   ): Promise<DomainCheckOutcome> {
     const checkedAt = new Date();
 
-    const connected = await this.cloudflareProvider.verifyToken();
+    const connected =
+      options.providerVerified ?? (await this.cloudflareProvider.verifyToken());
     if (!connected) {
       return this.recordFailure(tx, existing, checkedAt, 'provider_unavailable', null);
     }
@@ -139,17 +202,9 @@ export class DomainCheckService {
     if (located.kind === 'failed') {
       return this.recordFailure(tx, existing, checkedAt, 'provider_error', null);
     }
-    if (located.kind === 'missing') {
-      return this.recordFailure(
-        tx,
-        existing,
-        checkedAt,
-        'provider_hostname_missing',
-        null,
-      );
-    }
 
     const customHostname = located.resource;
+    await this.ensureHttpValidation(customHostname);
     const mapped = mapCloudflareCustomHostname(customHostname);
     const wasConnected = existing.status === 'connected';
     const nowConnected = mapped.status === 'connected';
@@ -157,8 +212,7 @@ export class DomainCheckService {
     // The HTTPS probe is only meaningful once the provider says the
     // hostname is active at the edge; before that, "unreachable" would just
     // restate "not connected yet" and look like a second problem. Note that
-    // `connected` is NOT "live": the certificate may still be pending and
-    // the probe may fail — see `isCustomDomainLive`.
+    // `connected` is NOT "live": the probe may fail — see `isCustomDomainLive`.
     const probe = nowConnected
       ? await this.httpsProbeService.probe(existing.hostname!)
       : null;
@@ -188,6 +242,7 @@ export class DomainCheckService {
         lastCheckedAt: checkedAt,
         lastCheckError: error,
         lastProviderErrorCode: null,
+        consecutiveFailures: error ? existing.consecutiveFailures + 1 : 0,
         ...(probe
           ? {
               httpsReachable: probe.reachable,
@@ -204,7 +259,7 @@ export class DomainCheckService {
       },
     );
 
-    return this.outcome(existing, after, error);
+    return this.outcome(existing, after, error, located.reRegistered);
   }
 
   private async recordFailure(
@@ -215,40 +270,27 @@ export class DomainCheckService {
     providerErrorCode: number | null,
   ): Promise<DomainCheckOutcome> {
     // The provider could not be consulted (or refused), so the previously
-    // known status stands — but a hostname the provider has forgotten
-    // cannot be "connected" any more: nothing serves it at the edge.
-    const status =
-      error === 'provider_hostname_missing' && existing.status === 'connected'
-        ? 'disconnected'
-        : existing.status;
+    // known status stands.
     const after = await this.domainConnectionsRepository.updateByAcademyId(
       tx,
       existing.academyId,
       {
         hostname: existing.hostname,
-        status,
         lastCheckedAt: checkedAt,
         lastCheckError: error,
         lastProviderErrorCode:
           providerErrorCode === null ? null : String(providerErrorCode),
-        ...(status === 'connected'
-          ? {}
-          : {
-              connectedAt: null,
-              httpsReachable: null,
-              httpsCheckedAt: null,
-              httpsStatusCode: null,
-              httpsFailureReason: null,
-            }),
+        consecutiveFailures: existing.consecutiveFailures + 1,
       },
     );
-    return this.outcome(existing, after, error);
+    return this.outcome(existing, after, error, false);
   }
 
   private outcome(
     before: DomainConnection,
     after: DomainConnection,
     error: DomainCheckErrorCode | null,
+    reRegistered: boolean,
   ): DomainCheckOutcome {
     return {
       before,
@@ -258,6 +300,7 @@ export class DomainCheckService {
         before.status !== after.status ||
         (before.httpsReachable ?? null) !== (after.httpsReachable ?? null),
       error,
+      reRegistered,
     };
   }
 }

@@ -1,19 +1,30 @@
 /**
  * DomainService — the customer's (Academy owner/administrator/manager)
- * domain surface: `academies/:id/website/domain*` (P11; reworked P63).
+ * domain surface: `academies/:id/website/domain*` (P11; reworked P63,
+ * hardened P63g).
  *
  * Every method independently re-establishes the RLS tenant context via
  * `TenancyContextService.runInTenantAndUserContext`. Write authorization
  * reuses P9/P10's exact `owner`/`administrator`/`manager` `assertCanManage`
  * pattern (`academy.website.manage` on the frontend).
  *
- * P63 guarantees, all enforced here or in the database, never in React:
+ * Guarantees, all enforced here or in the database, never in React:
  *   - IDEMPOTENT ADD: re-submitting the same hostname reuses the provider
  *     resource and keeps its verification records; changing hostname
- *     releases the previous provider resource first.
+ *     releases the previous provider resource AFTER the change commits.
+ *   - NEVER THE PLATFORM'S OWN NAMES (P63g): the platform base domain, any
+ *     name under it (every Academy's Atlas subdomain lives there) and the
+ *     routing target are refused before the provider is asked. Public
+ *     resolution prefers a connected custom hostname over a subdomain, so
+ *     without this rule one tenant could claim another's Atlas address.
  *   - DUPLICATE OWNERSHIP: a hostname another Academy holds is refused
  *     (409) — inside the tenant's own RLS view for a friendly error, and
  *     by the real UNIQUE index for the cross-tenant case RLS hides.
+ *   - NO DESTRUCTIVE PARTIAL OPERATION (P63g): the provider resource a
+ *     replace/remove gives up is recorded in `domain_provider_releases`
+ *     inside the same transaction, deleted at the provider only after
+ *     commit, and retried by the sweep until the provider confirms. A
+ *     refused replace (409) therefore leaves the working domain untouched.
  *   - CONCURRENCY: add/check/remove take the row lock
  *     (`lockByAcademyId`) so overlapping calls serialize per Academy.
  *   - SERVER-AUTHORITATIVE VERIFICATION: only `DomainCheckService`,
@@ -26,9 +37,9 @@
  *     the canonical host could have changed.
  */
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
-  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -39,18 +50,23 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { PublicWebsiteCacheService } from '../../public-website/services/public-website-cache.service';
+import { UsersRepository } from '../../identity/repositories/users.repository';
 import { SubdomainAllocationsRepository } from '../repositories/subdomain-allocations.repository';
 import { DomainConnectionsRepository } from '../repositories/domain-connections.repository';
-import { CLOUDFLARE_PROVIDER } from '../providers/cloudflare-provider.interface';
-import type { CloudflareProvider } from '../providers/cloudflare-provider.interface';
+import { DomainProviderReleasesRepository } from '../repositories/domain-provider-releases.repository';
 import { DomainCheckService } from './domain-check.service';
+import { DomainProviderReleaseService } from './domain-provider-release.service';
 import { PlatformDomainService } from './platform-domain.service';
 import {
   toAcademyDomainConfigurationResponse,
   type AcademyDomainConfigurationResponse,
 } from '../dto/domain.contract';
 import type { AddCustomDomainDto } from '../dto/add-custom-domain.dto';
-import { DOMAIN_AUDIT_ACTIONS } from '../constants/domain.constants';
+import {
+  DOMAIN_AUDIT_ACTIONS,
+  type DomainHostnameRefusal,
+  type DomainReleaseReason,
+} from '../constants/domain.constants';
 import { resolveCanonicalHost, resolveSubdomainHost } from '../utils/canonical-host.util';
 
 function isUniqueConstraintViolation(error: unknown): boolean {
@@ -58,6 +74,47 @@ function isUniqueConstraintViolation(error: unknown): boolean {
 }
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
+
+/** The column reset that "no custom domain" means — one definition so remove, archive and operator release cannot drift. */
+export const DOMAIN_CONNECTION_RESET: Omit<
+  Prisma.DomainConnectionUncheckedCreateInput,
+  'academyId'
+> = {
+  hostname: null,
+  status: 'not_configured',
+  verificationRecords: Prisma.JsonNull,
+  sslStatus: 'not_configured',
+  cdnStatus: 'not_configured',
+  cdnProvider: null,
+  providerHostnameId: null,
+  connectedAt: null,
+  lastCheckedAt: null,
+  lastCheckError: null,
+  lastProviderErrorCode: null,
+  httpsReachable: null,
+  httpsCheckedAt: null,
+  httpsStatusCode: null,
+  httpsFailureReason: null,
+  consecutiveFailures: 0,
+};
+
+/**
+ * P63g — why a hostname must never be a custom domain: the platform's own
+ * domain or anything under it, or the routing target itself.
+ */
+export function refuseHostnameReason(
+  hostname: string,
+  baseDomain: string | undefined,
+  cnameTarget: string | null | undefined,
+): DomainHostnameRefusal | null {
+  const host = hostname.toLowerCase();
+  if (baseDomain) {
+    const base = baseDomain.toLowerCase();
+    if (host === base || host.endsWith(`.${base}`)) return 'platform_domain';
+  }
+  if (cnameTarget && host === cnameTarget.toLowerCase()) return 'routing_target';
+  return null;
+}
 
 @Injectable()
 export class DomainService {
@@ -67,13 +124,14 @@ export class DomainService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
     private readonly domainConnectionsRepository: DomainConnectionsRepository,
+    private readonly releasesRepository: DomainProviderReleasesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly usersRepository: UsersRepository,
     private readonly domainCheckService: DomainCheckService,
+    private readonly releaseService: DomainProviderReleaseService,
     private readonly platformDomainService: PlatformDomainService,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly publicWebsiteCacheService: PublicWebsiteCacheService,
-    @Inject(CLOUDFLARE_PROVIDER)
-    private readonly cloudflareProvider: CloudflareProvider,
   ) {}
 
   private async assertCanManage(
@@ -157,6 +215,32 @@ export class DomainService {
       await this.publicWebsiteCacheService.invalidateHostnameResolution([...hosts]);
   }
 
+  /**
+   * P63g — after the transaction that gave a provider resource up has
+   * COMMITTED, try the delete once under the platform context. Failure is
+   * fine: the ledger row stays pending and the sweep retries it. Nothing
+   * here can throw into the customer's request.
+   */
+  private async attemptReleasesAfterCommit(releaseIds: readonly string[]): Promise<void> {
+    if (releaseIds.length === 0) return;
+    try {
+      const platformOwner = await this.usersRepository.findFirstPlatformOwnerId();
+      if (!platformOwner) return;
+      const providerAvailable = await this.platformDomainService.isProviderAvailable();
+      await this.tenancyContextService.runInUserContext(platformOwner.id, async (tx) => {
+        for (const id of releaseIds) {
+          const row = await this.releasesRepository.findById(tx, id);
+          if (row) await this.releaseService.attempt(tx, row, providerAvailable);
+        }
+      });
+    } catch (error) {
+      this.logger.warn(
+        { error: error instanceof Error ? error.message : 'unknown' },
+        'Post-commit provider release attempt failed; the sweep will retry',
+      );
+    }
+  }
+
   async getDomainConfiguration(
     academyId: string,
     organizationId: string,
@@ -177,20 +261,18 @@ export class DomainService {
     return this.toResponse(academyId, subdomain, domainConnection);
   }
 
-  private async releaseFromProvider(existing: DomainConnection | null): Promise<void> {
-    if (!existing?.hostname) return;
-    const connected = await this.cloudflareProvider.verifyToken();
-    if (!connected) return;
-    try {
-      const resource = existing.providerHostnameId
-        ? await this.cloudflareProvider.getCustomHostnameById(existing.providerHostnameId)
-        : await this.cloudflareProvider.getCustomHostnameByHostname(existing.hostname);
-      if (resource) await this.cloudflareProvider.deleteCustomHostname(resource.id);
-    } catch (error) {
-      this.logger.warn(
-        { error: error instanceof Error ? error.message : 'unknown' },
-        'Provider custom hostname release failed',
-      );
+  /** P63g — refuses the platform's own names before any row or provider call. */
+  private async assertHostnameAllowed(hostname: string): Promise<void> {
+    const [{ baseDomain }, cnameTarget] = await Promise.all([
+      this.platformDomainService.getEffectiveBaseDomain(),
+      this.platformDomainService.getCnameTarget(),
+    ]);
+    const refusal = refuseHostnameReason(hostname, baseDomain, cnameTarget);
+    if (refusal) {
+      throw new BadRequestException({
+        messageKey: 'errors.domain.hostnameReserved',
+        refusal,
+      });
     }
   }
 
@@ -200,7 +282,9 @@ export class DomainService {
     userId: string,
     payload: AddCustomDomainDto,
   ): Promise<AcademyDomainConfigurationResponse> {
-    const { response, subdomain, previousHostname } =
+    await this.assertHostnameAllowed(payload.hostname);
+
+    const { response, subdomain, previousHostname, releaseIds } =
       await this.tenancyContextService.runInTenantAndUserContext(
         organizationId,
         userId,
@@ -216,7 +300,8 @@ export class DomainService {
           // DIFFERENT tenant's row is invisible under this SELECT by RLS
           // design, so that case can only ever be caught by the real
           // database-level UNIQUE constraint on `hostname` when the
-          // `upsert` below runs — handled explicitly, never a raw 500.
+          // `upsert` below runs — handled explicitly, never a raw 500, and
+          // (P63g) BEFORE anything is released at the provider.
           const existingForHostname =
             await this.domainConnectionsRepository.findByHostname(tx, payload.hostname);
           if (existingForHostname && existingForHostname.academyId !== academyId) {
@@ -224,11 +309,6 @@ export class DomainService {
           }
 
           const sameHostname = existing?.hostname === payload.hostname;
-          if (existing?.hostname && !sameHostname) {
-            // Changing hostname: the old provider resource must not linger
-            // (it would keep answering for a hostname the customer gave up).
-            await this.releaseFromProvider(existing);
-          }
 
           let domainConnection: DomainConnection;
           try {
@@ -236,6 +316,7 @@ export class DomainService {
               tx,
               academyId,
               {
+                ...DOMAIN_CONNECTION_RESET,
                 hostname: payload.hostname,
                 // A same-hostname resubmission keeps the provider id and
                 // whatever verification progress the provider already
@@ -249,17 +330,6 @@ export class DomainService {
                 providerHostnameId: sameHostname
                   ? (existing?.providerHostnameId ?? null)
                   : null,
-                sslStatus: 'not_configured',
-                cdnStatus: 'not_configured',
-                cdnProvider: null,
-                connectedAt: null,
-                lastCheckedAt: null,
-                lastCheckError: null,
-                lastProviderErrorCode: null,
-                httpsReachable: null,
-                httpsCheckedAt: null,
-                httpsStatusCode: null,
-                httpsFailureReason: null,
               },
             );
           } catch (error) {
@@ -267,6 +337,20 @@ export class DomainService {
               throw new ConflictException({ messageKey: 'errors.domain.hostnameTaken' });
             }
             throw error;
+          }
+
+          // Changing hostname: the old provider resource must not linger
+          // (it would keep answering for a hostname the customer gave up).
+          // Recorded here, in the same transaction; deleted after commit.
+          const releases: string[] = [];
+          if (existing?.hostname && !sameHostname) {
+            const release = await this.releasesRepository.enqueue(tx, {
+              academyId,
+              hostname: existing.hostname,
+              providerHostnameId: existing.providerHostnameId,
+              reason: 'replaced',
+            });
+            releases.push(release.id);
           }
 
           // Register with the provider and record what it says — the same
@@ -307,12 +391,52 @@ export class DomainService {
             response: await this.toResponse(academyId, subdomainRow, domainConnection),
             subdomain: subdomainRow,
             previousHostname: existing?.hostname ?? null,
+            releaseIds: releases,
           };
         },
       );
 
     await this.invalidatePublicResolution(subdomain, previousHostname, payload.hostname);
+    await this.attemptReleasesAfterCommit(releaseIds);
     return response;
+  }
+
+  /**
+   * Resets the row and records the release — shared by the customer's
+   * Disconnect, the archive path and the operator release. Runs inside
+   * the caller's transaction; returns the release id (if any) for the
+   * post-commit attempt.
+   */
+  async resetInTransaction(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    existing: DomainConnection | null,
+    reason: DomainReleaseReason,
+  ): Promise<{ readonly row: DomainConnection; readonly releaseId: string | null }> {
+    let releaseId: string | null = null;
+    if (existing?.hostname) {
+      const release = await this.releasesRepository.enqueue(tx, {
+        academyId,
+        hostname: existing.hostname,
+        providerHostnameId: existing.providerHostnameId,
+        reason,
+      });
+      releaseId = release.id;
+    }
+    // Reset, never a hard delete — see this table's own RLS doc comment
+    // (no DELETE policy exists on `domain_connections`).
+    const row = existing
+      ? await this.domainConnectionsRepository.updateByAcademyId(
+          tx,
+          academyId,
+          DOMAIN_CONNECTION_RESET,
+        )
+      : await this.domainConnectionsRepository.upsert(
+          tx,
+          academyId,
+          DOMAIN_CONNECTION_RESET,
+        );
+    return { row, releaseId };
   }
 
   async removeCustomDomain(
@@ -320,7 +444,7 @@ export class DomainService {
     organizationId: string,
     userId: string,
   ): Promise<AcademyDomainConfigurationResponse> {
-    const { response, subdomain, previousHostname } =
+    const { response, subdomain, previousHostname, releaseId } =
       await this.tenancyContextService.runInTenantAndUserContext(
         organizationId,
         userId,
@@ -331,30 +455,11 @@ export class DomainService {
             academyId,
           );
 
-          await this.releaseFromProvider(existing);
-
-          // Reset, never a hard delete — see this table's own RLS doc comment
-          // (no DELETE policy exists on `domain_connections`).
-          const domainConnection = await this.domainConnectionsRepository.upsert(
+          const { row: domainConnection, releaseId } = await this.resetInTransaction(
             tx,
             academyId,
-            {
-              hostname: null,
-              status: 'not_configured',
-              verificationRecords: Prisma.JsonNull,
-              sslStatus: 'not_configured',
-              cdnStatus: 'not_configured',
-              cdnProvider: null,
-              providerHostnameId: null,
-              connectedAt: null,
-              lastCheckedAt: null,
-              lastCheckError: null,
-              lastProviderErrorCode: null,
-              httpsReachable: null,
-              httpsCheckedAt: null,
-              httpsStatusCode: null,
-              httpsFailureReason: null,
-            },
+            existing,
+            'removed',
           );
 
           if (existing?.hostname) {
@@ -381,11 +486,13 @@ export class DomainService {
             response: await this.toResponse(academyId, subdomainRow, domainConnection),
             subdomain: subdomainRow,
             previousHostname: existing?.hostname ?? null,
+            releaseId,
           };
         },
       );
 
     await this.invalidatePublicResolution(subdomain, previousHostname);
+    await this.attemptReleasesAfterCommit(releaseId ? [releaseId] : []);
     return response;
   }
 
@@ -422,6 +529,7 @@ export class DomainService {
               outcome: outcome.error ? 'failed' : 'succeeded',
               error: outcome.error,
               httpsReachable: outcome.after.httpsReachable ?? null,
+              reRegistered: outcome.reRegistered,
             },
             changes: {
               status: { from: outcome.before.status, to: outcome.after.status },

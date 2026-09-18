@@ -135,7 +135,7 @@ export function toDomainConnectionResponse(
   connection: PrismaDomainConnection | null,
 ): DomainConnectionResponse | undefined {
   if (!connection || connection.status === 'not_configured') return undefined;
-  const records = toVerificationRecords(connection);
+  const records = toCustomerRecords(connection);
   return {
     hostname: connection.hostname ?? undefined,
     status: connection.status,
@@ -156,11 +156,25 @@ export function toDomainConnectionResponse(
   };
 }
 
+/**
+ * P63g — records the CUSTOMER must create. HTTP validation records are
+ * served by the provider itself once the CNAME routes traffic through it
+ * (that is the point of HTTP validation), so they are never something a
+ * customer adds at their DNS provider and are not shown.
+ */
+function toCustomerRecords(
+  connection: PrismaDomainConnection,
+): DomainVerificationRecordResponse[] {
+  return toVerificationRecords(connection).filter(
+    (record) => record.type.toUpperCase() !== 'HTTP',
+  );
+}
+
 function toDnsInstructions(
   connection: PrismaDomainConnection,
   cnameTarget: string | null,
 ): DomainDnsInstructionsResponse {
-  const records = toVerificationRecords(connection);
+  const records = toCustomerRecords(connection);
   // P63f — "registered" is the provider holding the hostname, full stop.
   // Once ownership is verified and the certificate issued, the provider
   // returns NO verification records any more; the CNAME is still the one
@@ -277,6 +291,14 @@ export interface PlatformDomainReadinessResponse {
     readonly baseDomainReachable?: boolean;
     readonly wildcardReachable?: boolean;
     readonly checkedAt: string;
+  };
+  /** P63g — proof the verification sweep is alive, and the release backlog. */
+  readonly sweep: {
+    readonly lastCompletedAt?: string;
+    readonly lastResult?: Record<string, number | string | boolean | null>;
+    /** Provider resources Atlas gave up that the provider has not yet confirmed deleted. */
+    readonly pendingReleases: number;
+    readonly intervalMs: number;
   };
   readonly checkedAt: string;
 }

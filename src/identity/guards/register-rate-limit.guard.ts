@@ -17,6 +17,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import type { IdentityConfig } from '../../config/configuration';
+import { resolveClientIp } from '../utils/request-metadata.util';
 import { AuthRateLimiterService } from '../services/auth-rate-limiter.service';
 
 @Injectable()
@@ -32,7 +33,7 @@ export class RegisterRateLimitGuard implements CanActivate {
     const { max, windowSeconds } = identity.registerRateLimit;
 
     const ipCheck = await this.rateLimiter.consume(
-      `register:ip:${request.ip}`,
+      `register:ip:${resolveClientIp(request) ?? request.ip}`,
       max,
       windowSeconds,
     );

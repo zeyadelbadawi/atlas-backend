@@ -485,6 +485,7 @@ model Academy {
   websiteTestimonials  WebsiteTestimonialEntry[]
   subdomainAllocation  SubdomainAllocation?
   domainConnection     DomainConnection?
+  domainProviderReleases DomainProviderRelease[]
   /// Phase P13 — Course Commerce (master plan §23/§5.8).
   courseOrderPayments  Payment[]
   courseOrders         CourseOrder[]
@@ -2363,12 +2364,48 @@ model DomainConnection {
   /// `HTTPS_FAILURE_REASONS` (`origin_error`, `tls_failed`, …). `null` when
   /// reachable or never probed.
   httpsFailureReason  String?                     @map("https_failure_reason")
+  /// P63g — consecutive checks that ended in a recorded error (provider
+  /// refusal, provider error, DNS not pointing, …). Drives the sweep's
+  /// exponential backoff so an abandoned or permanently refused hostname
+  /// is not re-asked every five minutes forever. Reset to 0 by any
+  /// successful check.
+  consecutiveFailures Int                         @default(0) @map("consecutive_failures")
   createdAt           DateTime                    @default(now()) @map("created_at")
   updatedAt           DateTime                    @updatedAt @map("updated_at")
 
   @@index([status])
   @@index([lastCheckedAt])
   @@map("domain_connections")
+}
+
+/// P63g — a provider resource Atlas has stopped using and must delete at
+/// the provider: written in the SAME transaction as the replace/remove/
+/// archive/operator-release that gave the hostname up, attempted right
+/// after commit, and retried by the verification sweep until the provider
+/// confirms the resource is gone (or reports it never existed). This is
+/// what makes "release" safe: nothing is ever deleted at the provider
+/// before the database has durably recorded the customer's intent, and a
+/// failed delete can never silently orphan an active hostname at the edge.
+model DomainProviderRelease {
+  id                 String    @id @default(uuid())
+  academyId          String    @map("academy_id")
+  academy            Academy   @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  hostname           String
+  providerHostnameId String?   @map("provider_hostname_id")
+  /// `replaced` | `removed` | `archived` | `operator_release`
+  reason             String
+  attempts           Int       @default(0)
+  lastAttemptedAt    DateTime? @map("last_attempted_at")
+  /// A stable code (`provider_unavailable`, `provider_error`, `hostname_mismatch`), never a provider message.
+  lastError          String?   @map("last_error")
+  releasedAt         DateTime? @map("released_at")
+  /// `deleted` | `not_found` | `reassigned` — how the release concluded.
+  outcome            String?
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  @@index([releasedAt])
+  @@index([academyId])
+  @@map("domain_provider_releases")
 }
 
 /// Platform-owned singleton — mirrors `TrialPolicy` (P4) exactly: a fixed,
@@ -2380,6 +2417,13 @@ model PlatformDomainConfiguration {
   baseDomain String?  @map("base_domain")
   configured Boolean  @default(false)
   updatedAt  DateTime @updatedAt @map("updated_at")
+  /// P63g — when the verification sweep last finished a tick, and what it
+  /// did (`{considered, checked, changed, failed, releasesProcessed,
+  /// durationMs}`). The Platform Owner readiness page shows it, so a
+  /// silently vanished repeatable job is visible instead of inferred from
+  /// customer complaints.
+  lastSweepCompletedAt DateTime? @map("last_sweep_completed_at")
+  lastSweepResult      Json?     @map("last_sweep_result")
 
   @@map("platform_domain_configuration")
 }

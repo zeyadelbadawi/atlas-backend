@@ -30,4 +30,30 @@ export class PlatformDomainConfigurationRepository {
       update: { baseDomain, configured: true },
     });
   }
+
+  /** P63g — the verification sweep's last completed tick (platform-owned singleton, no RLS: written by the sweep, read by readiness). */
+  recordSweep(
+    completedAt: Date,
+    result: Record<string, number | string | boolean | null>,
+  ): Promise<PlatformDomainConfiguration> {
+    return this.prisma.platformDomainConfiguration.upsert({
+      where: { id: SINGLETON_ID },
+      create: {
+        id: SINGLETON_ID,
+        baseDomain: null,
+        configured: false,
+        lastSweepCompletedAt: completedAt,
+        lastSweepResult: result,
+      },
+      update: { lastSweepCompletedAt: completedAt, lastSweepResult: result },
+    });
+  }
+
+  /** P63g — pending provider releases, counted through the RLS-bypassing definer function (the readiness view runs outside any tenant context). */
+  async countPendingReleases(): Promise<number> {
+    const rows = await this.prisma.$queryRaw<
+      { count: bigint }[]
+    >`SELECT count_pending_domain_releases() AS count`;
+    return Number(rows[0]?.count ?? 0);
+  }
 }

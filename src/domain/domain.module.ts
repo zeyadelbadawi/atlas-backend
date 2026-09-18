@@ -40,6 +40,8 @@ import { DomainVerificationSweepService } from './services/domain-verification-s
 import { InfrastructureService } from './services/infrastructure.service';
 import { SubdomainAllocationsRepository } from './repositories/subdomain-allocations.repository';
 import { DomainConnectionsRepository } from './repositories/domain-connections.repository';
+import { DomainProviderReleasesRepository } from './repositories/domain-provider-releases.repository';
+import { DomainProviderReleaseService } from './services/domain-provider-release.service';
 import { PlatformDomainConfigurationRepository } from './repositories/platform-domain-configuration.repository';
 import { CLOUDFLARE_PROVIDER } from './providers/cloudflare-provider.interface';
 import { CloudflareApiProvider } from './providers/cloudflare-api.provider';
@@ -73,6 +75,8 @@ import { DOMAIN_VERIFICATION_SWEEP_QUEUE } from './queue/domain-verification-swe
     InfrastructureService,
     SubdomainAllocationsRepository,
     DomainConnectionsRepository,
+    DomainProviderReleasesRepository,
+    DomainProviderReleaseService,
     PlatformDomainConfigurationRepository,
     PublicWebsiteCacheService,
     { provide: CLOUDFLARE_PROVIDER, useClass: CloudflareApiProvider },
@@ -80,6 +84,7 @@ import { DOMAIN_VERIFICATION_SWEEP_QUEUE } from './queue/domain-verification-swe
   exports: [
     SubdomainAllocationsRepository,
     DomainConnectionsRepository,
+    DomainProviderReleasesRepository,
     PlatformDomainConfigurationRepository,
     PlatformDomainService,
   ],

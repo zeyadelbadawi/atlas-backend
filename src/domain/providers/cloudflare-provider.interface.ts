@@ -38,7 +38,15 @@ export interface CloudflareCustomHostname {
   readonly verificationRecords: readonly CloudflareVerificationRecord[];
   /** Cloudflare's own human-readable verification errors, when it reports any (e.g. a CNAME that does not point at the zone). Display data only; never a secret. */
   readonly verificationErrors?: readonly string[];
+  /** P63g — the certificate validation method the resource is configured with (`http` | `txt` | `email`), when reported. */
+  readonly sslMethod?: string;
 }
+
+/** P63g — how a delete concluded. `not_found` is a success for the caller's purpose (nothing is left at the provider). */
+export type CloudflareDeleteOutcome = 'deleted' | 'not_found' | 'failed';
+
+/** P63g — the certificate validation method Atlas asks for. `http` validates automatically once the customer's CNAME routes traffic through the provider, including at every renewal. */
+export const CLOUDFLARE_SSL_METHOD = 'http';
 
 /** The zone's Cloudflare-for-SaaS fallback origin — the hostname every custom hostname is routed to, and therefore the CNAME target customers must use. */
 export interface CloudflareFallbackOrigin {
@@ -87,22 +95,26 @@ export interface CloudflareProvider {
   /**
    * Creates a Cloudflare Custom Hostname for `hostname` under the
    * configured zone — the real "connect a custom domain" operation.
-   * IDEMPOTENT (P63): when Cloudflare already holds this hostname in the
-   * zone, the existing resource is returned rather than an error, so a
-   * repeated submission never loses the verification records.
-   * Throws `CloudflareProviderError` (code + category, no message) when
-   * the provider refuses; any other error means the request itself failed.
+   * IDEMPOTENT (P63): when Cloudflare says the zone ALREADY holds this
+   * exact hostname (and only then — P63g), the existing resource is
+   * returned rather than an error, so a repeated submission never loses
+   * the verification records. Any other refusal throws
+   * `CloudflareProviderError` (code + category, no message); a failed
+   * request throws an ordinary Error.
    */
   createCustomHostname(hostname: string): Promise<CloudflareCustomHostname>;
 
-  /** Looks up an existing Custom Hostname by its hostname value — the real "check current status" / "re-verify" operation. `null` if none exists for this hostname in the configured zone. */
+  /** Looks up an existing Custom Hostname by its EXACT hostname value. `null` when the zone holds none; throws when the request fails (P63g — a failure is never mistaken for "none"). */
   getCustomHostnameByHostname(hostname: string): Promise<CloudflareCustomHostname | null>;
 
-  /** Looks up a Custom Hostname by the provider's own id. `null` when it no longer exists. */
+  /** Looks up a Custom Hostname by the provider's own id. `null` only when the provider says it does not exist; throws when the request fails (P63g). */
   getCustomHostnameById(id: string): Promise<CloudflareCustomHostname | null>;
 
-  /** Deletes a Custom Hostname — the real "disconnect" operation. */
-  deleteCustomHostname(id: string): Promise<void>;
+  /** Deletes a Custom Hostname — the real "disconnect" operation. Never throws; the outcome says what happened (P63g). */
+  deleteCustomHostname(id: string): Promise<CloudflareDeleteOutcome>;
+
+  /** P63g — switches the resource's certificate validation method (e.g. legacy `txt` → `http`). Returns `false` when the provider refused or the request failed. */
+  updateCustomHostnameSslMethod(id: string, method: string): Promise<boolean>;
 
   /** The zone's fallback origin, or `null` when none is configured or the provider is unavailable. Read-only. */
   getFallbackOrigin(): Promise<CloudflareFallbackOrigin | null>;

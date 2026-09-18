@@ -28,5 +28,36 @@ import type { HelmetOptions } from 'helmet';
 export const HSTS_MAX_AGE_SECONDS = 31_536_000;
 
 export const HELMET_OPTIONS: HelmetOptions = {
-  hsts: { maxAge: HSTS_MAX_AGE_SECONDS, includeSubDomains: true },
+  // P63g — HSTS is set by `hstsPerHost` below, per request host.
+  hsts: false,
 };
+
+/**
+ * P63g — `Strict-Transport-Security` per host. The platform domain and
+ * every Atlas subdomain get `includeSubDomains` (Atlas owns that whole
+ * tree); a customer's custom domain gets the bare directive, because
+ * Atlas does not own — and must not make policy for — `mail.customer.com`
+ * or any other name under the customer's apex. Same one-year max-age in
+ * both cases, matching the edge.
+ */
+export function hstsPerHost(
+  baseDomain: string | undefined,
+): (
+  req: { hostname?: string; headers: Record<string, unknown> },
+  res: { setHeader: (name: string, value: string) => void },
+  next: () => void,
+) => void {
+  const base = baseDomain?.toLowerCase();
+  return (req, res, next) => {
+    const rawHost = (req.hostname ?? String(req.headers.host ?? '')).toLowerCase();
+    const host = rawHost.replace(/:\d+$/, '');
+    const platform = Boolean(base) && (host === base || host.endsWith(`.${base}`));
+    res.setHeader(
+      'Strict-Transport-Security',
+      platform
+        ? `max-age=${HSTS_MAX_AGE_SECONDS}; includeSubDomains`
+        : `max-age=${HSTS_MAX_AGE_SECONDS}`,
+    );
+    next();
+  };
+}

@@ -12,10 +12,13 @@
  * the row remains a fallback for deployments without the variable, and
  * the API reports which one is in force (`source`) so nobody has to guess.
  */
-import { ConflictException, Inject, Injectable } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
 import { PlatformDomainConfigurationRepository } from '../repositories/platform-domain-configuration.repository';
+import { SubdomainAllocationsRepository } from '../repositories/subdomain-allocations.repository';
+import { PublicWebsiteCacheService } from '../../public-website/services/public-website-cache.service';
+import { PrismaService } from '../../database/prisma.service';
 import { CLOUDFLARE_PROVIDER } from '../providers/cloudflare-provider.interface';
 import type {
   CloudflareFallbackOrigin,
@@ -24,6 +27,8 @@ import type {
 } from '../providers/cloudflare-provider.interface';
 import type { OriginSslModeState } from '../constants/domain.constants';
 import { HttpsProbeService } from './https-probe.service';
+import { resolveEffectiveBaseDomain } from '../utils/effective-base-domain.util';
+import { DOMAIN_VERIFICATION_SWEEP_INTERVAL_MS } from '../queue/domain-verification-sweep.types';
 import {
   toPlatformDomainConfigurationResponse,
   type PlatformBaseDomainSource,
@@ -69,8 +74,13 @@ const WILDCARD_PROBE_LABEL = 'atlas-wildcard-probe';
 export class PlatformDomainService {
   private readonly environmentBaseDomain?: string;
 
+  private readonly logger = new Logger(PlatformDomainService.name);
+
   constructor(
     private readonly platformDomainConfigurationRepository: PlatformDomainConfigurationRepository,
+    private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
+    private readonly publicWebsiteCacheService: PublicWebsiteCacheService,
+    private readonly prisma: PrismaService,
     private readonly httpsProbeService: HttpsProbeService,
     @Inject(CLOUDFLARE_PROVIDER)
     private readonly cloudflareProvider: CloudflareProvider,
@@ -88,10 +98,7 @@ export class PlatformDomainService {
       return { baseDomain: this.environmentBaseDomain, source: 'environment' };
     }
     const row = await this.platformDomainConfigurationRepository.findSingleton();
-    if (row.configured && row.baseDomain) {
-      return { baseDomain: row.baseDomain.toLowerCase(), source: 'database' };
-    }
-    return {};
+    return resolveEffectiveBaseDomain(undefined, row);
   }
 
   /**
@@ -140,6 +147,27 @@ export class PlatformDomainService {
     return toPlatformDomainConfigurationResponse(configuration, effective);
   }
 
+  /**
+   * P63g — the provider token, verified at most once per minute. The
+   * sweep, the post-commit release attempt and readiness all ask; a
+   * customer's "Check now" still verifies live through `DomainCheckService`.
+   */
+  private providerAvailability?: { readonly value: boolean; readonly checkedAt: number };
+
+  async isProviderAvailable(fresh = false): Promise<boolean> {
+    const now = Date.now();
+    if (
+      !fresh &&
+      this.providerAvailability &&
+      now - this.providerAvailability.checkedAt < 60_000
+    ) {
+      return this.providerAvailability.value;
+    }
+    const value = await this.cloudflareProvider.verifyToken();
+    this.providerAvailability = { value, checkedAt: now };
+    return value;
+  }
+
   async updatePlatformDomainConfiguration(
     baseDomain: string,
   ): Promise<PlatformDomainConfigurationResponse> {
@@ -150,12 +178,42 @@ export class PlatformDomainService {
         messageKey: 'errors.domain.baseDomainManagedByEnvironment',
       });
     }
+    const normalized = baseDomain.trim().toLowerCase();
     const configuration =
-      await this.platformDomainConfigurationRepository.update(baseDomain);
+      await this.platformDomainConfigurationRepository.update(normalized);
+    // P63g — every allocation's advertised full host follows the base
+    // domain, and every cached resolution for the old hosts is dropped.
+    // Without this, existing Academies kept advertising the previous
+    // domain forever (no backfill path existed).
+    const rewritten = await this.subdomainAllocationsRepository.rewriteFullHosts(
+      this.prisma,
+      normalized,
+    );
+    await this.publicWebsiteCacheService.invalidateHostnameResolution(
+      rewritten.flatMap((row) => [
+        row.subdomain,
+        ...(row.previousFullHost ? [row.previousFullHost] : []),
+      ]),
+    );
+    this.invalidateZoneFacts();
     return toPlatformDomainConfigurationResponse(configuration, {
       baseDomain: configuration.baseDomain?.toLowerCase(),
       source: 'database',
     });
+  }
+
+  /** P63g — the sweep records its last completed tick here so the readiness page can show it. */
+  async recordSweepResult(
+    result: Record<string, number | string | boolean | null>,
+  ): Promise<void> {
+    try {
+      await this.platformDomainConfigurationRepository.recordSweep(new Date(), result);
+    } catch (error) {
+      this.logger.warn(
+        { error: error instanceof Error ? error.message : 'unknown' },
+        'Could not record the sweep result',
+      );
+    }
   }
 
   /** Every field a live answer or explicitly absent — see the response contract. */
@@ -163,10 +221,13 @@ export class PlatformDomainService {
     const checkedAt = new Date();
     const effective = await this.getEffectiveBaseDomain();
 
-    const [connected, { fallbackOrigin, sslMode }] = await Promise.all([
-      this.cloudflareProvider.verifyToken(),
-      this.loadZoneFacts(true),
-    ]);
+    const [connected, { fallbackOrigin, sslMode }, configuration, pendingReleases] =
+      await Promise.all([
+        this.cloudflareProvider.verifyToken(),
+        this.loadZoneFacts(true),
+        this.platformDomainConfigurationRepository.findSingleton(),
+        this.platformDomainConfigurationRepository.countPendingReleases(),
+      ]);
     const zoneFactsError = this.cloudflareProvider.getLastZoneFactsError();
     const originSslModeState = classifyOriginSslModeRead(connected, sslMode);
 
@@ -206,6 +267,16 @@ export class PlatformDomainService {
         baseDomainReachable: baseProbe?.reachable,
         wildcardReachable: wildcardProbe?.reachable,
         checkedAt: checkedAt.toISOString(),
+      },
+      sweep: {
+        lastCompletedAt: configuration.lastSweepCompletedAt?.toISOString(),
+        lastResult:
+          (configuration.lastSweepResult as Record<
+            string,
+            number | string | boolean | null
+          > | null) ?? undefined,
+        pendingReleases,
+        intervalMs: DOMAIN_VERIFICATION_SWEEP_INTERVAL_MS,
       },
       checkedAt: checkedAt.toISOString(),
     };

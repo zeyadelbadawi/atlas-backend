@@ -15,6 +15,9 @@ import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer
 import { PublicWebsiteCacheService } from '../../public-website/services/public-website-cache.service';
 import { DomainConnectionsRepository } from '../repositories/domain-connections.repository';
 import { DomainCheckService } from './domain-check.service';
+import { DomainService } from './domain.service';
+import { DomainProviderReleaseService } from './domain-provider-release.service';
+import { DomainProviderReleasesRepository } from '../repositories/domain-provider-releases.repository';
 import { PlatformDomainService } from './platform-domain.service';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import {
@@ -36,10 +39,99 @@ export class PlatformDomainsService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly domainConnectionsRepository: DomainConnectionsRepository,
     private readonly domainCheckService: DomainCheckService,
+    private readonly domainService: DomainService,
+    private readonly releaseService: DomainProviderReleaseService,
+    private readonly releasesRepository: DomainProviderReleasesRepository,
     private readonly platformDomainService: PlatformDomainService,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly publicWebsiteCacheService: PublicWebsiteCacheService,
   ) {}
+
+  /**
+   * P63g — operator release: frees a hostname an Academy is holding
+   * (typically archived, or a customer who left without disconnecting)
+   * so its rightful owner can connect it elsewhere. Same reset as the
+   * customer's Disconnect, through the platform UPDATE policy, audited
+   * with the operator as actor; the provider resource is released after
+   * commit and retried by the sweep if that fails.
+   */
+  async release(
+    platformOwnerId: string,
+    academyId: string,
+  ): Promise<PlatformDomainRowResponse> {
+    const { row, previousHostname, releaseId, subdomain } =
+      await this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
+        const existing = await this.domainConnectionsRepository.lockByAcademyId(
+          tx,
+          academyId,
+        );
+        if (!existing?.hostname) {
+          throw new NotFoundException({ messageKey: 'errors.domain.noCustomDomain' });
+        }
+        const academy =
+          await this.domainConnectionsRepository.findAcademyWithDomainsAnyOrganization(
+            tx,
+            academyId,
+          );
+        if (!academy) throw new NotFoundException({ messageKey: 'errors.notFound' });
+
+        const reset = await this.domainService.resetInTransaction(
+          tx,
+          academyId,
+          existing,
+          'operator_release',
+        );
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: platformOwnerId,
+          organizationId: academy.organizationId,
+          academyId,
+          role: 'platform_owner',
+          action: DOMAIN_AUDIT_ACTIONS.platformRelease,
+          targetType: 'domain_connection',
+          targetId: reset.row.id,
+          targetLabel: existing.hostname,
+          changes: {
+            hostname: { from: existing.hostname, to: null },
+            status: { from: existing.status, to: 'not_configured' },
+          },
+        });
+        const refreshed =
+          await this.domainConnectionsRepository.findAcademyWithDomainsAnyOrganization(
+            tx,
+            academyId,
+          );
+        return {
+          row: refreshed!,
+          previousHostname: existing.hostname,
+          releaseId: reset.releaseId,
+          subdomain: refreshed!.subdomainAllocation,
+        };
+      });
+
+    const { baseDomain } = await this.platformDomainService.getEffectiveBaseDomain();
+    const full = resolveSubdomainHost({
+      subdomainFullHost: subdomain?.fullHost,
+      subdomainLabel: subdomain?.subdomain,
+      baseDomain,
+    });
+    await this.publicWebsiteCacheService.invalidateHostnameResolution(
+      [previousHostname, subdomain?.subdomain, full].filter((h): h is string =>
+        Boolean(h),
+      ),
+    );
+    if (releaseId) {
+      try {
+        const providerAvailable = await this.platformDomainService.isProviderAvailable();
+        await this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
+          const release = await this.releasesRepository.findById(tx, releaseId);
+          if (release) await this.releaseService.attempt(tx, release, providerAvailable);
+        });
+      } catch {
+        // The sweep retries it.
+      }
+    }
+    return toPlatformDomainRowResponse(row, baseDomain);
+  }
 
   async list(
     platformOwnerId: string,

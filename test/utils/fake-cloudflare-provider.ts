@@ -8,6 +8,7 @@
 import {
   CloudflareProviderError,
   type CloudflareCustomHostname,
+  type CloudflareDeleteOutcome,
   type CloudflareFallbackOrigin,
   type CloudflareProvider,
   type CloudflareZoneFactsError,
@@ -19,6 +20,7 @@ interface FakeHostnameState {
   readonly hostname: string;
   status: string;
   sslStatus: string;
+  sslMethod: string;
   verificationErrors: string[];
   /** Cloudflare returns no ownership/validation records once they are no longer needed. */
   recordsWithheld: boolean;
@@ -48,6 +50,7 @@ export class FakeCloudflareProvider implements CloudflareProvider {
   reset(): void {
     this.connected = true;
     this.outage = false;
+    this.deletesFail = false;
     this.registrationRefusal = null;
     this.zoneFactsError = null;
     this.zoneSslMode = 'full';
@@ -67,6 +70,7 @@ export class FakeCloudflareProvider implements CloudflareProvider {
       hostname: state.hostname,
       status: state.status,
       sslStatus: state.sslStatus,
+      sslMethod: state.sslMethod,
       verificationRecords: state.recordsWithheld
         ? []
         : [
@@ -137,6 +141,7 @@ export class FakeCloudflareProvider implements CloudflareProvider {
       hostname,
       status: 'pending',
       sslStatus: 'pending_validation',
+      sslMethod: 'http',
       verificationErrors: [],
       recordsWithheld: false,
     };
@@ -161,11 +166,33 @@ export class FakeCloudflareProvider implements CloudflareProvider {
     return null;
   }
 
-  async deleteCustomHostname(id: string): Promise<void> {
+  /** When set, deletes fail (the provider refuses or the request fails) — orphan simulation. */
+  deletesFail = false;
+
+  async deleteCustomHostname(id: string): Promise<CloudflareDeleteOutcome> {
     this.calls.push(`delete:${id}`);
-    this.guard();
+    if (this.outage || this.deletesFail) return 'failed';
     for (const [hostname, state] of this.hostnames)
-      if (state.id === id) this.hostnames.delete(hostname);
+      if (state.id === id) {
+        this.hostnames.delete(hostname);
+        return 'deleted';
+      }
+    return 'not_found';
+  }
+
+  async updateCustomHostnameSslMethod(id: string, method: string): Promise<boolean> {
+    this.calls.push(`sslMethod:${id}:${method}`);
+    if (this.outage) return false;
+    for (const state of this.hostnames.values())
+      if (state.id === id) state.sslMethod = method;
+    return true;
+  }
+
+  /** Test control: a legacy resource still on TXT validation. */
+  setSslMethod(hostname: string, method: string): void {
+    const state = this.hostnames.get(hostname);
+    if (!state) throw new Error(`fake cloudflare: unknown hostname ${hostname}`);
+    state.sslMethod = method;
   }
 
   async getFallbackOrigin(): Promise<CloudflareFallbackOrigin | null> {

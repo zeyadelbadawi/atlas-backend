@@ -21,6 +21,12 @@ on:
   push:
     branches: [main]
 
+# P63g — one deploy at a time against the single VPS (see the frontend
+# workflow for the cross-repo `flock` in deploy.sh).
+concurrency:
+  group: atlas-vps-deploy
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
@@ -50,7 +56,9 @@ jobs:
           context: .
           platforms: linux/arm64
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/atlas-backend:latest
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/atlas-backend:latest
+            ghcr.io/${{ github.repository_owner }}/atlas-backend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -86,9 +94,18 @@ jobs:
           # version-controlled too — previously /opt/atlas/deploy.sh was
           # hand-placed and drifted from the repo, so changes to
           # deploy/deploy.sh never took effect in production.
+          # P63g — the compose file and the backup script are deployed
+          # artefacts too (previously only deploy.sh was, so a change to
+          # either in this repo never reached production).
           scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
             deploy/deploy.sh \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/atlas/deploy.sh
+          scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+            deploy/docker-compose.prod.yml \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/atlas/docker-compose.yml
+          scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+            deploy/backup.sh \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/atlas/backup.sh
           printf '%s' "$FRAGMENT_B64" | ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'bash /opt/atlas/deploy.sh --sync-env'

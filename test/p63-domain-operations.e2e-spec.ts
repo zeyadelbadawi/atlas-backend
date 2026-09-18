@@ -33,6 +33,7 @@ import { DomainConnectionsRepository } from '../src/domain/repositories/domain-c
 import { CLOUDFLARE_PROVIDER } from '../src/domain/providers/cloudflare-provider.interface';
 import { DomainVerificationSweepService } from '../src/domain/services/domain-verification-sweep.service';
 import { PlatformDomainService } from '../src/domain/services/platform-domain.service';
+import { AcademiesService } from '../src/academy/services/academies.service';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -321,7 +322,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     expect(JSON.stringify(checked.body)).not.toContain('secret-token-xyz');
   });
 
-  it('P63-DOM-008 — a provider outage is recorded as provider_error and changes no status; a vanished hostname disconnects a previously connected domain', async () => {
+  it('P63-DOM-008 — a provider outage is recorded as provider_error and changes no status; a vanished hostname is re-registered by the next check', async () => {
     const { owner, academy } = await seedManagedAcademy('p63-outage');
     const hostname = `learn-${run}-008.example.com`;
     await addDomain(academy.id, owner.accessToken, hostname).expect(201);
@@ -334,11 +335,21 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     expect(duringOutage.body.customDomain.lastCheckError).toBe('provider_error');
     cloudflare.outage = false;
 
+    // P63g — a hostname the provider positively lost is REGISTERED AFRESH
+    // by the next check (self-healing), never reported "missing" forever.
     cloudflare.forget(hostname);
     const gone = await verify(academy.id, owner.accessToken).expect(201);
-    expect(gone.body.customDomain.status).toBe('disconnected');
-    expect(gone.body.customDomain.lastCheckError).toBe('provider_hostname_missing');
+    expect(cloudflare.has(hostname)).toBe(true);
+    expect(gone.body.customDomain.status).toBe('verifying');
+    expect(gone.body.customDomain.lastCheckError).toBeUndefined();
     expect(gone.body.customDomain.connectedAt).toBeUndefined();
+    expect(gone.body.customDomain.providerRegistered).toBe(true);
+    expect(gone.body.dns.ready).toBe(true);
+    const audit = await admin.auditLogEntry.findFirst({
+      where: { action: 'domain.verification_checked', academyId: academy.id },
+      orderBy: { occurredAt: 'desc' },
+    });
+    expect((audit?.context as Record<string, unknown>).reRegistered).toBe(true);
   });
 
   it('P63-DOM-009 — with no provider credentials the row records provider_unavailable and stands exactly as it was — never a simulated success', async () => {
@@ -867,6 +878,181 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     expect(back.body.canonicalHost).toEqual({ host: hostname, source: 'custom_domain' });
   });
 
+  it('P63-DOM-023 (C1) — replacing a live domain with one another tenant holds is refused with 409 and the live domain is left UNTOUCHED at the provider; a same-tenant duplicate check still serialises', async () => {
+    const a = await seedManagedAcademyWithSubdomain('p63-c1-a');
+    const b = await seedManagedAcademyWithSubdomain('p63-c1-b');
+    const x = `c1-${run}-x.example.com`;
+    const y = `c1-${run}-y.example.com`;
+    await addDomain(a.academy.id, a.owner.accessToken, x).expect(201);
+    cloudflare.setState(x, 'active', 'active');
+    await verify(a.academy.id, a.owner.accessToken).expect(201);
+    await addDomain(b.academy.id, b.owner.accessToken, y).expect(201);
+    cloudflare.setState(y, 'active', 'active');
+    const bLive = await verify(b.academy.id, b.owner.accessToken).expect(201);
+    expect(bLive.body.customDomain.live).toBe(true);
+
+    await addDomain(b.academy.id, b.owner.accessToken, x).expect(409);
+
+    // Nothing was released: the provider still holds Y, no ledger row exists.
+    expect(cloudflare.has(y)).toBe(true);
+    expect(cloudflare.calls.filter((c) => c.startsWith('delete:'))).toHaveLength(0);
+    expect(
+      await admin.domainProviderRelease.count({ where: { academyId: b.academy.id } }),
+    ).toBe(0);
+    const still = await verify(b.academy.id, b.owner.accessToken).expect(201);
+    expect(still.body.customDomain).toMatchObject({
+      hostname: y,
+      status: 'connected',
+      live: true,
+    });
+  });
+
+  it('P63-DOM-024 (C1/C6) — a replace that succeeds releases the old resource AFTER commit through the ledger; a failed provider delete is retried by the sweep until the provider confirms', async () => {
+    const { owner, academy } = await seedManagedAcademyWithSubdomain('p63-ledger');
+    const first = `ledger-${run}-first.example.com`;
+    const second = `ledger-${run}-second.example.com`;
+    await addDomain(academy.id, owner.accessToken, first).expect(201);
+    cloudflare.setState(first, 'active', 'active');
+    await verify(academy.id, owner.accessToken).expect(201);
+
+    cloudflare.deletesFail = true;
+    const replaced = await addDomain(academy.id, owner.accessToken, second).expect(201);
+    expect(replaced.body.customDomain.hostname).toBe(second);
+    // The old resource could not be deleted: it is still at the provider,
+    // and the ledger remembers it instead of forgetting.
+    expect(cloudflare.has(first)).toBe(true);
+    const pending = await admin.domainProviderRelease.findFirst({
+      where: { academyId: academy.id, hostname: first },
+    });
+    expect(pending).toMatchObject({
+      reason: 'replaced',
+      releasedAt: null,
+      lastError: 'provider_error',
+    });
+    expect(pending!.attempts).toBeGreaterThanOrEqual(1);
+
+    // The provider recovers; the sweep retries and the orphan is gone.
+    cloudflare.deletesFail = false;
+    await admin.domainProviderRelease.update({
+      where: { id: pending!.id },
+      data: { lastAttemptedAt: new Date('2000-01-01T00:00:00Z') },
+    });
+    const sweep = app.get(DomainVerificationSweepService, { strict: false });
+    const result = await sweep.run();
+    expect(result.releasesProcessed).toBeGreaterThanOrEqual(1);
+    expect(cloudflare.has(first)).toBe(false);
+    const done = await admin.domainProviderRelease.findUniqueOrThrow({
+      where: { id: pending!.id },
+    });
+    expect(done.releasedAt).not.toBeNull();
+    expect(done.outcome).toBe('deleted');
+    // The new hostname is untouched by the release.
+    expect(cloudflare.has(second)).toBe(true);
+  });
+
+  it('P63-DOM-025 (C3) — the platform routing target and the platform domain family are refused as custom domains before the provider is asked', async () => {
+    const { owner, academy } = await seedManagedAcademyWithSubdomain('p63-reserved-host');
+    const target = await addDomain(
+      academy.id,
+      owner.accessToken,
+      'customers.atlas-test.dev',
+    );
+    expect(target.status).toBe(400);
+    expect(target.body.error?.messageKey ?? target.body.messageKey).toBe(
+      'errors.domain.hostnameReserved',
+    );
+    if (envBaseDomain) {
+      await addDomain(academy.id, owner.accessToken, envBaseDomain).expect(400);
+      await addDomain(
+        academy.id,
+        owner.accessToken,
+        `someone-else.${envBaseDomain}`,
+      ).expect(400);
+      await addDomain(academy.id, owner.accessToken, `a.b.${envBaseDomain}`).expect(400);
+    }
+    expect(cloudflare.calls.filter((c) => c.startsWith('create:'))).toHaveLength(0);
+    const config = await request(app.getHttpServer())
+      .get(domainPath(academy.id))
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(config.body.customDomain).toBeUndefined();
+  });
+
+  it('P63-DOM-026 (C11) — a permanently refused registration backs off: after the free retries the sweep leaves the row alone until its backoff has elapsed', async () => {
+    const sweep = app.get(DomainVerificationSweepService, { strict: false });
+    const { owner, academy } = await seedManagedAcademy('p63-backoff');
+    const hostname = `backoff-${run}.example.com`;
+    cloudflare.registrationRefusal = { code: 10000, category: 'permission' };
+    await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+    // Several refused checks: the counter climbs.
+    for (let i = 0; i < 4; i += 1)
+      await verify(academy.id, owner.accessToken).expect(201);
+    let row = await admin.domainConnection.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    expect(row.consecutiveFailures).toBe(5);
+    // Six minutes old: due on the plain cadence, but NOT within its backoff (20 min for 5 failures).
+    await admin.domainConnection.update({
+      where: { academyId: academy.id },
+      data: { lastCheckedAt: new Date(Date.now() - 6 * 60 * 1000) },
+    });
+    const createsBefore = cloudflare.calls.filter(
+      (c) => c === `create:${hostname}`,
+    ).length;
+    await sweep.run();
+    expect(cloudflare.calls.filter((c) => c === `create:${hostname}`).length).toBe(
+      createsBefore,
+    );
+    // Once the backoff has elapsed it is retried — and succeeds as soon as the provider allows it.
+    cloudflare.registrationRefusal = null;
+    await admin.domainConnection.update({
+      where: { academyId: academy.id },
+      data: { lastCheckedAt: new Date('2000-01-01T00:00:00Z') },
+    });
+    await sweep.run();
+    row = await admin.domainConnection.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    expect(row.status).toBe('verifying');
+    expect(row.consecutiveFailures).toBe(0);
+  });
+
+  it('P63-DOM-027 (C5) — certificates are ordered with HTTP validation, HTTP validation records are never shown to the customer, and a legacy TXT-validated resource is migrated in place', async () => {
+    const { owner, academy } = await seedManagedAcademyWithSubdomain('p63-dcv');
+    const hostname = `dcv-${run}.example.com`;
+    await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+    expect(cloudflare.calls).toContain(`create:${hostname}`);
+    cloudflare.setSslMethod(hostname, 'txt');
+    const checked = await verify(academy.id, owner.accessToken).expect(201);
+    expect(
+      cloudflare.calls.some((c) => c.startsWith('sslMethod:') && c.endsWith(':http')),
+    ).toBe(true);
+    expect(
+      checked.body.dns.records.every(
+        (r: { type: string }) => r.type.toUpperCase() !== 'HTTP',
+      ),
+    ).toBe(true);
+  });
+
+  it('P63-DOM-028 (C4) — a reserved platform label can never become an Academy slug (and therefore never a public subdomain) through the service that creates Academies', async () => {
+    const { owner, org } = await seedManagedAcademy('p63-reserved-slug');
+    const academies = app.get(AcademiesService, { strict: false });
+    for (const slug of ['www', 'api', 'admin']) {
+      await expect(
+        academies.create(owner.userId, {
+          organizationId: org.id,
+          name: `Reserved ${slug}`,
+          slug,
+        } as never),
+      ).rejects.toMatchObject({
+        response: { messageKey: 'errors.academy.slugReserved' },
+      });
+    }
+    expect(
+      await admin.subdomainAllocation.findUnique({ where: { subdomain: 'www' } }),
+    ).toBeNull();
+  });
+
   describe('Platform Owner domain operations', () => {
     it('P63-OPS-001 — every operations endpoint is Platform Owner-only; an organization owner gets 403, anonymous gets 401', async () => {
       const { owner, academy } = await seedManagedAcademy('p63-ops-authz');
@@ -1041,6 +1227,78 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
         .expect(404);
     });
 
+    it('P63-OPS-005 (C14) — a Platform Owner can release a hostname an Academy is holding; the row resets, the provider resource is released, it is audited, and the hostname can then be connected elsewhere', async () => {
+      const platformOwner = await seedPlatformOwner('p63-ops-release-owner');
+      const holder = await seedManagedAcademyWithSubdomain('p63-holder');
+      const claimant = await seedManagedAcademyWithSubdomain('p63-claimant');
+      const hostname = `burned-${run}.example.com`;
+      await addDomain(holder.academy.id, holder.owner.accessToken, hostname).expect(201);
+      cloudflare.setState(hostname, 'active', 'active');
+      await verify(holder.academy.id, holder.owner.accessToken).expect(201);
+      await addDomain(claimant.academy.id, claimant.owner.accessToken, hostname).expect(
+        409,
+      );
+
+      // An organization owner cannot use the operator route.
+      await request(app.getHttpServer())
+        .delete(`/platform-domains/${holder.academy.id}/custom-domain`)
+        .set('Authorization', `Bearer ${holder.owner.accessToken}`)
+        .expect(403);
+
+      const released = await request(app.getHttpServer())
+        .delete(`/platform-domains/${holder.academy.id}/custom-domain`)
+        .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+        .expect(200);
+      expect(released.body.customDomain).toBeUndefined();
+      expect(cloudflare.has(hostname)).toBe(false);
+      const audit = await admin.auditLogEntry.findFirst({
+        where: { action: 'domain.platform_release', academyId: holder.academy.id },
+      });
+      expect(audit?.role).toBe('platform_owner');
+
+      const claimed = await addDomain(
+        claimant.academy.id,
+        claimant.owner.accessToken,
+        hostname,
+      ).expect(201);
+      expect(claimed.body.customDomain.hostname).toBe(hostname);
+    });
+
+    it('P63-OPS-006 (C10) — archiving an Academy releases its custom domain and takes every public read offline, including the by-id endpoints and the contact form', async () => {
+      const { owner, academy } = await seedManagedAcademyWithSubdomain('p63-archive');
+      const hostname = `archived-${run}.example.com`;
+      await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+      cloudflare.setState(hostname, 'active', 'active');
+      await verify(academy.id, owner.accessToken).expect(201);
+      await request(app.getHttpServer())
+        .get('/public/websites/resolve')
+        .query({ hostname })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .delete(`/academies/${academy.id}`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(204);
+
+      await request(app.getHttpServer())
+        .get('/public/websites/resolve')
+        .query({ hostname })
+        .expect(404);
+      await request(app.getHttpServer())
+        .get(`/public/websites/${academy.id}`)
+        .expect(404);
+      await request(app.getHttpServer())
+        .post(`/public/websites/${academy.id}/contact`)
+        .send({ name: 'x', email: 'x@example.com', message: 'hello there' })
+        .expect(404);
+      // The hostname is free again and the provider resource released.
+      const row = await admin.domainConnection.findUniqueOrThrow({
+        where: { academyId: academy.id },
+      });
+      expect(row.hostname).toBeNull();
+      expect(cloudflare.has(hostname)).toBe(false);
+    });
+
     it('P63-OPS-004 — readiness reports live provider facts; PATCH of the base domain stays allowed here only because no environment value is set', async () => {
       const platformOwner = await seedPlatformOwner('p63-ops-ready-owner');
       const readiness = await request(app.getHttpServer())
@@ -1053,6 +1311,10 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
         fallbackOrigin: 'customers.atlas-test.dev',
         originSslMode: 'full',
         originSslModeCompatible: true,
+      });
+      expect(readiness.body.sweep).toMatchObject({
+        pendingReleases: expect.any(Number),
+        intervalMs: expect.any(Number),
       });
       expect(readiness.body.source).toBe(
         envBaseDomain ? 'environment' : readiness.body.source,
@@ -1142,7 +1404,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
       expect(after.updatedAt).toEqual(before);
     });
 
-    it('P63-SWP-003 — a connected domain is re-checked on the slow cadence and demoted when the provider has forgotten it', async () => {
+    it('P63-SWP-003 — a connected domain is re-checked on the slow cadence and re-registered when the provider has forgotten it', async () => {
       const sweep = app.get(DomainVerificationSweepService, { strict: false });
       const tenant = await seedManagedAcademy('p63-swp-connected');
       const hostname = `swp-${run}-connected.example.com`;
@@ -1167,8 +1429,11 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
       row = await admin.domainConnection.findUniqueOrThrow({
         where: { academyId: tenant.academy.id },
       });
-      expect(row.status).toBe('disconnected');
-      expect(row.lastCheckError).toBe('provider_hostname_missing');
+      // P63g — re-registered by the sweep itself: back to verifying with a
+      // fresh provider resource, demoted from canonical meanwhile.
+      expect(row.status).toBe('verifying');
+      expect(row.lastCheckError).toBeNull();
+      expect(cloudflare.has(hostname)).toBe(true);
     });
 
     it('P63-SWP-002 — without provider credentials the sweep skips entirely rather than stamping errors on every pending row', async () => {

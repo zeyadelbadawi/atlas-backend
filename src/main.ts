@@ -22,13 +22,14 @@ import { ConfigService } from '@nestjs/config';
 import { Logger, LoggerErrorInterceptor } from 'nestjs-pino';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import helmet from 'helmet';
-import { HELMET_OPTIONS } from './common/security/helmet.options';
+import { HELMET_OPTIONS, hstsPerHost } from './common/security/helmet.options';
+import { isPlatformOrigin } from './common/security/platform-origin.util';
+import { PlatformDomainService } from './domain/services/platform-domain.service';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { throwClassValidatorViolations } from './common/validation/class-validator-violations.util';
 import type { AppConfig } from './config/configuration';
 import type { MediaStorageConfig } from './config/configuration';
-import type { PlatformDomainRuntimeConfig } from './config/configuration';
 import type { IncomingMessage } from 'node:http';
 
 async function bootstrap(): Promise<void> {
@@ -122,7 +123,14 @@ async function bootstrap(): Promise<void> {
   // Security headers. HSTS is pinned rather than left on helmet's
   // default because the edge no longer sends a competing copy — see
   // `common/security/helmet.options.ts` for the whole story.
+  const platformDomainServiceEarly = app.get(PlatformDomainService, { strict: false });
+  const { baseDomain: hstsBaseDomain } =
+    await platformDomainServiceEarly.getEffectiveBaseDomain();
   app.use(helmet(HELMET_OPTIONS));
+  // P63g — HSTS is asserted per host: `includeSubDomains` only for the
+  // platform's own domain. A customer's apex domain must never have its
+  // unrelated subdomains force-upgraded for a year by Atlas.
+  app.use(hstsPerHost(hstsBaseDomain));
 
   // Phase 7 — production serves the platform's main domain, every academy's
   // `{slug}.{baseDomain}` subdomain, and (eventually) connected custom
@@ -134,13 +142,14 @@ async function bootstrap(): Promise<void> {
   // allows the platform's own base domain and any single-label subdomain of
   // it, once `PLATFORM_BASE_DOMAIN` is configured. No wildcard is ever
   // reflected — the actual matched origin is echoed back, same as before.
-  const platformDomainConfig =
-    configService.get<PlatformDomainRuntimeConfig>('platformDomain');
+  // P63g — the EFFECTIVE base domain (environment, else the configured
+  // row), read through the same service every other consumer uses, and
+  // matched by a parser rather than an interpolated regex. A rejected
+  // origin is simply not allowed (no ACAO header) — never a thrown error,
+  // which used to surface as an HTTP 500 and a Sentry event per crawler.
   const staticAllowedOrigins = new Set(config.corsAllowedOrigins as string[]);
-  const baseDomain = platformDomainConfig?.baseDomain;
-  const subdomainPattern = baseDomain
-    ? new RegExp(`^https:\\/\\/([a-z0-9-]+)\\.${baseDomain.replace(/\./g, '\\.')}$`, 'i')
-    : undefined;
+  const platformDomainService = app.get(PlatformDomainService, { strict: false });
+  const { baseDomain } = await platformDomainService.getEffectiveBaseDomain();
 
   app.enableCors({
     origin: (origin, callback) => {
@@ -148,9 +157,8 @@ async function bootstrap(): Promise<void> {
       // nothing for CORS to police.
       if (!origin) return callback(null, true);
       if (staticAllowedOrigins.has(origin)) return callback(null, true);
-      if (baseDomain && origin === `https://${baseDomain}`) return callback(null, true);
-      if (subdomainPattern?.test(origin)) return callback(null, true);
-      return callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+      if (isPlatformOrigin(origin, baseDomain)) return callback(null, true);
+      return callback(null, false);
     },
     credentials: true,
   });

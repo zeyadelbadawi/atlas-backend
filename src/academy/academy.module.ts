@@ -52,6 +52,13 @@ import { ContactSubmissionsRepository } from './repositories/contact-submissions
 import { AcademyOrganizationScopeGuard } from './guards/academy-organization-scope.guard';
 import { AcademyScopeGuard } from './guards/academy-scope.guard';
 import { SubdomainAllocationsRepository } from '../domain/repositories/subdomain-allocations.repository';
+import { DomainConnectionsRepository } from '../domain/repositories/domain-connections.repository';
+import { DomainProviderReleasesRepository } from '../domain/repositories/domain-provider-releases.repository';
+import { DomainProviderReleaseService } from '../domain/services/domain-provider-release.service';
+import { PlatformDomainService } from '../domain/services/platform-domain.service';
+import { HttpsProbeService } from '../domain/services/https-probe.service';
+import { CLOUDFLARE_PROVIDER } from '../domain/providers/cloudflare-provider.interface';
+import { CloudflareApiProvider } from '../domain/providers/cloudflare-api.provider';
 import { PlatformDomainConfigurationRepository } from '../domain/repositories/platform-domain-configuration.repository';
 import { PublicWebsiteCacheService } from '../public-website/services/public-website-cache.service';
 
@@ -81,6 +88,16 @@ import { PublicWebsiteCacheService } from '../public-website/services/public-web
     // hostname resolution so a deleted Academy's site goes offline at
     // once rather than 60 seconds later.
     PublicWebsiteCacheService,
+    // P63g — archiving releases the Academy's custom domain at the provider
+    // (ledger + best-effort delete) and needs the effective base domain.
+    // Registered directly for the same no-cycle reason as above; every one
+    // of these is a stateless wrapper over global services.
+    DomainConnectionsRepository,
+    DomainProviderReleasesRepository,
+    DomainProviderReleaseService,
+    PlatformDomainService,
+    HttpsProbeService,
+    { provide: CLOUDFLARE_PROVIDER, useClass: CloudflareApiProvider },
     AcademiesService,
     AcademyOrganizationScopeGuard,
     AcademyScopeGuard,

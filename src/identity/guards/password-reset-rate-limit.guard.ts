@@ -12,6 +12,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import type { IdentityConfig } from '../../config/configuration';
+import { resolveClientIp } from '../utils/request-metadata.util';
 import { AuthRateLimiterService } from '../services/auth-rate-limiter.service';
 import { normalizeEmail } from '../utils/email.util';
 
@@ -28,7 +29,7 @@ export class PasswordResetRateLimitGuard implements CanActivate {
     const { max, windowSeconds } = identity.passwordResetRateLimit;
 
     const ipCheck = await this.rateLimiter.consume(
-      `password-reset:ip:${request.ip}`,
+      `password-reset:ip:${resolveClientIp(request) ?? request.ip}`,
       max,
       windowSeconds,
     );

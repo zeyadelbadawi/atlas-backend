@@ -6,6 +6,7 @@
  */
 import {
   Controller,
+  Delete,
   Get,
   HttpCode,
   Param,
@@ -49,6 +50,15 @@ export class PlatformDomainsController {
     @Param('academyId') academyId: string,
   ): Promise<PlatformDomainRowResponse> {
     return this.platformDomainsService.get(request.authContext!.userId, academyId);
+  }
+
+  /** P63g — frees a hostname an Academy is holding (e.g. archived) so it can be connected elsewhere. */
+  @Delete(':academyId/custom-domain')
+  async release(
+    @Req() request: Request,
+    @Param('academyId') academyId: string,
+  ): Promise<PlatformDomainRowResponse> {
+    return this.platformDomainsService.release(request.authContext!.userId, academyId);
   }
 
   @Post(':academyId/check')

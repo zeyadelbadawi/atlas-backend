@@ -7,6 +7,7 @@
  * for a customer, `runInUserContext(<platform owner>)` for the sweep and
  * the Platform Owner console).
  */
+import { domainCheckBackoffMs } from '../constants/domain.constants';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type {
@@ -18,6 +19,9 @@ import type {
 } from '@prisma/client';
 
 /** Statuses the provider can still move forward on its own — the sweep re-checks these. */
+/** Distinct backoff buckets expressed in the sweep query; beyond this the maximum backoff applies. */
+const BACKOFF_BUCKETS = 16;
+
 export const DOMAIN_STATUSES_AWAITING_PROVIDER: readonly DomainStatus[] = [
   'pending',
   'verification_required',
@@ -36,6 +40,9 @@ export const DOMAIN_STATUSES_AWAITING_PROVIDER: readonly DomainStatus[] = [
 export const DOMAIN_STATUSES_SWEPT: readonly DomainStatus[] = [
   ...DOMAIN_STATUSES_AWAITING_PROVIDER,
   'failed',
+  // P63g — a hostname the provider lost is re-registered by the check
+  // itself now, so a `disconnected` row recovers without a click too.
+  'disconnected',
 ];
 
 /** Statuses that mean "the customer must do something" or "something went wrong". */
@@ -155,10 +162,35 @@ export class DomainConnectionsRepository {
    */
   findManyDueForVerificationSweep(
     tx: Prisma.TransactionClient,
+    now: Date,
     awaitingBefore: Date,
     connectedBefore: Date,
     take: number,
   ): Promise<DomainConnection[]> {
+    // P63g — exponential backoff expressed IN the query, so backed-off rows
+    // never occupy a batch (they are the oldest, and would otherwise
+    // starve every other candidate): a row with N consecutive failures is
+    // due only once its last check is older than `domainCheckBackoffMs(N)`.
+    const backoffBuckets: Prisma.DomainConnectionWhereInput[] = [];
+    for (let failures = 0; failures < BACKOFF_BUCKETS; failures += 1) {
+      backoffBuckets.push({
+        consecutiveFailures: failures,
+        OR: [
+          { lastCheckedAt: null },
+          {
+            lastCheckedAt: {
+              lt: new Date(now.getTime() - domainCheckBackoffMs(failures)),
+            },
+          },
+        ],
+      });
+    }
+    backoffBuckets.push({
+      consecutiveFailures: { gte: BACKOFF_BUCKETS },
+      lastCheckedAt: {
+        lt: new Date(now.getTime() - domainCheckBackoffMs(BACKOFF_BUCKETS)),
+      },
+    });
     return tx.domainConnection.findMany({
       where: {
         hostname: { not: null },
@@ -166,14 +198,20 @@ export class DomainConnectionsRepository {
           {
             status: { in: [...DOMAIN_STATUSES_SWEPT] },
             OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: awaitingBefore } }],
+            AND: [{ OR: backoffBuckets }],
           },
           {
             status: 'connected',
-            OR: [{ sslStatus: { not: 'active' } }, { httpsReachable: { not: true } }],
+            OR: [
+              { sslStatus: { not: 'active' } },
+              { httpsReachable: { not: true } },
+              { httpsReachable: null },
+            ],
             AND: [
               {
                 OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: awaitingBefore } }],
               },
+              { OR: backoffBuckets },
             ],
           },
           {

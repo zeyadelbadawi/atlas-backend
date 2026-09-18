@@ -20,6 +20,31 @@ export class DomainVerificationSweepScheduler implements OnApplicationBootstrap 
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // P63g — BullMQ keys a repeatable by name + jobId + interval, so a
+    // changed interval would leave the OLD schedule firing forever beside
+    // the new one. Drop every repeatable of this job that is not the one
+    // we are about to (re-)register.
+    try {
+      const existing = await this.queue.getRepeatableJobs();
+      for (const job of existing) {
+        if (job.name !== DOMAIN_VERIFICATION_SWEEP_JOB) continue;
+        if (
+          job.id === DOMAIN_VERIFICATION_SWEEP_REPEAT_JOB_ID &&
+          job.every === String(DOMAIN_VERIFICATION_SWEEP_INTERVAL_MS)
+        )
+          continue;
+        await this.queue.removeRepeatableByKey(job.key);
+        this.logger.warn(
+          { key: job.key },
+          'Removed a stale domain-verification-sweep repeatable.',
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        { error: error instanceof Error ? error.message : 'unknown' },
+        'Could not inspect existing repeatables; registering anyway.',
+      );
+    }
     await this.queue.add(
       DOMAIN_VERIFICATION_SWEEP_JOB,
       {},
@@ -28,6 +53,11 @@ export class DomainVerificationSweepScheduler implements OnApplicationBootstrap 
         jobId: DOMAIN_VERIFICATION_SWEEP_REPEAT_JOB_ID,
         removeOnComplete: true,
         removeOnFail: { count: 1000 },
+        // P63g — a tick that throws before its per-row try/catch (pool
+        // timeout, Redis hiccup) is retried once with a short backoff
+        // instead of being lost until the next interval.
+        attempts: 2,
+        backoff: { type: 'fixed', delay: 30_000 },
       },
     );
     this.logger.log(

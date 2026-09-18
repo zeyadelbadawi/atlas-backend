@@ -66,6 +66,14 @@ services:
     volumes:
       - caddy_data:/data
       - caddy_config:/config
+    # P63g — a broken Caddyfile, a failed certificate load or a bad SPA
+    # build used to produce a green deploy (only the backend was checked).
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', '--no-check-certificate', 'https://localhost/']
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
 volumes:
   atlas_postgres_data:

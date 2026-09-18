@@ -243,7 +243,17 @@ const EnvSchema = z.object({
   // a fallback value: "no environment today sets this variable" is the
   // frontend's own documented, honest starting state, and the backend
   // mirrors it exactly rather than inventing a domain that doesn't exist.
-  PLATFORM_BASE_DOMAIN: z.string().min(1).optional(),
+  // P63g — shape-validated and lowercased: this value is the suffix every
+  // subdomain is matched against, the CORS allow-rule and the HSTS scope.
+  PLATFORM_BASE_DOMAIN: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(
+      /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/,
+      'PLATFORM_BASE_DOMAIN must be a bare hostname (no scheme, port or trailing dot)',
+    )
+    .optional(),
 
   // --- Zoom (Live Sessions add-on) ---
   //
@@ -285,7 +295,12 @@ const EnvSchema = z.object({
   // mean every Cloudflare-backed status genuinely reports
   // `not_configured`/`connected: false` — never a fabricated success.
   CLOUDFLARE_API_TOKEN: z.string().min(1).optional(),
-  CLOUDFLARE_ZONE_ID: z.string().min(1).optional(),
+  // P63g — Cloudflare zone ids are 32 hex characters; anything else is a
+  // configuration mistake that would otherwise surface as confusing 404s.
+  CLOUDFLARE_ZONE_ID: z
+    .string()
+    .regex(/^[0-9a-f]{32}$/i, 'CLOUDFLARE_ZONE_ID must be a 32-character hex zone id')
+    .optional(),
   CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
 
   // --- Phase P12 — Atlas Subscription Billing (master plan §5.7, §12,
@@ -385,6 +400,17 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
           'implicit/wildcard CORS policy in production (see master plan §16, "CORS").',
       );
     }
+  }
+
+  // P63g — half-configured Cloudflare credentials used to pass the token
+  // check and then fail every custom-domain call one by one. Both or none.
+  if (
+    Boolean(parsed.data.CLOUDFLARE_API_TOKEN) !== Boolean(parsed.data.CLOUDFLARE_ZONE_ID)
+  ) {
+    throw new Error(
+      'CLOUDFLARE_API_TOKEN and CLOUDFLARE_ZONE_ID must be set together — refusing to start ' +
+        'with a token but no zone (or a zone but no token) for the custom-domain integration.',
+    );
   }
 
   if (parsed.data.EMAIL_PROVIDER === 'resend') {

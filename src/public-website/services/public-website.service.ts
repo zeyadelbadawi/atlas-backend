@@ -24,7 +24,6 @@
  * `@types`), never a second, parallel public projection.
  */
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { WebsiteConfigurationRepository } from '../../website/repositories/website-configuration.repository';
 import { WebsitePagesRepository } from '../../website/repositories/website-pages.repository';
@@ -43,7 +42,7 @@ import {
   normalizeHostname,
 } from '../utils/hostname-normalization.util';
 import type { HostnameResolutionResponse } from '../dto/hostname-resolution.contract';
-import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
+import { PlatformDomainService } from '../../domain/services/platform-domain.service';
 import { resolveCanonicalHost } from '../../domain/utils/canonical-host.util';
 // Phase 6 additions — see this file's own header comment.
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
@@ -72,8 +71,6 @@ import {
 
 @Injectable()
 export class PublicWebsiteService {
-  private readonly baseDomain?: string;
-
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly publicHostnameResolutionRepository: PublicHostnameResolutionRepository,
@@ -89,15 +86,20 @@ export class PublicWebsiteService {
     private readonly academiesRepository: AcademiesRepository,
     // Decides whether this tenant may be served publicly at all.
     private readonly subscriptionAccessService: SubscriptionAccessService,
-    configService: ConfigService,
-  ) {
-    this.baseDomain =
-      configService.get<PlatformDomainRuntimeConfig>('platformDomain')?.baseDomain;
+    private readonly platformDomainService: PlatformDomainService,
+  ) {}
+
+  /** P63g — the effective base domain (environment first, then the configured row), never only the env var. */
+  private async baseDomainNow(): Promise<string | undefined> {
+    return (await this.platformDomainService.getEffectiveBaseDomain()).baseDomain;
   }
 
   /** Resolves the candidate subdomain label to try: the trusted-base-domain-derived one first, falling back to treating a bare, dot-free input as a direct subdomain label (this is what makes a real Academy subdomain like `harvard` — sent with no base-domain suffix at all, e.g. a local/dev lookup — resolvable without the backend needing any dev-mode-specific branch of its own). */
-  private resolveSubdomainCandidate(normalizedHostname: string): string | null {
-    const extracted = extractSubdomainLabel(normalizedHostname, this.baseDomain);
+  private resolveSubdomainCandidate(
+    normalizedHostname: string,
+    baseDomain: string | undefined,
+  ): string | null {
+    const extracted = extractSubdomainLabel(normalizedHostname, baseDomain);
     if (extracted) return extracted;
     return normalizedHostname.includes('.') ? null : normalizedHostname;
   }
@@ -112,18 +114,21 @@ export class PublicWebsiteService {
       );
     if (cached) return cached;
 
-    const subdomainLabel = this.resolveSubdomainCandidate(normalized);
+    const baseDomain = await this.baseDomainNow();
+    const subdomainLabel = this.resolveSubdomainCandidate(normalized, baseDomain);
     const resolved = await this.publicHostnameResolutionRepository.resolve(
       normalized,
       subdomainLabel,
     );
     if (!resolved) return null;
 
+    // Same rule and same inputs as the dashboard (`DomainService.toResponse`):
+    // the allocation's stored full host, else label + effective base domain.
     const canonical = resolveCanonicalHost({
       connectedCustomHostname: resolved.customHostname,
-      subdomainFullHost: null,
+      subdomainFullHost: resolved.subdomainFullHost,
       subdomainLabel: resolved.subdomain,
-      baseDomain: this.baseDomain,
+      baseDomain,
     });
     const response: HostnameResolutionResponse = {
       academyId: resolved.academyId,

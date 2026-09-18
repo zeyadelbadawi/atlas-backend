@@ -23,6 +23,7 @@
  */
 import { Module } from '@nestjs/common';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { DomainModule } from '../domain/domain.module';
 import { WebsiteModule } from '../website/website.module';
 import { AcademyModule } from '../academy/academy.module';
 import { CourseModule } from '../course/course.module';
@@ -33,7 +34,14 @@ import { PublicHostnameResolutionRepository } from './repositories/public-hostna
 import { PlansModule } from '../plans/plans.module';
 
 @Module({
-  imports: [PlansModule, TenancyModule, WebsiteModule, AcademyModule, CourseModule],
+  imports: [
+    PlansModule,
+    TenancyModule,
+    WebsiteModule,
+    AcademyModule,
+    CourseModule,
+    DomainModule,
+  ],
   controllers: [PublicWebsiteController],
   providers: [
     PublicWebsiteService,

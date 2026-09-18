@@ -17,7 +17,8 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ClientIpThrottlerGuard } from './common/security/client-ip-throttler.guard';
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { LoggerModule } from 'nestjs-pino';
 import { BullModule } from '@nestjs/bullmq';
@@ -185,7 +186,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: ClientIpThrottlerGuard },
     /*
       Runs after every guard, so the tenant context it reads has already
       been verified. An expired tenant keeps full READ access and every

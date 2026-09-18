@@ -26,5 +26,11 @@ export const DOMAIN_VERIFICATION_SWEEP_CONNECTED_RECHECK_MS = 60 * 60 * 1000;
 export const DOMAIN_VERIFICATION_SWEEP_BATCH_SIZE = 50;
 /** Hard cap per tick — provider rate limits are shared with every other Cloudflare call Atlas makes. */
 export const DOMAIN_VERIFICATION_SWEEP_MAX_PER_TICK = 200;
+/** P63g — pending provider releases retried per tick. */
+export const DOMAIN_VERIFICATION_SWEEP_RELEASES_PER_TICK = 50;
+/** P63g — wall-clock budget for one tick, comfortably inside the interval so ticks never queue behind each other. */
+export const DOMAIN_VERIFICATION_SWEEP_TICK_BUDGET_MS = 7 * 60 * 1000;
+/** P63g — BullMQ lock renewal window for the worker; the tick budget above is what actually bounds the work. */
+export const DOMAIN_VERIFICATION_SWEEP_LOCK_MS = 60 * 1000;
 
 export type DomainVerificationSweepJobPayload = Record<string, never>;

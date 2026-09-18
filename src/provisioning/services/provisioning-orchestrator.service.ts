@@ -49,7 +49,8 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { AcademiesService } from '../../academy/services/academies.service';
 import { SubdomainAllocationsRepository } from '../../domain/repositories/subdomain-allocations.repository';
-import { PlatformDomainConfigurationRepository } from '../../domain/repositories/platform-domain-configuration.repository';
+import { PlatformDomainService } from '../../domain/services/platform-domain.service';
+import { buildFullHost } from '../../domain/utils/effective-base-domain.util';
 import { ProvisioningRequestsRepository } from '../repositories/provisioning-requests.repository';
 import { ProvisioningStepsRepository } from '../repositories/provisioning-steps.repository';
 import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
@@ -183,7 +184,7 @@ export class ProvisioningOrchestratorService {
     private readonly academiesRepository: AcademiesRepository,
     private readonly academiesService: AcademiesService,
     private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
-    private readonly platformDomainConfigurationRepository: PlatformDomainConfigurationRepository,
+    private readonly platformDomainService: PlatformDomainService,
     private readonly notificationFanoutService: NotificationFanoutService,
     private readonly websiteConfigurationService: WebsiteConfigurationService,
     private readonly websiteGenerationService: WebsiteGenerationService,
@@ -810,11 +811,9 @@ export class ProvisioningOrchestratorService {
      * transaction that remains is now exactly the two writes that must be
      * atomic, and holds no connection while waiting on anything else.
      */
-    const platformDomainConfig =
-      await this.platformDomainConfigurationRepository.findSingleton();
-    const fullHost = platformDomainConfig.baseDomain
-      ? `${request.requestedSubdomain}.${platformDomainConfig.baseDomain}`
-      : null;
+    // P63g — the EFFECTIVE base domain (environment first), never the raw row.
+    const { baseDomain } = await this.platformDomainService.getEffectiveBaseDomain();
+    const fullHost = buildFullHost(request.requestedSubdomain, baseDomain);
 
     return this.runTenantAsRequester(
       organizationId,

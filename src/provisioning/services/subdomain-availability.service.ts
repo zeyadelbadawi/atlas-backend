@@ -9,7 +9,8 @@
  */
 import { Injectable } from '@nestjs/common';
 import { SubdomainAllocationsRepository } from '../../domain/repositories/subdomain-allocations.repository';
-import { PlatformDomainConfigurationRepository } from '../../domain/repositories/platform-domain-configuration.repository';
+import { PlatformDomainService } from '../../domain/services/platform-domain.service';
+import { buildFullHost } from '../../domain/utils/effective-base-domain.util';
 import { RESERVED_SUBDOMAINS } from '../dto/provisioning.constants';
 import type { SubdomainAllocationResponse } from '../../domain/dto/domain.contract';
 
@@ -17,10 +18,11 @@ import type { SubdomainAllocationResponse } from '../../domain/dto/domain.contra
 export class SubdomainAvailabilityService {
   constructor(
     private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
-    private readonly platformDomainConfigurationRepository: PlatformDomainConfigurationRepository,
+    private readonly platformDomainService: PlatformDomainService,
   ) {}
 
-  async checkAvailability(subdomain: string): Promise<SubdomainAllocationResponse> {
+  async checkAvailability(rawSubdomain: string): Promise<SubdomainAllocationResponse> {
+    const subdomain = rawSubdomain.trim().toLowerCase();
     if (RESERVED_SUBDOMAINS.includes(subdomain)) {
       return { subdomain, status: 'reserved' };
     }
@@ -30,14 +32,11 @@ export class SubdomainAvailabilityService {
       return { subdomain, status: 'unavailable' };
     }
 
-    const platformDomainConfig =
-      await this.platformDomainConfigurationRepository.findSingleton();
+    const { baseDomain } = await this.platformDomainService.getEffectiveBaseDomain();
     return {
       subdomain,
       status: 'available',
-      fullHost: platformDomainConfig.baseDomain
-        ? `${subdomain}.${platformDomainConfig.baseDomain}`
-        : undefined,
+      fullHost: buildFullHost(subdomain, baseDomain) ?? undefined,
     };
   }
 }

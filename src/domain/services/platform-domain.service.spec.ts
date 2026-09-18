@@ -12,7 +12,11 @@ function build(
       baseDomain: row.baseDomain,
       configured: row.configured,
       updatedAt: new Date('2026-09-16T00:00:00Z'),
+      lastSweepCompletedAt: null,
+      lastSweepResult: null,
     }),
+    countPendingReleases: jest.fn().mockResolvedValue(0),
+    recordSweep: jest.fn().mockResolvedValue(undefined),
     update: jest.fn().mockImplementation(async (baseDomain: string) => ({
       id: 'singleton',
       baseDomain,
@@ -36,8 +40,14 @@ function build(
   const config = {
     get: jest.fn().mockReturnValue({ baseDomain: envBaseDomain }),
   } as unknown as ConfigService;
+  const allocations = { rewriteFullHosts: jest.fn().mockResolvedValue([]) };
+  const cache = { invalidateHostnameResolution: jest.fn().mockResolvedValue(undefined) };
+  const prisma = {};
   const service = new PlatformDomainService(
     repository as never,
+    allocations as never,
+    cache as never,
+    prisma as never,
     probe as never,
     cloudflare as never,
     config,

@@ -13,6 +13,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import type { IdentityConfig } from '../../config/configuration';
+import { resolveClientIp } from '../utils/request-metadata.util';
 import { AuthRateLimiterService } from '../services/auth-rate-limiter.service';
 import { normalizeEmail } from '../utils/email.util';
 
@@ -29,7 +30,7 @@ export class SignInRateLimitGuard implements CanActivate {
     const { max, windowSeconds } = identity.signInRateLimit;
 
     const ipCheck = await this.rateLimiter.consume(
-      `signin:ip:${request.ip}`,
+      `signin:ip:${resolveClientIp(request) ?? request.ip}`,
       max,
       windowSeconds,
     );

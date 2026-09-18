@@ -41,6 +41,27 @@ export class SubdomainAllocationsRepository {
     return tx.subdomainAllocation.create({ data });
   }
 
+  /**
+   * P63g — when the platform base domain changes, every allocation's
+   * advertised `full_host` follows it. Cross-tenant by nature (one
+   * platform fact touching every tenant's row), so it goes through the
+   * `rewrite_subdomain_full_hosts` definer function rather than any tenant
+   * context. Returns each label with the host it previously advertised so
+   * the caller can drop the stale cache entries.
+   */
+  async rewriteFullHosts(
+    prisma: PrismaService,
+    baseDomain: string,
+  ): Promise<{ subdomain: string; previousFullHost: string | null }[]> {
+    const rows = await prisma.$queryRaw<
+      { subdomain: string; previous_full_host: string | null }[]
+    >(Prisma.sql`SELECT * FROM rewrite_subdomain_full_hosts(${baseDomain})`);
+    return rows.map((row) => ({
+      subdomain: row.subdomain,
+      previousFullHost: row.previous_full_host,
+    }));
+  }
+
   /** Phase P14 — global, context-free availability check. See this class's own doc comment. */
   async existsBySubdomain(subdomain: string): Promise<boolean> {
     const rows = await this.prisma.$queryRaw<{ subdomain_is_taken: boolean }[]>(

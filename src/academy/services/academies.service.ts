@@ -33,6 +33,17 @@ import { AcademiesRepository } from '../repositories/academies.repository';
 import { AcademyMembersRepository } from '../repositories/academy-members.repository';
 import { ContactSubmissionsRepository } from '../repositories/contact-submissions.repository';
 import { SubdomainAllocationsRepository } from '../../domain/repositories/subdomain-allocations.repository';
+import { DomainConnectionsRepository } from '../../domain/repositories/domain-connections.repository';
+import { DomainProviderReleasesRepository } from '../../domain/repositories/domain-provider-releases.repository';
+import { DomainProviderReleaseService } from '../../domain/services/domain-provider-release.service';
+import { PlatformDomainService } from '../../domain/services/platform-domain.service';
+import {
+  buildFullHost,
+  resolveEffectiveBaseDomain,
+} from '../../domain/utils/effective-base-domain.util';
+import { RESERVED_SUBDOMAINS } from '../../provisioning/dto/provisioning.constants';
+import { ConfigService } from '@nestjs/config';
+import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
 import { PlatformDomainConfigurationRepository } from '../../domain/repositories/platform-domain-configuration.repository';
 import { PublicWebsiteCacheService } from '../../public-website/services/public-website-cache.service';
 import { toAcademyResponse } from '../dto/academy.contract';
@@ -73,6 +84,13 @@ import type { User } from '@prisma/client';
  * content; see `ORGANIZATION_INSTRUCTOR_PERMISSIONS`'s doc comment for
  * the same exclusion at the organization-permission layer.
  */
+/** P63g — a slug that is a reserved platform label can never become a public subdomain. */
+export function assertSlugNotReserved(slug: string): void {
+  if (RESERVED_SUBDOMAINS.includes(slug.trim().toLowerCase())) {
+    throw new ConflictException({ messageKey: 'errors.academy.slugReserved' });
+  }
+}
+
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
 /**
@@ -140,7 +158,10 @@ export interface ArchiveAcademyInput {
  * `staff` maps to the `staff` limit even though no endpoint currently
  * creates a staff member — see `createAcademyMember`.
  */
-export const MEMBER_ROLE_LIMIT: Record<AcademyMemberRole, 'instructors' | 'staff' | null> = {
+export const MEMBER_ROLE_LIMIT: Record<
+  AcademyMemberRole,
+  'instructors' | 'staff' | null
+> = {
   owner: null,
   administrator: null,
   manager: null,
@@ -165,8 +186,36 @@ export class AcademiesService {
     private readonly contactSubmissionsRepository: ContactSubmissionsRepository,
     private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
     private readonly platformDomainConfigurationRepository: PlatformDomainConfigurationRepository,
+    private readonly domainConnectionsRepository: DomainConnectionsRepository,
+    private readonly domainProviderReleasesRepository: DomainProviderReleasesRepository,
+    private readonly domainProviderReleaseService: DomainProviderReleaseService,
+    private readonly platformDomainService: PlatformDomainService,
     private readonly publicWebsiteCacheService: PublicWebsiteCacheService,
-  ) {}
+    configService: ConfigService,
+  ) {
+    this.environmentBaseDomain = configService
+      .get<PlatformDomainRuntimeConfig>('platformDomain')
+      ?.baseDomain?.trim()
+      .toLowerCase();
+  }
+
+  private readonly environmentBaseDomain?: string;
+
+  /** P63g — best-effort provider release after the archive committed; the sweep retries anything that fails. Never throws into the request. */
+  private async domainReleaseAfterCommit(releaseId: string): Promise<void> {
+    try {
+      const platformOwner = await this.usersRepository.findFirstPlatformOwnerId();
+      if (!platformOwner) return;
+      const providerAvailable = await this.platformDomainService.isProviderAvailable();
+      await this.tenancyContextService.runInUserContext(platformOwner.id, async (tx) => {
+        const row = await this.domainProviderReleasesRepository.findById(tx, releaseId);
+        if (row)
+          await this.domainProviderReleaseService.attempt(tx, row, providerAvailable);
+      });
+    } catch {
+      // Recorded in the ledger; the sweep retries.
+    }
+  }
 
   /**
    * Resolves the target user for a Manager/Instructor grant: an existing
@@ -250,6 +299,10 @@ export class AcademiesService {
   }
 
   async create(userId: string, payload: CreateAcademyDto): Promise<AcademyResponse> {
+    // P63g — the slug IS the public subdomain label; labels Atlas itself
+    // needs (`www`, `api`, `admin`, …) are refused here exactly as the
+    // provisioning path refuses them.
+    assertSlugNotReserved(payload.slug);
     await this.assertSlugAvailable(payload.organizationId, payload.slug);
 
     const academy = await this.withSlugConflictHandling(() =>
@@ -355,6 +408,10 @@ export class AcademiesService {
           // already treats the two namespaces as one.
           const platformDomain =
             await this.platformDomainConfigurationRepository.findSingleton();
+          const { baseDomain } = resolveEffectiveBaseDomain(
+            this.environmentBaseDomain,
+            platformDomain,
+          );
 
           await this.subdomainAllocationsRepository.create(tx, {
             academyId: created.id,
@@ -363,10 +420,9 @@ export class AcademiesService {
             // Null when no platform base domain is configured (local and
             // early environments). The allocation is still recorded, so
             // resolution by bare label keeps working and configuring the
-            // domain later needs no backfill.
-            fullHost: platformDomain.baseDomain
-              ? `${created.slug}.${platformDomain.baseDomain}`
-              : null,
+            // domain later needs no backfill. P63g: the EFFECTIVE base
+            // domain (environment first), the same rule every reader uses.
+            fullHost: buildFullHost(created.slug, baseDomain),
           });
 
           // Phase P15 retroactive audit coverage (master plan §21 P15's
@@ -399,6 +455,7 @@ export class AcademiesService {
     payload: UpdateAcademyDto,
   ): Promise<AcademyResponse> {
     if (payload.slug) {
+      assertSlugNotReserved(payload.slug);
       await this.assertSlugAvailable(organizationId, payload.slug, academyId);
     }
 
@@ -504,12 +561,82 @@ export class AcademiesService {
     //
     // Both hostname forms the resolver accepts are dropped: the bare slug
     // and the fully-qualified host, since either could be the cached key.
+    // P63g — every host that could be cached is dropped: the allocation's
+    // label (which may differ from the slug), its stored full host, the
+    // effective full host, the slug forms, AND the connected custom
+    // hostname. The custom domain itself is released: an archived Academy
+    // must not keep a hostname burned (no path could free it before) nor
+    // keep a provider resource answering at the edge.
+    const { allocation, releaseId, previousHostname } =
+      await this.tenancyContextService.runInTenantAndUserContext(
+        organizationId,
+        userId,
+        async (tx) => {
+          const allocation = await this.subdomainAllocationsRepository.findByAcademyId(
+            tx,
+            academyId,
+          );
+          const connection = await this.domainConnectionsRepository.lockByAcademyId(
+            tx,
+            academyId,
+          );
+          let releaseId: string | null = null;
+          if (connection?.hostname) {
+            const release = await this.domainProviderReleasesRepository.enqueue(tx, {
+              academyId,
+              hostname: connection.hostname,
+              providerHostnameId: connection.providerHostnameId,
+              reason: 'archived',
+            });
+            releaseId = release.id;
+            await this.domainConnectionsRepository.updateByAcademyId(tx, academyId, {
+              hostname: null,
+              status: 'not_configured',
+              verificationRecords: Prisma.JsonNull,
+              sslStatus: 'not_configured',
+              cdnStatus: 'not_configured',
+              cdnProvider: null,
+              providerHostnameId: null,
+              connectedAt: null,
+              lastCheckedAt: null,
+              lastCheckError: null,
+              lastProviderErrorCode: null,
+              httpsReachable: null,
+              httpsCheckedAt: null,
+              httpsStatusCode: null,
+              httpsFailureReason: null,
+              consecutiveFailures: 0,
+            });
+          }
+          return {
+            allocation,
+            releaseId,
+            previousHostname: connection?.hostname ?? null,
+          };
+        },
+      );
     const platformDomain =
       await this.platformDomainConfigurationRepository.findSingleton();
-    await this.publicWebsiteCacheService.invalidateHostnameResolution([
-      archived.slug,
-      platformDomain.baseDomain ? `${archived.slug}.${platformDomain.baseDomain}` : '',
-    ]);
+    const { baseDomain } = resolveEffectiveBaseDomain(
+      this.environmentBaseDomain,
+      platformDomain,
+    );
+    const hosts = new Set<string>([archived.slug]);
+    if (allocation) {
+      hosts.add(allocation.subdomain);
+      if (allocation.fullHost) hosts.add(allocation.fullHost);
+      const full = buildFullHost(allocation.subdomain, baseDomain);
+      if (full) hosts.add(full);
+    }
+    const slugFull = buildFullHost(archived.slug, baseDomain);
+    if (slugFull) hosts.add(slugFull);
+    if (platformDomain.baseDomain)
+      hosts.add(`${archived.slug}.${platformDomain.baseDomain}`);
+    if (previousHostname) hosts.add(previousHostname);
+    await this.publicWebsiteCacheService.invalidateHostnameResolution([...hosts]);
+    if (releaseId) {
+      await this.domainReleaseAfterCommit(releaseId);
+    }
 
     // Phase 2 — an archived academy frees its entire quota footprint
     // (academies/instructors/staff/courses/students/storage all drop) —

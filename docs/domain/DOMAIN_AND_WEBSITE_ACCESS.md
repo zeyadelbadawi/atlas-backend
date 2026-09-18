@@ -230,6 +230,78 @@ dashboard. Three gaps, all closed:
   round-trip (live → CNAME removed → failed with the CNAME shown → DNS
   restored → the sweep brings it back to live, no click).
 
+### 5b. Production hardening (P63g, 18 Sep 2026)
+
+A full adversarial audit of this subsystem found fifteen issues; every
+one is closed here, with the design decisions that closed them:
+
+- **No destructive partial operation.** A replace/remove/archive/operator
+  release writes a `domain_provider_releases` row IN the transaction and
+  only after commit attempts the provider delete (`DomainProviderRelease
+  Service`); the sweep retries pending rows with doubling delays (one
+  minute → six hours) and never gives up. Before deleting, the resource
+  must still carry the released hostname and no Atlas row may have
+  re-adopted it. A refused replace (409) therefore leaves the working
+  domain untouched (`P63-DOM-023`), and a failed provider delete is
+  retried until confirmed (`P63-DOM-024`).
+- **Self-healing registration.** A hostname the provider positively lost
+  is registered afresh by the next check (button or sweep) instead of
+  being reported "missing" forever; transport failures are
+  `provider_error`, never "missing" (`P63-DOM-008`, `P63-SWP-003`).
+  `disconnected` rows are swept for the same reason.
+- **Platform names are never custom domains.** The base domain, any name
+  under it and the routing target are refused with
+  `errors.domain.hostnameReserved` before the provider is asked
+  (`P63-DOM-025`); reserved labels (`www`, `api`, …) are refused on the
+  Academy-creation service as well as on provisioning (`P63-DOM-028`).
+- **Certificates validate over HTTP.** Issuance and every renewal
+  complete by themselves for any hostname whose traffic routes through
+  the provider (the CNAME setup); legacy TXT-validated resources are
+  migrated in place; HTTP validation records are never shown to the
+  customer (`P63-DOM-027`).
+- **Adapter safety.** An existing resource is adopted only on the
+  provider's duplicate refusal and only when its hostname matches;
+  lookups assert exact matches; not-found is distinguished from failure;
+  deletes report outcomes; one bounded retry on 429/5xx; non-JSON bodies
+  are failures, not crashes.
+- **Sweep hygiene.** Token verified once per tick; exponential backoff for
+  failing rows expressed in the candidate query (`consecutive_failures`),
+  so a permanently refused hostname is not re-created every five minutes
+  (`P63-DOM-026`); stale repeatables removed on boot; tick retried once;
+  wall-clock budget per tick; the completed tick and the release backlog
+  are recorded and shown on the readiness page.
+- **Operator release.** `DELETE /platform-domains/:academyId/custom-domain`
+  frees a hostname an Academy holds (audited `domain.platform_release`,
+  `P63-OPS-005`); archiving an Academy releases its custom domain, drops
+  every cached host, and the by-id public reads (including the contact
+  form) go offline through `resolve_academy_organization` (`P63-OPS-006`).
+- **One base-domain rule.** `resolveEffectiveBaseDomain` feeds Academy
+  creation, provisioning, availability, the public runtime, CORS and HSTS;
+  the resolver returns the allocation's stored full host so the public
+  canonical host and the dashboard agree; a base-domain change rewrites
+  every `full_host` (`rewrite_subdomain_full_hosts`) and drops the caches.
+- **Edge and API.** Caddy trusts only Cloudflare's published ranges and
+  forwards the real client as `X-Real-IP`; every rate limiter keys on it
+  (`resolveClientIp`, `ClientIpThrottlerGuard`); HSTS `includeSubDomains`
+  is asserted only on the platform tree (`hstsPerHost`); custom
+  hostnames on plain HTTP are redirected; CORS matches the platform
+  origin by parsing, never by an interpolated regex, and rejects without
+  a 500. `PLATFORM_BASE_DOMAIN` and `CLOUDFLARE_ZONE_ID` are shape-
+  validated; token and zone must be set together.
+- **Database invariants.** `hostname` and `subdomain` are CHECK-constrained
+  lowercase, so the case-sensitive unique indexes cannot be defeated by a
+  second writer.
+- **Deploys.** Both workflows share a concurrency group, `deploy.sh`
+  takes a host-level `flock`, a frontend push rolls only Caddy
+  (`--frontend-only`), images are also tagged by commit, the last healthy
+  digests are recorded for `--rollback`, and health is gated on Caddy as
+  well as the backend; the compose file and backup script ship with every
+  deploy.
+- **Public site.** The canonical redirect confirms the target answers
+  before moving a visitor; sitemap and robots use the canonical origin;
+  hostname resolution is re-read after a minute of staleness; the
+  dashboard never fabricates an address from the slug.
+
 ## 6. Canonical host
 
 `resolveCanonicalHost` (`domain/utils/canonical-host.util.ts`) is the one

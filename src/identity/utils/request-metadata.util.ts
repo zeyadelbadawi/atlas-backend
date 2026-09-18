@@ -32,38 +32,45 @@ function firstHeaderValue(request: Request, name: string): string | undefined {
 }
 
 /**
- * The real client IP, resolved through the production proxy chain in
- * order of decreasing authority:
+ * The real client IP (P63g trust model).
  *
- *   1. `CF-Connecting-IP` — set by Cloudflare and always the true end
- *      user. Preferred because Caddy's own `X-Real-IP {remote_host}`
- *      (see the production Caddyfile) records CLOUDFLARE's edge address,
- *      not the visitor's, so trusting `X-Real-IP` first would label every
- *      session with a Cloudflare datacentre IP.
- *   2. The leftmost `X-Forwarded-For` entry — the original client as the
- *      first proxy recorded it.
- *   3. `X-Real-IP` — correct for a deployment without Cloudflare in front.
- *   4. `request.ip` — the direct socket peer; correct in local
- *      development, where there is no proxy at all.
+ * In production the only path to this process is Caddy on the compose
+ * network, and Caddy — configured with Cloudflare's published ranges as
+ * `trusted_proxies` — computes the true client address itself
+ * (`{client_ip}`) and forwards it as `X-Real-IP`. So:
  *
- * Returns `undefined` rather than a placeholder when nothing resolves, so
- * the session list can say "unknown" honestly instead of showing a made-up
- * address.
+ *   1. when the socket peer is a private/loopback address (Caddy, or a
+ *      local proxy), `X-Real-IP` is authoritative;
+ *   2. otherwise (a request that reached the process directly) the socket
+ *      peer IS the client, and NO forwarded header is trusted — a direct
+ *      caller could otherwise name any address it liked, evading every
+ *      IP-keyed limiter or filling another visitor's bucket.
+ *
+ * `CF-Connecting-IP` and `X-Forwarded-For` are deliberately no longer
+ * read here: Caddy has already folded them into `X-Real-IP` when they
+ * came from a trusted hop, and they are forgeable when they did not.
  */
 export function resolveClientIp(request: Request): string | undefined {
-  const cloudflare = firstHeaderValue(request, 'cf-connecting-ip');
-  if (cloudflare) return cloudflare.slice(0, MAX_IP_LENGTH);
-
-  const forwardedFor = firstHeaderValue(request, 'x-forwarded-for');
-  if (forwardedFor) {
-    const [leftmost] = forwardedFor.split(',');
-    if (leftmost?.trim()) return leftmost.trim().slice(0, MAX_IP_LENGTH);
+  const peer = request.socket?.remoteAddress ?? request.ip;
+  if (peer && isPrivateOrLoopback(peer)) {
+    const realIp = firstHeaderValue(request, 'x-real-ip');
+    if (realIp) return realIp.slice(0, MAX_IP_LENGTH);
   }
+  return peer ? peer.slice(0, MAX_IP_LENGTH) : undefined;
+}
 
-  const realIp = firstHeaderValue(request, 'x-real-ip');
-  if (realIp) return realIp.slice(0, MAX_IP_LENGTH);
-
-  return request.ip ? request.ip.slice(0, MAX_IP_LENGTH) : undefined;
+/** Loopback, RFC 1918, link-local, unique-local and IPv4-mapped forms of those. */
+export function isPrivateOrLoopback(address: string): boolean {
+  const ip = address.startsWith('::ffff:') ? address.slice(7) : address;
+  if (ip === '::1' || ip === 'localhost') return true;
+  if (/^127\./.test(ip)) return true;
+  if (/^10\./.test(ip)) return true;
+  if (/^192\.168\./.test(ip)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true;
+  if (/^169\.254\./.test(ip)) return true;
+  if (/^f[cd][0-9a-f]{2}:/i.test(ip)) return true;
+  if (/^fe[89ab][0-9a-f]:/i.test(ip)) return true;
+  return false;
 }
 
 /** The raw `User-Agent`, stored verbatim and parsed only for display. `undefined` when absent — never a fabricated default. */
