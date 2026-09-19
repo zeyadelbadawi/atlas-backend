@@ -124,6 +124,7 @@ fi
 
 set -a; source .env; set +a
 
+# Persist the currently running application image digests for rollback.
 record_last_good() {
   {
     echo "BACKEND_IMAGE=$(docker inspect --format='{{index .RepoDigests 0}}' "$(docker compose ps -q backend)" 2>/dev/null || true)"
@@ -192,6 +193,7 @@ record_precheck_counts() {
   cat "$out"
 }
 
+# Wait for both the backend endpoint and Caddy container to become healthy.
 wait_healthy() {
   echo "==> Waiting for backend health"
   local ok=0
