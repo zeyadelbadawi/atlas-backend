@@ -33,10 +33,19 @@ echo "Dump size: ${SIZE} bytes"
 #
 # Size alone only catches an empty dump. Before this backup is allowed to
 # stand as the restore point for a migration that rewrites learner data,
-# three cheap checks establish that the archive is intact, that pg_dump
-# ran to completion rather than dying mid-stream, and that the tables the
+# three checks establish that the archive is intact, that pg_dump ran to
+# completion rather than dying mid-stream, and that the tables the
 # migration touches are actually in it. Each exits non-zero, which is what
 # makes `deploy.sh`'s gate fail closed.
+#
+# DECOMPRESSED ONCE, TO A FILE, AND NOT PIPED INTO grep. The obvious
+# `gzip -dc file | grep -q pattern` is wrong under `set -o pipefail`:
+# `grep -q` exits the moment it matches, gzip is then killed by SIGPIPE
+# and exits 141, and pipefail reports the pipeline as failed. The check
+# therefore REJECTS a perfectly good dump — measured on a real 17 MB
+# production-shaped dump, five runs out of five — and would have failed
+# every migration deploy. A 28 KB schema-only fixture passes, which is
+# exactly why this has to be tested at realistic size.
 #
 # This is NOT a restore test. It proves the file is readable and complete,
 # not that a restore into a live cluster succeeds; a true restore drill
@@ -48,17 +57,31 @@ if ! gzip -t "${LOCAL_DIR}/${FILENAME}"; then
   exit 1
 fi
 
-if ! gzip -dc "${LOCAL_DIR}/${FILENAME}" | grep -q '^-- PostgreSQL database dump complete'; then
+# `mktemp` in the backups directory, not /tmp: a multi-gigabyte dump must
+# not depend on /tmp having room. Removed on every exit path, including
+# failure and interruption.
+VERIFY_TMP=$(mktemp "${LOCAL_DIR}/.verify-XXXXXX")
+trap 'rm -f "${VERIFY_TMP}"' EXIT INT TERM
+
+if ! gzip -dc "${LOCAL_DIR}/${FILENAME}" > "${VERIFY_TMP}"; then
+  echo "Backup could not be decompressed in full — not usable as a restore point." >&2
+  exit 1
+fi
+
+if ! grep -q '^-- PostgreSQL database dump complete' "${VERIFY_TMP}"; then
   echo "Backup is truncated: pg_dump's completion marker is missing." >&2
   exit 1
 fi
 
 for table in users enrollments quiz_attempts academy_students; do
-  if ! gzip -dc "${LOCAL_DIR}/${FILENAME}" | grep -q "CREATE TABLE public.${table}"; then
+  if ! grep -q "CREATE TABLE public.${table}" "${VERIFY_TMP}"; then
     echo "Backup does not contain table '${table}' — refusing to treat it as a restore point." >&2
     exit 1
   fi
 done
+
+rm -f "${VERIFY_TMP}"
+trap - EXIT INT TERM
 
 echo "Dump verified: archive intact, completion marker present, core tables included."
 

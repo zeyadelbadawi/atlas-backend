@@ -143,19 +143,71 @@ psql_prod() {
     psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -t -A "$@"
 }
 
-# How many migrations the image carries that the database has not applied.
-# Deliberately a count comparison rather than parsing `prisma migrate
-# status`: the text and exit codes of that command are version-dependent,
-# and this is the fact we actually need. `set -e` aborts if either side
-# cannot be read, so an unreadable database can never be mistaken for
-# "nothing pending".
-pending_migration_count() {
-  local in_image applied
-  in_image=$(docker compose run --rm --no-deps --entrypoint sh backend \
-    -c 'ls -1 /app/prisma/migrations | grep -c "^[0-9]"' | tr -d '\r')
-  applied=$(psql_prod -c \
-    "select count(*) from _prisma_migrations where finished_at is not null" | tr -d '\r')
-  echo $(( in_image - applied ))
+# Which migrations the image carries that the database has not cleanly
+# applied — compared by NAME, never by count.
+#
+# A count comparison is not a safety check. Two different mistakes cancel
+# out: a migration present in the image but unapplied, plus a migration
+# recorded in the database but absent from the image, leaves the counts
+# equal and the deployment proceeding into a schema it cannot reason
+# about. This database currently holds exactly that shape — a row for
+# `20260927010000_p49b_live_provider_oauth` that is unfinished and rolled
+# back — which a count of "finished" rows silently skips.
+#
+# So three distinct conditions are detected and each one stops the
+# deployment:
+#
+#   PENDING    a migration in the image with no clean row in the database.
+#              Normal, and what `--with-migrations` exists to apply.
+#   UNKNOWN    a row in the database naming a migration the image does not
+#              contain. The running code is older than the schema, or the
+#              database belongs to a different branch. Never safe to
+#              migrate into.
+#   UNFINISHED a row that never completed or was rolled back. Prisma will
+#              refuse to continue past it anyway; failing here says so
+#              plainly instead of failing mid-deploy.
+#
+# Results are written to globals rather than echoed, so the caller can
+# report exact names. `set -e` aborts if either side cannot be read, so an
+# unreadable database can never be mistaken for "nothing pending".
+MIGRATIONS_PENDING=""
+MIGRATIONS_UNKNOWN=""
+MIGRATIONS_UNFINISHED=""
+
+compare_migration_state() {
+  local image_list db_clean_list
+
+  image_list=$(docker compose run --rm --no-deps --entrypoint sh backend \
+    -c 'ls -1 /app/prisma/migrations | grep "^[0-9]" | sort' | tr -d '\r')
+
+  # Cleanly applied: finished and not rolled back. Anything else is
+  # reported as unfinished below rather than counted as applied.
+  db_clean_list=$(psql_prod -c \
+    "select migration_name from _prisma_migrations \
+     where finished_at is not null and rolled_back_at is null \
+     order by migration_name" | tr -d '\r')
+
+  MIGRATIONS_UNFINISHED=$(psql_prod -c \
+    "select migration_name from _prisma_migrations \
+     where finished_at is null or rolled_back_at is not null \
+     order by migration_name" | tr -d '\r')
+
+  MIGRATIONS_PENDING=$(comm -23 \
+    <(printf '%s\n' "$image_list" | sed '/^$/d') \
+    <(printf '%s\n' "$db_clean_list" | sed '/^$/d'))
+
+  MIGRATIONS_UNKNOWN=$(comm -13 \
+    <(printf '%s\n' "$image_list" | sed '/^$/d') \
+    <(printf '%s\n' "$db_clean_list" | sed '/^$/d'))
+}
+
+# Prints a block naming every migration in a category, for the deploy log
+# and for the operator's record.
+report_migration_names() {
+  local label="$1" names="$2"
+  [ -z "$names" ] && return 0
+  echo "    ${label}:"
+  printf '%s\n' "$names" | sed 's/^/      - /'
 }
 
 # The counts the master plan requires before the migration runs. These are
@@ -273,18 +325,35 @@ docker compose up --wait --wait-timeout 180 postgres redis
 # it) and the stack has NOT been rolled yet (line below), so every exit
 # path out of this block leaves the previously running containers serving
 # traffic untouched.
-PENDING=$(pending_migration_count)
+compare_migration_state
+PENDING=$(printf '%s\n' "$MIGRATIONS_PENDING" | sed '/^$/d' | wc -l | tr -d ' ')
+
+# FAIL CLOSED on a schema this deployment cannot prove it understands.
+# Neither condition is something `--with-migrations` may override: an
+# unknown or unfinished migration means the database is not in a state
+# `prisma migrate deploy` should be pointed at, whoever approved it.
+if [ -n "$MIGRATIONS_UNKNOWN" ] || [ -n "$MIGRATIONS_UNFINISHED" ]; then
+  echo "==> Refusing to continue: image and database migration state cannot be proven compatible." >&2
+  report_migration_names "recorded in the database but absent from this image" "$MIGRATIONS_UNKNOWN" >&2
+  report_migration_names "never finished or rolled back" "$MIGRATIONS_UNFINISHED" >&2
+  echo "    Nothing was migrated and nothing was rolled; the running stack is untouched." >&2
+  echo "    Resolve the database's migration history before deploying." >&2
+  exit 1
+fi
+
 if [ "$PENDING" -gt 0 ] || [ "$MODE" = "preflight" ]; then
   if [ "$MODE" != "preflight" ] && [ "$WITH_MIGRATIONS" != "1" ]; then
     echo "==> ${PENDING} migration(s) pending and migrations are NOT authorized." >&2
+    report_migration_names "pending" "$MIGRATIONS_PENDING" >&2
     echo "    Nothing was migrated and nothing was rolled; the running stack is untouched." >&2
     echo "    To apply them: dispatch the Deploy workflow with apply_migrations=true," >&2
     echo "    which additionally requires approval of the protected production" >&2
-    echo "    environment, or run: deploy.sh --with-migrations" >&2
+    echo "    environment (that approval is what releases the migration SSH key)." >&2
     exit 1
   fi
 
   echo "==> ${PENDING} migration(s) pending — taking a verified backup first"
+  report_migration_names "pending" "$MIGRATIONS_PENDING"
   # Fails closed: `backup.sh` exits non-zero on a truncated, unreadable or
   # incomplete dump, and `set -e` aborts here, BEFORE any schema change.
   bash /opt/atlas/backup.sh
