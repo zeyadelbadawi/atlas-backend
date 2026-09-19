@@ -17,9 +17,32 @@ name: Deploy
 # `workflow_run: {workflows: [CI], types: [completed]}` with
 # `if: github.event.workflow_run.conclusion == 'success'` so deploy is
 # properly gated on tests passing again.
+# P64 Phase 1 — production migrations are gated behind TWO independent
+# conditions, because the Phase 1 migration rewrites learner-visible data
+# (it renumbers quiz attempt numbers and closes stale in-progress attempts)
+# and `deploy.sh --rollback` re-pins images without reverting a migration.
+#
+#   1. INTENT:   this workflow must be dispatched by hand with
+#                `apply_migrations=true`. A push never sets it.
+#   2. APPROVAL: that input routes the run through the `production-migrations`
+#                job below, which names a protected environment and therefore
+#                cannot start until a required reviewer approves it.
+#
+# Either condition missing means `deploy.sh` is invoked WITHOUT
+# `--with-migrations`, and it then aborts before touching the schema if any
+# migration is pending. A push that carries no migration is unaffected.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      apply_migrations:
+        description: >-
+          Apply pending database migrations. Requires approval of the
+          protected `production-migrations` environment. Leave false to
+          deploy application code only.
+        type: boolean
+        default: false
 
 # P63g — one deploy at a time against the single VPS (see the frontend
 # workflow for the cross-repo `flock` in deploy.sh).
@@ -32,7 +55,34 @@ permissions:
   packages: write
 
 jobs:
+  # Condition 2 of the migration gate. It runs ONLY when a human dispatched
+  # this workflow asking for migrations, and it does no work of its own: its
+  # entire purpose is to name a protected environment, so GitHub holds the
+  # run until a required reviewer approves. `build-and-deploy` waits on the
+  # result. On a push this job is skipped, which the dependent job allows.
+  #
+  # PREREQUISITE, and the gate is inert without it: the repository must have
+  # an environment named `production-migrations` with at least one required
+  # reviewer configured. Naming an environment here does not by itself
+  # require approval — the protection rule does.
+  approve-migrations:
+    if: github.event_name == 'workflow_dispatch' && inputs.apply_migrations
+    runs-on: ubuntu-latest
+    environment: production-migrations
+    steps:
+      - name: Record the approval
+        run: |
+          echo "Production migrations approved by ${{ github.actor }}"
+          echo "Run: ${{ github.run_id }} — commit ${{ github.sha }}"
+
   build-and-deploy:
+    needs: [approve-migrations]
+    # `always()` so a push (where the gate job is SKIPPED) still deploys,
+    # while a REJECTED or failed approval stops the deploy entirely.
+    if: >-
+      always() &&
+      (needs.approve-migrations.result == 'success' ||
+       needs.approve-migrations.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -106,6 +156,14 @@ jobs:
           scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
             deploy/backup.sh \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/atlas/backup.sh
+          # Condition 1 of the migration gate. The flag is appended ONLY for a
+          # dispatch that asked for migrations — and such a run reached this
+          # point only by passing the protected-environment approval above.
+          # A push always sends the bare `--sync-env`, exactly as before.
+          MIGRATE_FLAG=""
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.apply_migrations }}" = "true" ]; then
+            MIGRATE_FLAG=" --with-migrations"
+          fi
           printf '%s' "$FRAGMENT_B64" | ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'bash /opt/atlas/deploy.sh --sync-env'
+            "bash /opt/atlas/deploy.sh --sync-env${MIGRATE_FLAG}"

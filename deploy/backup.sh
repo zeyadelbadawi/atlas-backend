@@ -29,6 +29,39 @@ if [ "$SIZE" -lt 1024 ]; then
 fi
 echo "Dump size: ${SIZE} bytes"
 
+# --- P64 Phase 1: readability verification -------------------------------
+#
+# Size alone only catches an empty dump. Before this backup is allowed to
+# stand as the restore point for a migration that rewrites learner data,
+# three cheap checks establish that the archive is intact, that pg_dump
+# ran to completion rather than dying mid-stream, and that the tables the
+# migration touches are actually in it. Each exits non-zero, which is what
+# makes `deploy.sh`'s gate fail closed.
+#
+# This is NOT a restore test. It proves the file is readable and complete,
+# not that a restore into a live cluster succeeds; a true restore drill
+# belongs on its own schedule, against a scratch database.
+echo "==> Verifying the dump is readable and complete"
+
+if ! gzip -t "${LOCAL_DIR}/${FILENAME}"; then
+  echo "Backup failed gzip integrity check — not usable as a restore point." >&2
+  exit 1
+fi
+
+if ! gzip -dc "${LOCAL_DIR}/${FILENAME}" | grep -q '^-- PostgreSQL database dump complete'; then
+  echo "Backup is truncated: pg_dump's completion marker is missing." >&2
+  exit 1
+fi
+
+for table in users enrollments quiz_attempts academy_students; do
+  if ! gzip -dc "${LOCAL_DIR}/${FILENAME}" | grep -q "CREATE TABLE public.${table}"; then
+    echo "Backup does not contain table '${table}' — refusing to treat it as a restore point." >&2
+    exit 1
+  fi
+done
+
+echo "Dump verified: archive intact, completion marker present, core tables included."
+
 echo "==> Uploading to R2 backup bucket"
 docker run --rm \
   -e AWS_ACCESS_KEY_ID="${R2_BACKUP_ACCESS_KEY_ID}" \
