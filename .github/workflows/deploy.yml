@@ -17,9 +17,32 @@ name: Deploy
 # `workflow_run: {workflows: [CI], types: [completed]}` with
 # `if: github.event.workflow_run.conclusion == 'success'` so deploy is
 # properly gated on tests passing again.
+# P64 Phase 1 — production migrations are gated behind TWO independent
+# conditions, because the Phase 1 migration rewrites learner-visible data
+# (it renumbers quiz attempt numbers and closes stale in-progress attempts)
+# and `deploy.sh --rollback` re-pins images without reverting a migration.
+#
+#   1. INTENT:   this workflow must be dispatched by hand with
+#                `apply_migrations=true`. A push never sets it.
+#   2. APPROVAL: that input routes the run through the `production-migrations`
+#                job below, which names a protected environment and therefore
+#                cannot start until a required reviewer approves it.
+#
+# Either condition missing means `deploy.sh` is invoked WITHOUT
+# `--with-migrations`, and it then aborts before touching the schema if any
+# migration is pending. A push that carries no migration is unaffected.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      apply_migrations:
+        description: >-
+          Apply pending database migrations. Requires approval of the
+          protected `production-migrations` environment. Leave false to
+          deploy application code only.
+        type: boolean
+        default: false
 
 # P63g — one deploy at a time against the single VPS (see the frontend
 # workflow for the cross-repo `flock` in deploy.sh).
@@ -32,7 +55,10 @@ permissions:
   packages: write
 
 jobs:
-  build-and-deploy:
+  # 1. BUILD — holds no SSH identity at all, so nothing here can reach the
+  #    VPS. Runs for every trigger; both deploy jobs below consume the
+  #    image it pushes.
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,50 +88,65 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy to VPS
-        env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          # The four Zoom production variables, from GitHub Secrets. Unset
-          # secrets arrive as empty strings and are filtered out below, so
-          # this step is a safe no-op until the secrets are populated.
-          ZOOM_OAUTH_CLIENT_ID: ${{ secrets.ZOOM_OAUTH_CLIENT_ID }}
-          ZOOM_OAUTH_CLIENT_SECRET: ${{ secrets.ZOOM_OAUTH_CLIENT_SECRET }}
-          ZOOM_OAUTH_REDIRECT_URI: ${{ secrets.ZOOM_OAUTH_REDIRECT_URI }}
-          ZOOM_WEBHOOK_SECRET_TOKEN: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}
+  # 2. NORMAL DEPLOYMENT — every push to `main`, and any dispatch that did
+  #    not ask for migrations.
+  #
+  #    It holds `DEPLOY_SSH_KEY`, the NON-MIGRATION identity, and never
+  #    passes `--with-migrations`. If the image carries a pending
+  #    migration, `deploy.sh` stops before touching the schema and this job
+  #    fails — code and schema stay in lockstep rather than drifting.
+  #
+  #    This job has no access to `MIGRATION_SSH_KEY`: that secret lives on
+  #    the `production-migrations` environment, and a job that does not
+  #    declare that environment cannot read it. That is the boundary — not
+  #    the ordering of jobs.
+  deploy:
+    needs: [build]
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && !inputs.apply_migrations)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/vps-deploy
+        with:
+          ssh_key: ${{ secrets.DEPLOY_SSH_KEY }}
+          user: ${{ secrets.DEPLOY_USER }}
+          host: ${{ secrets.DEPLOY_HOST }}
+          with_migrations: 'false'
+          zoom_client_id: ${{ secrets.ZOOM_OAUTH_CLIENT_ID }}
+          zoom_client_secret: ${{ secrets.ZOOM_OAUTH_CLIENT_SECRET }}
+          zoom_redirect_uri: ${{ secrets.ZOOM_OAUTH_REDIRECT_URI }}
+          zoom_webhook_secret_token: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}
+
+  # 3. MIGRATION DEPLOYMENT — dispatch only, with the input explicitly set.
+  #
+  #    Declaring `environment: production-migrations` does two things at
+  #    once, and the second is the one that matters: GitHub holds the job
+  #    until a required reviewer approves it, AND it is the only way this
+  #    job can read that environment's secrets. `MIGRATION_SSH_KEY` is an
+  #    ENVIRONMENT secret, so the migration-capable credential is released
+  #    by the approval itself. No other job in this workflow — including
+  #    the push path above — can obtain it.
+  migrate-and-deploy:
+    needs: [build]
+    if: github.event_name == 'workflow_dispatch' && inputs.apply_migrations
+    runs-on: ubuntu-latest
+    environment: production-migrations
+    steps:
+      - name: Record the approval
         run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          # Build a base64 fragment of ONLY the non-empty Zoom vars. Kept
-          # in a variable and piped over ssh stdin — never on the command
-          # line (which would show in the VPS process list) and never
-          # echoed (base64 of a secret is not auto-masked by Actions).
-          FRAGMENT_B64=$(python3 - <<'PYEOF'
-          import os, base64
-          keys = [
-            'ZOOM_OAUTH_CLIENT_ID', 'ZOOM_OAUTH_CLIENT_SECRET',
-            'ZOOM_OAUTH_REDIRECT_URI', 'ZOOM_WEBHOOK_SECRET_TOKEN',
-          ]
-          lines = [f"{k}={os.environ[k]}" for k in keys if os.environ.get(k)]
-          print(base64.b64encode("\n".join(lines).encode()).decode() if lines else "")
-          PYEOF
-          )
-          # Deliver the repo's deploy.sh to the VPS so the deploy SCRIPT is
-          # version-controlled too — previously /opt/atlas/deploy.sh was
-          # hand-placed and drifted from the repo, so changes to
-          # deploy/deploy.sh never took effect in production.
-          # P63g — the compose file and the backup script are deployed
-          # artefacts too (previously only deploy.sh was, so a change to
-          # either in this repo never reached production).
-          scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
-            deploy/deploy.sh \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/atlas/deploy.sh
-          scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
-            deploy/docker-compose.prod.yml \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/atlas/docker-compose.yml
-          scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
-            deploy/backup.sh \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/atlas/backup.sh
-          printf '%s' "$FRAGMENT_B64" | ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'bash /opt/atlas/deploy.sh --sync-env'
+          echo "Production migrations approved for run ${{ github.run_id }}"
+          echo "Commit: ${{ github.sha }} — dispatched by ${{ github.actor }}"
+
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/vps-deploy
+        with:
+          ssh_key: ${{ secrets.MIGRATION_SSH_KEY }}
+          user: ${{ secrets.MIGRATION_DEPLOY_USER || secrets.DEPLOY_USER }}
+          host: ${{ secrets.DEPLOY_HOST }}
+          with_migrations: 'true'
+          zoom_client_id: ${{ secrets.ZOOM_OAUTH_CLIENT_ID }}
+          zoom_client_secret: ${{ secrets.ZOOM_OAUTH_CLIENT_SECRET }}
+          zoom_redirect_uri: ${{ secrets.ZOOM_OAUTH_REDIRECT_URI }}
+          zoom_webhook_secret_token: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}

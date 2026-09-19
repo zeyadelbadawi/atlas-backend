@@ -1,0 +1,111 @@
+name: Deploy to the Atlas VPS
+description: >-
+  SSH to the production VPS and run deploy.sh. Factored out of the Deploy
+  workflow so the NORMAL deployment job and the MIGRATION deployment job
+  can run identical steps while holding DIFFERENT SSH identities — the
+  point of the split is that only one of them is ever given a credential
+  capable of migrating, and duplicating this block in both jobs would
+  invite the two copies to drift apart.
+
+  This action references no secret of its own. Every credential arrives as
+  an input, so the question "which job can migrate?" is answered entirely
+  at the two call sites in the workflow.
+
+inputs:
+  ssh_key:
+    description: Private key for the identity this job is allowed to use.
+    required: true
+  user:
+    description: SSH user on the VPS.
+    required: true
+  host:
+    description: VPS hostname.
+    required: true
+  with_migrations:
+    description: >-
+      'true' only from the migration-approved job. Adds --with-migrations,
+      which is the sole way deploy.sh will apply a pending migration.
+    required: false
+    default: 'false'
+  zoom_client_id:
+    required: false
+    default: ''
+    description: Zoom OAuth client id, synced into the VPS .env.
+  zoom_client_secret:
+    required: false
+    default: ''
+    description: Zoom OAuth client secret, synced into the VPS .env.
+  zoom_redirect_uri:
+    required: false
+    default: ''
+    description: Zoom OAuth redirect URI, synced into the VPS .env.
+  zoom_webhook_secret_token:
+    required: false
+    default: ''
+    description: Zoom webhook secret token, synced into the VPS .env.
+
+runs:
+  using: composite
+  steps:
+    - name: Deploy to VPS
+      shell: bash
+      env:
+        SSH_KEY: ${{ inputs.ssh_key }}
+        DEPLOY_USER: ${{ inputs.user }}
+        DEPLOY_HOST: ${{ inputs.host }}
+        WITH_MIGRATIONS: ${{ inputs.with_migrations }}
+        ZOOM_OAUTH_CLIENT_ID: ${{ inputs.zoom_client_id }}
+        ZOOM_OAUTH_CLIENT_SECRET: ${{ inputs.zoom_client_secret }}
+        ZOOM_OAUTH_REDIRECT_URI: ${{ inputs.zoom_redirect_uri }}
+        ZOOM_WEBHOOK_SECRET_TOKEN: ${{ inputs.zoom_webhook_secret_token }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${SSH_KEY}" ]; then
+          echo "No SSH key was supplied to this job. If this is the migration" >&2
+          echo "job, the production-migrations environment is missing its" >&2
+          echo "MIGRATION_SSH_KEY secret. Refusing to continue." >&2
+          exit 1
+        fi
+
+        mkdir -p ~/.ssh
+        echo "$SSH_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+
+        # Build a base64 fragment of ONLY the non-empty Zoom vars. Kept in a
+        # variable and piped over ssh stdin — never on the command line
+        # (which would show in the VPS process list) and never echoed
+        # (base64 of a secret is not auto-masked by Actions).
+        FRAGMENT_B64=$(python3 - <<'PYEOF'
+        import os, base64
+        keys = [
+          'ZOOM_OAUTH_CLIENT_ID', 'ZOOM_OAUTH_CLIENT_SECRET',
+          'ZOOM_OAUTH_REDIRECT_URI', 'ZOOM_WEBHOOK_SECRET_TOKEN',
+        ]
+        lines = [f"{k}={os.environ[k]}" for k in keys if os.environ.get(k)]
+        print(base64.b64encode("\n".join(lines).encode()).decode() if lines else "")
+        PYEOF
+        )
+
+        # Deliver the repo's deploy.sh to the VPS so the deploy SCRIPT is
+        # version-controlled too — previously /opt/atlas/deploy.sh was
+        # hand-placed and drifted from the repo, so changes to
+        # deploy/deploy.sh never took effect in production.
+        # P63g — the compose file and the backup script are deployed
+        # artefacts too (previously only deploy.sh was, so a change to
+        # either in this repo never reached production).
+        scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+          deploy/deploy.sh "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/deploy.sh"
+        scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+          deploy/docker-compose.prod.yml "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/docker-compose.yml"
+        scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+          deploy/backup.sh "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/backup.sh"
+
+        MIGRATE_FLAG=""
+        if [ "${WITH_MIGRATIONS}" = "true" ]; then
+          MIGRATE_FLAG=" --with-migrations"
+        fi
+
+        printf '%s' "$FRAGMENT_B64" | ssh -o StrictHostKeyChecking=accept-new \
+          -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+          "bash /opt/atlas/deploy.sh --sync-env${MIGRATE_FLAG}"
