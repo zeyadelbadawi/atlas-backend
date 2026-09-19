@@ -48,13 +48,20 @@ export class ProtectedMediaStorage implements OnModuleInit {
     const protectedMedia = configService.getOrThrow<ProtectedMediaConfig>('protectedMedia');
     this.bucket = protectedMedia.bucket;
     this.defaultTtlSeconds = protectedMedia.signedUrlTtlSeconds;
+    // Endpoint, region and addressing style are properties of the R2
+    // account and are shared. The CREDENTIALS are not: they come from
+    // `protectedMedia`, which is the dedicated single-bucket token when
+    // one is configured and the public media token otherwise. A token
+    // scoped to the protected bucket alone means a leak of it cannot
+    // touch the public bucket, and a leak of the public one cannot reach
+    // protected lesson media.
     this.client = new S3Client({
       region: media.region,
       endpoint: media.endpoint,
       forcePathStyle: media.forcePathStyle,
       credentials: {
-        accessKeyId: media.accessKeyId,
-        secretAccessKey: media.secretAccessKey,
+        accessKeyId: protectedMedia.accessKeyId,
+        secretAccessKey: protectedMedia.secretAccessKey,
       },
     });
   }

@@ -260,6 +260,28 @@ const EnvSchema = z.object({
   FLAG_PLAYER_V2_ACADEMY_IDS: z.string().optional(),
 
   R2_PROTECTED_BUCKET: z.string().trim().min(1).optional(),
+  /*
+    Credentials for the PROTECTED bucket alone.
+
+    Optional, and absent they fall back to `R2_ACCESS_KEY_ID` /
+    `R2_SECRET_ACCESS_KEY`, which is the behaviour every environment had
+    before these existed — so an environment that never sets them is
+    unaffected.
+
+    They exist because the protected bucket is the one place a token
+    scoped to a SINGLE bucket is worth having: an R2 token restricted to
+    the protected bucket cannot read or write the public media bucket, so
+    a leak of the protected credential cannot reach customer avatars,
+    thumbnails or course images, and vice versa. Sharing one token across
+    both buckets would make either leak total.
+
+    Both must be set together to take effect — a half-configured pair is
+    rejected below rather than silently falling back, because "I set the
+    key id and protected media is still using the public token" is
+    exactly the kind of failure nobody notices.
+  */
+  R2_PROTECTED_ACCESS_KEY_ID: z.string().trim().min(1).optional(),
+  R2_PROTECTED_SECRET_ACCESS_KEY: z.string().trim().min(1).optional(),
   PROTECTED_MEDIA_URL_TTL_SECONDS: z.coerce
     .number()
     .int()
@@ -507,6 +529,22 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
     throw new Error(
       'CLOUDFLARE_API_TOKEN and CLOUDFLARE_ZONE_ID must be set together — refusing to start ' +
         'with a token but no zone (or a zone but no token) for the custom-domain integration.',
+    );
+  }
+
+  // P64 Phase 2 — the protected-bucket credentials are the same "both or
+  // none" shape, for a sharper reason than the pair above: a key id with
+  // no secret does not fail, it FALLS BACK to the public media token and
+  // keeps working. The bucket isolation an operator thought they had
+  // would be silently absent, and nothing would say so.
+  if (
+    Boolean(parsed.data.R2_PROTECTED_ACCESS_KEY_ID) !==
+    Boolean(parsed.data.R2_PROTECTED_SECRET_ACCESS_KEY)
+  ) {
+    throw new Error(
+      'R2_PROTECTED_ACCESS_KEY_ID and R2_PROTECTED_SECRET_ACCESS_KEY must be set together — ' +
+        'refusing to start with half a protected-bucket credential, which would silently fall ' +
+        'back to the public media token and lose the isolation those variables exist to provide.',
     );
   }
 

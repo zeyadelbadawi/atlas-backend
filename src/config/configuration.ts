@@ -136,6 +136,17 @@ export interface LearningFeatureFlags {
  */
 export interface ProtectedMediaConfig {
   readonly bucket: string;
+  /**
+   * Credentials for the protected bucket.
+   *
+   * Resolved here rather than at the call site so there is exactly one
+   * place that knows about the fallback. When `R2_PROTECTED_ACCESS_KEY_ID`
+   * and its secret are set these hold that dedicated, single-bucket
+   * token; otherwise they hold the public media credentials, which is
+   * what every environment used before the pair existed.
+   */
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
   /** Presigned-URL lifetime. 10 minutes (Phase 2 §I) — long enough to start a download, short enough that a forwarded link is dead on arrival. */
   readonly signedUrlTtlSeconds: number;
   /** Per-file ceiling for protected uploads — video is uploaded direct-to-provider, so this governs documents and lesson images. */
@@ -474,6 +485,10 @@ export default () => {
 
   const protectedMedia: ProtectedMediaConfig = {
     bucket: env.R2_PROTECTED_BUCKET || `${env.R2_BUCKET}-protected`,
+    // `env.validation.ts` rejects a half-configured pair, so testing one
+    // of the two is enough to know both are present.
+    accessKeyId: env.R2_PROTECTED_ACCESS_KEY_ID || env.R2_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_PROTECTED_SECRET_ACCESS_KEY || env.R2_SECRET_ACCESS_KEY,
     signedUrlTtlSeconds: Number(env.PROTECTED_MEDIA_URL_TTL_SECONDS ?? 600),
     maxUploadBytes: Number(env.PROTECTED_MEDIA_MAX_UPLOAD_BYTES ?? 50 * 1024 * 1024),
   };
