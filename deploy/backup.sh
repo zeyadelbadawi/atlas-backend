@@ -97,6 +97,17 @@ docker run --rm \
 echo "==> Pruning local backups older than ${RETENTION_DAYS} days"
 find "$LOCAL_DIR" -name 'atlas-*.sql.gz' -mtime +${RETENTION_DAYS} -delete
 
+# `grep -v` exits 1 when it filters everything out, which is the NORMAL
+# case here: a bucket with nothing older than the retention window emits a
+# single `None`, grep drops it, and `set -o pipefail` then failed the whole
+# script — AFTER a perfectly good dump had been taken and uploaded.
+#
+# That was invisible while this only ran from a systemd timer. It stopped
+# being invisible when `deploy.sh` began gating migrations on this script's
+# exit code: a successful backup reported failure, and the migration was
+# correctly refused. Guarding the grep keeps "nothing to prune" from
+# meaning "backup failed", and changes nothing when there IS something to
+# prune.
 echo "==> Pruning remote backups older than ${RETENTION_DAYS} days"
 CUTOFF=$(date -u -d "-${RETENTION_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
 docker run --rm \
@@ -106,7 +117,7 @@ docker run --rm \
   --endpoint-url "${R2_BACKUP_ENDPOINT}" \
   s3api list-objects-v2 --bucket "${R2_BACKUP_BUCKET}" \
   --query "Contents[?LastModified<='${CUTOFF}'].Key" --output text \
-  | tr '\t' '\n' | grep -v '^None$' | while read -r key; do
+  | tr '\t' '\n' | { grep -v '^None$' || true; } | while read -r key; do
     [ -n "$key" ] && docker run --rm \
       -e AWS_ACCESS_KEY_ID="${R2_BACKUP_ACCESS_KEY_ID}" \
       -e AWS_SECRET_ACCESS_KEY="${R2_BACKUP_SECRET_ACCESS_KEY}" \
