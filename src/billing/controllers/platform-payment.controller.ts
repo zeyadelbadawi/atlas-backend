@@ -19,6 +19,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
@@ -30,7 +31,7 @@ import type { PaymentResponse } from '../dto/payment.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('payments')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class PlatformPaymentController {
   constructor(private readonly platformPaymentService: PlatformPaymentService) {}
 

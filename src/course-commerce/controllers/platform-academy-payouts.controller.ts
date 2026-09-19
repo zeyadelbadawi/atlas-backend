@@ -1,6 +1,7 @@
 /** PlatformAcademyPayoutsController — `/platform-academy-payouts*`, `PlatformOwnerGuard`-gated. The ONLY route tree that can create/mark-paid an `AcademyPayout` (see `PlatformAcademyPayoutsService`'s own doc comment for the asymmetric read/write reasoning). */
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
@@ -12,7 +13,7 @@ import type { AcademyPayoutResponse } from '../dto/academy-payout.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('platform-academy-payouts')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class PlatformAcademyPayoutsController {
   constructor(
     private readonly platformAcademyPayoutsService: PlatformAcademyPayoutsService,

@@ -30,6 +30,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { TenantSubscriptionService } from '../services/tenant-subscription.service';
 import { TrialRedemptionService } from '../services/trial-redemption.service';
@@ -86,7 +87,7 @@ interface CancellationResponse {
  */
 @AllowInactiveSubscription()
 @Controller('organizations')
-@UseGuards(JwtAuthGuard, OrganizationMembershipGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, OrganizationMembershipGuard)
 export class TenantSubscriptionController {
   constructor(
     private readonly tenantSubscriptionService: TenantSubscriptionService,

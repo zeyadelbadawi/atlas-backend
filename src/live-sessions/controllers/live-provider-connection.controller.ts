@@ -24,6 +24,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { LiveProviderConnectionService } from '../services/live-provider-connection.service';
@@ -49,7 +50,7 @@ import { LiveProviderConnectionService } from '../services/live-provider-connect
 const OWNER_CONNECT_PERMISSION = 'tenant.addon.view';
 
 @Controller('academies')
-@UseGuards(JwtAuthGuard, AcademyScopeGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
 export class LiveProviderConnectionController {
   constructor(
     private readonly tenancyContextService: TenancyContextService,

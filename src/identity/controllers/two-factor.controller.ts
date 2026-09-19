@@ -103,7 +103,9 @@ export class TwoFactorController {
       {
         ipAddress: resolveClientIp(request),
         userAgent: resolveUserAgent(request),
+        hostname: request.hostname,
       },
+      { surface: dto.surface ?? 'management', academyId: dto.academyId },
     );
   }
 

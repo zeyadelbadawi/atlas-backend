@@ -23,6 +23,8 @@
  * imports the exact same `WebsiteConfiguration`/`WebsitePage` types from
  * `@types`), never a second, parallel public projection.
  */
+import type { Prisma } from '@prisma/client';
+import type { CourseWithRelations } from '../../course/repositories/courses.repository';
 import { Injectable } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { WebsiteConfigurationRepository } from '../../website/repositories/website-configuration.repository';
@@ -367,11 +369,15 @@ export class PublicWebsiteService {
     const result = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        const course = await this.coursesRepository.findPublishedById(tx, courseId);
-        if (!course || course.academyId !== academyId) return null;
+        const course = await this.findPublishedPublicCourseByIdOrSlug(
+          tx,
+          academyId,
+          courseId,
+        );
+        if (!course) return null;
         const [totalSections, totalLessons] = await Promise.all([
-          this.coursesRepository.countSections(tx, courseId),
-          this.coursesRepository.countLessons(tx, courseId),
+          this.coursesRepository.countSections(tx, course.id),
+          this.coursesRepository.countLessons(tx, course.id),
         ]);
         return { course, totalSections, totalLessons };
       },
@@ -400,14 +406,44 @@ export class PublicWebsiteService {
     if (!organizationId) return null;
 
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      const course = await this.coursesRepository.findPublishedById(tx, courseId);
-      if (!course || course.academyId !== academyId) return null;
+      const course = await this.findPublishedPublicCourseByIdOrSlug(
+        tx,
+        academyId,
+        courseId,
+      );
+      if (!course) return null;
       const sections = await this.courseSectionsRepository.findManyForCourse(
         tx,
-        courseId,
+        course.id,
       );
       return toPublicCourseCurriculumResponse(sections);
     });
+  }
+
+  /**
+   * P64 Phase 1 — the public course page is addressed by id OR by the
+   * academy-scoped slug (the production website linked `/courses/{slug}`
+   * while this API resolved ids only, and every such page 404'd). The
+   * slug lookup is scoped to this academy's compound key, so a same-slug
+   * course in another academy is never even queried; both paths still
+   * require published + public and this academy's ownership.
+   */
+  private async findPublishedPublicCourseByIdOrSlug(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    courseIdOrSlug: string,
+  ): Promise<CourseWithRelations | null> {
+    const byId = await this.coursesRepository.findPublishedById(tx, courseIdOrSlug);
+    if (byId && byId.academyId === academyId) return byId;
+    if (byId) return null;
+    const bySlug = await this.coursesRepository.findByAcademyAndSlug(
+      tx,
+      academyId,
+      courseIdOrSlug.toLowerCase(),
+    );
+    if (!bySlug) return null;
+    const published = await this.coursesRepository.findPublishedById(tx, bySlug.id);
+    return published && published.academyId === academyId ? published : null;
   }
 
   /**

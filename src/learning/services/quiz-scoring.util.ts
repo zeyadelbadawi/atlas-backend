@@ -25,6 +25,29 @@ export interface SubmittedAnswer {
 }
 
 /** Every question must have exactly one answer entry — no missing question, no foreign/duplicate `questionId`. Mirrors `CourseCurriculumService.assertExactPermutation`'s identical "exact set match" discipline (P5), re-enforcing the frontend's own `buildQuizAttemptSchema` requirement server-side. */
+/**
+ * P64 Phase 1 — every `selectedOptionId` must belong to the question it is
+ * submitted for. Foreign ids can never score (the correct set is the whole
+ * secret) but they used to be persisted verbatim and echoed to reviewers.
+ */
+export function areSelectedOptionsOwnedByQuestions(
+  questions: readonly ScorableQuestion[],
+  answers: readonly SubmittedAnswer[],
+): boolean {
+  const optionsByQuestion = new Map(
+    questions.map((q) => [q.id, new Set(q.options.map((o) => o.id))]),
+  );
+  return answers.every((answer) => {
+    const owned = optionsByQuestion.get(answer.questionId);
+    if (!owned) return false;
+    const unique = new Set(answer.selectedOptionIds);
+    return (
+      unique.size === answer.selectedOptionIds.length &&
+      answer.selectedOptionIds.every((id) => owned.has(id))
+    );
+  });
+}
+
 export function isExactQuestionCoverage(
   questions: readonly ScorableQuestion[],
   answers: readonly SubmittedAnswer[],

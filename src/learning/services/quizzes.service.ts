@@ -26,6 +26,7 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 import { CoursesRepository } from '../../course/repositories/courses.repository';
@@ -53,6 +54,7 @@ import {
 import {
   canStartAnotherAttempt,
   isAttemptPassing,
+  areSelectedOptionsOwnedByQuestions,
   isExactQuestionCoverage,
   scoreQuizAttempt,
 } from './quiz-scoring.util';
@@ -62,6 +64,7 @@ export class QuizzesService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly enrollmentsRepository: EnrollmentsRepository,
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly coursesRepository: CoursesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
@@ -97,6 +100,11 @@ export class QuizzesService {
         this.courseInstructorsRepository,
         userId,
         courseId,
+        {
+          coursesRepository: this.coursesRepository,
+          academyMembersRepository: this.academyMembersRepository,
+        },
+        this.academyStudentsRepository,
       );
       const quizzes = await this.quizzesRepository.findManyPublishedForCourse(
         tx,
@@ -118,6 +126,11 @@ export class QuizzesService {
         this.courseInstructorsRepository,
         userId,
         courseId,
+        {
+          coursesRepository: this.coursesRepository,
+          academyMembersRepository: this.academyMembersRepository,
+        },
+        this.academyStudentsRepository,
       );
       const quiz = await this.quizzesRepository.findPublishedByIdWithQuestions(
         tx,
@@ -135,7 +148,13 @@ export class QuizzesService {
     quizId: string,
   ): Promise<PaginatedResult<QuizAttemptResponse>> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(tx, this.enrollmentsRepository, userId, courseId);
+      await assertActiveEnrollment(
+        tx,
+        this.enrollmentsRepository,
+        userId,
+        courseId,
+        this.academyStudentsRepository,
+      );
       const quiz = await this.quizzesRepository.findPublishedById(tx, courseId, quizId);
       if (!quiz) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
@@ -159,9 +178,43 @@ export class QuizzesService {
     quizId: string,
   ): Promise<QuizAttemptResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(tx, this.enrollmentsRepository, userId, courseId);
+      const enrollment = await assertActiveEnrollment(
+        tx,
+        this.enrollmentsRepository,
+        userId,
+        courseId,
+        this.academyStudentsRepository,
+      );
       const quiz = await this.quizzesRepository.findPublishedById(tx, courseId, quizId);
       if (!quiz) throw new NotFoundException({ messageKey: 'errors.notFound' });
+
+      // P64 Phase 1 — concurrency protection. The enrollment row is locked
+      // for the rest of this transaction, so two simultaneous starts
+      // serialize: the second one sees the first one's attempt. The
+      // database independently agrees through the unique
+      // (quiz, student, attempt_number) index and the partial "one open
+      // attempt" index — a race that slipped past this lock would fail
+      // the insert rather than create a duplicate.
+      await this.enrollmentsRepository.lockForUpdate(tx, enrollment.id);
+
+      // One open attempt at a time: starting again while one is in
+      // progress resumes it instead of burning a second attempt.
+      const open = await this.quizzesRepository.findOpenAttemptForStudent(
+        tx,
+        userId,
+        quizId,
+      );
+      if (open) {
+        const count = await this.quizzesRepository.countAttemptsForStudent(
+          tx,
+          userId,
+          quizId,
+        );
+        return toQuizAttemptResponse(
+          open,
+          canStartAnotherAttempt(count, quiz.maxAttempts),
+        );
+      }
 
       const existingCount = await this.quizzesRepository.countAttemptsForStudent(
         tx,
@@ -193,13 +246,42 @@ export class QuizzesService {
     payload: SubmitQuizAttemptDto,
   ): Promise<QuizAttemptResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(tx, this.enrollmentsRepository, userId, courseId);
+      const enrollment = await assertActiveEnrollment(
+        tx,
+        this.enrollmentsRepository,
+        userId,
+        courseId,
+        this.academyStudentsRepository,
+      );
+      // P64 Phase 1 — same lock as `startAttempt`: two concurrent submits of
+      // one attempt serialize, and the second becomes the idempotent return
+      // below instead of a second grading pass.
+      await this.enrollmentsRepository.lockForUpdate(tx, enrollment.id);
 
       const attempt = await this.quizzesRepository.findAttemptById(tx, attemptId);
       if (!attempt || attempt.studentId !== userId || attempt.quizId !== quizId) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
       if (attempt.status !== 'in_progress') {
+        // Idempotent: an already-graded attempt is returned as-is (a
+        // double-click or a retried request never errors and never
+        // re-grades); anything else still open is a real conflict.
+        if (attempt.status === 'passed' || attempt.status === 'failed') {
+          const total = await this.quizzesRepository.countAttemptsForStudent(
+            tx,
+            userId,
+            quizId,
+          );
+          const quizRow = await this.quizzesRepository.findPublishedById(
+            tx,
+            courseId,
+            quizId,
+          );
+          return toQuizAttemptResponse(
+            attempt,
+            canStartAnotherAttempt(total, quizRow?.maxAttempts ?? null),
+          );
+        }
         throw new BadRequestException({
           messageKey: 'errors.quiz.attemptAlreadySubmitted',
         });
@@ -212,6 +294,13 @@ export class QuizzesService {
 
       if (!isExactQuestionCoverage(quiz.questions, payload.answers)) {
         throw new BadRequestException({ messageKey: 'errors.quiz.incompleteAnswers' });
+      }
+
+      // P64 Phase 1 — every selected option must belong to the question it
+      // answers. Foreign ids were previously persisted verbatim (never
+      // scored, but echoed back to reviewers).
+      if (!areSelectedOptionsOwnedByQuestions(quiz.questions, payload.answers)) {
+        throw new BadRequestException({ messageKey: 'errors.quiz.invalidOption' });
       }
 
       const { score } = scoreQuizAttempt(quiz.questions, payload.answers);

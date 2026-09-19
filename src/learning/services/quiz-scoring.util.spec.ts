@@ -1,4 +1,5 @@
 import {
+  areSelectedOptionsOwnedByQuestions,
   canStartAnotherAttempt,
   isAttemptPassing,
   isExactQuestionCoverage,
@@ -172,5 +173,65 @@ describe('canStartAnotherAttempt', () => {
 
   it('blocks an attempt beyond the limit', () => {
     expect(canStartAnotherAttempt(4, 3)).toBe(false);
+  });
+});
+
+describe('areSelectedOptionsOwnedByQuestions (P64 Phase 1)', () => {
+  const questions = [
+    {
+      id: 'q1',
+      options: [
+        { id: 'a', isCorrect: true },
+        { id: 'b', isCorrect: false },
+      ],
+    },
+    {
+      id: 'q2',
+      options: [
+        { id: 'c', isCorrect: true },
+        { id: 'd', isCorrect: false },
+      ],
+    },
+  ];
+
+  it('accepts answers whose options belong to their own question', () => {
+    expect(
+      areSelectedOptionsOwnedByQuestions(questions, [
+        { questionId: 'q1', selectedOptionIds: ['a'] },
+        { questionId: 'q2', selectedOptionIds: ['c', 'd'] },
+      ]),
+    ).toBe(true);
+  });
+
+  it('rejects an option that belongs to another question', () => {
+    expect(
+      areSelectedOptionsOwnedByQuestions(questions, [
+        { questionId: 'q1', selectedOptionIds: ['c'] },
+      ]),
+    ).toBe(false);
+  });
+
+  it('rejects an option id that does not exist at all', () => {
+    expect(
+      areSelectedOptionsOwnedByQuestions(questions, [
+        { questionId: 'q1', selectedOptionIds: ['nope'] },
+      ]),
+    ).toBe(false);
+  });
+
+  it('rejects an unknown question id', () => {
+    expect(
+      areSelectedOptionsOwnedByQuestions(questions, [
+        { questionId: 'q9', selectedOptionIds: ['a'] },
+      ]),
+    ).toBe(false);
+  });
+
+  it('rejects a duplicated option id within one answer', () => {
+    expect(
+      areSelectedOptionsOwnedByQuestions(questions, [
+        { questionId: 'q1', selectedOptionIds: ['a', 'a'] },
+      ]),
+    ).toBe(false);
   });
 });

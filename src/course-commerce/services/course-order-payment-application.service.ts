@@ -108,10 +108,15 @@ export class CourseOrderPaymentApplicationService {
         // Enrollment row (the `(studentId, courseId)` unique constraint
         // would reject one anyway; this is the honest, intentional path,
         // not a rescue from a constraint violation).
-        if (existingEnrollment.status !== 'enrolled') {
+        if (existingEnrollment.status !== 'enrolled' || existingEnrollment.revokedAt) {
+          // P64 Phase 1 — a re-purchase clears the earlier revocation.
           await this.enrollmentsRepository.update(tx, existingEnrollment.id, {
             status: 'enrolled',
             enrolledAt: new Date(),
+            revokedAt: null,
+            revokeReason: null,
+            accessSource: 'order',
+            courseOrder: { connect: { id: courseOrder.id } },
           });
         }
       } else {
@@ -119,6 +124,11 @@ export class CourseOrderPaymentApplicationService {
           tx,
           courseOrder.studentId,
           course,
+          {
+            accessSource: 'order',
+            courseOrderId: courseOrder.id,
+            ensureMembership: 'purchase',
+          },
         );
       }
     }

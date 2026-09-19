@@ -11,6 +11,7 @@
  */
 import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { PlatformDomainService } from '../services/platform-domain.service';
 import { UpdatePlatformDomainConfigurationDto } from '../dto/update-platform-domain-configuration.dto';
@@ -20,7 +21,7 @@ import type {
 } from '../dto/domain.contract';
 
 @Controller('platform-domain')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class PlatformDomainController {
   constructor(private readonly platformDomainService: PlatformDomainService) {}
 

@@ -224,16 +224,22 @@ describe('Quizzes (e2e)', () => {
       answers: [{ questionId: question.id, selectedOptionIds: [correct.id] }],
     };
 
-    await request(app.getHttpServer())
+    const first = await request(app.getHttpServer())
       .post(`/courses/${course.id}/quizzes/${quiz.id}/attempts/${started.body.id}/submit`)
       .set('Authorization', `Bearer ${student.accessToken}`)
       .send(answers)
       .expect(201);
-    await request(app.getHttpServer())
+    // P64 Phase 1 — submission is idempotent: a retried/duplicate submit
+    // returns the already-graded attempt unchanged and never re-grades.
+    const second = await request(app.getHttpServer())
       .post(`/courses/${course.id}/quizzes/${quiz.id}/attempts/${started.body.id}/submit`)
       .set('Authorization', `Bearer ${student.accessToken}`)
-      .send(answers)
-      .expect(400);
+      .send({ answers: [{ questionId: question.id, selectedOptionIds: [correct.id] }] })
+      .expect(201);
+    expect(second.body.id).toBe(first.body.id);
+    expect(second.body.status).toBe(first.body.status);
+    expect(second.body.score).toBe(first.body.score);
+    expect(second.body.submittedAt).toBe(first.body.submittedAt);
   });
 
   it('enforces maxAttempts — a new attempt is rejected once the limit is reached', async () => {

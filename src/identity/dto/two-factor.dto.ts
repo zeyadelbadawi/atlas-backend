@@ -8,6 +8,7 @@
  * hammer.
  */
 import {
+  IsIn,
   IsOptional,
   IsString,
   Matches,
@@ -45,6 +46,15 @@ export class VerifyTwoFactorDto {
   @MinLength(8, { message: 'validation:invalidValue' })
   @MaxLength(64, { message: 'validation:invalidValue' })
   recoveryCode?: string;
+
+  /** P64 Phase 1 — the surface the original sign-in was made on (see `SignInDto`). */
+  @IsOptional()
+  @IsIn(['management', 'academy'])
+  readonly surface?: 'management' | 'academy';
+
+  @IsOptional()
+  @IsString()
+  readonly academyId?: string;
 }
 
 export class DisableTwoFactorDto {

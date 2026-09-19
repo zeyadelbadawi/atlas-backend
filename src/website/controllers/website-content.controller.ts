@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { WebsiteContentService } from '../services/website-content.service';
 import { CreateWebsiteFaqEntryDto } from '../dto/create-website-faq-entry.dto';
@@ -29,7 +30,7 @@ import type { WebsiteTestimonialEntryResponse } from '../dto/website-testimonial
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('academies')
-@UseGuards(JwtAuthGuard, AcademyScopeGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
 export class WebsiteContentController {
   constructor(private readonly websiteContentService: WebsiteContentService) {}
 

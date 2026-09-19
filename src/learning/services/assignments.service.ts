@@ -99,6 +99,11 @@ export class AssignmentsService {
         this.courseInstructorsRepository,
         userId,
         courseId,
+        {
+          coursesRepository: this.coursesRepository,
+          academyMembersRepository: this.academyMembersRepository,
+        },
+        this.academyStudentsRepository,
       );
       const assignments = await this.assignmentsRepository.findManyPublishedForCourse(
         tx,
@@ -124,6 +129,11 @@ export class AssignmentsService {
         this.courseInstructorsRepository,
         userId,
         courseId,
+        {
+          coursesRepository: this.coursesRepository,
+          academyMembersRepository: this.academyMembersRepository,
+        },
+        this.academyStudentsRepository,
       );
       const assignment = await this.assignmentsRepository.findPublishedById(
         tx,
@@ -142,7 +152,13 @@ export class AssignmentsService {
     assignmentId: string,
   ): Promise<AssignmentSubmissionResponse | null> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(tx, this.enrollmentsRepository, userId, courseId);
+      await assertActiveEnrollment(
+        tx,
+        this.enrollmentsRepository,
+        userId,
+        courseId,
+        this.academyStudentsRepository,
+      );
       const assignment = await this.assignmentsRepository.findPublishedById(
         tx,
         courseId,
@@ -172,7 +188,13 @@ export class AssignmentsService {
     }
 
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(tx, this.enrollmentsRepository, userId, courseId);
+      await assertActiveEnrollment(
+        tx,
+        this.enrollmentsRepository,
+        userId,
+        courseId,
+        this.academyStudentsRepository,
+      );
       const assignment = await this.assignmentsRepository.findPublishedById(
         tx,
         courseId,
@@ -255,7 +277,13 @@ export class AssignmentsService {
     payload: UploadMediaAssetDto,
   ): Promise<MediaAssetResponse> {
     await this.tenancyContextService.runInUserContext(userId, (tx) =>
-      assertActiveEnrollment(tx, this.enrollmentsRepository, userId, courseId),
+      assertActiveEnrollment(
+        tx,
+        this.enrollmentsRepository,
+        userId,
+        courseId,
+        this.academyStudentsRepository,
+      ),
     );
 
     const academyId =
@@ -266,7 +294,12 @@ export class AssignmentsService {
       await this.academyStudentsRepository.resolveOrganizationId(academyId);
     if (!organizationId) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-    return this.mediaService.uploadForSubmission(academyId, organizationId, payload);
+    return this.mediaService.uploadForSubmission(
+      academyId,
+      organizationId,
+      payload,
+      userId,
+    );
   }
 
   // -------------------------------------------------------------------

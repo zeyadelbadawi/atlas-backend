@@ -21,6 +21,27 @@ import { Logger } from 'nestjs-pino';
 import type { FieldViolation, NormalizedApiErrorResponse } from '../dto/api-error.dto';
 import { isRetryableKind, mapStatusToErrorKind } from './error-kind.util';
 
+type Primitive = string | number | boolean;
+type ErrorDetailValue = Primitive | readonly Readonly<Record<string, Primitive>>[];
+
+function isPrimitive(value: unknown): value is Primitive {
+  return (
+    typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+  );
+}
+
+function isFlatRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function pickPrimitives(
+  row: Record<string, unknown>,
+): Readonly<Record<string, Primitive>> {
+  return Object.fromEntries(
+    Object.entries(row).filter(([, v]) => isPrimitive(v)),
+  ) as Record<string, Primitive>;
+}
+
 /** Shape NestJS's built-in `ValidationPipe` produces for a failed `class-validator` check. */
 interface ValidationExceptionResponse {
   readonly message: string[] | string;
@@ -79,17 +100,27 @@ export class AllExceptionsFilter implements ExceptionFilter {
     response.status(status).json(body);
   }
 
-  /** Keeps only primitive entries, so `details` can never become a channel for objects an exception happened to be carrying. */
+  /**
+   * Keeps only primitive entries — plus, since P64 Phase 1, arrays of flat
+   * primitive records (the learner sign-in refusal carries the caller's
+   * academies as `[{ academyId, name, host }]`). Nothing nested deeper than
+   * that ever passes, so `details` can never become a channel for arbitrary
+   * objects an exception happened to be carrying.
+   */
   private toDetails(
     value: unknown,
-  ): Readonly<Record<string, string | number | boolean>> | undefined {
+  ): Readonly<Record<string, ErrorDetailValue>> | undefined {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-    const entries = Object.entries(value as Record<string, unknown>).filter(
-      ([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean',
+    const entries = Object.entries(value as Record<string, unknown>).flatMap(
+      ([key, v]): [string, ErrorDetailValue][] => {
+        if (isPrimitive(v)) return [[key, v]];
+        if (Array.isArray(v) && v.every(isFlatRecord)) {
+          return [[key, v.map((row) => pickPrimitives(row))]];
+        }
+        return [];
+      },
     );
-    return entries.length > 0
-      ? (Object.fromEntries(entries) as Record<string, string | number | boolean>)
-      : undefined;
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
   }
 
   private resolve(exception: unknown): {
@@ -97,7 +128,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     messageKey: string;
     code?: string;
     violations?: readonly FieldViolation[];
-    details?: Readonly<Record<string, string | number | boolean>>;
+    details?: Readonly<Record<string, ErrorDetailValue>>;
   } {
     if (exception instanceof HttpException) {
       const status = exception.getStatus();

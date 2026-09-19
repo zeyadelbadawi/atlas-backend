@@ -118,6 +118,7 @@ async function main(): Promise<void> {
     console.log('  jane.doe@acme-academy.dev  — instructor in Academy A1');
     console.log('  mike.wilson@acme-academy.dev — staff in Academy A1');
     console.log('  lisa.park@acme-academy.dev — Org A member, NO academy role (read-only on Academy A1/courses)');
+    console.log('  nora.haddad@acme-academy.dev — MANAGER of Academy A1 (P64 Phase 1)');
     console.log('  alex.morgan@student.dev    — a pure student, no organization/academy role anywhere; enrolled in "Spanish for Beginners" with its first lesson already completed');
   } finally {
     await adminPrisma.$disconnect();
@@ -136,6 +137,7 @@ interface SeededUsers {
   readonly janeDoe: { id: string };
   readonly mikeWilson: { id: string };
   readonly lisaPark: { id: string };
+  readonly noraHaddad: { id: string };
 }
 
 async function seedUsers(prisma: PrismaClient, passwordHash: string): Promise<SeededUsers> {
@@ -146,16 +148,18 @@ async function seedUsers(prisma: PrismaClient, passwordHash: string): Promise<Se
       update: { name, isPlatformOwner },
     });
 
-  const [admin, sarahChen, omarHassan, janeDoe, mikeWilson, lisaPark] = await Promise.all([
+  const [admin, sarahChen, omarHassan, janeDoe, mikeWilson, lisaPark, noraHaddad] = await Promise.all([
     upsertUser('admin@atlas.dev', 'Atlas Admin', true),
     upsertUser('sarah.chen@acme-academy.dev', 'Sarah Chen'),
     upsertUser('omar.hassan@nextgen-learning.dev', 'Omar Hassan'),
     upsertUser('jane.doe@acme-academy.dev', 'Jane Doe'),
     upsertUser('mike.wilson@acme-academy.dev', 'Mike Wilson'),
     upsertUser('lisa.park@acme-academy.dev', 'Lisa Park'),
+    // P64 Phase 1 — a seeded Manager so the RBAC matrix is exercisable locally.
+    upsertUser('nora.haddad@acme-academy.dev', 'Nora Haddad'),
   ]);
 
-  return { admin, sarahChen, omarHassan, janeDoe, mikeWilson, lisaPark };
+  return { admin, sarahChen, omarHassan, janeDoe, mikeWilson, lisaPark, noraHaddad };
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +208,12 @@ async function seedOrganizations(prisma: PrismaClient, users: SeededUsers): Prom
     // "a user in Org 1 AND Org 2" scenario, now visible in real local data
     // (e.g. exercising the OrganizationSwitcher against real seeded orgs).
     upsertMembership(orgB.id, users.sarahChen.id, 'member', false),
+    // P64 Phase 1 — academy staff get the organization membership the real
+    // grant services always write (`addInstructor`/`addManager`), so seeded
+    // staff behave like production staff (AcademyScopeGuard, permissions).
+    upsertMembership(orgA.id, users.janeDoe.id, 'instructor', true),
+    upsertMembership(orgA.id, users.mikeWilson.id, 'member', true),
+    upsertMembership(orgA.id, users.noraHaddad.id, 'manager', true),
   ]);
 
   return { orgA, orgB };
@@ -275,8 +285,16 @@ async function seedAcademies(
     upsertMember(academyA1.id, users.sarahChen.id, 'owner'),
     upsertMember(academyA1.id, users.janeDoe.id, 'instructor'),
     upsertMember(academyA1.id, users.mikeWilson.id, 'staff'),
+    upsertMember(academyA1.id, users.noraHaddad.id, 'manager'),
     upsertMember(academyB1.id, users.omarHassan.id, 'owner'),
   ]);
+
+  // P64 Phase 1 (D3) — one restricted-policy academy so invite/approval
+  // flows are exercisable locally; every other academy stays `open`.
+  await prisma.academy.update({
+    where: { id: academyA2.id },
+    data: { registrationPolicy: 'invite' },
+  });
 
   return { academyA1, academyA2, academyB1 };
 }
@@ -1033,6 +1051,23 @@ async function seedStudentEnrollment(
       select: { id: true },
     });
 
+    // P64 Phase 1 — the explicit academy membership the enrollment path
+    // requires (previously satisfied only by the P21 backfill migration).
+    const spanishAcademy = await admin.course.findUniqueOrThrow({
+      where: { id: spanishCourse.id },
+      select: { academyId: true },
+    });
+    await admin.academyStudent.upsert({
+      where: { academyId_userId: { academyId: spanishAcademy.academyId, userId: studentId } },
+      create: {
+        academyId: spanishAcademy.academyId,
+        userId: studentId,
+        status: 'active',
+        source: 'backfill',
+      },
+      update: {},
+    });
+
     await enrollmentsService.createEnrollment(studentId, { courseId: spanishCourse.id });
     await courseProgressService.completeLesson(studentId, spanishCourse.id, {
       lessonId: firstLesson.id,
@@ -1157,14 +1192,22 @@ async function seedInstructorOperationsAndCommunity(
     await announcementsService.publishAnnouncement(ids.sarahChenId, reactCourse.id, created.id);
   }
 
-  // Academy-level blog post — authored/published by Jane Doe (Academy A1
-  // staff; `BlogPostsService.resolveAuthorAcademyId` resolves her single
-  // real `academy_members` row).
+  // Academy-level blog post — authored/published by Sarah Chen, the
+  // Academy A1 OWNER.
+  //
+  // P64 Phase 1 seed alignment: this previously named Jane Doe and only
+  // ever succeeded on a database where the post already existed. Jane is
+  // an `instructor`, and `BlogPostsService.AUTHORING_ROLES` is
+  // owner/administrator/manager/staff — an instructor authoring an
+  // academy blog post is refused by the real service, so a clean reseed
+  // failed outright (reproduced: `ForbiddenException` from
+  // `resolveAuthorAcademyId`). The seed now uses an author the real
+  // authorization rule actually admits.
   const existingPost = await adminPrisma.blogPost.findFirst({
     where: { slug: 'tips-for-new-react-developers' },
   });
   if (!existingPost) {
-    const created = await blogPostsService.createPost(ids.janeDoeId, {
+    const created = await blogPostsService.createPost(ids.sarahChenId, {
       title: 'Tips for New React Developers',
       slug: 'tips-for-new-react-developers',
       excerpt: 'A few habits that make learning React easier.',
@@ -1173,7 +1216,7 @@ async function seedInstructorOperationsAndCommunity(
       category: 'Learning',
       tags: ['react', 'beginners'],
     });
-    await blogPostsService.publishPost(ids.janeDoeId, created.id);
+    await blogPostsService.publishPost(ids.sarahChenId, created.id);
   }
 
   // Course forum — React Fundamentals: Jane Doe (instructor) starts a

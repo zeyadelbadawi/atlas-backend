@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { PlatformDomainsService } from '../services/platform-domains.service';
 import { PlatformDomainsQueryDto } from '../dto/platform-domains-query.dto';
@@ -27,7 +28,7 @@ import type {
 } from '../dto/platform-domains.contract';
 
 @Controller('platform-domains')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class PlatformDomainsController {
   constructor(private readonly platformDomainsService: PlatformDomainsService) {}
 

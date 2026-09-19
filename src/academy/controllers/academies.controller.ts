@@ -25,6 +25,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyOrganizationScopeGuard } from '../guards/academy-organization-scope.guard';
 import { AcademyScopeGuard } from '../guards/academy-scope.guard';
 import { AcademiesService } from '../services/academies.service';
@@ -45,7 +46,7 @@ import type { ContactSubmissionResponse } from '../dto/contact-submission.contra
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('academies')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class AcademiesController {
   constructor(private readonly academiesService: AcademiesService) {}
 

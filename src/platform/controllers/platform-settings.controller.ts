@@ -5,6 +5,7 @@
  */
 import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
@@ -13,7 +14,7 @@ import { UpdatePlatformSettingsDto } from '../dto/update-platform-settings.dto';
 import type { PlatformConfigurationResponse } from '../dto/platform-settings.contract';
 
 @Controller('platform-settings')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class PlatformSettingsController {
   constructor(private readonly platformSettingsService: PlatformSettingsService) {}
 

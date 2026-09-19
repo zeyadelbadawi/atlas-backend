@@ -9,12 +9,13 @@
  */
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { SubdomainAvailabilityService } from '../services/subdomain-availability.service';
 import { CheckSubdomainAvailabilityDto } from '../dto/check-subdomain-availability.dto';
 import type { SubdomainAllocationResponse } from '../../domain/dto/domain.contract';
 
 @Controller('subdomains')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class SubdomainAvailabilityController {
   constructor(
     private readonly subdomainAvailabilityService: SubdomainAvailabilityService,

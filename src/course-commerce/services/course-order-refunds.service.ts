@@ -170,8 +170,12 @@ export class CourseOrderRefundsService {
           fresh.courseId,
         );
         if (enrollment) {
+          // P64 Phase 1 — the lifecycle columns are what `assertActiveEnrollment`
+          // checks; `unavailable` alone was only half of the revocation.
           await this.enrollmentsRepository.update(tx, enrollment.id, {
             status: 'unavailable',
+            revokedAt: new Date(),
+            revokeReason: 'refund',
           });
         }
 

@@ -19,6 +19,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { BlogPostsService } from '../services/blog-posts.service';
 import { CreateBlogPostDto } from '../dto/create-blog-post.dto';
 import { UpdateBlogPostDto } from '../dto/update-blog-post.dto';
@@ -27,7 +28,7 @@ import type { BlogPostResponse } from '../dto/blog-post.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('blog-posts')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class BlogPostsController {
   constructor(private readonly blogPostsService: BlogPostsService) {}
 

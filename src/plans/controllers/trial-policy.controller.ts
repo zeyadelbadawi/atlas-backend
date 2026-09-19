@@ -10,13 +10,14 @@
  */
 import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { PlansService } from '../services/plans.service';
 import { UpdateTrialPolicyDto } from '../dto/trial-policy.contract';
 import type { TrialPolicyResponse } from '../dto/trial-policy.contract';
 
 @Controller('trial-policy')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class TrialPolicyController {
   constructor(private readonly plansService: PlansService) {}
 

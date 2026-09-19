@@ -30,6 +30,19 @@ export interface UserPreferences {
 /** Matches `OrganizationMembership` (`identity.types.ts`) — real as of Phase P2, populated from `organization_memberships` via `UserOrganizationsService`. */
 export type OrganizationMembership = OrganizationMembershipResponse;
 
+/** P64 Phase 1 (AD-4) — the derived principal kind; see `PrincipalResolverService`. */
+export type PrincipalKindResponse =
+  'platform_owner' | 'staff' | 'learner' | 'unaffiliated';
+
+export interface LearnerAcademyResponse {
+  readonly academyId: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly host?: string;
+  readonly membershipStatus: string;
+  readonly blocked: boolean;
+}
+
 export interface CurrentUserResponse {
   readonly id: string;
   readonly email: string;
@@ -39,6 +52,20 @@ export interface CurrentUserResponse {
   readonly permissions: readonly string[];
   readonly organizations: readonly OrganizationMembership[];
   readonly organizationMemberships: readonly OrganizationMembership[];
+  /** P64 Phase 1 — derived, never stored; the frontend routes on it. */
+  readonly principalKind: PrincipalKindResponse;
+  /** P64 Phase 1 — every academy this user is a student of (with its public host). */
+  readonly academies: readonly LearnerAcademyResponse[];
+  /**
+   * P64 Phase 1 (§T) — whether the management-surface refusal is switched
+   * on for THIS principal, so the interface can route on the server's own
+   * answer instead of re-deriving one. During a staged rollout a learner
+   * the rollout has not reached is still admitted to the dashboard by the
+   * backend; the frontend must not send them to the academy chooser and
+   * strand them. Always `true` for a learner once the rollout completes,
+   * and irrelevant for every other principal kind.
+   */
+  readonly managementSurfaceEnforced: boolean;
   readonly preferences?: UserPreferences;
   readonly createdAt: string;
   readonly lastSignInAt?: string;
@@ -103,10 +130,21 @@ export interface TokenRefreshResponseContract {
 export function toCurrentUser(
   user: User,
   organizationMemberships: readonly OrganizationMembership[] = [],
+  principal: {
+    readonly kind: PrincipalKindResponse;
+    readonly academies: readonly LearnerAcademyResponse[];
+    readonly managementSurfaceEnforced?: boolean;
+  } = { kind: user.isPlatformOwner ? 'platform_owner' : 'unaffiliated', academies: [] },
 ): CurrentUserResponse {
   const preferences = (user.preferences ?? {}) as UserPreferences;
 
   return {
+    principalKind: principal.kind,
+    academies: principal.academies,
+    // Defaults to enforced: a caller that did not resolve the rollout
+    // state must never be the reason a learner is routed as if the
+    // refusal were off.
+    managementSurfaceEnforced: principal.managementSurfaceEnforced ?? true,
     id: user.id,
     email: user.email,
     name: user.name,

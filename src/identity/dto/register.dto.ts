@@ -42,4 +42,9 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   readonly academyId?: string;
+
+  /** P64 Phase 1 (D3) — required when the academy's registration policy is `invite`. */
+  @IsOptional()
+  @IsString()
+  readonly inviteToken?: string;
 }

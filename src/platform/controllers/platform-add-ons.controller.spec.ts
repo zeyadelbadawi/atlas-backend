@@ -9,6 +9,7 @@
 import { Test } from '@nestjs/testing';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { PlatformAddOnsController } from './platform-add-ons.controller';
 import { PlatformAddOnsService } from '../services/platform-add-ons.service';
@@ -32,6 +33,10 @@ describe('PlatformAddOnsController', () => {
     })
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
+      // P64 Phase 1 — management controllers also carry
+      // `ManagementSurfaceGuard` (a learner principal is refused).
+      .overrideGuard(ManagementSurfaceGuard)
+      .useValue({ canActivate: () => true })
       .overrideGuard(PlatformOwnerGuard)
       .useValue({ canActivate: () => true })
       .compile();
@@ -40,7 +45,10 @@ describe('PlatformAddOnsController', () => {
   });
 
   it('is guarded by JwtAuthGuard AND PlatformOwnerGuard', () => {
-    const guards = Reflect.getMetadata('__guards__', PlatformAddOnsController) as unknown[];
+    const guards = Reflect.getMetadata(
+      '__guards__',
+      PlatformAddOnsController,
+    ) as unknown[];
     const names = guards.map((g) => (g as { name: string }).name);
     expect(names).toEqual(expect.arrayContaining(['JwtAuthGuard', 'PlatformOwnerGuard']));
   });

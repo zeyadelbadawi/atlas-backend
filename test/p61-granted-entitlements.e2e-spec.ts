@@ -106,11 +106,22 @@ describe('P61 granted entitlements (e2e) — P61-GRANT-001..018', () => {
     const email = uniqueTestEmail(label);
     await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ name: label, email, password: PASSWORD, ...(academyId ? { academyId } : {}) })
+      .send({
+        name: label,
+        email,
+        password: PASSWORD,
+        ...(academyId ? { academyId } : {}),
+      })
       .expect(201);
+    // P64 Phase 1 (AD-5) — an academy-scoped signup is a learner and signs
+    // in on the academy surface; an academy-less signup stays management.
     const signIn = await request(app.getHttpServer())
       .post('/auth/sign-in')
-      .send({ email, password: PASSWORD })
+      .send({
+        email,
+        password: PASSWORD,
+        ...(academyId ? { surface: 'academy', academyId } : {}),
+      })
       .expect(200);
     return {
       email,
@@ -237,7 +248,16 @@ describe('P61 granted entitlements (e2e) — P61-GRANT-001..018', () => {
 
       // A. the grant is untouched by the catalog edit
       const subscription = await admin.tenantSubscription.findUniqueOrThrow({
-        where: { organizationId: seeded.length ? (await admin.enrollment.findFirstOrThrow({ where: { studentId: seeded[0] }, include: { course: { include: { academy: true } } } })).course.academy.organizationId : '' },
+        where: {
+          organizationId: seeded.length
+            ? (
+                await admin.enrollment.findFirstOrThrow({
+                  where: { studentId: seeded[0] },
+                  include: { course: { include: { academy: true } } },
+                })
+              ).course.academy.organizationId
+            : '',
+        },
       });
       expect((subscription.grantedLimits as { students: number }).students).toBe(50);
 
@@ -400,7 +420,12 @@ describe('P61 granted entitlements (e2e) — P61-GRANT-001..018', () => {
       grantedStudents: 50,
     });
     await admin.academyMember.create({
-      data: { academyId: academy.id, userId: owner.userId, role: 'owner', status: 'active' },
+      data: {
+        academyId: academy.id,
+        userId: owner.userId,
+        role: 'owner',
+        status: 'active',
+      },
     });
 
     // Cut the catalog's COURSES limit to 0 while the grant says 100.
@@ -618,10 +643,7 @@ describe('P61 granted entitlements (e2e) — P61-GRANT-001..018', () => {
   }
 
   /** A priced plan, so a real Checkout can be created against it. */
-  async function seedPricedPlanWithLimits(
-    label: string,
-    students: number,
-  ) {
+  async function seedPricedPlanWithLimits(label: string, students: number) {
     const plan = await admin.plan.create({
       data: {
         key: `${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -698,7 +720,12 @@ describe('P61 granted entitlements (e2e) — P61-GRANT-001..018', () => {
     const second = await seedCourseIn(academy.id, 'p61-downgrade-second');
     await enrollAs(existing.token, course.id).expect(409); // genuinely new: refused
     await admin.enrollment.create({
-      data: { studentId: existing.userId, courseId: course.id, academyId: academy.id, status: 'enrolled' },
+      data: {
+        studentId: existing.userId,
+        courseId: course.id,
+        academyId: academy.id,
+        status: 'enrolled',
+      },
     });
     await enrollAs(existing.token, second.id).expect(201); // already counted: allowed
   }, 120_000);

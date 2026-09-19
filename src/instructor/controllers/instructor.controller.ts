@@ -19,6 +19,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { InstructorService } from '../services/instructor.service';
 import { GradeSubmissionDto } from '../dto/grade-submission.dto';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
@@ -33,8 +34,12 @@ import type {
 } from '../dto/instructor.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
-@Controller('instructor')
-@UseGuards(JwtAuthGuard)
+// P64 Phase 1 — the review surface is authorized for course instructors AND
+// the owning academy's owner/administrator/manager (`assertCanReviewCourse`),
+// so the honest prefix is `review`. `instructor` stays as an alias for one
+// release so in-flight clients keep working.
+@Controller(['instructor', 'review'])
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class InstructorController {
   constructor(private readonly instructorService: InstructorService) {}
 

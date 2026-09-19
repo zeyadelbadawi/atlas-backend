@@ -49,6 +49,9 @@ import { AcademyStudentsRepository } from './repositories/academy-students.repos
 import { AcademyStaffRepository } from './repositories/academy-staff.repository';
 import { OrganizationMembershipGuard } from './guards/organization-membership.guard';
 import { SaasLevelCallerGuard } from './guards/saas-level-caller.guard';
+import { PrincipalResolverService } from './services/principal-resolver.service';
+import { SurfaceEnforcementService } from './services/surface-enforcement.service';
+import { ManagementSurfaceGuard } from './guards/management-surface.guard';
 
 @Module({
   imports: [AuthCoreModule],
@@ -72,6 +75,10 @@ import { SaasLevelCallerGuard } from './guards/saas-level-caller.guard';
     // Foundational-audit fix (ATLAS_FOUNDATIONAL_AUTH_TENANCY_AUDIT.md,
     // Fix A) — see the guard's own doc comment.
     SaasLevelCallerGuard,
+    // P64 Phase 1 — derived principal kind and the management-surface boundary.
+    PrincipalResolverService,
+    SurfaceEnforcementService,
+    ManagementSurfaceGuard,
   ],
   exports: [
     TenancyContextService,
@@ -80,6 +87,9 @@ import { SaasLevelCallerGuard } from './guards/saas-level-caller.guard';
     AcademyStudentsRepository,
     AcademyStaffRepository,
     UserOrganizationsService,
+    PrincipalResolverService,
+    SurfaceEnforcementService,
+    ManagementSurfaceGuard,
     // Phase P15 additions — both reused verbatim, unmodified, by
     // `PlatformModule`'s `OrganizationsController` (see this file's own
     // header comment).

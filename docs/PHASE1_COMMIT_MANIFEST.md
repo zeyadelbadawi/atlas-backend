@@ -1,0 +1,251 @@
+# P64 Phase 1 — exact commit contents
+
+Regenerated 19 Sep 2026 at the final pre-production packaging checkpoint. Read-only: produced from `git status --porcelain`, nothing staged, nothing committed.
+
+## atlas-backend — all 129 paths belong to Phase 1; nothing excluded
+
+```
+new       docs/ATLAS_SECURE_LEARNING_MASTER_PLAN.md
+new       docs/PHASE1_COMMIT_MANIFEST.md
+new       prisma/migrations/20261008000000_p64_phase1_identity_rbac_foundation/
+new       prisma/migrations/20261008000100_p64_phase1_learner_academies/
+new       prisma/migrations/20261008000200_p64_phase1_staff_enrollment_policies/
+new       prisma/migrations/20261008000300_p64_phase1_enrollment_guard_scope/
+new       prisma/migrations/20261008000400_p64_phase1_quiz_attempts_tenant_lookup/
+new       prisma/migrations/20261008000500_p64_phase1_quizzes_tenant_select/
+new       prisma/migrations/20261008000600_p64_phase1_courses_enrolled_student_select/
+new       prisma/migrations/20261008000700_p64_phase1_enrolled_course_lookup/
+new       src/identity/dto/password-reset-validate.dto.ts
+new       src/identity/services/academy-surface.service.ts
+new       src/learning/controllers/academy-students.controller.ts
+new       src/learning/dto/academy-roster.contract.ts
+new       src/learning/dto/academy-roster.dto.ts
+new       src/learning/repositories/academy-roster.repository.ts
+new       src/learning/services/academy-students.service.ts
+new       src/learning/services/learning-access.util.spec.ts
+new       src/tenancy/guards/management-surface.guard.spec.ts
+new       src/tenancy/guards/management-surface.guard.ts
+new       src/tenancy/services/principal-resolver.service.spec.ts
+new       src/tenancy/services/principal-resolver.service.ts
+new       src/tenancy/services/surface-enforcement.service.ts
+new       test/p64-browser-findings.e2e-spec.ts
+new       test/p64-critical-fixes.e2e-spec.ts
+new       test/p64-identity-surfaces.e2e-spec.ts
+new       test/p64-rbac-review.e2e-spec.ts
+new       test/p64-rls-review-and-published.e2e-spec.ts
+new       test/p64-roster-lifecycle.e2e-spec.ts
+new       test/p64-surface-enforce-flag.e2e-spec.ts
+modified  prisma/schema.prisma
+modified  prisma/seed.ts
+modified  src/academy/controllers/academies.controller.ts
+modified  src/academy/guards/academy-scope.guard.spec.ts
+modified  src/academy/guards/academy-scope.guard.ts
+modified  src/analytics/controllers/analytics.controller.ts
+modified  src/analytics/controllers/platform-metrics.controller.ts
+modified  src/billing/controllers/checkout.controller.ts
+modified  src/billing/controllers/organization-payment-settings.controller.ts
+modified  src/billing/controllers/payment-methods.controller.ts
+modified  src/billing/controllers/payment.controller.ts
+modified  src/billing/controllers/platform-atlas-payment-provider.controller.ts
+modified  src/billing/controllers/platform-commission.controller.ts
+modified  src/billing/controllers/platform-payment.controller.ts
+modified  src/common/dto/api-error.dto.ts
+modified  src/common/filters/all-exceptions.filter.ts
+modified  src/community/controllers/blog-posts.controller.ts
+modified  src/config/configuration.ts
+modified  src/config/env.validation.ts
+modified  src/course-commerce/controllers/academy-payouts.controller.ts
+modified  src/course-commerce/controllers/platform-academy-payouts.controller.ts
+modified  src/course-commerce/controllers/platform-course-order-payments.controller.ts
+modified  src/course-commerce/services/course-order-payment-application.service.ts
+modified  src/course-commerce/services/course-order-refunds.service.ts
+modified  src/course/controllers/course-curriculum.controller.ts
+modified  src/course/controllers/courses.controller.ts
+modified  src/course/services/course-curriculum.service.ts
+modified  src/course/services/unit-curriculum.service.ts
+modified  src/dashboard/controllers/dashboard.controller.ts
+modified  src/dashboard/controllers/student-analytics.controller.ts
+modified  src/domain/controllers/domain.controller.ts
+modified  src/domain/controllers/infrastructure.controller.ts
+modified  src/domain/controllers/platform-domain.controller.ts
+modified  src/domain/controllers/platform-domains.controller.ts
+modified  src/identity/auth-core.module.ts
+modified  src/identity/controllers/auth.controller.ts
+modified  src/identity/controllers/two-factor.controller.ts
+modified  src/identity/dto/contracts.ts
+modified  src/identity/dto/register.dto.ts
+modified  src/identity/dto/sign-in.dto.ts
+modified  src/identity/dto/two-factor.dto.ts
+modified  src/identity/identity.module.ts
+modified  src/identity/repositories/refresh-tokens.repository.ts
+modified  src/identity/services/auth.service.ts
+modified  src/identity/services/users.service.ts
+modified  src/instructor/controllers/instructor.controller.ts
+modified  src/instructor/services/instructor.service.ts
+modified  src/learning/dto/enrollment.contract.ts
+modified  src/learning/learning.module.ts
+modified  src/learning/repositories/course-progress.repository.ts
+modified  src/learning/repositories/enrollments.repository.ts
+modified  src/learning/repositories/quizzes.repository.ts
+modified  src/learning/services/assignments.service.ts
+modified  src/learning/services/course-content.service.ts
+modified  src/learning/services/course-progress.service.ts
+modified  src/learning/services/enrollments.service.ts
+modified  src/learning/services/learning-access.util.ts
+modified  src/learning/services/quiz-scoring.util.spec.ts
+modified  src/learning/services/quiz-scoring.util.ts
+modified  src/learning/services/quizzes.service.ts
+modified  src/live-sessions/controllers/add-ons-lifecycle.catalog-status.spec.ts
+modified  src/live-sessions/controllers/add-ons-lifecycle.controller.ts
+modified  src/live-sessions/controllers/live-provider-connection.controller.ts
+modified  src/live-sessions/controllers/live-provider-oauth.controller.spec.ts
+modified  src/live-sessions/controllers/live-provider-oauth.controller.ts
+modified  src/live-sessions/controllers/live-sessions.controller.ts
+modified  src/media/controllers/media.controller.ts
+modified  src/media/services/media.service.ts
+modified  src/plans/controllers/add-ons.controller.ts
+modified  src/plans/controllers/organizations.controller.ts
+modified  src/plans/controllers/plans.controller.ts
+modified  src/plans/controllers/tenant-subscription.controller.ts
+modified  src/plans/controllers/trial-policy.controller.ts
+modified  src/platform/controllers/admin-subscriptions.controller.ts
+modified  src/platform/controllers/audit-log.controller.ts
+modified  src/platform/controllers/organizations.controller.ts
+modified  src/platform/controllers/platform-academies.controller.ts
+modified  src/platform/controllers/platform-add-ons.controller.spec.ts
+modified  src/platform/controllers/platform-add-ons.controller.ts
+modified  src/platform/controllers/platform-courses.controller.ts
+modified  src/platform/controllers/platform-plans.controller.ts
+modified  src/platform/controllers/platform-settings.controller.ts
+modified  src/platform/controllers/platform-users.controller.ts
+modified  src/platform/controllers/platform-zoom.controller.ts
+modified  src/platform/controllers/support-cases.controller.ts
+modified  src/platform/controllers/tenant-support-cases.controller.ts
+modified  src/provisioning/controllers/platform-provisioning.controller.ts
+modified  src/provisioning/controllers/provisioning-requests.controller.ts
+modified  src/provisioning/controllers/subdomain-availability.controller.ts
+modified  src/public-website/services/public-website.service.ts
+modified  src/search/controllers/search.controller.ts
+modified  src/tenancy/repositories/academy-staff.repository.ts
+modified  src/tenancy/tenancy.module.ts
+modified  src/website/controllers/website-content.controller.ts
+modified  src/website/controllers/website.controller.ts
+modified  test/entitlement-enforcement.e2e-spec.ts
+modified  test/learning-enrollment.e2e-spec.ts
+modified  test/learning-quiz.e2e-spec.ts
+modified  test/p61-granted-entitlements.e2e-spec.ts
+```
+
+## atlas-front — 94 Phase 1 paths
+
+```
+new       e2e/
+new       playwright.config.ts
+new       src/features/academy/academy-students-roster.test.tsx
+new       src/features/academy/components/AcademyInvitesCard.tsx
+new       src/features/academy/components/AcademyStudentActionDialogs.tsx
+new       src/features/academy/components/AcademyStudentDrawer.tsx
+new       src/features/academy/components/AcademyStudentsTab.tsx
+new       src/features/academy/components/RegistrationPolicyCard.tsx
+new       src/features/academy/enrollment-access-state.test.tsx
+new       src/features/academy/hooks/useAcademyInvites.ts
+new       src/features/academy/hooks/useAcademyRegistrationPolicy.ts
+new       src/features/academy/hooks/useAcademyStudent.ts
+new       src/features/academy/hooks/useAcademyStudentMutations.ts
+new       src/features/academy/hooks/useAcademyStudents.ts
+new       src/features/academy/registration-policy-card.test.tsx
+new       src/features/academy/services/AcademyRosterService.ts
+new       src/features/academy/utils/academy-roster.utils.ts
+new       src/features/auth/components/AcademyChooser.tsx
+new       src/features/auth/components/AcademyLinkList.tsx
+new       src/features/auth/components/StudentSignInRefusal.tsx
+new       src/features/auth/hooks/useValidatePasswordResetToken.ts
+new       src/features/auth/hooks/useVerifyEmail.ts
+new       src/features/auth/pages/AcademyChooserPage.tsx
+new       src/features/auth/pages/LearnerSurfaceRedirectPage.tsx
+new       src/features/auth/surface-separation.test.tsx
+new       src/features/auth/utils/
+new       src/features/learning/my-learning-access-state.test.ts
+new       src/features/public-website/academy-sign-in.test.tsx
+new       src/features/public-website/components/PublicWebsiteAuthShell.tsx
+new       src/features/public-website/components/PublicWebsiteForgotPasswordPage.tsx
+new       src/features/public-website/components/PublicWebsiteResetPasswordPage.tsx
+new       src/features/public-website/components/PublicWebsiteVerifyEmailPage.tsx
+new       src/localization/translation-parity.test.ts
+new       src/shared/utils/principal.utils.test.ts
+new       src/shared/utils/principal.utils.ts
+new       src/types/academy-roster.types.ts
+modified  .gitignore
+modified  package.json
+modified  src/app/navigation/navigation.config.ts
+modified  src/app/providers/identity/IdentityProvider.tsx
+modified  src/app/providers/identity/identity.context.ts
+modified  src/app/routes/AppRouter.tsx
+modified  src/app/routes/guards/RouteGuard.tsx
+modified  src/app/routes/route-paths.ts
+modified  src/features/academy/constants/academy.constants.ts
+modified  src/features/academy/hooks/index.ts
+modified  src/features/academy/index.ts
+modified  src/features/academy/pages/AcademyMembersPage.tsx
+modified  src/features/academy/pages/AcademySettingsPage.tsx
+modified  src/features/academy/utils/academy-status.utils.ts
+modified  src/features/auth/components/RegistrationForm.tsx
+modified  src/features/auth/components/ResetPasswordForm.tsx
+modified  src/features/auth/components/SignInForm.tsx
+modified  src/features/auth/hooks/index.ts
+modified  src/features/auth/index.ts
+modified  src/features/auth/pages/RegistrationPage.tsx
+modified  src/features/auth/pages/ResetPasswordPage.tsx
+modified  src/features/auth/pages/SignInPage.tsx
+modified  src/features/course/pages/CourseAssignmentsPage.tsx
+modified  src/features/course/pages/CourseQuizzesPage.tsx
+modified  src/features/instructor/pages/InstructorCourseOverviewPage.tsx
+modified  src/features/instructor/services/InstructorService.ts
+modified  src/features/learning/pages/StudentMyLearningPage.tsx
+modified  src/features/learning/utils/learning-status.utils.ts
+modified  src/features/public-website/PublicWebsiteRouter.tsx
+modified  src/features/public-website/components/PublicWebsiteSignInPage.tsx
+modified  src/features/public-website/components/PublicWebsiteSignUpPage.tsx
+modified  src/features/website/renderer/WebsiteHeader.tsx
+modified  src/localization/resources/ar/academy.json
+modified  src/localization/resources/ar/auth.json
+modified  src/localization/resources/ar/course.json
+modified  src/localization/resources/ar/errors.json
+modified  src/localization/resources/ar/instructor.json
+modified  src/localization/resources/ar/learning.json
+modified  src/localization/resources/ar/publicWebsite.json
+modified  src/localization/resources/en/academy.json
+modified  src/localization/resources/en/auth.json
+modified  src/localization/resources/en/course.json
+modified  src/localization/resources/en/errors.json
+modified  src/localization/resources/en/instructor.json
+modified  src/localization/resources/en/learning.json
+modified  src/localization/resources/en/publicWebsite.json
+modified  src/services/api/api-error.ts
+modified  src/services/identity/authentication.service.ts
+modified  src/services/identity/session.service.ts
+modified  src/services/identity/two-factor.service.ts
+modified  src/services/query/query-keys.ts
+modified  src/shared/hooks/useSignIn.ts
+modified  src/shared/utils/index.ts
+modified  src/types/api.types.ts
+modified  src/types/enrollment.types.ts
+modified  src/types/identity.types.ts
+modified  src/types/index.ts
+modified  src/types/instructor.types.ts
+```
+
+## atlas-front — EXCLUDE from the Phase 1 commit (4)
+
+```
+modified  ATLAS_HANDOVER.md
+modified  src/features/public-website/utils/canonical-redirect.utils.test.ts
+new       MASTER_HANDOVER.md
+new       NEW_HANDOVER.md
+```
+
+Reasons: the two untracked handover documents predate P64 and contain no Phase 1 content; the two-line banner on `ATLAS_HANDOVER.md` points at them; the one-line change to `canonical-redirect.utils.test.ts` removes a bogus `probeHostAnswers` import shipped in the committed P63g commit and belongs to that work.
+
+## Generated artifacts
+
+None appear in either `git status`. Playwright's `test-results/`, `playwright-report/`, `blob-report/` and `playwright/.cache/` were added to `atlas-front/.gitignore` during this phase; `dist/` and `.env*` were already ignored in both repositories.

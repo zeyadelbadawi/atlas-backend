@@ -40,6 +40,7 @@
 import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { SaasLevelCallerGuard } from '../../tenancy/guards/saas-level-caller.guard';
 import { OrganizationsService } from '../../tenancy/services/organizations.service';
 import { OrganizationSubscriptionBootstrapService } from '../services/organization-subscription-bootstrap.service';
@@ -48,7 +49,7 @@ import { CreateOrganizationDto } from '../../tenancy/dto/create-organization.dto
 import type { OrganizationResponse } from '../../tenancy/dto/organization.contract';
 
 @Controller('organizations')
-@UseGuards(JwtAuthGuard, SaasLevelCallerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, SaasLevelCallerGuard)
 export class OrganizationsController {
   constructor(
     private readonly organizationsService: OrganizationsService,

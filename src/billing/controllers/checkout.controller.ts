@@ -7,6 +7,7 @@
  */
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { CheckoutService } from '../services/checkout.service';
 import { CreateCheckoutDto } from '../dto/create-checkout.dto';
@@ -21,7 +22,7 @@ import { AllowInactiveSubscription } from '../../plans/decorators/allow-inactive
  */
 @AllowInactiveSubscription()
 @Controller('organizations')
-@UseGuards(JwtAuthGuard, OrganizationMembershipGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, OrganizationMembershipGuard)
 export class CheckoutController {
   constructor(private readonly checkoutService: CheckoutService) {}
 

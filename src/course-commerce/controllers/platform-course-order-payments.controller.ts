@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
@@ -22,7 +23,7 @@ import type { CourseOrderPaymentResponse } from '../dto/course-order-payment.con
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('platform-course-order-payments')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class PlatformCourseOrderPaymentsController {
   constructor(
     private readonly platformCourseOrderPaymentsService: PlatformCourseOrderPaymentsService,

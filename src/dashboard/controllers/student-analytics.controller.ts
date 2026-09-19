@@ -26,6 +26,7 @@
 import { Controller, ForbiddenException, Get, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { StudentAnalyticsService } from '../services/student-analytics.service';
@@ -34,7 +35,7 @@ import type { StudentAnalyticsResponse } from '../dto/student-analytics.contract
 const ORGANIZATION_DASHBOARD_PERMISSION = 'tenant.dashboard.view';
 
 @Controller()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class StudentAnalyticsController {
   constructor(private readonly studentAnalyticsService: StudentAnalyticsService) {}
 

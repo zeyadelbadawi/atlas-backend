@@ -32,12 +32,13 @@
 import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { AdminSubscriptionsService } from '../services/admin-subscriptions.service';
 import type { AdminSubscriptionOverview } from '../dto/admin-subscription.contract';
 
 @Controller('platform-subscriptions')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class AdminSubscriptionsController {
   constructor(private readonly adminSubscriptionsService: AdminSubscriptionsService) {}
 

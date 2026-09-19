@@ -16,6 +16,7 @@ import { Test } from '@nestjs/testing';
 import type { Request } from 'express';
 import { LiveProviderOAuthController } from './live-provider-oauth.controller';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { LiveProviderConnectionService } from '../services/live-provider-connection.service';
 import { ZoomOAuthService } from '../services/zoom-oauth.service';
@@ -77,6 +78,10 @@ describe('LiveProviderOAuthController', () => {
        * which is the one that was previously wrong.
        */
       .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      // P64 Phase 1 — management controllers also carry
+      // `ManagementSurfaceGuard` (a learner principal is refused).
+      .overrideGuard(ManagementSurfaceGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(AcademyScopeGuard)
       .useValue({ canActivate: () => true })

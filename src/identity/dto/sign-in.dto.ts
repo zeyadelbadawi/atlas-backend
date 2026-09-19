@@ -9,7 +9,17 @@
  * would be exactly the kind of undocumented product decision this phase
  * must not make; see the final report's "deliberately deferred" list.
  */
-import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
+
+export const SIGN_IN_SURFACES = ['management', 'academy'] as const;
+export type SignInSurface = (typeof SIGN_IN_SURFACES)[number];
 
 export class SignInDto {
   @IsNotEmpty()
@@ -23,4 +33,18 @@ export class SignInDto {
   @IsOptional()
   @IsBoolean()
   readonly rememberMe?: boolean;
+
+  /**
+   * P64 Phase 1 (AD-5) — which surface the caller is signing in on. The
+   * management dashboard refuses learners; an academy website requires
+   * `academyId` (verified against the request host). Defaults to
+   * `management` for older clients.
+   */
+  @IsOptional()
+  @IsIn(SIGN_IN_SURFACES)
+  readonly surface?: SignInSurface;
+
+  @IsOptional()
+  @IsString()
+  readonly academyId?: string;
 }

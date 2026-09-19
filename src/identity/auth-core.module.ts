@@ -59,6 +59,10 @@ import { RefreshTokensRepository } from './repositories/refresh-tokens.repositor
     JwtAuthGuard,
     SessionRevocationService,
     SessionActivityService,
+    // P64 Phase 1 — `AcademyStudentsService.block` ends the blocked
+    // learner's sessions on that academy, which needs the same stateless
+    // repository this module already provides for the guard's fallback.
+    RefreshTokensRepository,
   ],
 })
 export class AuthCoreModule {}

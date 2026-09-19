@@ -12,6 +12,9 @@ import type { CurrentUserResponse, UserPreferences } from '../dto/contracts';
 import { UserOrganizationsService } from '../../tenancy/services/user-organizations.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { PrincipalResolverService } from '../../tenancy/services/principal-resolver.service';
+import { SurfaceEnforcementService } from '../../tenancy/services/surface-enforcement.service';
+import type { Principal } from '../../tenancy/services/principal-resolver.service';
 
 @Injectable()
 export class UsersService {
@@ -22,13 +25,29 @@ export class UsersService {
     private readonly userOrganizationsService: UserOrganizationsService,
     private readonly tenancyContextService: TenancyContextService,
     private readonly notificationFanoutService: NotificationFanoutService,
+    private readonly principalResolver: PrincipalResolverService,
+    private readonly surfaceEnforcement: SurfaceEnforcementService,
   ) {}
+
+  /**
+   * P64 Phase 1 (§T) — the principal plus the rollout's answer for them,
+   * so `/users/me` reports whether the surface refusal actually applies
+   * rather than leaving the frontend to assume it does.
+   */
+  private withSurfaceState(principal: Principal) {
+    return {
+      ...principal,
+      managementSurfaceEnforced: this.surfaceEnforcement.isEnforcedFor(principal),
+    };
+  }
 
   async getCurrent(userId: string): Promise<CurrentUserResponse> {
     const user = await this.requireUser(userId);
-    const organizationMemberships =
-      await this.userOrganizationsService.getMembershipsForUser(userId);
-    return toCurrentUser(user, organizationMemberships);
+    const [organizationMemberships, principal] = await Promise.all([
+      this.userOrganizationsService.getMembershipsForUser(userId),
+      this.principalResolver.resolve(userId),
+    ]);
+    return toCurrentUser(user, organizationMemberships, this.withSurfaceState(principal));
   }
 
   async updateProfile(
@@ -42,7 +61,11 @@ export class UsersService {
     });
     const organizationMemberships =
       await this.userOrganizationsService.getMembershipsForUser(userId);
-    return toCurrentUser(updated, organizationMemberships);
+    return toCurrentUser(
+      updated,
+      organizationMemberships,
+      this.withSurfaceState(await this.principalResolver.resolve(userId)),
+    );
   }
 
   async updatePreferences(
@@ -57,7 +80,11 @@ export class UsersService {
     const updated = await this.usersRepository.mergePreferences(userId, partial);
     const organizationMemberships =
       await this.userOrganizationsService.getMembershipsForUser(userId);
-    return toCurrentUser(updated, organizationMemberships);
+    return toCurrentUser(
+      updated,
+      organizationMemberships,
+      this.withSurfaceState(await this.principalResolver.resolve(userId)),
+    );
   }
 
   /**

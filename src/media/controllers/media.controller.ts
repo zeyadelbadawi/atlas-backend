@@ -18,6 +18,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { MediaService } from '../services/media.service';
 import { UploadMediaAssetDto } from '../dto/upload-media-asset.dto';
@@ -27,7 +28,7 @@ import type { MediaAssetResponse } from '../dto/media-asset.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('academies')
-@UseGuards(JwtAuthGuard, AcademyScopeGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
 export class MediaController {
   constructor(private readonly mediaService: MediaService) {}
 

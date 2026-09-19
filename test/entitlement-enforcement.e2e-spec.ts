@@ -56,9 +56,10 @@ async function signUpStudentForAcademy(
     .post('/auth/register')
     .send({ name: label, email, password, academyId })
     .expect(201);
+  // P64 Phase 1 (AD-5) — learners sign in on the academy surface.
   const signIn = await request(app.getHttpServer())
     .post('/auth/sign-in')
-    .send({ email, password })
+    .send({ email, password, surface: 'academy', academyId })
     .expect(200);
   return { userId: signIn.body.user.id, accessToken: signIn.body.accessToken };
 }

@@ -16,6 +16,7 @@ import type { Request } from 'express';
 import { ForbiddenException } from '@nestjs/common';
 import { AddOnsLifecycleController } from './add-ons-lifecycle.controller';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
@@ -66,6 +67,10 @@ describe('AddOnsLifecycleController — catalog status enforcement', () => {
     })
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
+      // P64 Phase 1 — management controllers also carry
+      // `ManagementSurfaceGuard` (a learner principal is refused).
+      .overrideGuard(ManagementSurfaceGuard)
+      .useValue({ canActivate: () => true })
       .overrideGuard(OrganizationMembershipGuard)
       .useValue({ canActivate: () => true })
       .compile();
@@ -110,9 +115,11 @@ describe('AddOnsLifecycleController — catalog status enforcement', () => {
 
   it('still ALLOWS uninstall of a coming_soon add-on (an existing tenant can back out)', async () => {
     findByKey.mockResolvedValue(makeAddOn('coming_soon'));
-    const tenantRepo = (controller as unknown as {
-      tenantAddOnsRepository: { findOne: jest.Mock; setStatus: jest.Mock };
-    }).tenantAddOnsRepository;
+    const tenantRepo = (
+      controller as unknown as {
+        tenantAddOnsRepository: { findOne: jest.Mock; setStatus: jest.Mock };
+      }
+    ).tenantAddOnsRepository;
     tenantRepo.findOne.mockResolvedValue({ id: 'row-1', status: 'enabled' });
     tenantRepo.setStatus.mockResolvedValue(undefined);
 

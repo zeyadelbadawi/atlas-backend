@@ -37,6 +37,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { SupportCasesService } from '../services/support-cases.service';
@@ -59,7 +60,7 @@ import { AllowInactiveSubscription } from '../../plans/decorators/allow-inactive
  */
 @AllowInactiveSubscription()
 @Controller()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class TenantSupportCasesController {
   constructor(private readonly supportCasesService: SupportCasesService) {}
 

@@ -8,13 +8,14 @@
 import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import { BadRequestException } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { InfrastructureService } from '../services/infrastructure.service';
 import { INFRASTRUCTURE_PROVIDER_NAMES } from '../constants/domain.constants';
 import type { InfrastructureProviderStatusResponse } from '../dto/domain.contract';
 import type { InfrastructureProviderName } from '@prisma/client';
 
 @Controller('infrastructure')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class InfrastructureController {
   constructor(private readonly infrastructureService: InfrastructureService) {}
 

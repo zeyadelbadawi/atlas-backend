@@ -42,6 +42,7 @@ import type { Request } from 'express';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
 import { AcademiesRepository } from '../repositories/academies.repository';
+import { AcademyMembersRepository } from '../repositories/academy-members.repository';
 
 export interface AcademyContext {
   readonly academyId: string;
@@ -71,6 +72,7 @@ export class AcademyScopeGuard implements CanActivate {
     private readonly tenancyContextService: TenancyContextService,
     private readonly academiesRepository: AcademiesRepository,
     private readonly membershipsRepository: OrganizationMembershipsRepository,
+    private readonly academyMembersRepository: AcademyMembersRepository,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -97,20 +99,36 @@ export class AcademyScopeGuard implements CanActivate {
         this.membershipsRepository.findForUserInOrganization(tx, organizationId, userId),
     );
 
-    if (!membership) {
-      // Structurally unreachable if the bootstrap read above (governed by
-      // the identical membership fact) succeeded — kept as a real check,
-      // not an assertion, matching `OrganizationsService.getById`'s own
-      // "never assume the guard's read still holds" rule.
+    if (membership) {
+      request.academyContext = {
+        academyId,
+        organizationId,
+        organizationMembershipId: membership.id,
+        organizationRole: membership.role,
+        organizationPermissions: membership.permissions,
+      };
+      return true;
+    }
+
+    // P64 Phase 1 — an ACTIVE academy_members row (instructor/manager/owner
+    // granted at the academy level, e.g. seeded staff whose organization
+    // membership was never written) also scopes the caller to this academy.
+    // Read access only: every write still passes the services' own role
+    // checks (`assertCanManage`, `assertCanAuthorCourseContent`, ...).
+    const academyMembership = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.academyMembersRepository.findForUserInAcademy(tx, academyId, userId),
+    );
+    if (!academyMembership || academyMembership.status !== 'active') {
       throw new ForbiddenException({ messageKey: 'errors.tenancy.notAMember' });
     }
 
     request.academyContext = {
       academyId,
       organizationId,
-      organizationMembershipId: membership.id,
-      organizationRole: membership.role,
-      organizationPermissions: membership.permissions,
+      organizationMembershipId: '',
+      organizationRole: `academy_${academyMembership.role}`,
+      organizationPermissions: [],
     };
     return true;
   }

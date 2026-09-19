@@ -7,12 +7,13 @@
  */
 import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { SaasLevelCallerGuard } from '../../tenancy/guards/saas-level-caller.guard';
 import { PlansService } from '../services/plans.service';
 import type { AddOnResponse } from '../dto/add-on.contract';
 
 @Controller('add-ons')
-@UseGuards(JwtAuthGuard, SaasLevelCallerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, SaasLevelCallerGuard)
 export class AddOnsController {
   constructor(private readonly plansService: PlansService) {}
 

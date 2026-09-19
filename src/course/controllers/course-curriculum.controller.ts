@@ -23,6 +23,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { CourseCurriculumService } from '../services/course-curriculum.service';
 import { UnitCurriculumService } from '../services/unit-curriculum.service';
@@ -42,7 +43,7 @@ import type {
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('academies')
-@UseGuards(JwtAuthGuard, AcademyScopeGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
 export class CourseCurriculumController {
   constructor(
     private readonly curriculumService: CourseCurriculumService,
@@ -55,7 +56,12 @@ export class CourseCurriculumController {
     @Param('courseId') courseId: string,
   ): Promise<PaginatedResult<CourseSectionResponse>> {
     const { academyId, organizationId } = request.academyContext!;
-    return this.curriculumService.getSections(courseId, academyId, organizationId);
+    return this.curriculumService.getSections(
+      courseId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+    );
   }
 
   @Post(':id/courses/:courseId/sections')

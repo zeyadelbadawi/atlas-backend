@@ -22,6 +22,12 @@
  */
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { CoursesRepository } from '../../course/repositories/courses.repository';
+import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import {
+  assertCanReviewCourse,
+  type CourseReviewContext,
+} from '../../learning/services/learning-access.util';
 import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
@@ -87,28 +93,34 @@ export class InstructorService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
+    private readonly coursesRepository: CoursesRepository,
+    private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly instructorRepository: InstructorRepository,
     private readonly academiesRepository: AcademiesRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
+  /**
+   * P64 Phase 1 — the review tier replaces the instructor-only check on
+   * every per-course read/review/grade path: the course's assigned
+   * instructor OR the owning academy's owner/administrator/manager
+   * (`assertCanReviewCourse`, mirrored by the `*_review_select`/
+   * `assignment_submissions_review_update` RLS policies). Still 404, not
+   * 403, for everyone else — never confirms the course exists.
+   */
   private async assertTeachesCourse(
     tx: Prisma.TransactionClient,
     userId: string,
     courseId: string,
-  ): Promise<void> {
-    const isInstructor = await this.courseInstructorsRepository.isInstructor(
+  ): Promise<CourseReviewContext> {
+    return assertCanReviewCourse(
       tx,
-      courseId,
+      this.coursesRepository,
+      this.academyMembersRepository,
+      this.courseInstructorsRepository,
       userId,
+      courseId,
     );
-    if (!isInstructor) {
-      // 404, not 403 — matches every other "draft/unreachable content
-      // looks like it doesn't exist" precedent in this codebase
-      // (`assertActiveEnrollment`'s own doc comment, P6) rather than
-      // confirming to an unauthorized caller that the course exists.
-      throw new NotFoundException({ messageKey: 'errors.notFound' });
-    }
   }
 
   private async buildActivityFeed(

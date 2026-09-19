@@ -32,6 +32,7 @@ import {
 import type { Request } from 'express';
 import { IsBoolean, Equals } from 'class-validator';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
@@ -54,7 +55,7 @@ export class AddOnLifecycleDto {
 }
 
 @Controller('organizations')
-@UseGuards(JwtAuthGuard, OrganizationMembershipGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, OrganizationMembershipGuard)
 export class AddOnsLifecycleController {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
