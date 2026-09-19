@@ -5,6 +5,7 @@
  */
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
@@ -12,7 +13,7 @@ import { PlatformMetricsService } from '../services/platform-metrics.service';
 import type { PlatformMetricsOverviewResponse } from '../dto/platform-metrics.contract';
 
 @Controller('platform-metrics')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class PlatformMetricsController {
   constructor(private readonly platformMetricsService: PlatformMetricsService) {}
 

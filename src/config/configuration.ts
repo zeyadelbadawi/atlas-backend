@@ -58,6 +58,36 @@ export interface PlatformDomainRuntimeConfig {
   readonly baseDomain?: string;
 }
 
+/**
+ * P64 Phase 1 (master plan Phase 1 §T) — staged rollout control for the
+ * surface boundary, and ONLY for that boundary.
+ *
+ * `ManagementSurfaceGuard` and every RLS policy are the security boundary;
+ * this flag decides how widely the *surface refusal* is switched on while
+ * it rolls out, exactly as the plan requires ("staged by allowlist —
+ * internal academy first, then global within one week"). It can never
+ * grant a learner anything RLS or another guard would refuse: a learner
+ * admitted here still holds only their own rows, still cannot read another
+ * tenant, and every other authorization check runs unchanged. What it
+ * changes is whether a learner is refused the management SURFACE at all.
+ *
+ * Read from configuration only — never from a header, a query parameter or
+ * anything else a caller controls.
+ *
+ * - `on` (default): refuse every learner. The end state.
+ * - `allowlist`: refuse only learners who belong to a listed academy.
+ * - `off`: refuse nobody — the pre-P64 behaviour, for the first minutes of
+ *   a rollout and for an instant rollback without a redeploy.
+ */
+export const SURFACE_ENFORCEMENT_MODES = ['off', 'allowlist', 'on'] as const;
+export type SurfaceEnforcementMode = (typeof SURFACE_ENFORCEMENT_MODES)[number];
+
+export interface SurfaceEnforcementConfig {
+  readonly mode: SurfaceEnforcementMode;
+  /** Academy ids the refusal applies to while `mode` is `allowlist`. Ignored in the other modes. */
+  readonly academyIds: readonly string[];
+}
+
 export interface CloudflareConfig {
   readonly apiToken?: string;
   readonly zoneId?: string;
@@ -241,6 +271,16 @@ export default () => {
     sdkSecret: env.ZOOM_SDK_SECRET || undefined,
   };
 
+  const surfaceEnforcement: SurfaceEnforcementConfig = {
+    // Defaults to full enforcement: an unset variable must never be the
+    // reason a learner reaches the management surface.
+    mode: (env.SURFACE_ENFORCE_MODE ?? 'on') as SurfaceEnforcementMode,
+    academyIds: (env.SURFACE_ENFORCE_ACADEMY_IDS ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0),
+  };
+
   const cloudflare: CloudflareConfig = {
     apiToken: env.CLOUDFLARE_API_TOKEN || undefined,
     zoneId: env.CLOUDFLARE_ZONE_ID || undefined,
@@ -270,6 +310,7 @@ export default () => {
     identity,
     media,
     platformDomain,
+    surfaceEnforcement,
     cloudflare,
     zoom,
     billing,

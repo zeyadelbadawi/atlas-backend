@@ -48,6 +48,24 @@ export class CourseProgressRepository {
     return tx.courseProgress.update({ where: { enrollmentId }, data });
   }
 
+  /**
+   * P64 Phase 1 — an enrollment created outside `createEnrollmentInTransaction`
+   * (older data, a staff enrollment, a purchase applied before P64) may have
+   * no `course_progress` row at all; reads and completion used to 500 on it.
+   * Upsert instead of update so the row is materialized on first touch.
+   */
+  upsertCourseProgress(
+    tx: Prisma.TransactionClient,
+    enrollmentId: string,
+    data: Omit<Prisma.CourseProgressUncheckedCreateInput, 'enrollmentId'>,
+  ): Promise<CourseProgress> {
+    return tx.courseProgress.upsert({
+      where: { enrollmentId },
+      create: { enrollmentId, ...data },
+      update: data,
+    });
+  }
+
   createManyLessonProgress(
     tx: Prisma.TransactionClient,
     rows: Prisma.LessonProgressCreateManyInput[],

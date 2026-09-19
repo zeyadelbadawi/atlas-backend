@@ -22,6 +22,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { CoursesService } from '../services/courses.service';
 import { CreateCourseDto } from '../dto/create-course.dto';
@@ -33,7 +34,7 @@ import type { CourseCategoryResponse } from '../dto/course-category.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('academies')
-@UseGuards(JwtAuthGuard, AcademyScopeGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
 export class CoursesController {
   constructor(private readonly coursesService: CoursesService) {}
 

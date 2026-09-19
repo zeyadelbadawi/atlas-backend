@@ -60,6 +60,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { LiveProviderConnectionService } from '../services/live-provider-connection.service';
 import { ZoomOAuthService } from '../services/zoom-oauth.service';
@@ -101,7 +102,7 @@ export class LiveProviderOAuthController {
    * by the fetch layer rather than by the user's browser window.
    */
   @Post('academies/:id/live-sessions/connection/authorize')
-  @UseGuards(JwtAuthGuard, AcademyScopeGuard)
+  @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
   @HttpCode(HttpStatus.OK)
   async authorize(@Req() request: Request) {
     const { academyId, organizationId } = request.academyContext!;

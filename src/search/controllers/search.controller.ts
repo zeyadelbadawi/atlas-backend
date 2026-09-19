@@ -9,6 +9,7 @@
  */
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { SearchService } from '../services/search.service';
@@ -16,7 +17,7 @@ import { SearchQueryDto } from '../dto/search-query.dto';
 import type { SearchResultsResponse } from '../dto/search.contract';
 
 @Controller('search')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class SearchController {
   constructor(private readonly searchService: SearchService) {}
 

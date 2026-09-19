@@ -12,6 +12,7 @@ import type {
 } from '@prisma/client';
 import { toCourseResponse } from '../../course/dto/course.contract';
 import type { CourseResponse } from '../../course/dto/course.contract';
+import { isEnrollmentActive } from '../services/learning-access.util';
 
 /**
  * A slim progress summary for list views (My Learning) — real totals only,
@@ -57,6 +58,18 @@ export interface EnrollmentResponse {
    * enum. Absent wherever `course` above is absent, for the same reason.
    */
   readonly progress?: EnrollmentProgressSummary;
+  /**
+   * P64 Phase 1 — whether this enrollment grants access RIGHT NOW, by the
+   * one rule `isEnrollmentActive` states and every access check enforces.
+   * The learner's own UI cannot derive it: `status` alone stays `enrolled`
+   * on an expired enrollment, so "My Learning" was offering a Start Course
+   * button that the backend then refused (found in browser validation).
+   * `expiresAt`/`revokedAt` come with it so the card can say WHY access
+   * ended rather than only that it did.
+   */
+  readonly isActive: boolean;
+  readonly expiresAt?: string;
+  readonly revokedAt?: string;
 }
 
 export function toEnrollmentResponse(
@@ -78,6 +91,9 @@ export function toEnrollmentResponse(
     status: enrollment.status,
     enrolledAt: enrollment.enrolledAt?.toISOString(),
     completedAt: enrollment.completedAt?.toISOString(),
+    isActive: isEnrollmentActive(enrollment),
+    expiresAt: enrollment.expiresAt?.toISOString(),
+    revokedAt: enrollment.revokedAt?.toISOString(),
     course: enrollment.course ? toCourseResponse(enrollment.course) : undefined,
     progress: progress
       ? {

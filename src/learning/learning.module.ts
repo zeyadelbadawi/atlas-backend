@@ -59,6 +59,9 @@ import { CourseProgressController } from './controllers/course-progress.controll
 import { QuizzesController } from './controllers/quizzes.controller';
 import { AssignmentsController } from './controllers/assignments.controller';
 import { CourseContentController } from './controllers/course-content.controller';
+import { AcademyStudentsController } from './controllers/academy-students.controller';
+import { AcademyStudentsService } from './services/academy-students.service';
+import { AcademyRosterRepository } from './repositories/academy-roster.repository';
 import { StudentResultsController } from './controllers/student-results.controller';
 import { CourseDiscoveryService } from './services/course-discovery.service';
 import { EnrollmentsService } from './services/enrollments.service';
@@ -89,6 +92,7 @@ import { StudentResultsRepository } from './repositories/student-results.reposit
     QuizzesController,
     AssignmentsController,
     CourseContentController,
+    AcademyStudentsController,
     // Phase 9 — the student-facing "My Results" surface.
     StudentResultsController,
   ],
@@ -99,6 +103,8 @@ import { StudentResultsRepository } from './repositories/student-results.reposit
     QuizzesService,
     AssignmentsService,
     CourseContentService,
+    AcademyStudentsService,
+    AcademyRosterRepository,
     StudentResultsService,
     EnrollmentsRepository,
     CourseProgressRepository,

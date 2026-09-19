@@ -48,6 +48,11 @@ import { EmailVerificationTokensRepository } from '../repositories/email-verific
 import { EMAIL_PROVIDER } from './email-provider.interface';
 import type { EmailProvider } from './email-provider.interface';
 import { emailDomain } from '../../plans/utils/trial-subject.util';
+import { PrincipalResolverService } from '../../tenancy/services/principal-resolver.service';
+import { SurfaceEnforcementService } from '../../tenancy/services/surface-enforcement.service';
+import type { Principal } from '../../tenancy/services/principal-resolver.service';
+import { AcademySurfaceService } from './academy-surface.service';
+import type { SignInSurface } from '../dto/sign-in.dto';
 
 /** A value nobody can ever sign in with — see `getDummyHash()`. */
 const DUMMY_PASSWORD = 'atlas-p1-dummy-password-for-timing-safety-only';
@@ -68,6 +73,14 @@ export interface SessionRequestContext {
    * never substituted with a guess.
    */
   readonly locationCountry?: string;
+  /** P64 Phase 1 — the request's `Host`, for academy-surface verification. */
+  readonly hostname?: string;
+}
+
+/** P64 Phase 1 (AD-5) — what a session is minted for. */
+export interface SessionSurfaceSelection {
+  readonly surface: SignInSurface;
+  readonly academyId?: string;
 }
 
 @Injectable()
@@ -109,6 +122,9 @@ export class AuthService {
     private readonly emailVerificationTokensRepository: EmailVerificationTokensRepository,
     private readonly twoFactorService: TwoFactorService,
     @Inject(EMAIL_PROVIDER) private readonly emailProvider: EmailProvider,
+    private readonly principalResolver: PrincipalResolverService,
+    private readonly surfaceEnforcement: SurfaceEnforcementService,
+    private readonly academySurfaceService: AcademySurfaceService,
   ) {}
 
   /**
@@ -160,6 +176,8 @@ export class AuthService {
     email: string;
     password: string;
     academyId?: string;
+    inviteToken?: string;
+    hostname?: string;
   }): Promise<void> {
     const email = normalizeEmail(input.email);
     const existing = await this.usersRepository.findByEmail(email);
@@ -167,23 +185,15 @@ export class AuthService {
       // Registration duplicate-email disclosure is the one deliberate
       // exception to "never reveal account existence" in this service —
       // the caller must be told to sign in instead, and the frontend has
-      // no other way to explain a failed registration. This is distinct
-      // from password-reset-request below, where the requester is
-      // unauthenticated and has not proven they should learn anything
-      // about the account.
+      // no other way to explain a failed registration.
       throw new ConflictException({
         messageKey: 'errors.auth.emailAlreadyRegistered',
       });
     }
 
     // Phase 10.1 — disposable/undeliverable addresses are refused here,
-    // on the server, for every caller. The frontend may also check, but
-    // this is the enforcement point: calling the API directly must not
-    // bypass it.
-    //
-    // The rejection is deliberately GENERIC. Reporting whether the domain
-    // was on the throwaway list or simply had no mail exchanger would
-    // tell an abuser precisely how to adapt, so both map to one message.
+    // on the server, for every caller. The rejection is deliberately
+    // generic (throwaway list vs. no mail exchanger both map to one key).
     const emailRisk = await this.emailRiskService.evaluate(email);
     if (!emailRisk.acceptable) {
       this.logger.log(
@@ -195,36 +205,80 @@ export class AuthService {
       });
     }
 
-    // Validated BEFORE the account is created — a bad/unknown academyId
-    // must never leave an orphaned user record behind.
-    const academyId = await this.resolveRegistrationAcademyId(input.academyId);
-
-    const passwordHash = await this.passwordHasher.hash(input.password);
-    const user = await this.usersRepository.create({
-      email,
-      passwordHash,
-      name: input.name,
-    });
-
-    if (academyId) {
-      // Self-insert, under the new user's own identity — see the
-      // migration's `academy_students_self_insert` policy doc comment for
-      // why this is the one write on this table that needs no tenant
-      // context: this IS the step that gives the account its first real
-      // Academy fact.
-      await this.tenancyContextService.runInUserContext(user.id, (tx) =>
-        this.academyStudentsRepository.create(tx, {
-          academyId,
-          userId: user.id,
-        }),
+    // P64 Phase 1 — the surface decides what this registration may create.
+    // A request arriving on a real academy host MUST carry that academy's
+    // id (a learner is never created without an academy, and never for an
+    // academy the host does not serve); a request on the management host
+    // with no academy id is staff onboarding and creates no learner row.
+    const hostAcademyId = await this.academySurfaceService.resolveHostAcademyId(
+      input.hostname,
+    );
+    if (hostAcademyId && !input.academyId) {
+      throw new BadRequestException({ messageKey: 'errors.auth.academyContextRequired' });
+    }
+    if (input.academyId) {
+      await this.academySurfaceService.assertAcademyMatchesHost(
+        input.academyId,
+        input.hostname,
       );
     }
 
-    // Best-effort by design. The account exists and is usable; failing
-    // the whole registration because an SMTP provider had a bad minute
-    // would be a worse outcome than an unverified account the user can
-    // re-trigger verification for at any time.
-    await this.sendEmailVerification(user.id, email);
+    // Validated BEFORE the account is created — a bad/unknown academyId
+    // must never leave an orphaned user record behind.
+    const academyId = await this.resolveRegistrationAcademyId(input.academyId);
+    const admission = academyId
+      ? await this.academySurfaceService.admissionForNewLearner(
+          academyId,
+          input.inviteToken,
+        )
+      : undefined;
+
+    const passwordHash = await this.passwordHasher.hash(input.password);
+    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
+    const rawVerificationToken = generateOpaqueToken();
+    const userId = randomUUID();
+
+    // P64 Phase 1 (Finding F4) — ONE transaction: the user row, the
+    // academy membership and the verification-token outbox entry either
+    // all exist or none do. The membership insert runs under the new
+    // user's own identity (`academy_students_self_insert`), so the user
+    // id is minted here and the RLS context set on the same connection.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+      await tx.user.create({
+        data: { id: userId, email, passwordHash, name: input.name },
+      });
+      if (academyId && admission) {
+        await this.academyStudentsRepository.create(tx, {
+          academyId,
+          userId,
+          status: admission.status,
+          source: admission.source,
+          registeredViaHost: input.hostname ?? null,
+        });
+      }
+      await tx.emailVerificationToken.create({
+        data: {
+          userId,
+          tokenHash: hashOpaqueToken(rawVerificationToken),
+          expiresAt: new Date(
+            Date.now() + identity.emailVerificationTokenTtlMinutes * 60 * 1000,
+          ),
+        },
+      });
+    });
+
+    // Delivery is best-effort AFTER commit: the account and its token
+    // exist; a bad SMTP minute must not undo a registration, and the user
+    // can re-request verification at any time.
+    try {
+      await this.emailProvider.sendEmailVerification(email, rawVerificationToken);
+    } catch (error) {
+      this.logger.warn(
+        { userId, error: error instanceof Error ? error.message : error },
+        'Could not send the verification email; the account exists and verification can be re-requested.',
+      );
+    }
   }
 
   /**
@@ -303,6 +357,8 @@ export class AuthService {
   async signIn(input: {
     email: string;
     password: string;
+    surface?: SignInSurface;
+    academyId?: string;
     context?: SessionRequestContext;
   }): Promise<AuthenticationResponseContract> {
     const email = normalizeEmail(input.email);
@@ -353,6 +409,18 @@ export class AuthService {
     // The challenge is completed by `POST /auth/2fa/verify`, which calls
     // `issueSessionForVerifiedUser` — so `issueSession` remains the one
     // and only place a session is minted, shared by both paths.
+    // P64 Phase 1 (AD-5) — the surface is decided BEFORE any credential
+    // is minted: a learner on the management surface is refused here with
+    // the academies they can sign in through; an academy-surface sign-in
+    // is bound to the academy the host serves and admitted under that
+    // academy's registration policy. Runs before the second factor so a
+    // refused surface never even starts a 2FA challenge.
+    const selection = await this.resolveSurface(
+      user,
+      { surface: input.surface ?? 'management', academyId: input.academyId },
+      input.context,
+    );
+
     if (await this.twoFactorService.isEnforcedFor(user.id)) {
       const challenge = await this.twoFactorService.createChallenge(user.id);
       return {
@@ -363,10 +431,100 @@ export class AuthService {
     }
     // =====================================================================
 
-    const session = await this.issueSession(user, input.context);
+    const session = await this.issueSession(user, input.context, selection);
     await this.usersRepository.touchLastSignInAt(user.id);
 
     return session;
+  }
+
+  /**
+   * P64 Phase 1 — the surface rules, shared by password sign-in and the
+   * 2FA completion path so both mint identical sessions.
+   *
+   * management: learners (student rows only, no staff fact) are refused
+   *   with 403 `errors.auth.studentUseAcademySignIn` and the academies
+   *   they belong to (name + public host) in `details.academies`.
+   * academy: `academyId` is required and must match the request host.
+   *   Staff of that academy and existing students sign in as they are; a
+   *   blocked student is refused; anyone else is admitted under the
+   *   academy's registration policy (open → joined now, `sign_in_join`;
+   *   invite/approval → refused, the sign-up page handles those).
+   */
+  private async resolveSurface(
+    user: User,
+    requested: SessionSurfaceSelection,
+    context?: SessionRequestContext,
+  ): Promise<SessionSurfaceSelection> {
+    const principal = await this.principalResolver.resolve(user.id);
+
+    if (requested.surface === 'management') {
+      // The refusal itself is staged by `surface.enforce` (master plan
+      // Phase 1 §T). While the rollout has not reached this learner the
+      // pre-P64 behaviour stands and a management session is issued — a
+      // session that grants nothing RLS or any other guard would refuse,
+      // because the surface is the only thing this flag governs.
+      if (
+        principal.kind === 'learner' &&
+        this.surfaceEnforcement.isEnforcedFor(principal)
+      ) {
+        throw new ForbiddenException({
+          messageKey: 'errors.auth.studentUseAcademySignIn',
+          details: {
+            academies: principal.academies.map((academy) => ({
+              academyId: academy.academyId,
+              name: academy.name,
+              slug: academy.slug,
+              host: academy.host ?? '',
+            })),
+          },
+        });
+      }
+      return { surface: 'management' };
+    }
+
+    const academyId = requested.academyId;
+    if (!academyId) {
+      throw new BadRequestException({ messageKey: 'errors.auth.academyContextRequired' });
+    }
+    await this.academySurfaceService.assertAcademyMatchesHost(
+      academyId,
+      context?.hostname,
+    );
+
+    const membership = principal.academies.find(
+      (academy) => academy.academyId === academyId,
+    );
+    if (membership?.blocked) {
+      throw new ForbiddenException({ messageKey: 'errors.auth.academyAccessBlocked' });
+    }
+    if (membership) {
+      return { surface: 'academy', academyId };
+    }
+
+    if (this.isStaffOfAcademy(principal, academyId) || principal.isPlatformOwner) {
+      // Staff preview the academy site as a learner would; no student row
+      // is invented for them.
+      return { surface: 'academy', academyId };
+    }
+
+    const policy = await this.academySurfaceService.registrationPolicy(academyId);
+    if (policy !== 'open') {
+      throw new ForbiddenException({ messageKey: 'errors.auth.notAMemberOfAcademy' });
+    }
+    await this.tenancyContextService.runInUserContext(user.id, (tx) =>
+      this.academyStudentsRepository.create(tx, {
+        academyId,
+        userId: user.id,
+        status: 'active',
+        source: 'sign_in_join',
+        registeredViaHost: context?.hostname ?? null,
+      }),
+    );
+    return { surface: 'academy', academyId };
+  }
+
+  private isStaffOfAcademy(principal: Principal, academyId: string): boolean {
+    return principal.academyStaff.some((row) => row.academyId === academyId);
   }
 
   /**
@@ -381,6 +539,7 @@ export class AuthService {
     challengeId: string,
     input: { token?: string; recoveryCode?: string },
     context?: SessionRequestContext,
+    requested: SessionSurfaceSelection = { surface: 'management' },
   ): Promise<AuthenticationSessionContract> {
     const userId = await this.twoFactorService.completeChallenge(challengeId, input);
 
@@ -391,9 +550,22 @@ export class AuthService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
 
-    const session = await this.issueSession(user, context);
+    // P64 Phase 1 — the surface is re-resolved here (the challenge holds
+    // only the user id), so a learner can no more finish a management
+    // sign-in through 2FA than start one.
+    const selection = await this.resolveSurface(user, requested, context);
+    const session = await this.issueSession(user, context, selection);
     await this.usersRepository.touchLastSignInAt(user.id);
     return session;
+  }
+
+  /** P64 Phase 1 — non-consuming check used by the reset page; the token stays usable. */
+  async isPasswordResetTokenValid(rawToken: string): Promise<boolean> {
+    if (!rawToken) return false;
+    const row = await this.passwordResetTokensRepository.findValidByHash(
+      hashOpaqueToken(rawToken),
+    );
+    return row !== null;
   }
 
   /**
@@ -621,6 +793,7 @@ export class AuthService {
   private async issueSession(
     user: User,
     context?: SessionRequestContext,
+    selection: SessionSurfaceSelection = { surface: 'management' },
   ): Promise<AuthenticationSessionContract> {
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     const rawRefreshToken = generateOpaqueToken();
@@ -643,6 +816,8 @@ export class AuthService {
       locationCountry: context?.locationCountry,
       userAgent: context?.userAgent,
       deviceLabel: deriveDeviceLabel(context?.userAgent),
+      surface: selection.surface,
+      academyId: selection.academyId ?? null,
     });
 
     const accessToken = this.accessTokenService.issue({
@@ -654,14 +829,19 @@ export class AuthService {
       sid: refreshToken.sessionId,
     });
 
-    const organizationMemberships =
-      await this.userOrganizationsService.getMembershipsForUser(user.id);
+    const [organizationMemberships, principal] = await Promise.all([
+      this.userOrganizationsService.getMembershipsForUser(user.id),
+      this.principalResolver.resolve(user.id),
+    ]);
 
     return {
       accessToken: accessToken.token,
       refreshToken: rawRefreshToken,
       expiresIn: accessToken.expiresInSeconds,
-      user: toCurrentUser(user, organizationMemberships),
+      user: toCurrentUser(user, organizationMemberships, {
+        ...principal,
+        managementSurfaceEnforced: this.surfaceEnforcement.isEnforcedFor(principal),
+      }),
     };
   }
 }

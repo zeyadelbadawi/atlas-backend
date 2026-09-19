@@ -28,6 +28,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 import { CourseSectionsRepository } from '../../course/repositories/course-sections.repository';
@@ -43,6 +44,7 @@ export class CourseContentService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly enrollmentsRepository: EnrollmentsRepository,
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly courseSectionsRepository: CourseSectionsRepository,
   ) {}
 
@@ -57,6 +59,8 @@ export class CourseContentService {
         this.courseInstructorsRepository,
         userId,
         courseId,
+        undefined,
+        this.academyStudentsRepository,
       );
       const sections = await this.courseSectionsRepository.findManyForCourse(
         tx,
@@ -115,9 +119,7 @@ export class CourseContentService {
             })),
         ].sort(
           (x, y) =>
-            x.order - y.order ||
-            x.type.localeCompare(y.type) ||
-            x.id.localeCompare(y.id),
+            x.order - y.order || x.type.localeCompare(y.type) || x.id.localeCompare(y.id),
         );
 
         return toCourseSectionResponse(

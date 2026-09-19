@@ -34,6 +34,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { CourseInstructorsRepository } from '../repositories/course-instructors.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { CoursesRepository } from '../repositories/courses.repository';
 import type {
@@ -61,6 +62,7 @@ export class UnitCurriculumService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly coursesRepository: CoursesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
@@ -76,7 +78,7 @@ export class UnitCurriculumService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertSectionInCourseInAcademy(tx, sectionId, courseId, academyId);
         const items = await this.readSectionItems(tx, sectionId);
         return items.map((item) => ({ ...item, sectionId }));
@@ -99,7 +101,7 @@ export class UnitCurriculumService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertCourseInAcademy(tx, courseId, academyId);
         const [quizzes, assignments] = await Promise.all([
           tx.quiz.findMany({
@@ -146,7 +148,7 @@ export class UnitCurriculumService {
       organizationId,
       userId,
       async (tx) => {
-        const role = await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertSectionInCourseInAcademy(tx, sectionId, courseId, academyId);
 
         // The item must already belong to THIS course — never reach across
@@ -209,7 +211,7 @@ export class UnitCurriculumService {
       organizationId,
       userId,
       async (tx) => {
-        const role = await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertSectionInCourseInAcademy(tx, sectionId, courseId, academyId);
 
         const existing =
@@ -222,7 +224,11 @@ export class UnitCurriculumService {
                 where: { id: dto.itemId },
                 select: { id: true, courseId: true, sectionId: true, title: true },
               });
-        if (!existing || existing.courseId !== courseId || existing.sectionId !== sectionId) {
+        if (
+          !existing ||
+          existing.courseId !== courseId ||
+          existing.sectionId !== sectionId
+        ) {
           throw new NotFoundException({ messageKey: 'errors.notFound' });
         }
 
@@ -272,7 +278,7 @@ export class UnitCurriculumService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertSectionInCourseInAcademy(tx, sectionId, courseId, academyId);
 
         const items = await this.readSectionItems(tx, sectionId);
@@ -325,7 +331,8 @@ export class UnitCurriculumService {
     // Stable, deterministic: primary by shared order, then type, then id —
     // so ties from legacy data never render in a random order.
     merged.sort(
-      (a, b) => a.order - b.order || a.type.localeCompare(b.type) || a.id.localeCompare(b.id),
+      (a, b) =>
+        a.order - b.order || a.type.localeCompare(b.type) || a.id.localeCompare(b.id),
     );
     return merged;
   }
@@ -364,16 +371,28 @@ export class UnitCurriculumService {
     tx: Prisma.TransactionClient,
     academyId: string,
     userId: string,
+    courseId?: string,
   ): Promise<string> {
     const membership = await this.academyMembersRepository.findForUserInAcademy(
       tx,
       academyId,
       userId,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
-      throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
+    if (membership && MANAGING_ROLES.has(membership.role)) {
+      return membership.role;
     }
-    return membership.role;
+    // P64 Phase 1 (RBAC matrix: "Edit curriculum — Instructor: yes, assigned
+    // courses") — the course's own assigned instructor may edit its
+    // curriculum; `can_author_course_content()` is the RLS twin.
+    if (courseId) {
+      const isInstructor = await this.courseInstructorsRepository.isInstructor(
+        tx,
+        courseId,
+        userId,
+      );
+      if (isInstructor) return 'instructor';
+    }
+    throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
   }
 
   private async assertCourseInAcademy(

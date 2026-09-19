@@ -3,6 +3,7 @@ import { AcademyScopeGuard } from './academy-scope.guard';
 import type { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import type { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
 import type { AcademiesRepository } from '../repositories/academies.repository';
+import type { AcademyMembersRepository } from '../repositories/academy-members.repository';
 
 function buildContext(
   params: { id?: string },
@@ -33,10 +34,14 @@ describe('AcademyScopeGuard', () => {
     } as unknown as TenancyContextService;
     const academiesRepository = {} as AcademiesRepository;
     const membershipsRepository = {} as OrganizationMembershipsRepository;
+    const academyMembersRepository = {
+      findForUserInAcademy: jest.fn().mockResolvedValue(null),
+    } as unknown as AcademyMembersRepository;
     const guard = new AcademyScopeGuard(
       tenancyContextService,
       academiesRepository,
       membershipsRepository,
+      academyMembersRepository,
     );
     const { context } = buildContext({ id: 'academy-1' }, undefined);
 
@@ -55,10 +60,14 @@ describe('AcademyScopeGuard', () => {
       findVisibleToUser: jest.fn().mockResolvedValue(null),
     } as unknown as AcademiesRepository;
     const membershipsRepository = {} as OrganizationMembershipsRepository;
+    const academyMembersRepository = {
+      findForUserInAcademy: jest.fn().mockResolvedValue(null),
+    } as unknown as AcademyMembersRepository;
     const guard = new AcademyScopeGuard(
       tenancyContextService,
       academiesRepository,
       membershipsRepository,
+      academyMembersRepository,
     );
     const { context } = buildContext({ id: 'academy-1' }, { userId: 'user-a' });
 
@@ -83,10 +92,14 @@ describe('AcademyScopeGuard', () => {
     const membershipsRepository = {
       findForUserInOrganization: jest.fn().mockResolvedValue(null),
     } as unknown as OrganizationMembershipsRepository;
+    const academyMembersRepository = {
+      findForUserInAcademy: jest.fn().mockResolvedValue(null),
+    } as unknown as AcademyMembersRepository;
     const guard = new AcademyScopeGuard(
       tenancyContextService,
       academiesRepository,
       membershipsRepository,
+      academyMembersRepository,
     );
     const { context } = buildContext({ id: 'academy-1' }, { userId: 'user-a' });
 
@@ -112,10 +125,14 @@ describe('AcademyScopeGuard', () => {
         .fn()
         .mockResolvedValue({ id: 'membership-1', role: 'owner' }),
     } as unknown as OrganizationMembershipsRepository;
+    const academyMembersRepository = {
+      findForUserInAcademy: jest.fn().mockResolvedValue(null),
+    } as unknown as AcademyMembersRepository;
     const guard = new AcademyScopeGuard(
       tenancyContextService,
       academiesRepository,
       membershipsRepository,
+      academyMembersRepository,
     );
     const { context, request } = buildContext({ id: 'academy-1' }, { userId: 'user-a' });
 

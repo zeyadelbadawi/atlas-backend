@@ -41,4 +41,15 @@ export class AcademyStaffRepository {
     });
     return row !== null;
   }
+
+  /** Every academy_members row for one user (P64 Phase 1 principal resolution) — `academy_members_self_select`. */
+  findAllForUser(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<{ academyId: string; role: string; status: string }[]> {
+    return tx.academyMember.findMany({
+      where: { userId },
+      select: { academyId: true, role: true, status: true },
+    });
+  }
 }

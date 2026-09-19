@@ -7,13 +7,14 @@
 import { Body, Controller, Delete, Get, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { DomainService } from '../services/domain.service';
 import { AddCustomDomainDto } from '../dto/add-custom-domain.dto';
 import type { AcademyDomainConfigurationResponse } from '../dto/domain.contract';
 
 @Controller('academies')
-@UseGuards(JwtAuthGuard, AcademyScopeGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
 export class DomainController {
   constructor(private readonly domainService: DomainService) {}
 

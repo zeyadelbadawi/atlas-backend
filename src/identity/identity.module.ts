@@ -38,6 +38,7 @@ import { PasswordResetEmailProducer } from './queue/password-reset-email.produce
 import { PasswordResetEmailProcessor } from './queue/password-reset-email.processor';
 import { PASSWORD_RESET_EMAIL_QUEUE } from './queue/password-reset-email.types';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { AcademySurfaceService } from './services/academy-surface.service';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { TenancyModule } from '../tenancy/tenancy.module';
   providers: [
     AuthService,
     UsersService,
+    AcademySurfaceService,
     PasswordHasherService,
     AuthRateLimiterService,
     // Phase P17 — `EMAIL_PROVIDER` resolves to whichever concrete

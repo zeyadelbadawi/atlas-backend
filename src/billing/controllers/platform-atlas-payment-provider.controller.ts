@@ -11,6 +11,7 @@
  */
 import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
@@ -22,7 +23,7 @@ import type {
 } from '../dto/atlas-subscription-payment-provider.contract';
 
 @Controller('platform-atlas-payment-provider')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class PlatformAtlasPaymentProviderController {
   constructor(
     private readonly atlasSubscriptionPaymentProviderService: AtlasSubscriptionPaymentProviderService,

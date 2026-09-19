@@ -57,7 +57,15 @@ export interface NormalizedApiError {
    * Values are primitives only: this is a contract for clients, not a
    * debugging channel.
    */
-  readonly details?: Readonly<Record<string, string | number | boolean>>;
+  readonly details?: Readonly<
+    Record<
+      string,
+      | string
+      | number
+      | boolean
+      | readonly Readonly<Record<string, string | number | boolean>>[]
+    >
+  >;
   readonly requestId?: string;
   readonly retryable: boolean;
 }

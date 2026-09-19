@@ -27,6 +27,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { OrganizationPaymentSettingsService } from '../services/organization-payment-settings.service';
 import { OrganizationGatewayCredentialsService } from '../services/organization-gateway-credentials.service';
@@ -43,7 +44,7 @@ import type { OrganizationConnectedAccountResponse } from '../dto/organization-c
 import type { OrganizationCommissionResponse } from '../dto/commission.contract';
 
 @Controller('organizations')
-@UseGuards(JwtAuthGuard, OrganizationMembershipGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, OrganizationMembershipGuard)
 export class OrganizationPaymentSettingsController {
   constructor(
     private readonly organizationPaymentSettingsService: OrganizationPaymentSettingsService,

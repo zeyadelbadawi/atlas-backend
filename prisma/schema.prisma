@@ -205,10 +205,23 @@ model RefreshToken {
   expiresAt       DateTime  @map("expires_at")
   revokedAt       DateTime? @map("revoked_at")
   createdAt       DateTime  @default(now()) @map("created_at")
+  /// P64 Phase 1 (AD-5) — the surface this session was minted on and,
+  /// for the academy surface, which academy. Copied forward on every
+  /// rotation; a learner never holds a `management` session.
+  surface         SessionSurface @default(management)
+  academyId       String?   @map("academy_id")
 
   @@index([userId, revokedAt])
   @@index([sessionId])
   @@map("refresh_tokens")
+}
+
+/// P64 Phase 1 — where a session was created (AD-5).
+enum SessionSurface {
+  management
+  academy
+
+  @@map("session_surface")
 }
 
 /// Backs `PasswordResetRequest`/`PasswordResetConfirmation`. Single-use,
@@ -471,9 +484,13 @@ model Academy {
   archiveReason   String?   @map("archive_reason")
   /// Optional free text the owner chose to leave. Never required.
   archiveFeedback String?   @map("archive_feedback")
+  /// P64 Phase 1 (D3) — existing academies default to `open`; new academies
+  /// choose at creation; changeable later by the Client Owner only (D8).
+  registrationPolicy AcademyRegistrationPolicy @default(open) @map("registration_policy")
 
   members              AcademyMember[]
   students             AcademyStudent[]
+  invites              AcademyInvite[]
   courseCategories     CourseCategory[]
   courses              Course[]
   announcements        Announcement[]
@@ -547,11 +564,62 @@ model AcademyStudent {
   user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   status    AcademyMemberStatus @default(active)
   joinedAt  DateTime            @default(now()) @map("joined_at")
+  /// P64 Phase 1 — provenance and roster facts. `source` records how the
+  /// membership came to exist; `blocked_at` is the staff-side kill switch
+  /// (`is_academy_student()` and `assertActiveEnrollment` both refuse a
+  /// blocked student); `last_activity_at` feeds the roster sort.
+  source            AcademyStudentSource @default(self_signup)
+  registeredViaHost String?              @map("registered_via_host")
+  blockedAt         DateTime?            @map("blocked_at")
+  blockedReason     String?              @map("blocked_reason")
+  invitedBy         String?              @map("invited_by")
+  lastActivityAt    DateTime?            @map("last_activity_at")
 
   @@unique([academyId, userId])
   @@index([academyId])
   @@index([userId])
+  @@index([academyId, lastActivityAt])
   @@map("academy_students")
+}
+
+/// P64 Phase 1 — how an `academy_students` row came to exist.
+enum AcademyStudentSource {
+  self_signup
+  sign_in_join
+  staff_created
+  purchase
+  invite
+  backfill
+
+  @@map("academy_student_source")
+}
+
+/// P64 Phase 1 — who may become a student of an Academy (D3).
+enum AcademyRegistrationPolicy {
+  open
+  invite
+  approval
+
+  @@map("academy_registration_policy")
+}
+
+/// P64 Phase 1 — a single-use (by default) invitation token for an
+/// Academy whose registration policy is `invite`. Only the hash is stored.
+model AcademyInvite {
+  id         String    @id @default(uuid())
+  academyId  String    @map("academy_id")
+  academy    Academy   @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique @map("token_hash")
+  createdBy  String    @map("created_by")
+  email      String?
+  maxUses    Int       @default(1) @map("max_uses")
+  usedCount  Int       @default(0) @map("used_count")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([academyId, expiresAt])
+  @@map("academy_invites")
 }
 
 // ---------------------------------------------------------------------------
@@ -1318,6 +1386,16 @@ model Enrollment {
   status      EnrollmentStatus
   enrolledAt  DateTime?        @map("enrolled_at")
   completedAt DateTime?        @map("completed_at")
+  /// P64 Phase 1 — access lifecycle. `status` alone could not express
+  /// "expired", "revoked for a reason" or "how was access obtained";
+  /// `assertActiveEnrollment` now checks all three, so a refund, a manual
+  /// revocation or an expiry refuses new content access immediately.
+  expiresAt     DateTime?               @map("expires_at")
+  revokedAt     DateTime?               @map("revoked_at")
+  revokeReason  EnrollmentRevokeReason? @map("revoke_reason")
+  accessSource  EnrollmentAccessSource  @default(free) @map("access_source")
+  courseOrderId String?                 @map("course_order_id")
+  courseOrder   CourseOrder?            @relation(fields: [courseOrderId], references: [id], onDelete: SetNull)
   createdAt   DateTime         @default(now()) @map("created_at")
   updatedAt   DateTime         @updatedAt @map("updated_at")
 
@@ -1325,6 +1403,7 @@ model Enrollment {
   LessonProgress LessonProgress[]
 
   @@unique([studentId, courseId])
+  @@index([courseOrderId])
   @@index([studentId, status])
   /// Phase 4.5.1 (scalability). `courseId` is an FK with no backing index —
   /// Postgres does not auto-index FK columns — so every course-scoped
@@ -1363,6 +1442,27 @@ enum EnrollmentStatus {
   unavailable
 
   @@map("enrollment_status")
+}
+
+/// P64 Phase 1 — why an enrollment stopped granting access.
+enum EnrollmentRevokeReason {
+  refund
+  manual
+  membership_ended
+  expired
+  suspended
+
+  @@map("enrollment_revoke_reason")
+}
+
+/// P64 Phase 1 — how the enrollment was obtained.
+enum EnrollmentAccessSource {
+  free
+  order
+  manual
+  seed
+
+  @@map("enrollment_access_source")
 }
 
 /// Mirrors `CourseProgress` (`progress.types.ts`) — a materialized summary
@@ -1541,6 +1641,11 @@ model QuizAttempt {
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
   @@index([studentId, quizId, attemptNumber])
+  /// P64 Phase 1 — the attempt-number race fix: two concurrent starts can
+  /// no longer both insert attempt N+1. A partial unique index (one
+  /// `in_progress` attempt per student per quiz) lives in the migration
+  /// SQL; Prisma cannot express partial indexes.
+  @@unique([quizId, studentId, attemptNumber])
   @@map("quiz_attempts")
 }
 
@@ -3133,6 +3238,7 @@ model CourseOrder {
   expiresAt      DateTime          @map("expires_at")
   idempotencyKey String            @map("idempotency_key")
   paidAt         DateTime?         @map("paid_at")
+  enrollments    Enrollment[]
   createdAt      DateTime          @default(now()) @map("created_at")
   updatedAt      DateTime          @updatedAt @map("updated_at")
 

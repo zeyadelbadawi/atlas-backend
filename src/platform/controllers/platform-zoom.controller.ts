@@ -26,6 +26,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
@@ -53,7 +54,7 @@ import type {
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('platform-zoom')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class PlatformZoomController {
   constructor(private readonly platformZoomService: PlatformZoomService) {}
 

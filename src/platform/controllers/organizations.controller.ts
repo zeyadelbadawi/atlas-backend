@@ -14,6 +14,7 @@
 import { Controller, Get, Param, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationsAccessGuard } from '../guards/organizations-access.guard';
 import { OrganizationsService } from '../../tenancy/services/organizations.service';
 import { PlatformOrganizationsService } from '../services/platform-organizations.service';
@@ -26,7 +27,7 @@ import type {
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('organizations')
-@UseGuards(JwtAuthGuard, OrganizationsAccessGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, OrganizationsAccessGuard)
 export class OrganizationsController {
   constructor(
     private readonly organizationsService: OrganizationsService,

@@ -34,6 +34,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
@@ -64,7 +65,7 @@ const MANAGING_ROLES: ReadonlySet<string> = new Set([
 ]);
 
 @Controller('academies')
-@UseGuards(JwtAuthGuard, AcademyScopeGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
 export class LiveSessionsController {
   constructor(
     private readonly tenancyContextService: TenancyContextService,

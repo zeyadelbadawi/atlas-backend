@@ -19,6 +19,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { CourseInstructorsRepository } from '../repositories/course-instructors.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { CoursesRepository } from '../repositories/courses.repository';
 import { CourseSectionsRepository } from '../repositories/course-sections.repository';
@@ -50,6 +51,7 @@ export class CourseCurriculumService {
     private readonly sectionsRepository: CourseSectionsRepository,
     private readonly lessonsRepository: CourseLessonsRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
@@ -57,11 +59,18 @@ export class CourseCurriculumService {
     courseId: string,
     academyId: string,
     organizationId: string,
+    userId: string,
   ): Promise<PaginatedResult<CourseSectionResponse>> {
-    const sections = await this.tenancyContextService.runInTenantContext(
+    const sections = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
+      userId,
       async (tx) => {
         await this.assertCourseInAcademy(tx, courseId, academyId);
+        // P64 Phase 1 (audit finding S9) — reading a course's full
+        // curriculum is an authoring-tier read, not something every member
+        // of the owning organization may do. `AcademyScopeGuard` only
+        // proves tenancy; this proves authority.
+        await this.assertCanManage(tx, academyId, userId, courseId);
         return this.sectionsRepository.findManyForCourse(tx, courseId);
       },
     );
@@ -83,7 +92,7 @@ export class CourseCurriculumService {
     const section = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        const role = await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertCourseInAcademy(tx, courseId, academyId);
 
         const { _max } = await this.sectionsRepository.maxOrder(tx, courseId);
@@ -124,7 +133,7 @@ export class CourseCurriculumService {
     const section = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        const role = await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertCourseInAcademy(tx, courseId, academyId);
         await this.assertSectionInCourse(tx, sectionId, courseId);
 
@@ -165,7 +174,7 @@ export class CourseCurriculumService {
     userId: string,
   ): Promise<void> {
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      const role = await this.assertCanManage(tx, academyId, userId);
+      const role = await this.assertCanManage(tx, academyId, userId, courseId);
       await this.assertCourseInAcademy(tx, courseId, academyId);
       const section = await this.assertSectionInCourse(tx, sectionId, courseId);
       // Cascades to `course_lessons` via the FK's `onDelete: Cascade` —
@@ -195,7 +204,7 @@ export class CourseCurriculumService {
     payload: ReorderItemsDto,
   ): Promise<void> {
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
+      await this.assertCanManage(tx, academyId, userId, courseId);
       await this.assertCourseInAcademy(tx, courseId, academyId);
 
       const existing = await this.sectionsRepository.findIdsForCourse(tx, courseId);
@@ -223,7 +232,7 @@ export class CourseCurriculumService {
     const lesson = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        const role = await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertCourseInAcademy(tx, courseId, academyId);
         await this.assertSectionInCourse(tx, sectionId, courseId);
 
@@ -270,7 +279,7 @@ export class CourseCurriculumService {
     const lesson = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        const role = await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertCourseInAcademy(tx, courseId, academyId);
         await this.assertSectionInCourse(tx, sectionId, courseId);
         await this.assertLessonInSection(tx, lessonId, sectionId);
@@ -311,7 +320,7 @@ export class CourseCurriculumService {
     userId: string,
   ): Promise<void> {
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      const role = await this.assertCanManage(tx, academyId, userId);
+      const role = await this.assertCanManage(tx, academyId, userId, courseId);
       await this.assertCourseInAcademy(tx, courseId, academyId);
       await this.assertSectionInCourse(tx, sectionId, courseId);
       const lesson = await this.assertLessonInSection(tx, lessonId, sectionId);
@@ -340,7 +349,7 @@ export class CourseCurriculumService {
     payload: ReorderItemsDto,
   ): Promise<void> {
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
+      await this.assertCanManage(tx, academyId, userId, courseId);
       await this.assertCourseInAcademy(tx, courseId, academyId);
       await this.assertSectionInCourse(tx, sectionId, courseId);
 
@@ -363,16 +372,28 @@ export class CourseCurriculumService {
     tx: Prisma.TransactionClient,
     academyId: string,
     userId: string,
+    courseId?: string,
   ): Promise<string> {
     const membership = await this.academyMembersRepository.findForUserInAcademy(
       tx,
       academyId,
       userId,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
-      throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
+    if (membership && MANAGING_ROLES.has(membership.role)) {
+      return membership.role;
     }
-    return membership.role;
+    // P64 Phase 1 (RBAC matrix: "Edit curriculum — Instructor: yes, assigned
+    // courses") — the course's own assigned instructor may edit its
+    // curriculum; `can_author_course_content()` is the RLS twin.
+    if (courseId) {
+      const isInstructor = await this.courseInstructorsRepository.isInstructor(
+        tx,
+        courseId,
+        userId,
+      );
+      if (isInstructor) return 'instructor';
+    }
+    throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
   }
 
   private async assertCourseInAcademy(

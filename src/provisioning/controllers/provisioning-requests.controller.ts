@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { ProvisioningRequestsService } from '../services/provisioning-requests.service';
 import { CreateProvisioningRequestDto } from '../dto/create-provisioning-request.dto';
@@ -25,7 +26,7 @@ import type { ProvisioningRequestResponse } from '../dto/provisioning-request.co
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('organizations')
-@UseGuards(JwtAuthGuard, OrganizationMembershipGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, OrganizationMembershipGuard)
 export class ProvisioningRequestsController {
   constructor(
     private readonly provisioningRequestsService: ProvisioningRequestsService,

@@ -20,6 +20,7 @@ import { RegisterDto } from '../dto/register.dto';
 import { SignInDto } from '../dto/sign-in.dto';
 import { RefreshTokenDto } from '../dto/refresh-token.dto';
 import { PasswordResetRequestDto } from '../dto/password-reset-request.dto';
+import { PasswordResetValidateDto } from '../dto/password-reset-validate.dto';
 import { PasswordResetConfirmDto } from '../dto/password-reset-confirm.dto';
 import { VerifyEmailDto } from '../dto/verify-email.dto';
 import type {
@@ -46,6 +47,8 @@ function sessionContext(request: Request): SessionRequestContext {
     ipAddress: resolveClientIp(request),
     userAgent: resolveUserAgent(request),
     locationCountry: resolveClientCountry(request),
+    // P64 Phase 1 — the host the edge routed to (Express strips the port).
+    hostname: request.hostname,
   };
 }
 
@@ -57,8 +60,8 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(RegisterRateLimitGuard)
-  async register(@Body() dto: RegisterDto): Promise<void> {
-    await this.authService.register(dto);
+  async register(@Body() dto: RegisterDto, @Req() request: Request): Promise<void> {
+    await this.authService.register({ ...dto, hostname: request.hostname });
   }
 
   @Post('sign-in')
@@ -178,6 +181,21 @@ export class AuthController {
   @UseGuards(PasswordResetRateLimitGuard)
   async requestPasswordReset(@Body() dto: PasswordResetRequestDto): Promise<void> {
     await this.authService.requestPasswordReset(dto.email);
+  }
+
+  /**
+   * P64 Phase 1 — lets the reset page check a token before the user types a
+   * new password (previously it accepted any non-empty token and only found
+   * out on submit). Public like `confirm`; reveals only whether THIS token is
+   * currently valid, never who it belongs to.
+   */
+  @Post('password-reset/validate')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PasswordResetRateLimitGuard)
+  async validatePasswordReset(
+    @Body() dto: PasswordResetValidateDto,
+  ): Promise<{ valid: boolean }> {
+    return { valid: await this.authService.isPasswordResetTokenValid(dto.token) };
   }
 
   @Post('password-reset/confirm')

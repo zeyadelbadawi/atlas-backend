@@ -17,6 +17,9 @@ export interface CreateRefreshTokenInput {
   readonly ipAddress?: string;
   readonly userAgent?: string;
   readonly locationCountry?: string;
+  /** P64 Phase 1 (AD-5) — surface the session is minted on; academy id on the academy surface. */
+  readonly surface?: 'management' | 'academy';
+  readonly academyId?: string | null;
 }
 
 /** One device session: the rotation family's newest row, plus when the family began. */
@@ -48,6 +51,8 @@ export class RefreshTokensRepository {
         ipAddress: input.ipAddress,
         userAgent: input.userAgent,
         locationCountry: input.locationCountry,
+        surface: input.surface ?? 'management',
+        academyId: input.academyId ?? null,
         // A brand-new session's last activity is its creation — a real
         // timestamp for a real event, not a placeholder.
         lastUsedAt: new Date(),
@@ -169,6 +174,38 @@ export class RefreshTokensRepository {
     });
   }
 
+  /**
+   * P64 Phase 1 — ends every live session a user holds ON ONE ACADEMY.
+   *
+   * Blocking a student is a security action, so it must close the sessions
+   * already open, not only refuse the next sign-in: until the access token
+   * expires the blocked learner otherwise stays signed in on the academy
+   * site. Scoped by `academyId` on purpose — a learner may belong to
+   * several academies, and being blocked by one must not sign them out of
+   * the others (`revokeAllForUser` is the whole-account tool and stays
+   * reserved for credential changes).
+   *
+   * Returns the distinct session ids that were actually revoked, so the
+   * caller can close the access-token window through
+   * `SessionRevocationService.markRevoked`.
+   */
+  async revokeSessionsForUserInAcademy(
+    userId: string,
+    academyId: string,
+  ): Promise<string[]> {
+    const rows = await this.prisma.refreshToken.findMany({
+      where: { userId, academyId, revokedAt: null },
+      distinct: ['sessionId'],
+      select: { sessionId: true },
+    });
+    if (rows.length === 0) return [];
+    await this.prisma.refreshToken.updateMany({
+      where: { userId, academyId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return rows.map((row) => row.sessionId);
+  }
+
   /** Revokes every active refresh token for a user — password reset / change-password only (master plan §8/§21 P1). Never used by plain sign-out. */
   async revokeAllForUser(userId: string): Promise<void> {
     await this.prisma.refreshToken.updateMany({
@@ -241,6 +278,9 @@ export class RefreshTokensRepository {
           locationCountry: newToken.locationCountry ?? claimed.locationCountry,
           // Real activity: this refresh actually happened, now.
           lastUsedAt: now,
+          // P64 Phase 1 — the surface never changes across a rotation.
+          surface: claimed.surface,
+          academyId: claimed.academyId,
         },
       });
 

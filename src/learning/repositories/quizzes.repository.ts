@@ -89,6 +89,18 @@ export class QuizzesRepository {
     return tx.quizAttempt.create({ data });
   }
 
+  /** P64 Phase 1 — the one open attempt (`quiz_attempts_one_open_per_student_idx` guarantees at most one). */
+  findOpenAttemptForStudent(
+    tx: Prisma.TransactionClient,
+    studentId: string,
+    quizId: string,
+  ): Promise<QuizAttempt | null> {
+    return tx.quizAttempt.findFirst({
+      where: { studentId, quizId, status: 'in_progress' },
+      orderBy: { attemptNumber: 'desc' },
+    });
+  }
+
   findAttemptById(tx: Prisma.TransactionClient, id: string): Promise<QuizAttempt | null> {
     return tx.quizAttempt.findUnique({ where: { id } });
   }

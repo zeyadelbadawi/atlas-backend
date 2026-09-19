@@ -37,6 +37,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
+import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { MediaAssetsRepository } from '../repositories/media-assets.repository';
@@ -71,6 +72,7 @@ export class MediaService {
 
   constructor(
     private readonly tenancyContextService: TenancyContextService,
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly mediaAssetsRepository: MediaAssetsRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly mediaProcessingProducer: MediaProcessingProducer,
@@ -182,16 +184,36 @@ export class MediaService {
     academyId: string,
     organizationId: string,
     payload: UploadMediaAssetDto,
+    studentUserId: string,
   ): Promise<MediaAssetResponse> {
     const { buffer, kind } = this.parseAndValidate(payload);
 
-    await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
-      this.entitlementEnforcementService.assertStorageWithinLimit(
-        tx,
-        organizationId,
-        kind.assetType === 'video' ? 'videoStorage' : 'generalStorage',
-        buffer.length,
-      ),
+    // P64 Phase 1 — this method used to trust its caller entirely; it now
+    // performs its own authorization: the uploader must hold an ACTIVE,
+    // unblocked student membership of exactly this academy. A future
+    // caller that forgets its own check can no longer write into an
+    // arbitrary academy's bucket.
+    await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      studentUserId,
+      async (tx) => {
+        const membership = await this.academyStudentsRepository.findForUserInAcademy(
+          tx,
+          academyId,
+          studentUserId,
+        );
+        if (!membership || membership.status !== 'active' || membership.blockedAt) {
+          throw new ForbiddenException({
+            messageKey: 'errors.enrollment.academyMembershipRequired',
+          });
+        }
+        await this.entitlementEnforcementService.assertStorageWithinLimit(
+          tx,
+          organizationId,
+          kind.assetType === 'video' ? 'videoStorage' : 'generalStorage',
+          buffer.length,
+        );
+      },
     );
 
     return this.performUpload(academyId, organizationId, payload, buffer, kind);

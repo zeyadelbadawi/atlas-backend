@@ -25,6 +25,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import type { Enrollment, Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { CourseSectionsRepository } from '../../course/repositories/course-sections.repository';
+import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { CourseProgressRepository } from '../repositories/course-progress.repository';
 import { toCourseProgressResponse } from '../dto/course-progress.contract';
@@ -41,6 +42,7 @@ export class CourseProgressService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly enrollmentsRepository: EnrollmentsRepository,
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly courseProgressRepository: CourseProgressRepository,
     private readonly courseSectionsRepository: CourseSectionsRepository,
   ) {}
@@ -75,7 +77,32 @@ export class CourseProgressService {
     const missingLessons = curriculumLessons.filter(
       (lesson) => !existingByLessonId.has(lesson.id),
     );
-    if (missingLessons.length === 0) return;
+    if (missingLessons.length === 0) {
+      // P64 Phase 1 — nothing to backfill for lessons, but the rollup row
+      // itself may be missing (an enrollment materialized elsewhere). Never
+      // let a read or a completion 500 on that.
+      const rollup = await this.courseProgressRepository.findByEnrollmentId(
+        tx,
+        enrollment.id,
+      );
+      if (!rollup) {
+        const totalLessons = curriculumLessons.length;
+        const completedLessons = existingRows.filter(
+          (row) => row.status === 'completed',
+        ).length;
+        const completionState = deriveCompletionState(completedLessons, totalLessons);
+        await this.courseProgressRepository.upsertCourseProgress(tx, enrollment.id, {
+          totalLessons,
+          completedLessons,
+          percentage: totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0,
+          currentLessonId:
+            existingRows.find((row) => row.status !== 'completed')?.lessonId ?? null,
+          completionState,
+          certificateStatus: deriveCertificateStatus(completionState),
+        });
+      }
+      return;
+    }
 
     let previousCompleted = true;
     const newRows: Prisma.LessonProgressCreateManyInput[] = [];
@@ -109,7 +136,7 @@ export class CourseProgressService {
     const completionState = deriveCompletionState(completedLessons, totalLessons);
     const currentLesson = mergedRows.find((row) => row.status !== 'completed');
 
-    await this.courseProgressRepository.updateCourseProgress(tx, enrollment.id, {
+    await this.courseProgressRepository.upsertCourseProgress(tx, enrollment.id, {
       totalLessons,
       completedLessons,
       percentage: totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0,
@@ -129,6 +156,7 @@ export class CourseProgressService {
         this.enrollmentsRepository,
         userId,
         courseId,
+        this.academyStudentsRepository,
       );
       await this.backfillLessonProgress(tx, enrollment, courseId);
       const courseProgress = await this.courseProgressRepository.findByEnrollmentId(
@@ -157,6 +185,7 @@ export class CourseProgressService {
         this.enrollmentsRepository,
         userId,
         courseId,
+        this.academyStudentsRepository,
       );
       await this.backfillLessonProgress(tx, enrollment, courseId);
 

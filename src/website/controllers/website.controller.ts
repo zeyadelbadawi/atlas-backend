@@ -19,6 +19,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { WebsiteConfigurationService } from '../services/website-configuration.service';
 import { WebsitePagesService } from '../services/website-pages.service';
@@ -33,7 +34,7 @@ import type { WebsitePageResponse } from '../dto/website-page.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('academies')
-@UseGuards(JwtAuthGuard, AcademyScopeGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
 export class WebsiteController {
   constructor(
     private readonly websiteConfigurationService: WebsiteConfigurationService,

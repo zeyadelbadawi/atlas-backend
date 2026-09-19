@@ -37,6 +37,19 @@ export class EnrollmentsRepository {
     return tx.enrollment.findUnique({ where: { id } });
   }
 
+  /**
+   * P64 Phase 1 — serializes concurrent writers that key on one enrollment
+   * (quiz attempt start/submit). `SELECT ... FOR UPDATE` under the caller's
+   * own RLS context: a row the caller may not see is simply not locked and
+   * `false` is returned, never an error that would reveal existence.
+   */
+  async lockForUpdate(tx: Prisma.TransactionClient, id: string): Promise<boolean> {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "enrollments" WHERE "id" = ${id} FOR UPDATE
+    `;
+    return rows.length === 1;
+  }
+
   async findManyForStudent(
     tx: Prisma.TransactionClient,
     studentId: string,

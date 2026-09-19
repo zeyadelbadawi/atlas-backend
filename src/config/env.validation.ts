@@ -255,6 +255,20 @@ const EnvSchema = z.object({
     )
     .optional(),
 
+  // --- P64 Phase 1: surface-enforcement rollout control ---
+  //
+  // Rollout control for the management-surface refusal, NOT a security
+  // boundary: `ManagementSurfaceGuard` and the RLS policies stay in force
+  // in every mode. `on` is the default and the end state; `allowlist`
+  // refuses only learners of the listed academies (the plan's staged
+  // rollout); `off` restores the pre-P64 behaviour for an instant
+  // rollback. An invalid value fails startup rather than being silently
+  // treated as `off` — a typo must never quietly disable the refusal.
+  SURFACE_ENFORCE_MODE: z.enum(['off', 'allowlist', 'on']).optional(),
+
+  // Comma-separated academy ids; only read while the mode is `allowlist`.
+  SURFACE_ENFORCE_ACADEMY_IDS: z.string().trim().optional(),
+
   // --- Zoom (Live Sessions add-on) ---
   //
   // ATLAS OWNS THE ZOOM APPLICATION. These are Atlas's own General OAuth

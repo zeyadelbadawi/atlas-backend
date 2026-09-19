@@ -1,13 +1,14 @@
 /** PaymentMethodsController — `/payment-methods` (master plan §10). Platform-owned catalog: every authenticated caller reads the same list, no organization scoping — matches `PlansController`'s identical "only `JwtAuthGuard` applies" precedent. */
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PaymentService } from '../services/payment.service';
 import type { PaymentMethodResponse } from '../dto/payment-method.contract';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('payment-methods')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class PaymentMethodsController {
   constructor(private readonly paymentService: PaymentService) {}
 

@@ -28,6 +28,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
@@ -35,18 +36,14 @@ import { PlatformPlansService } from '../services/platform-plans.service';
 import type { PlanLimitImpactResponse } from '../services/platform-plans.service';
 import { PlanHistoryService } from '../services/plan-history.service';
 import type { PlanHistoryEntryResponse } from '../services/plan-history.service';
-import {
-  ArchivePlanDto,
-  CreatePlanDto,
-  UpdatePlanDto,
-} from '../dto/update-plan.dto';
+import { ArchivePlanDto, CreatePlanDto, UpdatePlanDto } from '../dto/update-plan.dto';
 import { PreviewPlanLimitsDto } from '../dto/preview-plan-limits.dto';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { PlanResponse } from '../../plans/dto/plan.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('platform-plans')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class PlatformPlansController {
   constructor(
     private readonly platformPlansService: PlatformPlansService,

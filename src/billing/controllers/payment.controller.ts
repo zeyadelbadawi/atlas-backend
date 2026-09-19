@@ -22,6 +22,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { PaymentService } from '../services/payment.service';
 import { CreatePaymentDto } from '../dto/create-payment.dto';
@@ -41,7 +42,7 @@ import { AllowInactiveSubscription } from '../../plans/decorators/allow-inactive
  */
 @AllowInactiveSubscription()
 @Controller('organizations')
-@UseGuards(JwtAuthGuard, OrganizationMembershipGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, OrganizationMembershipGuard)
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 

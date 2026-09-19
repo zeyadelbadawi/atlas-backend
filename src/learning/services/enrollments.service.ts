@@ -150,7 +150,11 @@ export class EnrollmentsService {
           course.academyId,
           userId,
         );
-        if (!membership) {
+        // P64 Phase 1 — the membership must also be ACTIVE and unblocked:
+        // an `approval`-policy academy leaves a new learner `pending`, and
+        // staff can block one at any time. `is_academy_student()` (RLS)
+        // enforces the identical rule underneath.
+        if (!membership || membership.status !== 'active' || membership.blockedAt) {
           throw new ForbiddenException({
             messageKey: 'errors.enrollment.academyMembershipRequired',
           });
@@ -221,13 +225,41 @@ export class EnrollmentsService {
     tx: Prisma.TransactionClient,
     studentId: string,
     course: Pick<CourseWithRelations, 'id' | 'academyId'>,
+    options: {
+      readonly accessSource?: 'free' | 'order' | 'manual' | 'seed';
+      readonly courseOrderId?: string;
+      readonly expiresAt?: Date | null;
+      /** P64 Phase 1 (Finding F4) — a purchase or staff grant also makes the buyer a student of the academy. */
+      readonly ensureMembership?: 'purchase' | 'staff_created';
+    } = {},
   ): Promise<Enrollment> {
+    if (options.ensureMembership) {
+      const membership = await this.academyStudentsRepository.findForUserInAcademy(
+        tx,
+        course.academyId,
+        studentId,
+      );
+      if (!membership) {
+        await this.academyStudentsRepository.create(tx, {
+          academyId: course.academyId,
+          userId: studentId,
+          status: 'active',
+          source: options.ensureMembership,
+        });
+      }
+    }
+
     const enrollment = await this.enrollmentsRepository.create(tx, {
       student: { connect: { id: studentId } },
       course: { connect: { id: course.id } },
       academyId: course.academyId,
       status: 'enrolled',
       enrolledAt: new Date(),
+      accessSource: options.accessSource ?? 'free',
+      expiresAt: options.expiresAt ?? null,
+      ...(options.courseOrderId
+        ? { courseOrder: { connect: { id: options.courseOrderId } } }
+        : {}),
     });
 
     const sections = await this.courseSectionsRepository.findManyForCourse(tx, course.id);
