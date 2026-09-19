@@ -156,6 +156,11 @@ model User {
   hostedLiveSessions      LiveSession[]                   @relation("LiveSessionHost")
   liveSessionParticipants LiveSessionParticipant[]        @relation("LiveSessionParticipant")
 
+  /// P64 Phase 2 — the learner's registered devices and their own
+  /// content-access history.
+  studentDevices   StudentDevice[]
+  contentAccessLog ContentAccessLog[]
+
   @@index([status])
   @@map("users")
 }
@@ -164,11 +169,11 @@ model User {
 /// SHA-256 hash of the raw token is ever persisted — a database leak alone
 /// never yields a usable token (master plan §5.1, §8, §16).
 model RefreshToken {
-  id              String    @id @default(uuid())
-  userId          String    @map("user_id")
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash       String    @unique @map("token_hash")
-  deviceLabel     String?   @map("device_label")
+  id              String         @id @default(uuid())
+  userId          String         @map("user_id")
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash       String         @unique @map("token_hash")
+  deviceLabel     String?        @map("device_label")
   /// Phase 10 — the stable identity of one DEVICE SESSION, constant across
   /// every rotation of that session's refresh token.
   ///
@@ -182,37 +187,48 @@ model RefreshToken {
   /// change non-breaking: an access token already in circulation carries
   /// `sid` = its row id, and that value is now exactly the `sessionId` of
   /// the same session, so previously-issued tokens keep resolving.
-  sessionId       String    @map("session_id")
+  sessionId       String         @map("session_id")
   /// Real client IP at the moment this token was issued, resolved from the
   /// production reverse proxy's forwarding header (never client-supplied
   /// body data). Null for rows created before Phase 10 — honestly unknown
   /// rather than backfilled with a fabricated address.
-  ipAddress       String?   @map("ip_address")
+  ipAddress       String?        @map("ip_address")
   /// Raw `User-Agent` header, stored verbatim and parsed for display only.
-  userAgent       String?   @map("user_agent")
+  userAgent       String?        @map("user_agent")
   /// ISO 3166-1 alpha-2 country, resolved from Cloudflare's `CF-IPCountry`
   /// edge header. Null when Cloudflare did not supply a usable country
   /// (local development, or its `XX`/`T1` sentinels) — honestly unknown
   /// rather than guessed. Deliberately country-only: Atlas has no
   /// trustworthy city source, and inventing one is worse than saying
   /// nothing.
-  locationCountry String?   @map("location_country") @db.VarChar(2)
+  locationCountry String?        @map("location_country") @db.VarChar(2)
   /// Real last activity for this session: set at sign-in, on every
   /// refresh, and — since Phase 11.10 — coalesced from ordinary
   /// authenticated request activity. Never a frontend-supplied or
   /// render-time value.
-  lastUsedAt      DateTime? @map("last_used_at")
-  expiresAt       DateTime  @map("expires_at")
-  revokedAt       DateTime? @map("revoked_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
+  lastUsedAt      DateTime?      @map("last_used_at")
+  expiresAt       DateTime       @map("expires_at")
+  revokedAt       DateTime?      @map("revoked_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
   /// P64 Phase 1 (AD-5) — the surface this session was minted on and,
   /// for the academy surface, which academy. Copied forward on every
   /// rotation; a learner never holds a `management` session.
   surface         SessionSurface @default(management)
-  academyId       String?   @map("academy_id")
+  academyId       String?        @map("academy_id")
+  /// P64 Phase 2 (AD-10, D4) — the `student_devices` row this session was
+  /// minted on, when the sign-in carried an `atlas_device` cookie.
+  ///
+  /// Null for every management session and for every row minted before
+  /// this column existed: the device registry governs LEARNING, and
+  /// retro-fitting a device identity onto a session that never had one
+  /// would be an invention. Copied forward on rotation exactly like
+  /// `sessionId`, so a device's session survives refreshes.
+  deviceId        String?        @map("device_id")
+  device          StudentDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
 
   @@index([userId, revokedAt])
   @@index([sessionId])
+  @@index([deviceId])
   @@map("refresh_tokens")
 }
 
@@ -479,47 +495,72 @@ model Academy {
   /// so the reason lives on the row rather than in a separate tombstone.
   /// Null for an Academy that is not archived, and for one archived
   /// before this was recorded.
-  archivedAt      DateTime? @map("archived_at")
+  archivedAt         DateTime?                 @map("archived_at")
   /// Closed vocabulary, validated by the DTO. Never free text.
-  archiveReason   String?   @map("archive_reason")
+  archiveReason      String?                   @map("archive_reason")
   /// Optional free text the owner chose to leave. Never required.
-  archiveFeedback String?   @map("archive_feedback")
+  archiveFeedback    String?                   @map("archive_feedback")
   /// P64 Phase 1 (D3) — existing academies default to `open`; new academies
   /// choose at creation; changeable later by the Client Owner only (D8).
   registrationPolicy AcademyRegistrationPolicy @default(open) @map("registration_policy")
+  /// P64 Phase 2 (D8) — the Client Owner's content-protection choices for
+  /// this academy. Mirrors `AcademyContentProtection`: `{ watermark: bool,
+  /// watermarkText: string|null, disableDownload: bool, disablePip: bool,
+  /// disableContextMenu: bool }`. Validated by the DTO, not the schema,
+  /// following `address`'s existing precedent in this file. Null means
+  /// "platform defaults", which is what every academy gets until an owner
+  /// changes something — never a silently weaker setting.
+  contentProtection  Json?                     @map("content_protection")
+  /// P64 Phase 2 (D10, D11) — the tier NEW uploads land on.
+  ///
+  /// A default for future uploads, never a statement about existing ones:
+  /// `media_assets.security_tier` is the record of what each asset
+  /// actually is. Bounded at write time by what the organization's plan
+  /// family entitles, so an academy cannot select a tier it is not paying
+  /// for. Null means "whatever the plan entitles", which is the correct
+  /// behaviour for every academy that has never chosen.
+  videoSecurityTier  VideoSecurityTier?        @map("video_security_tier")
 
-  members              AcademyMember[]
-  students             AcademyStudent[]
-  invites              AcademyInvite[]
-  courseCategories     CourseCategory[]
-  courses              Course[]
-  announcements        Announcement[]
-  blogPosts            BlogPost[]
-  mediaAssets          MediaAsset[]
-  websiteConfiguration WebsiteConfiguration?
-  websitePages         WebsitePage[]
-  websiteFaqEntries    WebsiteFaqEntry[]
-  websiteTestimonials  WebsiteTestimonialEntry[]
-  subdomainAllocation  SubdomainAllocation?
-  domainConnection     DomainConnection?
+  members                AcademyMember[]
+  students               AcademyStudent[]
+  invites                AcademyInvite[]
+  courseCategories       CourseCategory[]
+  courses                Course[]
+  announcements          Announcement[]
+  blogPosts              BlogPost[]
+  mediaAssets            MediaAsset[]
+  websiteConfiguration   WebsiteConfiguration?
+  websitePages           WebsitePage[]
+  websiteFaqEntries      WebsiteFaqEntry[]
+  websiteTestimonials    WebsiteTestimonialEntry[]
+  subdomainAllocation    SubdomainAllocation?
+  domainConnection       DomainConnection?
   domainProviderReleases DomainProviderRelease[]
   /// Phase P13 — Course Commerce (master plan §23/§5.8).
-  courseOrderPayments  Payment[]
-  courseOrders         CourseOrder[]
-  revenueLedgerEntries RevenueLedgerEntry[]
-  payouts              AcademyPayout[]
+  courseOrderPayments    Payment[]
+  courseOrders           CourseOrder[]
+  revenueLedgerEntries   RevenueLedgerEntry[]
+  payouts                AcademyPayout[]
   /// Phase P14 — Provisioning Orchestration (master plan §5.11/§21).
-  provisioningRequest  ProvisioningRequest?
+  provisioningRequest    ProvisioningRequest?
   /// Phase 6 — real, persisted public Contact-form submissions.
-  contactSubmissions   ContactSubmission[]
+  contactSubmissions     ContactSubmission[]
   /// Phase 8 — Support, Audit & Dashboards.
-  auditLogEntries      AuditLogEntry[]
-  supportCases         SupportCase[]
+  auditLogEntries        AuditLogEntry[]
+  supportCases           SupportCase[]
 
   /// Phase 12 — Live Sessions add-on.
   liveProviderConnection  AcademyLiveProviderConnection?
   liveProviderOAuthStates LiveProviderOAuthState[]
   liveSessions            LiveSession[]
+
+  /// P64 Phase 2 — protected content, its access log, and the device
+  /// policy that governs who may play it where.
+  lessonContents   LessonContent[]
+  lessonResources  LessonResource[]
+  contentAccessLog ContentAccessLog[]
+  studentDevices   StudentDevice[]
+  accessPolicy     AccessPolicy?
 
   @@index([organizationId, status])
   @@map("academies")
@@ -557,13 +598,13 @@ model AcademyMember {
 /// shape both paths rely on, and `is_academy_student` (mirrors
 /// `is_academy_member`) for how downstream RLS (`enrollments`) uses it.
 model AcademyStudent {
-  id        String              @id @default(uuid())
-  academyId String              @map("academy_id")
-  academy   Academy             @relation(fields: [academyId], references: [id], onDelete: Cascade)
-  userId    String              @map("user_id")
-  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status    AcademyMemberStatus @default(active)
-  joinedAt  DateTime            @default(now()) @map("joined_at")
+  id                String               @id @default(uuid())
+  academyId         String               @map("academy_id")
+  academy           Academy              @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  userId            String               @map("user_id")
+  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status            AcademyMemberStatus  @default(active)
+  joinedAt          DateTime             @default(now()) @map("joined_at")
   /// P64 Phase 1 — provenance and roster facts. `source` records how the
   /// membership came to exist; `blocked_at` is the staff-side kill switch
   /// (`is_academy_student()` and `assertActiveEnrollment` both refuse a
@@ -606,17 +647,17 @@ enum AcademyRegistrationPolicy {
 /// P64 Phase 1 — a single-use (by default) invitation token for an
 /// Academy whose registration policy is `invite`. Only the hash is stored.
 model AcademyInvite {
-  id         String    @id @default(uuid())
-  academyId  String    @map("academy_id")
-  academy    Academy   @relation(fields: [academyId], references: [id], onDelete: Cascade)
-  tokenHash  String    @unique @map("token_hash")
-  createdBy  String    @map("created_by")
-  email      String?
-  maxUses    Int       @default(1) @map("max_uses")
-  usedCount  Int       @default(0) @map("used_count")
-  expiresAt  DateTime  @map("expires_at")
-  revokedAt  DateTime? @map("revoked_at")
-  createdAt  DateTime  @default(now()) @map("created_at")
+  id        String    @id @default(uuid())
+  academyId String    @map("academy_id")
+  academy   Academy   @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash")
+  createdBy String    @map("created_by")
+  email     String?
+  maxUses   Int       @default(1) @map("max_uses")
+  usedCount Int       @default(0) @map("used_count")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
 
   @@index([academyId, expiresAt])
   @@map("academy_invites")
@@ -707,6 +748,16 @@ model Plan {
   descriptionLocalized Json?      @map("description_localized")
   status               PlanStatus @default(active)
   displayOrder         Int        @default(0) @map("display_order")
+  /// P64 Phase 2 (D10) — the two commercial axes.
+  ///
+  /// Existing rows are backfilled to `normal` and to the tier their own
+  /// key already implies, so nothing about an existing subscription
+  /// changes. `key` stays the unique identity (subscriptions reference
+  /// it); these two columns describe it rather than replacing it, which is
+  /// what lets the catalog answer "what does a PREMIUM_GROWTH plan
+  /// entitle?" without six copies of the same logic.
+  family               PlanFamily @default(normal)
+  tier                 PlanTier   @default(basic)
   /// Mirrors `PlanResourceLimits` — validated server-side (DTO), not
   /// schema-enforced, matching `users.preferences`'s established precedent
   /// in this file. Each of the 7 `PlanLimitKey` fields is either an `int`
@@ -747,6 +798,9 @@ model Plan {
   commissionSettings PlanCommissionSettings?
 
   @@index([status, displayOrder])
+  /// P64 Phase 2 (D10) — the catalog is read by family and tier, not by key,
+  /// once six variants exist.
+  @@index([family, tier])
   @@map("plans")
 }
 
@@ -904,18 +958,25 @@ model TenantAddOn {
 /// (`EntitlementService`), never persisted here (it would immediately go
 /// stale the moment a plan/add-on changed).
 model TenantUsage {
-  organizationId   String       @id @map("organization_id")
-  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  academies        Int          @default(0)
-  students         Int          @default(0)
-  instructors      Int          @default(0)
-  staff            Int          @default(0)
-  courses          Int          @default(0)
+  organizationId      String       @id @map("organization_id")
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  academies           Int          @default(0)
+  students            Int          @default(0)
+  instructors         Int          @default(0)
+  staff               Int          @default(0)
+  courses             Int          @default(0)
   /// GB.
-  generalStorageGb Int          @default(0) @map("general_storage_gb")
+  generalStorageGb    Int          @default(0) @map("general_storage_gb")
   /// GB — tracked separately from general storage.
-  videoStorageGb   Int          @default(0) @map("video_storage_gb")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
+  videoStorageGb      Int          @default(0) @map("video_storage_gb")
+  /// P64 Phase 2 (D5/AD-14) — MINUTES of provider-hosted video, which is a
+  /// different resource from `videoStorageGb` (bytes of video sitting in
+  /// Atlas's own R2) and therefore a different column rather than a
+  /// reinterpretation of an existing one. Ready videos plus active upload
+  /// reservations. Atlas's own entitlement number; no provider price is
+  /// derived from it anywhere.
+  videoStorageMinutes Int          @default(0) @map("video_storage_minutes")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
 
   @@map("tenant_usage")
 }
@@ -1220,6 +1281,13 @@ model Course {
   /// Phase 12 — Live Sessions as a first-class course activity.
   liveSessions LiveSession[]
 
+  /// P64 Phase 2 — protected lesson payloads belonging to this course, and
+  /// the media uploaded for it (the prefix a protected object key is built
+  /// from).
+  lessonContents  LessonContent[]
+  lessonResources LessonResource[]
+  mediaAssets     MediaAsset[]
+
   @@unique([academyId, slug])
   @@index([academyId, status, visibility])
   @@index([status, visibility])
@@ -1303,9 +1371,33 @@ model CourseLesson {
   createdAt   DateTime                @default(now()) @map("created_at")
   updatedAt   DateTime                @updatedAt @map("updated_at")
 
+  /// P64 Phase 2. A preview lesson is deliberately readable WITHOUT an
+  /// enrollment — it is the sample a prospective student watches before
+  /// buying — so it is the one place the entitlement chain is allowed to
+  /// short-circuit, and it is opt-in per lesson by the author.
+  isPreview       Boolean              @default(false) @map("is_preview")
+  /// Drip date. Null means "available as soon as the course is". A future
+  /// value locks the lesson with reason `scheduled`, for enrolled students
+  /// too.
+  availableAt     DateTime?            @map("available_at")
+  /// Authoritative length used for the curriculum's duration labels and as
+  /// the denominator of the watched-ratio rule. Copied from the video asset
+  /// when one is attached; author-set for text lessons.
+  durationSeconds Int?                 @map("duration_seconds")
+  completionRule  LessonCompletionRule @default(manual) @map("completion_rule")
+  /// The protected video this lesson plays, when it plays one. Separate
+  /// from `lesson_contents` because the body and the video are edited
+  /// independently and a lesson may have a body AND a video.
+  videoAssetId    String?              @map("video_asset_id")
+  videoAsset      MediaAsset?          @relation(fields: [videoAssetId], references: [id], onDelete: SetNull)
+
   lessonProgress LessonProgress[]
+  /// P64 Phase 2 — the protected body/file/external payload (AD-3).
+  content        LessonContent?
+  resources      LessonResource[]
 
   @@index([sectionId, order])
+  @@index([videoAssetId])
   @@map("course_lessons")
 }
 
@@ -1377,15 +1469,15 @@ model CourseLesson {
 /// (P5) — never updated afterward, never a real FK relation object (matches
 /// that precedent's plain-column shape).
 model Enrollment {
-  id          String           @id @default(uuid())
-  studentId   String           @map("student_id")
-  student     User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  courseId    String           @map("course_id")
-  course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  academyId   String           @map("academy_id")
-  status      EnrollmentStatus
-  enrolledAt  DateTime?        @map("enrolled_at")
-  completedAt DateTime?        @map("completed_at")
+  id            String                  @id @default(uuid())
+  studentId     String                  @map("student_id")
+  student       User                    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  courseId      String                  @map("course_id")
+  course        Course                  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  academyId     String                  @map("academy_id")
+  status        EnrollmentStatus
+  enrolledAt    DateTime?               @map("enrolled_at")
+  completedAt   DateTime?               @map("completed_at")
   /// P64 Phase 1 — access lifecycle. `status` alone could not express
   /// "expired", "revoked for a reason" or "how was access obtained";
   /// `assertActiveEnrollment` now checks all three, so a refund, a manual
@@ -1396,8 +1488,8 @@ model Enrollment {
   accessSource  EnrollmentAccessSource  @default(free) @map("access_source")
   courseOrderId String?                 @map("course_order_id")
   courseOrder   CourseOrder?            @relation(fields: [courseOrderId], references: [id], onDelete: SetNull)
-  createdAt   DateTime         @default(now()) @map("created_at")
-  updatedAt   DateTime         @updatedAt @map("updated_at")
+  createdAt     DateTime                @default(now()) @map("created_at")
+  updatedAt     DateTime                @updatedAt @map("updated_at")
 
   progress       CourseProgress?
   LessonProgress LessonProgress[]
@@ -1481,6 +1573,14 @@ model CourseProgress {
   createdAt         DateTime              @default(now()) @map("created_at")
   updatedAt         DateTime              @updatedAt @map("updated_at")
 
+  /// P64 Phase 2 — real time on task, accumulated from the same bounded
+  /// heartbeat deltas that feed `lesson_progress.watchedSeconds`, and the
+  /// timestamp the learner dashboard's "continue learning" ordering uses.
+  /// `updatedAt` cannot serve that purpose: it also moves when a
+  /// recompute rewrites percentages for every enrollment at once.
+  timeSpentSeconds Int       @default(0) @map("time_spent_seconds")
+  lastActivityAt   DateTime? @map("last_activity_at")
+
   @@map("course_progress")
 }
 
@@ -1517,9 +1617,211 @@ model LessonProgress {
   createdAt    DateTime             @default(now()) @map("created_at")
   updatedAt    DateTime             @updatedAt @map("updated_at")
 
+  /// P64 Phase 2 — server-recorded playback EVIDENCE (Phase 2 §D.6).
+  ///
+  /// Every one of these is written from bounded heartbeat deltas computed
+  /// on the server, never from a number the client simply asserts: a
+  /// client that claims it watched an hour in ten seconds moves these by
+  /// the wall-clock gap, not by its claim. That is what makes
+  /// `maxWatchedRatio` usable as a completion GATE rather than a
+  /// decoration.
+  ///
+  /// `lastPositionSeconds` is where playback resumes (the learner's last
+  /// known position, which may move backwards when they rewind).
+  /// `watchedSeconds` only ever increases and is the sum of credited
+  /// deltas. `maxWatchedRatio` is the furthest credited fraction of the
+  /// lesson's duration, kept as a high-water mark so a rewind can never
+  /// take a completion away.
+  lastPositionSeconds Int       @default(0) @map("last_position_seconds")
+  watchedSeconds      Int       @default(0) @map("watched_seconds")
+  maxWatchedRatio     Decimal   @default(0) @map("max_watched_ratio") @db.Decimal(5, 4)
+  lastActivityAt      DateTime? @map("last_activity_at")
+
   @@unique([enrollmentId, lessonId])
   @@index([enrollmentId, status])
   @@map("lesson_progress")
+}
+
+/// P64 Phase 2 (AD-3) — the lesson payload itself, moved OUT of
+/// `course_lessons.content_url`.
+///
+/// This table exists because the old shape could not be secured. A
+/// `content_url` on the lesson row is a durable, guessable, permanently
+/// valid address: once a curriculum response had handed it over, an
+/// enrollment could be revoked, refunded or expired and the URL kept
+/// working forever, for anyone it had been forwarded to. Worse, the
+/// lesson row is legitimately readable by anyone browsing a published,
+/// public course — so the payload inherited a public audience from its
+/// container.
+///
+/// Separating them lets the two have DIFFERENT audiences: the lesson row
+/// stays publicly listable (title, order, duration, preview flag) while
+/// its content has NO public RLS policy at all and is reachable only
+/// through `LessonContentService.getContent()`, which re-decides
+/// entitlement at the moment the bytes are asked for (AD-2).
+model LessonContent {
+  id           String            @id @default(uuid())
+  lessonId     String            @unique @map("lesson_id")
+  lesson       CourseLesson      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  /// Denormalised from the lesson's own section/course. Present so every
+  /// RLS policy and every protected object key can be decided from THIS
+  /// row without a join — a policy that has to join to find its tenant is
+  /// a policy that evaluates the joined table's policies too, which is
+  /// exactly the class of mistake Phase 1 spent two corrective migrations
+  /// removing.
+  courseId     String            @map("course_id")
+  course       Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  academyId    String            @map("academy_id")
+  academy      Academy           @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  kind         LessonContentKind
+  /// Sanitised rich text for `kind: text`. Server-sanitised on write.
+  bodyHtml     String?           @map("body_html")
+  /// The protected object for `kind: file` (and the poster/source for a
+  /// video lesson whose asset is not provider-hosted).
+  mediaAssetId String?           @map("media_asset_id")
+  mediaAsset   MediaAsset?       @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  /// `kind: external` only — a third-party embed Atlas does not host.
+  /// Surfaced to the learner as explicitly NOT protected, because
+  /// pretending otherwise would be the dishonest option.
+  externalUrl  String?           @map("external_url")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+
+  @@index([academyId, courseId])
+  @@index([mediaAssetId])
+  @@map("lesson_contents")
+}
+
+/// Downloadable attachments for one lesson. Same audience rules as
+/// `lesson_contents` — no public policy, one signed URL per request.
+model LessonResource {
+  id           String       @id @default(uuid())
+  lessonId     String       @map("lesson_id")
+  lesson       CourseLesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  courseId     String       @map("course_id")
+  course       Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  academyId    String       @map("academy_id")
+  academy      Academy      @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  title        String
+  mediaAssetId String?      @map("media_asset_id")
+  mediaAsset   MediaAsset?  @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  externalUrl  String?      @map("external_url")
+  order        Int          @default(0)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  @@index([lessonId, order])
+  @@index([academyId, courseId])
+  @@index([mediaAssetId])
+  @@map("lesson_resources")
+}
+
+/// Every content-access DECISION, granted or refused (Phase 2 §D.2).
+///
+/// Refusals alone would be the obvious thing to log and the wrong one:
+/// the abuse this table has to make visible is a legitimate account
+/// pulling grants at a rate no human watches at (Phase 2 §U's "p99 > 40
+/// per 10 minutes"), and every one of those is a GRANT. Retention is 90
+/// days — long enough to investigate a sharing report, short enough that
+/// the table is not a permanent record of what every learner read.
+model ContentAccessLog {
+  id           String              @id @default(uuid())
+  userId       String?             @map("user_id")
+  user         User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  academyId    String              @map("academy_id")
+  academy      Academy             @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  courseId     String              @map("course_id")
+  lessonId     String              @map("lesson_id")
+  result       ContentAccessResult
+  /// The machine-readable refusal reason (`notEnrolled`, `locked`,
+  /// `deviceLimit`, …) or, for a grant, the kind that was signed. Closed
+  /// vocabulary from `ContentAccessReason`, never free text.
+  reason       String?
+  /// The device and session the decision was made for. Null when the
+  /// request carried no device cookie, which is itself worth seeing.
+  deviceId     String?             @map("device_id")
+  sessionId    String?             @map("session_id")
+  /// P64 Phase 2 (D10) — WHICH TIER AND PROVIDER served this decision.
+  ///
+  /// Required because Normal and Premium assets coexist inside one academy
+  /// (D11), so "was this lesson delivered under the protection we sold
+  /// them?" is a question the log has to be able to answer. Null for a
+  /// refusal that never reached an asset, and for text lessons, which have
+  /// no provider.
+  securityTier VideoSecurityTier?  @map("security_tier")
+  provider     MediaAssetProvider? @map("provider")
+  createdAt    DateTime            @default(now()) @map("created_at")
+
+  @@index([academyId, createdAt])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("content_access_log")
+}
+
+/// One browser (or app) a learner has registered with an academy (AD-10).
+///
+/// Identified by a SERVER-ISSUED opaque cookie, never by a fingerprint.
+/// That is a deliberate privacy choice as well as a correctness one:
+/// fingerprints are both unreliable and collected without consent,
+/// whereas a cookie Atlas minted is something the learner can see listed,
+/// name, and remove — which is precisely the Devices page this phase
+/// ships.
+///
+/// Scoped per academy, because the device allowance is the academy's
+/// policy to set (D8) and a learner studying at two academies must not
+/// have one academy's limit consume the other's.
+model StudentDevice {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  academyId  String    @map("academy_id")
+  academy    Academy   @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the opaque cookie value. Hashed at rest for the same
+  /// reason `refresh_tokens.token_hash` is: a database read must not yield
+  /// a credential that can be replayed.
+  cookieHash String    @unique @map("cookie_hash")
+  /// What the learner sees in the list. Derived from the User-Agent
+  /// ("Chrome on macOS"), renameable by the learner.
+  label      String
+  userAgent  String?   @map("user_agent")
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  /// Set when the learner removes the device, or an owner resets the
+  /// registry. Rows are never hard-deleted: a removed device that comes
+  /// back must register again and count against the cap again, and the
+  /// audit trail of what was removed when has to survive.
+  revokedAt  DateTime? @map("revoked_at")
+
+  refreshTokens RefreshToken[]
+
+  @@index([userId, academyId, revokedAt])
+  @@index([academyId, revokedAt])
+  @@map("student_devices")
+}
+
+/// How many devices and concurrent sessions a learner may use (D4/D8).
+///
+/// Resolved most-specific-first — academy, then plan, then platform — and
+/// an academy row may never exceed the platform row's values. Enforcing
+/// the ceiling in the resolver rather than in a check constraint is
+/// deliberate: the platform maximum is itself a row that can change, and
+/// a constraint would have to be rewritten every time it did.
+model AccessPolicy {
+  id                    String            @id @default(uuid())
+  scope                 AccessPolicyScope
+  /// Set only when `scope` is `academy`. One policy row per academy.
+  academyId             String?           @unique @map("academy_id")
+  academy               Academy?          @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  /// Set only when `scope` is `plan` — reserved (Phase 2 §D.7); no plan
+  /// row is seeded, and the resolver simply finds none.
+  planKey               String?           @map("plan_key")
+  maxDevices            Int               @map("max_devices")
+  maxConcurrentSessions Int               @map("max_concurrent_sessions")
+  createdAt             DateTime          @default(now()) @map("created_at")
+  updatedAt             DateTime          @updatedAt @map("updated_at")
+
+  @@index([scope])
+  @@map("access_policies")
 }
 
 enum LessonProgressStatus {
@@ -1640,12 +1942,12 @@ model QuizAttempt {
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
-  @@index([studentId, quizId, attemptNumber])
   /// P64 Phase 1 — the attempt-number race fix: two concurrent starts can
   /// no longer both insert attempt N+1. A partial unique index (one
   /// `in_progress` attempt per student per quiz) lives in the migration
   /// SQL; Prisma cannot express partial indexes.
   @@unique([quizId, studentId, attemptNumber])
+  @@index([studentId, quizId, attemptNumber])
   @@map("quiz_attempts")
 }
 
@@ -2051,6 +2353,166 @@ enum MediaAssetStatus {
   @@map("media_asset_status")
 }
 
+/// P64 Phase 2 (AD-1, AD-3) — whether an object may be fetched by anyone
+/// holding its URL, or only through an Atlas-signed, short-lived grant.
+/// `public` is the pre-P64 behaviour and stays valid for marketing images,
+/// logos and course thumbnails; `protected` objects live in a separate
+/// bucket with no public base URL at all, so a leaked key is not a
+/// leaked file.
+enum MediaAssetAccess {
+  public
+  protected
+
+  @@map("media_asset_access")
+}
+
+/// P64 Phase 2 (D10) — the COMMERCIAL family a plan belongs to.
+///
+/// Atlas sells two families, each with the same three tiers, giving six
+/// variants. The family decides the VIDEO SECURITY CAPABILITY CLASS; the
+/// tier decides commercial limits and features. They are two independent
+/// axes precisely so the catalog does not have to duplicate six sets of
+/// business rules — one family value and one tier value describe any
+/// variant.
+enum PlanFamily {
+  normal
+  premium
+
+  @@map("plan_family")
+}
+
+/// P64 Phase 2 (D10) — the commercial tier, independent of the family.
+///
+/// `basic` is the tier the repository's seeded plan key calls `starter`;
+/// the seeded keys are deliberately NOT renamed (DL-17), because renaming
+/// a plan key would break every subscription row that references it for
+/// no product benefit.
+enum PlanTier {
+  basic
+  growth
+  enterprise
+
+  @@map("plan_tier")
+}
+
+/// P64 Phase 2 (AD-15, D10) — WHAT ATLAS PROMISES for a video asset.
+///
+/// Deliberately NOT the same thing as `MediaAssetProvider`, which records
+/// where the bytes physically live. Two reasons they must stay separate:
+///
+///   1. If Atlas later moves the Normal tier to a different provider,
+///      every customer's promise is unchanged while every asset's provider
+///      changes. Collapsing them would make that migration a
+///      customer-facing event.
+///   2. A learner asking "is this video protected?" must be told the truth
+///      about THAT video. Deriving the answer from the academy's current
+///      plan would lie about every asset created before a plan change
+///      (D11: a plan change never rewrites history).
+enum VideoSecurityTier {
+  normal
+  premium
+
+  @@map("video_security_tier")
+}
+
+/// P64 Phase 2 (D5) — HOW a video's duration was established.
+///
+/// The quota is denominated in minutes, so duration is a billing-relevant
+/// number and "who said so" matters. `measured` is the provider's own
+/// figure; `parsed` is Atlas reading the container's metadata; `declared`
+/// is the uploader's word, which is never silently trusted — it is
+/// recorded so an operator can see the quota drifting toward
+/// self-reported.
+enum VideoDurationSource {
+  measured
+  parsed
+  declared
+
+  @@map("video_duration_source")
+}
+
+/// Where the bytes actually live. `r2` is Atlas's own object storage;
+/// `cloudflare_stream` is the provider-hosted video path. The column
+/// exists so the grant signer can pick a signer without inspecting the
+/// storage key, and so a SECOND video provider is a new value here plus a
+/// new adapter — never a change to the tables above it.
+enum MediaAssetProvider {
+  /// Atlas's own object storage, delivered by a presigned URL. Protected
+  /// FILES (lesson attachments, documents) take this path.
+  r2
+  /// P64 Phase 2 (DL-19) — the NORMAL video tier: the same R2 object, but
+  /// delivered through the Cloudflare CDN behind an Atlas-controlled
+  /// Worker gate. A distinct value from `r2` because the delivery path and
+  /// therefore the enforced capabilities genuinely differ: a presign is
+  /// bound to time alone, while the Worker re-authorizes every request and
+  /// can revoke before expiry.
+  r2_worker
+  /// The PREMIUM video tier — provider-hosted, provider-processed.
+  cloudflare_stream
+
+  @@map("media_asset_provider")
+}
+
+/// Lifecycle of a provider-hosted asset. `pending` covers the window
+/// between Atlas reserving quota and the upload actually starting, which
+/// is why quota counts it (AD-14).
+enum MediaProcessingStatus {
+  pending
+  processing
+  ready
+  failed
+
+  @@map("media_processing_status")
+}
+
+/// How a lesson is allowed to become `completed`. `manual` is the pre-P64
+/// behaviour — the learner presses the button. `watched_ratio` additionally
+/// requires server-recorded evidence that enough of the video was actually
+/// watched; the button is still there, but it refuses below the minimum.
+enum LessonCompletionRule {
+  manual
+  watched_ratio
+
+  @@map("lesson_completion_rule")
+}
+
+/// What a lesson actually delivers. Deliberately WIDER than
+/// `CourseLessonContentType` (text/video/file): `external` is a real,
+/// distinct case — an embed Atlas does not host and therefore cannot
+/// protect — and the learner is told so rather than being left to assume
+/// the protection applies.
+enum LessonContentKind {
+  text
+  video
+  file
+  external
+
+  @@map("lesson_content_kind")
+}
+
+/// The outcome recorded for one content-access decision. Every decision is
+/// logged, not just the refusals: a grant flood is only visible if the
+/// grants are there to count.
+enum ContentAccessResult {
+  granted
+  refused
+
+  @@map("content_access_result")
+}
+
+/// Which population an `access_policies` row governs. Resolution is
+/// most-specific-first (`academy` beats `plan` beats `platform`) and an
+/// academy may never exceed the platform row's maximums (D4/D8).
+/// `plan` exists as a reserved scope: the resolver already honours it, so
+/// a future plan-tier policy is a data row rather than a code change.
+enum AccessPolicyScope {
+  platform
+  plan
+  academy
+
+  @@map("access_policy_scope")
+}
+
 /// Mirrors `MediaAssetSummary`/`MediaAssetDetail` (`media.types.ts`)
 /// field-for-field — the frontend has no separate detail shape (`type
 /// MediaAssetDetail = MediaAssetSummary`), so this one model backs both
@@ -2081,10 +2543,69 @@ model MediaAsset {
   createdAt  DateTime         @default(now()) @map("created_at")
   updatedAt  DateTime         @updatedAt @map("updated_at")
 
+  /// P64 Phase 2 (AD-1/AD-3). Everything that existed before this phase is
+  /// `public` + `r2` + `ready`, which is exactly what the backfill sets and
+  /// exactly what those rows already were — no behaviour changes for them.
+  ///
+  /// `access` decides WHICH bucket and WHICH signer; `provider` decides
+  /// WHO stores the bytes. They are separate because a protected file and a
+  /// protected video are both protected but are signed completely
+  /// differently (R2 presign vs. provider token), and collapsing them into
+  /// one column would force the signer to parse the storage key.
+  access           MediaAssetAccess      @default(public)
+  provider         MediaAssetProvider    @default(r2)
+  /// The provider's own identifier — Cloudflare Stream's `uid`. Null for
+  /// `r2`, whose identity is its `storageKey`.
+  providerId       String?               @map("provider_id")
+  processingStatus MediaProcessingStatus @default(ready) @map("processing_status")
+  /// Video length in seconds.
+  ///
+  /// While `processingStatus` is `pending`/`processing` this holds the
+  /// RESERVED maximum the uploader asked for, not a measured value — that
+  /// is what makes "usage = ready minutes + active reservations" (AD-14) a
+  /// single SUM over one column rather than two tables that can disagree.
+  /// The provider webhook replaces it with the real duration, which is the
+  /// reconciliation step D5 requires.
+  durationSeconds  Int?                  @map("duration_seconds")
+  /// Set when the asset was uploaded FOR a specific course, so a protected
+  /// object key can be prefixed by academy AND course (H) and so quota
+  /// reconciliation can attribute a video without walking lessons.
+  courseId         String?               @map("course_id")
+  /// P64 Phase 2 (AD-15) — WHAT ATLAS PROMISED for this asset, as distinct
+  /// from `provider`, which records where its bytes are.
+  ///
+  /// Null for everything that is not hosted video (documents, images, the
+  /// protected file tier), because a security TIER is a video product
+  /// concept and claiming one for a PDF would be meaningless.
+  ///
+  /// Set once, at creation, from the academy's entitled tier — and never
+  /// rewritten when the academy's plan changes (D11). That is the whole
+  /// point: an academy that downgrades keeps its existing Premium videos
+  /// on the Premium path, and a learner is told the truth about the video
+  /// in front of them rather than about a subscription.
+  securityTier     VideoSecurityTier?    @map("security_tier")
+  /// P64 Phase 2 (D5) — how `durationSeconds` was established. See
+  /// `VideoDurationSource`. Null while a reservation still holds a
+  /// declared maximum rather than a real figure.
+  durationSource   VideoDurationSource?  @map("duration_source")
+  course           Course?               @relation(fields: [courseId], references: [id], onDelete: SetNull)
+
   /// Phase 12 — set when this asset was imported from a session recording.
   liveSessionRecordingFiles LiveSessionRecordingFile[]
 
+  /// P64 Phase 2 — the protected payloads that point at this asset.
+  lessonContents  LessonContent[]
+  lessonResources LessonResource[]
+  lessonVideoFor  CourseLesson[]
+
   @@index([academyId, status, type])
+  /// P64 Phase 2 — the quota query: every ready-or-reserved video for one
+  /// organization's academies, summed by duration. Without this it is a
+  /// sequential scan of every asset the platform holds on every upload.
+  @@index([academyId, provider, processingStatus])
+  /// P64 Phase 2 — "which of this academy's videos are on which tier",
+  /// the query a tier migration and the staff library both need.
+  @@index([academyId, securityTier])
   @@map("media_assets")
 }
 
@@ -2424,59 +2945,59 @@ model SubdomainAllocation {
 /// — the master plan's own §5.11 schema keeps these on the same row
 /// (`ssl_status`, `cdn_status`, `cdn_provider`), never a separate table.
 model DomainConnection {
-  id                  String                      @id @default(uuid())
-  academyId           String                      @unique @map("academy_id")
-  academy             Academy                     @relation(fields: [academyId], references: [id], onDelete: Cascade)
-  hostname            String?                     @unique
-  status              DomainStatus                @default(not_configured)
+  id                    String                      @id @default(uuid())
+  academyId             String                      @unique @map("academy_id")
+  academy               Academy                     @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  hostname              String?                     @unique
+  status                DomainStatus                @default(not_configured)
   /// `DomainVerificationRecord[]` (`{type, name, value}`) — display data
   /// only, generated from the real Cloudflare custom-hostname response,
   /// never fabricated locally.
-  verificationRecords Json?                       @map("verification_records")
-  sslStatus           SslStatus                   @default(not_configured) @map("ssl_status")
-  cdnStatus           CdnStatus                   @default(not_configured) @map("cdn_status")
-  cdnProvider         InfrastructureProviderName? @map("cdn_provider")
-  connectedAt         DateTime?                   @map("connected_at")
+  verificationRecords   Json?                       @map("verification_records")
+  sslStatus             SslStatus                   @default(not_configured) @map("ssl_status")
+  cdnStatus             CdnStatus                   @default(not_configured) @map("cdn_status")
+  cdnProvider           InfrastructureProviderName? @map("cdn_provider")
+  connectedAt           DateTime?                   @map("connected_at")
   /// P63 — the provider's own id for this custom hostname (Cloudflare
   /// Custom Hostname id). Lets re-check/disconnect address the exact
   /// resource instead of searching by hostname; `null` when the provider
   /// never accepted the hostname (e.g. no credentials configured).
-  providerHostnameId  String?                     @map("provider_hostname_id")
+  providerHostnameId    String?                     @map("provider_hostname_id")
   /// P63 — when Atlas last asked the provider about this hostname (manual
   /// "check now", operator check, or the verification sweep). `null` until
   /// the first check. What the customer and the Platform Owner see as
   /// "last checked".
-  lastCheckedAt       DateTime?                   @map("last_checked_at")
+  lastCheckedAt         DateTime?                   @map("last_checked_at")
   /// P63 — a stable, non-sensitive error code for the latest failed check
   /// (`provider_unavailable`, `provider_hostname_missing`, …). Never a raw
   /// provider message, never a credential. `null` after a successful check.
-  lastCheckError      String?                     @map("last_check_error")
+  lastCheckError        String?                     @map("last_check_error")
   /// P63c — the provider's own numeric error code for the latest refused
   /// registration/lookup (a number, never a message). `null` when none.
-  lastProviderErrorCode String?                   @map("last_provider_error_code")
+  lastProviderErrorCode String?                     @map("last_provider_error_code")
   /// P63 — result of Atlas's own outbound HTTPS probe of the hostname
   /// (`https://{hostname}/`): `true` reachable with a valid certificate,
   /// `false` not reachable, `null` never probed. Real telemetry, not a
   /// derived guess.
-  httpsReachable      Boolean?                    @map("https_reachable")
-  httpsCheckedAt      DateTime?                   @map("https_checked_at")
+  httpsReachable        Boolean?                    @map("https_reachable")
+  httpsCheckedAt        DateTime?                   @map("https_checked_at")
   /// P63d — the HTTP status the probe received (e.g. Cloudflare's 525 when
   /// the edge could not complete the origin handshake). `null` when no
   /// response arrived or the hostname was never probed. A 5xx is recorded
   /// as NOT reachable: the edge answered, the website did not.
-  httpsStatusCode     Int?                        @map("https_status_code")
+  httpsStatusCode       Int?                        @map("https_status_code")
   /// P63d — why the last probe found the hostname unreachable, as one of
   /// `HTTPS_FAILURE_REASONS` (`origin_error`, `tls_failed`, …). `null` when
   /// reachable or never probed.
-  httpsFailureReason  String?                     @map("https_failure_reason")
+  httpsFailureReason    String?                     @map("https_failure_reason")
   /// P63g — consecutive checks that ended in a recorded error (provider
   /// refusal, provider error, DNS not pointing, …). Drives the sweep's
   /// exponential backoff so an abandoned or permanently refused hostname
   /// is not re-asked every five minutes forever. Reset to 0 by any
   /// successful check.
-  consecutiveFailures Int                         @default(0) @map("consecutive_failures")
-  createdAt           DateTime                    @default(now()) @map("created_at")
-  updatedAt           DateTime                    @updatedAt @map("updated_at")
+  consecutiveFailures   Int                         @default(0) @map("consecutive_failures")
+  createdAt             DateTime                    @default(now()) @map("created_at")
+  updatedAt             DateTime                    @updatedAt @map("updated_at")
 
   @@index([status])
   @@index([lastCheckedAt])
@@ -2518,10 +3039,10 @@ model DomainProviderRelease {
 /// Not tenant-scoped, no RLS — matches `TrialPolicy`/`SchemaMeta`'s own
 /// identical "platform-infrastructure metadata, not tenant data" rule.
 model PlatformDomainConfiguration {
-  id         String   @id @default(uuid())
-  baseDomain String?  @map("base_domain")
-  configured Boolean  @default(false)
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id                   String    @id @default(uuid())
+  baseDomain           String?   @map("base_domain")
+  configured           Boolean   @default(false)
+  updatedAt            DateTime  @updatedAt @map("updated_at")
   /// P63g — when the verification sweep last finished a tick, and what it
   /// did (`{considered, checked, changed, failed, releasesProcessed,
   /// durationMs}`). The Platform Owner readiness page shows it, so a

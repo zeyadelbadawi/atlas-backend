@@ -32,6 +32,7 @@ import { toCourseProgressResponse } from '../dto/course-progress.contract';
 import type { CourseProgressResponse } from '../dto/course-progress.contract';
 import type { CompleteLessonDto } from '../dto/complete-lesson.dto';
 import { assertActiveEnrollment } from './learning-access.util';
+import { MINIMUM_WATCHED_RATIO } from '../dto/learning.constants';
 import {
   deriveCertificateStatus,
   deriveCompletionState,
@@ -201,6 +202,32 @@ export class CourseProgressService {
         throw new ForbiddenException({ messageKey: 'errors.progress.lessonLocked' });
       }
 
+      // P64 Phase 2 (§D.6) — the watched-ratio rule.
+      //
+      // The button stays where it was; what changes is that under
+      // `watched_ratio` it refuses below the minimum. The check is on
+      // SERVER-CREDITED evidence (`max_watched_ratio`, written only by
+      // `PlaybackService` from bounded wall-clock deltas), never on
+      // anything this request carries — a client that could assert its own
+      // ratio here would make the rule decorative, and a course whose
+      // certificate depends on it would be worthless.
+      const lesson = await tx.courseLesson.findUnique({
+        where: { id: payload.lessonId },
+        select: { completionRule: true },
+      });
+      if (
+        lesson?.completionRule === 'watched_ratio' &&
+        Number(lessonProgress.maxWatchedRatio) < MINIMUM_WATCHED_RATIO
+      ) {
+        throw new ForbiddenException({
+          messageKey: 'errors.progress.watchRequirementNotMet',
+          details: {
+            watchedRatio: Number(lessonProgress.maxWatchedRatio),
+            requiredRatio: MINIMUM_WATCHED_RATIO,
+          },
+        });
+      }
+
       // Idempotent: completing an already-completed lesson is a no-op
       // that just returns the current state, never an error.
       if (lessonProgress.status !== 'completed') {
@@ -246,6 +273,107 @@ export class CourseProgressService {
           await this.enrollmentsRepository.update(tx, enrollment.id, {
             status: 'completed',
             completedAt: new Date(),
+          });
+        }
+      }
+
+      const courseProgress = await this.courseProgressRepository.findByEnrollmentId(
+        tx,
+        enrollment.id,
+      );
+      const lessonProgressRows =
+        await this.courseProgressRepository.findLessonProgressForEnrollment(
+          tx,
+          enrollment.id,
+        );
+      return toCourseProgressResponse(courseId, courseProgress!, lessonProgressRows);
+    });
+  }
+
+  /**
+   * P64 Phase 2 (§D.6/§L) — UNDO a lesson completion.
+   *
+   * Exists because completion is now something a learner can trigger by
+   * accident (an auto-advance, a misclick on a lesson they had not
+   * finished), and without an undo their only options were to live with a
+   * wrong progress figure or ask staff to fix it. The plan lists it as a
+   * first-class endpoint for exactly that reason.
+   *
+   * WHAT IT DELIBERATELY DOES NOT DO: it does not re-lock the lessons that
+   * were unlocked as a consequence. A learner who already saw the next
+   * lesson has seen it; taking it back would be a punishment for pressing
+   * undo, and re-locking content a person has legitimately reached is a
+   * worse outcome than a briefly generous unlock. Only this lesson's own
+   * status, the counts and the derived states move.
+   *
+   * Evidence is NOT reset either. `watched_seconds` and
+   * `max_watched_ratio` record what actually happened; erasing them
+   * because the learner pressed undo would be rewriting history, and would
+   * also let someone under a `watched_ratio` rule clear their own evidence
+   * at will.
+   */
+  async undoCompleteLesson(
+    userId: string,
+    courseId: string,
+    lessonId: string,
+  ): Promise<CourseProgressResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const enrollment = await assertActiveEnrollment(
+        tx,
+        this.enrollmentsRepository,
+        userId,
+        courseId,
+        this.academyStudentsRepository,
+      );
+      await this.backfillLessonProgress(tx, enrollment, courseId);
+
+      const lessonProgress = await this.courseProgressRepository.findLessonProgress(
+        tx,
+        enrollment.id,
+        lessonId,
+      );
+      if (!lessonProgress || lessonProgress.courseId !== courseId) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+
+      // Idempotent in the same way `completeLesson` is: undoing something
+      // that is not complete returns the current state rather than erroring.
+      if (lessonProgress.status === 'completed') {
+        await this.courseProgressRepository.updateLessonProgress(tx, lessonProgress.id, {
+          // Back to `in_progress` when there is evidence of watching, else
+          // `available`. Honest either way — it says what the learner
+          // actually did.
+          status: lessonProgress.watchedSeconds > 0 ? 'in_progress' : 'available',
+          completedAt: null,
+        });
+
+        const allLessonProgress =
+          await this.courseProgressRepository.findLessonProgressForEnrollment(
+            tx,
+            enrollment.id,
+          );
+        const totalLessons = allLessonProgress.length;
+        const completedLessons = allLessonProgress.filter(
+          (row) => row.status === 'completed',
+        ).length;
+        const completionState = deriveCompletionState(completedLessons, totalLessons);
+        const currentLesson = allLessonProgress.find((row) => row.status !== 'completed');
+
+        await this.courseProgressRepository.updateCourseProgress(tx, enrollment.id, {
+          completedLessons,
+          percentage: totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0,
+          currentLessonId: currentLesson?.lessonId ?? null,
+          completionState,
+          certificateStatus: deriveCertificateStatus(completionState),
+        });
+
+        // A course that is no longer complete must not leave the
+        // enrollment claiming it is — the roster, the certificate status
+        // and the learner's own list all read that field.
+        if (completionState !== 'completed' && enrollment.status === 'completed') {
+          await this.enrollmentsRepository.update(tx, enrollment.id, {
+            status: 'enrolled',
+            completedAt: null,
           });
         }
       }

@@ -21,3 +21,15 @@ export const MAX_QUIZ_OPTIONS_PER_QUESTION = 10;
 export const MAX_ASSIGNMENT_TITLE_LENGTH = 150;
 export const MAX_ASSIGNMENT_DESCRIPTION_LENGTH = 2000;
 export const MAX_ASSIGNMENT_INSTRUCTIONS_LENGTH = 5000;
+
+/**
+ * P64 Phase 2 — the fraction of a video that must be WATCHED (by
+ * server-credited evidence, see `playback-evidence.util.ts`) before a
+ * lesson whose `completion_rule` is `watched_ratio` may be marked
+ * complete.
+ *
+ * 0.9 rather than 1.0 on purpose: end credits, a trailing silence and a
+ * player that stops a beat short of the final second are all normal, and
+ * a threshold nobody can actually reach is a threshold that gets disabled.
+ */
+export const MINIMUM_WATCHED_RATIO = 0.9;

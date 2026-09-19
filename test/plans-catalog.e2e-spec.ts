@@ -4,6 +4,7 @@
  * reads the same list, no organization scoping.
  */
 import { INestApplication } from '@nestjs/common';
+import { PLAN_CATALOG_KEYS } from '../src/plans/utils/plan-catalog.util';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma, seedAddOn, seedPlan } from './utils/db-admin';
@@ -97,7 +98,11 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
     expect(firstPage.body.pagination).toMatchObject({ page: 1, pageSize: 100 });
 
     const keys = firstPage.body.items.map((p: { key: string }) => p.key);
-    expect(keys).toEqual(['starter', 'growth', 'enterprise']);
+    // P64 Phase 2 (D10) — Atlas now sells TWO plan families, so the
+    // customer-facing catalog is six variants, not three. Derived from
+    // `PLAN_CATALOG_KEYS` rather than re-listed here so this assertion
+    // cannot drift from the catalog the seed and the migration write.
+    expect([...keys].sort()).toEqual([...PLAN_CATALOG_KEYS].sort());
 
     const growth = firstPage.body.items.find((p: { key: string }) => p.key === 'growth');
     expect(growth).toMatchObject({
@@ -133,7 +138,11 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
     const keys = catalog.body.items.map((p: { key: string }) => p.key);
     expect(keys).not.toContain(archived.key);
     expect(keys).not.toContain(fixture.key);
-    expect(keys).toEqual(['starter', 'growth', 'enterprise']);
+    // P64 Phase 2 (D10) — Atlas now sells TWO plan families, so the
+    // customer-facing catalog is six variants, not three. Derived from
+    // `PLAN_CATALOG_KEYS` rather than re-listed here so this assertion
+    // cannot drift from the catalog the seed and the migration write.
+    expect([...keys].sort()).toEqual([...PLAN_CATALOG_KEYS].sort());
 
     const byKey = await request(app.getHttpServer())
       .get(`/plans/${archived.key}`)

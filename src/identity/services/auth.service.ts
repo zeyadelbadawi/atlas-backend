@@ -50,6 +50,11 @@ import type { EmailProvider } from './email-provider.interface';
 import { emailDomain } from '../../plans/utils/trial-subject.util';
 import { PrincipalResolverService } from '../../tenancy/services/principal-resolver.service';
 import { SurfaceEnforcementService } from '../../tenancy/services/surface-enforcement.service';
+import {
+  DEVICE_COOKIE_MAX_AGE_SECONDS,
+  StudentDeviceService,
+} from '../../tenancy/services/student-device.service';
+import { AccessPolicyService } from '../../tenancy/services/access-policy.service';
 import type { Principal } from '../../tenancy/services/principal-resolver.service';
 import { AcademySurfaceService } from './academy-surface.service';
 import type { SignInSurface } from '../dto/sign-in.dto';
@@ -75,6 +80,24 @@ export interface SessionRequestContext {
   readonly locationCountry?: string;
   /** P64 Phase 1 — the request's `Host`, for academy-surface verification. */
   readonly hostname?: string;
+  /**
+   * P64 Phase 2 (AD-10) — the `atlas_device` cookie the browser presented,
+   * if any. Read from the real request by the controller, never from the
+   * body: a client must not be able to name its own device row.
+   */
+  readonly deviceCookie?: string;
+  /**
+   * Called when a NEW device was registered for this sign-in and its
+   * cookie has to be written to the response.
+   *
+   * A callback rather than a new return type, following
+   * `OrganizationsService.create`'s established `onCreated` precedent
+   * (see `TenancyModule`'s header comment): setting a cookie is an HTTP
+   * concern that belongs to the controller, and threading it through
+   * `AuthenticationSessionContract` would put a server-only secret into
+   * the wire contract every client already consumes.
+   */
+  readonly onDeviceCookie?: (value: string, maxAgeSeconds: number) => void;
 }
 
 /** P64 Phase 1 (AD-5) — what a session is minted for. */
@@ -125,6 +148,8 @@ export class AuthService {
     private readonly principalResolver: PrincipalResolverService,
     private readonly surfaceEnforcement: SurfaceEnforcementService,
     private readonly academySurfaceService: AcademySurfaceService,
+    private readonly studentDeviceService: StudentDeviceService,
+    private readonly accessPolicyService: AccessPolicyService,
   ) {}
 
   /**
@@ -790,6 +815,54 @@ export class AuthService {
    * `signIn`) must issue sessions through exactly this method rather than
    * duplicating token creation.
    */
+  /**
+   * Resolves (or registers) the device this sign-in is coming from.
+   *
+   * Runs in the learner's OWN user context so `student_devices_self_all`
+   * is the policy in force — the guard's decision and RLS independently
+   * agree that a person only ever touches their own device rows.
+   *
+   * Never throws. A device registry that could fail a sign-in would turn
+   * a policy feature into an availability risk for the whole academy
+   * surface; the worst case here is a session with no device, which the
+   * grant endpoint then refuses with a message the learner can act on.
+   */
+  private async resolveSignInDevice(
+    userId: string,
+    academyId: string,
+    context?: SessionRequestContext,
+  ): Promise<string | null> {
+    try {
+      return await this.tenancyContextService.runInUserContext(userId, async (tx) => {
+        const policy = await this.accessPolicyService.resolveForAcademy(tx, academyId);
+        const resolution = await this.studentDeviceService.resolveForSession(tx, {
+          userId,
+          academyId,
+          cookieValue: context?.deviceCookie,
+          userAgent: context?.userAgent,
+          maxDevices: policy.maxDevices,
+        });
+        if (resolution.issueCookieValue && context?.onDeviceCookie) {
+          context.onDeviceCookie(
+            resolution.issueCookieValue,
+            DEVICE_COOKIE_MAX_AGE_SECONDS,
+          );
+        }
+        return resolution.device?.id ?? null;
+      });
+    } catch (error) {
+      this.logger.warn(
+        {
+          userId,
+          academyId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Device registration failed during sign-in; issuing a session with no device.',
+      );
+      return null;
+    }
+  }
+
   private async issueSession(
     user: User,
     context?: SessionRequestContext,
@@ -807,6 +880,21 @@ export class AuthService {
     // life of the session rather than one link in the rotation chain.
     const sessionId = randomUUID();
 
+    // P64 Phase 2 (AD-10) — bind this session to a registered DEVICE, but
+    // only on the academy surface. Management sessions are staff sessions;
+    // the device policy governs learning, and attaching a device row to a
+    // staff session would both misreport the learner's device list and
+    // consume a slot nobody asked for.
+    //
+    // Reaching the cap does NOT refuse the sign-in (see
+    // `StudentDeviceService`'s own comment): the session is issued with no
+    // device, and it is CONTENT delivery that is refused, which leaves the
+    // learner able to reach the Devices page and remove one.
+    const deviceId =
+      selection.surface === 'academy' && selection.academyId
+        ? await this.resolveSignInDevice(user.id, selection.academyId, context)
+        : null;
+
     const refreshToken = await this.refreshTokensRepository.create({
       userId: user.id,
       tokenHash,
@@ -818,6 +906,7 @@ export class AuthService {
       deviceLabel: deriveDeviceLabel(context?.userAgent),
       surface: selection.surface,
       academyId: selection.academyId ?? null,
+      deviceId,
     });
 
     const accessToken = this.accessTokenService.issue({

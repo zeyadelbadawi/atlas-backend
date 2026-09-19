@@ -234,6 +234,89 @@ const EnvSchema = z.object({
     .positive()
     .default(10 * 1024 * 1024),
 
+  // --- P64 Phase 2 — protected content tier and provider-hosted video
+  // (master plan Phase 2 §D.1/§D.4) ---
+  //
+  // Every one of these is optional with a working default, because the
+  // phase has to boot in an environment that has no Cloudflare Stream
+  // account — the same honest posture `ZOOM_*` already takes. What must
+  // NOT have a permissive default is the protected bucket name: it falls
+  // back to `<R2_BUCKET>-protected` in `configuration.ts`, so an unset
+  // variable still means a genuinely separate bucket, never the public one.
+  // The five P64 Phase 2 rollout flags (§S). Same three modes as
+  // `SURFACE_ENFORCE_MODE`, defaulting to `off` — see
+  // `FeatureFlagsService` for why `off` is the safe end for each of them.
+  FLAG_CONTENT_PROTECTED_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
+  FLAG_CONTENT_PROTECTED_ACADEMY_IDS: z.string().optional(),
+  FLAG_VIDEO_NORMAL_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
+  FLAG_VIDEO_NORMAL_ACADEMY_IDS: z.string().optional(),
+  FLAG_VIDEO_PREMIUM_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
+  FLAG_VIDEO_PREMIUM_ACADEMY_IDS: z.string().optional(),
+  FLAG_DEVICES_POLICY_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
+  FLAG_DEVICES_POLICY_ACADEMY_IDS: z.string().optional(),
+  FLAG_LEARNER_DASHBOARD_V2_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
+  FLAG_LEARNER_DASHBOARD_V2_ACADEMY_IDS: z.string().optional(),
+  FLAG_PLAYER_V2_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
+  FLAG_PLAYER_V2_ACADEMY_IDS: z.string().optional(),
+
+  R2_PROTECTED_BUCKET: z.string().trim().min(1).optional(),
+  PROTECTED_MEDIA_URL_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    // 10 minutes (Phase 2 §I). Capped as well as defaulted: a presigned
+    // URL is a bearer credential, and an operator who typed 86400 would be
+    // turning it back into the durable link this phase exists to remove.
+    .max(3600)
+    .default(600),
+  PROTECTED_MEDIA_MAX_UPLOAD_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(50 * 1024 * 1024),
+  VIDEO_PROVIDER: z.enum(['fake', 'cloudflare_stream', 'r2_worker']).default('fake'),
+  // P64 Phase 2 (DL-19) — the NORMAL tier's delivery gate. Optional: the
+  // tier reports itself unconfigured without them rather than failing
+  // startup, because an environment may legitimately run Premium only.
+  BASIC_VIDEO_DELIVERY_HOST: z.string().trim().optional(),
+  BASIC_VIDEO_SIGNING_SECRET: z.string().trim().optional(),
+  // Revocation and origin restriction are CAPABILITIES the grant reports
+  // to the learner, so they are driven by whether they are actually
+  // configured — never assumed (AD-16).
+  BASIC_VIDEO_REVOCATION_ENDPOINT: z.string().trim().optional(),
+  BASIC_VIDEO_REVOCATION_TOKEN: z.string().trim().optional(),
+  BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED: z.enum(['true', 'false']).default('false'),
+  BASIC_VIDEO_PLAYBACK_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    // Capped at one hour, like every other credential ceiling here: the
+    // Normal tier's short credential IS its revocation mechanism, and an
+    // operator who typed 86400 would be removing it.
+    .max(3600)
+    .default(600),
+  CLOUDFLARE_STREAM_ACCOUNT_ID: z.string().trim().optional(),
+  CLOUDFLARE_STREAM_API_TOKEN: z.string().trim().optional(),
+  CLOUDFLARE_STREAM_SIGNING_KEY_ID: z.string().trim().optional(),
+  CLOUDFLARE_STREAM_SIGNING_KEY_PEM: z.string().optional(),
+  CLOUDFLARE_STREAM_WEBHOOK_SECRET: z.string().trim().optional(),
+  CLOUDFLARE_STREAM_CUSTOMER_SUBDOMAIN: z.string().trim().optional(),
+  VIDEO_PLAYBACK_TOKEN_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    // 2 hours (Phase 2 §I) — the ceiling, not just the default, for the
+    // same reason as above.
+    .max(2 * 60 * 60)
+    .default(2 * 60 * 60),
+  LEARNING_LEASE_TTL_SECONDS: z.coerce.number().int().positive().max(600).default(60),
+  LEARNING_LEASE_HEARTBEAT_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(300)
+    .default(20),
+
   // --- Phase P11 — Public Website Runtime, Domains & Edge (master plan
   // §5.11, §21 P11) ---
   // The trusted root domain Atlas subdomains are allocated under (e.g.
@@ -425,6 +508,44 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
       'CLOUDFLARE_API_TOKEN and CLOUDFLARE_ZONE_ID must be set together — refusing to start ' +
         'with a token but no zone (or a zone but no token) for the custom-domain integration.',
     );
+  }
+
+  // P64 Phase 2 — selecting the real video provider without the credentials
+  // to sign a playback token would boot an app that accepts uploads and
+  // then refuses every play. Fail at startup instead, where an operator
+  // sees it, rather than per-request where a learner does.
+  if (parsed.data.VIDEO_PROVIDER === 'cloudflare_stream') {
+    const missing = (
+      [
+        ['CLOUDFLARE_STREAM_ACCOUNT_ID', parsed.data.CLOUDFLARE_STREAM_ACCOUNT_ID],
+        ['CLOUDFLARE_STREAM_API_TOKEN', parsed.data.CLOUDFLARE_STREAM_API_TOKEN],
+        ['CLOUDFLARE_STREAM_SIGNING_KEY_ID', parsed.data.CLOUDFLARE_STREAM_SIGNING_KEY_ID],
+        [
+          'CLOUDFLARE_STREAM_SIGNING_KEY_PEM',
+          parsed.data.CLOUDFLARE_STREAM_SIGNING_KEY_PEM,
+        ],
+        [
+          'CLOUDFLARE_STREAM_CUSTOMER_SUBDOMAIN',
+          parsed.data.CLOUDFLARE_STREAM_CUSTOMER_SUBDOMAIN,
+        ],
+        // Required, not optional: without it every inbound webhook fails
+        // signature verification, so no upload is ever reconciled and
+        // every reservation keeps consuming quota. See
+        // `CloudflareStreamProvider.isConfigured`.
+        [
+          'CLOUDFLARE_STREAM_WEBHOOK_SECRET',
+          parsed.data.CLOUDFLARE_STREAM_WEBHOOK_SECRET,
+        ],
+      ] as const
+    )
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new Error(
+        `VIDEO_PROVIDER=cloudflare_stream requires ${missing.join(', ')} — refusing to start ` +
+          'with the real video provider selected but no credentials to sign playback with.',
+      );
+    }
   }
 
   if (parsed.data.EMAIL_PROVIDER === 'resend') {

@@ -1,16 +1,24 @@
 /**
  * One-off (but safely re-runnable) maintenance script — reduces the
- * shared `plans` catalog to exactly the 3 real, production plans
- * `prisma/seed.ts` defines (`starter`/`growth`/`enterprise`), removing
+ * shared `plans` catalog to exactly the real, production plans the
+ * catalog defines (`src/plans/utils/plan-catalog.util.ts`), removing
  * every e2e-test-fixture row.
+ *
+ * P64 Phase 2 (D10): that catalog is now SIX variants, not three —
+ * `starter`/`growth`/`enterprise` (Normal) plus `premium-starter`/
+ * `premium-growth`/`premium-enterprise`. The real keys are imported from
+ * the one table the seed and the premium-plan migration also write from,
+ * rather than restated here: a literal list in this file that fell behind
+ * the catalog would not merely be stale, it would DELETE real plans and
+ * every subscription referencing them.
  *
  * Background (checkout/plans investigation): `plans` has NO write
  * endpoint at all — the only two ways a `Plan` row is ever created are
- * `prisma/seed.ts`'s `seedPlansAndSubscriptions` (upserts exactly the 3
- * real plans, by their stable `key`) and raw test fixtures
+ * `prisma/seed.ts`'s `seedPlansAndSubscriptions` (upserts exactly the
+ * catalog's real plans, by their stable `key`) and raw test fixtures
  * (`test/utils/db-admin.ts`'s `seedPlan`, and a handful of e2e specs'
  * own direct `admin.plan.create(...)` calls). This means ANY plan whose
- * `key` is not one of the 3 real ones is, with total certainty, a test
+ * `key` is not one of the real ones is, with total certainty, a test
  * fixture — never ambiguous, never a real customer's configuration.
  *
  * `PlansRepository`'s `CUSTOMER_FACING_WHERE` filter (the code fix this
@@ -40,8 +48,9 @@
  * Usage: `npm run db:cleanup-plan-catalog` (dry run: pass `--dry-run`).
  */
 import { PrismaClient } from '@prisma/client';
+import { PLAN_CATALOG_KEYS } from '../src/plans/utils/plan-catalog.util';
 
-const REAL_PLAN_KEYS = ['starter', 'growth', 'enterprise'] as const;
+const REAL_PLAN_KEYS: readonly string[] = PLAN_CATALOG_KEYS;
 
 function requireAdminDatabaseUrl(): string {
   const url = process.env.DATABASE_URL;
@@ -95,7 +104,9 @@ async function main(): Promise<void> {
         `Expected exactly ${REAL_PLAN_KEYS.length} plans after cleanup, found ${after}.`,
       );
     }
-    console.log('✔ Plan catalog now holds exactly the 3 real, customer-facing plans.');
+    console.log(
+      `✔ Plan catalog now holds exactly the ${REAL_PLAN_KEYS.length} real, customer-facing plans.`,
+    );
   } finally {
     await prisma.$disconnect();
   }

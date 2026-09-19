@@ -1,0 +1,13 @@
+{
+  "name": "atlas-video-gate-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker that enforces Atlas-minted playback tokens in front of the protected R2 bucket. Zero runtime dependencies by design.",
+  "dependencies": {},
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  }
+}

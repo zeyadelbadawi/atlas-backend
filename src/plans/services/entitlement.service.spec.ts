@@ -34,6 +34,7 @@ const BASE_LIMITS: PlanResourceLimits = {
   courses: 20,
   generalStorage: 10,
   videoStorage: 10,
+  videoStorageMinutes: 500,
   recordedSessions: 0,
 };
 

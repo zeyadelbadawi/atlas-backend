@@ -55,6 +55,7 @@ import { AnnouncementsService } from '../src/community/services/announcements.se
 import { BlogPostsService } from '../src/community/services/blog-posts.service';
 import { ForumsService } from '../src/community/services/forums.service';
 import { permissionsForRole } from '../src/tenancy/constants/organization-permissions.constants';
+import { PLAN_CATALOG, planKeysForTiers } from '../src/plans/utils/plan-catalog.util';
 
 const DEV_PASSWORD = 'DevPassword123!';
 
@@ -320,6 +321,15 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       },
       status: 'active',
       displayOrder: 1,
+      // P64 Phase 2 (D10) — set EXPLICITLY, never left to the column
+      // default. The Phase 2 migration backfills existing rows to
+      // `normal` and to the tier their key implies; a fresh database has
+      // no rows for it to backfill, so only the seed can say which tier
+      // `growth` and `enterprise` are — and the column default (`basic`)
+      // would quietly make all three the same tier. A seeded database and
+      // a migrated one have to agree.
+      family: 'normal',
+      tier: 'basic',
       limits: {
         academies: 1,
         students: 20,
@@ -328,6 +338,11 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         courses: 5,
         generalStorage: 2,
         videoStorage: 2,
+        // P64 Phase 2 (D5, mapped per DL-3): Starter 500 minutes of
+        // provider-hosted video. An Atlas entitlement, not a provider price.
+        // Read from the shared catalog so the seed, the premium-plan
+        // migration and the tests cannot disagree about the baseline.
+        videoStorageMinutes: PLAN_CATALOG.normal.basic.videoStorageMinutes,
         // Live Sessions add-on: how many sessions may be RECORDED.
         // Unrecorded sessions are unlimited and gated by the feature flag.
         recordedSessions: 3,
@@ -349,7 +364,7 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       pricing: { amount: 0, currency: 'USD', billingCycle: 'monthly' },
       trialEligible: true,
     },
-    update: { trialEligible: true },
+    update: { trialEligible: true, family: 'normal', tier: 'basic' },
   });
 
   const growth = await prisma.plan.upsert({
@@ -365,6 +380,8 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       },
       status: 'active',
       displayOrder: 2,
+      family: 'normal',
+      tier: 'growth',
       limits: {
         academies: 5,
         students: 200,
@@ -373,6 +390,8 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         courses: 50,
         generalStorage: 20,
         videoStorage: 20,
+        // P64 Phase 2 (D5/DL-3) — the tier D5 calls "Professional".
+        videoStorageMinutes: PLAN_CATALOG.normal.growth.videoStorageMinutes,
         recordedSessions: 10,
       },
       features: {
@@ -392,7 +411,7 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       pricing: { amount: 79, currency: 'USD', billingCycle: 'monthly' },
       trialEligible: true,
     },
-    update: { trialEligible: true },
+    update: { trialEligible: true, family: 'normal', tier: 'growth' },
   });
 
   await prisma.plan.upsert({
@@ -408,6 +427,8 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       },
       status: 'active',
       displayOrder: 3,
+      family: 'normal',
+      tier: 'enterprise',
       limits: {
         academies: 'unlimited',
         students: 'unlimited',
@@ -416,6 +437,11 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
         courses: 'unlimited',
         generalStorage: 'unlimited',
         videoStorage: 'unlimited',
+        // P64 Phase 2 (D5/DL-3) — the tier D5 calls "Business". A real
+        // number, not `unlimited`: D5 sets a ceiling for every tier, and
+        // provider-hosted minutes are the one resource the plan deliberately
+        // does not give away without bound.
+        videoStorageMinutes: PLAN_CATALOG.normal.enterprise.videoStorageMinutes,
         recordedSessions: 'unlimited',
       },
       features: {
@@ -435,7 +461,184 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       pricing: { amount: 299, currency: 'USD', billingCycle: 'monthly' },
       trialEligible: false,
     },
-    update: { trialEligible: false },
+    update: { trialEligible: false, family: 'normal', tier: 'enterprise' },
+  });
+
+  // ---------------------------------------------------------------------
+  // P64 Phase 2 (D10, DL-18) — the PREMIUM family.
+  //
+  // The same three tiers, so a customer comparing `growth` with
+  // `premium-growth` is comparing exactly one thing: the video security
+  // capability class. Seat counts, course counts, storage, features and
+  // recording allowances are IDENTICAL to the Normal counterpart, on
+  // purpose — D10 gives the family authority over the video tier and the
+  // TIER authority over commercial limits, so a family that also changed
+  // the seat count would be two product changes wearing one name, and an
+  // academy downgrading from Premium to Normal would lose instructors it
+  // never bought video protection for.
+  //
+  // `videoStorageMinutes` matches the Normal counterpart too. D5 as
+  // amended explicitly PERMITS per-variant values and DL-24 records that
+  // as an open owner decision; the mechanism is already here (one value
+  // per variant in `PLAN_CATALOG`), so honouring a ruling is a data
+  // change. Choosing a different number today would be inventing the
+  // decision instead of implementing it.
+  //
+  // PRICING IS DISPLAY-ONLY METADATA, exactly as it is on the three plans
+  // above — no checkout or authorization path reads it, and `pricing` is
+  // never written on the upsert's UPDATE path so a Platform Owner's later
+  // adjustment survives a re-seed. The amounts below are placeholders
+  // chosen only to sit clearly above their Normal counterpart; the REAL
+  // prices are business data the owner sets in the catalog. They are
+  // never derived from, and never validated against, what a video
+  // provider charges — D5 and D10 both forbid a provider price appearing
+  // anywhere in this codebase.
+  // ---------------------------------------------------------------------
+  await prisma.plan.upsert({
+    where: { key: PLAN_CATALOG.premium.basic.key },
+    create: {
+      key: PLAN_CATALOG.premium.basic.key,
+      name: 'Premium Starter',
+      description: 'A single academy, with Premium video protection.',
+      nameLocalized: { en: 'Premium Starter', ar: 'الأساسية المميزة' },
+      descriptionLocalized: {
+        en: 'A single academy, with Premium video protection.',
+        ar: 'أكاديمية واحدة، مع حماية فيديو مميزة.',
+      },
+      status: 'active',
+      displayOrder: PLAN_CATALOG.premium.basic.displayOrder,
+      family: 'premium',
+      tier: 'basic',
+      limits: {
+        academies: 1,
+        students: 20,
+        instructors: 2,
+        staff: 2,
+        courses: 5,
+        generalStorage: 2,
+        videoStorage: 2,
+        videoStorageMinutes: PLAN_CATALOG.premium.basic.videoStorageMinutes,
+        recordedSessions: 3,
+      },
+      features: {
+        cms: true,
+        seo: false,
+        seoAdvanced: false,
+        marketing: false,
+        marketingAdvanced: false,
+        analytics: false,
+        analyticsAdvanced: false,
+        customDomain: false,
+        themes: true,
+        multipleThemes: false,
+        backup: false,
+        liveSessions: false,
+      },
+      pricing: { amount: 49, currency: 'USD', billingCycle: 'monthly' },
+      // Mirrors the Normal counterpart. Trial eligibility is catalog data
+      // the Platform Owner changes without a deploy (see `Plan.
+      // trialEligible`'s own doc comment) — making Premium Starter
+      // untrialable would be a revenue decision nobody has taken.
+      trialEligible: true,
+    },
+    update: { trialEligible: true, family: 'premium', tier: 'basic' },
+  });
+
+  await prisma.plan.upsert({
+    where: { key: PLAN_CATALOG.premium.growth.key },
+    create: {
+      key: PLAN_CATALOG.premium.growth.key,
+      name: 'Premium Growth',
+      description:
+        'For growing organizations running multiple academies, with Premium video protection.',
+      nameLocalized: { en: 'Premium Growth', ar: 'النمو المميز' },
+      descriptionLocalized: {
+        en: 'For growing organizations running multiple academies, with Premium video protection.',
+        ar: 'للمؤسسات المتنامية التي تدير عدة أكاديميات، مع حماية فيديو مميزة.',
+      },
+      status: 'active',
+      displayOrder: PLAN_CATALOG.premium.growth.displayOrder,
+      family: 'premium',
+      tier: 'growth',
+      limits: {
+        academies: 5,
+        students: 200,
+        instructors: 10,
+        staff: 10,
+        courses: 50,
+        generalStorage: 20,
+        videoStorage: 20,
+        videoStorageMinutes: PLAN_CATALOG.premium.growth.videoStorageMinutes,
+        recordedSessions: 10,
+      },
+      features: {
+        cms: true,
+        seo: true,
+        seoAdvanced: true,
+        marketing: true,
+        marketingAdvanced: false,
+        analytics: true,
+        analyticsAdvanced: false,
+        customDomain: true,
+        themes: true,
+        multipleThemes: true,
+        backup: false,
+        liveSessions: false,
+      },
+      pricing: { amount: 199, currency: 'USD', billingCycle: 'monthly' },
+      trialEligible: true,
+    },
+    update: { trialEligible: true, family: 'premium', tier: 'growth' },
+  });
+
+  await prisma.plan.upsert({
+    where: { key: PLAN_CATALOG.premium.enterprise.key },
+    create: {
+      key: PLAN_CATALOG.premium.enterprise.key,
+      name: 'Premium Enterprise',
+      description: 'Unlimited scale for large organizations, with Premium video protection.',
+      nameLocalized: { en: 'Premium Enterprise', ar: 'المؤسسات المميزة' },
+      descriptionLocalized: {
+        en: 'Unlimited scale for large organizations, with Premium video protection.',
+        ar: 'نطاق غير محدود للمؤسسات الكبيرة، مع حماية فيديو مميزة.',
+      },
+      status: 'active',
+      displayOrder: PLAN_CATALOG.premium.enterprise.displayOrder,
+      family: 'premium',
+      tier: 'enterprise',
+      limits: {
+        academies: 'unlimited',
+        students: 'unlimited',
+        instructors: 'unlimited',
+        staff: 'unlimited',
+        courses: 'unlimited',
+        generalStorage: 'unlimited',
+        videoStorage: 'unlimited',
+        // Still a real number, for the same reason the Normal Enterprise
+        // plan carries one: D5 sets a ceiling on provider-hosted minutes
+        // for every tier, and `unlimited` here would be the single place
+        // the catalog stopped bounding a resource with a real cost.
+        videoStorageMinutes: PLAN_CATALOG.premium.enterprise.videoStorageMinutes,
+        recordedSessions: 'unlimited',
+      },
+      features: {
+        cms: true,
+        seo: true,
+        seoAdvanced: true,
+        marketing: true,
+        marketingAdvanced: true,
+        analytics: true,
+        analyticsAdvanced: true,
+        customDomain: true,
+        themes: true,
+        multipleThemes: true,
+        backup: true,
+        liveSessions: false,
+      },
+      pricing: { amount: 599, currency: 'USD', billingCycle: 'monthly' },
+      trialEligible: false,
+    },
+    update: { trialEligible: false, family: 'premium', tier: 'enterprise' },
   });
 
   // ---------------------------------------------------------------------
@@ -450,10 +653,19 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
   // every other key untouched, so this is safe to re-run and never
   // clobbers a deployment's own tuned values for the keys it does not name.
   // ---------------------------------------------------------------------
+  //
+  // P64 Phase 2 (D10): the allowance is keyed by TIER, so each Premium
+  // variant carries its Normal counterpart's number. The family governs
+  // the video security tier and nothing else — a Premium customer who
+  // could record fewer sessions than the Normal customer on the same tier
+  // would be a second, undeclared product difference.
   const RECORDED_SESSION_ALLOWANCE: Record<string, number | 'unlimited'> = {
-    starter: 3,
-    growth: 10,
-    enterprise: 'unlimited',
+    [PLAN_CATALOG.normal.basic.key]: 3,
+    [PLAN_CATALOG.normal.growth.key]: 10,
+    [PLAN_CATALOG.normal.enterprise.key]: 'unlimited',
+    [PLAN_CATALOG.premium.basic.key]: 3,
+    [PLAN_CATALOG.premium.growth.key]: 10,
+    [PLAN_CATALOG.premium.enterprise.key]: 'unlimited',
   };
 
   for (const [planKey, allowance] of Object.entries(RECORDED_SESSION_ALLOWANCE)) {
@@ -488,7 +700,7 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       description:
         'Run live classes inside your courses with Zoom, with attendance tracking and optional recording.',
       effect: { type: 'feature', featureKey: 'liveSessions' },
-      compatiblePlanKeys: ['starter', 'growth', 'enterprise'],
+      compatiblePlanKeys: planKeysForTiers(['basic', 'growth', 'enterprise']),
       pricing: { amount: 29, currency: 'USD', billingCycle: 'monthly' },
       // Implemented but not yet launched to customers: it is listed in the
       // store as "Coming Soon" and cannot be installed until a Platform
@@ -497,7 +709,10 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
     },
     update: {
       effect: { type: 'feature', featureKey: 'liveSessions' },
-      compatiblePlanKeys: ['starter', 'growth', 'enterprise'],
+      // Repaired on every seed: a row written before the Premium family
+      // existed lists Normal keys only, which would refuse the add-on to
+      // a paying Premium customer of the same tier (D10).
+      compatiblePlanKeys: planKeysForTiers(['basic', 'growth', 'enterprise']),
     },
   });
 
@@ -508,11 +723,11 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       name: 'Extra Academy',
       description: 'Raises your academy limit by 2.',
       effect: { type: 'limit', limitKey: 'academies', amount: 2 },
-      compatiblePlanKeys: ['starter', 'growth'],
+      compatiblePlanKeys: planKeysForTiers(['basic', 'growth']),
       pricing: { amount: 15, currency: 'USD', billingCycle: 'monthly' },
       catalogStatus: 'published',
     },
-    update: {},
+    update: { compatiblePlanKeys: planKeysForTiers(['basic', 'growth']) },
   });
 
   await prisma.addOn.upsert({
@@ -520,13 +735,13 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
     create: {
       key: 'advanced-analytics',
       name: 'Advanced Analytics',
-      description: 'Unlocks advanced analytics on the Growth plan.',
+      description: 'Unlocks advanced analytics on the Growth tier.',
       effect: { type: 'feature', featureKey: 'analyticsAdvanced' },
-      compatiblePlanKeys: ['growth'],
+      compatiblePlanKeys: planKeysForTiers(['growth']),
       pricing: { amount: 25, currency: 'USD', billingCycle: 'monthly' },
       catalogStatus: 'published',
     },
-    update: {},
+    update: { compatiblePlanKeys: planKeysForTiers(['growth']) },
   });
 
   const now = new Date();

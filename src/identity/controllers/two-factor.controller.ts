@@ -23,9 +23,10 @@ import {
   HttpStatus,
   Post,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import { TwoFactorService } from '../services/two-factor.service';
 import type { TwoFactorStatus } from '../services/two-factor.service';
@@ -40,6 +41,8 @@ import {
   VerifyTwoFactorDto,
 } from '../dto/two-factor.dto';
 import { resolveClientIp, resolveUserAgent } from '../utils/request-metadata.util';
+import { deviceCookieOptions, readCookie } from '../../common/http/cookies.util';
+import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
 import type { AuthenticationSessionContract } from '../dto/contracts';
 
 @Controller('auth/2fa')
@@ -96,6 +99,7 @@ export class TwoFactorController {
   async verify(
     @Req() request: Request,
     @Body() dto: VerifyTwoFactorDto,
+    @Res({ passthrough: true }) response: Response,
   ): Promise<AuthenticationSessionContract> {
     return this.authService.completeTwoFactorSignIn(
       dto.challengeId,
@@ -104,6 +108,18 @@ export class TwoFactorController {
         ipAddress: resolveClientIp(request),
         userAgent: resolveUserAgent(request),
         hostname: request.hostname,
+        // P64 Phase 2 — the 2FA path mints a session exactly like the
+        // password path, so it registers the device exactly like it too.
+        // Omitting this here would give every 2FA-protected learner a
+        // session with no device and a permanent content refusal.
+        deviceCookie: readCookie(request.headers.cookie, DEVICE_COOKIE_NAME),
+        onDeviceCookie: (value, maxAgeSeconds) => {
+          response.cookie(
+            DEVICE_COOKIE_NAME,
+            value,
+            deviceCookieOptions({ secure: request.secure, maxAgeSeconds }),
+          );
+        },
       },
       { surface: dto.surface ?? 'management', academyId: dto.academyId },
     );

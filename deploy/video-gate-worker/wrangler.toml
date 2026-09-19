@@ -1,0 +1,136 @@
+# Atlas Normal-tier video gate — Wrangler configuration.
+#
+# This file is the whole deployment. There is no build step and no
+# `package.json`, because the Worker has zero runtime dependencies: it uses
+# only the Workers runtime's own Web Crypto, `URL`, `Headers` and `Response`
+# plus the R2 and KV bindings declared below. Deploy with a transient CLI:
+#
+#     npx wrangler@latest deploy
+#
+# Nothing in this directory is imported by the NestJS application, and
+# nothing here is part of the API's build. It is deployed on its own
+# lifecycle, to Cloudflare, by an operator — see README.md.
+
+name = "atlas-video-gate"
+main = "src/index.js"
+
+# Pin the runtime date. Workers uses this to decide which runtime
+# behaviours apply, and leaving it floating means a future Cloudflare
+# release could change semantics under a security boundary without anyone
+# editing a file. Bump it deliberately, and re-run the validation harness
+# when you do.
+compatibility_date = "2026-09-19"
+
+# `nodejs_compat` is deliberately NOT enabled. The gate must run on the
+# same standards-only surface the local harness runs on; a Node shim would
+# let a future edit reach for `node:crypto` and silently break the "one
+# verifier, two runtimes" property that makes local validation meaningful.
+compatibility_flags = []
+
+# Observability on, because DL-22's cost question ("Worker request volume
+# and realistic request cost") can only be answered from production
+# numbers, and the per-invocation CPU time that drives the CPU half of the
+# bill is reported per request in the Workers Trace Events dataset
+# (`CPUTimeMs`) and as a quantile chart in the dashboard.
+[observability]
+enabled = true
+
+# ---------------------------------------------------------------------------
+# Route
+# ---------------------------------------------------------------------------
+# The Atlas-owned delivery hostname. It MUST match
+# `BASIC_VIDEO_DELIVERY_HOST` in the API's environment, because that is the
+# host `BasicVideoProvider.issuePlaybackToken` writes into every playback
+# URL. A mismatch does not fail loudly — it produces playback URLs that
+# resolve to nothing — so treat these two values as one setting recorded in
+# two places.
+#
+# Uncomment and set the real zone before the first deploy.
+# routes = [
+#   { pattern = "video.example.ae/v/*", zone_name = "example.ae" }
+# ]
+
+# ---------------------------------------------------------------------------
+# Bindings
+# ---------------------------------------------------------------------------
+
+# The protected bucket, bound directly. This is the decision the whole tier
+# rests on (investigation §4.3): a binding keeps delivery on an
+# Atlas-controlled hostname behind a verifier Atlas controls, where a
+# presigned URL would only work on the S3 API hostname and would therefore
+# forgo the CDN — and could be neither session-bound nor revoked.
+#
+# `bucket_name` must be the SAME bucket `ProtectedMediaStorage` writes to,
+# which the API derives as `R2_PROTECTED_BUCKET` or, when unset,
+# `${R2_BUCKET}-protected`.
+[[r2_buckets]]
+binding = "VIDEO_BUCKET"
+bucket_name = "atlas-media-protected"
+preview_bucket_name = "atlas-media-dev-protected"
+
+# The revocation denylist: one key per revoked session, `rev:s:<sessionId>`.
+# Value is ignored; presence is the signal. Write it with a TTL equal to the
+# longest token lifetime (600 s) so the list stays small on its own — after
+# that, every token naming that session has expired anyway and the entry has
+# nothing left to revoke.
+#
+# Create it first and paste the id here:
+#     npx wrangler kv namespace create GATE_DENYLIST
+[[kv_namespaces]]
+binding = "GATE_DENYLIST"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+
+# ---------------------------------------------------------------------------
+# Plain variables (non-secret)
+# ---------------------------------------------------------------------------
+[vars]
+# "kv"   — check the denylist on every request (the tier's headline claim).
+# "none" — signature and expiry only. Setting this forfeits
+#          `revocableBeforeExpiry`, which `basic-video.provider.ts`
+#          advertises in `capabilities()`. Do not ship "none" while that
+#          capability is reported as true.
+REVOCATION_MODE = "kv"
+
+# How long a colo may reuse a denylist read. This IS the revocation latency
+# budget, and 30 is Cloudflare's documented minimum. See README.
+DENYLIST_CACHE_TTL_SECONDS = "30"
+
+# "closed" — if the denylist cannot be read, refuse. Matches Atlas's
+#            standing rule that an authorization component which cannot
+#            reach its data says no.
+# "open"   — keep playback up during a KV incident and rely on the
+#            ten-minute token lifetime plus signing-secret rotation as the
+#            backstop. A deliberate availability-over-strictness choice;
+#            record it as one if you make it.
+DENYLIST_FAIL_MODE = "closed"
+
+# Comma-separated browser origins permitted to embed the player. Empty or
+# unset means no origin restriction. Read the honest caveats in README
+# before treating this as a security control: `Origin` is forgeable, and a
+# plain `<video src>` element sends no `Origin` at all.
+ALLOWED_ORIGINS = ""
+
+# "false" turns the origin check into a CORS-header-only feature while
+# still refusing nothing. Left as "true" so that setting ALLOWED_ORIGINS
+# actually enforces something.
+ENFORCE_ORIGIN = "true"
+
+# ---------------------------------------------------------------------------
+# Secrets — NEVER in this file
+# ---------------------------------------------------------------------------
+# The signing secret is set out of band and is never committed:
+#
+#     npx wrangler secret put GATE_SIGNING_SECRET
+#     npx wrangler secret put GATE_SIGNING_SECRET_PREVIOUS   # rotation only
+#
+# `GATE_SIGNING_SECRET` must equal `BASIC_VIDEO_SIGNING_SECRET` in the API's
+# environment. It is the only shared secret between Atlas and the edge, and
+# it is what makes a token unforgeable — treat a leak of it exactly as you
+# would treat a leak of the JWT signing key: rotate immediately, which also
+# invalidates every playback URL currently in flight.
+#
+# `GATE_SIGNING_SECRET_PREVIOUS` exists so a ROUTINE rotation has no
+# breakage window: set the new secret as current, move the old one to
+# previous, wait out the longest token lifetime (600 s), then delete the
+# previous slot with `npx wrangler secret delete GATE_SIGNING_SECRET_PREVIOUS`.

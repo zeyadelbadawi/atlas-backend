@@ -20,6 +20,23 @@
  * check and those policies must agree, matching `assertCourseReadAccess`'s
  * own doc comment's discipline for its sibling checks.
  *
+ * P64 Phase 2 (§D.3) — this projection no longer hands out `contentUrl`
+ * once the academy's `content.protected` flag is on. That single field was
+ * finding S3 in its entirety: one curriculum response delivered a durable,
+ * permanently valid address for every lesson in the course at once, so
+ * revoking the enrollment afterwards changed nothing and forwarding the
+ * response handed the whole course to somebody else. The replacement is
+ * `GET /learning/courses/:id/lessons/:lessonId/content`, which re-decides
+ * entitlement per lesson, per request, and signs something that expires.
+ *
+ * The field is still emitted while the flag is off, deliberately: Phase 2
+ * §T requires the previous frontend image to keep working against the new
+ * schema during the rollout, and that image reads `contentUrl`.
+ *
+ * Each lesson also now carries `isPreview`, `durationSeconds`,
+ * `availableAt`, and the learner's own `lockState`/`lockReason`, so the
+ * curriculum can say WHY something is locked instead of just that it is.
+ *
  * Unlike the authoring endpoint, this strips `status: 'draft'` lessons
  * from the response — a student must never see a lesson an instructor
  * hasn't published yet, even though RLS itself doesn't distinguish
@@ -37,6 +54,9 @@ import type { CourseSectionResponse } from '../../course/dto/course-section.cont
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { assertCourseReadAccess } from './learning-access.util';
+import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
+import { CourseSequenceService } from './course-sequence.service';
+import type { LessonProjectionOptions } from '../../course/dto/course-lesson.contract';
 
 @Injectable()
 export class CourseContentService {
@@ -46,6 +66,8 @@ export class CourseContentService {
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly courseSectionsRepository: CourseSectionsRepository,
+    private readonly featureFlags: FeatureFlagsService,
+    private readonly courseSequenceService: CourseSequenceService,
   ) {}
 
   async getSections(
@@ -83,6 +105,29 @@ export class CourseContentService {
           select: { id: true, title: true, order: true, status: true, sectionId: true },
         }),
       ]);
+
+      // P64 Phase 2 — per-learner lock state for each lesson, from the same
+      // derivation the sequence endpoint uses, so the curriculum page and
+      // the player sidebar can never disagree about what is locked.
+      const course = await tx.course.findUnique({
+        where: { id: courseId },
+        select: { academyId: true },
+      });
+      const includeContentUrl = !this.featureFlags.isEnabledForAcademy(
+        'contentProtected',
+        course?.academyId ?? null,
+      );
+      const sequence = await this.courseSequenceService
+        .getSequenceItems(tx, userId, courseId)
+        .catch(() => []);
+      const lessonOptions = new Map<string, LessonProjectionOptions>(
+        sequence
+          .filter((item) => item.type === 'lesson')
+          .map((item) => [
+            item.id,
+            { includeContentUrl, lockState: item.state, lockReason: item.lockReason },
+          ]),
+      );
 
       const items = sections.map((section) => {
         const publishedLessons = section.lessons.filter(
@@ -125,6 +170,7 @@ export class CourseContentService {
         return toCourseSectionResponse(
           { ...section, lessons: publishedLessons },
           unified,
+          lessonOptions,
         );
       });
 

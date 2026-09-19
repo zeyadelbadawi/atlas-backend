@@ -84,6 +84,12 @@ async function bootstrap(): Promise<void> {
     '/api/v1/live-sessions/webhook',
     '/api/v1/live-sessions/deauthorization',
   ];
+  /*
+    P64 Phase 2 — the video provider signs `time + "." + rawBody`, so the
+    same "verify the exact bytes, never a re-serialization" rule applies
+    for exactly the reason recorded above.
+  */
+  const SIGNED_BODY_PATHS = [...ZOOM_SIGNED_PATHS, '/api/v1/webhooks/video'];
   app.useBodyParser('json', {
     limit: bodyLimitBytes,
     verify: (
@@ -92,7 +98,7 @@ async function bootstrap(): Promise<void> {
       buffer: Buffer,
     ) => {
       const url = request.url;
-      if (url && ZOOM_SIGNED_PATHS.some((path) => url.startsWith(path))) {
+      if (url && SIGNED_BODY_PATHS.some((path) => url.startsWith(path))) {
         request.rawBody = Buffer.from(buffer);
       }
     },
@@ -178,7 +184,13 @@ async function bootstrap(): Promise<void> {
   // `/health` is deliberately excluded — infrastructure endpoints are
   // conventionally unprefixed/unversioned, distinct from the business API
   // every later phase adds under `/api/v1`.
-  app.setGlobalPrefix('api', { exclude: ['health'] });
+  // `metrics` joins `health` outside the prefix (P64 Phase 2 §U):
+  // infrastructure endpoints are conventionally unprefixed and
+  // unversioned, and a Prometheus scrape configuration should not have to
+  // follow a product API's version bumps. `MetricsController` is still
+  // guarded by `JwtAuthGuard` + `PlatformOwnerGuard` — being outside the
+  // prefix is a routing decision, never an authorization one.
+  app.setGlobalPrefix('api', { exclude: ['health', 'metrics'] });
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
 
   // API documentation stays out of production by default — nothing in P0

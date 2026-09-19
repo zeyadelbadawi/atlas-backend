@@ -70,6 +70,23 @@ export interface PlanResponse {
   readonly descriptionLocalized?: PlanLocalizedTextResponse;
   readonly status: PrismaPlan['status'];
   readonly displayOrder: number;
+  /**
+   * P64 Phase 2 (D10) — the two commercial axes this plan sits on.
+   *
+   * `key` remains the IDENTITY: it is what a subscription references, what
+   * a checkout quotes, and what an add-on's `compatiblePlanKeys` matches.
+   * These two describe that key rather than replace it, which is what lets
+   * a client group six variants into two families and three tiers without
+   * parsing plan keys or carrying its own lookup table.
+   *
+   * `family` is the video security capability CLASS the customer bought —
+   * it is not itself a promise about any individual video. A learner is
+   * told what protects the asset in front of them by the content grant
+   * (AD-15, AD-16), because an academy that downgraded still holds Premium
+   * assets and the plan must never rewrite their history (D11).
+   */
+  readonly family: PrismaPlan['family'];
+  readonly tier: PrismaPlan['tier'];
   readonly limits: PlanResourceLimits;
   readonly features: PlanFeatures;
   readonly pricing?: PlanPricingMetadataResponse;
@@ -115,6 +132,8 @@ export function toPlanResponse(
     descriptionLocalized: toLocalizedText(plan.descriptionLocalized),
     status: plan.status,
     displayOrder: plan.displayOrder,
+    family: plan.family,
+    tier: plan.tier,
     limits: plan.limits as unknown as PlanResourceLimits,
     features: plan.features as unknown as PlanFeatures,
     pricing: (plan.pricing as PlanPricingMetadataResponse | null) ?? undefined,

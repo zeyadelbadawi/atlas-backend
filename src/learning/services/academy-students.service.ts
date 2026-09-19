@@ -68,6 +68,9 @@ import {
 } from '../../identity/utils/opaque-token.util';
 import { RefreshTokensRepository } from '../../identity/repositories/refresh-tokens.repository';
 import { SessionRevocationService } from '../../identity/services/session-revocation.service';
+import { LearningLeaseService } from './learning-lease.service';
+import { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
+import type { GateRevocationReason } from '../../media/video/video-gate-revocation.service';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
@@ -91,6 +94,8 @@ export class AcademyStudentsService {
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly refreshTokensRepository: RefreshTokensRepository,
     private readonly sessionRevocationService: SessionRevocationService,
+    private readonly learningLeaseService: LearningLeaseService,
+    private readonly gateRevocation: VideoGateRevocationService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -303,6 +308,21 @@ export class AcademyStudentsService {
     await Promise.all(
       sessionIds.map((id) => this.sessionRevocationService.markRevoked(id)),
     );
+
+    // P64 Phase 2 — and the learning LEASE. Revoking the sessions stops
+    // the blocked learner from getting a NEW grant, but a browser already
+    // mid-lesson holds a lease that would keep being renewed by its
+    // heartbeats until it expired on its own. Dropping it here means the
+    // block takes effect on the player at the next heartbeat rather than
+    // up to a minute later.
+    await this.learningLeaseService.revokeAll(studentUserId, academyId);
+
+    // And at the DELIVERY GATE. The two above stop the next grant and the
+    // next heartbeat; a Normal-tier playback URL already in the player
+    // would otherwise keep serving bytes for the rest of its life. A
+    // blocked learner should stop watching, not stop watching in ten
+    // minutes.
+    await this.gateRevocation.revokeSessions(sessionIds, 'academy_membership_blocked');
 
     return result;
   }
@@ -526,7 +546,7 @@ export class AcademyStudentsService {
     enrollmentId: string,
     payload: RevokeEnrollmentDto,
   ): Promise<RosterEnrollmentResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const revoked = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actingUserId,
       async (tx) => {
@@ -562,8 +582,67 @@ export class AcademyStudentsService {
             } · ${reason}`,
           });
         }
-        return this.readEnrollment(tx, academyId, enrollment.studentId, enrollment.id);
+        return {
+          studentId: enrollment.studentId,
+          response: await this.readEnrollment(
+            tx,
+            academyId,
+            enrollment.studentId,
+            enrollment.id,
+          ),
+        };
       },
+    );
+
+    // P64 Phase 2 (§O: "lease revoked on enrollment revocation"). After
+    // the transaction, for the same reason `block` does it after: the
+    // revocation is the durable outcome and a lease-store failure must
+    // not roll it back. The learner's next grant or heartbeat re-checks
+    // entitlement and is refused with `accessEnded`; dropping the lease
+    // just stops the browser that is already playing from carrying on
+    // until the lease would have expired.
+    await this.learningLeaseService.revokeAll(revoked.studentId, academyId);
+
+    // P64 Phase 2 — and the delivery gate, for the same reason the lease
+    // is dropped: a refund or a manual revocation should stop the video
+    // that is playing right now, not merely refuse the next request.
+    // Scoped to this academy's sessions — a learner who studies at two
+    // academies keeps the other one.
+    await this.revokeGateSessionsForAcademy(
+      revoked.studentId,
+      academyId,
+      'enrollment_revoked',
+    );
+    return revoked.response;
+  }
+
+  /**
+   * Stops the video gate honouring this learner's credentials for ONE
+   * academy.
+   *
+   * Reads the sessions rather than taking them from the caller so it
+   * cannot be handed the wrong set, and scopes by `academyId` so a
+   * learner enrolled at two academies loses access only where their
+   * entitlement actually ended.
+   */
+  private async revokeGateSessionsForAcademy(
+    studentUserId: string,
+    academyId: string,
+    reason: GateRevocationReason,
+  ): Promise<void> {
+    if (!this.gateRevocation.isEnabled) return;
+    const sessions = await this.tenancyContextService.runInUserContext(
+      studentUserId,
+      (tx) =>
+        tx.refreshToken.findMany({
+          where: { userId: studentUserId, academyId, surface: 'academy' },
+          select: { sessionId: true },
+          distinct: ['sessionId'],
+        }),
+    );
+    await this.gateRevocation.revokeSessions(
+      sessions.map((session) => session.sessionId),
+      reason,
     );
   }
 

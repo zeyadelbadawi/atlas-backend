@@ -33,6 +33,12 @@ const LIMITS = {
   courses: 5,
   generalStorage: 1,
   videoStorage: 1,
+  // P64 Phase 2 (D5) — the ninth `PlanLimitKey`. The DTO requires EVERY
+  // key, and that is deliberate rather than incidental: a plan created
+  // without a video-minutes allowance would resolve to zero at
+  // `resolveVideoMinutesQuota`, so the Platform Owner would have silently
+  // sold a plan that can host no video at all.
+  videoStorageMinutes: 100,
   recordedSessions: 1,
 };
 

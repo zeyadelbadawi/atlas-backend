@@ -179,6 +179,11 @@ describe('Tenant Subscription/Usage/Add-ons (e2e)', () => {
         courses: 5,
         generalStorage: 1,
         videoStorage: 1,
+        // P64 Phase 2 (D5) — provider-hosted video minutes, a separate
+        // resource from `videoStorage` (gigabytes of video in Atlas's own
+        // R2). An academy can be at zero on one and at its ceiling on the
+        // other, which is why they are two keys and not one.
+        videoStorageMinutes: 50,
       },
     });
     await seedTenantSubscription(admin, org.id, plan.id);
@@ -215,6 +220,9 @@ describe('Tenant Subscription/Usage/Add-ons (e2e)', () => {
       courses: { used: 0, limit: 5 },
       generalStorage: { used: 0, limit: 1 },
       videoStorage: { used: 0, limit: 1 },
+      // §D.5 requires usage to expose the minutes quota, so the staff
+      // meter reads the same number enforcement does.
+      videoStorageMinutes: { used: 0, limit: 50 },
       updatedAt: expect.any(String),
     });
   });

@@ -25,6 +25,8 @@ export interface TenantUsageResponse {
   readonly courses: UsageMetricResponse;
   readonly generalStorage: UsageMetricResponse;
   readonly videoStorage: UsageMetricResponse;
+  /** P64 Phase 2 (D5) — provider-hosted video minutes, exposed so the staff quota meter reads the same number enforcement does. */
+  readonly videoStorageMinutes: UsageMetricResponse;
   readonly updatedAt: string;
 }
 
@@ -44,6 +46,10 @@ export function toTenantUsageResponse(
       limit: entitlements.limits.generalStorage,
     },
     videoStorage: { used: usage.videoStorageGb, limit: entitlements.limits.videoStorage },
+    videoStorageMinutes: {
+      used: usage.videoStorageMinutes,
+      limit: entitlements.limits.videoStorageMinutes,
+    },
     updatedAt: usage.updatedAt.toISOString(),
   };
 }

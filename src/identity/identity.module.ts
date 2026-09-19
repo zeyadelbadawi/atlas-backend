@@ -124,6 +124,11 @@ import { AcademySurfaceService } from './services/academy-surface.service';
     PlatformOwnerGuard,
     EMAIL_PROVIDER,
     PasswordHasherService,
+    // P64 Phase 2 — the learner surface scopes every read by the academy
+    // the request HOST resolved to, and this is the service that resolves
+    // it. Exported rather than duplicated so "which academy is this host"
+    // keeps exactly one definition, shared with the Phase 1 sign-in path.
+    AcademySurfaceService,
   ],
 })
 export class IdentityModule {}

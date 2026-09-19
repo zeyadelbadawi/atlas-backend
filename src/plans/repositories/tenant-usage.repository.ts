@@ -16,6 +16,8 @@ export interface TenantUsageCounts {
   readonly courses: number;
   readonly generalStorageGb: number;
   readonly videoStorageGb: number;
+  /** P64 Phase 2 (D5/AD-14) — ready provider-hosted video minutes plus active upload reservations. */
+  readonly videoStorageMinutes: number;
 }
 
 @Injectable()

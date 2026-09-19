@@ -1,0 +1,737 @@
+/**
+ * `LessonContentService` — THE POLICY DECISION POINT for every byte of
+ * lesson content (master plan Phase 2 §D.2, AD-1, AD-2; findings S1–S3).
+ *
+ * Everything this phase is for converges here. Before P64, a curriculum
+ * response handed out a durable `contentUrl` for every lesson in the
+ * course at once, and that URL was the whole authorization check: it
+ * outlived refunds, revocations, expiries and the enrollment itself, and
+ * it worked for anyone it was forwarded to. This service replaces that
+ * with a decision taken AT THE MOMENT the bytes are asked for, for ONE
+ * lesson, that expires on its own.
+ *
+ * THE SEVEN CONDITIONS, in the order they are checked and why:
+ *
+ *   1. identity + session   — who is asking, and on which session/device.
+ *   2. academy context      — the lesson's academy must be the academy the
+ *                             request host actually resolved to, so a
+ *                             session minted for academy A cannot fetch
+ *                             academy B's content by id.
+ *   3. active enrollment    — enrolled/completed, unrevoked, unexpired,
+ *                             with an active unblocked academy membership.
+ *   4. published course     — an unpublished or archived course delivers
+ *                             nothing, even to someone who enrolled while
+ *                             it was live.
+ *   5. deliverable lesson   — published, drip date passed, and content
+ *                             that actually exists — or a preview lesson,
+ *                             which is the one documented short-circuit.
+ *   6. device + lease       — a registered device within the cap, holding
+ *                             the single-session lease.
+ *   7. no suspension        — a suspended account delivers nothing.
+ *
+ * Ordering is deliberate: the cheap identity checks come first, the
+ * refusals that reveal the least come before the ones that reveal more,
+ * and the lease — the only condition with a side effect — is taken LAST,
+ * so a request that was going to be refused anyway never steals another
+ * device's lease on the way out.
+ *
+ * WHAT STAFF GET. An instructor or academy manager previewing their own
+ * course passes conditions 3–6 by role instead of by enrollment (they
+ * must be able to check their own content), and takes no lease: staff are
+ * not subject to a learner device policy, and treating a manager's
+ * preview as a concurrent learning session would lock out the learner
+ * they were helping.
+ *
+ * RLS INDEPENDENTLY AGREES. `can_access_lesson()` encodes the row-shaped
+ * half of this (preview / enrolled / instructor / manager) and every read
+ * below runs in the caller's own user context, so a bug in this service
+ * still yields zero rows rather than another tenant's content. Guard
+ * decides, RLS independently agrees.
+ */
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import type {
+  LessonContentKind,
+  MediaAssetProvider,
+  Prisma,
+  VideoSecurityTier,
+} from '@prisma/client';
+import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
+import { AccessPolicyService } from '../../tenancy/services/access-policy.service';
+import { StudentDeviceService } from '../../tenancy/services/student-device.service';
+import { EnrollmentsRepository } from '../repositories/enrollments.repository';
+import { ContentAccessLogRepository } from '../repositories/content-access-log.repository';
+import { ContentGrantSigner } from './content-grant.signer';
+import { AcademyOriginsService } from '../../media/video/academy-origins.service';
+import { LearningLeaseService } from './learning-lease.service';
+import { ContentGrantRateLimiter } from './content-grant.rate-limiter';
+import { isEnrollmentActive } from './learning-access.util';
+import { resolveContentProtection } from '../dto/content-protection.contract';
+import { MINIMUM_WATCHED_RATIO } from '../dto/learning.constants';
+import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
+import type {
+  ContentAccessReason,
+  ContentProtectionReport,
+  GrantedResourceContract,
+  LessonContentGrantResponse,
+} from '../dto/lesson-content.contract';
+import type { VideoProviderCapabilities } from '../../media/video/video-provider.interface';
+
+export interface ContentRequestContext {
+  readonly userId: string | null;
+  readonly sessionId: string | null;
+  /** The academy the request HOST resolved to. Null on the platform host (staff preview) and in local development. */
+  readonly hostAcademyId: string | null;
+  readonly deviceCookie?: string | null;
+  readonly userAgent?: string | null;
+}
+
+/**
+ * A refusal, carrying the asset context WHEN IT IS KNOWN.
+ *
+ * §V asks the access log to record the tier and provider for every
+ * decision, not only grants — "was this refusal on a Premium lesson or a
+ * Normal one?" is a real forensic question once the two coexist in one
+ * academy (D11). Many refusals genuinely happen before any asset is in
+ * hand (`notEnrolled`, `notAuthenticated`), and for those the honest
+ * answer is null rather than a guess.
+ */
+class ContentRefusal extends Error {
+  constructor(
+    readonly reason: ContentAccessReason,
+    readonly assetContext: {
+      readonly securityTier: VideoSecurityTier | null;
+      readonly provider: MediaAssetProvider | null;
+    } = { securityTier: null, provider: null },
+  ) {
+    super(reason);
+  }
+}
+
+@Injectable()
+export class LessonContentService {
+  private readonly logger = new Logger(LessonContentService.name);
+
+  constructor(
+    private readonly tenancyContextService: TenancyContextService,
+    private readonly enrollmentsRepository: EnrollmentsRepository,
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
+    private readonly accessPolicyService: AccessPolicyService,
+    private readonly studentDeviceService: StudentDeviceService,
+    private readonly leaseService: LearningLeaseService,
+    private readonly signer: ContentGrantSigner,
+    private readonly originsService: AcademyOriginsService,
+    private readonly accessLog: ContentAccessLogRepository,
+    private readonly rateLimiter: ContentGrantRateLimiter,
+    private readonly metrics: LearningMetricsService,
+  ) {}
+
+  async getContent(
+    courseId: string,
+    lessonId: string,
+    context: ContentRequestContext,
+  ): Promise<LessonContentGrantResponse> {
+    // An anonymous caller may still open a PREVIEW lesson, so identity is
+    // resolved rather than required here; condition 1 is enforced per
+    // branch below, once we know whether this is a preview.
+    const userId = context.userId;
+
+    // The whole decision runs in the caller's own user context (or none at
+    // all, for an anonymous preview), so `can_access_lesson()` is the
+    // policy in force for every read inside it.
+    const run = <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> =>
+      userId
+        ? this.tenancyContextService.runInUserContext(userId, fn)
+        : this.tenancyContextService.runWithoutContext(fn);
+
+    try {
+      return await run(async (tx) => {
+        const lesson = await tx.courseLesson.findFirst({
+          where: { id: lessonId, courseId },
+          include: {
+            content: { include: { mediaAsset: true } },
+            resources: { include: { mediaAsset: true }, orderBy: { order: 'asc' } },
+            videoAsset: true,
+            section: { select: { courseId: true } },
+          },
+        });
+        // Zero rows here is already RLS refusing, not just "no such
+        // lesson": the two are indistinguishable to the caller on purpose,
+        // matching the established "unreachable content looks like it does
+        // not exist" rule.
+        if (!lesson) throw new ContentRefusal('lessonUnavailable');
+
+        const course = await tx.course.findUnique({
+          where: { id: courseId },
+          select: { id: true, academyId: true, status: true, title: true },
+        });
+        if (!course) throw new ContentRefusal('courseUnavailable');
+
+        // --- condition 2: academy context -----------------------------
+        // A host that resolves to an academy MUST match the content's
+        // academy. A null host (platform dashboard, local dev) is not a
+        // free pass — it simply means the host carried no academy claim,
+        // and conditions 3–7 still decide everything.
+        if (context.hostAcademyId && context.hostAcademyId !== course.academyId) {
+          throw new ContentRefusal('notAuthenticated');
+        }
+
+        const staffPreview = userId
+          ? await this.isStaffPreviewer(tx, userId, courseId, course.academyId)
+          : false;
+
+        // --- condition 5 (partial): preview short-circuit --------------
+        const isOpenPreview =
+          lesson.isPreview &&
+          lesson.status === 'published' &&
+          course.status === 'published';
+
+        if (!staffPreview && !isOpenPreview) {
+          // --- condition 1: identity ---------------------------------
+          if (!userId) throw new ContentRefusal('notAuthenticated');
+
+          // --- condition 7: suspension -------------------------------
+          const account = await tx.user.findUnique({
+            where: { id: userId },
+            select: { status: true },
+          });
+          if (!account || account.status !== 'active') {
+            throw new ContentRefusal('suspended');
+          }
+
+          // --- condition 3: active enrollment ------------------------
+          const enrollment = await this.enrollmentsRepository.findByStudentAndCourse(
+            tx,
+            userId,
+            courseId,
+          );
+          if (!enrollment) throw new ContentRefusal('notEnrolled');
+          if (!isEnrollmentActive(enrollment)) throw new ContentRefusal('accessEnded');
+
+          const membership = await this.academyStudentsRepository.findForUserInAcademy(
+            tx,
+            course.academyId,
+            userId,
+          );
+          if (!membership || membership.status !== 'active' || membership.blockedAt) {
+            throw new ContentRefusal('accessEnded');
+          }
+
+          // --- condition 4: published course -------------------------
+          if (course.status !== 'published') {
+            throw new ContentRefusal('courseUnavailable');
+          }
+
+          // --- condition 5: deliverable lesson -----------------------
+          if (lesson.status !== 'published') {
+            throw new ContentRefusal('lessonUnavailable');
+          }
+          if (lesson.availableAt && lesson.availableAt.getTime() > Date.now()) {
+            throw new ContentRefusal('scheduled');
+          }
+        }
+
+        if (!lesson.content) throw new ContentRefusal('lessonUnavailable');
+
+        // SEC-3 — the ASSET-READINESS refusal is hoisted above the lease.
+        //
+        // This file's own rule is that the lease is taken last, "so a
+        // request that was going to be refused anyway never steals
+        // another device's lease on the way out". That held for every
+        // condition except this one, which sat further down in
+        // `buildGrant` — so a learner opening a still-processing video
+        // took the academy's single learning lease and held it for its
+        // full 60-second TTL, locking their other device out of a lesson
+        // that would have worked.
+        if (lesson.videoAsset && lesson.videoAsset.processingStatus !== 'ready') {
+          throw new ContentRefusal('lessonUnavailable', {
+            securityTier: lesson.videoAsset.securityTier,
+            provider: lesson.videoAsset.provider,
+          });
+        }
+
+        // --- rate limit --------------------------------------------------
+        // Counted per learner, not per lesson: the abuse this catches is
+        // one account pulling grants for a whole catalogue, which looks
+        // perfectly normal lesson-by-lesson (Phase 2 §U).
+        if (userId && !staffPreview) {
+          const allowed = await this.rateLimiter.consume(userId);
+          if (!allowed) throw new ContentRefusal('rateLimited');
+        }
+
+        // --- conditions 6: device + lease --------------------------------
+        let deviceId: string | null = null;
+        let lease: LessonContentGrantResponse['playbackLease'] = null;
+
+        if (userId && !staffPreview) {
+          const policy = await this.accessPolicyService.resolveForAcademy(
+            tx,
+            course.academyId,
+          );
+          const resolution = await this.studentDeviceService.resolveForSession(tx, {
+            userId,
+            academyId: course.academyId,
+            cookieValue: context.deviceCookie,
+            userAgent: context.userAgent,
+            maxDevices: policy.maxDevices,
+          });
+          if (resolution.atCapacity || !resolution.device) {
+            throw new ContentRefusal('deviceLimit');
+          }
+          deviceId = resolution.device.id;
+
+          // Taken last, and only when everything else already passed.
+          const outcome = await this.leaseService.acquire({
+            userId,
+            academyId: course.academyId,
+            deviceId,
+            sessionId: context.sessionId ?? deviceId,
+            courseId,
+            lessonId,
+          });
+          if (outcome.status === 'held_by_other') {
+            const holder = await tx.studentDevice.findUnique({
+              where: { id: outcome.holder.deviceId },
+              select: { label: true },
+            });
+            // SEC-2 — NOT written here. This runs inside the
+            // transaction that is about to throw `ConflictException`, so
+            // the insert was rolled back with it and not one session
+            // conflict was ever recorded. The refusal is carried on the
+            // exception instead and logged outside the transaction, the
+            // same way every other refusal is.
+            throw new ConflictException({
+              messageKey: 'errors.learning.sessionConflict',
+              details: {
+                deviceLabel: holder?.label ?? null,
+                since: outcome.holder.acquiredAt,
+              },
+              // Read by the catch block below, which logs outside the
+              // transaction so the record survives the rollback.
+              atlasRefusal: {
+                reason: 'sessionConflict' as const,
+                securityTier: lesson.videoAsset?.securityTier ?? null,
+                provider: lesson.videoAsset?.provider ?? null,
+                deviceId,
+              },
+            });
+          }
+          if (outcome.status === 'acquired') {
+            lease = {
+              leaseId: outcome.lease.leaseId,
+              ttlSeconds: outcome.ttlSeconds,
+              heartbeatSeconds: outcome.heartbeatSeconds,
+            };
+          } else {
+            // Redis is unreachable. Delivering content is the right call:
+            // the lease is a sharing DETERRENT, not the authorization
+            // boundary, and every other condition has already passed.
+            // Refusing here would turn a cache outage into a platform-wide
+            // learning outage. Logged at warn so it is visible.
+            this.logger.warn(
+              { userId, academyId: course.academyId, courseId, lessonId },
+              'Learning lease unavailable; content delivered without a lease.',
+            );
+          }
+        }
+
+        const grant = await this.buildGrant(tx, {
+          lesson,
+          course,
+          userId,
+          sessionId: context.sessionId,
+          deviceId,
+          lease,
+          staffPreview,
+        });
+
+        await this.log(tx, {
+          userId,
+          academyId: course.academyId,
+          courseId,
+          lessonId,
+          result: 'granted',
+          reason: grant.kind,
+          deviceId,
+          sessionId: context.sessionId,
+          // D10 — Normal and Premium assets coexist in one academy, so
+          // "was this delivered under the protection we sold them?" has to
+          // be answerable from the log alone.
+          securityTier: grant.protection.tier,
+          provider: lesson.videoAsset?.provider ?? null,
+        });
+
+        this.metrics.recordGrant(grant.kind, grant.protection.tier);
+        return grant;
+      });
+    } catch (error) {
+      // A conflict is a refusal too, and its record has to outlive the
+      // transaction that produced it (SEC-2).
+      if (error instanceof ConflictException) {
+        const refusal = (error.getResponse() as { atlasRefusal?: {
+          reason: ContentAccessReason;
+          securityTier: VideoSecurityTier | null;
+          provider: MediaAssetProvider | null;
+          deviceId: string | null;
+        } }).atlasRefusal;
+        if (refusal) {
+          this.metrics.recordRefusal(refusal.reason, refusal.securityTier);
+          await this.logRefusal(courseId, lessonId, context, refusal.reason, {
+            securityTier: refusal.securityTier,
+            provider: refusal.provider,
+          });
+        }
+        throw error;
+      }
+
+      if (error instanceof ContentRefusal) {
+        this.metrics.recordRefusal(error.reason, error.assetContext.securityTier);
+        // Refusals are logged OUTSIDE the caller's context: a learner who
+        // was just refused may well have no rows visible to them, and the
+        // record of the refusal is exactly what a sharing investigation
+        // needs to exist regardless.
+        await this.logRefusal(courseId, lessonId, context, error.reason, error.assetContext);
+        throw refusalToHttp(error.reason);
+      }
+      throw error;
+    }
+  }
+
+  /** An instructor of this course, or an owner/administrator/manager of its academy. */
+  private async isStaffPreviewer(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    courseId: string,
+    academyId: string,
+  ): Promise<boolean> {
+    const [instructor, member] = await Promise.all([
+      tx.courseInstructor.findFirst({ where: { courseId, userId } }),
+      tx.academyMember.findFirst({
+        where: {
+          academyId,
+          userId,
+          status: 'active',
+          role: { in: ['owner', 'administrator', 'manager'] },
+        },
+      }),
+    ]);
+    return Boolean(instructor ?? member);
+  }
+
+  private async buildGrant(
+    tx: Prisma.TransactionClient,
+    args: {
+      readonly lesson: Prisma.CourseLessonGetPayload<{
+        include: {
+          content: { include: { mediaAsset: true } };
+          resources: { include: { mediaAsset: true } };
+          videoAsset: true;
+        };
+      }>;
+      readonly course: { id: string; academyId: string; status: string; title: string };
+      readonly userId: string | null;
+      readonly sessionId: string | null;
+      readonly deviceId: string | null;
+      readonly lease: LessonContentGrantResponse['playbackLease'];
+      readonly staffPreview: boolean;
+    },
+  ): Promise<LessonContentGrantResponse> {
+    const { lesson, course } = args;
+    const content = lesson.content!;
+
+    const academy = await tx.academy.findUnique({
+      where: { id: course.academyId },
+      select: { contentProtection: true, name: true },
+    });
+    const protection = resolveContentProtection(academy?.contentProtection);
+
+    const expiryCandidates: number[] = [];
+    let bodyHtml: string | undefined;
+    let fileUrl: string | undefined;
+    let fileName: string | undefined;
+    let externalUrl: string | undefined;
+    let video: LessonContentGrantResponse['video'];
+    let videoCapabilities: VideoProviderCapabilities | null = null;
+    let assetTier: VideoSecurityTier | null = null;
+
+    if (content.kind === 'text') {
+      bodyHtml = content.bodyHtml ?? '';
+    } else if (content.kind === 'external') {
+      externalUrl = content.externalUrl ?? undefined;
+    } else if (content.kind === 'file' && content.mediaAsset) {
+      const signed = await this.signer.signFile(content.mediaAsset);
+      fileUrl = signed.url;
+      fileName = content.mediaAsset.fileName;
+      expiryCandidates.push(signed.expiresAt.getTime());
+    }
+
+    if (lesson.videoAsset) {
+      // Already refused above, before the lease was taken (SEC-3). Kept
+      // as a defence in depth: `buildGrant` must never sign an asset the
+      // provider has not finished processing, whatever path reached it.
+      if (lesson.videoAsset.processingStatus !== 'ready') {
+        throw new ContentRefusal('lessonUnavailable', {
+          securityTier: lesson.videoAsset.securityTier,
+          provider: lesson.videoAsset.provider,
+        });
+      }
+      const origins = await this.originsService.forAcademy(tx, course.academyId);
+      const signed = await this.signer.signVideo(lesson.videoAsset, {
+        userId: args.userId ?? 'anonymous',
+        sessionId: args.sessionId ?? 'anonymous',
+        deviceId: args.deviceId ?? 'anonymous',
+        academyId: course.academyId,
+        allowedOrigins: origins,
+      });
+      video = signed.video;
+      // AD-16 — what the DELIVERING adapter actually enforces, read from
+      // it rather than assumed from the tier's name.
+      videoCapabilities = signed.capabilities;
+      assetTier = lesson.videoAsset.securityTier;
+      expiryCandidates.push(signed.expiresAt.getTime());
+    }
+
+    const resources: GrantedResourceContract[] = [];
+    for (const resource of lesson.resources) {
+      if (resource.mediaAsset) {
+        const signed = await this.signer.signFile(resource.mediaAsset);
+        expiryCandidates.push(signed.expiresAt.getTime());
+        resources.push({ id: resource.id, title: resource.title, url: signed.url });
+      } else if (resource.externalUrl) {
+        resources.push({
+          id: resource.id,
+          title: resource.title,
+          externalUrl: resource.externalUrl,
+        });
+      }
+    }
+
+    // The grant expires with its SHORTEST credential. A grant that claimed
+    // to outlive one of its own URLs would send the player to a dead link
+    // and call it a network error.
+    const expiresAt = new Date(
+      expiryCandidates.length > 0
+        ? Math.min(...expiryCandidates)
+        : Date.now() + this.signer.fileTtlSeconds * 1000,
+    );
+
+    const resume = args.userId
+      ? await tx.lessonProgress.findFirst({
+          where: { lessonId: lesson.id, enrollment: { studentId: args.userId } },
+          select: { lastPositionSeconds: true },
+        })
+      : null;
+
+    return {
+      lessonId: lesson.id,
+      courseId: course.id,
+      academyId: course.academyId,
+      title: lesson.title,
+      kind: content.kind,
+      isPreview: lesson.isPreview,
+      durationSeconds: lesson.durationSeconds ?? lesson.videoAsset?.durationSeconds ?? null,
+      completionRule: lesson.completionRule,
+      minimumWatchedRatio:
+        lesson.completionRule === 'watched_ratio' ? MINIMUM_WATCHED_RATIO : null,
+      protection: buildProtectionReport({
+        kind: content.kind,
+        capabilities: videoCapabilities,
+        tier: assetTier,
+        expiresAt,
+        watermarkEnabled: protection.watermark && Boolean(video),
+      }),
+      bodyHtml,
+      fileUrl,
+      fileName,
+      video,
+      externalUrl,
+      resources,
+      watermark: {
+        enabled: protection.watermark && Boolean(video),
+        text: protection.watermark
+          ? buildWatermarkText(protection.watermarkText, args.userId)
+          : '',
+      },
+      playbackLease: args.lease,
+      resumePositionSeconds: resume?.lastPositionSeconds ?? 0,
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  private async log(
+    tx: Prisma.TransactionClient,
+    entry: Parameters<ContentAccessLogRepository['record']>[1],
+  ): Promise<void> {
+    await this.accessLog.record(tx, entry);
+  }
+
+  private async logRefusal(
+    courseId: string,
+    lessonId: string,
+    context: ContentRequestContext,
+    reason: ContentAccessReason,
+    assetContext: {
+      readonly securityTier: VideoSecurityTier | null;
+      readonly provider: MediaAssetProvider | null;
+    } = { securityTier: null, provider: null },
+  ): Promise<void> {
+    try {
+      const academyId =
+        context.hostAcademyId ??
+        (await this.tenancyContextService.runWithoutContext((tx) =>
+          tx.course
+            .findUnique({ where: { id: courseId }, select: { academyId: true } })
+            .then((course) => course?.academyId ?? null),
+        ));
+      if (!academyId) return;
+      await this.tenancyContextService.runWithoutContext((tx) =>
+        this.accessLog.record(tx, {
+          userId: context.userId,
+          academyId,
+          courseId,
+          lessonId,
+          result: 'refused',
+          reason,
+          deviceId: null,
+          sessionId: context.sessionId,
+          securityTier: assetContext.securityTier,
+          provider: assetContext.provider,
+        }),
+      );
+    } catch (error) {
+      // Never let the audit trail turn a clean refusal into a 500.
+      this.logger.warn(
+        { courseId, lessonId, error: error instanceof Error ? error.message : String(error) },
+        'Could not record a content-access refusal.',
+      );
+    }
+  }
+}
+
+/**
+ * Refusal → HTTP.
+ *
+ * Almost everything is 404. That is the established rule for unreachable
+ * content in this codebase, and it matters more here than anywhere else:
+ * a 403 for `notEnrolled` versus a 404 for "no such lesson" would let an
+ * unauthenticated crawler map every lesson id in a paid catalogue.
+ *
+ * The exceptions are the two states a learner can actually DO something
+ * about — the device cap and the rate limit — where hiding the reason
+ * would leave them stuck with no explanation.
+ */
+function refusalToHttp(reason: ContentAccessReason): Error {
+  switch (reason) {
+    case 'deviceLimit':
+      return new ForbiddenException({ messageKey: 'errors.learning.deviceLimit' });
+    case 'rateLimited':
+      return new ForbiddenException({ messageKey: 'errors.learning.grantRateLimited' });
+    case 'suspended':
+      return new ForbiddenException({ messageKey: 'errors.auth.accountSuspended' });
+    case 'accessEnded':
+      return new ForbiddenException({ messageKey: 'errors.learning.accessEnded' });
+    case 'scheduled':
+      return new ForbiddenException({ messageKey: 'errors.learning.lessonScheduled' });
+    default:
+      return new NotFoundException({ messageKey: 'errors.notFound' });
+  }
+}
+
+/**
+ * Builds the honest protection report (AD-16).
+ *
+ * Every flag comes from the delivering adapter's own `capabilities()`.
+ * Nothing is inferred from the tier's NAME — that is precisely the
+ * mistake finding D-5 recorded, where "premium" was assumed to mean
+ * device-bound and the provider's edge was in fact checking nothing of
+ * the sort.
+ *
+ * Content with no hosted video reports a null tier and no video-shaped
+ * claims: a text lesson is delivered over the same authenticated,
+ * entitlement-checked channel, but calling it "watermarked" or
+ * "origin-restricted" would be meaningless.
+ */
+export function buildProtectionReport(args: {
+  readonly kind: LessonContentKind;
+  readonly capabilities: VideoProviderCapabilities | null;
+  readonly tier: VideoSecurityTier | null;
+  readonly expiresAt: Date;
+  readonly watermarkEnabled: boolean;
+}): ContentProtectionReport {
+  const expiresInSeconds = Math.max(
+    0,
+    Math.round((args.expiresAt.getTime() - Date.now()) / 1000),
+  );
+
+  // An external embed is the one case where Atlas hosts nothing and
+  // therefore protects nothing. Saying so plainly is the honest option;
+  // the learner is told rather than left to assume.
+  if (args.kind === 'external') {
+    return {
+      tier: null,
+      signedUrl: false,
+      expiresInSeconds: 0,
+      boundToSession: false,
+      boundToDevice: false,
+      revocableBeforeExpiry: false,
+      originRestricted: false,
+      watermark: false,
+      adaptiveBitrate: false,
+      drm: false,
+    };
+  }
+
+  if (!args.capabilities) {
+    // Text, files and resources: signed and short-lived, with no video
+    // capabilities to report.
+    return {
+      tier: null,
+      signedUrl: true,
+      expiresInSeconds,
+      boundToSession: false,
+      boundToDevice: false,
+      // A protected file's URL dies with its presign and cannot be
+      // withdrawn earlier — stated rather than glossed over.
+      revocableBeforeExpiry: false,
+      originRestricted: false,
+      watermark: false,
+      adaptiveBitrate: false,
+      drm: false,
+    };
+  }
+
+  return {
+    tier: args.tier,
+    signedUrl: args.capabilities.signedPlayback,
+    expiresInSeconds,
+    boundToSession: args.capabilities.boundToSession,
+    boundToDevice: args.capabilities.boundToDevice,
+    revocableBeforeExpiry: args.capabilities.revocableBeforeExpiry,
+    originRestricted: args.capabilities.originRestricted,
+    // The academy must have asked for it AND the player must actually be
+    // drawing one.
+    watermark: args.watermarkEnabled,
+    adaptiveBitrate: args.capabilities.adaptiveBitrate,
+    // Neither tier has DRM, and Cloudflare Stream does not offer it at
+    // all (D1). Typed as the literal `false` so it cannot drift.
+    drm: false,
+  };
+}
+
+/**
+ * The overlay text.
+ *
+ * The academy's own template wins when it set one; otherwise the viewer's
+ * user id, which is stable, unique, and — unlike an email address —
+ * discloses nothing extra to anyone standing behind the learner.
+ */
+function buildWatermarkText(template: string | null, userId: string | null): string {
+  if (template) return template;
+  return userId ? `ID ${userId.slice(0, 8).toUpperCase()}` : '';
+}
