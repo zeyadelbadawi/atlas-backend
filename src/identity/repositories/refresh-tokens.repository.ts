@@ -20,6 +20,13 @@ export interface CreateRefreshTokenInput {
   /** P64 Phase 1 (AD-5) — surface the session is minted on; academy id on the academy surface. */
   readonly surface?: 'management' | 'academy';
   readonly academyId?: string | null;
+  /**
+   * P64 Phase 2 (AD-10) — the `student_devices` row this session was
+   * minted on. Null for every management session, and null on the academy
+   * surface when the learner is already at their device cap: sign-in
+   * still succeeds, only CONTENT delivery is refused.
+   */
+  readonly deviceId?: string | null;
 }
 
 /** One device session: the rotation family's newest row, plus when the family began. */
@@ -53,6 +60,7 @@ export class RefreshTokensRepository {
         locationCountry: input.locationCountry,
         surface: input.surface ?? 'management',
         academyId: input.academyId ?? null,
+        deviceId: input.deviceId ?? null,
         // A brand-new session's last activity is its creation — a real
         // timestamp for a real event, not a placeholder.
         lastUsedAt: new Date(),
@@ -281,6 +289,12 @@ export class RefreshTokensRepository {
           // P64 Phase 1 — the surface never changes across a rotation.
           surface: claimed.surface,
           academyId: claimed.academyId,
+          // P64 Phase 2 — nor does the device. Inherited from the claimed
+          // row exactly like `sessionId`, so a refresh can never move a
+          // session onto a different device (which is precisely the move a
+          // stolen refresh token would want to make), and a device the
+          // learner has since removed cannot be re-attached by refreshing.
+          deviceId: claimed.deviceId,
         },
       });
 

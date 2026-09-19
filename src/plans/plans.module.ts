@@ -24,6 +24,7 @@
  * scheduler's own doc comment for why this is ONE mechanism, not two).
  */
 import { Module } from '@nestjs/common';
+import { VideoTierService } from './services/video-tier.service';
 import { BullModule } from '@nestjs/bullmq';
 import { AuthCoreModule } from '../identity/auth-core.module';
 import { IdentityModule } from '../identity/identity.module';
@@ -96,6 +97,10 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     OrganizationsController,
   ],
   providers: [
+    // P64 Phase 2 (D10) — plan family → entitled video security tier.
+    // Lives here because it reads the SUBSCRIPTION's plan, which is this
+    // module's own data; `MediaModule` already depends on it one-way.
+    VideoTierService,
     PlansService,
     TenantSubscriptionService,
     EntitlementService,
@@ -123,6 +128,7 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     SubscriptionSweepScheduler,
   ],
   exports: [
+    VideoTierService,
     EntitlementService,
     // Phase 2 — the live, write-time entitlement authority every
     // plan-limited write path (`AcademiesService.create`, course

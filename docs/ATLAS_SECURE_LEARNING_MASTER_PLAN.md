@@ -11,36 +11,66 @@ Repository: `atlas-backend` (this file) and `atlas-front` (frontend work referen
 
 | Field | Value |
 |---|---|
-| Status | **Phase 1 implementation complete (local), not yet deployed** (19 Sep 2026). Phases 2–4 not started and not approved. |
+| Status | **Phase 1 COMPLETE in production** (19 Sep 2026). Phases 2–4 approved and queued for autonomous sequential execution (DL-15). |
 | Version | 1.0 — 18 Sep 2026 |
 | Approved product decisions | 9 (see below) |
-| Implementation approval | **Phase 1 approved and delivered** (18 Sep 2026); Phases 2–4 not yet approved |
-| Current phase | Phase 1 — implementation, tests, Playwright J2/J3, the `surface.enforce` rollout flag, browser validation and security review all complete. Only the two production steps of its Definition of DONE remain, and they need explicit authorisation. Awaiting explicit Phase 2 approval. |
+| Implementation approval | **Phases 1–4 all approved.** Phase 1 delivered to production 19 Sep 2026; Phases 2, 3 and 4 approved together under DL-15 and run back to back with no per-phase approval. |
+| Current phase | Phase 1 complete and live. **Next: Phase 2**, started automatically under the autonomous workflow. |
 
 Allowed status values: Planning / Awaiting Approval / Approved / In Progress / Blocked / Complete.
+
+**Execution governance.** This plan is executed autonomously across Phases 1 → 2 → 3 → 4, then a Final Master Plan Audit, a final repository-wide review, and the Final Report. The implementer does not pause between phases. Each phase must still earn its completion through the full lifecycle in the next section — implement, test, pull request, CodeRabbit review loop, merge, deploy, migrate, and real Chrome production validation — and stops only for the six blocker conditions listed there.
 
 ---
 
 ## How this file is used (mandatory workflow)
 
-Before starting any phase, the implementer (human or agent) must:
+**Execution model: autonomous sequential.** Phases 1 → 2 → 3 → 4 run continuously. When a phase satisfies every acceptance criterion and its Definition of DONE, the implementer proceeds to the next phase **without requesting another phase-start approval**. Approval for Phases 2, 3 and 4 was granted together with this workflow change (DL-15); it is not re-sought per phase.
 
-1. Read this master plan in full.
-2. Read the current phase's scope, acceptance criteria and definition of done.
-3. Read the previous phase's **Phase Completion Record** at the bottom of this file.
-4. Inspect the current repository state (`git log`, `git status`, schema, migrations, tests) and confirm it matches the previous completion record.
-5. Confirm every dependency of the current phase is satisfied and every acceptance criterion is understood.
-6. Implement **only** the current approved phase. Work from another phase is allowed only when a hard dependency requires it, and must be recorded as a deviation.
-7. Run the required unit, integration, RLS and e2e tests for the phase.
-8. Perform the required Chrome browser validation with a learner account created through an academy website.
-9. Record actual results (tests run, browser checks, commits, deploy SHAs) in the **Phase Completion Record**.
-10. Set the phase status (In Progress / Blocked / Complete) in the phase header and in **Document Status**.
-11. Record deviations, discoveries, decisions and unresolved issues in the **Decision Log** and **Implementation Change Log**.
-12. **STOP** before starting the next phase and wait for explicit approval.
+### The per-phase lifecycle
 
-The next phase always starts from the updated master plan and the recorded completion state of the previous phase. This file must stay synchronized with reality; a phase whose record is missing or stale is not complete.
+**Phase start.** Re-read this file in full; read the phase's scope, acceptance criteria and Definition of DONE; read the previous phase's Completion Record; inspect the repository (`git log`, `git status`, schema, migrations, tests) and confirm it matches that record; confirm every dependency is satisfied.
 
-Hard rules inherited from the project rulebook: guard decides and RLS independently agrees; no destructive production changes; no migrations outside an approved phase; entitlement zero-delta rules apply to every new limit; Live Sessions add-on stays untouched.
+**Implementation.** Implement the phase completely, across backend and frontend as the phase requires. No knowingly-left TODOs, placeholders, fake implementations, skipped tests or broken flows. Work from another phase is allowed only when a hard dependency requires it, and is recorded as a deviation. Existing architecture and security decisions are preserved unless a real implementation dependency forces a change, which is then documented.
+
+**Local validation.** Run the phase's unit, integration, RLS, frontend, Playwright and adversarial/security tests. Fix every real failure and re-run until clean. A pull request is not opened while a known implementation or test failure remains, unless that failure is documented as unrelated **and** independently demonstrated to be pre-existing.
+
+**Git and pull request.** Commit the phase to a dedicated feature branch (`feat/p64-phase2`, `feat/p64-phase3`, `feat/p64-phase4`) and **push that branch to the remote** — a pull request cannot exist without it. "Do not push to main" forbids pushing the phase *directly* to main; it does not forbid pushing the feature branch. Open a pull request targeting `main`. Do not merge yet.
+
+**Review loop (mandatory).** Wait for the configured checks and the CodeRabbit review. Read every comment and classify it: real bug or security issue; real correctness issue; real architectural issue; real testing gap; real performance or reliability issue; valid code-quality issue; false positive; or already handled elsewhere. Verify each against the actual code — CodeRabbit is a reviewer, not the authority, and correct code is never changed merely to satisfy it. Fix what is justified, add or update tests, run the affected tests, commit, push the branch, and let the review run again. Repeat until every actionable finding is resolved or explicitly justified in writing.
+
+**Merge.** Merge the pull request into `main` when the implementation is complete, local tests pass, required CI checks pass, the current review cycle is finished, all actionable findings are resolved or justified, no known blocking defect remains, the diff has been reviewed, the migrations are understood and safe, and the acceptance criteria are satisfied. Merging does not require a further request to the owner.
+
+**Production deployment.** Let the normal deployment workflow run and monitor it. If build or deploy fails: diagnose, fix, commit, re-check, re-review, merge and redeploy. A failed deployment is not a reason to abandon a phase. Never bypass a protected-environment approval or any other GitHub permission control; where one genuinely requires a human, record the blocker and stop there.
+
+**Production migrations.** Follow the existing migration architecture: preflight, verified backup, migration order, data-safety checks, no destructive migration, rollback procedure. Apply **only** the migrations belonging to the phase being executed; a future phase's migrations are never applied early. Afterwards verify the migration count, the schema, application health, database and Redis health, and the expected routes.
+
+**Real Chrome production validation (mandatory, every phase).** Against the real production academy website and a real learner journey — never only unit tests, Jest, local Playwright, mocked APIs, a local browser, screenshots or a green build. Validate every browser requirement the phase names, capturing actual evidence. If Chrome finds a defect, the phase is **not** complete: fix it, re-test, update the pull request, re-review, merge, redeploy and re-run the production validation until the Definition of DONE is genuinely satisfied.
+
+**Record, then continue.** Update this file (see *Phase Completion Record requirements*), then **immediately begin the next phase**. After Phase 4: the Final Master Plan Audit, the final repository-wide review, the Final Report, then stop.
+
+### When to stop
+
+Solve problems autonomously. Do **not** stop merely because a phase is large, many files changed, CodeRabbit left comments, a test needs fixing, a deployment needs retrying, a pull request needs another review cycle, a browser test found a defect, code needs refactoring, or a preflight caught a fixable issue. Investigate, fix, re-test, continue.
+
+Stop only when one of these is true:
+
+1. A human decision is genuinely required and cannot be inferred from this approved plan.
+2. A required secret, credential or access is unavailable.
+3. A protected GitHub or environment permission requires a human approval the agent cannot supply.
+4. Continuing would violate an explicit project safety or security rule.
+5. A production incident makes continuation unsafe.
+6. A requirement here is internally contradictory and cannot be resolved from the recorded decisions.
+
+When blocked, never bypass the blocker silently. Record the exact blocker, the evidence, what was attempted, why it cannot be resolved autonomously, and the exact action needed from the owner.
+
+### Quality bar
+
+Autonomous execution is not permission to rush. Forbidden: skipping tests to save time; ignoring CodeRabbit findings; merging with known critical or security defects; claiming Chrome validation, a deployment or a migration without evidence; suppressing failing tests; weakening a security control to make a test pass; marking a phase complete because the implementation is "mostly done"; starting the next phase while the current one has unresolved blockers. Never fabricate evidence, and never mark something complete merely because the code exists.
+
+The sequence is: complete → review → fix → test → deploy → real Chrome → verify → record → next phase.
+
+Hard rules inherited from the project rulebook: guard decides and RLS independently agrees; no destructive production changes; no migrations outside the phase being executed; entitlement zero-delta rules apply to every new limit; Live Sessions add-on stays untouched.
 
 ---
 
@@ -48,17 +78,19 @@ Hard rules inherited from the project rulebook: guard decides and RLS independen
 
 | # | Decision | Ruling (binding) |
 |---|---|---|
-| D1 | Cloudflare DRM | Proceed **without DRM**. Use Cloudflare Stream with mandatory signed tokens, short-lived authorization, allowed origins, entitlement checks at academy/course/lesson level, watermarking, and a provider abstraction with capability flags. Do not design around DRM. Keep the architecture extensible so a DRM-capable provider can be added later. Verifying DRM availability with Cloudflare in writing happens during provider onboarding and **must not block** implementation. |
+| D1 | Video protection model | **AMENDED 19 Sep 2026** (see D10; original ruling preserved in the Decision Log as DL-16). Proceed **without DRM on either tier** — Cloudflare Stream does not offer DRM at all, so this is a property of the provider, not only a choice. Atlas ships **two video security tiers**. **Premium** uses Cloudflare Stream with signed playback, short-lived authorization, allowed origins, managed processing, adaptive bitrate, managed delivery and watermarking. **Normal** uses Atlas-owned object storage behind an Atlas-controlled gate, with short-lived credentials and the **same** Atlas entitlement checks. Neither tier may be described as "unsecured"; Normal is **"Basic Video Protection" / "Self-Managed Video Delivery"**. Neither tier may claim DRM, piracy-proofing, download-proofing or screen-record-proofing. **The tier a grant was issued under, and exactly which protections it actually enforces, are reported to the client rather than assumed** — never advertise a security property merely because an identifier exists inside a JWT (AD-16). |
 | D2 | Staff who are also learners | **Remove learner routes from the management dashboard.** Staff who are enrolled learn through the academy website exactly like students. Management surface = Platform Owner / Client Owner / Manager / Instructor → management dashboard. Learning surface = learner → academy website → academy login → learner dashboard → learning experience. No duplicate learner routes in the dashboard. |
 | D3 | Registration policy | Existing academies default to **open** registration. New academies choose the policy at creation. The model supports open and invitation-only/restricted policies and must remain changeable later (no hard-coding). |
 | D4 | Device takeover | **Allowed.** Inform the learner another active learning session exists; require explicit confirmation; revoke/terminate the previous learning session; activate the new one; record an auditable `DEVICE_SESSION_TAKEOVER` event with learner, old device/session, new device/session, academy, course/session context and timestamp. |
-| D5 | Video storage quota | Add `videoStorageMinutes` to Atlas plans: Starter 500, Professional 2,000, Business 5,000 minutes. These are Atlas entitlements, **not** Cloudflare billing values. Atlas enforces the quota when video content is added (reject when `usage + new > quota`, e.g. 1,850 + 180 = 2,030 > 2,000 → reject with a clear message; 1,850 + 100 = 1,950 → allow). No delivery/consumption quotas now, but keep the model extensible. Cloudflare billing stays external and Atlas never depends on a Cloudflare price. Atlas owns plan quota, usage, enforcement and upgrade messaging; Cloudflare owns provider usage and charges. |
+| D5 | Video storage quota | `videoStorageMinutes` is a plan entitlement: baseline Basic 500, Growth 2,000, Enterprise 5,000 minutes. These are Atlas entitlements, **not** provider billing values. Atlas enforces the quota when video content is added (reject when `usage + new > quota`, e.g. 1,850 + 180 = 2,030 > 2,000 → reject with a clear message; 1,850 + 100 = 1,950 → allow). No delivery/consumption quotas now, but keep the model extensible. Provider billing stays external and Atlas never depends on a provider price. **AMENDED 19 Sep 2026:** the quota is **provider- and tier-independent** — it counts every minute of Atlas-hosted video whichever tier delivers it, so Normal video does **not** additionally consume `videoStorage` (GB) and the two tiers stay directly comparable. The catalog **may** set different quota values for the Normal and Premium variants of the same tier (e.g. `NORMAL_BASIC` ≠ `PREMIUM_BASIC`); the mechanism is one provider-independent key, not two. Where a provider does not report a measured duration, Atlas derives it and records how it was obtained — a declared duration is never silently trusted. |
 | D6 | Certificate branding | Platform-standard certificate template with academy logo/identity, academy signature where applicable, and an "Issued via Atlas" footer. Lifecycle supports eligibility, issuance, certificate ID/reference, visibility, verification, status, revocation, explicit regeneration rules, and immutable issuance facts. |
 | D7 | Quiz retake after certificate | Learners may retake a required quiz after a certificate is issued. The certificate preserves the score/result at issuance; a later retake never silently modifies it. Regeneration/reissuance is an explicit workflow, never a side effect. |
 | D8 | Security policy permissions | **Client Owner**: academy-wide authority including security-sensitive policies (device/session enforcement, content protection/security configuration). **Manager**: academy-wide operational course/content/curriculum management, learner outcomes, grading/review, operational settings — **no** authority over device enforcement or other high-impact security policies. Owner and Manager are never collapsed into one permission set; RBAC stays explicit and granular. |
+| D10 | **Plan families and video tiers** | Atlas has **two plan families** — `normal` and `premium` — each with three tiers (`basic`, `growth`, `enterprise`), giving six commercial variants: `NORMAL_BASIC`, `NORMAL_GROWTH`, `NORMAL_ENTERPRISE`, `PREMIUM_BASIC`, `PREMIUM_GROWTH`, `PREMIUM_ENTERPRISE`. **The family determines the video security capability class; the tier determines commercial limits and features.** Prices are catalog/business data and must never appear in provider or authorization logic. The resolution chain is **plan → entitlement → security tier → provider registry → provider**; `premium` must never be hard-wired to `CloudflareStreamProvider` anywhere in the authorization layer. |
+| D11 | **Premium → Normal downgrade** | **No automatic migration.** When an academy moves from Premium to Normal: existing Premium assets stay on their existing provider and tier, new uploads use the newly entitled tier, **mixed provider/tier state within one academy is valid and expected**, nothing is silently migrated, and no destructive conversion occurs. No Premium → Normal video migration is promised until provider capabilities are verified and a dedicated migration workflow is designed. An academy's current plan **never rewrites the historical security tier of an existing asset**. |
 | D9 | `administrator` academy role | Keep in the enum/model for compatibility; hide from the UI; not selectable for new assignments; no new functionality built on it; existing records preserved; retirement is a separate future migration decision. |
 
-Note on D5 naming: the repository's seeded and typed plan tiers are `Starter`, `Growth`, `Enterprise` (`prisma/seed.ts`, `src/plans`). The approved quotas are mapped Starter → 500, Growth (the tier the decision calls "Professional") → 2,000, Enterprise (the tier the decision calls "Business") → 5,000 unless the owner corrects the mapping (Decision Log DL-3). The existing `videoStorage` limit is in **GB** (R2 file storage); `videoStorageMinutes` is a new, separate key for provider-hosted video.
+Note on D5 naming: the repository's seeded plan keys are `starter`, `growth`, `enterprise` (`prisma/seed.ts`, `src/plans`). D10's tier vocabulary calls the first of these **`basic`**; the seeded key `starter` is that tier, and the existing rows are not renamed (Decision Log DL-3, DL-17). The approved baseline quotas map basic/`starter` → 500, growth → 2,000, enterprise → 5,000. The existing `videoStorage` limit is in **GB** (R2 file storage) and is unrelated; `videoStorageMinutes` is the provider-independent key for hosted video (D5).
 
 ---
 
@@ -66,26 +98,28 @@ Note on D5 naming: the repository's seeded and typed plan tiers are `Starter`, `
 
 | ID | Decision | Rationale |
 |---|---|---|
-| AD-1 | **Atlas is the sole authorization authority; Cloudflare Stream and R2 are delivery layers that only honour capabilities Atlas signs.** Video bytes are never proxied through the backend. | Keeps the single VPS off the media path; revocation and entitlement stay centralized. |
+| AD-1 | **Atlas is the sole authorization authority; EVERY video provider is a delivery layer that only honours capabilities Atlas signs.** Video bytes are never proxied through the backend, **on any tier**. (Amended 19 Sep 2026 — was "Cloudflare Stream and R2 are delivery layers"; the rule was never Cloudflare-specific and is now stated that way.) | Keeps the single VPS off the media path; revocation and entitlement stay centralized; prevents the tempting shortcut of serving Normal-tier video from the VPS. |
 | AD-2 | **Entitlement is evaluated at the moment bytes are requested**, per lesson, per request, and again on every playback-token refresh. Sections/curriculum responses never carry content URLs. | Closes the "one enrollment = whole course forever" model. |
 | AD-3 | **Lesson bodies and resources live in `lesson_contents` / `lesson_resources` with no public RLS policy.** | Structural fix for the published+public lesson policy gap. |
 | AD-4 | **Principal kind is derived, not stored**: `platform_owner` (flag), `staff` (any organization membership or active `academy_members` row), otherwise `learner`. A person can be staff in one organization and a learner in another; the surface decides which capabilities apply. | Matches the existing "students are global users + `academy_students`" rule without adding a contradictory flag. |
 | AD-5 | **Surface-aware authentication**: sign-in carries `surface: 'management' \| 'academy'`; learners are refused a management session; `ManagementSurfaceGuard` protects every management controller server-side. | Finding 1 requires enforcement beyond frontend routing. |
 | AD-6 | **Scopes**: platform → organization → academy → course. Instructor is course-scoped (`course_instructors`), Manager and Client Owner are academy-wide, with D8's split between operational and security-sensitive authority. New helpers `assertCanReviewCourse`, `assertCanViewAcademyStudents`, `assertCanManageSecurityPolicy` and SQL `can_review_course`. | Finding 5. |
-| AD-7 | **Video provider abstraction** `VideoProvider` with `capabilities()` (`signedPlayback`, `allowedOrigins`, `staticWatermark`, `drm`, `downloads`) and `CloudflareStreamProvider` as the only production implementation. | D1; extensibility. |
+| AD-7 | **Video provider abstraction and registry.** `VideoProvider` with `capabilities()` reporting what is ACTUALLY enforced — `signedPlayback`, `boundToSession`, `boundToDevice`, `revocableBeforeExpiry`, `originRestricted`, `staticWatermark`, `adaptiveBitrate`, `drm`, `downloads`, `reportsReadinessAsynchronously`, `enforcesMaxDuration`. A **`VideoProviderRegistry`** resolves the adapter **by security tier on upload** and **by `media_assets.provider` on playback**, following the established `PaymentProviderAdapter` registry shape. Production implementations: `CloudflareStreamProvider` (premium) and `BasicVideoProvider` (normal). **Capability flags are CONSUMED, not merely declared** — the content grant reports them to the client (AD-16). (Amended 19 Sep 2026 — superseded the clause naming `CloudflareStreamProvider` as "the only production implementation"; see DL-16.) | D1, D10; two first-class production tiers. |
 | AD-8 | **Server-authoritative quiz attempts**: server clock, deadline, autosave with monotonic revisions, delayed auto-submit job plus sweep, database uniqueness (attempt number; one open attempt), grading policies, results disclosure by policy. Expiry grades as-is and never auto-fails. | D5 of the previous round (quiz expiry), finding evidence. |
 | AD-9 | **Integrity tiers**: enforcement (server), detection (browser signals with server timestamps), deterrence (fullscreen, selection/copy/context-menu limits, watermark), UX (warnings, counters, thresholds). No claim that recording or screenshots can be prevented. | Honest security model. |
 | AD-10 | **Device policy** via server-issued `atlas_device` cookie and `student_devices`; concurrent learning session via Redis lease with heartbeats; defaults 2 devices / 1 session in `access_policies` (platform → academy → plan override, Client Owner only). Takeover per D4. | D4, D8. |
 | AD-11 | **Completion rules** per course (`completion_rule` JSON) evaluated server-side from lesson evidence, quiz results and assignment grades; certificates issued from an eligibility evaluator with immutable issuance snapshot. | Finding 2, D6, D7. |
 | AD-12 | **One learner surface**: learner dashboard and player live on the academy website under `/my/*`; dashboard learner routes are removed after redirects. | D2. |
 | AD-13 | **Additive migrations only**; every projection change is behind a per-academy flag with a platform default; rollback = flag off. | Rollout safety on a single-VPS deployment. |
-| AD-14 | **Quota model**: `videoStorageMinutes` is a `PlanResourceLimits` key following `granted_limits ?? plan.limits` and zero-delta semantics; usage is Atlas-owned (`media_assets.duration_seconds` for ready videos plus active upload reservations); enforcement happens before a direct-upload URL is issued and again when the provider reports the real duration. | D5. |
+| AD-14 | **Quota model**: `videoStorageMinutes` is a `PlanResourceLimits` key following `granted_limits ?? plan.limits` and zero-delta semantics; usage is Atlas-owned (`media_assets.duration_seconds` for ready videos plus active upload reservations); enforcement happens before a direct-upload URL is issued and again when the provider reports the real duration. **Amended 19 Sep 2026:** usage counts **every** provider, never one. The two independent aggregates (`EntitlementEnforcementService` for enforcement and `TenantUsageRecomputeService` for reporting) must be changed together and asserted to agree, because divergence means enforcement and the Usage page tell a customer different numbers. A reservation released by a failed upload stops counting. | D5, D10. |
+| AD-15 | **`securityTier` is not `provider`.** `media_assets.provider` records **where the bytes are** (a storage fact). `media_assets.security_tier` records **what Atlas promised and enforces** for that asset (a product fact). They are separate columns and neither is derived from the other at read time. | A future change of Normal-tier provider must not change any customer's promise; and a learner must be told the truth about an INDIVIDUAL video, not about their academy's current subscription (D11). |
+| AD-16 | **Capability-honest grants.** The content grant reports the tier and the capabilities the delivering provider actually enforces, read from `capabilities()` — never an aspiration. Specifically: Cloudflare Stream does **not** enforce Atlas session/device claims at its edge (investigation finding D-5), so a Premium grant reports `boundToSession: false` / `boundToDevice: false` and says plainly that binding is enforced at grant-issue time only. | Finding D-5. The alternative is telling a paying customer their content has a protection it does not have. |
 
 ---
 
 ## Scope
 
-**In scope**: everything in the four phases below — critical fixes; identity surfaces; registration integrity; student roster; RBAC realignment; learner dashboard; unified course player; protected content tier; Cloudflare Stream video; device/session policy; video quota; quiz engine v2; integrity layer; assignment drafts/due dates; completion rules; certificates; catalog, preview and checkout; observability; hardening; production rollout.
+**In scope**: everything in the four phases below — critical fixes; identity surfaces; registration integrity; student roster; RBAC realignment; learner dashboard; unified course player; protected content tier; two-tier hosted video (Normal and Premium, D10); device/session policy; video quota; quiz engine v2; integrity layer; assignment drafts/due dates; completion rules; certificates; catalog, preview and checkout; observability; hardening; production rollout.
 
 **Out of scope**: DRM integration (D1), forensic A/B watermarking, Live Sessions add-on changes, marketplace/cross-academy course sharing, payment gateway integrations beyond the existing manual-payment order pipeline, native mobile apps.
 
@@ -313,14 +347,16 @@ Deploy with the standard workflow; flag `surface.enforce` staged by allowlist (i
 - [x] **Draft-course quiz attachment works for owners; analytics failing-quiz signal fires in test** — `p64-critical-fixes` e2e.
 - [x] **Ten concurrent attempt starts create exactly one attempt; progress never 500s; course page resolves by slug** — `p64-critical-fixes` e2e; slug resolution also verified anonymously in the browser, by slug and by id, with the draft course 404 on both.
 - [x] **Enrollment revocation/expiry refuses access immediately** — `p64-roster-lifecycle` and `p64-browser-findings` e2e, plus the manual Chrome lifecycle pass.
-- [x] **All listed unit, e2e, RLS and Playwright tests green; browser validation recorded** — 938 backend unit, 513 frontend unit, 56 Phase 1 e2e, 8 RLS, 18 Playwright (J2 + J3), full backend e2e with every failure individually accounted for, and two recorded Chrome passes. *Recorded honestly:* "green in CI" cannot be claimed — nothing is committed, so no CI run exists. Everything above ran locally, repeatedly, on the real stack.
+- [x] **All listed unit, e2e, RLS and Playwright tests green; browser validation recorded** — 938 backend unit, 513 frontend unit, 56 Phase 1 e2e, 8 RLS, 18 Playwright (J2 + J3), full backend e2e with every failure individually accounted for, and two recorded Chrome passes. *Recorded honestly:* "green in CI" still cannot be claimed, though the reason has changed. Both repositories are now merged to `main`, but the `CI` workflow is **disabled** in GitHub (`disabled_manually`), so no CI run exists for these commits. Every suite above ran locally, repeatedly, against the real stack, and the `Deploy` workflow succeeded for the current `main`.
 
 ### W. Definition of DONE
-All acceptance boxes checked; migrations applied in production; production read-only verification recorded; Phase Completion Record filled (commits, deploy SHA, test run summary, browser evidence, deviations); Document Status updated; explicit STOP before Phase 2.
+All acceptance boxes checked; migrations applied in production; production read-only verification recorded; Phase Completion Record filled (commits, deploy SHA, test run summary, browser evidence, deviations); Document Status updated. **Satisfied on 19 Sep 2026** — see the Phase 1 record for the evidence, including the two production Chrome checks that remain blocked on credentials. Under DL-15 the implementer proceeds directly to Phase 2 from here.
 
-**Status against this definition (19 Sep 2026, after the readiness checkpoint):** all eight acceptance boxes are checked with evidence, including the Playwright journeys and the `surface.enforce` flag that the first checkpoint found missing. Tests run, browser evidence recorded, adversarial review done, Completion Record filled, Document Status updated, and the work stopped before Phase 2.
+**Status against this definition (19 Sep 2026, after production delivery):** all eight acceptance boxes are checked with evidence, including the Playwright journeys and the `surface.enforce` flag that the readiness checkpoint found missing. Tests run, browser evidence recorded, adversarial review done, Completion Record filled, Document Status updated — and the production steps this definition demands are now done too.
 
-**Two items remain outstanding, deliberately:** migrations are applied to the local database only, and the production read-only verification has not been performed. Both need an explicit deployment authorisation that has not been given. Nothing is committed or pushed. Phase 1 is therefore complete as implementation and **not yet DONE by this definition** — and it cannot be, because this definition includes production.
+**The two production items this definition requires are complete, verified 19 Sep 2026 and re-verified before Phase 2 began.** Migrations are applied in production: 103 applied, all eight `p64_phase1` among them, none unfinished or rolled back. The production read-only verification was performed in real Chrome against the live `ghg` academy. Both repositories are merged to `main` — backend `0b884e7` deployed at `7672ee3`, frontend `92f80bc` — and the backend reports healthy with the Phase 1 routes live.
+
+**Phase 1 is therefore DONE by this definition**, with one honest qualification carried forward rather than hidden: the Client Owner Students tab and the Manager/Instructor UI boundaries were **not** exercised in production Chrome, because no Client Owner credential for that academy is available and the platform-owner account is correctly refused its data. Those two checks stay recorded as BLOCKED in the completion record above. They do not block Phase 2: the same boundaries are covered by Playwright J3 and by the server-side data verification, and the gap is one of observation, not of implementation.
 
 ---
 
@@ -328,7 +364,7 @@ All acceptance boxes checked; migrations applied in production; production read-
 
 **Status:** Not Started
 **Estimate:** ~7 weeks
-**Consolidates:** P64d (learner dashboard), P64e (protected content tier and grants), P64f (Cloudflare Stream video), P64g (device/session policy), the player-shell and sequence half of P64j, plus the video storage quota (D5) and the dashboard learner-route removal (D2).
+**Consolidates:** P64d (learner dashboard), P64e (protected content tier and grants), P64f (hosted video — **both** the Normal and Premium tiers, D10), P64g (device/session policy), the player-shell and sequence half of P64j, plus the video storage quota (D5) and the dashboard learner-route removal (D2).
 
 ### A. Objective
 Give learners one complete, academy-branded learning surface (dashboard + unified player) and make every byte of paid content entitlement-checked, short-lived, provider-signed and device-policed, with progress evidence recorded server-side.
@@ -337,14 +373,22 @@ Give learners one complete, academy-branded learning surface (dashboard + unifie
 S1–S3 (anonymous media, RLS gap, whole-course URL delivery) are the critical security findings; F1's dashboard and F3's player are the learner-facing product gaps; D1, D2, D4 and D5 all land here. Content grants, video and device policy share the same policy decision point, so they ship together as one vertical slice.
 
 ### C. Dependencies
-Phase 1 complete (principal model, lifecycle columns, review RBAC). Cloudflare Stream account enabled with signing key and webhook (onboarding checklist in Rollout); D5 quota mapping confirmed (Decision Log DL-3).
+Phase 1 complete (principal model, lifecycle columns, review RBAC). D5 quota mapping confirmed (Decision Log DL-3).
+
+**Amended 19 Sep 2026 (D10).** Cloudflare Stream onboarding — account, signing key, webhook secret — is a dependency of the **Premium tier only**. The **Normal tier depends on nothing that does not already exist** (R2, the protected bucket, the presign path and the Worker gate), so Phase 2 as a whole is no longer blocked on provider onboarding. The Normal tier's Worker architecture must pass the validation spike in §S before it is declared production-ready.
 
 ### D. Backend work
 1. **Protected content tier**: protected R2 bucket and upload endpoint; `lesson_contents`, `lesson_resources`; `media_assets` gains `access`, `provider`, `provider_id`, `processing_status`, `duration_seconds`, `course_id`; `course_lessons` gains `is_preview`, `available_at`, `duration_seconds`, `completion_rule`, `video_asset_id`.
 2. **Policy decision point** `LessonContentService.getContent()` implementing all seven entitlement conditions (identity/session, academy context, active enrollment, published course, deliverable lesson or preview, device/lease, no suspension), rate-limited, logged to `content_access_log`, returning `{ kind: text|video|file|external, …, watermark, playbackLease, expiresAt }`; `ContentGrantSigner` (R2 presign 10 min; Stream token 2 h bound to session and device, never `downloadable`).
 3. **Sections projection** without `contentUrl` (behind `content.protected`), adding `isPreview`, `durationSeconds`, `lockState`, `lockReason`; **sequence endpoint** `GET /learning/courses/:id/sequence` returning ordered items across lessons, quizzes, assignments and live sessions with per-item state and lock reasons (unified curriculum ordinals; assignment/quiz ordering bug fixed).
-4. **Video provider**: `VideoProvider` interface with `capabilities()`; `CloudflareStreamProvider` — direct creator upload with `maxDurationSeconds` reservation and `requireSignedURLs`, allowed-origins sync from the domain module (platform wildcard + apex + every live custom hostname; updated on domain go-live/release), local token signing, webhook HMAC verification (`time + "." + body`, constant-time compare, 5-min replay window, idempotent by uid), status-poll fallback, static academy watermark profile (optional); `FakeVideoProvider` for local/tests; DRM capability reported `false` (D1).
-5. **Video storage quota (D5)**: `videoStorageMinutes` added to `PlanResourceLimits`, plan catalog (Starter 500 / Growth 2,000 / Enterprise 5,000 per DL-3), `granted_limits` semantics, tenant usage (`videoStorageMinutes = ready video minutes + active reservations`); enforcement before issuing an upload URL (`usage + requested > quota` → `409 errors.entitlement.videoStorageMinutesExceeded` with used/quota/requested) and reconciliation when the provider reports real duration; usage exposed in the tenant usage endpoint; no Cloudflare price anywhere in Atlas.
+4. **Video providers and the registry (AD-7, D10)**: `VideoProvider` with `capabilities()` reporting what is actually enforced; a `VideoProviderRegistry` resolving **by security tier on upload** and **by `media_assets.provider` on playback**.
+   - **`CloudflareStreamProvider` (premium)** — direct creator upload with `maxDurationSeconds` reservation and `requireSignedURLs`, allowed-origins sync from the domain module (platform wildcard + apex + every live custom hostname; updated on domain go-live/release), local token signing, webhook HMAC verification (`time + "." + body`, constant-time compare, 5-min replay window, idempotent by uid), status-poll fallback, static academy watermark profile (optional). Reports `drm: false` (D1) **and `boundToSession`/`boundToDevice` `false`** — its `accessRules` are `any/allow` and Cloudflare does not interpret Atlas's custom claims (AD-16, finding D-5).
+   - **`BasicVideoProvider` (normal)** — R2 + Cloudflare CDN + an Atlas-controlled Worker gate validating an Atlas-minted token. Upload is a presigned PUT; readiness is **synchronous** (`reportsReadinessAsynchronously: false`) and finalised by the completion endpoint in §L, because there is no webhook. Duration is derived by Atlas, never taken from the client (§D.5). Reports `enforcesMaxDuration: false` — a presigned PUT cannot bound runtime minutes — and `adaptiveBitrate: false`.
+   - **`FakeVideoProvider`** for local/tests; refuses to run under `NODE_ENV=production`.
+   - Methods a synchronous adapter cannot honour (`verifyWebhookSignature`, `parseWebhookEvent`, `fetchAsset`, `syncAllowedOrigins`) are **capability-gated, never stubbed dishonestly**.
+5. **Video storage quota (D5, AD-14)**: `videoStorageMinutes` in `PlanResourceLimits`, plan catalog baseline (basic 500 / growth 2,000 / enterprise 5,000 per DL-3, per-family values permitted per D5), `granted_limits` semantics, tenant usage (`videoStorageMinutes = ready video minutes + active reservations`); enforcement before issuing an upload URL (`usage + requested > quota` → `409 errors.entitlement.videoStorageMinutesExceeded` with used/quota/requested) and reconciliation when the real duration is known; usage exposed in the tenant usage endpoint; **no provider price anywhere in Atlas**.
+   **Counted across every provider**, not one (AD-14). Normal-tier video does not additionally consume `videoStorage` (GB), so the tiers stay comparable.
+   **Duration provenance**: Cloudflare measures it; R2 does not. Atlas resolves it (ranged `mvhd` parse, falling back to a worker probe) and records whether the figure was `measured`, `parsed` or `declared`. A declared duration is never silently trusted — that would make the quota self-reported.
 6. **Playback and progress evidence**: `POST …/playback` heartbeats (position, watched seconds, max ratio) bounded to plausible deltas; `lesson_progress` evidence columns; resume position; lesson completion via watched-ratio rule or manual mark above the minimum; undo completion; `course_progress.time_spent_seconds`.
 7. **Device and session policy (AD-10, D4)**: `atlas_device` cookie issued at sign-in; `student_devices` registry; `access_policies` (platform default 2 devices / 1 session; academy override by Client Owner within platform maximums; plan scope reserved); Redis lease `learning_lease:{userId}` (60 s TTL, heartbeat every 20 s); grant/refresh enforce the lease; `POST /learning/session/takeover` (inform → confirm → revoke previous lease and block its token refresh → activate → audit `DEVICE_SESSION_TAKEOVER` with learner, old device/session, new device/session, academy, course/lesson, timestamp); device list/removal; staff reset (owner).
 8. **Learner dashboard aggregates**: `GET /learning/overview`, `/learning/assignments`, `/learning/quizzes`, global counts for My Courses; sessions list for the Devices section.
@@ -353,7 +397,7 @@ Phase 1 complete (principal model, lifecycle columns, review RBAC). Cloudflare S
 ### E. Frontend work
 1. **Learner dashboard** `features/learner` under `/my/*`: shell (branded header, desktop side navigation, mobile bottom nav Overview/Courses/Assessments/Profile, breadcrumbs), Overview (continue learning, progress rings, due dates, recent results, certificates placeholder until Phase 3, announcements), My Courses (All/In progress/Completed with server counts, search), Course progress (outline with states and lock reasons), Assessments (Quizzes/Assignments lists), Certificates (empty state until Phase 3), Purchases (orders), Devices (registered devices, active sessions, remove/sign out elsewhere), Profile (no Organizations tab), Security; redirects from `/my-learning`, `/my-account` and `/dashboard/learning/*`; **dashboard learner routes removed** (D2) after redirects; notification templates updated.
 2. **Unified player shell**: lessons, quizzes, assignments and live sessions render inside one shell (course title, back link, overall progress, curriculum drawer/sidebar, activity header with type/number/title/duration, content area, one action bar); one ordered sequence drives sidebar, Previous/Next and Continue; numbering "2.3" with locale digits; per-item states (locked with reason, available, in progress, completed, passed, failed, submitted, graded, overdue) with icons + text and `aria-current`; the six learner questions answered on every screen.
-3. **Player content**: grant consumer with silent refresh; video adapter (hls.js on Chromium/Firefox, native HLS on Safari/iOS; DASH optional) with poster, loading skeleton, explicit error states (processing, expired grant, access ended, network), resume, playback rate, captions, keyboard shortcuts, `controlsList`/no-PiP/context-menu deterrents, per-viewer visible watermark overlay; text lessons with rich body, reading progress, resources panel; preview rail for non-enrolled visitors; lock cards; completion behaviours (inline confirmation, "Next: …", optional auto-advance, undo); external embeds labelled "not protected".
+3. **Player content**: grant consumer with silent refresh — **mandatory, not an optimisation**, because a Normal-tier credential is shorter than a long lesson (§I); the protection badge renders the AD-16 capability object honestly, including saying plainly when playback is **not** device-bound (which, per finding D-5, is the *Premium* tier); video adapter driven by the grant's `format` discriminator — native `<video>` for the Normal tier's progressive MP4 (no new player dependency, Range/seek already works), hls.js on Chromium/Firefox and **native HLS on Safari/iOS** for Premium (iOS ManagedMediaSource makes hls.js on iPhone a trap; DASH is not used) with poster, loading skeleton, explicit error states (processing, expired grant, access ended, network), resume, playback rate, captions, keyboard shortcuts, `controlsList`/no-PiP/context-menu deterrents, per-viewer visible watermark overlay; text lessons with rich body, reading progress, resources panel; preview rail for non-enrolled visitors; lock cards; completion behaviours (inline confirmation, "Next: …", optional auto-advance, undo); external embeds labelled "not protected".
 4. **Devices UX**: limit-reached dialog with device list; "already learning on another device" takeover dialog with explicit confirmation; lease-lost pause state (no progress loss).
 5. **Staff UX**: video upload with progress and processing state, captions upload, thumbnail choice; quota meter and clear quota-exceeded message with upgrade path; lesson body editor with protected image upload; resources list; `is_preview` toggle; drip date; content-protection panel (owner only) and device policy settings (owner only); "protected/unprotected" badges.
 6. Accessibility fixes carried from the audit: `role="progressbar"` everywhere, no nested interactive controls, live regions, captions track, reduced motion; RTL mirroring of drawer and chevrons; mobile bottom nav hidden inside the player.
@@ -361,7 +405,8 @@ Phase 1 complete (principal model, lifecycle columns, review RBAC). Cloudflare S
 ### F. Database / schema / migration work
 - `lesson_contents`, `lesson_resources`, `content_access_log` (retention 90 days), `student_devices`, `access_policies` (seed platform row 2/1), `media_assets` additions, `course_lessons` additions, `lesson_progress` evidence columns, `course_progress.time_spent_seconds`/`last_activity_at`, `refresh_tokens.device_id`, `academies.content_protection jsonb`, plan catalog `videoStorageMinutes` (limits JSON) with seed values and `granted_limits` compatibility.
 - RLS: `lesson_contents`/`lesson_resources` select for active enrollment (via `can_access_lesson` definer resolving enrollment, unlock and preview), course instructor, academy manager/owner, platform owner — **no public policy**; `content_access_log` self/manager/platform; `student_devices` self + owner reset; `access_policies` owner/platform.
-- Backfill: copy public lesson objects to the protected bucket per academy under the flag (public copies deleted after 30 days); text descriptions copied into `lesson_contents.body_html`; external `contentUrl` rows become `kind: 'external'`.
+- **Amended 19 Sep 2026 (D10, AD-15):** `plans` gains `family` (`normal` | `premium`) and `tier` (`basic` | `growth` | `enterprise`) so the six commercial variants are modelled once rather than duplicated; `media_assets` gains `security_tier` (what Atlas promised for THIS asset) alongside `provider` (where the bytes are) and a duration-provenance column; `academies` gains the default upload tier, bounded by the plan entitlement; `content_access_log` gains `security_tier` and `provider` (§Q — Normal and Premium coexist in one academy, so the log must say which delivered).
+- Backfill: copy public lesson objects to the protected bucket per academy under the flag (public copies deleted after 30 days); text descriptions copied into `lesson_contents.body_html`; external `contentUrl` rows become `kind: 'external'`. Existing plans are backfilled to `family: normal` with their current tier, and existing assets to the tier they were actually created under — **never to the academy's current plan** (D11).
 
 ### G. Authentication and authorization
 Grant endpoint enforces the seven conditions; device cookie is a server-issued credential (no fingerprinting); takeover requires the learner's own confirmed request; device policy editable by Client Owner only (D8); content protection settings owner only (D8).
@@ -370,7 +415,21 @@ Grant endpoint enforces the seven conditions; device cookie is a server-issued c
 Protected object keys prefixed by academy id and course id from verified context; Stream videos carry `meta.academyId`/`courseId` and the signer refuses cross-academy tokens; allowed origins limited to the academy's hosts; RLS spec creates published + public fixtures for `lesson_contents` and asserts zero rows without context, in a foreign tenant context and for a non-enrolled user.
 
 ### I. Security work
-Closes S1, S2 (table), S3, S7 (evidence), S8 (devices); tokens never `downloadable`; TTLs 10 min / 2 h; `Cache-Control: private, no-store` on grant responses; CSP on academy hosts allows the Stream customer subdomain only; `Referrer-Policy: no-referrer`; webhook HMAC; rate limits on grants and token refresh; audit for takeovers, device resets, policy changes.
+Closes S1, S2 (table), S3, S7 (evidence), S8 (devices); tokens never `downloadable`; `Cache-Control: private, no-store` on grant responses; CSP on academy hosts allows only the delivering host for the tier in use; `Referrer-Policy: no-referrer`; webhook HMAC; rate limits on grants and token refresh; audit for takeovers, device resets, policy changes.
+
+**Amended 19 Sep 2026 — the honest tier difference (D1, AD-16).**
+
+| | Normal | Premium |
+|---|---|---|
+| Credential lifetime | ≤ 10 min, refreshed | ≤ 2 h |
+| Bound to session/device **at the edge** | **No** (corrected 19 Sep 2026 — see below) | **No** — `accessRules: any/allow`; Atlas enforces at grant-issue only (finding D-5) |
+| Revocation before expiry | **Yes, per request** — only once the revocation list is wired, and reported from configuration rather than assumed. **Prompt, not instant**: bounded by denylist propagation (~1 min measured) plus the gate's cache, so no sub-second SLA may be promised | **No** — only by revoking a signing key, which invalidates every token minted with it |
+| Adaptive bitrate | No (single 720p rendition) | Yes, managed |
+| Encoding | Atlas | Provider, free |
+
+**Correction, 19 Sep 2026.** An earlier version of this table claimed the Normal tier binds to session and device at the edge. It does not, and it cannot: the delivery host is an Atlas-owned hostname, cross-site from the academy the learner is signed in to, so no Atlas session reaches it. The gate verifies the token's signature, object key, expiry, request `Origin` and the revocation list — not who is presenting it. A Normal-tier token lifted from one browser plays in another until it expires or is revoked, which is **the same shape as finding D-5**. Asserting otherwise would have reproduced D-5 on the tier this plan presents as the stronger one. The capability is now reported `false` by the adapter and surfaced to the client (AD-16).
+
+Neither tier has DRM. Neither may claim download- or screen-record-proofing, and **neither may claim edge-enforced session or device binding**. On revocation latency Normal remains the stronger of the two — a ten-minute credential plus a revocation list, against Stream's two hours and a key-wide kill switch — which is why the tiers are sold as *self-managed* versus *platform-managed* delivery and never as "less secure" versus "secure".
 
 ### J. Learner UX work
 Everything in E.1–E.4 in EN and AR, desktop and 400 px width, keyboard-only operable.
@@ -379,10 +438,22 @@ Everything in E.1–E.4 in EN and AR, desktop and 400 px width, keyboard-only op
 E.5; quota messaging; policy panels gated by role.
 
 ### L. API changes
-`GET /learning/courses/:id/lessons/:lessonId/content`, `POST …/playback`, `POST …/playback/refresh`, `GET /learning/courses/:id/sequence`, `DELETE …/progress/complete-lesson/:lessonId` (undo), `GET /learning/overview`, `/learning/assignments`, `/learning/quizzes`, `GET /auth/devices`, `DELETE /auth/devices/:id`, `POST /learning/session/takeover`, `POST /academies/:id/media/protected`, `POST /academies/:id/media/video-uploads`, `POST /webhooks/video/stream`, `PATCH /academies/:id/content-protection` (owner), `PATCH /academies/:id/device-policy` (owner), tenant usage gains `videoStorageMinutes`; sections projection changes behind flag.
+`GET /learning/courses/:id/lessons/:lessonId/content` (its `protection` field is the capability object of AD-16, not a boolean), `POST …/playback`, `POST …/playback/refresh` (**mandatory for the Normal tier**, whose credential is shorter than a long lesson), `POST /academies/:id/media/video-uploads/:assetId/complete` (synchronous readiness, §D.4), `PATCH /academies/:id/video-tier` (owner-only, bounded by plan entitlement), `GET /learning/courses/:id/sequence`, `DELETE …/progress/complete-lesson/:lessonId` (undo), `GET /learning/overview`, `/learning/assignments`, `/learning/quizzes`, `GET /auth/devices`, `DELETE /auth/devices/:id`, `POST /learning/session/takeover`, `POST /academies/:id/media/protected`, `POST /academies/:id/media/video-uploads`, `POST /webhooks/video/stream`, `PATCH /academies/:id/content-protection` (owner), `PATCH /academies/:id/device-policy` (owner), tenant usage gains `videoStorageMinutes`; sections projection changes behind flag.
 
 ### M. Testing strategy
 Unit (signer, policy resolution, lease, quota arithmetic, completion rule for lessons), e2e (grant matrix, quota, devices, playback), RLS (published+public), k6 load, frontend component tests, Playwright J1 (dashboard, player, video, progress, devices), axe.
+
+**Amended 19 Sep 2026 (D10, D11, AD-15, AD-16)** — additionally required:
+- all **six** plan variants (`NORMAL_*`, `PREMIUM_*`) resolve the right entitlements, tier and provider;
+- tier resolution and provider resolution as separate, independently asserted steps;
+- asset-level `provider` and asset-level `security_tier`, including that they can differ from the academy's current plan;
+- **mixed Normal and Premium assets inside one academy** behave correctly (D11);
+- quota enforced across both providers, with the two aggregates asserted to agree (AD-14);
+- capability reporting: a Premium grant asserts `boundToDevice: false` (D-5) rather than inheriting an aspiration;
+- **regressions for findings D-1 … D-5** specifically;
+- Normal playback, Premium playback, token expiry, refresh, revocation;
+- downgrade behaviour: **no silent provider migration** (D11);
+- access-log tier/provider recording.
 
 ### N. Unit tests
 Token claims and TTL clamps; session/device binding; allowed-origin list builder (wildcard caveats); webhook signature verification; quota check (`1,850+180 → reject`, `1,850+100 → allow`, reservation release on failed upload); lease semantics with fake Redis; policy resolution most-specific-first with platform maximums; watched-ratio completion; sequence ordering and lock-reason derivation.
@@ -394,25 +465,35 @@ Grants for enrolled / locked / preview / revoked / expired / refunded / anonymou
 J1 (partial): academy login → learner dashboard every section (EN/AR, desktop/mobile) → course → player shell → lesson with grant → protected video plays → reload resumes position → mark complete/undo → next activity → devices page; J5 (revocation): refund → grants refused → lease revoked. Two-browser test: second device triggers conflict; takeover pauses the first.
 
 ### Q. Chrome browser validation
-Learner dashboard on desktop and at 400 px in EN and AR; network panel shows no durable content URLs; video plays on the platform host and on a custom domain; manifest request from a foreign origin fails; expired grant refreshes silently; revoked enrollment shows "access ended"; third device refused; takeover flow with confirmation; staff: upload a video, watch processing → ready, quota meter, quota-exceeded message; preview lesson opens anonymously; dashboard learner routes redirect.
+**Run for BOTH the Normal and Premium paths** (amended 19 Sep 2026). Learner dashboard on desktop and at 400 px in EN and AR; network panel shows no durable content URLs on either tier; video plays on the platform host and on a custom domain; manifest request from a foreign origin fails; expired grant refreshes silently; revoked enrollment shows "access ended"; third device refused; takeover flow with confirmation; staff: upload a video, watch processing → ready, quota meter, quota-exceeded message; preview lesson opens anonymously; dashboard learner routes redirect.
 
 ### R. Adversarial / security validation
 Replay a presigned URL after revocation (expected to work until TTL; new grant refused); token for another academy's video (refused); grant flood from one learner (rate-limited, alert); forged webhook (rejected); attempt to fetch `lesson_contents` under foreign tenant context (zero rows); device cookie tampering (unknown device → re-registration under the cap).
 
 ### S. Migration requirements
-Provider onboarding before `video.stream` is enabled anywhere: Stream enabled, signing key stored, webhook verified on staging, allowed origins synced, quota seeded; DRM availability asked of Cloudflare in writing (non-blocking, recorded in DL-1). Per-academy flags `content.protected`, `video.stream`, `devices.policy`, `learner.dashboard_v2`, `player.v2`; protected-bucket backfill per academy; redirects for two releases before the dashboard learner routes are deleted.
+Provider onboarding before the **Premium** tier is enabled anywhere: Stream enabled, signing key stored, webhook verified on staging, allowed origins synced, quota seeded. DRM is not available on Stream at all (D1), so nothing is pending on that question.
+
+**Normal-tier Worker validation spike — required before the Normal architecture is declared production-ready (amended 19 Sep 2026).** The presigned-GET probe already run (206 on Range, 403 unsigned, 403 on a swapped key) validates the *presign* path and is explicitly **not** sufficient to prove the Worker path. The spike must empirically establish: per-request authorization; session binding; revocation before expiry; HLS/segment behaviour if HLS is used; caching behaviour; realistic concurrency; Worker request volume and cost at realistic segment counts; hotlink behaviour; failure behaviour; expiry behaviour.
+
+Per-academy flags `content.protected`, `video.normal`, `video.premium`, `devices.policy`, `learner.dashboard_v2`, `player.v2`; protected-bucket backfill per academy; redirects for two releases before the dashboard learner routes are deleted.
 
 ### T. Rollout requirements
-Canary on an internal academy, then the first customer academy that asked for protection, one week each; metrics in U watched; rollback = flag off (old projections and pages remain until flags are global); the previous image runs against the new schema.
+Canary on an internal academy, then the first customer academy that asked for protection, one week each; metrics in U watched; rollback = flag off (old projections and pages remain until flags are global); the previous image runs against the new schema. **Amended 19 Sep 2026:** the **Normal** tier can canary immediately (it depends on nothing new); the **Premium** tier waits for Stream onboarding. Rollback of a tier change costs nothing because existing assets keep their provider and tier (D11).
 
 ### U. Observability / metrics / logging
-`content_grants_total{kind,result}`; per-student grant rate (p99 > 40/10 min → owner report); `video_token_mint_duration_ms` and provider errors (> 2 % alert); `video_processing_pending_age_s` (> 30 min alert); webhook signature failures (any → alert); `lease_conflicts_total`, `device_limit_hits_total`, takeovers per student per day (> 5 → sharing report); `video_storage_minutes_used{organization}` vs quota; readiness reports protected bucket, Stream config and Redis lease store; structured logs for every grant, refusal, takeover and policy change.
+`content_grants_total{kind,result,tier}` and `video_token_mint_duration_ms{tier}` (labelled so the tiers are compared, not averaged); `video_upload_completions_total{tier,result}` (the synchronous path has no webhook to alert on); a duration-provenance counter (`measured`/`parsed`/`declared` — a rise in `declared` means the quota is drifting toward self-reported); grant-refresh rate per learner (the Normal tier's expected load, and the signal that reveals a TTL misconfiguration); per-student grant rate (p99 > 40/10 min → owner report); `video_token_mint_duration_ms` and provider errors (> 2 % alert); `video_processing_pending_age_s` (> 30 min alert); webhook signature failures (any → alert); `lease_conflicts_total`, `device_limit_hits_total`, takeovers per student per day (> 5 → sharing report); `video_storage_minutes_used{organization}` vs quota; readiness reports protected bucket, Stream config and Redis lease store; structured logs for every grant, refusal, takeover and policy change.
 
 ### V. Acceptance criteria
 - [ ] No learner-facing response contains a durable URL to protected media; file URLs expire ≤ 10 min, video tokens ≤ 2 h and are bound to session and device.
 - [ ] Locked lessons carry no content until unlocked; preview lessons open without enrollment.
 - [ ] Every uploaded video requires a signed token; playback only from allowed origins; no video byte passes through the VPS.
-- [ ] `videoStorageMinutes` enforced per D5 with clear messaging; no Cloudflare price in the codebase.
+- [ ] `videoStorageMinutes` enforced per D5 with clear messaging, counted across **every** provider; no provider price in the codebase.
+- [ ] **No learner-facing response overstates the protection actually enforced** (AD-16) — in particular a Premium grant reports `boundToDevice: false`.
+- [ ] All **six** plan variants resolve the correct entitlements, security tier and provider; `premium` is nowhere hard-wired to a provider class in the authorization layer (D10).
+- [ ] `media_assets.provider` records the **acting** adapter and `security_tier` records what was promised; neither is derived from the academy's current plan (AD-15, D11).
+- [ ] Mixed Normal and Premium assets coexist correctly in one academy, and a downgrade migrates **nothing** (D11).
+- [ ] `content_access_log` records the security tier and provider for every decision.
+- [ ] Findings D-1 … D-5 each have a regression test.
 - [ ] Device defaults (2/1) enforced and changeable via `access_policies`; takeover requires confirmation and writes `DEVICE_SESSION_TAKEOVER`.
 - [ ] Learner dashboard sections exist with real data; dashboard learner routes removed (redirects in place); axe clean; EN/AR parity.
 - [ ] Unified player: quizzes and assignments render in the shell and participate in Next/Previous; lock reasons shown; watched-ratio completion works; resume works after reload.
@@ -420,7 +501,7 @@ Canary on an internal academy, then the first customer academy that asked for pr
 - [ ] All tests green; Playwright J1 (partial) and J5 green; browser validation recorded.
 
 ### W. Definition of DONE
-All boxes checked; flags enabled on the canary academies with metrics reviewed for one week each; Phase Completion Record filled; Document Status updated; STOP before Phase 3.
+All boxes checked; flags enabled on the canary academies with metrics reviewed for one week each; feature branch pushed and a pull request opened against `main`; the CodeRabbit review cycle completed with every actionable finding fixed or explicitly justified; required CI checks green; pull request merged; production deployment succeeded; only this phase's migrations applied and verified; **real Chrome production validation performed against the live academy website** with evidence captured; Phase Completion Record filled in the extended format; Document Status updated. **Then proceed directly to Phase 3** — no further phase-start approval is sought (DL-15).
 
 ---
 
@@ -519,7 +600,7 @@ Engine v2 on canary academy first; integrity mode remains off until an instructo
 - [ ] All tests green; Playwright J1 (assessment/certificate) and J4 green; browser validation recorded.
 
 ### W. Definition of DONE
-All boxes checked; canary rollout reviewed; Phase Completion Record filled; Document Status updated; STOP before Phase 4.
+All boxes checked; canary rollout reviewed; feature branch pushed and a pull request opened against `main`; the CodeRabbit review cycle completed with every actionable finding fixed or explicitly justified; required CI checks green; pull request merged; production deployment succeeded; only this phase's migrations applied and verified; **real Chrome production validation performed against the live academy website** with evidence captured; Phase Completion Record filled in the extended format; Document Status updated. **Then proceed directly to Phase 4** — no further phase-start approval is sought (DL-15).
 
 ---
 
@@ -598,7 +679,7 @@ Full Appendix checklist against production read-only plus a synthetic grant floo
 Catalog columns additive; reviews table new; flags `checkout.student`, `catalog.v2`; retention jobs enabled after the first successful dry run.
 
 ### T. Rollout requirements
-Enable all remaining P64 flags globally in the order: `learner.dashboard_v2` → `player.v2` → `content.protected` → `video.stream` → `devices.policy` → `quiz.engine_v2` → `certificates` → `checkout.student` → `catalog.v2`; one production verification per flag; owner communication; `--rollback` path re-tested before the global switch.
+Enable all remaining P64 flags globally in the order: `learner.dashboard_v2` → `player.v2` → `content.protected` → `video.normal` → `video.premium` → `devices.policy` → `quiz.engine_v2` → `certificates` → `checkout.student` → `catalog.v2`; one production verification per flag; owner communication; `--rollback` path re-tested before the global switch.
 
 ### U. Observability / metrics / logging
 Every metric from Phases 1–3 visible; `checkout_orders_total{state}`, approval latency; catalog latency; retention job outcomes; alert routing confirmed by a fired synthetic alert; readiness reports every dependency.
@@ -613,7 +694,7 @@ Every metric from Phases 1–3 visible; `checkout_orders_total{state}`, approval
 - [ ] All P64 flags enabled globally with per-flag production verification recorded.
 
 ### W. Definition of DONE
-All boxes checked; Document Status set to Complete with the final deploy SHAs; Phase Completion Record filled; open items moved to the Decision Log or a new initiative.
+All boxes checked; feature branch pushed and a pull request opened against `main`; the CodeRabbit review cycle completed with every actionable finding fixed or explicitly justified; required CI checks green; pull request merged; production deployment succeeded; only this phase's migrations applied and verified; **real Chrome production validation performed against the live academy website** with evidence captured; Phase Completion Record filled in the extended format; Document Status updated; Document Status set to Complete with the final deploy SHAs; open items moved to the Decision Log or a new initiative. **Then, without stopping:** the Final Master Plan Audit, the final repository-wide CodeRabbit review, and the Final Report — and only then stop.
 
 ---
 
@@ -671,7 +752,7 @@ Additive only; defaults reproduce current behaviour; every projection change beh
 
 ## Rollout Strategy
 
-Phase 1 ships directly after tests and production read-only verification (surface enforcement staged by allowlist). Phases 2 and 3 ship behind flags to an internal academy, then one customer academy, one week each, then globally in Phase 4 in the listed order with a verification per flag. Provider onboarding (Stream account, signing key, webhook, allowed origins, quota seed, written DRM question) precedes any `video.stream` enablement. Communication to staff before Phase 1 (sign-in rule, Students tab, review permissions) and before Phase 2 (protected content, preview, quota). Rollback is always flag-off; migrations are never reverted.
+Phase 1 ships directly after tests and production read-only verification (surface enforcement staged by allowlist). Phases 2 and 3 ship behind flags to an internal academy, then one customer academy, one week each, then globally in Phase 4 in the listed order with a verification per flag. Provider onboarding for the **Premium** tier only (Stream account, signing key, webhook secret, allowed origins, quota seed) — the Normal tier depends on nothing new and canaries first (D10, DL-19); the Normal Worker validation spike (DL-22) gates its production readiness precedes any `video.premium` enablement (the `video.normal` tier needs no provider onboarding). Communication to staff before Phase 1 (sign-in rule, Students tab, review permissions) and before Phase 2 (protected content, preview, quota). Rollback is always flag-off; migrations are never reverted.
 
 ### Deployment-path blocker (found 19 Sep 2026 at the final authorization checkpoint)
 
@@ -687,9 +768,9 @@ Phase 1 was authorised for production and **was not deployed**, because the deli
 - Production is unreachable from the implementation environment: `DEPLOY_HOST`, `DEPLOY_USER` and `DEPLOY_SSH_KEY` are GitHub Actions secrets, and the local `DATABASE_URL` points only at the local database.
 - Separately, the CI lint job has been red on `main` since before Phase 7 and `deploy.yml` is deliberately un-gated from it. Phase 1 adds none of those failures: all 113 remaining lint errors are in 17 files, **none** of which Phase 1 modifies or adds.
 
-**Conclusion.** The automatic "push to `main` = deploy = migrate" model is incompatible with the approved Phase 1 safety sequence. Phase 1 stays **not DONE** until a production backup is taken and verified, the approved migrations are applied, both services are deployed, and production verification is recorded.
+**Conclusion (as assessed on 19 Sep 2026, now RESOLVED).** The automatic "push to `main` = deploy = migrate" model was incompatible with the approved Phase 1 safety sequence, and Phase 1 could not be DONE until a production backup was taken and verified, the approved migrations applied, both services deployed, and production verification recorded. **All four have since happened** — see the Phase 1 completion record. This section is retained as the history of the blocker and the reasoning behind the migration gate, not as a current state.
 
-**Blocker patch — implemented locally on 19 Sep 2026, not committed, not deployed.** Three delivery files changed, no application or database code touched: `deploy/deploy.sh` (argument loop, `--preflight`, `--with-migrations`, and a migration gate that takes a verified backup and records the pre-migration counts before any schema change), `deploy/backup.sh` (gzip integrity, pg_dump completion marker, and presence of the tables the migration rewrites), and `.github/workflows/deploy.yml` (a `workflow_dispatch` input plus an `approve-migrations` job naming a protected environment). Migration now requires BOTH an explicit flag and a protected-environment approval; a push that carries pending migrations aborts before touching the schema, and a push that carries none behaves exactly as before. The gate is inert until the repository defines a `production-migrations` environment with at least one required reviewer.
+**Blocker patch — since merged and live** (PR #1 as `b9ef0e5`, plus the backup-prune fix `7672ee3` found by the first real preflight). As implemented on 19 Sep 2026: Three delivery files changed, no application or database code touched: `deploy/deploy.sh` (argument loop, `--preflight`, `--with-migrations`, and a migration gate that takes a verified backup and records the pre-migration counts before any schema change), `deploy/backup.sh` (gzip integrity, pg_dump completion marker, and presence of the tables the migration rewrites), and `.github/workflows/deploy.yml` (a `workflow_dispatch` input plus an `approve-migrations` job naming a protected environment). Migration now requires BOTH an explicit flag and a protected-environment approval; a push that carries pending migrations aborts before touching the schema, and a push that carries none behaves exactly as before. The gate is inert until the repository defines a `production-migrations` environment with at least one required reviewer.
 
 ### Phase 1 production execution sequence (prepared 19 Sep 2026, NOT executed)
 
@@ -722,6 +803,14 @@ Nine steps, in this order. Nothing below has been run; each needs explicit autho
 
 ## Decision Log
 
+### Superseded decisions — preserved, not deleted
+
+| ID | Superseded text | Superseded by | Date |
+|---|---|---|---|
+| DL-16 | **D1 (original):** *"Use Cloudflare Stream with mandatory signed tokens … and a provider abstraction with capability flags."* and **AD-7 (original):** *"`CloudflareStreamProvider` as the only production implementation."* Both assumed exactly one production video provider. | D1/D10 as amended, AD-7 as amended. Superseded by `ATLAS_VIDEO_PROVIDER_TIERS_INVESTIGATION.md`, approved 19 Sep 2026. The original reasoning remains valid **for the Premium tier**; what changed is that it is no longer the only tier. | 19 Sep 2026 |
+| DL-17 | **D5 naming note (original):** mapped the approved quotas onto the seeded tiers `Starter`/`Growth`/`Enterprise`. | D10's tier vocabulary renames the first tier `basic` in the product model; the seeded key `starter` is unchanged in the database. Values are unaffected. | 19 Sep 2026 |
+
+
 | ID | Date | Decision | Status |
 |---|---|---|---|
 | DL-1 | 2026-09-18 | Proceed without DRM (D1); ask Cloudflare in writing during onboarding; answer to be recorded here. | Approved (owner) |
@@ -735,25 +824,91 @@ Nine steps, in this order. Nothing below has been run; each needs explicit autho
 | DL-9 | 2026-09-18 | `academy_students_tenant_select` admits the academy's whole roster under an organization context; the instructor's narrowing to assigned courses is done by the application layer (`viewerScope: 'assigned_courses'`) and verified under a user-only context. Layering choice, taken deliberately: an RLS predicate that also narrowed by course would have to re-derive the instructor relation on every roster row. | Taken (implementation); recorded for review |
 | DL-10 | 2026-09-18 | Blocking a student revokes that learner's sessions **for that academy only**, never the whole account. A learner may belong to several academies, so `revokeAllForUser` (password change / reset) stays the account-wide tool. | Taken (implementation) |
 | DL-11 | 2026-09-18 | An enrolled learner may SELECT the `courses` row they hold any enrollment for, including a `draft`/`private` course and including revoked or expired enrollments, so their own list can render the state. Course *content* tiers are unchanged and still require an accepted status. | Taken (implementation) |
+| DL-15 | 2026-09-19 | **Execution model changed to autonomous sequential.** Phases 2, 3 and 4 are approved together; the implementer runs them back to back and no longer stops between phases for approval. Every quality gate is unchanged and in fact tightened: each phase must pass its acceptance criteria, a CodeRabbit review loop, a merged pull request, a successful deployment, its own migrations only, and real Chrome production validation before the next phase begins. Stopping is reserved for the six blocker conditions in the workflow section. Phase 4 is followed by a Final Master Plan Audit, a final repository-wide review and the Final Report. No technical scope, acceptance criterion, security requirement, D1–D9 decision or AD-1–AD-14 architecture decision was changed by this. | Approved (owner) |
 | DL-13 | 2026-09-19 | `surface.enforce` is ROLLOUT control, never a boundary. `ManagementSurfaceGuard` and every RLS policy run in all three modes; `off` restores the pre-P64 surface behaviour and grants nothing RLS or another guard would refuse. Default `on`, so an unset or unreadable variable can never be the reason a learner reaches the management surface, and an invalid value fails startup. | Taken (implementation) |
 | DL-14 | 2026-09-19 | Playwright journeys run against the real stack and the repository's own seed, with the learner created fresh through the academy website each run. Learner addresses use Atlas's own platform domain: the dev API runs the real deliverability check, which correctly refuses `@atlas.test` (no DNS) and `@example.com` (RFC 7505 null MX). | Taken (implementation) |
+| DL-18 | 2026-09-19 | **Two plan families approved (D10).** `normal` and `premium`, each with `basic`/`growth`/`enterprise` — six commercial variants. Family decides the video security capability class; tier decides commercial limits. Prices are catalog data and never appear in provider or authorization logic. Resolution is plan → entitlement → security tier → provider registry → provider; `premium` is never hard-wired to a provider class. | Approved (owner) |
+| DL-19 | 2026-09-19 | **Normal tier = R2 + Cloudflare CDN + Atlas-controlled Worker gate**, progressive MP4, single 720p rendition, **no ABR initially** — deliberately, to avoid inheriting the transcoding/ABR burden. Premium keeps Cloudflare Stream's managed ABR pipeline. | Approved (owner) |
+| DL-20 | 2026-09-19 | **No automatic Premium → Normal migration (D11).** Existing Premium assets stay on their provider and tier; new uploads use the newly entitled tier; mixed state in one academy is valid and expected; nothing is silently migrated or destructively converted. Not promised until provider capabilities are verified and a dedicated workflow is designed. | Approved (owner) |
+| DL-21 | 2026-09-19 | **Finding D-5 recorded as binding (AD-16).** Cloudflare Stream mints `accessRules: any/allow` and does not interpret Atlas's custom JWT claims, so Premium session/device binding is enforced at grant-issue time only, not at the Stream edge. The API must report actual enforced capabilities; a security property is never advertised because an identifier exists inside a JWT. | Approved (owner) |
+| DL-22 | 2026-09-19 | **Normal-tier Worker validation spike is mandatory** before the Normal architecture is production-ready. The presigned-GET probe already run is explicitly insufficient to prove the Worker path. | Approved (owner) |
+| DL-22b | 2026-09-19 | **DL-22 discharged — the Normal-tier Worker spike passed.** Recorded in `ATLAS_NORMAL_VIDEO_WORKER_SPIKE.md`. Revocation proved by a control experiment: a gate token with ~600 s of life left returned `403 revoked` after one denylist write, while a presigned URL for the same object kept returning `206` — which is the entire argument for the gate over a presign. Range/seek, tamper, key-swap, expiry, concurrency (50 concurrent ranged reads, 0 errors) and fail-closed behaviour all verified locally against the real Worker module. Three qualifications recorded: revocation is PROMPT not instant (KV propagation ~1 min plus cache); "bound to session" means the session is nameable and revocable, **not** proof-of-possession — a lifted token still plays, confirming the `boundToSession: false` correction; and HLS would need a prefix claim in the token, which progressive MP4 (DL-19) does not. CDN caching, Worker CPU and real pricing remain UNVERIFIED pending a real deployment. | Approved (evidence recorded) |
+| DL-23 | 2026-09-19 | **Cloudflare CDN terms** require video served through the Cloudflare proxy to be hosted on a Cloudflare service (R2 named as sanctioned). This eliminates VPS-disk-behind-Cloudflare on licensing grounds — independently of AD-1, which already forbade it — and eliminates Backblaze B2 + Cloudflare. Recorded so the option is not revisited. | Recorded (investigation evidence) |
+| DL-24 | 2026-09-19 | **Open — owner decision required.** Whether Normal and Premium variants of the same tier carry different `videoStorageMinutes` values, and whether Normal is metered in minutes or gigabytes. D5 requires the mechanism to support per-variant values; the baseline 500/2,000/5,000 stands until the catalog says otherwise. | **Open — not blocking** |
 | DL-12 | 2026-09-18 | `POST /auth/register` still answers `409 errors.auth.emailAlreadyRegistered`, which lets an anonymous caller test whether an address has an Atlas account. Pre-existing and now reachable on every academy sign-up page. Changing it means emailing the existing account instead of answering — a product decision, not an implementation one. | **Open — owner decision required** |
 
 ## Implementation Change Log
 
 | Date | Phase | Change | Author | Notes |
 |---|---|---|---|---|
-| 2026-09-18 | — | Master plan created from proposal v2 and the nine approved decisions. No code, schema, migration or production changes. | Claude (planning) | Awaiting implementation approval. |
+| 2026-09-18 | — | Master plan created from proposal v2 and the nine approved decisions. No code, schema, migration or production changes. | Claude (planning) | Historical: awaiting implementation approval *at that date*. Superseded by DL-15. |
+| 2026-09-19 | 2 | **Master Plan amended for the two-plan-family video model** (D1, D5, D10, D11, AD-1, AD-7, AD-14, AD-15, AD-16; Phase 2 §C, D.4, D.5, E.3, F, I, L, M, Q, S, T, U, V). Base was `ATLAS_VIDEO_PROVIDER_TIERS_INVESTIGATION.md`'s §20 amendment set, extended with the owner's six-variant plan model. Superseded text preserved as DL-16/DL-17 rather than deleted. Documentation only — no code changed by this entry. | Claude (planning) | Phase 2 implementation continues from the preserved working tree. |
 | 2026-09-18 | 1 | Phase 1 implemented in full: critical fixes, derived principal model, surface-aware authentication, management-surface protection on 51 controllers, registration integrity, enrollment lifecycle, student roster, RBAC realignment, RLS tiers, frontend, 7 migrations, seed alignment. | Claude (implementation) | Local only. Nothing committed, pushed or deployed. |
 | 2026-09-19 | 1 | Readiness checkpoint closed the two remaining gaps: the Playwright project with journeys J2 and J3 (18 tests, real stack), and the `surface.enforce` staged-rollout flag with its own e2e matrix (6 tests) and unit coverage. | Claude (implementation) | Local only. Still nothing committed, pushed or deployed. |
+| 2026-09-19 | 1 | **Phase 1 delivered to production.** Backend PR #2 merged as `0b884e7`, frontend PR #1 merged as `92f80bc`; backend deployed at `7672ee3`, frontend at `92f80bc`; the eight Phase 1 migrations applied under environment approval after a verified backup, taking production from 95 to 103; real Chrome validation passed on the live `ghg` academy with two staff-UI checks blocked on credentials. | Claude (implementation) | See the Phase 1 record. |
+| 2026-09-19 | — | **Execution model changed to autonomous sequential (DL-15).** Workflow section rewritten; the three "STOP before the next phase" clauses replaced; Document Status and Phase 1 transition language reconciled; extended Phase Completion Record format, Final Master Plan Audit, final repository-wide review and Final Report sections added. No technical scope, acceptance criterion, security requirement, D-decision or AD-decision changed. | Claude (planning) | Documentation only — no code, migration or deployment. |
 | 2026-09-19 | 1 | A performance regression introduced by B1's fix was found by the journeys and corrected in `20261008000700`; a pre-existing missing translation (B6) was fixed; `PrincipalResolverService` now resolves in one transaction instead of three round trips. | Claude (implementation) | See findings B5, B6 and observation O3. |
 | 2026-09-18 | 1 | Four defects found by real Chrome validation fixed after the first green test run: learner enrollment list 500 on a non-public course; roster counting an expired enrollment as active; block leaving the learner's sessions alive; My Learning offering an action the backend refuses. Six new e2e regressions plus nine frontend unit tests added. | Claude (implementation) | See Phase 1 record. |
+
+## Phase Completion Record requirements
+
+Every phase record from Phase 2 onward must carry these sections. A record missing any of them means the phase is not complete, whatever the code says.
+
+**Git / PR** — feature branch; PR number and URL; commits; merge commit; final `main` SHA.
+
+**CodeRabbit** — review completed yes/no; number of review cycles; actionable findings; findings fixed; findings rejected or closed, each with the justification that was verified against the code.
+
+**CI** — build; unit; integration; RLS; e2e; Playwright; security/adversarial; frontend tests. Real numbers, not "passing".
+
+**Production** — migration count before and after; backend deploy SHA; frontend deploy SHA; health checks; **real Chrome production validation**; network evidence; console evidence; security evidence.
+
+**Final phase status** — COMPLETE or BLOCKED, and if blocked, the exact blockers.
+
+Also required, in the shared logs rather than the record: every deviation, discovery and decision in the **Decision Log**, and every implementation change in the **Implementation Change Log**, including each phase's PR, merge and deploy SHAs. Never fabricate evidence; never mark something complete because the code exists.
+
+## Final Master Plan Audit (after Phase 4, before the Final Report)
+
+Do not stop when Phase 4 deploys. Audit the whole plan, Phase 1 through Phase 4, against the actual repository and actual production, not against the phase reports. Verify: findings F1–F5; security findings S1–S12; browser findings B1–B6 and anything added later; decisions D1–D9; architecture decisions AD-1–AD-14; the RBAC matrix; the learner journey; every phase's acceptance criteria and Definition of DONE; every migration; every production deployment; every flag; every security control; every test suite; every Chrome production validation; every CodeRabbit review; every recorded observation and deferred item; every deviation; and every unresolved issue.
+
+Look for contradictions, stale statements, missing evidence, unticked checklist items, undocumented changes, and requirements implemented differently from how they are described. Anything wrong gets fixed — and if the fix touches code, it goes through the same loop: branch, pull request, CodeRabbit, merge, deploy, Chrome validation, plan update. Repeat until this file is consistent with the code and with production.
+
+## Final repository-wide review (after the audit)
+
+One final review pass over the repository through CodeRabbit on the appropriate final surface. Read and evaluate every finding, fix every legitimate one, re-test, re-review. The project is not complete while a legitimate critical, security or correctness issue remains open.
+
+## Final Report (last step)
+
+Written only after the audit and the final review pass. Covers the whole journey, Phase 1 to Phase 4: executive summary; each phase's implementation; every original finding and how it was addressed; security improvements; identity, tenancy and RBAC changes; learner dashboard; course player; protected content; video provider and security; device and session system; quiz engine; integrity layer; assignments; completion rules; certificates; catalog, preview and checkout; observability and hardening; database migrations; test totals; Playwright results; Chrome production validation results; CodeRabbit cycles and findings; branches, PRs, commits and merge SHAs; production deploy SHAs; documented deviations; deferred observations; final security status; the consistency audit result; and any remaining blockers.
+
+It must distinguish plainly between: implemented; tested locally; tested in CI; **verified in production**; observed but intentionally deferred; and not implemented or out of scope. Unresolved items are never hidden. Then, and only then, stop — no new features, no unrelated cleanup.
 
 ## Phase Completion Records
 
 ### Phase 1 — record
 
-- **Status: Complete** (local). Implemented, tested, browser-validated and security-reviewed on 18–19 Sep 2026.
+- **Status: COMPLETE IN PRODUCTION** (19 Sep 2026), with two production Chrome checks recorded as blocked on credentials (below). Implemented, tested, browser-validated and security-reviewed 18–19 Sep 2026; deployed and migrated 19 Sep 2026.
+
+**Production delivery (19 Sep 2026).**
+
+| Item | Evidence |
+|---|---|
+| Backend PR | #2, branch `feat/p64-phase1-secure-learning`, commit `e4d1b0b`, merged as `0b884e7` |
+| Frontend PR | #1, branch `feat/p64-phase1-learner-experience`, commit `001c07f`, merged as `92f80bc` |
+| Backend deploy SHA | `7672ee3` (includes the backup-prune fix found by the preflight) |
+| Frontend deploy SHA | `92f80bc`, run `35433219464`, success |
+| Migrations before → after | **95 → 103**; the eight `p64_phase1` migrations, none unfinished or rolled back |
+| Pre-migration backup | `atlas-20260919T084204Z.sql.gz`, 8.7 MB, integrity + completion marker + required tables verified, uploaded to the backup bucket |
+| Preflight counts | `rows_to_renumber=0`, `duplicate_number_groups=0`, `attempts_to_close=0`, `in_progress_total=0` — both data-rewriting steps were no-ops, so no learner record changed |
+| Migration authorisation | Dispatch with `apply_migrations=true` plus `production-migrations` environment approval; the gate refused three earlier push-triggered deploys exactly as designed |
+| Health after rollout | `status: ok`, database up, Redis up; all four containers healthy |
+
+**Real Chrome production validation (19 Sep 2026)** against the live `ghg` academy, with a learner registered through the production academy website:
+
+PASS — academy site loads; registration under the `open` policy; academy sign-in landing on `/my-learning`; `principalKind: learner` with the academy's real host; central sign-in refusal (`403 errors.auth.studentUseAcademySignIn`, no token issued, nothing written to browser storage); **twelve** management endpoints each refused with `403 errors.auth.managementSurfaceOnly`; protected content 404 before enrolment; enrolment flipping access on; the course player rendering sections, lessons and progress; public course by slug; Arabic and RTL on `/ar/my-learning`; a clean console; 65 network requests with zero non-2xx/3xx; and roster provenance recorded as `active / self_signup / ghg.atlass.dpdns.org` with the session stored on the `academy` surface.
+
+**BLOCKED — two checks, recorded honestly rather than claimed.** The Client Owner Students tab and the Manager/Instructor UI boundaries were not exercised in production Chrome. No Client Owner credential for that academy is available, and the production platform-owner account is correctly refused that academy's data (`errors.tenancy.notAMember`). The underlying data was verified server-side and the same boundaries pass in Playwright J3, but the production UI was not observed. Resolving this needs a Client Owner test account.
+
+**Test data created in production,** clearly marked and removable on request: learner `p64.prodcheck.1789808533758@atlass.dpdns.org` on `ghg`, and one free-course enrolment.
 - **Start / end:** 18 Sep 2026 → 19 Sep 2026.
 - **Commits / deploy SHA:** none. Nothing was committed, pushed, deployed or run against production — the phase brief forbade destructive production changes and no deployment was authorised. All work is uncommitted in the two working trees.
 
@@ -856,8 +1011,60 @@ Three defects in the journeys' own setup were found and fixed rather than worked
 **Decisions taken:** DL-9, DL-10, DL-11 (implementation); DL-12 raised and open.
 
 ### Phase 2 — record
-- Status: Not Started
-- (same fields as above)
+
+- **Status: IMPLEMENTED AND VERIFIED LOCALLY — NOT DEPLOYED** (19 Sep 2026). Nothing is committed, pushed, merged or run against production. Every number below was observed in this session; no field is filled from expectation.
+
+**What was built.** The two-plan-family video model (D10): `normal` and `premium` × `basic`/`growth`/`enterprise`, six commercial variants. A `VideoProviderRegistry` resolving the adapter **by security tier on upload** and **by `media_assets.provider` on playback** (AD-7). `BasicVideoProvider` (R2 + CDN + Atlas-controlled Worker gate, progressive MP4, single 720p rendition, DL-19) alongside `CloudflareStreamProvider`. `security_tier` recorded per asset and never re-derived from the academy's current plan (AD-15, D11). Capability-honest grants (AD-16). Plus the Phase 2 scope proper: protected content tier, the seven-condition policy decision point, device registry and lease, takeover with audit, unified sequence, playback evidence, learner dashboard, `videoStorageMinutes` end to end, observability, and the learner shell and player.
+
+**Verified test evidence (19 Sep 2026).**
+
+| Suite | Result |
+|---|---|
+| Backend typecheck | 0 errors |
+| Frontend typecheck | 0 errors |
+| Backend unit (media, learning, plans, tenancy) | **533 passing** |
+| Security + RLS/tier e2e | **59 / 59 passing** |
+| API verification + quota e2e | **61 / 61 passing** |
+| Frontend | **563 passing, 55 files** (baseline was 523) |
+| Phase 1 regression (`p64-*`, `auth-signin`, `auth-refresh`) | **66 passing — unchanged** |
+| App boot | `/health` 200, database and Redis up; `/metrics` 401 (guarded) |
+
+**Migrations added (5).** `20261009000000` protected content, video and devices · `…000100` plan families and video tiers · `…000200` the three premium plans · `…000300` the SEC-1/SEC-2 corrections · `…000400` `ALTER ROLE atlas_app SET jit = off`. All applied locally only.
+
+**Defects found and fixed — fourteen.** Recorded because the pattern matters more than the count: almost every one was caught by an independent review pass, and the serious ones were invisible to a passing suite and a clean typecheck.
+
+| | Defect | How it presented |
+|---|---|---|
+| D-1 | `media_assets.provider` wrote a hardcoded literal | Column recorded a constant, not a fact; playback resolves from it |
+| D-2 | Direct-upload ticket carried an empty `uploadUrl` | Adapter did not satisfy its own contract |
+| D-3 | Grant advertised up to 2 h for a credential clamped to 10 min | Player would be stranded mid-lesson with no reason to refresh |
+| D-4 | No readiness path without a webhook | A Normal asset would sit at `processing` forever |
+| D-5 | Cloudflare Stream does not enforce Atlas's session/device claims | A capability was being sold that the provider never checked |
+| B1 | `createVideoUpload` read a `const` inside the callback producing it | **`ReferenceError` on every call — whole upload path dead, `tsc` green** |
+| SEC-1 | `media_assets` had no user-context SELECT policy | **Every video grant silently returned no video, while reporting `signedUrl: true`** |
+| SEC-2 | Refusal log rejected by RLS (two independent causes) | **Not one content-access refusal had ever been recorded** |
+| SEC-3 | Lease taken before the asset-readiness refusal | A refused request held the learner's single lease for 60 s |
+| SEC-5 | Webhook resolved the process-wide provider | Under a Normal-first rollout, every Cloudflare webhook would be rejected |
+| SEC-6 | Local adapter's webhook verifier had no production guard | Verifiable against a constant published in this repository |
+| P2-API-2 | Completion endpoint advertised a public URL for protected assets | Finding S1's shape, on an empty storage key |
+| P2-API-4 | 6.5 s of PostgreSQL JIT on learner-context reads | Intermittent **500s**, worse at scale — `jit = off` for the app role gives 4.4 ms |
+| — | `course_lessons.video_asset_id` had no write path | The hosted-video feature was unreachable in practice |
+
+**Corrections made to this plan's own claims.** Three security properties were asserted and then withdrawn once evidence contradicted them; the originals are preserved in §I and in the investigation rather than overwritten:
+
+1. **Neither tier binds to session or device at the delivery edge.** Cloudflare mints `accessRules: any/allow` and ignores custom claims (D-5); the Normal gate is cross-site from the academy and receives no Atlas session. A lifted token plays elsewhere on both tiers until it expires or is revoked.
+2. **Revocation is prompt, not instant** — bounded by denylist propagation (~1 min measured) plus the gate's cache. No sub-second SLA may be promised.
+3. The investigation's "cache-key fix is Enterprise-only" was out of date; "ignore query string" is available on all plans.
+
+**Evidence produced.** `ATLAS_VIDEO_PROVIDER_TIERS_INVESTIGATION.md` (approved), `ATLAS_PHASE2_RECONCILIATION.md`, `ATLAS_PHASE2_SECURITY_AUDIT.md`, `ATLAS_PHASE2_API_VERIFICATION.md`, `ATLAS_NORMAL_VIDEO_WORKER_SPIKE.md` (DL-22 discharged — revocation proved by control experiment: a gate token with ~600 s left returned `403 revoked` after one denylist write while a presign for the same object kept returning `206`).
+
+**NOT DONE — required before this phase can be called complete.**
+
+- Local Chrome validation (§Q), for **both** tiers.
+- Adversarial validation (§R) beyond what the security e2e covers.
+- Canary flag enablement with a week of metrics per academy (§W) — cannot be compressed.
+- Pull request, CodeRabbit review cycle, merge, deployment, production Chrome validation.
+- **Open business decision:** what the Premium tier is sold as, given correction 1 above. Premium's premium is managed delivery, ABR and provider-side processing — not stronger cryptographic protection. That is a commercial position and is recorded as requiring explicit sign-off.
 
 ### Phase 3 — record
 - Status: Not Started
@@ -884,6 +1091,6 @@ Three defects in the journeys' own setup were found and fixed rather than worked
 
 Local Chrome validation with a learner created through the academy website reproduced: central-login acceptance of learners and dashboard rendering; Students missing from Members (rows present in `users` and `academy_students`, none in `organization_memberships`/`academy_members`); owner/manager 404 on review and grading; instructor 404 on other courses and 403 on academy routes; owner 500 when attaching a quiz to a section of a draft course (201 after publishing); quiz and assignment pages outside the player shell; Next skipping the quiz; course completion before the required quiz; certificate enum only; native video with download/PiP enabled; concurrent attempt starts exceeding the cap; reload clearing answers; anonymous media fetch 200 with 1-year immutable cache.
 
-Cloudflare Stream official documentation verified: signed tokens (`exp` ≤ 24 h, `nbf`, `downloadable`, `accessRules` ≤ 5), local signing keys (≤ 1,000, not rate-limited), allowed origins with wildcard caveats, direct creator uploads (`maxDurationSeconds` reservation; 200 MB basic / TUS), MP4 downloads opt-in and token-gated, static PNG watermark profiles applied at upload, webhook HMAC-SHA256 signature, HLS/DASH manifests never cached, $5 per 1,000 stored minutes and $1 per 1,000 delivered minutes (external billing facts only, never encoded in Atlas), 30 GB max upload, **no DRM in docs, FAQ or changelog**.
+Cloudflare Stream official documentation verified (applies to the **Premium** tier; see `ATLAS_VIDEO_PROVIDER_TIERS_INVESTIGATION.md` for the Normal tier's evidence and for finding D-5, which corrects what these tokens actually enforce): signed tokens (`exp` ≤ 24 h, `nbf`, `downloadable`, `accessRules` ≤ 5), local signing keys (≤ 1,000, not rate-limited), allowed origins with wildcard caveats, direct creator uploads (`maxDurationSeconds` reservation; 200 MB basic / TUS), MP4 downloads opt-in and token-gated, static PNG watermark profiles applied at upload, webhook HMAC-SHA256 signature, HLS/DASH manifests never cached, $5 per 1,000 stored minutes and $1 per 1,000 delivered minutes (external billing facts only, never encoded in Atlas), 30 GB max upload, **no DRM in docs, FAQ or changelog**.
 
 Code locations: `src/identity/services/auth.service.ts`, `src/identity/dto/contracts.ts`, `src/tenancy/guards/saas-level-caller.guard.ts`, `src/academy/guards/academy-scope.guard.ts`, `src/academy/services/academies.service.ts`, `src/course/services/course-curriculum.service.ts`, `src/learning/services/learning-access.util.ts`, `src/learning/services/quizzes.service.ts`, `src/learning/services/course-progress.service.ts`, `src/learning/services/assignments.service.ts`, `src/instructor/services/instructor.service.ts`, `src/dashboard/services/student-analytics.service.ts`, `src/media/controllers/public-media.controller.ts`, `src/plans/dto/entitlement.types.ts`, `prisma/schema.prisma`, migrations p6/p7/p13/p21/p22b/p24/p24c/p27c/p30; `atlas-front/src/app/routes/*`, `src/app/navigation/navigation.config.ts`, `src/features/auth/*`, `src/features/public-website/*`, `src/features/academy/pages/AcademyMembersPage.tsx`, `src/features/learning/*`, `src/features/website/renderer/*`.

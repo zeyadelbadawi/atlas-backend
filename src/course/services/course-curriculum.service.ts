@@ -284,12 +284,40 @@ export class CourseCurriculumService {
         await this.assertSectionInCourse(tx, sectionId, courseId);
         await this.assertLessonInSection(tx, lessonId, sectionId);
 
+        // P64 Phase 2 — attaching a video is a TENANCY decision, so the
+        // asset is verified against THIS academy before it is linked. An
+        // id alone proves nothing: without this check an author could
+        // attach another academy's video by guessing, and the grant path
+        // would then happily sign it because the lesson says it is theirs.
+        if (payload.videoAssetId) {
+          const asset = await tx.mediaAsset.findFirst({
+            where: { id: payload.videoAssetId, academyId, type: 'video' },
+            select: { id: true, durationSeconds: true, processingStatus: true },
+          });
+          if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+
         const updated = await this.lessonsRepository.update(tx, lessonId, {
           title: payload.title,
           description: payload.description,
           contentType: payload.contentType,
           contentUrl: payload.contentUrl,
           status: payload.status,
+          // `undefined` leaves a field alone; `null` deliberately clears
+          // it. That distinction matters here — detaching a video and
+          // "not mentioning the video" are different requests.
+          ...(payload.videoAssetId !== undefined
+            ? { videoAsset: payload.videoAssetId
+                ? { connect: { id: payload.videoAssetId } }
+                : { disconnect: true } }
+            : {}),
+          ...(payload.isPreview !== undefined ? { isPreview: payload.isPreview } : {}),
+          ...(payload.availableAt !== undefined
+            ? { availableAt: payload.availableAt ? new Date(payload.availableAt) : null }
+            : {}),
+          ...(payload.completionRule !== undefined
+            ? { completionRule: payload.completionRule }
+            : {}),
         });
 
         await this.auditLogWriterService.write(tx, {
@@ -301,7 +329,17 @@ export class CourseCurriculumService {
           targetType: 'course_lesson',
           targetId: lessonId,
           targetLabel: updated.title,
-          context: { courseId, sectionId },
+          // The video link and the preview flag are the two changes a
+          // reviewer is most likely to be looking for later, so they are
+          // named rather than buried in a diff.
+          context: {
+            courseId,
+            sectionId,
+            ...(payload.videoAssetId !== undefined
+              ? { videoAssetId: payload.videoAssetId }
+              : {}),
+            ...(payload.isPreview !== undefined ? { isPreview: payload.isPreview } : {}),
+          },
         });
 
         return updated;

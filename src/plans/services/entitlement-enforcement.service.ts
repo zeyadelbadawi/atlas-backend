@@ -53,10 +53,12 @@ import type {
   EffectiveEntitlements,
   EntitlementAddOnInput,
   LimitValue,
+  PlanResourceLimits,
   PlanFeatures,
   PlanLimitKey,
 } from '../dto/entitlement.types';
 import type { TenantUsageCounts } from '../repositories/tenant-usage.repository';
+import { HOSTED_VIDEO_PROVIDERS } from '../../media/video/hosted-video-providers';
 
 /**
  * Which `TenantUsageCounts` field backs each count-based `PlanLimitKey`.
@@ -64,6 +66,14 @@ import type { TenantUsageCounts } from '../repositories/tenant-usage.repository'
  * are byte-precise, not integer-count limits, and go through
  * {@link EntitlementEnforcementService.assertStorageWithinLimit} instead
  * (see that method's own doc comment for why).
+ *
+ * `videoStorageMinutes` (P64 Phase 2) is excluded for a third reason: the
+ * decision it backs is not "may one more row exist" but "does this
+ * SPECIFIC requested duration fit in what is left", which needs the
+ * requested amount as an input. It goes through
+ * `VideoQuotaService.assertWithinQuota` instead — the same shape
+ * `RecordingQuotaService` already established for a quota that has to be
+ * checked against a quantity rather than a count.
  *
  * `recordedSessions` (Phase 12) is excluded for a different reason: it is
  * not in `tenant_usage` at all. Its usage is the count of
@@ -74,7 +84,10 @@ import type { TenantUsageCounts } from '../repositories/tenant-usage.repository'
  * that service exists to close.
  */
 const COUNT_LIMIT_FIELDS: Record<
-  Exclude<PlanLimitKey, 'generalStorage' | 'videoStorage' | 'recordedSessions'>,
+  Exclude<
+    PlanLimitKey,
+    'generalStorage' | 'videoStorage' | 'videoStorageMinutes' | 'recordedSessions'
+  >,
   keyof TenantUsageCounts
 > = {
   academies: 'academies',
@@ -121,7 +134,7 @@ export class EntitlementEnforcementService {
     organizationId: string,
     limitKey: Exclude<
       PlanLimitKey,
-      'generalStorage' | 'videoStorage' | 'recordedSessions'
+      'generalStorage' | 'videoStorage' | 'videoStorageMinutes' | 'recordedSessions'
     >,
     additionalAmount = 1,
   ): Promise<void> {
@@ -274,6 +287,102 @@ export class EntitlementEnforcementService {
    * consume, not merely "some limit number greater than the current
    * count."
    */
+  /**
+   * P64 Phase 2 (D5, AD-14) — `videoStorageMinutes`.
+   *
+   * Lives here, beside `assertStorageWithinLimit`, rather than in a
+   * separate service, because this class owns the one answer to "what is
+   * this customer entitled to": the subscription-status refusals and the
+   * `granted_limits ?? plan.limits` rule both apply to this quota exactly
+   * as they do to every other, and a second implementation would
+   * eventually tell a customer a different number than the Usage page.
+   *
+   * It is NOT `assertWithinLimit`, though, because the question is
+   * different in kind. That method asks "may one more row exist"; this
+   * asks "does this SPECIFIC requested duration fit in what is left", and
+   * D5 spells the arithmetic out: 1,850 + 180 = 2,030 > 2,000 → reject;
+   * 1,850 + 100 = 1,950 → allow. `RecordingQuotaService` (Phase 12)
+   * established the same shape for the same reason.
+   *
+   * USAGE INCLUDES RESERVATIONS. While an upload is in flight its
+   * `duration_seconds` holds the RESERVED maximum rather than a measured
+   * value, so twenty concurrent uploads that each fit individually cannot
+   * collectively overflow the quota. The provider webhook later replaces
+   * each reservation with the real duration — D5's reconciliation step,
+   * and the reason usage falls after a short video finishes processing.
+   */
+  async videoMinutesSnapshot(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<{ readonly usedMinutes: number; readonly quota: LimitValue }> {
+    const entitlements = await this.loadActiveEntitlements(tx, organizationId);
+    return {
+      usedMinutes: await this.usedVideoMinutes(tx, organizationId),
+      quota: resolveVideoMinutesQuota(entitlements.limits),
+    };
+  }
+
+  /**
+   * Refuses when `used + requested > quota`.
+   *
+   * 409 with used / quota / requested / remaining in the body, because the
+   * uploader has to be told how much room is left and how much this video
+   * needs — a bare 403 would leave them guessing how much to trim.
+   */
+  async assertVideoMinutesWithinQuota(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    requestedMinutes: number,
+  ): Promise<void> {
+    const entitlements = await this.loadActiveEntitlements(tx, organizationId);
+    const quota = resolveVideoMinutesQuota(entitlements.limits);
+    if (quota === 'unlimited') return;
+
+    // The same serialization every other quota decision in this class
+    // uses: without it, two uploads can read the same usage figure and
+    // both be allowed through a ceiling that only had room for one.
+    await this.lockSubscription(tx, organizationId);
+
+    const usedMinutes = await this.usedVideoMinutes(tx, organizationId);
+    if (usedMinutes + requestedMinutes <= quota) return;
+
+    throw new ConflictException({
+      messageKey: 'errors.entitlement.videoStorageMinutesExceeded',
+      code: 'ENTITLEMENT_VIDEO_MINUTES_EXCEEDED',
+      details: {
+        used: usedMinutes,
+        quota,
+        requested: requestedMinutes,
+        remaining: Math.max(0, quota - usedMinutes),
+      },
+    });
+  }
+
+  private async usedVideoMinutes(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<number> {
+    const aggregate = await tx.mediaAsset.aggregate({
+      where: {
+        status: 'active',
+        // AD-14 — EVERY provider-hosted video, never one. This filter was
+        // `provider: 'cloudflare_stream'`, which meant a second tier's
+        // video was invisible to the quota that is supposed to bound it.
+        // `r2` is deliberately excluded: that is the protected FILE tier,
+        // which is metered in gigabytes by `videoStorage`, and counting an
+        // attachment against a video-minutes quota would be nonsense.
+        provider: { in: [...HOSTED_VIDEO_PROVIDERS] },
+        processingStatus: { in: ['pending', 'processing', 'ready'] },
+        academy: { organizationId, status: { not: 'archived' } },
+      },
+      _sum: { durationSeconds: true },
+    });
+    // Rounded UP: a 90-second video consumes two minutes of a
+    // minute-denominated quota, and rounding down would let a tenant hold
+    // more video than their plan allows by uploading short clips.
+    return Math.ceil((aggregate._sum.durationSeconds ?? 0) / 60);
+  }
+
   private async loadActiveEntitlements(
     tx: Prisma.TransactionClient,
     organizationId: string,
@@ -323,4 +432,24 @@ export class EntitlementEnforcementService {
       addOnInputs,
     );
   }
+}
+
+/**
+ * Reads `videoStorageMinutes` defensively.
+ *
+ * `plans.limits` is JSONB cast without validation at the contract
+ * boundary, so `undefined` and a non-numeric value are both reachable —
+ * a plan row that predates the key, or one an operator edited by hand.
+ * Both mean "this plan has not been given a video allowance", and that is
+ * ZERO, not unlimited: treating a missing entitlement as unbounded would
+ * hand out capacity nobody granted, while zero refuses the upload until
+ * someone sets a real number, which is recoverable. The P64 Phase 2
+ * migration backfills every existing plan so this path is not reached in
+ * practice.
+ */
+function resolveVideoMinutesQuota(limits: PlanResourceLimits): LimitValue {
+  const value: unknown = limits.videoStorageMinutes;
+  if (value === 'unlimited') return 'unlimited';
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  return 0;
 }

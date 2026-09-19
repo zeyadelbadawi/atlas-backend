@@ -1,0 +1,52 @@
+-- ============================================================================
+-- P64 Phase 2 — disable PostgreSQL JIT for the application role.
+--
+-- THE PROBLEM, MEASURED. `GET /learning/courses/:id/sequence` intermittently
+-- returned 500 rather than merely being slow, because it runs inside a
+-- 5-second interactive transaction. On a course with FOUR lessons, the
+-- single `course_lessons` read under learner context took 8,756 ms of an
+-- 8,070 ms transaction:
+--
+--     Seq Scan on course_lessons  (cost=… rows=… width=…) cost=606681
+--     JIT:
+--       Functions: 627
+--       Timing: … Total 6517 ms
+--     Execution Time: 6560 ms
+--
+-- With `SET jit = off` on the same statement and the same data: **4.4 ms**.
+--
+-- WHY IT HAPPENS, AND WHY IT IS NOT A DATA PROBLEM. Atlas's RLS predicates
+-- call `SECURITY DEFINER` functions (`can_access_lesson`,
+-- `is_enrolled_in_course`, `can_access_media_asset` …). Those functions are
+-- not `LEAKPROOF`, so the planner may not push them below the scan; the
+-- resulting plan is a sequential scan whose ESTIMATED cost is enormous.
+-- That estimate — not the row count — is what clears all three JIT
+-- thresholds (`jit_above_cost`, `jit_inline_above_cost`,
+-- `jit_optimize_above_cost`), so PostgreSQL spends six and a half seconds
+-- compiling 627 functions to execute a query over four rows.
+--
+-- The cost estimate is a property of the SCHEMA, not of the dataset. A
+-- production database with more rows is therefore MORE exposed to this, not
+-- less — which is exactly backwards from the usual "it will be fine at
+-- small scale" intuition, and is why this is fixed now rather than left as
+-- a performance note.
+--
+-- WHY THE ROLE AND NOT THE CLUSTER. `atlas_app` is the only role that runs
+-- RLS-filtered application queries. Prisma migrations, `psql` maintenance
+-- and any analytics role keep JIT, where a long-running analytical query
+-- can genuinely benefit from it. Scoping it to the role fixes the queries
+-- that suffer and changes nothing else.
+--
+-- WHY NOT INDEXES INSTEAD. An index cannot help here: the planner's problem
+-- is that it cannot evaluate a non-leakproof security predicate before the
+-- scan, so it has no selective qual to use an index for. Making the
+-- functions `LEAKPROOF` would be the alternative and is emphatically NOT
+-- done — `LEAKPROOF` asserts a function cannot leak information about its
+-- arguments through errors or timing, and asserting that about a predicate
+-- that reads other tenants' tables would be a security claim we cannot
+-- support.
+--
+-- Takes effect on the next connection; existing pooled connections keep
+-- their current setting until recycled.
+-- ============================================================================
+ALTER ROLE atlas_app SET jit = off;

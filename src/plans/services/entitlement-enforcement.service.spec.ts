@@ -34,6 +34,7 @@ const FULL_LIMITS = (students: number | 'unlimited'): PlanResourceLimits => ({
   courses: 100,
   generalStorage: 100,
   videoStorage: 100,
+  videoStorageMinutes: 500,
   recordedSessions: 100,
 });
 

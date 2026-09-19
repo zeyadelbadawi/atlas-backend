@@ -44,6 +44,7 @@ import {
   TenantUsageCounts,
 } from '../repositories/tenant-usage.repository';
 import { bytesToGb } from '../utils/storage-units.util';
+import { HOSTED_VIDEO_PROVIDERS } from '../../media/video/hosted-video-providers';
 
 @Injectable()
 export class TenantUsageRecomputeService {
@@ -71,6 +72,7 @@ export class TenantUsageRecomputeService {
       studentRows,
       generalStorage,
       videoStorage,
+      videoMinutes,
     ] = await Promise.all([
       // `academies` — non-archived only (an archived academy no longer
       // consumes the organization's quota).
@@ -148,9 +150,40 @@ export class TenantUsageRecomputeService {
         where: {
           status: 'active',
           type: 'video',
+          // P64 Phase 2 (D5) — PROVIDER-HOSTED video is metered in
+          // MINUTES and must not also consume the gigabyte quota.
+          // Charging one tier against two quotas would make the Normal and
+          // Premium tiers incomparable to a customer choosing between
+          // them. This has no effect on Premium assets (their `sizeBytes`
+          // is zero, the provider holds the bytes) but it matters for the
+          // Normal tier, whose MP4 genuinely sits in Atlas's own R2.
+          provider: { notIn: [...HOSTED_VIDEO_PROVIDERS] },
           academy: { organizationId, status: { not: 'archived' } },
         },
         _sum: { sizeBytes: true },
+      }),
+
+      // P64 Phase 2 (D5/AD-14) — provider-hosted video MINUTES.
+      //
+      // `pending`/`processing` rows are counted deliberately: while an
+      // upload is in flight its `duration_seconds` holds the RESERVED
+      // maximum, and excluding reservations would let a tenant open
+      // twenty concurrent uploads that each individually fit and
+      // collectively do not. `failed` is excluded because a failed upload
+      // consumes nothing.
+      tx.mediaAsset.aggregate({
+        where: {
+          status: 'active',
+          // AD-14 — the same set as `EntitlementEnforcementService`'s own
+          // aggregate, from the same shared constant. These two are
+          // independent implementations of one number, and if they drift
+          // the Usage page and the enforcement gate tell a customer
+          // different things.
+          provider: { in: [...HOSTED_VIDEO_PROVIDERS] },
+          processingStatus: { in: ['pending', 'processing', 'ready'] },
+          academy: { organizationId, status: { not: 'archived' } },
+        },
+        _sum: { durationSeconds: true },
       }),
     ]);
 
@@ -162,6 +195,10 @@ export class TenantUsageRecomputeService {
       students: studentRows.length,
       generalStorageGb: bytesToGb(generalStorage._sum.sizeBytes),
       videoStorageGb: bytesToGb(videoStorage._sum.sizeBytes),
+      // Rounded UP: a 90-second video consumes two minutes of a
+      // minute-denominated quota, and rounding down would let a tenant
+      // hold more video than their plan allows by uploading short clips.
+      videoStorageMinutes: Math.ceil((videoMinutes._sum.durationSeconds ?? 0) / 60),
     };
   }
 

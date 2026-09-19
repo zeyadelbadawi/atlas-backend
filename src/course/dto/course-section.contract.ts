@@ -4,7 +4,10 @@ import type {
   CourseSection as PrismaCourseSection,
 } from '@prisma/client';
 import { toCourseLessonResponse } from './course-lesson.contract';
-import type { CourseLessonResponse } from './course-lesson.contract';
+import type {
+  CourseLessonResponse,
+  LessonProjectionOptions,
+} from './course-lesson.contract';
 import type { CurriculumItemResponse } from './curriculum-item.contract';
 
 export interface CourseSectionResponse {
@@ -28,6 +31,13 @@ export interface CourseSectionResponse {
 export function toCourseSectionResponse(
   section: PrismaCourseSection & { lessons: PrismaCourseLesson[] },
   items?: readonly CurriculumItemResponse[],
+  /**
+   * P64 Phase 2 — per-lesson projection options, keyed by lesson id. Only
+   * the student-facing curriculum read supplies them; every authoring and
+   * instructor read calls this exactly as before and gets exactly what it
+   * got before.
+   */
+  lessonOptions?: ReadonlyMap<string, LessonProjectionOptions>,
 ): CourseSectionResponse {
   return {
     id: section.id,
@@ -35,7 +45,9 @@ export function toCourseSectionResponse(
     title: section.title,
     description: section.description ?? undefined,
     order: section.order,
-    lessons: section.lessons.map(toCourseLessonResponse),
+    lessons: section.lessons.map((lesson) =>
+      toCourseLessonResponse(lesson, lessonOptions?.get(lesson.id)),
+    ),
     ...(items ? { items } : {}),
     createdAt: section.createdAt.toISOString(),
     updatedAt: section.updatedAt.toISOString(),

@@ -59,6 +59,17 @@ describe('Course Commerce — P13 (e2e)', () => {
     app = testApp.app;
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
+    // The platform commission default is a GLOBAL singleton, not per-test
+    // data. Every Atlas Payments purchase below needs one to resolve —
+    // §4.2 refuses the payment outright rather than guessing 0% — but the
+    // first test that set one sat two thirds of the way down this file, so
+    // the earlier purchases only ever passed on a commission left behind by
+    // a previous run. On a freshly reset database they fail with
+    // `errors.courseOrder.commissionNotConfigured`, which is the safeguard
+    // working correctly. Establish the precondition here instead; the cases
+    // that assert a SPECIFIC rate still set their own immediately before
+    // asserting, so nothing below is masked by this default.
+    await setGlobalCommission(1000);
   });
 
   afterAll(async () => {

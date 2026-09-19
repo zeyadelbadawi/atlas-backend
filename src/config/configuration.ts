@@ -88,6 +88,173 @@ export interface SurfaceEnforcementConfig {
   readonly academyIds: readonly string[];
 }
 
+
+
+/**
+ * One rollout flag, in the shape `SurfaceEnforcementConfig` already
+ * proved: `on` everywhere, `off` nowhere, `allowlist` for the named
+ * academies only. See `FeatureFlagsService` for why each flag defaults
+ * where it does.
+ */
+export interface FeatureFlagConfig {
+  readonly mode: SurfaceEnforcementMode;
+  readonly academyIds: readonly string[];
+}
+
+/** P64 Phase 2 (§S) — the five per-academy flags the phase rolls out behind. */
+export interface LearningFeatureFlags {
+  readonly contentProtected: FeatureFlagConfig;
+  /**
+   * P64 Phase 2 (D10) — one flag PER TIER, not one for "video".
+   *
+   * The two tiers roll out on different schedules by decision: the Normal
+   * tier depends on nothing new and can canary immediately, while Premium
+   * waits for Cloudflare Stream onboarding (DL-19, Phase 2 §T). A single
+   * flag would force them to move together and would make the canary
+   * meaningless.
+   */
+  readonly videoNormal: FeatureFlagConfig;
+  readonly videoPremium: FeatureFlagConfig;
+  readonly devicesPolicy: FeatureFlagConfig;
+  readonly learnerDashboardV2: FeatureFlagConfig;
+  readonly playerV2: FeatureFlagConfig;
+}
+
+/**
+ * P64 Phase 2 — the PROTECTED object tier (master plan Phase 2 §D.1).
+ *
+ * A second bucket, not a prefix in the first one. The public bucket is
+ * reachable by URL by design — that is what `publicUrlBase` is — so a
+ * prefix inside it would be protected only by nobody having guessed the
+ * key yet, which is precisely the property S1 says is not a security
+ * control. This bucket deliberately has NO public base URL: every read
+ * goes through a presigned URL Atlas mints per request.
+ *
+ * `bucket` falls back to `<public bucket>-protected` so a developer who
+ * sets nothing still gets a genuinely separate bucket rather than
+ * silently writing protected objects into the public one.
+ */
+export interface ProtectedMediaConfig {
+  readonly bucket: string;
+  /**
+   * Credentials for the protected bucket.
+   *
+   * Resolved here rather than at the call site so there is exactly one
+   * place that knows about the fallback. When `R2_PROTECTED_ACCESS_KEY_ID`
+   * and its secret are set these hold that dedicated, single-bucket
+   * token; otherwise they hold the public media credentials, which is
+   * what every environment used before the pair existed.
+   */
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  /** Presigned-URL lifetime. 10 minutes (Phase 2 §I) — long enough to start a download, short enough that a forwarded link is dead on arrival. */
+  readonly signedUrlTtlSeconds: number;
+  /** Per-file ceiling for protected uploads — video is uploaded direct-to-provider, so this governs documents and lesson images. */
+  readonly maxUploadBytes: number;
+}
+
+/** Which `VideoProvider` implementation is wired in. `fake` is the local/test adapter; it signs nothing real and reports no DRM. */
+export const VIDEO_PROVIDER_KEYS = ['fake', 'cloudflare_stream', 'r2_worker'] as const;
+export type VideoProviderKey = (typeof VIDEO_PROVIDER_KEYS)[number];
+
+/**
+ * P64 Phase 2 — provider-hosted video (master plan Phase 2 §D.4, AD-1).
+ *
+ * Every credential is OPTIONAL and the provider defaults to `fake`,
+ * because no real Cloudflare Stream account exists in any Atlas
+ * environment yet and the platform must boot without one — the same
+ * honest starting state `ZoomConfig` already documents for Live Sessions.
+ * `CloudflareStreamProvider` refuses to sign anything when its own
+ * credentials are missing rather than pretending to.
+ *
+ * `customerSubdomain` is the `customer-<hash>.cloudflarestream.com` host
+ * the player fetches manifests from; the academy CSP allows exactly that
+ * host and nothing else (Phase 2 §I).
+ *
+ * NOTE, deliberately: there is no price, no currency and no billing field
+ * anywhere in this interface. Atlas owns plan quota, usage, enforcement
+ * and upgrade messaging; the provider owns its own charges (D5).
+ */
+/**
+ * P64 Phase 2 (DL-19) — the NORMAL tier's delivery gate.
+ *
+ * Bytes live in the protected R2 bucket Atlas already owns; delivery goes
+ * through the Cloudflare CDN on an Atlas-controlled hostname, behind a
+ * Worker that validates a token Atlas mints. The Worker is what gives the
+ * Normal tier the two properties a bare presign cannot have — per-request
+ * authorization and revocation before expiry (AD-16).
+ *
+ * Every field is optional and the tier reports itself unconfigured
+ * without them, for the same reason the Cloudflare block does: the
+ * platform must boot in an environment that has neither.
+ */
+export interface BasicVideoConfig {
+  /** The Atlas-owned hostname the Worker is routed on, e.g. `video.atlas.example`. */
+  readonly deliveryHost?: string;
+  /** Shared secret the Worker verifies Atlas's token with. Never leaves the server. */
+  readonly signingSecret?: string;
+  /**
+   * Credential lifetime for a Normal-tier playback URL.
+   *
+   * Short by design (10 minutes): it is the only thing enforcing
+   * revocation latency, and the player refreshes rather than holding a
+   * long-lived credential. Raising it would trade the Normal tier's one
+   * genuine advantage over Premium for nothing.
+   */
+  readonly playbackTtlSeconds: number;
+  /**
+   * Where Atlas publishes a revoked session so the gate stops honouring
+   * its tokens before they expire.
+   *
+   * Optional, and its absence is REPORTED rather than hidden: without it
+   * `BasicVideoProvider` reports `revocableBeforeExpiry: false`, because
+   * a revocation list nobody writes to revokes nothing (AD-16).
+   */
+  readonly revocationEndpoint?: string;
+  readonly revocationToken?: string;
+  /**
+   * Whether an origin allowlist has actually been pushed to the gate.
+   *
+   * Same reasoning: `originRestricted` must describe what is enforced,
+   * not what the gate is capable of enforcing.
+   */
+  readonly allowedOriginsConfigured: boolean;
+}
+
+export interface VideoProviderConfig {
+  /**
+   * The adapter bound for the PREMIUM tier, and the default when no tier
+   * resolution applies. The Normal tier's adapter is selected by tier, not
+   * by this field — see `VideoProviderRegistry`.
+   */
+  readonly provider: VideoProviderKey;
+  readonly accountId?: string;
+  readonly apiToken?: string;
+  /** The Stream signing key id and its PEM/JWK, used to mint playback tokens LOCALLY — never a round-trip to the provider per play. */
+  readonly signingKeyId?: string;
+  readonly signingKeyPem?: string;
+  readonly webhookSecret?: string;
+  readonly customerSubdomain?: string;
+  /** Playback-token lifetime. 2 hours (Phase 2 §I), bound to session and device. */
+  readonly playbackTokenTtlSeconds: number;
+}
+
+/**
+ * P64 Phase 2 — the learning LEASE (AD-10, D4).
+ *
+ * One learner, one active learning session at a time by default. The lease
+ * is a short-TTL Redis key refreshed by heartbeats, so a browser that
+ * crashes releases it by expiring rather than by being cleaned up — there
+ * is no reliable "goodbye" from a closing tab, and a lease that needed one
+ * would strand learners out of their own account.
+ */
+export interface LearningLeaseConfig {
+  /** Lease TTL. 60 s (Phase 2 §D.7). */
+  readonly ttlSeconds: number;
+  /** How often the client is told to heartbeat. 20 s — a third of the TTL, so two consecutive losses are tolerated. */
+  readonly heartbeatSeconds: number;
+}
+
 export interface CloudflareConfig {
   readonly apiToken?: string;
   readonly zoneId?: string;
@@ -281,6 +448,76 @@ export default () => {
       .filter((id) => id.length > 0),
   };
 
+  const readFlag = (
+    modeVar: string | undefined,
+    idsVar: string | undefined,
+  ): FeatureFlagConfig => ({
+    // Defaults to `off` — see `FeatureFlagsService`. An unset variable must
+    // never be the reason a rollout reaches an academy that has not been
+    // canaried.
+    mode: (modeVar ?? 'off') as SurfaceEnforcementMode,
+    academyIds: (idsVar ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0),
+  });
+
+  const learningFeatureFlags: LearningFeatureFlags = {
+    contentProtected: readFlag(
+      env.FLAG_CONTENT_PROTECTED_MODE,
+      env.FLAG_CONTENT_PROTECTED_ACADEMY_IDS,
+    ),
+    videoNormal: readFlag(env.FLAG_VIDEO_NORMAL_MODE, env.FLAG_VIDEO_NORMAL_ACADEMY_IDS),
+    videoPremium: readFlag(
+      env.FLAG_VIDEO_PREMIUM_MODE,
+      env.FLAG_VIDEO_PREMIUM_ACADEMY_IDS,
+    ),
+    devicesPolicy: readFlag(
+      env.FLAG_DEVICES_POLICY_MODE,
+      env.FLAG_DEVICES_POLICY_ACADEMY_IDS,
+    ),
+    learnerDashboardV2: readFlag(
+      env.FLAG_LEARNER_DASHBOARD_V2_MODE,
+      env.FLAG_LEARNER_DASHBOARD_V2_ACADEMY_IDS,
+    ),
+    playerV2: readFlag(env.FLAG_PLAYER_V2_MODE, env.FLAG_PLAYER_V2_ACADEMY_IDS),
+  };
+
+  const protectedMedia: ProtectedMediaConfig = {
+    bucket: env.R2_PROTECTED_BUCKET || `${env.R2_BUCKET}-protected`,
+    // `env.validation.ts` rejects a half-configured pair, so testing one
+    // of the two is enough to know both are present.
+    accessKeyId: env.R2_PROTECTED_ACCESS_KEY_ID || env.R2_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_PROTECTED_SECRET_ACCESS_KEY || env.R2_SECRET_ACCESS_KEY,
+    signedUrlTtlSeconds: Number(env.PROTECTED_MEDIA_URL_TTL_SECONDS ?? 600),
+    maxUploadBytes: Number(env.PROTECTED_MEDIA_MAX_UPLOAD_BYTES ?? 50 * 1024 * 1024),
+  };
+
+  const basicVideo: BasicVideoConfig = {
+    deliveryHost: env.BASIC_VIDEO_DELIVERY_HOST || undefined,
+    signingSecret: env.BASIC_VIDEO_SIGNING_SECRET || undefined,
+    playbackTtlSeconds: Number(env.BASIC_VIDEO_PLAYBACK_TTL_SECONDS ?? 600),
+    revocationEndpoint: env.BASIC_VIDEO_REVOCATION_ENDPOINT || undefined,
+    revocationToken: env.BASIC_VIDEO_REVOCATION_TOKEN || undefined,
+    allowedOriginsConfigured: (env.BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED ?? 'false') === 'true',
+  };
+
+  const video: VideoProviderConfig = {
+    provider: (env.VIDEO_PROVIDER ?? 'fake') as VideoProviderKey,
+    accountId: env.CLOUDFLARE_STREAM_ACCOUNT_ID || undefined,
+    apiToken: env.CLOUDFLARE_STREAM_API_TOKEN || undefined,
+    signingKeyId: env.CLOUDFLARE_STREAM_SIGNING_KEY_ID || undefined,
+    signingKeyPem: env.CLOUDFLARE_STREAM_SIGNING_KEY_PEM || undefined,
+    webhookSecret: env.CLOUDFLARE_STREAM_WEBHOOK_SECRET || undefined,
+    customerSubdomain: env.CLOUDFLARE_STREAM_CUSTOMER_SUBDOMAIN || undefined,
+    playbackTokenTtlSeconds: Number(env.VIDEO_PLAYBACK_TOKEN_TTL_SECONDS ?? 2 * 60 * 60),
+  };
+
+  const learningLease: LearningLeaseConfig = {
+    ttlSeconds: Number(env.LEARNING_LEASE_TTL_SECONDS ?? 60),
+    heartbeatSeconds: Number(env.LEARNING_LEASE_HEARTBEAT_SECONDS ?? 20),
+  };
+
   const cloudflare: CloudflareConfig = {
     apiToken: env.CLOUDFLARE_API_TOKEN || undefined,
     zoneId: env.CLOUDFLARE_ZONE_ID || undefined,
@@ -309,6 +546,11 @@ export default () => {
     observability,
     identity,
     media,
+    learningFeatureFlags,
+    protectedMedia,
+    video,
+    basicVideo,
+    learningLease,
     platformDomain,
     surfaceEnforcement,
     cloudflare,

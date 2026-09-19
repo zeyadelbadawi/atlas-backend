@@ -12,9 +12,10 @@ import {
   Param,
   Post,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import { RegisterDto } from '../dto/register.dto';
 import { SignInDto } from '../dto/sign-in.dto';
@@ -40,6 +41,8 @@ import {
   resolveUserAgent,
 } from '../utils/request-metadata.util';
 import type { UserSessionResponse } from '../dto/user-session.contract';
+import { deviceCookieOptions, readCookie } from '../../common/http/cookies.util';
+import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
 
 /** Real, server-resolved request metadata for a session write. See `request-metadata.util.ts` for the trust model behind these headers. */
 function sessionContext(request: Request): SessionRequestContext {
@@ -49,6 +52,35 @@ function sessionContext(request: Request): SessionRequestContext {
     locationCountry: resolveClientCountry(request),
     // P64 Phase 1 — the host the edge routed to (Express strips the port).
     hostname: request.hostname,
+    // P64 Phase 2 (AD-10) — read from the real `Cookie` header, never from
+    // the body, so a client cannot name its own device row.
+    deviceCookie: readCookie(request.headers.cookie, DEVICE_COOKIE_NAME),
+  };
+}
+
+/**
+ * Adds the "write the device cookie if a new device was registered" hook.
+ *
+ * `secure` follows the request's own protocol rather than `NODE_ENV`: the
+ * production edge terminates TLS and forwards `x-forwarded-proto`, which
+ * Express resolves into `request.secure` because `trust proxy` is set
+ * (`main.ts`), and a `Secure` cookie over plain local HTTP is silently
+ * dropped by every browser — which would mean the feature quietly did not
+ * work for developers while appearing to.
+ */
+function sessionContextWithDeviceCookie(
+  request: Request,
+  response: Response,
+): SessionRequestContext {
+  return {
+    ...sessionContext(request),
+    onDeviceCookie: (value, maxAgeSeconds) => {
+      response.cookie(
+        DEVICE_COOKIE_NAME,
+        value,
+        deviceCookieOptions({ secure: request.secure, maxAgeSeconds }),
+      );
+    },
   };
 }
 
@@ -70,11 +102,17 @@ export class AuthController {
   async signIn(
     @Body() dto: SignInDto,
     @Req() request: Request,
+    // `passthrough` so Nest still serialises the returned contract — the
+    // response object is needed only to set the device cookie.
+    @Res({ passthrough: true }) response: Response,
   ): Promise<AuthenticationResponseContract> {
     // Phase 10 — device/IP are resolved from the real request here, never
     // accepted from `dto`, so a client cannot label or locate its own
     // session however it likes.
-    return this.authService.signIn({ ...dto, context: sessionContext(request) });
+    return this.authService.signIn({
+      ...dto,
+      context: sessionContextWithDeviceCookie(request, response),
+    });
   }
 
   @Post('refresh')

@@ -59,6 +59,11 @@ const LIMITS = (students: number | 'unlimited') => ({
   courses: 100,
   generalStorage: 100,
   videoStorage: 100,
+  // P64 Phase 2 (D5) — the ninth `PlanLimitKey`; the DTO requires every
+  // one. Held constant across catalog edits here because these cases are
+  // about the STUDENTS grant surviving a catalog cut, and a second moving
+  // limit would blur what each assertion is actually proving.
+  videoStorageMinutes: 100,
   recordedSessions: 10,
 });
 

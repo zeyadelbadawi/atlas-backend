@@ -10,6 +10,7 @@
  * catalog read for every customer on the Plans page.
  */
 import { toPlanResponse } from './plan.contract';
+import { PLAN_CATALOG_VARIANTS } from '../utils/plan-catalog.util';
 import type { Plan } from '@prisma/client';
 
 function buildPlan(overrides: Partial<Plan> = {}): Plan {
@@ -22,6 +23,8 @@ function buildPlan(overrides: Partial<Plan> = {}): Plan {
     descriptionLocalized: null,
     status: 'active',
     displayOrder: 2,
+    family: 'normal',
+    tier: 'growth',
     limits: {},
     features: {},
     pricing: null,
@@ -93,5 +96,62 @@ describe('toPlanResponse — localized catalog text (P54)', () => {
 
     expect(response.nameLocalized).toBeUndefined();
     expect(response.name).toBe('Growth');
+  });
+});
+
+/**
+ * P64 Phase 2 (D10) — the two commercial axes on the wire.
+ *
+ * `family` and `tier` are projected STRAIGHT THROUGH from the row, with
+ * no defaulting and no inference from `key`. That is the whole point of
+ * the pair of columns: a client that receives `family: 'premium'` has
+ * been told what the customer bought, not what a plan key looked like to
+ * a parser. These tests pin that — including for the Premium family,
+ * whose rows did not exist before this phase.
+ */
+describe('toPlanResponse — plan family and tier (P64 Phase 2, D10)', () => {
+  it('projects `family` and `tier` from the row', () => {
+    const response = toPlanResponse(buildPlan({ family: 'premium', tier: 'enterprise' }));
+
+    expect(response.family).toBe('premium');
+    expect(response.tier).toBe('enterprise');
+  });
+
+  it('keeps `key` as the identity, never replacing it with the variant name', () => {
+    // DL-17: `starter` IS the `basic` tier. The key is what every
+    // `tenant_subscriptions` row references, so the contract must still
+    // report it verbatim alongside the new descriptive columns.
+    const response = toPlanResponse(
+      buildPlan({ key: 'starter', name: 'Starter', family: 'normal', tier: 'basic' }),
+    );
+
+    expect(response.key).toBe('starter');
+    expect(response.family).toBe('normal');
+    expect(response.tier).toBe('basic');
+  });
+
+  it.each(PLAN_CATALOG_VARIANTS.map((variant) => [variant.key, variant] as const))(
+    'reports the catalog axes unchanged for %s',
+    (_key, variant) => {
+      const response = toPlanResponse(
+        buildPlan({ key: variant.key, family: variant.family, tier: variant.tier }),
+      );
+
+      expect(response).toMatchObject({
+        key: variant.key,
+        family: variant.family,
+        tier: variant.tier,
+      });
+    },
+  );
+
+  it('never infers the family from the plan key', () => {
+    // A row whose key says one thing and whose column says another is a
+    // data problem for an operator to fix, not something the mapper may
+    // quietly "correct" — inferring `premium` from a key would be exactly
+    // the hard-wiring D10 forbids, one layer up.
+    const response = toPlanResponse(buildPlan({ key: 'premium_growth', family: 'normal' }));
+
+    expect(response.family).toBe('normal');
   });
 });

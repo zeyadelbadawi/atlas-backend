@@ -63,6 +63,30 @@ import { AcademyStudentsController } from './controllers/academy-students.contro
 import { AcademyStudentsService } from './services/academy-students.service';
 import { AcademyRosterRepository } from './repositories/academy-roster.repository';
 import { StudentResultsController } from './controllers/student-results.controller';
+// --- P64 Phase 2 ---
+import { LessonContentController } from './controllers/lesson-content.controller';
+import { LearnerDashboardController } from './controllers/learner-dashboard.controller';
+import { LearnerSessionController } from './controllers/learner-session.controller';
+import { AcademyProtectionController } from './controllers/academy-protection.controller';
+import { LessonContentService } from './services/lesson-content.service';
+import { ContentGrantSigner } from './services/content-grant.signer';
+import { ContentGrantRateLimiter } from './services/content-grant.rate-limiter';
+import { ContentAccessLogRepository } from './repositories/content-access-log.repository';
+import { CourseSequenceService } from './services/course-sequence.service';
+import { PlaybackService } from './services/playback.service';
+import { LearnerDashboardService } from './services/learner-dashboard.service';
+import { LearnerSessionService } from './services/learner-session.service';
+import { LearningLeaseService } from './services/learning-lease.service';
+import { AcademyProtectionService } from './services/academy-protection.service';
+import { OptionalJwtAuthGuard } from '../identity/guards/optional-jwt-auth.guard';
+import { FlagsModule } from '../common/flags/flags.module';
+import { RedisModule } from '../redis/redis.module';
+import { IdentityModule } from '../identity/identity.module';
+import { BullModule } from '@nestjs/bullmq';
+import { PHASE2_MAINTENANCE_QUEUE } from './queue/phase2-maintenance.types';
+import { Phase2MaintenanceScheduler } from './queue/phase2-maintenance.scheduler';
+import { Phase2MaintenanceProcessor } from './queue/phase2-maintenance.processor';
+import { Phase2MaintenanceService } from './services/phase2-maintenance.service';
 import { CourseDiscoveryService } from './services/course-discovery.service';
 import { EnrollmentsService } from './services/enrollments.service';
 import { CourseProgressService } from './services/course-progress.service';
@@ -84,6 +108,16 @@ import { StudentResultsRepository } from './repositories/student-results.reposit
     AcademyModule,
     PlansModule,
     MediaModule,
+    // P64 Phase 2 — the rollout flags, the lease/rate-limit store, and
+    // `AcademySurfaceService` (host → academy), which the learner surface
+    // scopes every read by.
+    FlagsModule,
+    RedisModule,
+    IdentityModule,
+    // P64 Phase 2 — the retention sweep (§F) and the stalled-video status
+    // poll (§D.4). Both were implemented with no caller; this is what
+    // makes them actually run.
+    BullModule.registerQueue({ name: PHASE2_MAINTENANCE_QUEUE }),
   ],
   controllers: [
     CourseDiscoveryController,
@@ -95,6 +129,13 @@ import { StudentResultsRepository } from './repositories/student-results.reposit
     AcademyStudentsController,
     // Phase 9 — the student-facing "My Results" surface.
     StudentResultsController,
+    // P64 Phase 2 — the learner surface: content grants, the sequence,
+    // playback, the dashboard, devices/takeover, and the owner-only
+    // protection settings.
+    LessonContentController,
+    LearnerDashboardController,
+    LearnerSessionController,
+    AcademyProtectionController,
   ],
   providers: [
     CourseDiscoveryService,
@@ -111,7 +152,32 @@ import { StudentResultsRepository } from './repositories/student-results.reposit
     QuizzesRepository,
     AssignmentsRepository,
     StudentResultsRepository,
+    // --- P64 Phase 2 ---
+    LessonContentService,
+    ContentGrantSigner,
+    ContentGrantRateLimiter,
+    ContentAccessLogRepository,
+    CourseSequenceService,
+    PlaybackService,
+    LearnerDashboardService,
+    LearnerSessionService,
+    LearningLeaseService,
+    AcademyProtectionService,
+    OptionalJwtAuthGuard,
+    Phase2MaintenanceService,
+    Phase2MaintenanceScheduler,
+    Phase2MaintenanceProcessor,
   ],
-  exports: [EnrollmentsService, EnrollmentsRepository],
+  exports: [
+    EnrollmentsService,
+    EnrollmentsRepository,
+    // P64 Phase 2 — `AcademyStudentsService.block` and the enrollment
+    // revocation path drop a learner's lease, so the same instance has to
+    // be reachable from those flows rather than a second one with its own
+    // view of Redis.
+    LearningLeaseService,
+    LearnerSessionService,
+    ContentAccessLogRepository,
+  ],
 })
 export class LearningModule {}

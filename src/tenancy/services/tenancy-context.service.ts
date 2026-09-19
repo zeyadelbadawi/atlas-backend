@@ -27,6 +27,30 @@ import { PrismaService } from '../../database/prisma.service';
 export class TenancyContextService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * A transaction with NO context variable set at all.
+   *
+   * P64 Phase 2 — there are exactly two legitimate uses, and both are
+   * about the ANONYMOUS case rather than about escaping RLS:
+   *
+   *   - an anonymous visitor opening a PREVIEW lesson, who has no user id
+   *     to set and is admitted only by `can_access_lesson()`'s preview
+   *     tier, which deliberately requires no identity;
+   *   - recording a content-access REFUSAL, which must land even when the
+   *     refused caller can see no rows of their own.
+   *
+   * This grants nothing. Under `atlas_app` (NOBYPASSRLS, FORCE ROW LEVEL
+   * SECURITY) an unset `app.current_user_id` makes every self-scoped and
+   * tenant-scoped policy evaluate to false — the context is absent, not
+   * elevated — which is precisely why the RLS spec asserts "zero rows
+   * without context" as its first case.
+   */
+  async runWithoutContext<T>(
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return this.prisma.$transaction((tx) => work(tx));
+  }
+
   async runInTenantContext<T>(
     organizationId: string,
     work: (tx: Prisma.TransactionClient) => Promise<T>,

@@ -52,6 +52,8 @@ import { SaasLevelCallerGuard } from './guards/saas-level-caller.guard';
 import { PrincipalResolverService } from './services/principal-resolver.service';
 import { SurfaceEnforcementService } from './services/surface-enforcement.service';
 import { ManagementSurfaceGuard } from './guards/management-surface.guard';
+import { StudentDeviceService } from './services/student-device.service';
+import { AccessPolicyService } from './services/access-policy.service';
 
 @Module({
   imports: [AuthCoreModule],
@@ -79,6 +81,12 @@ import { ManagementSurfaceGuard } from './guards/management-surface.guard';
     PrincipalResolverService,
     SurfaceEnforcementService,
     ManagementSurfaceGuard,
+    // P64 Phase 2 — the device registry and its policy. Here rather than
+    // in `LearningModule` for exactly the reason `AcademyStudentsRepository`
+    // is here: sign-in registers the device, `IdentityModule` already
+    // depends on this module, and the reverse would be a cycle.
+    StudentDeviceService,
+    AccessPolicyService,
   ],
   exports: [
     TenancyContextService,
@@ -90,6 +98,8 @@ import { ManagementSurfaceGuard } from './guards/management-surface.guard';
     PrincipalResolverService,
     SurfaceEnforcementService,
     ManagementSurfaceGuard,
+    StudentDeviceService,
+    AccessPolicyService,
     // Phase P15 additions — both reused verbatim, unmodified, by
     // `PlatformModule`'s `OrganizationsController` (see this file's own
     // header comment).

@@ -9,7 +9,7 @@
 /** A resource limit value. Explicit `'unlimited'` — never a magic number. */
 export type LimitValue = number | 'unlimited';
 
-/** Matches `PlanLimitKey` (`plan.types.ts`) exactly — 8 keys. */
+/** Matches `PlanLimitKey` (`plan.types.ts`) exactly — 9 keys. */
 export type PlanLimitKey =
   | 'academies'
   | 'students'
@@ -18,6 +18,20 @@ export type PlanLimitKey =
   | 'courses'
   | 'generalStorage'
   | 'videoStorage'
+  /**
+   * P64 Phase 2 (D5, AD-14) — MINUTES of provider-hosted video.
+   *
+   * A different resource from `videoStorage`, which is GIGABYTES of video
+   * sitting in Atlas's own R2. An academy can be at zero on one and at its
+   * ceiling on the other, so this is a new key rather than a
+   * reinterpretation of an existing one.
+   *
+   * It is an ATLAS entitlement, not a provider billing value. Atlas owns
+   * the quota, the usage, the enforcement and the upgrade message; the
+   * provider owns its own charges, and no provider price appears anywhere
+   * in this codebase.
+   */
+  | 'videoStorageMinutes'
   /**
    * Live Sessions add-on — how many sessions may be RECORDED.
    *
@@ -41,6 +55,7 @@ export const PLAN_LIMIT_KEYS: readonly PlanLimitKey[] = [
   'courses',
   'generalStorage',
   'videoStorage',
+  'videoStorageMinutes',
   'recordedSessions',
 ];
 
@@ -53,6 +68,7 @@ export interface PlanResourceLimits {
   readonly courses: LimitValue;
   readonly generalStorage: LimitValue;
   readonly videoStorage: LimitValue;
+  readonly videoStorageMinutes: LimitValue;
   readonly recordedSessions: LimitValue;
 }
 

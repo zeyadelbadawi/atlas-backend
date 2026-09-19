@@ -14,7 +14,7 @@
  * silently receives.
  *
  * This suite proves, end to end, against the real API:
- *   1. `GET /plans` returns exactly the 3 real, customer-facing plans.
+ *   1. `GET /plans` returns exactly the real, customer-facing catalog.
  *   2. Each of them carries valid, checkout-usable pricing.
  *   3. A brand-new account can create a Checkout for each of the 3 and
  *      reach the payment-method stage (monthly).
@@ -29,12 +29,16 @@
  *      see the fix report).
  */
 import { INestApplication } from '@nestjs/common';
+import { PLAN_CATALOG_KEYS } from '../src/plans/utils/plan-catalog.util';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma, seedOrganizationWithOwner, seedPlan } from './utils/db-admin';
 import type { Plan, PrismaClient } from '@prisma/client';
 
-const REAL_PLAN_KEYS = ['starter', 'growth', 'enterprise'] as const;
+// P64 Phase 2 (D10) — six commercial variants across two plan families.
+// Imported rather than re-listed so a catalog change cannot leave this
+// fixture asserting a catalog that no longer exists.
+const REAL_PLAN_KEYS = PLAN_CATALOG_KEYS;
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -80,7 +84,7 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
     return { user, org };
   }
 
-  it('1/2. GET /plans returns exactly the 3 real, customer-facing plans, each with valid pricing', async () => {
+  it('1/2. GET /plans returns exactly the real, customer-facing catalog, each with valid pricing', async () => {
     const { user } = await newAccountWithOrg('catalog-exact3');
 
     const response = await request(app.getHttpServer())
@@ -91,7 +95,9 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
 
     const keys = response.body.items.map((p: { key: string }) => p.key);
     expect(keys).toEqual([...REAL_PLAN_KEYS]);
-    expect(response.body.pagination.totalItems).toBe(3);
+    // Derived, not a literal — the catalog is six variants since D10 and
+    // must not need a hand-edit here the next time it changes.
+    expect(response.body.pagination.totalItems).toBe(REAL_PLAN_KEYS.length);
 
     for (const plan of response.body.items) {
       expect(plan.status).toBe('active');
