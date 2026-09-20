@@ -27,14 +27,6 @@ compatibility_date = "2026-09-19"
 # verifier, two runtimes" property that makes local validation meaningful.
 compatibility_flags = []
 
-# Observability on, because DL-22's cost question ("Worker request volume
-# and realistic request cost") can only be answered from production
-# numbers, and the per-invocation CPU time that drives the CPU half of the
-# bill is reported per request in the Workers Trace Events dataset
-# (`CPUTimeMs`) and as a quantile chart in the dashboard.
-[observability]
-enabled = true
-
 # ---------------------------------------------------------------------------
 # Route
 # ---------------------------------------------------------------------------
@@ -45,10 +37,37 @@ enabled = true
 # resolve to nothing — so treat these two values as one setting recorded in
 # two places.
 #
-# Uncomment and set the real zone before the first deploy.
-# routes = [
-#   { pattern = "video.example.ae/v/*", zone_name = "example.ae" }
-# ]
+# PRODUCTION ROUTE.
+#
+# `atlass.dpdns.org` is itself the Cloudflare zone: the apex `dpdns.org`
+# stays on DigitalPlat's nameservers, and only this subdomain is delegated
+# to Cloudflare (`ashton`/`ainsley.ns.cloudflare.com`). So the zone name is
+# the full `atlass.dpdns.org`, not `dpdns.org` — a route naming the apex
+# would be rejected as a zone this account does not hold.
+#
+# WHY A ROUTE AND NOT `custom_domain`. A wildcard `*.atlass.dpdns.org`
+# already resolves every academy subdomain to the Atlas frontend, so the
+# hostname resolves before this Worker exists — no DNS record has to be
+# created. A route takes precedence over the origin for matching requests,
+# which is exactly the "Worker wins on this host, SPA keeps every other
+# host" behaviour wanted here. `custom_domain = true` would instead demand
+# its own record and manage DNS itself.
+#
+# The pattern deliberately claims the WHOLE host rather than just `/v/*`:
+# the host is dedicated to the gate, and leaving other paths to fall
+# through to the SPA would mean a mistyped playback URL answered 200 with
+# HTML — the silent failure this file warns about two paragraphs up.
+routes = [
+  { pattern = "video.atlass.dpdns.org/*", zone_name = "atlass.dpdns.org" }
+]
+
+# Observability on, because DL-22's cost question ("Worker request volume
+# and realistic request cost") can only be answered from production
+# numbers, and the per-invocation CPU time that drives the CPU half of the
+# bill is reported per request in the Workers Trace Events dataset
+# (`CPUTimeMs`) and as a quantile chart in the dashboard.
+[observability]
+enabled = true
 
 # ---------------------------------------------------------------------------
 # Bindings
@@ -65,7 +84,12 @@ enabled = true
 # `${R2_BUCKET}-protected`.
 [[r2_buckets]]
 binding = "VIDEO_BUCKET"
-bucket_name = "atlas-media-protected"
+# Production: matches `R2_PROTECTED_BUCKET` in the API's environment, which
+# is the bucket `ProtectedMediaStorage` actually writes to (verified in
+# production on 20 Sep 2026 — a protected upload returned 201 and the asset
+# carried `provider: r2`, `access: protected`, no durable URL).
+bucket_name = "atlas-media-prod-protected"
+# Local development derives `${R2_BUCKET}-protected` from `atlas-media-dev`.
 preview_bucket_name = "atlas-media-dev-protected"
 
 # The revocation denylist: one key per revoked session, `rev:s:<sessionId>`.
@@ -74,12 +98,19 @@ preview_bucket_name = "atlas-media-dev-protected"
 # that, every token naming that session has expired anyway and the entry has
 # nothing left to revoke.
 #
-# Create it first and paste the id here:
+# THE ONE VALUE THAT CANNOT BE PREPARED IN ADVANCE. A namespace id is
+# issued by Cloudflare, so it does not exist until an authenticated CLI
+# asks for one. Everything else in this file is ready; these two ids are
+# the only edit left before `deploy`, and `deploy` fails loudly on the
+# placeholder rather than shipping a Worker whose denylist reads nothing.
+#
+# After `wrangler login`, run both and paste the returned ids here:
 #     npx wrangler kv namespace create GATE_DENYLIST
+#     npx wrangler kv namespace create GATE_DENYLIST --preview
 [[kv_namespaces]]
 binding = "GATE_DENYLIST"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+id = "553a234e0a1142d49cc7e567f649234e"
+preview_id = "badb2a58244b40e08d32e44aac396b43"
 
 # ---------------------------------------------------------------------------
 # Plain variables (non-secret)
