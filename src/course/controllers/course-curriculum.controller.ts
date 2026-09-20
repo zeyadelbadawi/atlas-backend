@@ -18,6 +18,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -26,6 +27,8 @@ import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { CourseCurriculumService } from '../services/course-curriculum.service';
+import { UpsertLessonContentDto } from '../dto/upsert-lesson-content.dto';
+import type { LessonContentResponse } from '../dto/lesson-content.contract';
 import { UnitCurriculumService } from '../services/unit-curriculum.service';
 import {
   CreateCourseSectionDto,
@@ -142,6 +145,34 @@ export class CourseCurriculumController {
   ): Promise<CourseLessonResponse> {
     const { academyId, organizationId } = request.academyContext!;
     return this.curriculumService.createLesson(
+      sectionId,
+      courseId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body,
+    );
+  }
+
+  /**
+   * Creates or replaces a lesson's protected content body.
+   *
+   * `PUT` because `lesson_contents.lessonId` is UNIQUE: there is exactly
+   * one body per lesson, so the request describes a complete desired
+   * state rather than a partial change, and a retried call must land on
+   * the same single row instead of creating a second one.
+   */
+  @Put(':id/courses/:courseId/sections/:sectionId/lessons/:lessonId/content')
+  async upsertLessonContent(
+    @Req() request: Request,
+    @Param('courseId') courseId: string,
+    @Param('sectionId') sectionId: string,
+    @Param('lessonId') lessonId: string,
+    @Body() body: UpsertLessonContentDto,
+  ): Promise<LessonContentResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.curriculumService.upsertLessonContent(
+      lessonId,
       sectionId,
       courseId,
       academyId,

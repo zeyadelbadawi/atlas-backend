@@ -33,6 +33,7 @@ import { CoursesRepository } from './repositories/courses.repository';
 import { CourseCategoriesRepository } from './repositories/course-categories.repository';
 import { CourseSectionsRepository } from './repositories/course-sections.repository';
 import { CourseLessonsRepository } from './repositories/course-lessons.repository';
+import { LessonContentsRepository } from './repositories/lesson-contents.repository';
 import { CourseInstructorsRepository } from './repositories/course-instructors.repository';
 
 @Module({
@@ -46,6 +47,7 @@ import { CourseInstructorsRepository } from './repositories/course-instructors.r
     CourseCategoriesRepository,
     CourseSectionsRepository,
     CourseLessonsRepository,
+    LessonContentsRepository,
     CourseInstructorsRepository,
   ],
   exports: [

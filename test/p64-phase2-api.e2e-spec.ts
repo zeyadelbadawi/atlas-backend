@@ -1630,4 +1630,241 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     });
     expect(logged?.reason).toBe('notAuthenticated');
   });
+
+  /**
+   * P64 Phase 2 — the `lesson_contents` AUTHORING path.
+   *
+   * These cases exist because of a production failure, not a hypothesis.
+   * The Normal tier was configured end to end on the real deployment —
+   * protected R2 reachable, upload reserved, bytes PUT, completion parsing
+   * a real 3-second duration, `videoAssetId` attached, `can_access_lesson`
+   * returning true for the enrolled learner — and the grant still answered
+   * 404. The cause was that `lesson_contents` had RLS, a backfill and a
+   * reader, but no writer: every lesson created after the migration had no
+   * content row, and `LessonContentService` correctly refuses without one.
+   *
+   * Every other video test in this file seeds that row with the admin
+   * client. These do not: they drive the real `PUT .../content` endpoint,
+   * which is the only way this regression could have been caught.
+   */
+  describe('lesson content authoring (PUT .../lessons/:lessonId/content)', () => {
+    function putContent(
+      w: { academy: { id: string }; course: { id: string }; section: { id: string } },
+      auth: Record<string, string>,
+      lessonId: string,
+      body: Record<string, unknown>,
+    ) {
+      return request(app.getHttpServer())
+        .put(
+          `/academies/${w.academy.id}/courses/${w.course.id}/sections/${w.section.id}/lessons/${lessonId}/content`,
+        )
+        .set(auth)
+        .send(body);
+    }
+
+    /** A published video lesson with its asset attached but NO content row — the exact production state that returned 404. */
+    async function lessonAwaitingContent(
+      w: Awaited<ReturnType<typeof world>>,
+      label: string,
+    ) {
+      const { ticket } = await readyNormalAsset(w, 30);
+      const lesson = await seedCourseLesson(admin, w.section.id, w.course.id, label, 0, {
+        contentType: 'video',
+        status: 'published',
+      });
+      await request(app.getHttpServer())
+        .patch(
+          `/academies/${w.academy.id}/courses/${w.course.id}/sections/${w.section.id}/lessons/${lesson.id}`,
+        )
+        .set(w.owner.auth)
+        .send({ videoAssetId: ticket.assetId })
+        .expect(200);
+      return { lesson, assetId: ticket.assetId };
+    }
+
+    it('THE REGRESSION: a lesson with a video asset but no content row is refused, and authoring content makes the learner grant succeed', async () => {
+      const w = await world('authoring-regression', { family: 'normal', tier: 'growth' });
+      const { lesson, assetId } = await lessonAwaitingContent(w, 'awaiting-content');
+      const student = await enrolledLearner(w, 'authoring-regression-student');
+
+      // Exactly what production did: entitled learner, attached asset, no
+      // content row. 404 — indistinguishable from "no such lesson", by design.
+      await getContent(student, w.course.id, lesson.id).expect(404);
+
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'video',
+        mediaAssetId: assetId,
+      }).expect(200);
+
+      // The same request, unchanged, now succeeds.
+      const grant = await getContent(student, w.course.id, lesson.id).expect(200);
+      expect(grant.body.video.url).toContain(BASIC_DELIVERY_HOST);
+      expect(grant.body.protection).toMatchObject({ tier: 'normal', drm: false });
+    });
+
+    it('writes exactly one row per lesson, however many times it is called', async () => {
+      const w = await world('authoring-idempotent', { family: 'normal', tier: 'growth' });
+      const { lesson, assetId } = await lessonAwaitingContent(w, 'idempotent');
+
+      const first = await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'video',
+        mediaAssetId: assetId,
+      }).expect(200);
+      const second = await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'video',
+        mediaAssetId: assetId,
+      }).expect(200);
+
+      // Same row, not a second one — the UNIQUE lessonId is what makes
+      // "one body per lesson" a database fact rather than a convention.
+      expect(second.body.id).toBe(first.body.id);
+      expect(await admin.lessonContent.count({ where: { lessonId: lesson.id } })).toBe(1);
+    });
+
+    it('switching kind clears the field the previous kind owned, leaving no dangling asset reference', async () => {
+      const w = await world('authoring-switch', { family: 'normal', tier: 'growth' });
+      const { lesson, assetId } = await lessonAwaitingContent(w, 'switch');
+
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'video',
+        mediaAssetId: assetId,
+      }).expect(200);
+      const swapped = await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'external',
+        externalUrl: 'https://example.com/embed/lesson',
+      }).expect(200);
+
+      expect(swapped.body.kind).toBe('external');
+      expect(swapped.body.mediaAssetId).toBeUndefined();
+      const row = await admin.lessonContent.findUnique({ where: { lessonId: lesson.id } });
+      expect(row?.mediaAssetId).toBeNull();
+    });
+
+    it('never returns the stored body back to the author', async () => {
+      const w = await world('authoring-no-echo', { family: 'normal', tier: 'growth' });
+      const { lesson, assetId } = await lessonAwaitingContent(w, 'no-echo');
+      const saved = await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'video',
+        mediaAssetId: assetId,
+      }).expect(200);
+      expect(saved.body.bodyHtml).toBeUndefined();
+    });
+
+    it('refuses a learner, on the guard AND on the surface — writing content is not a learner capability', async () => {
+      const w = await world('authoring-learner', { family: 'normal', tier: 'growth' });
+      const { lesson, assetId } = await lessonAwaitingContent(w, 'learner-write');
+      const student = await enrolledLearner(w, 'authoring-learner-student');
+
+      await putContent(w, student.auth, lesson.id, {
+        kind: 'video',
+        mediaAssetId: assetId,
+      }).expect(403);
+
+      expect(await admin.lessonContent.count({ where: { lessonId: lesson.id } })).toBe(0);
+    });
+
+    it('refuses an asset belonging to ANOTHER academy, and says only "not found"', async () => {
+      const mine = await world('authoring-mine', { family: 'normal', tier: 'growth' });
+      const theirs = await world('authoring-theirs', { family: 'normal', tier: 'growth' });
+      const { lesson } = await lessonAwaitingContent(mine, 'cross-academy');
+      const foreign = await readyNormalAsset(theirs, 30);
+
+      // 404, not 403: a distinct "wrong academy" answer would confirm the
+      // id exists somewhere, which is the disclosure the refusal avoids.
+      await putContent(mine, mine.owner.auth, lesson.id, {
+        kind: 'video',
+        mediaAssetId: foreign.ticket.assetId,
+      }).expect(404);
+
+      expect(await admin.lessonContent.count({ where: { lessonId: lesson.id } })).toBe(0);
+    });
+
+    it('refuses a non-video asset for a video body', async () => {
+      const w = await world('authoring-not-video', { family: 'normal', tier: 'growth' });
+      const { lesson } = await lessonAwaitingContent(w, 'not-video');
+      const doc = await admin.mediaAsset.create({
+        data: {
+          academyId: w.academy.id,
+          type: 'document',
+          access: 'protected',
+          storageKey: `academies/${w.academy.id}/${randomUUID()}.pdf`,
+          mimeType: 'application/pdf',
+          fileName: 'notes.pdf',
+          sizeBytes: 10,
+          url: '',
+        },
+      });
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'video',
+        mediaAssetId: doc.id,
+      }).expect(400);
+    });
+
+    it('refuses a PUBLIC asset for a file body — a durable public URL is the problem this phase removes', async () => {
+      const w = await world('authoring-public-file', { family: 'normal', tier: 'growth' });
+      const { lesson } = await lessonAwaitingContent(w, 'public-file');
+      const publicDoc = await admin.mediaAsset.create({
+        data: {
+          academyId: w.academy.id,
+          type: 'document',
+          access: 'public',
+          storageKey: `academies/${w.academy.id}/${randomUUID()}.pdf`,
+          mimeType: 'application/pdf',
+          fileName: 'public.pdf',
+          sizeBytes: 10,
+          url: 'https://cdn.example.test/public.pdf',
+        },
+      });
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'file',
+        mediaAssetId: publicDoc.id,
+      }).expect(400);
+    });
+
+    it('refuses kind: text with a reason, and cannot be sent a body at all', async () => {
+      const w = await world('authoring-text', { family: 'normal', tier: 'growth' });
+      const { lesson } = await lessonAwaitingContent(w, 'text-refused');
+
+      // The kind itself is refused with a reason the caller can act on:
+      // the field is legitimate, the authoring path for it is not built,
+      // and no sanitiser was invented to pretend otherwise.
+      const res = await putContent(w, w.owner.auth, lesson.id, { kind: 'text' }).expect(
+        400,
+      );
+      expect(res.body.error.messageKey).toBe('errors.lessonContent.textNotYetSupported');
+
+      // And `bodyHtml` is not a field this DTO has, so `forbidNonWhitelisted`
+      // rejects it before any handler runs. That is the stronger guarantee:
+      // unsanitised HTML cannot reach the column even by mistake, because
+      // there is no parameter that carries it.
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'text',
+        bodyHtml: '<p>hello</p>',
+      }).expect(400);
+
+      expect(await admin.lessonContent.count({ where: { lessonId: lesson.id } })).toBe(0);
+    });
+
+    it('refuses an incomplete payload for each kind', async () => {
+      const w = await world('authoring-incomplete', { family: 'normal', tier: 'growth' });
+      const { lesson, assetId } = await lessonAwaitingContent(w, 'incomplete');
+
+      await putContent(w, w.owner.auth, lesson.id, { kind: 'video' }).expect(400);
+      await putContent(w, w.owner.auth, lesson.id, { kind: 'external' }).expect(400);
+      // `external` names a third party; an asset id alongside it is a
+      // contradiction, not an extra.
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'external',
+        externalUrl: 'https://example.com/e',
+        mediaAssetId: assetId,
+      }).expect(400);
+      // http is refused at the DTO: the learner surface is TLS, so it
+      // would be a mixed-content block at playback rather than here.
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'external',
+        externalUrl: 'http://example.com/e',
+      }).expect(400);
+    });
+  });
+
 });

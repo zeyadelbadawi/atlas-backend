@@ -24,9 +24,13 @@ import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer
 import { CoursesRepository } from '../repositories/courses.repository';
 import { CourseSectionsRepository } from '../repositories/course-sections.repository';
 import { CourseLessonsRepository } from '../repositories/course-lessons.repository';
+import { LessonContentsRepository } from '../repositories/lesson-contents.repository';
 import { toCourseSectionResponse } from '../dto/course-section.contract';
 import type { CourseSectionResponse } from '../dto/course-section.contract';
 import { toCourseLessonResponse } from '../dto/course-lesson.contract';
+import { toLessonContentResponse } from '../dto/lesson-content.contract';
+import type { LessonContentResponse } from '../dto/lesson-content.contract';
+import type { UpsertLessonContentDto } from '../dto/upsert-lesson-content.dto';
 import type { CourseLessonResponse } from '../dto/course-lesson.contract';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
@@ -50,6 +54,7 @@ export class CourseCurriculumService {
     private readonly coursesRepository: CoursesRepository,
     private readonly sectionsRepository: CourseSectionsRepository,
     private readonly lessonsRepository: CourseLessonsRepository,
+    private readonly lessonContentsRepository: LessonContentsRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
@@ -347,6 +352,136 @@ export class CourseCurriculumService {
     );
 
     return toCourseLessonResponse(lesson);
+  }
+
+  /**
+   * Creates or replaces the lesson's protected content row.
+   *
+   * This is the writer `lesson_contents` never had. The table, its RLS
+   * policies and a one-time backfill shipped with Phase 2's first
+   * migration, but nothing could author a row afterwards — so every
+   * lesson created since had no content, and `LessonContentService`
+   * refused its grant. That refusal is correct and is left untouched;
+   * what was missing is the row it looks for.
+   *
+   * ORDER OF CHECKS IS THE POINT. Manage-permission, then course, then
+   * section, then lesson — the same ladder every other write on this
+   * service climbs — before a single field of the payload is trusted. A
+   * caller who cannot manage this academy learns nothing about whether
+   * the ids they guessed exist.
+   */
+  async upsertLessonContent(
+    lessonId: string,
+    sectionId: string,
+    courseId: string,
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    payload: UpsertLessonContentDto,
+  ): Promise<LessonContentResponse> {
+    // `text` parses (it is a real column value) and is refused HERE rather
+    // than by the DTO, so the caller gets a reason instead of "not one of
+    // the allowed values" — the field IS allowed, the authoring path for
+    // it is not built. See the DTO header for why no sanitiser is invented.
+    if (payload.kind === 'text') {
+      throw new BadRequestException({
+        messageKey: 'errors.lessonContent.textNotYetSupported',
+      });
+    }
+
+    const content = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        const role = await this.assertCanManage(tx, academyId, userId, courseId);
+        await this.assertCourseInAcademy(tx, courseId, academyId);
+        await this.assertSectionInCourse(tx, sectionId, courseId);
+        await this.assertLessonInSection(tx, lessonId, sectionId);
+
+        let mediaAssetId: string | null = null;
+        let externalUrl: string | null = null;
+
+        if (payload.kind === 'video' || payload.kind === 'file') {
+          if (!payload.mediaAssetId) {
+            throw new BadRequestException({
+              messageKey: 'errors.lessonContent.mediaAssetRequired',
+            });
+          }
+          // Scoped to THIS academy, exactly as `updateLesson` scopes
+          // `videoAssetId`: an id proves nothing on its own, and without
+          // this an author could attach another academy's object by
+          // guessing, after which the grant path would sign it because
+          // the lesson claims it. A miss is `notFound`, not a distinct
+          // "wrong academy" — the two must be indistinguishable.
+          const asset = await tx.mediaAsset.findFirst({
+            where: { id: payload.mediaAssetId, academyId },
+            select: { id: true, type: true, access: true },
+          });
+          if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+
+          if (payload.kind === 'video' && asset.type !== 'video') {
+            throw new BadRequestException({
+              messageKey: 'errors.lessonContent.assetNotVideo',
+            });
+          }
+          // A `file` lesson body must live in the protected bucket. A
+          // public object would be readable by URL by anyone it was
+          // forwarded to, which is the durable-link problem this whole
+          // phase exists to remove — accepting one here would reintroduce
+          // it behind a field named "protected content".
+          if (payload.kind === 'file' && asset.access !== 'protected') {
+            throw new BadRequestException({
+              messageKey: 'errors.lessonContent.assetNotProtected',
+            });
+          }
+          mediaAssetId = asset.id;
+        }
+
+        if (payload.kind === 'external') {
+          if (!payload.externalUrl) {
+            throw new BadRequestException({
+              messageKey: 'errors.lessonContent.externalUrlRequired',
+            });
+          }
+          if (payload.mediaAssetId) {
+            throw new BadRequestException({
+              messageKey: 'errors.lessonContent.unexpectedMediaAsset',
+            });
+          }
+          externalUrl = payload.externalUrl;
+        }
+
+        // `courseId`/`academyId` are denormalised onto the row so every
+        // RLS policy decides tenancy without a join. They are taken from
+        // the VERIFIED context above, never from the payload.
+        const saved = await this.lessonContentsRepository.upsertForLesson(tx, lessonId, {
+          courseId,
+          academyId,
+          kind: payload.kind,
+          mediaAssetId,
+          externalUrl,
+        });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'course_lesson.content_updated',
+          targetType: 'course_lesson',
+          targetId: lessonId,
+          context: {
+            courseId,
+            sectionId,
+            kind: payload.kind,
+            ...(mediaAssetId ? { mediaAssetId } : {}),
+          },
+        });
+
+        return saved;
+      },
+    );
+
+    return toLessonContentResponse(content);
   }
 
   async deleteLesson(
