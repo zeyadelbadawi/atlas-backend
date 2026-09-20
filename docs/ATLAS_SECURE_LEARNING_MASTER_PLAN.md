@@ -1094,3 +1094,106 @@ Local Chrome validation with a learner created through the academy website repro
 Cloudflare Stream official documentation verified (applies to the **Premium** tier; see `ATLAS_VIDEO_PROVIDER_TIERS_INVESTIGATION.md` for the Normal tier's evidence and for finding D-5, which corrects what these tokens actually enforce): signed tokens (`exp` ≤ 24 h, `nbf`, `downloadable`, `accessRules` ≤ 5), local signing keys (≤ 1,000, not rate-limited), allowed origins with wildcard caveats, direct creator uploads (`maxDurationSeconds` reservation; 200 MB basic / TUS), MP4 downloads opt-in and token-gated, static PNG watermark profiles applied at upload, webhook HMAC-SHA256 signature, HLS/DASH manifests never cached, $5 per 1,000 stored minutes and $1 per 1,000 delivered minutes (external billing facts only, never encoded in Atlas), 30 GB max upload, **no DRM in docs, FAQ or changelog**.
 
 Code locations: `src/identity/services/auth.service.ts`, `src/identity/dto/contracts.ts`, `src/tenancy/guards/saas-level-caller.guard.ts`, `src/academy/guards/academy-scope.guard.ts`, `src/academy/services/academies.service.ts`, `src/course/services/course-curriculum.service.ts`, `src/learning/services/learning-access.util.ts`, `src/learning/services/quizzes.service.ts`, `src/learning/services/course-progress.service.ts`, `src/learning/services/assignments.service.ts`, `src/instructor/services/instructor.service.ts`, `src/dashboard/services/student-analytics.service.ts`, `src/media/controllers/public-media.controller.ts`, `src/plans/dto/entitlement.types.ts`, `prisma/schema.prisma`, migrations p6/p7/p13/p21/p22b/p24/p24c/p27c/p30; `atlas-front/src/app/routes/*`, `src/app/navigation/navigation.config.ts`, `src/features/auth/*`, `src/features/public-website/*`, `src/features/academy/pages/AcademyMembersPage.tsx`, `src/features/learning/*`, `src/features/website/renderer/*`.
+
+---
+
+# PHASE 2 CLOSEOUT — 20 September 2026
+
+## Status: DEPLOYED AND PRODUCTION-VERIFIED
+
+Superseding the earlier record of "IMPLEMENTED AND VERIFIED LOCALLY — NOT
+DEPLOYED". Phase 2 is live on production and its protected-video path has
+been exercised end to end against the real deployment.
+
+## 1. Deployed and verified in production
+
+| Item | Evidence |
+|---|---|
+| Backend revision | `4632fbf` (image tag verified in the deploy log) |
+| Frontend revision | `09ba905` |
+| Migrations | **103 → 108**; all five Phase 2 migrations applied by name, then `Backend healthy.` |
+| Six plan variants | `/api/v1/public/plans` returns 6 with `family`/`tier` and 500 / 2,000 / 5,000 minutes, identical across both families |
+| Protected R2 | dedicated single-bucket token; protected upload 201, `access: protected`, **no durable URL** |
+| Public R2 | unaffected by the credential split — 201 with a durable URL, same academy, same moment |
+| Video upload → complete | `durationSource: parsed` — the server measures the container rather than trusting the client's declared ceiling (D-4) |
+| `videoAssetId` attach | 200, academy-scoped |
+| **Lesson content authoring** | **200** — the writer `lesson_contents` never had |
+| **Learner grant** | **404 before authoring → 200 after**, same learner, same request |
+| **Worker delivery** | **200, 2,437 bytes, `content-type: video/mp4`**, valid `ftyp` header, from `atlas-media-prod-protected` |
+| Device / session model | Devices page shows the cap ("1 of 2 · Platform default") and the lease ("Limit: 1 learning session at a time") |
+| Surface isolation | learner `/dashboard` → 404; staff login states "Students sign in on their own academy website, not here" |
+
+### Security controls verified against production
+
+| Control | Result |
+|---|---|
+| Tampered signature | **403** |
+| Forged object key (valid signature, altered claims) | **403** |
+| Expired / altered expiry | **403** |
+| No token | **401** |
+| Cross-academy asset attach | **404** (not 403 — a distinct answer would confirm the id exists) |
+| Learner writing lesson content | **403**, zero rows written |
+| Public asset as a protected `file` body | **400** |
+| Entitlement (`can_access_lesson`) | true only for the enrolled learner |
+| RLS | 74 tables FORCE RLS, 0 enabled-but-not-forced; `atlas_app` NOBYPASSRLS, `jit=off` |
+
+## 2. Implemented in this closeout
+
+`PUT /api/v1/academies/:id/courses/:courseId/sections/:sectionId/lessons/:lessonId/content`
+(commit `cf760a8`, PR #4, merged as `4632fbf`).
+
+`lesson_contents` shipped with a table, RLS policies, a one-time backfill and
+a reader — but no writer. Every lesson created after that migration had no
+content row, so `LessonContentService` refused its grant at
+`if (!lesson.content)`. The refusal was correct; the row it looks for could
+not be created. Attaching `course_lessons.video_asset_id` says which asset a
+lesson plays; `lesson_contents` is the row the grant resolves. Both are
+required, and only the first had a writer.
+
+Supports `video`, `file` and `external`. Upserts on the UNIQUE `lessonId`, so
+one body per lesson is a database fact rather than a convention. No migration
+was required.
+
+## 3. Intentionally deferred
+
+- **`kind: text` authoring** — refused with `errors.lessonContent.textNotYetSupported`. The column promises "server-sanitised on write" and this repository has no sanitiser; accepting rich text would mean storing unsanitised HTML behind a field that says otherwise, or inventing a sanitiser under deadline. `bodyHtml` is not on the DTO, so `forbidNonWhitelisted` rejects it before any handler runs. Backfilled text lessons are unaffected. **Needs a reviewed sanitiser (e.g. `sanitize-html`) as its own change.**
+- **Revocation before expiry** — `BASIC_VIDEO_REVOCATION_ENDPOINT`/`_TOKEN` are deliberately unset: the shipped Worker accepts only `GET`/`HEAD`/`OPTIONS` and returns **405** to Atlas's revocation `POST`, so there is no HTTP receiver. The capability is therefore reported **false** rather than claimed. Revocation today is the 10-minute token lifetime plus secret rotation. A receiver is a separate change.
+- **Premium (Cloudflare Stream)** — architecture and adapter are complete and unit-tested; no `CLOUDFLARE_STREAM_*` credentials are configured, so the tier is unconfigured in production and refuses rather than silently downgrading.
+
+## 4. Implemented but NOT production-verified
+
+- **Premium tier end to end** — blocked on provider credentials, above.
+- **Origin restriction** — `ALLOWED_ORIGINS` is empty (allow-all) and `BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED` is unset, so the grant reports `originRestricted: false`. Honest, but unexercised.
+- **Learner Chrome flow on the Normal tier** — the API path is fully verified; the browser player was exercised on a text lesson in an earlier round, not on a playing protected video.
+
+## 5. Outside Phase 2
+
+- **`search_vector` schema defect.** Migration `20260922000000_p44` drops the `search_vector` columns that `search.repository.ts` still queries; nothing restores them. On a database built from the migration chain, `GET /search` returns **500** for every query (7 e2e tests). p44 predates Phase 2 by weeks. **Production status UNKNOWN** — the running database may carry the columns out of band ("long-known raw-SQL `search_vector` items" appear in `prisma migrate diff` drift). Needs its own migration and its own PR.
+- **Pre-existing e2e flakes** — `media` and `p53-support-attachments` oversized-payload tests; pass in isolation, fail late in a long run. Three hypotheses tested and disproved (regex, heap ceiling, DB size). Mechanism open.
+- **Test-environment limits** — the dev database is never reset (`maxWorkers: 1`, no `globalSetup`), and a full suite exhausts Node's default heap around suite 106/116. Do **not** raise transaction timeouts, sweep batch sizes or page sizes to make accumulation-driven failures green.
+
+## 6. Remaining before Phase 3
+
+1. Deploy the Worker's KV namespace ids into version control (currently placeholders in `wrangler.toml`; the live Worker has real ones).
+2. Decide on the `text` sanitiser.
+3. Decide whether revocation-before-expiry is required for launch; if so, build the HTTP receiver.
+4. Configure Premium credentials if Premium is to be sold.
+5. Resolve `search_vector` — separately.
+6. Staff authoring **UI** (this closeout delivered the API only).
+
+## 7. Test counts at closeout
+
+- Phase 2 e2e: **138/138** (was 128; +10 covering the regression, idempotency, cross-academy refusal, learner 403 and each kind's validation)
+- Backend unit: **1238/1238**
+- Typecheck: **0 errors**
+- Full backend e2e on a clean database: **1290/1299**, the 9 failures being `search` (7, above) and the two pre-existing flakes
+
+## 8. Environment changes made to production
+
+Added: `R2_PROTECTED_BUCKET`, `R2_PROTECTED_ACCESS_KEY_ID`,
+`R2_PROTECTED_SECRET_ACCESS_KEY`, `BASIC_VIDEO_DELIVERY_HOST`,
+`BASIC_VIDEO_SIGNING_SECRET`, `VIDEO_PROVIDER=r2_worker`.
+`FLAG_VIDEO_NORMAL_MODE` is **off** — the smoke test scoped it to one
+disposable academy and it was reverted immediately afterwards. Public R2
+credentials were never touched. Every edit took a timestamped `600 root:root`
+backup first.
