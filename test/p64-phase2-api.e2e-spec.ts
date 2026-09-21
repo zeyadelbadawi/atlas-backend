@@ -665,9 +665,7 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     expect(premiumRow.provider).toBe('cloudflare_stream');
     // Neither recorded the process-wide adapter, and `fake` is never
     // written to the column at all — it is not a place bytes can live.
-    expect([normalRow.provider, premiumRow.provider]).not.toContain(
-      processWide.provider,
-    );
+    expect([normalRow.provider, premiumRow.provider]).not.toContain(processWide.provider);
   });
 
   it('the ACADEMY choice, not the plan, decides the tier within the entitlement — three separate steps (D10)', async () => {
@@ -733,7 +731,9 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       { fileName: 'flagged.mp4', maxDurationSeconds: 60, courseId: premium.course.id },
       403,
     );
-    expect(refused.body.error).toMatchObject({ messageKey: 'errors.media.videoNotEnabled' });
+    expect(refused.body.error).toMatchObject({
+      messageKey: 'errors.media.videoNotEnabled',
+    });
 
     // The OTHER tier's flag is untouched — Normal canaries independently.
     flags.value = { ...allFlags('on'), videoNormal: { mode: 'off', academyIds: [] } };
@@ -812,7 +812,9 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       .expect(201);
     expect(second.body).toMatchObject({ id: ticket.assetId });
 
-    const row = await admin.mediaAsset.findUniqueOrThrow({ where: { id: ticket.assetId } });
+    const row = await admin.mediaAsset.findUniqueOrThrow({
+      where: { id: ticket.assetId },
+    });
     expect(row.durationSeconds).toBe(180);
     expect(row.durationSource).toBe('parsed');
   });
@@ -826,10 +828,14 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     });
 
     const refused = await request(app.getHttpServer())
-      .post(`/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`)
+      .post(
+        `/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
+      )
       .set(w.owner.auth)
       .expect(400);
-    expect(refused.body.error).toMatchObject({ messageKey: 'errors.media.uploadNotFound' });
+    expect(refused.body.error).toMatchObject({
+      messageKey: 'errors.media.uploadNotFound',
+    });
 
     const row = await admin.mediaAsset.findUniqueOrThrow({
       where: { id: ticket.body.assetId },
@@ -847,7 +853,9 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     expect(ticket.body.requiresCompletionCall).toBe(false);
 
     const refused = await request(app.getHttpServer())
-      .post(`/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`)
+      .post(
+        `/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
+      )
       .set(w.owner.auth)
       .expect(400);
     expect(refused.body.error).toMatchObject({
@@ -868,10 +876,14 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     });
 
     const notStarted = await request(app.getHttpServer())
-      .post(`/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`)
+      .post(
+        `/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
+      )
       .set(w.owner.auth)
       .expect(400);
-    expect(notStarted.body.error).toMatchObject({ messageKey: 'errors.media.uploadNotStarted' });
+    expect(notStarted.body.error).toMatchObject({
+      messageKey: 'errors.media.uploadNotStarted',
+    });
 
     await request(app.getHttpServer())
       .post(`/academies/${w.academy.id}/media/video-uploads/${randomUUID()}/complete`)
@@ -879,7 +891,7 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       .expect(404);
   });
 
-  it('never lets one academy complete another academy\'s upload', async () => {
+  it("never lets one academy complete another academy's upload", async () => {
     const a = await world('complete-tenant-a', { family: 'normal', tier: 'growth' });
     const b = await world('complete-tenant-b', { family: 'normal', tier: 'growth' });
     const ticket = await createUpload(a, {
@@ -891,12 +903,16 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     // B's owner, B's academy in the path, A's asset id: refused as
     // not-found, the established "unreachable looks absent" shape.
     await request(app.getHttpServer())
-      .post(`/academies/${b.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`)
+      .post(
+        `/academies/${b.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
+      )
       .set(b.owner.auth)
       .expect(404);
     // B's owner against A's academy is refused at the scope guard.
     await request(app.getHttpServer())
-      .post(`/academies/${a.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`)
+      .post(
+        `/academies/${a.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
+      )
       .set(b.owner.auth)
       .expect(403);
   });
@@ -916,7 +932,9 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     expect(await putBytes(ticket.body.uploadUrl, faststartMp4(240))).toBe(200);
 
     const completed = await request(app.getHttpServer())
-      .post(`/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`)
+      .post(
+        `/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
+      )
       .set(w.owner.auth)
       .expect(201);
 
@@ -1133,7 +1151,9 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     expect(text.body.video).toBeUndefined();
     expect(text.body.bodyHtml).toContain('Reading material');
 
-    const external = await getContent(student, w.course.id, externalLesson.id).expect(200);
+    const external = await getContent(student, w.course.id, externalLesson.id).expect(
+      200,
+    );
     // Atlas hosts nothing here and protects nothing — said plainly rather
     // than left for the learner to assume.
     expect(external.body.protection).toMatchObject({
@@ -1142,6 +1162,14 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       expiresInSeconds: 0,
       drm: false,
     });
+    // A supported YouTube link is classified SERVER-SIDE into the one
+    // shape the player may embed: the vetted 11-character id, never the
+    // raw URL. The URL itself is still returned for the link-out.
+    expect(external.body.externalEmbed).toEqual({
+      provider: 'youtube',
+      videoId: 'dQw4w9WgXcQ',
+    });
+    expect(external.body.externalUrl).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   });
 
   // =========================================================================
@@ -1177,7 +1205,9 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       data: { status: 'unavailable', revokedAt: new Date(), revokeReason: 'refund' },
     });
     const afterRevoke = await refreshGrant(student, w.course.id, lesson.id).expect(403);
-    expect(afterRevoke.body.error).toMatchObject({ messageKey: 'errors.learning.accessEnded' });
+    expect(afterRevoke.body.error).toMatchObject({
+      messageKey: 'errors.learning.accessEnded',
+    });
 
     // CONDITION 4 — an unpublished course delivers nothing either.
     await admin.enrollment.updateMany({
@@ -1187,7 +1217,10 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     await refreshGrant(student, w.course.id, lesson.id).expect(200);
     await admin.course.update({ where: { id: w.course.id }, data: { status: 'draft' } });
     await refreshGrant(student, w.course.id, lesson.id).expect(404);
-    await admin.course.update({ where: { id: w.course.id }, data: { status: 'published' } });
+    await admin.course.update({
+      where: { id: w.course.id },
+      data: { status: 'published' },
+    });
 
     // CONDITION 5 — a drip date in the future.
     await admin.courseLesson.update({
@@ -1195,7 +1228,9 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       data: { availableAt: new Date(Date.now() + 86_400_000) },
     });
     const scheduled = await refreshGrant(student, w.course.id, lesson.id).expect(403);
-    expect(scheduled.body.error).toMatchObject({ messageKey: 'errors.learning.lessonScheduled' });
+    expect(scheduled.body.error).toMatchObject({
+      messageKey: 'errors.learning.lessonScheduled',
+    });
   });
 
   it('refresh requires a session, where the initial grant may be anonymous for a preview lesson', async () => {
@@ -1235,7 +1270,11 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     });
     await admin.mediaAsset.update({
       where: { id: premiumTicket.body.assetId },
-      data: { processingStatus: 'ready', durationSeconds: 300, durationSource: 'measured' },
+      data: {
+        processingStatus: 'ready',
+        durationSeconds: 300,
+        durationSource: 'measured',
+      },
     });
 
     // The academy then switches its DEFAULT to Normal.
@@ -1265,13 +1304,22 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       'mixed-premium',
       { order: 0 },
     );
-    const normalLesson = await attachVideoLesson(w, normalTicket.assetId, 'mixed-normal', {
-      order: 1,
-    });
+    const normalLesson = await attachVideoLesson(
+      w,
+      normalTicket.assetId,
+      'mixed-normal',
+      {
+        order: 1,
+      },
+    );
     const student = await enrolledLearner(w, 'mixed-student');
 
-    const premiumGrant = await getContent(student, w.course.id, premiumLesson.id).expect(200);
-    const normalGrant = await getContent(student, w.course.id, normalLesson.id).expect(200);
+    const premiumGrant = await getContent(student, w.course.id, premiumLesson.id).expect(
+      200,
+    );
+    const normalGrant = await getContent(student, w.course.id, normalLesson.id).expect(
+      200,
+    );
     expect(premiumGrant.body.protection.tier).toBe('premium');
     expect(premiumGrant.body.video.format).toBe('hls');
     expect(normalGrant.body.protection.tier).toBe('normal');
@@ -1302,7 +1350,11 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     });
     await admin.mediaAsset.update({
       where: { id: premiumTicket.body.assetId },
-      data: { processingStatus: 'ready', durationSeconds: 600, durationSource: 'measured' },
+      data: {
+        processingStatus: 'ready',
+        durationSeconds: 600,
+        durationSource: 'measured',
+      },
     });
     const premiumLesson = await attachVideoLesson(
       w,
@@ -1501,7 +1553,11 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     await createUpload(w, { fileName: 'x.mp4', maxDurationSeconds: -60 }, 400);
     await createUpload(w, { fileName: 'x.mp4', maxDurationSeconds: 1.5 }, 400);
     // 12 hours is the ceiling on ONE reservation.
-    await createUpload(w, { fileName: 'x.mp4', maxDurationSeconds: 12 * 60 * 60 + 1 }, 400);
+    await createUpload(
+      w,
+      { fileName: 'x.mp4', maxDurationSeconds: 12 * 60 * 60 + 1 },
+      400,
+    );
     await createUpload(w, { maxDurationSeconds: 60 }, 400);
     await createUpload(w, { fileName: 'y'.repeat(256), maxDurationSeconds: 60 }, 400);
     // `forbidNonWhitelisted` — a caller cannot smuggle in a tier or provider.
@@ -1538,7 +1594,9 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
         .send(body);
 
     await heartbeat({ lessonId: lesson.id, positionSeconds: -1 }).expect(400);
-    await heartbeat({ lessonId: lesson.id, positionSeconds: 24 * 60 * 60 + 1 }).expect(400);
+    await heartbeat({ lessonId: lesson.id, positionSeconds: 24 * 60 * 60 + 1 }).expect(
+      400,
+    );
     await heartbeat({ lessonId: lesson.id, positionSeconds: 10.5 }).expect(400);
     await heartbeat({ positionSeconds: 10 }).expect(400);
     // The client may report a POSITION and nothing else — a watched-seconds
@@ -1598,7 +1656,9 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       .set(instructor.auth)
       .send({ fileName: 'x.mp4', maxDurationSeconds: 60, courseId: w.course.id })
       .expect(403);
-    expect(refused.body.error).toMatchObject({ messageKey: 'errors.media.insufficientRole' });
+    expect(refused.body.error).toMatchObject({
+      messageKey: 'errors.media.insufficientRole',
+    });
 
     // The owner-only settings (D8) refuse a manager.
     const manager = await staffAccount('guards-manager');
@@ -1688,8 +1748,13 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       const student = await enrolledLearner(w, 'authoring-regression-student');
 
       // Exactly what production did: entitled learner, attached asset, no
-      // content row. 404 — indistinguishable from "no such lesson", by design.
-      await getContent(student, w.course.id, lesson.id).expect(404);
+      // content row. Still a 404 — but for a learner who has passed every
+      // entitlement check it names the real state, so the player says "no
+      // content yet" instead of guessing "still processing".
+      const refused = await getContent(student, w.course.id, lesson.id).expect(404);
+      expect(refused.body.error).toMatchObject({
+        messageKey: 'errors.learning.lessonNoContent',
+      });
 
       await putContent(w, w.owner.auth, lesson.id, {
         kind: 'video',
@@ -1736,8 +1801,68 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
 
       expect(swapped.body.kind).toBe('external');
       expect(swapped.body.mediaAssetId).toBeUndefined();
-      const row = await admin.lessonContent.findUnique({ where: { lessonId: lesson.id } });
+      const row = await admin.lessonContent.findUnique({
+        where: { lessonId: lesson.id },
+      });
       expect(row?.mediaAssetId).toBeNull();
+    });
+
+    it('an external URL that is not a supported YouTube link stays a link-out: no embed descriptor, no iframe door', async () => {
+      const w = await world('unsup-ext', {
+        family: 'normal',
+        tier: 'growth',
+      });
+      const { lesson } = await lessonAwaitingContent(w, 'unsup-ext');
+      const student = await enrolledLearner(w, 'unsup-ext-student');
+
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'external',
+        externalUrl: 'https://example.com/embed/lesson',
+      }).expect(200);
+
+      const grant = await getContent(student, w.course.id, lesson.id).expect(200);
+      expect(grant.body.kind).toBe('external');
+      expect(grant.body.externalUrl).toBe('https://example.com/embed/lesson');
+      expect(grant.body.externalEmbed).toBeUndefined();
+      // A YouTube-looking host that is not YouTube must not be promoted either.
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'external',
+        externalUrl: 'https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ',
+      }).expect(200);
+      const spoofed = await getContent(student, w.course.id, lesson.id).expect(200);
+      expect(spoofed.body.externalEmbed).toBeUndefined();
+    });
+
+    it('a lesson whose video asset has not finished processing is refused as PROCESSING, distinct from having no content', async () => {
+      const w = await world('authoring-processing', { family: 'normal', tier: 'growth' });
+      const { lesson, assetId } = await lessonAwaitingContent(w, 'processing');
+      const student = await enrolledLearner(w, 'authoring-processing-student');
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'video',
+        mediaAssetId: assetId,
+      }).expect(200);
+      await getContent(student, w.course.id, lesson.id).expect(200);
+
+      // The provider has not finished with it (a Stream webhook that never
+      // arrived, a re-upload in flight): the grant refuses, still 404, and
+      // names the state so the player can say "processing" honestly.
+      await admin.mediaAsset.update({
+        where: { id: assetId },
+        data: { processingStatus: 'processing' },
+      });
+      const refused = await getContent(student, w.course.id, lesson.id).expect(404);
+      expect(refused.body.error).toMatchObject({
+        messageKey: 'errors.learning.lessonProcessing',
+      });
+      expect(JSON.stringify(refused.body)).not.toContain(BASIC_DELIVERY_HOST);
+
+      // An outsider still learns nothing either way.
+      await request(app.getHttpServer())
+        .get(`/learning/courses/${w.course.id}/lessons/${lesson.id}/content`)
+        .expect(404)
+        .expect((res) => {
+          expect(res.body.error).toMatchObject({ messageKey: 'errors.notFound' });
+        });
     });
 
     it('never returns the stored body back to the author', async () => {
@@ -1765,7 +1890,10 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
 
     it('refuses an asset belonging to ANOTHER academy, and says only "not found"', async () => {
       const mine = await world('authoring-mine', { family: 'normal', tier: 'growth' });
-      const theirs = await world('authoring-theirs', { family: 'normal', tier: 'growth' });
+      const theirs = await world('authoring-theirs', {
+        family: 'normal',
+        tier: 'growth',
+      });
       const { lesson } = await lessonAwaitingContent(mine, 'cross-academy');
       const foreign = await readyNormalAsset(theirs, 30);
 
@@ -1801,7 +1929,10 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     });
 
     it('refuses a PUBLIC asset for a file body — a durable public URL is the problem this phase removes', async () => {
-      const w = await world('authoring-public-file', { family: 'normal', tier: 'growth' });
+      const w = await world('authoring-public-file', {
+        family: 'normal',
+        tier: 'growth',
+      });
       const { lesson } = await lessonAwaitingContent(w, 'public-file');
       const publicDoc = await admin.mediaAsset.create({
         data: {
@@ -1866,5 +1997,4 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       }).expect(400);
     });
   });
-
 });

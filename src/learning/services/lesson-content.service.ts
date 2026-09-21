@@ -74,6 +74,7 @@ import { ContentGrantRateLimiter } from './content-grant.rate-limiter';
 import { isEnrollmentActive } from './learning-access.util';
 import { resolveContentProtection } from '../dto/content-protection.contract';
 import { MINIMUM_WATCHED_RATIO } from '../dto/learning.constants';
+import { classifyExternalEmbed } from './external-embed.util';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import type {
   ContentAccessReason,
@@ -237,7 +238,12 @@ export class LessonContentService {
           }
         }
 
-        if (!lesson.content) throw new ContentRefusal('lessonUnavailable');
+        // Past this line the caller is entitled to the lesson, so the two
+        // "nothing to deliver" cases may be named: an unauthored lesson and
+        // an unprocessed asset are different facts with different fixes,
+        // and calling both "unavailable" left the player guessing
+        // "processing" for a lesson nobody had written yet. Both still 404.
+        if (!lesson.content) throw new ContentRefusal('noContent');
 
         // SEC-3 — the ASSET-READINESS refusal is hoisted above the lease.
         //
@@ -250,7 +256,7 @@ export class LessonContentService {
         // full 60-second TTL, locking their other device out of a lesson
         // that would have worked.
         if (lesson.videoAsset && lesson.videoAsset.processingStatus !== 'ready') {
-          throw new ContentRefusal('lessonUnavailable', {
+          throw new ContentRefusal('processing', {
             securityTier: lesson.videoAsset.securityTier,
             provider: lesson.videoAsset.provider,
           });
@@ -374,12 +380,16 @@ export class LessonContentService {
       // A conflict is a refusal too, and its record has to outlive the
       // transaction that produced it (SEC-2).
       if (error instanceof ConflictException) {
-        const refusal = (error.getResponse() as { atlasRefusal?: {
-          reason: ContentAccessReason;
-          securityTier: VideoSecurityTier | null;
-          provider: MediaAssetProvider | null;
-          deviceId: string | null;
-        } }).atlasRefusal;
+        const refusal = (
+          error.getResponse() as {
+            atlasRefusal?: {
+              reason: ContentAccessReason;
+              securityTier: VideoSecurityTier | null;
+              provider: MediaAssetProvider | null;
+              deviceId: string | null;
+            };
+          }
+        ).atlasRefusal;
         if (refusal) {
           this.metrics.recordRefusal(refusal.reason, refusal.securityTier);
           await this.logRefusal(courseId, lessonId, context, refusal.reason, {
@@ -396,7 +406,13 @@ export class LessonContentService {
         // was just refused may well have no rows visible to them, and the
         // record of the refusal is exactly what a sharing investigation
         // needs to exist regardless.
-        await this.logRefusal(courseId, lessonId, context, error.reason, error.assetContext);
+        await this.logRefusal(
+          courseId,
+          lessonId,
+          context,
+          error.reason,
+          error.assetContext,
+        );
         throw refusalToHttp(error.reason);
       }
       throw error;
@@ -456,6 +472,7 @@ export class LessonContentService {
     let fileUrl: string | undefined;
     let fileName: string | undefined;
     let externalUrl: string | undefined;
+    let externalEmbed: LessonContentGrantResponse['externalEmbed'] | null = null;
     let video: LessonContentGrantResponse['video'];
     let videoCapabilities: VideoProviderCapabilities | null = null;
     let assetTier: VideoSecurityTier | null = null;
@@ -464,6 +481,10 @@ export class LessonContentService {
       bodyHtml = content.bodyHtml ?? '';
     } else if (content.kind === 'external') {
       externalUrl = content.externalUrl ?? undefined;
+      // A supported YouTube link becomes an embeddable descriptor; every
+      // other address stays a link-out. The player embeds from `videoId`,
+      // never from the URL, so this is the only door into an iframe.
+      externalEmbed = classifyExternalEmbed(externalUrl);
     } else if (content.kind === 'file' && content.mediaAsset) {
       const signed = await this.signer.signFile(content.mediaAsset);
       fileUrl = signed.url;
@@ -476,7 +497,7 @@ export class LessonContentService {
       // as a defence in depth: `buildGrant` must never sign an asset the
       // provider has not finished processing, whatever path reached it.
       if (lesson.videoAsset.processingStatus !== 'ready') {
-        throw new ContentRefusal('lessonUnavailable', {
+        throw new ContentRefusal('processing', {
           securityTier: lesson.videoAsset.securityTier,
           provider: lesson.videoAsset.provider,
         });
@@ -535,7 +556,8 @@ export class LessonContentService {
       title: lesson.title,
       kind: content.kind,
       isPreview: lesson.isPreview,
-      durationSeconds: lesson.durationSeconds ?? lesson.videoAsset?.durationSeconds ?? null,
+      durationSeconds:
+        lesson.durationSeconds ?? lesson.videoAsset?.durationSeconds ?? null,
       completionRule: lesson.completionRule,
       minimumWatchedRatio:
         lesson.completionRule === 'watched_ratio' ? MINIMUM_WATCHED_RATIO : null,
@@ -551,6 +573,7 @@ export class LessonContentService {
       fileName,
       video,
       externalUrl,
+      ...(externalEmbed ? { externalEmbed } : {}),
       resources,
       watermark: {
         enabled: protection.watermark && Boolean(video),
@@ -607,7 +630,11 @@ export class LessonContentService {
     } catch (error) {
       // Never let the audit trail turn a clean refusal into a 500.
       this.logger.warn(
-        { courseId, lessonId, error: error instanceof Error ? error.message : String(error) },
+        {
+          courseId,
+          lessonId,
+          error: error instanceof Error ? error.message : String(error),
+        },
         'Could not record a content-access refusal.',
       );
     }
@@ -638,6 +665,14 @@ function refusalToHttp(reason: ContentAccessReason): Error {
       return new ForbiddenException({ messageKey: 'errors.learning.accessEnded' });
     case 'scheduled':
       return new ForbiddenException({ messageKey: 'errors.learning.lessonScheduled' });
+    // Still 404s — the posture that unreachable content is indistinguishable
+    // from non-existent content is kept, because these two are raised only
+    // for a learner who has already passed every entitlement check. The key
+    // lets the player say what is true instead of what is likely.
+    case 'noContent':
+      return new NotFoundException({ messageKey: 'errors.learning.lessonNoContent' });
+    case 'processing':
+      return new NotFoundException({ messageKey: 'errors.learning.lessonProcessing' });
     default:
       return new NotFoundException({ messageKey: 'errors.notFound' });
   }

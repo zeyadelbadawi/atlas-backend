@@ -42,6 +42,17 @@ export const CONTENT_ACCESS_REASONS = [
   'suspended',
   /** Too many grants in too short a window. */
   'rateLimited',
+  /**
+   * The lesson is reachable and the learner is entitled to it, but nobody
+   * has authored its content yet (no `lesson_contents` row). Distinct from
+   * `lessonUnavailable` so the player can say "no content yet" instead of
+   * guessing "still processing". Only ever raised AFTER every entitlement
+   * check has passed, so it discloses nothing to anyone who could not open
+   * the lesson anyway.
+   */
+  'noContent',
+  /** The lesson's video asset exists but has not finished processing. Same disclosure rule as `noContent`. */
+  'processing',
 ] as const;
 export type ContentAccessReason = (typeof CONTENT_ACCESS_REASONS)[number];
 
@@ -117,6 +128,14 @@ export interface ContentProtectionReport {
   readonly drm: false;
 }
 
+export interface ExternalEmbedContract {
+  readonly provider: 'youtube';
+  /** Exactly YouTube's 11-character id alphabet, validated server-side. */
+  readonly videoId: string;
+  /** Optional start offset carried from the URL's `t`/`start` parameter. */
+  readonly startSeconds?: number;
+}
+
 export interface LessonContentGrantResponse {
   readonly lessonId: string;
   readonly courseId: string;
@@ -141,6 +160,13 @@ export interface LessonContentGrantResponse {
   readonly fileName?: string;
   readonly video?: GrantedVideoContract;
   readonly externalUrl?: string;
+  /**
+   * Present only when `externalUrl` is a supported YouTube link. The player
+   * embeds from `videoId` alone — never from the raw URL — so this is the
+   * only way an external address ever becomes a frame on the learner's
+   * page. Absent for every other external URL, which stays a link-out.
+   */
+  readonly externalEmbed?: ExternalEmbedContract;
   readonly resources: readonly GrantedResourceContract[];
   readonly watermark: ContentWatermarkContract;
   /** Null for a preview opened without a session — there is nothing to lease. */
