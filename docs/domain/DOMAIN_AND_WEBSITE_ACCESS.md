@@ -413,8 +413,10 @@ Migration `20261007020000_p63c_provider_error_code`: nullable
 (INTEGER) and `https_failure_reason` (TEXT); rollback is dropping the two
 columns.
 Additive; NULL on every existing row means "never checked", exactly the
-prior behaviour. `prisma migrate diff` shows no domain drift (only the
-long-known raw-SQL `search_vector` items).
+prior behaviour. `prisma migrate diff` shows no domain drift. (The raw-SQL `search_vector`
+drift that used to appear here was eliminated on 21 Sep 2026 by P65, which
+models those columns in `schema.prisma`; the only line left is
+`tenant_add_ons.updated_at`'s hand-added DEFAULT from p44.)
 
 ## 11. Tests
 

@@ -77,30 +77,37 @@ enum UserAccountStatus {
 /// still guarantees one account per email regardless of the case a user
 /// types it in.
 model User {
-  id               String            @id @default(uuid())
-  email            String            @unique
-  passwordHash     String            @map("password_hash")
+  id               String                   @id @default(uuid())
+  email            String                   @unique
+  passwordHash     String                   @map("password_hash")
   name             String
-  avatarUrl        String?           @map("avatar_url")
-  isPlatformOwner  Boolean           @default(false) @map("is_platform_owner")
+  avatarUrl        String?                  @map("avatar_url")
+  isPlatformOwner  Boolean                  @default(false) @map("is_platform_owner")
   /// Mirrors `UserPreferences` (`theme?`, `language?`, `notifications?`).
   /// Validated server-side (not schema-enforced) — see `PreferencesService`.
-  preferences      Json              @default("{}")
-  status           UserAccountStatus @default(active)
+  preferences      Json                     @default("{}")
+  status           UserAccountStatus        @default(active)
   /// Phase 10.1 — when this address was proven able to receive mail.
   /// Null means unverified. Nullable rather than a boolean with a default
   /// so pre-existing accounts stay honestly "not yet proven" instead of
   /// being retroactively claimed as verified, and so the moment of
   /// verification is itself auditable.
-  emailVerifiedAt  DateTime?         @map("email_verified_at")
+  emailVerifiedAt  DateTime?                @map("email_verified_at")
   /// Phase 10.6 — when the user deleted their own account. Null while live.
-  deletedAt        DateTime?         @map("deleted_at")
+  deletedAt        DateTime?                @map("deleted_at")
   /// Optional closed-vocabulary reason, and optional free text. Neither is ever required to delete.
-  deletionReason   String?           @map("deletion_reason")
-  deletionFeedback String?           @map("deletion_feedback")
-  lastSignInAt     DateTime?         @map("last_sign_in_at")
-  createdAt        DateTime          @default(now()) @map("created_at")
-  updatedAt        DateTime          @updatedAt @map("updated_at")
+  deletionReason   String?                  @map("deletion_reason")
+  deletionFeedback String?                  @map("deletion_feedback")
+  lastSignInAt     DateTime?                @map("last_sign_in_at")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  updatedAt        DateTime                 @updatedAt @map("updated_at")
+  /// Full-text search vector — a STORED GENERATED column maintained by
+  /// PostgreSQL (name weight A, email weight B). Modelled here as `Unsupported` so that
+  /// `prisma migrate diff` knows the column and its GIN index exist and
+  /// never proposes dropping them again (migration p44 did exactly that,
+  /// which broke `GET /search` in production). Never read through the
+  /// Prisma Client; `SearchRepository` queries it by raw SQL.
+  searchVector     Unsupported("tsvector")? @default(dbgenerated("(setweight(to_tsvector('english'::regconfig, COALESCE(name, ''::text)), 'A'::\"char\") || setweight(to_tsvector('english'::regconfig, COALESCE(email, ''::text)), 'B'::\"char\"))")) @map("search_vector")
 
   refreshTokens                                 RefreshToken[]
   passwordResetTokens                           PasswordResetToken[]
@@ -162,6 +169,7 @@ model User {
   contentAccessLog ContentAccessLog[]
 
   @@index([status])
+  @@index([searchVector], type: Gin)
   @@map("users")
 }
 
@@ -358,14 +366,21 @@ enum OrganizationStatus {
 /// §7). Soft-delete only: no delete endpoint exists or is planned for this
 /// table; `status` is the only lifecycle mechanism.
 model Organization {
-  id          String             @id @default(uuid())
-  name        String
-  slug        String             @unique
-  status      OrganizationStatus @default(active)
-  ownerUserId String             @map("owner_user_id")
-  owner       User               @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
-  createdAt   DateTime           @default(now()) @map("created_at")
-  updatedAt   DateTime           @updatedAt @map("updated_at")
+  id           String                   @id @default(uuid())
+  name         String
+  slug         String                   @unique
+  status       OrganizationStatus       @default(active)
+  ownerUserId  String                   @map("owner_user_id")
+  owner        User                     @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  updatedAt    DateTime                 @updatedAt @map("updated_at")
+  /// Full-text search vector — a STORED GENERATED column maintained by
+  /// PostgreSQL (name weight A, slug weight B). Modelled here as `Unsupported` so that
+  /// `prisma migrate diff` knows the column and its GIN index exist and
+  /// never proposes dropping them again (migration p44 did exactly that,
+  /// which broke `GET /search` in production). Never read through the
+  /// Prisma Client; `SearchRepository` queries it by raw SQL.
+  searchVector Unsupported("tsvector")? @default(dbgenerated("(setweight(to_tsvector('english'::regconfig, COALESCE(name, ''::text)), 'A'::\"char\") || setweight(to_tsvector('english'::regconfig, COALESCE(slug, ''::text)), 'B'::\"char\"))")) @map("search_vector")
 
   memberships          OrganizationMembership[]
   academies            Academy[]
@@ -393,6 +408,7 @@ model Organization {
   supportCases         SupportCase[]
 
   @@index([status])
+  @@index([searchVector], type: Gin)
   @@map("organizations")
 }
 
@@ -468,27 +484,34 @@ enum AcademyMemberStatus {
 /// as a status transition to `archived`, never a SQL `DELETE`; there is no
 /// DELETE RLS policy on this table at all (see migration.sql).
 model Academy {
-  id             String        @id @default(uuid())
-  organizationId String        @map("organization_id")
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id             String                   @id @default(uuid())
+  organizationId String                   @map("organization_id")
+  organization   Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
-  slug           String        @unique
+  slug           String                   @unique
   description    String?
-  logoUrl        String?       @map("logo_url")
-  faviconUrl     String?       @map("favicon_url")
-  status         AcademyStatus @default(draft)
-  timezone       String        @default("UTC")
-  language       String        @default("en")
-  currency       String        @default("USD")
-  contactEmail   String?       @map("contact_email")
-  contactPhone   String?       @map("contact_phone")
-  websiteUrl     String?       @map("website_url")
+  logoUrl        String?                  @map("logo_url")
+  faviconUrl     String?                  @map("favicon_url")
+  status         AcademyStatus            @default(draft)
+  timezone       String                   @default("UTC")
+  language       String                   @default("en")
+  currency       String                   @default("USD")
+  contactEmail   String?                  @map("contact_email")
+  contactPhone   String?                  @map("contact_phone")
+  websiteUrl     String?                  @map("website_url")
   /// Mirrors `AcademyAddress` (`street?`, `city?`, `state?`, `postalCode?`,
   /// `country`). Validated server-side (DTO), not schema-enforced —
   /// consistent with `users.preferences`' existing precedent in this file.
   address        Json?
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  createdAt      DateTime                 @default(now()) @map("created_at")
+  updatedAt      DateTime                 @updatedAt @map("updated_at")
+  /// Full-text search vector — a STORED GENERATED column maintained by
+  /// PostgreSQL (name A, slug B, description C). Modelled here as `Unsupported` so that
+  /// `prisma migrate diff` knows the column and its GIN index exist and
+  /// never proposes dropping them again (migration p44 did exactly that,
+  /// which broke `GET /search` in production). Never read through the
+  /// Prisma Client; `SearchRepository` queries it by raw SQL.
+  searchVector   Unsupported("tsvector")? @default(dbgenerated("((setweight(to_tsvector('english'::regconfig, COALESCE(name, ''::text)), 'A'::\"char\") || setweight(to_tsvector('english'::regconfig, COALESCE(slug, ''::text)), 'B'::\"char\")) || setweight(to_tsvector('english'::regconfig, COALESCE(description, ''::text)), 'C'::\"char\"))")) @map("search_vector")
 
   /// Phase 10.6 — why the owner deleted this Academy. Atlas's delete IS
   /// archival (there is deliberately no DELETE RLS policy on this table),
@@ -563,6 +586,7 @@ model Academy {
   accessPolicy     AccessPolicy?
 
   @@index([organizationId, status])
+  @@index([searchVector], type: Gin)
   @@map("academies")
 }
 
@@ -1239,11 +1263,11 @@ model CourseCategory {
 /// floating-point money bugs at rest while exposing exactly the shape
 /// `CoursePricing` already defines; no new field or endpoint invented.
 model Course {
-  id                      String            @id @default(uuid())
-  academyId               String            @map("academy_id")
-  academy                 Academy           @relation(fields: [academyId], references: [id], onDelete: Cascade)
-  categoryId              String?           @map("category_id")
-  category                CourseCategory?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  id                      String                   @id @default(uuid())
+  academyId               String                   @map("academy_id")
+  academy                 Academy                  @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  categoryId              String?                  @map("category_id")
+  category                CourseCategory?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   /// P60 — who created this course.
   ///
   /// A property of the course, so it lives on the course. Nullable because
@@ -1252,21 +1276,28 @@ model Course {
   /// actor, and leaves the rest NULL rather than guessing at the academy
   /// owner. `SetNull` matches every other "who did this" relation here —
   /// deleting a user never deletes their academy's courses.
-  createdById             String?           @map("created_by_id")
-  createdBy               User?             @relation("CourseCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdById             String?                  @map("created_by_id")
+  createdBy               User?                    @relation("CourseCreator", fields: [createdById], references: [id], onDelete: SetNull)
   title                   String
   slug                    String
   description             String?
-  shortDescription        String?           @map("short_description")
-  thumbnailUrl            String?           @map("thumbnail_url")
-  status                  CourseStatus      @default(draft)
-  visibility              CourseVisibility  @default(private)
-  pricingType             CoursePricingType @default(free) @map("pricing_type")
-  pricingAmountMinorUnits BigInt?           @map("pricing_amount_minor_units")
-  pricingCurrency         String?           @map("pricing_currency")
-  publishedAt             DateTime?         @map("published_at")
-  createdAt               DateTime          @default(now()) @map("created_at")
-  updatedAt               DateTime          @updatedAt @map("updated_at")
+  shortDescription        String?                  @map("short_description")
+  thumbnailUrl            String?                  @map("thumbnail_url")
+  status                  CourseStatus             @default(draft)
+  visibility              CourseVisibility         @default(private)
+  pricingType             CoursePricingType        @default(free) @map("pricing_type")
+  pricingAmountMinorUnits BigInt?                  @map("pricing_amount_minor_units")
+  pricingCurrency         String?                  @map("pricing_currency")
+  publishedAt             DateTime?                @map("published_at")
+  createdAt               DateTime                 @default(now()) @map("created_at")
+  updatedAt               DateTime                 @updatedAt @map("updated_at")
+  /// Full-text search vector — a STORED GENERATED column maintained by
+  /// PostgreSQL (title A, short_description B, description C). Modelled here as `Unsupported` so that
+  /// `prisma migrate diff` knows the column and its GIN index exist and
+  /// never proposes dropping them again (migration p44 did exactly that,
+  /// which broke `GET /search` in production). Never read through the
+  /// Prisma Client; `SearchRepository` queries it by raw SQL.
+  searchVector            Unsupported("tsvector")? @default(dbgenerated("((setweight(to_tsvector('english'::regconfig, COALESCE(title, ''::text)), 'A'::\"char\") || setweight(to_tsvector('english'::regconfig, COALESCE(short_description, ''::text)), 'B'::\"char\")) || setweight(to_tsvector('english'::regconfig, COALESCE(description, ''::text)), 'C'::\"char\"))")) @map("search_vector")
 
   sections      CourseSection[]
   instructors   CourseInstructor[]
@@ -1295,6 +1326,7 @@ model Course {
   /// P60 — the platform-wide course list sorts by recency across every
   /// academy; neither existing index serves that.
   @@index([createdAt(sort: Desc)])
+  @@index([searchVector], type: Gin)
   @@map("courses")
 }
 

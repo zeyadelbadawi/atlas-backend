@@ -849,6 +849,7 @@ Nine steps, in this order. Nothing below has been run; each needs explicit autho
 | 2026-09-19 | — | **Execution model changed to autonomous sequential (DL-15).** Workflow section rewritten; the three "STOP before the next phase" clauses replaced; Document Status and Phase 1 transition language reconciled; extended Phase Completion Record format, Final Master Plan Audit, final repository-wide review and Final Report sections added. No technical scope, acceptance criterion, security requirement, D-decision or AD-decision changed. | Claude (planning) | Documentation only — no code, migration or deployment. |
 | 2026-09-19 | 1 | A performance regression introduced by B1's fix was found by the journeys and corrected in `20261008000700`; a pre-existing missing translation (B6) was fixed; `PrincipalResolverService` now resolves in one transaction instead of three round trips. | Claude (implementation) | See findings B5, B6 and observation O3. |
 | 2026-09-18 | 1 | Four defects found by real Chrome validation fixed after the first green test run: learner enrollment list 500 on a non-public course; roster counting an expired enrollment as active; block leaving the learner's sessions alive; My Learning offering an action the backend refuses. Six new e2e regressions plus nine frontend unit tests added. | Claude (implementation) | See Phase 1 record. |
+| 2026-09-21 | — | **Search restored (P65, standalone, outside the P64 phases).** Migration `20261010000000_p65_search_vector_generated_columns` re-creates the four `search_vector` columns p44 dropped as STORED GENERATED tsvectors (weighted A/B/C) with GIN indexes, now ALSO modelled in `schema.prisma` (`Unsupported("tsvector")` + `@@index(type: Gin)`, `dbgenerated` default) so `prisma migrate diff` is clean and the p44 drop cannot recur. Found while verifying: under FORCE RLS PostgreSQL never uses a GIN index for `@@` (not LEAKPROOF) — the original P17 design seq-scanned the RLS tables (1.3 s at 300k courses). Added `search_{courses,academies,organizations}_candidates` SECURITY DEFINER functions (caller re-verified, scope explicit, ≤50 ids) with the projection still read under RLS: 9 ms at 300k courses. `SearchRepository`/`SearchService` updated; search e2e 17 → 25 tests. Production confirmed missing the columns since 13 Sep 2026. | Claude (implementation) | Branch `fix/p44-search-vector-restore`. Needs the gated migration deploy. |
 
 ## Phase Completion Record requirements
 
@@ -1168,7 +1169,7 @@ was required.
 
 ## 5. Outside Phase 2
 
-- **`search_vector` schema defect.** Migration `20260922000000_p44` drops the `search_vector` columns that `search.repository.ts` still queries; nothing restores them. On a database built from the migration chain, `GET /search` returns **500** for every query (7 e2e tests). p44 predates Phase 2 by weeks. **Production status UNKNOWN** — the running database may carry the columns out of band ("long-known raw-SQL `search_vector` items" appear in `prisma migrate diff` drift). Needs its own migration and its own PR.
+- **`search_vector` schema defect.** Migration `20260922000000_p44` drops the `search_vector` columns that `search.repository.ts` still queries; nothing restores them. On a database built from the migration chain, `GET /search` returns **500** for every query (7 e2e tests). p44 predates Phase 2 by weeks. **Production status UNKNOWN** — the running database may carry the columns out of band ("long-known raw-SQL `search_vector` items" appear in `prisma migrate diff` drift). Needs its own migration and its own PR. **RESOLVED 21 Sep 2026** — production was confirmed missing all four columns and indexes (p44 applied 13 Sep 2026); fixed by P65 on branch `fix/p44-search-vector-restore` (see the Implementation Change Log entry of that date); deployment goes through the gated migration path.
 - **Pre-existing e2e flakes** — `media` and `p53-support-attachments` oversized-payload tests; pass in isolation, fail late in a long run. Three hypotheses tested and disproved (regex, heap ceiling, DB size). Mechanism open.
 - **Test-environment limits** — the dev database is never reset (`maxWorkers: 1`, no `globalSetup`), and a full suite exhausts Node's default heap around suite 106/116. Do **not** raise transaction timeouts, sweep batch sizes or page sizes to make accumulation-driven failures green.
 
@@ -1178,7 +1179,7 @@ was required.
 2. Decide on the `text` sanitiser.
 3. Decide whether revocation-before-expiry is required for launch; if so, build the HTTP receiver.
 4. Configure Premium credentials if Premium is to be sold.
-5. Resolve `search_vector` — separately.
+5. Resolve `search_vector` — separately. **Done (P65, 21 Sep 2026); awaiting the gated migration deploy.**
 6. Staff authoring **UI** (this closeout delivered the API only).
 
 ## 7. Test counts at closeout

@@ -366,4 +366,290 @@ describe('Global Search — P17 (e2e)', () => {
       ).toBe(false);
     });
   });
+
+  // --- Search index integrity — regression for migration p44 -----------------
+  //
+  // p44 (`20260922000000`) dropped the raw-SQL `search_vector` columns and
+  // GIN indexes that `SearchRepository` queries; production answered every
+  // search with `42703` from 13 Sep 2026 until P65 restored them as STORED
+  // GENERATED columns that are ALSO modelled in `schema.prisma`. These tests
+  // pin the schema facts a chain-built database must have, and the
+  // behaviours those columns are supposed to deliver.
+
+  describe('Search index integrity (p44 regression)', () => {
+    it('S18: every searchable table carries a STORED GENERATED search_vector column and a GIN index on it', async () => {
+      const columns = await admin.$queryRaw<
+        { table_name: string; attgenerated: string; data_type: string }[]
+      >`
+        SELECT c.relname AS table_name, a.attgenerated::text AS attgenerated,
+               format_type(a.atttypid, a.atttypmod) AS data_type
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind = 'r'
+          AND a.attname = 'search_vector' AND NOT a.attisdropped
+        ORDER BY c.relname
+      `;
+      expect(columns.map((c) => c.table_name)).toEqual([
+        'academies',
+        'courses',
+        'organizations',
+        'users',
+      ]);
+      for (const c of columns) {
+        expect(c.data_type).toBe('tsvector');
+        expect(c.attgenerated).toBe('s');
+      }
+
+      const indexes = await admin.$queryRaw<{ tablename: string; indexdef: string }[]>`
+        SELECT tablename, indexdef FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname IN (
+          'users_search_vector_idx', 'organizations_search_vector_idx',
+          'academies_search_vector_idx', 'courses_search_vector_idx'
+        )
+        ORDER BY tablename
+      `;
+      expect(indexes.map((i) => i.tablename)).toEqual([
+        'academies',
+        'courses',
+        'organizations',
+        'users',
+      ]);
+      for (const i of indexes) {
+        expect(i.indexdef).toMatch(/USING gin \(search_vector\)/);
+      }
+    });
+
+    it('S19: the vector follows writes — renaming a course makes it findable by the new title and not the old one', async () => {
+      const user = await signUpAndSignIn(app, 'search-follow');
+      const org = await seedOrganizationWithOwner(
+        admin,
+        user.userId,
+        'search-follow-org',
+      );
+      const academy = await seedAcademy(admin, org.id, 'search-follow-academy');
+      const oldToken = uniqueToken('Oldname');
+      const newToken = uniqueToken('Newname');
+      const course = await seedCourse(admin, academy.id, `${oldToken} course`, {
+        status: 'published',
+        visibility: 'public',
+      });
+
+      const before = await request(app.getHttpServer())
+        .get('/search')
+        .query({ q: oldToken })
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+      expect(
+        before.body.groups
+          .find((g: { category: string }) => g.category === 'content')
+          ?.items.some((i: { id: string }) => i.id === course.id),
+      ).toBe(true);
+
+      await admin.course.update({
+        where: { id: course.id },
+        data: { title: `${newToken} course` },
+      });
+
+      const staleQuery = await request(app.getHttpServer())
+        .get('/search')
+        .query({ q: oldToken })
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+      expect(
+        staleQuery.body.groups.find(
+          (g: { category: string }) => g.category === 'content',
+        ),
+      ).toBeUndefined();
+
+      const freshQuery = await request(app.getHttpServer())
+        .get('/search')
+        .query({ q: newToken })
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+      expect(
+        freshQuery.body.groups
+          .find((g: { category: string }) => g.category === 'content')
+          ?.items.some((i: { id: string }) => i.id === course.id),
+      ).toBe(true);
+    });
+
+    it('S20: a description-only match is found, and a title match ranks above it', async () => {
+      const user = await signUpAndSignIn(app, 'search-rank');
+      const org = await seedOrganizationWithOwner(admin, user.userId, 'search-rank-org');
+      const academy = await seedAcademy(admin, org.id, 'search-rank-academy');
+      const token = uniqueToken('Ranktoken');
+      const byDescription = await seedCourse(admin, academy.id, 'Plain title', {
+        status: 'published',
+        visibility: 'public',
+      });
+      await admin.course.update({
+        where: { id: byDescription.id },
+        data: { description: `A long description that mentions ${token} once.` },
+      });
+      const byTitle = await seedCourse(admin, academy.id, `${token} in the title`, {
+        status: 'published',
+        visibility: 'public',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/search')
+        .query({ q: token })
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+      const items: { id: string }[] = res.body.groups.find(
+        (g: { category: string }) => g.category === 'content',
+      ).items;
+      expect(items.map((i) => i.id)).toEqual([byTitle.id, byDescription.id]);
+    });
+
+    it('S21: the Platform Owner content search spans every tenant, while a tenant user still sees only their own', async () => {
+      const owner = await signUpAndSignIn(app, 'search-span-po');
+      await makePlatformOwner(admin, owner.userId);
+      const token = uniqueToken('Spantoken');
+      const userA = await signUpAndSignIn(app, 'search-span-a');
+      const orgA = await seedOrganizationWithOwner(
+        admin,
+        userA.userId,
+        'search-span-org-a',
+      );
+      const academyA = await seedAcademy(admin, orgA.id, 'search-span-academy-a');
+      const courseA = await seedCourse(admin, academyA.id, `${token} A`, {
+        status: 'published',
+        visibility: 'private',
+      });
+      const userB = await signUpAndSignIn(app, 'search-span-b');
+      const orgB = await seedOrganizationWithOwner(
+        admin,
+        userB.userId,
+        'search-span-org-b',
+      );
+      const academyB = await seedAcademy(admin, orgB.id, 'search-span-academy-b');
+      const courseB = await seedCourse(admin, academyB.id, `${token} B`, {
+        status: 'published',
+        visibility: 'private',
+      });
+
+      const asOwner = await request(app.getHttpServer())
+        .get('/search')
+        .query({ q: token })
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+      const ownerIds = asOwner.body.groups
+        .find((g: { category: string }) => g.category === 'content')
+        .items.map((i: { id: string }) => i.id);
+      expect(ownerIds).toEqual(expect.arrayContaining([courseA.id, courseB.id]));
+
+      const asA = await request(app.getHttpServer())
+        .get('/search')
+        .query({ q: token })
+        .set('Authorization', `Bearer ${userA.accessToken}`)
+        .expect(200);
+      const aIds = asA.body.groups
+        .find((g: { category: string }) => g.category === 'content')
+        .items.map((i: { id: string }) => i.id);
+      expect(aIds).toEqual([courseA.id]);
+    });
+
+    it('S22: a query that parses to nothing (stop words, bare operators) returns an empty result, never a 500', async () => {
+      const owner = await signUpAndSignIn(app, 'search-stopwords');
+      await makePlatformOwner(admin, owner.userId);
+      for (const q of ['the', '- -', 'or', '""', 'and the']) {
+        const res = await request(app.getHttpServer())
+          .get('/search')
+          .query({ q })
+          .set('Authorization', `Bearer ${owner.accessToken}`)
+          .expect(200);
+        expect(res.body.query).toBe(q.trim());
+        for (const group of res.body.groups) {
+          expect(['users', 'platform', 'content', 'system']).toContain(group.category);
+        }
+      }
+    });
+
+    it('S23: an archived course never appears in search, for its own tenant or the Platform Owner', async () => {
+      const owner = await signUpAndSignIn(app, 'search-archived-po');
+      await makePlatformOwner(admin, owner.userId);
+      const user = await signUpAndSignIn(app, 'search-archived');
+      const org = await seedOrganizationWithOwner(
+        admin,
+        user.userId,
+        'search-archived-org',
+      );
+      const academy = await seedAcademy(admin, org.id, 'search-archived-academy');
+      const token = uniqueToken('Archivedtoken');
+      await seedCourse(admin, academy.id, `${token} archived`, {
+        status: 'archived',
+        visibility: 'public',
+      });
+      for (const caller of [user, owner]) {
+        const res = await request(app.getHttpServer())
+          .get('/search')
+          .query({ q: token })
+          .set('Authorization', `Bearer ${caller.accessToken}`)
+          .expect(200);
+        expect(
+          res.body.groups.find((g: { category: string }) => g.category === 'content'),
+        ).toBeUndefined();
+      }
+    });
+    it('S24: the course candidate function refuses a caller who is not a member of the requested organization, and refuses a non-Platform-Owner cross-tenant search', async () => {
+      const member = await signUpAndSignIn(app, 'search-fn-member');
+      const org = await seedOrganizationWithOwner(admin, member.userId, 'search-fn-org');
+      const academy = await seedAcademy(admin, org.id, 'search-fn-academy');
+      const token = uniqueToken('Fntoken');
+      const course = await seedCourse(admin, academy.id, `${token} course`, {
+        status: 'published',
+        visibility: 'public',
+      });
+      const outsider = await signUpAndSignIn(app, 'search-fn-outsider');
+      const owner = await signUpAndSignIn(app, 'search-fn-po');
+      await makePlatformOwner(admin, owner.userId);
+
+      const call = (callerId: string, organizationId: string | null) =>
+        admin.$queryRaw<{ id: string }[]>`
+          SELECT "id" FROM search_courses_candidates(${callerId}::text, ${organizationId}::text, ${token}::text, 5)
+        `;
+
+      expect((await call(member.userId, org.id)).map((r) => r.id)).toEqual([course.id]);
+      expect(await call(outsider.userId, org.id)).toEqual([]);
+      expect(await call(outsider.userId, null)).toEqual([]);
+      expect(await call('', org.id)).toEqual([]);
+      expect((await call(owner.userId, null)).map((r) => r.id)).toEqual([course.id]);
+      expect((await call(owner.userId, org.id)).map((r) => r.id)).toEqual([course.id]);
+    });
+
+    it('S25: the organization and academy candidate functions serve only the Platform Owner, and never more than 50 rows', async () => {
+      const owner = await signUpAndSignIn(app, 'search-fn2-po');
+      await makePlatformOwner(admin, owner.userId);
+      const tenantUser = await signUpAndSignIn(app, 'search-fn2-tenant');
+      const token = uniqueToken('Fntwo');
+      const org = await seedOrganizationWithOwner(
+        admin,
+        tenantUser.userId,
+        `Org-${token}`,
+      );
+      const academy = await seedAcademy(admin, org.id, `Academy-${token}`);
+
+      const orgs = (callerId: string, limit: number) =>
+        admin.$queryRaw<{ id: string }[]>`
+          SELECT "id" FROM search_organizations_candidates(${callerId}::text, ${token}::text, ${limit}::integer)
+        `;
+      const academies = (callerId: string, limit: number) =>
+        admin.$queryRaw<{ id: string }[]>`
+          SELECT "id" FROM search_academies_candidates(${callerId}::text, ${token}::text, ${limit}::integer)
+        `;
+
+      expect((await orgs(owner.userId, 5)).map((r) => r.id)).toEqual([org.id]);
+      expect((await academies(owner.userId, 5)).map((r) => r.id)).toEqual([academy.id]);
+      expect(await orgs(tenantUser.userId, 5)).toEqual([]);
+      expect(await academies(tenantUser.userId, 5)).toEqual([]);
+      expect(await orgs(owner.userId, 0)).toEqual([]);
+      // The cap is enforced inside the function, whatever the caller asks for.
+      const capped = await admin.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM search_organizations_candidates(${owner.userId}::text, 'org', 100000)
+      `;
+      expect(capped[0].n).toBeLessThanOrEqual(50);
+    });
+  });
 });

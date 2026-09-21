@@ -110,10 +110,16 @@ export class SearchService {
       async (tx) => [
         await this.searchRepository.searchOrganizations(
           tx,
+          platformOwnerId,
           query,
           MAX_RESULTS_PER_CATEGORY,
         ),
-        await this.searchRepository.searchAcademies(tx, query, MAX_RESULTS_PER_CATEGORY),
+        await this.searchRepository.searchAcademies(
+          tx,
+          platformOwnerId,
+          query,
+          MAX_RESULTS_PER_CATEGORY,
+        ),
       ],
     );
 
@@ -146,7 +152,13 @@ export class SearchService {
     const rows = await this.tenancyContextService.runInUserContext(
       platformOwnerId,
       (tx) =>
-        this.searchRepository.searchCourses(tx, query, MAX_RESULTS_PER_CATEGORY, null),
+        this.searchRepository.searchCourses(
+          tx,
+          platformOwnerId,
+          null,
+          query,
+          MAX_RESULTS_PER_CATEGORY,
+        ),
     );
     return this.toGroup('content', this.mapCourseRows(rows));
   }
@@ -166,14 +178,17 @@ export class SearchService {
     // codebase's own seed data), never proportional to platform size.
     // See this class's own header comment for why a single cross-org
     // query isn't possible under this table's RLS design.
+    // The candidate function re-checks that membership from the database
+    // before searching, so a wrong `organizationId` here yields nothing.
     const perOrgResults = await Promise.all(
       organizationIds.map((organizationId) =>
         this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
           this.searchRepository.searchCourses(
             tx,
+            userId,
+            organizationId,
             query,
             MAX_RESULTS_PER_CATEGORY,
-            organizationId,
           ),
         ),
       ),
