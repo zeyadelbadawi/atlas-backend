@@ -418,6 +418,14 @@ own header warns about.
 from the chain returns **500 on every search** (`42703: column c.search_vector does not
 exist`) — 7 e2e tests.
 
+> **UPDATE 21 Sep 2026.** Production was verified over SSH to have **zero** `search_vector`
+> columns and indexes (p44 applied 13 Sep 2026), so production search had been failing
+> since then. Fixed by **P65** (`20261010000000_p65_search_vector_generated_columns`,
+> branch `fix/p44-search-vector-restore`): generated columns + GIN indexes, modelled in
+> `schema.prisma` so the drift cannot recur, plus `search_*_candidates` SECURITY DEFINER
+> functions because PostgreSQL will not use a GIN index for `@@` under RLS (not
+> LEAKPROOF). Awaiting the gated migration deploy at the time of this note.
+
 **p44 predates Phase 2 by weeks. Production status is UNKNOWN**: the old dev database
 had the columns despite p44, and the repo documents "the long-known raw-SQL
 `search_vector` items" in `prisma migrate diff` drift, which implies running databases
@@ -609,7 +617,7 @@ only the first had a writer.
 
 | # | Issue | State | Blocks Phase 3? |
 |---|---|---|---|
-| 1 | **`search_vector`** — p44 drops columns `search.repository.ts` queries; chain-built DB 500s on every search. Production status **UNKNOWN**. | Open, outside Phase 2 | No — but user-visible if production is affected |
+| 1 | **`search_vector`** — p44 dropped the columns `search.repository.ts` queries. **Production confirmed affected 21 Sep 2026; fixed by P65 (branch `fix/p44-search-vector-restore`), pending the gated migration deploy.** | Fixed, awaiting deploy | No |
 | 2 | **`text` authoring** — refused; no sanitiser exists and one must not be hand-rolled. `bodyHtml` is not on the DTO, so `forbidNonWhitelisted` blocks it. Backfilled text lessons work. | Deferred by decision | No |
 | 3 | **Revocation before expiry** — Worker has no HTTP receiver (POST → 405); env vars unset so capability reports **false**. Control today is the 10-min TTL. | Deferred by decision | No |
 | 4 | **Premium** — adapter complete; no `CLOUDFLARE_STREAM_*`; refuses rather than downgrading. | Not configured | Only if Premium must be sold |
@@ -800,7 +808,7 @@ LESSON_CONTENT_AUTHORING: PRODUCTION_VERIFIED
 PREMIUM: IMPLEMENTED_NOT_CONFIGURED
 TEXT_AUTHORING: DEFERRED_NO_SANITIZER
 REVOCATION_BEFORE_EXPIRY: DEFERRED_NO_RECEIVER
-SEARCH_VECTOR: OUTSIDE_PHASE_2 production_status_unknown
+SEARCH_VECTOR: FIXED_P65 production_was_broken_since_2026-09-13 awaiting_gated_migration_deploy
 STAFF_AUTHORING_UI: NOT_BUILT api_only
 CI: DISABLED_MANUALLY backend / NONE frontend
 FLAG_VIDEO_NORMAL_MODE: off
