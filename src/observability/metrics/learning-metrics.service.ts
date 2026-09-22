@@ -150,17 +150,12 @@ export class LearningMetricsService {
 
   recordTokenMint(tier: string, durationMs: number, ok: boolean): void {
     this.safely(() =>
-      this.tokenMintDuration.observe(
-        { tier, result: ok ? 'ok' : 'error' },
-        durationMs,
-      ),
+      this.tokenMintDuration.observe({ tier, result: ok ? 'ok' : 'error' }, durationMs),
     );
   }
 
   recordUploadCompletion(tier: string, ok: boolean): void {
-    this.safely(() =>
-      this.uploadCompletions.inc({ tier, result: ok ? 'ok' : 'error' }),
-    );
+    this.safely(() => this.uploadCompletions.inc({ tier, result: ok ? 'ok' : 'error' }));
   }
 
   recordDurationProvenance(source: 'measured' | 'parsed' | 'declared'): void {

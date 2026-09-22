@@ -312,8 +312,7 @@ export class ProtectedMediaService {
         // FINDING D-4 — an adapter with no webhook will never be told the
         // upload finished, so the client has to say so. Reported here
         // rather than inferred, so the uploader knows which call to make.
-        requiresCompletionCall: !provider.capabilities()
-          .reportsReadinessAsynchronously,
+        requiresCompletionCall: !provider.capabilities().reportsReadinessAsynchronously,
       };
     } catch (error) {
       // RELEASE THE RESERVATION. The quota was consumed for an upload that
@@ -374,7 +373,9 @@ export class ProtectedMediaService {
       // by a client claiming the upload is done — that would let an
       // uploader mark an asset ready before the provider had finished
       // processing it, and the first learner would get a broken player.
-      throw new BadRequestException({ messageKey: 'errors.media.completionNotApplicable' });
+      throw new BadRequestException({
+        messageKey: 'errors.media.completionNotApplicable',
+      });
     }
 
     const head = await this.storage.headObject(asset.providerId);

@@ -117,7 +117,12 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
        * quietly serving unprotected local URLs.
        */
       provide: VIDEO_PROVIDER,
-      inject: [ConfigService, CloudflareStreamProvider, BasicVideoProvider, FakeVideoProvider],
+      inject: [
+        ConfigService,
+        CloudflareStreamProvider,
+        BasicVideoProvider,
+        FakeVideoProvider,
+      ],
       useFactory: (
         configService: ConfigService,
         cloudflare: CloudflareStreamProvider,

@@ -88,8 +88,6 @@ export interface SurfaceEnforcementConfig {
   readonly academyIds: readonly string[];
 }
 
-
-
 /**
  * One rollout flag, in the shape `SurfaceEnforcementConfig` already
  * proved: `on` everywhere, `off` nowhere, `allowlist` for the named
@@ -499,7 +497,8 @@ export default () => {
     playbackTtlSeconds: Number(env.BASIC_VIDEO_PLAYBACK_TTL_SECONDS ?? 600),
     revocationEndpoint: env.BASIC_VIDEO_REVOCATION_ENDPOINT || undefined,
     revocationToken: env.BASIC_VIDEO_REVOCATION_TOKEN || undefined,
-    allowedOriginsConfigured: (env.BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED ?? 'false') === 'true',
+    allowedOriginsConfigured:
+      (env.BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED ?? 'false') === 'true',
   };
 
   const video: VideoProviderConfig = {

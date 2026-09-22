@@ -557,7 +557,10 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
       [
         ['CLOUDFLARE_STREAM_ACCOUNT_ID', parsed.data.CLOUDFLARE_STREAM_ACCOUNT_ID],
         ['CLOUDFLARE_STREAM_API_TOKEN', parsed.data.CLOUDFLARE_STREAM_API_TOKEN],
-        ['CLOUDFLARE_STREAM_SIGNING_KEY_ID', parsed.data.CLOUDFLARE_STREAM_SIGNING_KEY_ID],
+        [
+          'CLOUDFLARE_STREAM_SIGNING_KEY_ID',
+          parsed.data.CLOUDFLARE_STREAM_SIGNING_KEY_ID,
+        ],
         [
           'CLOUDFLARE_STREAM_SIGNING_KEY_PEM',
           parsed.data.CLOUDFLARE_STREAM_SIGNING_KEY_PEM,

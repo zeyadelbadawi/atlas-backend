@@ -68,8 +68,10 @@ function harness(
 
   const service = new ProtectedMediaService(
     {
-      runInTenantContext: (_org: string, work: (t: Prisma.TransactionClient) => unknown) =>
-        Promise.resolve(work(tx)),
+      runInTenantContext: (
+        _org: string,
+        work: (t: Prisma.TransactionClient) => unknown,
+      ) => Promise.resolve(work(tx)),
     } as never,
     {
       findForUserInAcademy: () => Promise.resolve({ role: 'owner', status: 'active' }),

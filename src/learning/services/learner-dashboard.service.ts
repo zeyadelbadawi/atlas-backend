@@ -44,10 +44,7 @@ const DEADLINE_HORIZON_DAYS = 30;
 export class LearnerDashboardService {
   constructor(private readonly tenancyContextService: TenancyContextService) {}
 
-  async getOverview(
-    userId: string,
-    academyId: string,
-  ): Promise<LearnerOverviewResponse> {
+  async getOverview(userId: string, academyId: string): Promise<LearnerOverviewResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const enrollments = await tx.enrollment.findMany({
         where: {
@@ -114,14 +111,13 @@ export class LearnerDashboardService {
       const nextTitles = new Map(nextLessons.map((lesson) => [lesson.id, lesson.title]));
 
       const horizon = new Date(Date.now() + DEADLINE_HORIZON_DAYS * 24 * 60 * 60 * 1000);
-      const [deadlines, quizResults, assignmentResults, announcements] = await Promise.all(
-        [
+      const [deadlines, quizResults, assignmentResults, announcements] =
+        await Promise.all([
           this.upcomingDeadlines(tx, userId, courseIds, horizon),
           this.recentQuizResults(tx, userId, courseIds),
           this.recentAssignmentResults(tx, userId, courseIds),
           this.announcements(tx, academyId, courseIds),
-        ],
-      );
+        ]);
 
       const recentResults = [...quizResults, ...assignmentResults]
         .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
@@ -131,7 +127,9 @@ export class LearnerDashboardService {
         academyId,
         continueLearning: continueLearning.map((item) => ({
           ...item,
-          nextItemTitle: item.nextItemId ? (nextTitles.get(item.nextItemId) ?? null) : null,
+          nextItemTitle: item.nextItemId
+            ? (nextTitles.get(item.nextItemId) ?? null)
+            : null,
         })),
         courseCounts: {
           all: enrollments.length,
@@ -297,23 +295,25 @@ export class LearnerDashboardService {
       take: OVERVIEW_LIMIT * 2,
     });
 
-    return assignments
-      // A deadline the learner has already met is not a deadline. Showing
-      // it would train them to ignore the list.
-      .filter((assignment) => {
-        const submission = assignment.submissions[0];
-        return !submission || submission.status !== 'submitted';
-      })
-      .slice(0, OVERVIEW_LIMIT)
-      .map((assignment) => ({
-        id: assignment.id,
-        type: 'assignment' as const,
-        title: assignment.title,
-        courseId: assignment.courseId,
-        courseTitle: assignment.course.title,
-        dueAt: assignment.dueAt!.toISOString(),
-        overdue: assignment.dueAt!.getTime() < now.getTime(),
-      }));
+    return (
+      assignments
+        // A deadline the learner has already met is not a deadline. Showing
+        // it would train them to ignore the list.
+        .filter((assignment) => {
+          const submission = assignment.submissions[0];
+          return !submission || submission.status !== 'submitted';
+        })
+        .slice(0, OVERVIEW_LIMIT)
+        .map((assignment) => ({
+          id: assignment.id,
+          type: 'assignment' as const,
+          title: assignment.title,
+          courseId: assignment.courseId,
+          courseTitle: assignment.course.title,
+          dueAt: assignment.dueAt!.toISOString(),
+          overdue: assignment.dueAt!.getTime() < now.getTime(),
+        }))
+    );
   }
 
   private async recentQuizResults(

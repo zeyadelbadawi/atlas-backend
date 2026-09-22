@@ -19,7 +19,12 @@
  * exists and why it is locked) but carries nothing that could be fetched.
  */
 
-export const SEQUENCE_ITEM_TYPES = ['lesson', 'quiz', 'assignment', 'live_session'] as const;
+export const SEQUENCE_ITEM_TYPES = [
+  'lesson',
+  'quiz',
+  'assignment',
+  'live_session',
+] as const;
 export type SequenceItemType = (typeof SEQUENCE_ITEM_TYPES)[number];
 
 /**

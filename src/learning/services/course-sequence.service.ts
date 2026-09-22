@@ -117,25 +117,46 @@ export class CourseSequenceService {
         tx.courseLesson.findMany({
           where: { courseId, status: 'published' },
           select: {
-            id: true, title: true, sectionId: true, order: true, createdAt: true,
-            durationSeconds: true, isPreview: true, availableAt: true,
+            id: true,
+            title: true,
+            sectionId: true,
+            order: true,
+            createdAt: true,
+            durationSeconds: true,
+            isPreview: true,
+            availableAt: true,
             videoAsset: { select: { durationSeconds: true } },
           },
         }),
         tx.quiz.findMany({
           where: { courseId, status: 'published', sectionId: { not: null } },
-          select: { id: true, title: true, sectionId: true, order: true, createdAt: true },
+          select: {
+            id: true,
+            title: true,
+            sectionId: true,
+            order: true,
+            createdAt: true,
+          },
         }),
         tx.assignment.findMany({
           where: { courseId, status: 'published', sectionId: { not: null } },
           select: {
-            id: true, title: true, sectionId: true, order: true, createdAt: true, dueAt: true,
+            id: true,
+            title: true,
+            sectionId: true,
+            order: true,
+            createdAt: true,
+            dueAt: true,
           },
         }),
         tx.liveSession.findMany({
           where: { courseId, status: { not: 'draft' }, sectionId: { not: null } },
           select: {
-            id: true, title: true, sectionId: true, order: true, createdAt: true,
+            id: true,
+            title: true,
+            sectionId: true,
+            order: true,
+            createdAt: true,
             scheduledStartAt: true,
           },
         }),
@@ -154,7 +175,9 @@ export class CourseSequenceService {
             select: { lessonId: true, status: true },
           })
         : [];
-      const lessonState = new Map(lessonProgress.map((row) => [row.lessonId, row.status]));
+      const lessonState = new Map(
+        lessonProgress.map((row) => [row.lessonId, row.status]),
+      );
 
       // Best attempt per quiz: a learner who passed on the second try has
       // passed, and showing the first attempt's failure instead would be
@@ -167,7 +190,8 @@ export class CourseSequenceService {
       for (const attempt of attempts) {
         const mapped = mapQuizState(attempt.status);
         const current = quizState.get(attempt.quizId);
-        if (!current || rank(mapped) > rank(current)) quizState.set(attempt.quizId, mapped);
+        if (!current || rank(mapped) > rank(current))
+          quizState.set(attempt.quizId, mapped);
       }
 
       const submissions = await tx.assignmentSubmission.findMany({
@@ -193,7 +217,8 @@ export class CourseSequenceService {
           sectionId: lesson.sectionId,
           order: lesson.order,
           createdAt: lesson.createdAt,
-          durationSeconds: lesson.durationSeconds ?? lesson.videoAsset?.durationSeconds ?? null,
+          durationSeconds:
+            lesson.durationSeconds ?? lesson.videoAsset?.durationSeconds ?? null,
           isPreview: lesson.isPreview,
           dueAt: null,
           availableAt: lesson.availableAt,
@@ -302,7 +327,10 @@ export class CourseSequenceService {
 /** "Finished" for the purpose of sequential unlock and the progress count. */
 function isFinished(state: SequenceItemState): boolean {
   return (
-    state === 'completed' || state === 'passed' || state === 'graded' || state === 'submitted'
+    state === 'completed' ||
+    state === 'passed' ||
+    state === 'graded' ||
+    state === 'submitted'
   );
 }
 
