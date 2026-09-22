@@ -25,6 +25,16 @@ import { PrismaService } from '../../database/prisma.service';
 
 @Injectable()
 export class TenancyContextService {
+  /**
+   * Interactive-transaction limits, read once. Validated by
+   * `env.validation.ts` at boot; the defaults are Prisma's own, so
+   * production behaviour is unchanged unless an operator sets them.
+   */
+  private readonly transactionOptions = {
+    timeout: Number(process.env.PRISMA_INTERACTIVE_TX_TIMEOUT_MS ?? 5000),
+    maxWait: Number(process.env.PRISMA_INTERACTIVE_TX_MAX_WAIT_MS ?? 2000),
+  };
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -48,7 +58,7 @@ export class TenancyContextService {
   async runWithoutContext<T>(
     work: (tx: Prisma.TransactionClient) => Promise<T>,
   ): Promise<T> {
-    return this.prisma.$transaction((tx) => work(tx));
+    return this.prisma.$transaction((tx) => work(tx), this.transactionOptions);
   }
 
   async runInTenantContext<T>(
@@ -58,7 +68,7 @@ export class TenancyContextService {
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.current_organization_id', ${organizationId}, true)`;
       return work(tx);
-    });
+    }, this.transactionOptions);
   }
 
   /**
@@ -79,7 +89,7 @@ export class TenancyContextService {
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
       return work(tx);
-    });
+    }, this.transactionOptions);
   }
 
   /**
@@ -107,6 +117,6 @@ export class TenancyContextService {
       await tx.$executeRaw`SELECT set_config('app.current_organization_id', ${organizationId}, true)`;
       await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
       return work(tx);
-    });
+    }, this.transactionOptions);
   }
 }

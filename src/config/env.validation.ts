@@ -270,6 +270,22 @@ const EnvSchema = z.object({
   // P64 Phase 3 (§D.6): certificate download links are a distinct purpose
   // from lesson-content presigns (10 min) — one hour, capped at one hour.
   CERTIFICATE_LINK_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(3600),
+  // Prisma interactive-transaction limits. The defaults are Prisma's own
+  // (5 s / 2 s); CI raises the timeout because the shared runner's
+  // database is slow enough for the seed-heavy suites to trip 5 s and
+  // answer 500 where the test expects a real outcome.
+  PRISMA_INTERACTIVE_TX_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1000)
+    .max(120_000)
+    .default(5000),
+  PRISMA_INTERACTIVE_TX_MAX_WAIT_MS: z.coerce
+    .number()
+    .int()
+    .min(500)
+    .max(60_000)
+    .default(2000),
 
   R2_PROTECTED_BUCKET: z.string().trim().min(1).optional(),
   /*
