@@ -1,21 +1,8 @@
 /**
- * Quiz AUTHORING response contract (Phase 4, P24) — structurally distinct
- * from `quiz.contract.ts`'s `QuizResponse`/`QuizQuestionResponse`/
- * `QuizQuestionOptionResponse`, which must never carry `isCorrect` (see
- * that file's own header comment — the mandatory pre-submission
- * correctness-projection guarantee, master plan §5.4/§9/§16/§18 scenario
- * 7). This file is the one deliberate exception: an author who is about
- * to grade/edit their own quiz's answer key needs to see which options
- * they marked correct.
- *
- * The safety boundary is therefore NOT "this field never exists in any
- * response type" — it is "this response type is only ever returned from
- * `QuizzesService`'s authoring methods (`createQuiz`/`updateQuiz`/
- * `getQuizForAuthoring`/`getQuizzesForAuthoring`), every one of which
- * gates on `assertCanAuthorCourseContent` — never from `getQuiz`/
- * `getQuizzes` (the student-safe, enrollment-or-instructor-reachable read
- * path), which continues to use the original `quiz.contract.ts` mappers,
- * completely unmodified.
+ * Authoring projection of a quiz — the ONLY response that carries
+ * `isCorrect` and `acceptedAnswers`, reachable solely through
+ * `assertCanAuthorCourseContent`. P64 Phase 3 adds the settings block and
+ * the per-question points / explanation / related lesson.
  */
 import type {
   Quiz as PrismaQuiz,
@@ -36,6 +23,33 @@ export interface QuizQuestionAuthoringResponse {
   readonly type: PrismaQuizQuestion['type'];
   readonly options: readonly QuizQuestionOptionAuthoringResponse[];
   readonly order: number;
+  readonly points: number;
+  readonly explanation?: string;
+  readonly relatedLessonId?: string;
+  readonly acceptedAnswers?: readonly string[];
+}
+
+export interface QuizSettingsResponse {
+  readonly mode: PrismaQuiz['mode'];
+  readonly timeLimitSeconds: number | null;
+  readonly availableFrom: string | null;
+  readonly availableUntil: string | null;
+  readonly dueAt: string | null;
+  readonly latePolicy: PrismaQuiz['latePolicy'];
+  readonly gradingPolicy: PrismaQuiz['gradingPolicy'];
+  readonly shuffleQuestions: boolean;
+  readonly shuffleOptions: boolean;
+  readonly questionsPerAttempt: number | null;
+  readonly layout: PrismaQuiz['layout'];
+  readonly showScore: PrismaQuiz['showScore'];
+  readonly showAnswers: PrismaQuiz['showAnswers'];
+  readonly showExplanations: boolean;
+  readonly integrityMode: PrismaQuiz['integrityMode'];
+  readonly maxViolations: number;
+  readonly requireFullscreen: boolean;
+  readonly requiredToProgress: boolean;
+  readonly requiredForCompletion: boolean;
+  readonly hideTimer: boolean;
 }
 
 export interface QuizAuthoringResponse {
@@ -48,7 +62,33 @@ export interface QuizAuthoringResponse {
   readonly questionCount: number;
   readonly passingScore?: number;
   readonly maxAttempts?: number;
+  readonly settings: QuizSettingsResponse;
   readonly questions: readonly QuizQuestionAuthoringResponse[];
+}
+
+export function toQuizSettingsResponse(quiz: PrismaQuiz): QuizSettingsResponse {
+  return {
+    mode: quiz.mode,
+    timeLimitSeconds: quiz.timeLimitSeconds,
+    availableFrom: quiz.availableFrom?.toISOString() ?? null,
+    availableUntil: quiz.availableUntil?.toISOString() ?? null,
+    dueAt: quiz.dueAt?.toISOString() ?? null,
+    latePolicy: quiz.latePolicy,
+    gradingPolicy: quiz.gradingPolicy,
+    shuffleQuestions: quiz.shuffleQuestions,
+    shuffleOptions: quiz.shuffleOptions,
+    questionsPerAttempt: quiz.questionsPerAttempt,
+    layout: quiz.layout,
+    showScore: quiz.showScore,
+    showAnswers: quiz.showAnswers,
+    showExplanations: quiz.showExplanations,
+    integrityMode: quiz.integrityMode,
+    maxViolations: quiz.maxViolations,
+    requireFullscreen: quiz.requireFullscreen,
+    requiredToProgress: quiz.requiredToProgress,
+    requiredForCompletion: quiz.requiredForCompletion,
+    hideTimer: quiz.hideTimer,
+  };
 }
 
 export function toQuizAuthoringResponse(
@@ -66,17 +106,26 @@ export function toQuizAuthoringResponse(
     questionCount: quiz.questions.length,
     passingScore: quiz.passingScore ?? undefined,
     maxAttempts: quiz.maxAttempts ?? undefined,
-    questions: quiz.questions.map((question) => ({
-      id: question.id,
-      quizId: question.quizId,
-      prompt: question.prompt,
-      type: question.type,
-      order: question.order,
-      options: question.options.map((option) => ({
-        id: option.id,
-        label: option.label,
-        isCorrect: option.isCorrect,
+    settings: toQuizSettingsResponse(quiz),
+    questions: [...quiz.questions]
+      .sort((a, b) => a.order - b.order)
+      .map((question) => ({
+        id: question.id,
+        quizId: question.quizId,
+        prompt: question.prompt,
+        type: question.type,
+        order: question.order,
+        points: question.points,
+        explanation: question.explanation ?? undefined,
+        relatedLessonId: question.relatedLessonId ?? undefined,
+        acceptedAnswers: Array.isArray(question.acceptedAnswers)
+          ? (question.acceptedAnswers as string[])
+          : undefined,
+        options: question.options.map((option) => ({
+          id: option.id,
+          label: option.label,
+          isCorrect: option.isCorrect,
+        })),
       })),
-    })),
   };
 }

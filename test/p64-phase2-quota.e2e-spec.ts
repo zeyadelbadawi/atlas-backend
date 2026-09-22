@@ -158,6 +158,9 @@ const flags: { value: LearningFeatureFlags } = {
     devicesPolicy: { mode: 'on', academyIds: [] },
     learnerDashboardV2: { mode: 'on', academyIds: [] },
     playerV2: { mode: 'on', academyIds: [] },
+    quizEngineV2: { mode: 'on', academyIds: [] },
+    quizIntegrity: { mode: 'on', academyIds: [] },
+    certificates: { mode: 'on', academyIds: [] },
   },
 };
 

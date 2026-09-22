@@ -44,6 +44,10 @@ import type { SubmitQuizAttemptDto } from '../dto/submit-quiz-attempt.dto';
 import type { CreateQuizDto } from '../dto/create-quiz.dto';
 import type { UpdateQuizDto } from '../dto/update-quiz.dto';
 import type { QuizQuestionInputDto } from '../dto/quiz-question-input.dto';
+import {
+  assertValidQuizSettings,
+  settingsWriteDataFromDto,
+} from '../dto/quiz-settings.mapper';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import {
@@ -397,7 +401,22 @@ export class QuizzesService {
         userId,
         courseId,
       );
-      const quiz = await this.quizzesRepository.create(tx, courseId, payload);
+      const settings = settingsWriteDataFromDto(payload);
+      assertValidQuizSettings(
+        {
+          availableFrom: (settings.availableFrom as Date | null | undefined) ?? null,
+          availableUntil: (settings.availableUntil as Date | null | undefined) ?? null,
+          dueAt: (settings.dueAt as Date | null | undefined) ?? null,
+          questionsPerAttempt: settings.questionsPerAttempt ?? null,
+          timeLimitSeconds: settings.timeLimitSeconds ?? null,
+          mode: settings.mode ?? 'practice',
+        },
+        payload.questions.length,
+      );
+      const quiz = await this.quizzesRepository.create(tx, courseId, {
+        ...payload,
+        settings,
+      });
 
       const { organizationId, role } = await this.resolveAuditAttribution(
         tx,
@@ -447,6 +466,29 @@ export class QuizzesService {
       );
       if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
+      const settings = settingsWriteDataFromDto(payload);
+      const pick = <T>(next: T | undefined, current: T): T =>
+        next === undefined ? current : next;
+      assertValidQuizSettings(
+        {
+          availableFrom: pick(
+            settings.availableFrom as Date | null | undefined,
+            existing.availableFrom,
+          ),
+          availableUntil: pick(
+            settings.availableUntil as Date | null | undefined,
+            existing.availableUntil,
+          ),
+          dueAt: pick(settings.dueAt as Date | null | undefined, existing.dueAt),
+          questionsPerAttempt: pick(
+            settings.questionsPerAttempt,
+            existing.questionsPerAttempt,
+          ),
+          timeLimitSeconds: pick(settings.timeLimitSeconds, existing.timeLimitSeconds),
+          mode: pick(settings.mode, existing.mode),
+        },
+        payload.questions ? payload.questions.length : existing.questions.length,
+      );
       await this.quizzesRepository.update(tx, quizId, {
         title: payload.title,
         description: payload.description,
@@ -454,6 +496,7 @@ export class QuizzesService {
         status: payload.status,
         passingScore: payload.passingScore,
         maxAttempts: payload.maxAttempts,
+        ...settings,
       });
 
       if (payload.questions) {
@@ -542,9 +585,34 @@ export class QuizzesService {
    */
   private assertValidQuestions(questions: readonly QuizQuestionInputDto[]): void {
     for (const question of questions) {
-      const correctCount = question.options.filter((o) => o.isCorrect).length;
+      const options = question.options ?? [];
+      const correctCount = options.filter((o) => o.isCorrect).length;
 
-      if (question.type === 'true_false' && question.options.length !== 2) {
+      // P64 Phase 3 — text questions carry no options; short answers need
+      // at least one accepted answer; choice questions need two options.
+      if (question.type === 'short_answer' || question.type === 'essay') {
+        if (options.length > 0) {
+          throw new BadRequestException({
+            messageKey: 'errors.quiz.textQuestionHasOptions',
+          });
+        }
+        if (
+          question.type === 'short_answer' &&
+          (question.acceptedAnswers ?? []).filter((a) => a.trim().length > 0).length === 0
+        ) {
+          throw new BadRequestException({
+            messageKey: 'errors.quiz.shortAnswerRequiresAcceptedAnswer',
+          });
+        }
+        continue;
+      }
+      if (options.length < 2) {
+        throw new BadRequestException({
+          messageKey: 'errors.quiz.choiceRequiresTwoOptions',
+        });
+      }
+
+      if (question.type === 'true_false' && options.length !== 2) {
         throw new BadRequestException({
           messageKey: 'errors.quiz.trueFalseRequiresTwoOptions',
         });

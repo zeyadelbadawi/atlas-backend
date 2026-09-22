@@ -40,6 +40,7 @@ import { PlansModule } from './plans/plans.module';
 import { LiveSessionsModule } from './live-sessions/live-sessions.module';
 import { CourseModule } from './course/course.module';
 import { LearningModule } from './learning/learning.module';
+import { CertificatesModule } from './certificates/certificates.module';
 import { InstructorModule } from './instructor/instructor.module';
 import { CommunityModule } from './community/community.module';
 import { MediaModule } from './media/media.module';
@@ -171,6 +172,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     LiveSessionsModule,
     CourseModule,
     LearningModule,
+    CertificatesModule,
     InstructorModule,
     CommunityModule,
     MediaModule,

@@ -23,6 +23,61 @@ const QUESTIONS_WITH_OPTIONS_INCLUDE = {
   include: { options: { orderBy: { createdAt: 'asc' as const } } },
 };
 
+/** P64 Phase 3 — the settings columns as Prisma write data (only the keys present are written). */
+export type QuizSettingsWriteData = Partial<
+  Pick<
+    Prisma.QuizUncheckedCreateInput,
+    | 'mode'
+    | 'timeLimitSeconds'
+    | 'availableFrom'
+    | 'availableUntil'
+    | 'dueAt'
+    | 'latePolicy'
+    | 'gradingPolicy'
+    | 'shuffleQuestions'
+    | 'shuffleOptions'
+    | 'questionsPerAttempt'
+    | 'layout'
+    | 'showScore'
+    | 'showAnswers'
+    | 'showExplanations'
+    | 'integrityMode'
+    | 'maxViolations'
+    | 'requireFullscreen'
+    | 'requiredToProgress'
+    | 'requiredForCompletion'
+    | 'hideTimer'
+  >
+>;
+
+/** P64 Phase 3 — the question shape both create and replace accept. */
+export interface QuizQuestionWriteInput {
+  readonly prompt: string;
+  readonly type:
+    'single_choice' | 'multiple_choice' | 'true_false' | 'short_answer' | 'essay';
+  readonly options?: readonly { label: string; isCorrect: boolean }[];
+  readonly points?: number;
+  readonly explanation?: string;
+  readonly relatedLessonId?: string;
+  readonly acceptedAnswers?: readonly string[];
+}
+
+function questionCreateData(
+  question: QuizQuestionWriteInput,
+  index: number,
+): Prisma.QuizQuestionCreateWithoutQuizInput {
+  return {
+    prompt: question.prompt,
+    type: question.type,
+    order: index,
+    points: question.points ?? 1,
+    explanation: question.explanation ?? null,
+    relatedLessonId: question.relatedLessonId ?? null,
+    acceptedAnswers: question.acceptedAnswers ? [...question.acceptedAnswers] : undefined,
+    options: { create: (question.options ?? []).map((option) => ({ ...option })) },
+  };
+}
+
 @Injectable()
 export class QuizzesRepository {
   async findManyPublishedForCourse(
@@ -169,11 +224,8 @@ export class QuizzesRepository {
       status?: 'draft' | 'published';
       passingScore?: number;
       maxAttempts?: number;
-      questions: readonly {
-        prompt: string;
-        type: 'single_choice' | 'multiple_choice' | 'true_false';
-        options: readonly { label: string; isCorrect: boolean }[];
-      }[];
+      questions: readonly QuizQuestionWriteInput[];
+      settings?: QuizSettingsWriteData;
     },
   ): Promise<QuizWithQuestions> {
     return tx.quiz.create({
@@ -185,13 +237,11 @@ export class QuizzesRepository {
         status: data.status,
         passingScore: data.passingScore,
         maxAttempts: data.maxAttempts,
+        ...(data.settings ?? {}),
         questions: {
-          create: data.questions.map((question, index) => ({
-            prompt: question.prompt,
-            type: question.type,
-            order: index,
-            options: { create: question.options.map((option) => ({ ...option })) },
-          })),
+          create: data.questions.map((question, index) =>
+            questionCreateData(question, index),
+          ),
         },
       },
       include: { questions: QUESTIONS_WITH_OPTIONS_INCLUDE },
@@ -211,23 +261,14 @@ export class QuizzesRepository {
   async replaceQuestions(
     tx: Prisma.TransactionClient,
     quizId: string,
-    questions: readonly {
-      prompt: string;
-      type: 'single_choice' | 'multiple_choice' | 'true_false';
-      options: readonly { label: string; isCorrect: boolean }[];
-    }[],
+    questions: readonly QuizQuestionWriteInput[],
   ): Promise<void> {
     await tx.quizQuestion.deleteMany({ where: { quizId } });
     await tx.quiz.update({
       where: { id: quizId },
       data: {
         questions: {
-          create: questions.map((question, index) => ({
-            prompt: question.prompt,
-            type: question.type,
-            order: index,
-            options: { create: question.options.map((option) => ({ ...option })) },
-          })),
+          create: questions.map((question, index) => questionCreateData(question, index)),
         },
       },
     });

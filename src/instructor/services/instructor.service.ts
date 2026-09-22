@@ -31,6 +31,9 @@ import {
 import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { ContentGrantSigner } from '../../learning/services/content-grant.signer';
+import { CourseCompletionService } from '../../learning/services/course-completion.service';
+import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
 import {
   InstructorRepository,
   type EnrollmentWithStudent,
@@ -92,6 +95,9 @@ function paginationOf(query?: CollectionQueryDto): {
 export class InstructorService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
+    private readonly contentGrantSigner: ContentGrantSigner,
+    private readonly courseCompletionService: CourseCompletionService,
+    private readonly notifications: NotificationFanoutService,
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly coursesRepository: CoursesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
@@ -514,8 +520,30 @@ export class InstructorService {
       if (!assignment || assignment.courseId !== courseId) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
-      return toAssignmentSubmissionReviewResponse(submission, submission.student.name);
+      return toAssignmentSubmissionReviewResponse(
+        submission,
+        submission.student.name,
+        await this.signAttachment(tx, submission.attachmentAssetId),
+      );
     });
+  }
+
+  private async signAttachment(
+    tx: Prisma.TransactionClient,
+    assetId: string | null,
+  ): Promise<AssignmentSubmissionReviewResponse['attachment']> {
+    if (!assetId) return null;
+    const asset = await tx.mediaAsset.findUnique({ where: { id: assetId } });
+    if (!asset) return null;
+    const signed = await this.contentGrantSigner.signFile(asset);
+    return {
+      assetId: asset.id,
+      fileName: asset.fileName,
+      mimeType: asset.mimeType,
+      sizeBytes: Number(asset.sizeBytes),
+      url: signed.url,
+      expiresAt: signed.expiresAt.toISOString(),
+    };
   }
 
   async gradeSubmission(
@@ -525,60 +553,97 @@ export class InstructorService {
     submissionId: string,
     payload: GradeSubmissionDto,
   ): Promise<AssignmentSubmissionReviewResponse> {
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await this.assertTeachesCourse(tx, userId, courseId);
-      const assignment = await this.instructorRepository.findAssignmentById(
-        tx,
-        assignmentId,
-      );
-      if (!assignment || assignment.courseId !== courseId) {
-        throw new NotFoundException({ messageKey: 'errors.notFound' });
-      }
-      const submission = await this.instructorRepository.findSubmissionById(
-        tx,
-        submissionId,
-      );
-      if (!submission || submission.assignmentId !== assignmentId) {
-        throw new NotFoundException({ messageKey: 'errors.notFound' });
-      }
-      if (submission.status !== 'submitted') {
-        throw new ForbiddenException({ messageKey: 'errors.submission.notSubmitted' });
-      }
+    const result = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        await this.assertTeachesCourse(tx, userId, courseId);
+        const assignment = await this.instructorRepository.findAssignmentById(
+          tx,
+          assignmentId,
+        );
+        if (!assignment || assignment.courseId !== courseId) {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        const submission = await this.instructorRepository.findSubmissionById(
+          tx,
+          submissionId,
+        );
+        if (!submission || submission.assignmentId !== assignmentId) {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        if (submission.status !== 'submitted') {
+          throw new ForbiddenException({ messageKey: 'errors.submission.notSubmitted' });
+        }
 
-      const graded = await this.instructorRepository.gradeSubmission(tx, submissionId, {
-        score: payload.score,
-        feedback: payload.feedback,
-        gradedBy: userId,
+        const graded = await this.instructorRepository.gradeSubmission(tx, submissionId, {
+          score: payload.score,
+          feedback: payload.feedback,
+          gradedBy: userId,
+        });
+
+        // Phase 8 — this service runs entirely under `runInUserContext`
+        // (no tenant context, see this class's own header comment), so
+        // `organizationId` is resolved via the same `SECURITY DEFINER`
+        // helper `AcademyStudentsRepository.resolveOrganizationId`/
+        // `CoursesRepository.resolveAcademyIdForPublishedCourse` already
+        // establish for the identical "no context yet" shape. A failure to
+        // resolve it (structurally unreachable — `assertTeachesCourse`
+        // above already proved this course is real) is not worth failing
+        // the whole grading action over; the audit write degrades to
+        // `academyId: undefined`/`organizationId: undefined` rather than
+        // ever blocking the actual grade from being recorded.
+        const course = await this.instructorRepository.findCourseById(tx, courseId);
+        const organizationId = course
+          ? await this.academiesRepository.resolveOrganizationId(course.academyId)
+          : null;
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId: organizationId ?? undefined,
+          academyId: course?.academyId,
+          role: 'instructor',
+          action: 'assignment_submission.graded',
+          targetType: 'assignment_submission',
+          targetId: submissionId,
+          targetLabel: submission.student.name,
+          context: { courseId, assignmentId, score: payload.score ?? null },
+        });
+
+        // P64 Phase 3 (§D.4): the learner is told, and completion is re-evaluated.
+        const enrollment = await tx.enrollment.findFirst({
+          where: { studentId: submission.studentId, courseId },
+          select: { id: true, academyId: true },
+        });
+        const notified = await this.notifications.notify(tx, {
+          userId: submission.studentId,
+          type: 'activity',
+          priority: 'medium',
+          titleKey: 'notifications:events.assignmentGraded.title',
+          messageKey: 'notifications:events.assignmentGraded.message',
+          values: { assignmentTitle: assignment.title, score: payload.score ?? null },
+          actionUrl: `/my/courses/${courseId}/activities/${assignmentId}`,
+          dedupeKey: `assignment_submission.graded:${submissionId}:${graded.submittedRevision}`,
+        });
+        return {
+          graded,
+          studentName: submission.student.name,
+          studentId: submission.studentId,
+          enrollment,
+          notified,
+          assignmentTitle: assignment.title,
+        };
+      },
+    );
+
+    if (result.enrollment) {
+      await this.courseCompletionService.recomputeInTenantContext({
+        enrollmentId: result.enrollment.id,
+        academyId: result.enrollment.academyId,
       });
-
-      // Phase 8 — this service runs entirely under `runInUserContext`
-      // (no tenant context, see this class's own header comment), so
-      // `organizationId` is resolved via the same `SECURITY DEFINER`
-      // helper `AcademyStudentsRepository.resolveOrganizationId`/
-      // `CoursesRepository.resolveAcademyIdForPublishedCourse` already
-      // establish for the identical "no context yet" shape. A failure to
-      // resolve it (structurally unreachable — `assertTeachesCourse`
-      // above already proved this course is real) is not worth failing
-      // the whole grading action over; the audit write degrades to
-      // `academyId: undefined`/`organizationId: undefined` rather than
-      // ever blocking the actual grade from being recorded.
-      const course = await this.instructorRepository.findCourseById(tx, courseId);
-      const organizationId = course
-        ? await this.academiesRepository.resolveOrganizationId(course.academyId)
-        : null;
-      await this.auditLogWriterService.write(tx, {
-        actorUserId: userId,
-        organizationId: organizationId ?? undefined,
-        academyId: course?.academyId,
-        role: 'instructor',
-        action: 'assignment_submission.graded',
-        targetType: 'assignment_submission',
-        targetId: submissionId,
-        targetLabel: submission.student.name,
-        context: { courseId, assignmentId, score: payload.score ?? null },
-      });
-
-      return toAssignmentSubmissionReviewResponse(graded, submission.student.name);
+    }
+    await this.notifications.sendEmailAfterCommit(result.studentId, result.notified, {
+      template: 'assignment_graded',
+      values: { assignmentTitle: result.assignmentTitle, score: payload.score ?? '' },
     });
+    return toAssignmentSubmissionReviewResponse(result.graded, result.studentName);
   }
 }

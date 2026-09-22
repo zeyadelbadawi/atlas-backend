@@ -74,7 +74,8 @@ export interface LearnerOverviewResponse {
    * flag rather than omitted, so the dashboard can render "coming soon"
    * instead of an empty list that looks like a learner earned none.
    */
-  readonly certificates: { readonly available: false; readonly count: 0 };
+  /** P64 Phase 3 — real once the `certificates` flag admits the academy. */
+  readonly certificates: { readonly available: boolean; readonly count: number };
 }
 
 export interface LearnerAssessmentItem {

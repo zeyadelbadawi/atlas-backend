@@ -34,6 +34,8 @@ COPY prisma ./prisma
 RUN npm ci --omit=dev && npm run prisma:generate && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
+# P64 Phase 3 — embedded certificate fonts (OFL), read at runtime by pdfkit.
+COPY assets ./assets
 
 RUN addgroup -S atlas && adduser -S atlas -G atlas
 USER atlas

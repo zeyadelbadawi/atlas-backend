@@ -124,7 +124,15 @@ model User {
   academyStudentships                           AcademyStudent[]
   courseInstructorships                         CourseInstructor[]
   enrollments                                   Enrollment[]
-  quizAttempts                                  QuizAttempt[]
+  quizAttempts                                  QuizAttempt[]                            @relation("QuizAttemptStudent")
+  quizAttemptsGraded                            QuizAttempt[]                            @relation("QuizAttemptGrader")
+  quizAttemptsInvalidated                       QuizAttempt[]                            @relation("QuizAttemptInvalidator")
+  quizResults                                   QuizResult[]
+  quizOverrides                                 QuizStudentOverride[]                    @relation("QuizOverrideStudent")
+  quizOverridesCreated                          QuizStudentOverride[]                    @relation("QuizOverrideCreator")
+  certificates                                  Certificate[]                            @relation("CertificateStudent")
+  certificatesIssued                            Certificate[]                            @relation("CertificateIssuer")
+  certificatesRevoked                           Certificate[]                            @relation("CertificateRevoker")
   assignmentSubmissions                         AssignmentSubmission[]                   @relation("SubmissionStudent")
   gradedSubmissions                             AssignmentSubmission[]                   @relation("SubmissionGrader")
   /// P60 — courses this user created. `SetNull` on the course side, so
@@ -579,11 +587,14 @@ model Academy {
 
   /// P64 Phase 2 — protected content, its access log, and the device
   /// policy that governs who may play it where.
-  lessonContents   LessonContent[]
-  lessonResources  LessonResource[]
-  contentAccessLog ContentAccessLog[]
-  studentDevices   StudentDevice[]
-  accessPolicy     AccessPolicy?
+  lessonContents            LessonContent[]
+  lessonResources           LessonResource[]
+  contentAccessLog          ContentAccessLog[]
+  studentDevices            StudentDevice[]
+  certificateTemplates      CertificateTemplate[]
+  certificates              Certificate[]
+  certificateSerialCounters CertificateSerialCounter[]
+  accessPolicy              AccessPolicy?
 
   @@index([organizationId, status])
   @@index([searchVector], type: Gin)
@@ -1288,6 +1299,15 @@ model Course {
   pricingType             CoursePricingType        @default(free) @map("pricing_type")
   pricingAmountMinorUnits BigInt?                  @map("pricing_amount_minor_units")
   pricingCurrency         String?                  @map("pricing_currency")
+  /// P64 Phase 3 (AD-11) — the completion rule. The default is exactly
+  /// today's rule: every published lesson completed, plus whichever quizzes
+  /// and assignments are individually marked `required_for_completion`
+  /// (none by default), with no minimum overall score.
+  completionRule          Json                     @default("{\"lessons\":\"all\",\"requiredQuizzes\":true,\"requiredAssignments\":true,\"minOverallScore\":null}") @map("completion_rule")
+  certificatesEnabled     Boolean                  @default(false) @map("certificates_enabled")
+  certificateTemplateId   String?                  @map("certificate_template_id")
+  certificateTemplate     CertificateTemplate?     @relation(fields: [certificateTemplateId], references: [id], onDelete: SetNull)
+  certificateMinScore     Int?                     @map("certificate_min_score")
   publishedAt             DateTime?                @map("published_at")
   createdAt               DateTime                 @default(now()) @map("created_at")
   updatedAt               DateTime                 @updatedAt @map("updated_at")
@@ -1318,6 +1338,7 @@ model Course {
   lessonContents  LessonContent[]
   lessonResources LessonResource[]
   mediaAssets     MediaAsset[]
+  certificates    Certificate[]
 
   @@unique([academyId, slug])
   @@index([academyId, status, visibility])
@@ -1525,6 +1546,7 @@ model Enrollment {
 
   progress       CourseProgress?
   LessonProgress LessonProgress[]
+  certificate    Certificate?
 
   @@unique([studentId, courseId])
   @@index([courseOrderId])
@@ -1613,6 +1635,12 @@ model CourseProgress {
   timeSpentSeconds Int       @default(0) @map("time_spent_seconds")
   lastActivityAt   DateTime? @map("last_activity_at")
 
+  /// P64 Phase 3 (AD-11) — when the completion rule was last satisfied and
+  /// the overall score the evaluator computed (null when no scored item
+  /// takes part in the rule).
+  completedAt  DateTime? @map("completed_at")
+  overallScore Decimal?  @map("overall_score") @db.Decimal(5, 2)
+
   @@map("course_progress")
 }
 
@@ -1627,6 +1655,8 @@ enum CourseCompletionState {
 enum CertificateStatus {
   unavailable
   eligible
+  issued
+  revoked
 
   @@map("certificate_status")
 }
@@ -1894,8 +1924,35 @@ model Quiz {
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt @map("updated_at")
 
+  /// P64 Phase 3 (§D.1) — the quiz settings model. Every default
+  /// reproduces the pre-Phase-3 behaviour: no timer, no window, no
+  /// shuffle, every question, score shown at once, correct answers never
+  /// shown, integrity off, nothing required for progression or completion.
+  mode                  QuizMode             @default(practice)
+  timeLimitSeconds      Int?                 @map("time_limit_seconds")
+  availableFrom         DateTime?            @map("available_from")
+  availableUntil        DateTime?            @map("available_until")
+  dueAt                 DateTime?            @map("due_at")
+  latePolicy            AssessmentLatePolicy @default(accept_flagged) @map("late_policy")
+  gradingPolicy         QuizGradingPolicy    @default(highest) @map("grading_policy")
+  shuffleQuestions      Boolean              @default(false) @map("shuffle_questions")
+  shuffleOptions        Boolean              @default(false) @map("shuffle_options")
+  questionsPerAttempt   Int?                 @map("questions_per_attempt")
+  layout                QuizLayout           @default(all_questions)
+  showScore             QuizDisclosure       @default(immediately) @map("show_score")
+  showAnswers           QuizDisclosure       @default(never) @map("show_answers")
+  showExplanations      Boolean              @default(false) @map("show_explanations")
+  integrityMode         QuizIntegrityMode    @default(off) @map("integrity_mode")
+  maxViolations         Int                  @default(3) @map("max_violations")
+  requireFullscreen     Boolean              @default(false) @map("require_fullscreen")
+  requiredToProgress    Boolean              @default(false) @map("required_to_progress")
+  requiredForCompletion Boolean              @default(false) @map("required_for_completion")
+  hideTimer             Boolean              @default(false) @map("hide_timer")
+
   questions QuizQuestion[]
   attempts  QuizAttempt[]
+  results   QuizResult[]
+  overrides QuizStudentOverride[]
 
   @@index([courseId, status])
   @@index([sectionId, order])
@@ -1907,6 +1964,60 @@ enum QuizStatus {
   published
 
   @@map("quiz_status")
+}
+
+/// P64 Phase 3 — quiz settings vocabularies (§D.1).
+enum QuizMode {
+  practice
+  exam
+
+  @@map("quiz_mode")
+}
+
+enum QuizLayout {
+  all_questions
+  one_per_page
+
+  @@map("quiz_layout")
+}
+
+/// Which attempt counts as THE result of a quiz (AD-8 grading policies).
+enum QuizGradingPolicy {
+  highest
+  latest
+  first
+  average
+
+  @@map("quiz_grading_policy")
+}
+
+/// When a score / the correct answers may be disclosed to the learner.
+enum QuizDisclosure {
+  immediately
+  after_due
+  after_attempts_exhausted
+  never
+
+  @@map("quiz_disclosure")
+}
+
+/// AD-9 integrity tiers. `off` records nothing; `monitor` records;
+/// `warn` records and warns; `strict` auto-submits at the threshold.
+enum QuizIntegrityMode {
+  off
+  monitor
+  warn
+  strict
+
+  @@map("quiz_integrity_mode")
+}
+
+/// Shared by quizzes and assignments: what happens after `due_at`.
+enum AssessmentLatePolicy {
+  block
+  accept_flagged
+
+  @@map("assessment_late_policy")
 }
 
 /// Mirrors `QuizQuestion` (`quiz.types.ts`). Real write path as of Phase 4
@@ -1921,6 +2032,15 @@ model QuizQuestion {
   createdAt DateTime         @default(now()) @map("created_at")
   updatedAt DateTime         @updatedAt @map("updated_at")
 
+  /// P64 Phase 3 — points per question (default 1 reproduces "each
+  /// question counts once"), an explanation disclosed by policy, the
+  /// lesson a wrong answer points back to, and the accepted answers of a
+  /// `short_answer` question (JSON string array, matched normalised).
+  points          Int     @default(1)
+  explanation     String?
+  relatedLessonId String? @map("related_lesson_id")
+  acceptedAnswers Json?   @map("accepted_answers")
+
   options QuizQuestionOption[]
 
   @@index([quizId, order])
@@ -1931,6 +2051,8 @@ enum QuizQuestionType {
   single_choice
   multiple_choice
   true_false
+  short_answer
+  essay
 
   @@map("quiz_question_type")
 }
@@ -1964,7 +2086,7 @@ model QuizAttempt {
   quizId        String            @map("quiz_id")
   quiz          Quiz              @relation(fields: [quizId], references: [id], onDelete: Cascade)
   studentId     String            @map("student_id")
-  student       User              @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  student       User              @relation("QuizAttemptStudent", fields: [studentId], references: [id], onDelete: Cascade)
   status        QuizAttemptStatus
   answers       Json              @default("[]")
   score         Decimal?          @db.Decimal(5, 2)
@@ -1974,12 +2096,45 @@ model QuizAttempt {
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
+  /// P64 Phase 3 (AD-8) — the server-authoritative attempt. `startedAt`
+  /// and `deadlineAt` come from the server clock; `questionIds` is the
+  /// ordered set this attempt was seeded with; `settingsSnapshot` freezes
+  /// the quiz settings at start so a mid-attempt edit never moves the
+  /// goalposts; `answersRevision` is the monotonic autosave counter.
+  startedAt           DateTime?            @map("started_at")
+  deadlineAt          DateTime?            @map("deadline_at")
+  seed                Int                  @default(0)
+  settingsSnapshot    Json?                @map("settings_snapshot")
+  questionIds         Json?                @map("question_ids")
+  answersRevision     Int                  @default(0) @map("answers_revision")
+  lastSavedAt         DateTime?            @map("last_saved_at")
+  autoSubmitted       Boolean              @default(false) @map("auto_submitted")
+  autoSubmittedReason String?              @map("auto_submitted_reason")
+  isLate              Boolean              @default(false) @map("is_late")
+  violationCount      Int                  @default(0) @map("violation_count")
+  integrityFlagged    Boolean              @default(false) @map("integrity_flagged")
+  pointsEarned        Decimal?             @map("points_earned") @db.Decimal(8, 2)
+  pointsTotal         Decimal?             @map("points_total") @db.Decimal(8, 2)
+  gradingStatus       AttemptGradingStatus @default(not_required) @map("grading_status")
+  /// Manual points per question id (essay questions), entered by a reviewer.
+  manualGrades        Json?                @map("manual_grades")
+  gradedById          String?              @map("graded_by")
+  gradedBy            User?                @relation("QuizAttemptGrader", fields: [gradedById], references: [id], onDelete: SetNull)
+  gradedAt            DateTime?            @map("graded_at")
+  invalidatedAt       DateTime?            @map("invalidated_at")
+  invalidatedById     String?              @map("invalidated_by")
+  invalidatedBy       User?                @relation("QuizAttemptInvalidator", fields: [invalidatedById], references: [id], onDelete: SetNull)
+  invalidationReason  String?              @map("invalidation_reason")
+
+  events QuizAttemptEvent[]
+
   /// P64 Phase 1 — the attempt-number race fix: two concurrent starts can
   /// no longer both insert attempt N+1. A partial unique index (one
   /// `in_progress` attempt per student per quiz) lives in the migration
   /// SQL; Prisma cannot express partial indexes.
   @@unique([quizId, studentId, attemptNumber])
   @@index([studentId, quizId, attemptNumber])
+  @@index([status, deadlineAt])
   @@map("quiz_attempts")
 }
 
@@ -1989,6 +2144,8 @@ enum QuizAttemptStatus {
   submitted
   passed
   failed
+  expired
+  invalidated
 
   @@map("quiz_attempt_status")
 }
@@ -1999,24 +2156,28 @@ enum QuizAttemptStatus {
 /// "no reverse relation array for a field nothing cascades on" reasoning as
 /// `Quiz.sectionId`.
 model Assignment {
-  id                String           @id @default(uuid())
-  courseId          String           @map("course_id")
-  course            Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  sectionId         String?          @map("section_id")
+  id                    String               @id @default(uuid())
+  courseId              String               @map("course_id")
+  course                Course               @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  sectionId             String?              @map("section_id")
   /// Optional unit placement. Deleting a unit SetNulls this (the assignment
   /// survives as a course-level assignment), never destroys the assignment.
-  section           CourseSection?   @relation(fields: [sectionId], references: [id], onDelete: SetNull)
-  lessonId          String?          @map("lesson_id")
-  title             String
-  description       String?
-  instructions      String?
-  status            AssignmentStatus @default(draft)
-  dueAt             DateTime?        @map("due_at")
-  allowResubmission Boolean          @default(false) @map("allow_resubmission")
+  section               CourseSection?       @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  lessonId              String?              @map("lesson_id")
+  title                 String
+  description           String?
+  instructions          String?
+  status                AssignmentStatus     @default(draft)
+  dueAt                 DateTime?            @map("due_at")
+  allowResubmission     Boolean              @default(false) @map("allow_resubmission")
+  /// P64 Phase 3 (§D.4, S12) — `due_at` is finally enforced. The default
+  /// reproduces today's behaviour (late work accepted) but now flags it.
+  latePolicy            AssessmentLatePolicy @default(accept_flagged) @map("late_policy")
+  requiredForCompletion Boolean              @default(false) @map("required_for_completion")
   /// Shared unit-curriculum ordinal (P52) — see Quiz.order.
-  order             Int              @default(0)
-  createdAt         DateTime         @default(now()) @map("created_at")
-  updatedAt         DateTime         @updatedAt @map("updated_at")
+  order                 Int                  @default(0)
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
 
   submissions AssignmentSubmission[]
 
@@ -2040,23 +2201,32 @@ enum AssignmentStatus {
 /// `(assignment_id, student_id)` stays unconditionally unique — see this
 /// section's header comment for why no history table exists.
 model AssignmentSubmission {
-  id            String                     @id @default(uuid())
-  assignmentId  String                     @map("assignment_id")
-  assignment    Assignment                 @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  studentId     String                     @map("student_id")
-  student       User                       @relation("SubmissionStudent", fields: [studentId], references: [id], onDelete: Cascade)
-  status        AssignmentSubmissionStatus
-  response      String?
-  attachmentUrl String?                    @map("attachment_url")
-  submittedAt   DateTime?                  @map("submitted_at")
-  gradingStatus SubmissionGradingStatus    @default(ungraded) @map("grading_status")
-  score         Decimal?                   @db.Decimal(5, 2)
-  feedback      String?
-  gradedAt      DateTime?                  @map("graded_at")
-  gradedBy      String?                    @map("graded_by")
-  grader        User?                      @relation("SubmissionGrader", fields: [gradedBy], references: [id], onDelete: SetNull)
-  createdAt     DateTime                   @default(now()) @map("created_at")
-  updatedAt     DateTime                   @updatedAt @map("updated_at")
+  id                String                     @id @default(uuid())
+  assignmentId      String                     @map("assignment_id")
+  assignment        Assignment                 @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  studentId         String                     @map("student_id")
+  student           User                       @relation("SubmissionStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  status            AssignmentSubmissionStatus
+  response          String?
+  attachmentUrl     String?                    @map("attachment_url")
+  /// P64 Phase 3 — the protected attachment (S12): a media asset the
+  /// student uploaded themselves into the protected tier. `attachmentUrl`
+  /// stays for submissions made before Phase 3.
+  attachmentAssetId String?                    @map("attachment_asset_id")
+  attachmentAsset   MediaAsset?                @relation("SubmissionAttachment", fields: [attachmentAssetId], references: [id], onDelete: SetNull)
+  isLate            Boolean                    @default(false) @map("is_late")
+  draftResponse     String?                    @map("draft_response")
+  draftSavedAt      DateTime?                  @map("draft_saved_at")
+  submittedRevision Int                        @default(0) @map("submitted_revision")
+  submittedAt       DateTime?                  @map("submitted_at")
+  gradingStatus     SubmissionGradingStatus    @default(ungraded) @map("grading_status")
+  score             Decimal?                   @db.Decimal(5, 2)
+  feedback          String?
+  gradedAt          DateTime?                  @map("graded_at")
+  gradedBy          String?                    @map("graded_by")
+  grader            User?                      @relation("SubmissionGrader", fields: [gradedBy], references: [id], onDelete: SetNull)
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
 
   @@unique([assignmentId, studentId])
   @@map("assignment_submissions")
@@ -2076,6 +2246,196 @@ enum SubmissionGradingStatus {
   graded
 
   @@map("submission_grading_status")
+}
+
+/// P64 Phase 3 — manual-grading state of a quiz attempt (essay questions).
+enum AttemptGradingStatus {
+  not_required
+  pending
+  graded
+
+  @@map("attempt_grading_status")
+}
+
+/// P64 Phase 3 (AD-9) — browser integrity signals recorded with BOTH the
+/// client's timestamp and the server's. Detection tier: advisory, never
+/// changes a score by itself; escalation acts only at configured thresholds.
+model QuizAttemptEvent {
+  id        String               @id @default(uuid())
+  attemptId String               @map("attempt_id")
+  attempt   QuizAttempt          @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  type      QuizAttemptEventType
+  /// Whether this event counted toward the violation threshold (after
+  /// debounce, warm-up and the sub-second visibility filter).
+  counted   Boolean              @default(false)
+  clientAt  DateTime?            @map("client_at")
+  serverAt  DateTime             @default(now()) @map("server_at")
+  payload   Json?
+
+  @@index([attemptId, serverAt])
+  @@index([serverAt])
+  @@map("quiz_attempt_events")
+}
+
+enum QuizAttemptEventType {
+  visibility_hidden
+  visibility_visible
+  blur
+  focus
+  fullscreen_exit
+  fullscreen_enter
+  copy
+  paste
+  cut
+  contextmenu
+  print
+  heartbeat
+  second_session
+  device_change
+  warning_acknowledged
+
+  @@map("quiz_attempt_event_type")
+}
+
+/// P64 Phase 3 (AD-8) — the materialised result of a quiz for a student,
+/// aggregated over their finalised attempts by the quiz's grading policy.
+/// This is what completion rules and certificates read (never a single
+/// attempt), so a retake changes the row only as the policy allows.
+model QuizResult {
+  id                 String   @id @default(uuid())
+  quizId             String   @map("quiz_id")
+  quiz               Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  studentId          String   @map("student_id")
+  student            User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  attemptsCount      Int      @default(0) @map("attempts_count")
+  bestScore          Decimal? @map("best_score") @db.Decimal(5, 2)
+  latestScore        Decimal? @map("latest_score") @db.Decimal(5, 2)
+  effectiveScore     Decimal? @map("effective_score") @db.Decimal(5, 2)
+  passed             Boolean  @default(false)
+  effectiveAttemptId String?  @map("effective_attempt_id")
+  pendingGrading     Boolean  @default(false) @map("pending_grading")
+  computedAt         DateTime @default(now()) @map("computed_at")
+
+  @@unique([quizId, studentId])
+  @@index([studentId])
+  @@map("quiz_results")
+}
+
+/// P64 Phase 3 — per-student accommodations set by reviewers.
+model QuizStudentOverride {
+  id             String    @id @default(uuid())
+  quizId         String    @map("quiz_id")
+  quiz           Quiz      @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  studentId      String    @map("student_id")
+  student        User      @relation("QuizOverrideStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  timeMultiplier Decimal   @default(1) @map("time_multiplier") @db.Decimal(4, 2)
+  extraAttempts  Int       @default(0) @map("extra_attempts")
+  availableFrom  DateTime? @map("available_from")
+  availableUntil DateTime? @map("available_until")
+  reason         String?
+  createdById    String    @map("created_by")
+  createdBy      User      @relation("QuizOverrideCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([quizId, studentId])
+  @@map("quiz_student_overrides")
+}
+
+/// P64 Phase 3 (D6) — the academy's certificate identity on top of the
+/// platform-standard layout: logo, signature, signatory, wording per
+/// locale. Versioned so an issued certificate can name the exact template
+/// it was rendered from.
+model CertificateTemplate {
+  id             String   @id @default(uuid())
+  academyId      String   @map("academy_id")
+  academy        Academy  @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  name           String
+  logoUrl        String?  @map("logo_url")
+  signatureUrl   String?  @map("signature_url")
+  signatoryName  String?  @map("signatory_name")
+  signatoryTitle String?  @map("signatory_title")
+  /// `{ en: { title, body }, ar: { title, body } }`
+  wording        Json     @default("{}")
+  version        Int      @default(1)
+  isDefault      Boolean  @default(false) @map("is_default")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  courses Course[]
+
+  @@index([academyId, isDefault])
+  @@map("certificate_templates")
+}
+
+enum CertificateState {
+  issued
+  revoked
+
+  @@map("certificate_state")
+}
+
+enum CertificateRenderStatus {
+  pending
+  ready
+  failed
+
+  @@map("certificate_render_status")
+}
+
+/// P64 Phase 3 (D6, D7) — one certificate per enrollment. `snapshot` is
+/// the immutable issuance record (learner, course, academy, instructors,
+/// completion date, score summary, template version); a later retake
+/// never touches it, and regeneration is an explicit action that bumps
+/// `version` while keeping the serial and verification code.
+model Certificate {
+  id               String                  @id @default(uuid())
+  academyId        String                  @map("academy_id")
+  academy          Academy                 @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  courseId         String                  @map("course_id")
+  course           Course                  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  enrollmentId     String                  @unique @map("enrollment_id")
+  enrollment       Enrollment              @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  studentId        String                  @map("student_id")
+  student          User                    @relation("CertificateStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  serial           String
+  verificationCode String                  @unique @map("verification_code")
+  status           CertificateState        @default(issued)
+  snapshot         Json
+  templateId       String?                 @map("template_id")
+  templateVersion  Int                     @default(1) @map("template_version")
+  version          Int                     @default(1)
+  locale           String                  @default("en")
+  issuedAt         DateTime                @default(now()) @map("issued_at")
+  issuedById       String?                 @map("issued_by")
+  issuedBy         User?                   @relation("CertificateIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+  revokedAt        DateTime?               @map("revoked_at")
+  revokedById      String?                 @map("revoked_by")
+  revokedBy        User?                   @relation("CertificateRevoker", fields: [revokedById], references: [id], onDelete: SetNull)
+  revokeReason     String?                 @map("revoke_reason")
+  renderStatus     CertificateRenderStatus @default(pending) @map("render_status")
+  storageKey       String?                 @map("storage_key")
+  renderedAt       DateTime?               @map("rendered_at")
+  renderError      String?                 @map("render_error")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  @@unique([academyId, serial])
+  @@index([studentId])
+  @@index([academyId, issuedAt(sort: Desc)])
+  @@index([courseId])
+  @@map("certificates")
+}
+
+/// P64 Phase 3 — per-academy, per-year serial allocator (`WDA-2026-000123`).
+model CertificateSerialCounter {
+  academyId String  @map("academy_id")
+  academy   Academy @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  year      Int
+  nextValue Int     @default(1) @map("next_value")
+
+  @@id([academyId, year])
+  @@map("certificate_serial_counters")
 }
 
 // ---------------------------------------------------------------------------
@@ -2620,15 +2980,18 @@ model MediaAsset {
   /// `VideoDurationSource`. Null while a reservation still holds a
   /// declared maximum rather than a real figure.
   durationSource   VideoDurationSource?  @map("duration_source")
+  /// P64 Phase 3 (S12) — who uploaded this object (students' submission attachments); null for staff/library uploads made before Phase 3.
+  uploadedByUserId String?               @map("uploaded_by_user_id")
   course           Course?               @relation(fields: [courseId], references: [id], onDelete: SetNull)
 
   /// Phase 12 — set when this asset was imported from a session recording.
   liveSessionRecordingFiles LiveSessionRecordingFile[]
 
   /// P64 Phase 2 — the protected payloads that point at this asset.
-  lessonContents  LessonContent[]
-  lessonResources LessonResource[]
-  lessonVideoFor  CourseLesson[]
+  lessonContents        LessonContent[]
+  lessonResources       LessonResource[]
+  lessonVideoFor        CourseLesson[]
+  submissionAttachments AssignmentSubmission[] @relation("SubmissionAttachment")
 
   @@index([academyId, status, type])
   /// P64 Phase 2 — the quota query: every ready-or-reserved video for one
@@ -2638,6 +3001,7 @@ model MediaAsset {
   /// P64 Phase 2 — "which of this academy's videos are on which tier",
   /// the query a tier migration and the staff library both need.
   @@index([academyId, securityTier])
+  @@index([uploadedByUserId])
   @@map("media_assets")
 }
 

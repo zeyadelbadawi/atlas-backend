@@ -29,6 +29,11 @@ export const EMAIL_TEMPLATE_KEYS = [
   // only; students are not emailed, because attending a session does not
   // grant access to its recording.
   'live_session_recording_available',
+  // P64 Phase 3 — assessment and certificate lifecycle (EN/AR by `locale`).
+  'assignment_graded',
+  'quiz_attempt_graded',
+  'certificate_issued',
+  'certificate_revoked',
 ] as const;
 
 export type EmailTemplateKey = (typeof EMAIL_TEMPLATE_KEYS)[number];
@@ -41,7 +46,52 @@ function str(values: Record<string, unknown>, key: string, fallback = ''): strin
   return typeof value === 'string' ? value : fallback;
 }
 
+/** P64 Phase 3 — the learner's preferred locale, when the caller knows it. */
+function isArabic(values: Record<string, unknown>): boolean {
+  return str(values, 'locale') === 'ar';
+}
+
 const TEMPLATES: Record<EmailTemplateKey, TemplateRenderer> = {
+  assignment_graded: (v) =>
+    isArabic(v)
+      ? {
+          subject: 'تم تقييم واجبك',
+          text: `تم تقييم واجبك "${str(v, 'assignmentTitle')}"${str(v, 'score') ? ` بدرجة ${str(v, 'score')}` : ''}. افتح لوحة التعلم لقراءة الملاحظات.`,
+        }
+      : {
+          subject: 'Your assignment has been graded',
+          text: `Your assignment "${str(v, 'assignmentTitle')}" has been graded${str(v, 'score') ? ` with a score of ${str(v, 'score')}` : ''}. Open your learning dashboard to read the feedback.`,
+        },
+  quiz_attempt_graded: (v) =>
+    isArabic(v)
+      ? {
+          subject: 'اكتمل تقييم اختبارك',
+          text: `اكتمل تقييم اختبارك "${str(v, 'quizTitle')}". افتح لوحة التعلم لمشاهدة النتيجة.`,
+        }
+      : {
+          subject: 'Your quiz has been graded',
+          text: `Grading of your quiz "${str(v, 'quizTitle')}" is complete. Open your learning dashboard to see the result.`,
+        },
+  certificate_issued: (v) =>
+    isArabic(v)
+      ? {
+          subject: 'شهادتك جاهزة',
+          text: `تهانينا — صدرت شهادة إتمام دورة "${str(v, 'courseTitle')}" من ${str(v, 'academyName')}. يمكنك تنزيلها من قسم الشهادات في لوحة التعلم. رقم التحقق: ${str(v, 'verificationCode')}.`,
+        }
+      : {
+          subject: 'Your certificate is ready',
+          text: `Congratulations — your certificate for "${str(v, 'courseTitle')}" from ${str(v, 'academyName')} has been issued. Download it from the Certificates section of your learning dashboard. Verification code: ${str(v, 'verificationCode')}.`,
+        },
+  certificate_revoked: (v) =>
+    isArabic(v)
+      ? {
+          subject: 'تم إلغاء شهادة',
+          text: `تم إلغاء شهادتك لدورة "${str(v, 'courseTitle')}" من ${str(v, 'academyName')}. تواصل مع الأكاديمية إذا كان لديك استفسار.`,
+        }
+      : {
+          subject: 'A certificate was revoked',
+          text: `Your certificate for "${str(v, 'courseTitle')}" from ${str(v, 'academyName')} has been revoked. Contact the academy if you have a question about this.`,
+        },
   live_session_recording_available: (v) => ({
     subject: 'Your session recording is ready',
     text: `The recording for "${str(v, 'title')}" has finished processing and is now in your academy's media library.`,

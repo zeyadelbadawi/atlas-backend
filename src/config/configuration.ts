@@ -116,6 +116,16 @@ export interface LearningFeatureFlags {
   readonly devicesPolicy: FeatureFlagConfig;
   readonly learnerDashboardV2: FeatureFlagConfig;
   readonly playerV2: FeatureFlagConfig;
+  /** P64 Phase 3 (§S) — engine v2, integrity layer, certificates. */
+  readonly quizEngineV2: FeatureFlagConfig;
+  readonly quizIntegrity: FeatureFlagConfig;
+  readonly certificates: FeatureFlagConfig;
+}
+
+/** P64 Phase 3 (§D.6) — certificate delivery settings. */
+export interface CertificatesConfig {
+  /** Signed download link lifetime; a distinct purpose from content presigns. */
+  readonly linkTtlSeconds: number;
 }
 
 /**
@@ -479,6 +489,19 @@ export default () => {
       env.FLAG_LEARNER_DASHBOARD_V2_ACADEMY_IDS,
     ),
     playerV2: readFlag(env.FLAG_PLAYER_V2_MODE, env.FLAG_PLAYER_V2_ACADEMY_IDS),
+    quizEngineV2: readFlag(
+      env.FLAG_QUIZ_ENGINE_V2_MODE,
+      env.FLAG_QUIZ_ENGINE_V2_ACADEMY_IDS,
+    ),
+    quizIntegrity: readFlag(
+      env.FLAG_QUIZ_INTEGRITY_MODE,
+      env.FLAG_QUIZ_INTEGRITY_ACADEMY_IDS,
+    ),
+    certificates: readFlag(env.FLAG_CERTIFICATES_MODE, env.FLAG_CERTIFICATES_ACADEMY_IDS),
+  };
+
+  const certificates: CertificatesConfig = {
+    linkTtlSeconds: Number(env.CERTIFICATE_LINK_TTL_SECONDS ?? 3600),
   };
 
   const protectedMedia: ProtectedMediaConfig = {
@@ -546,6 +569,7 @@ export default () => {
     identity,
     media,
     learningFeatureFlags,
+    certificates,
     protectedMedia,
     video,
     basicVideo,

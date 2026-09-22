@@ -21,6 +21,7 @@
  * academy filter and RLS agree: the filter narrows to one academy, RLS
  * independently refuses anything that is not theirs.
  */
+import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -42,7 +43,10 @@ const DEADLINE_HORIZON_DAYS = 30;
 
 @Injectable()
 export class LearnerDashboardService {
-  constructor(private readonly tenancyContextService: TenancyContextService) {}
+  constructor(
+    private readonly tenancyContextService: TenancyContextService,
+    private readonly featureFlags: FeatureFlagsService,
+  ) {}
 
   async getOverview(userId: string, academyId: string): Promise<LearnerOverviewResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
@@ -123,6 +127,15 @@ export class LearnerDashboardService {
         .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
         .slice(0, OVERVIEW_LIMIT);
 
+      const certificatesEnabled = this.featureFlags.isEnabledForAcademy(
+        'certificates',
+        academyId,
+      );
+      const issuedCertificates = certificatesEnabled
+        ? await tx.certificate.count({
+            where: { studentId: userId, academyId, status: 'issued' },
+          })
+        : 0;
       return {
         academyId,
         continueLearning: continueLearning.map((item) => ({
@@ -145,7 +158,10 @@ export class LearnerDashboardService {
         announcements,
         // Phase 3 owns certificates. Saying so explicitly is the honest
         // shape: an empty array alone would read as "you have earned none".
-        certificates: { available: false, count: 0 },
+        certificates: {
+          available: certificatesEnabled,
+          count: certificatesEnabled ? issuedCertificates : 0,
+        },
       };
     });
   }

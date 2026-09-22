@@ -38,12 +38,15 @@ import { PasswordResetEmailProducer } from './queue/password-reset-email.produce
 import { PasswordResetEmailProcessor } from './queue/password-reset-email.processor';
 import { PASSWORD_RESET_EMAIL_QUEUE } from './queue/password-reset-email.types';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.types';
 import { AcademySurfaceService } from './services/academy-surface.service';
 
 @Module({
   imports: [
     AuthCoreModule,
     BullModule.registerQueue({ name: PASSWORD_RESET_EMAIL_QUEUE }),
+    // P64 Phase 3 — account deletion enqueues certificate anonymisation.
+    BullModule.registerQueue({ name: CERTIFICATE_JOBS_QUEUE }),
     // One-directional: identity needs `UserOrganizationsService` to
     // populate `CurrentUser.organizations`. `TenancyModule` itself only
     // depends on `AuthCoreModule` (never on `IdentityModule`), so this

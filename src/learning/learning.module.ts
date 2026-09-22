@@ -99,6 +99,18 @@ import { QuizzesRepository } from './repositories/quizzes.repository';
 import { AssignmentsRepository } from './repositories/assignments.repository';
 import { StudentResultsService } from './services/student-results.service';
 import { StudentResultsRepository } from './repositories/student-results.repository';
+// --- P64 Phase 3 ---
+import { QuizAttemptsRepository } from './repositories/quiz-attempts.repository';
+import {
+  CourseCompletionRuleController,
+  LearnerCompletionController,
+} from './controllers/course-completion.controller';
+import { QuizAttemptEngineService } from './services/quiz-attempt-engine.service';
+import { CourseCompletionService } from './services/course-completion.service';
+import { QuizDeadlineProducer } from './queue/quiz-deadline.producer';
+import { QuizDeadlineProcessor } from './queue/quiz-deadline.processor';
+import { QUIZ_DEADLINE_QUEUE } from './queue/quiz-deadline.types';
+import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.types';
 
 @Module({
   imports: [
@@ -118,6 +130,10 @@ import { StudentResultsRepository } from './repositories/student-results.reposit
     // poll (§D.4). Both were implemented with no caller; this is what
     // makes them actually run.
     BullModule.registerQueue({ name: PHASE2_MAINTENANCE_QUEUE }),
+    // P64 Phase 3 — delayed auto-submit jobs, and the certificate queue the
+    // completion evaluator enqueues into (processed by CertificatesModule).
+    BullModule.registerQueue({ name: QUIZ_DEADLINE_QUEUE }),
+    BullModule.registerQueue({ name: CERTIFICATE_JOBS_QUEUE }),
   ],
   controllers: [
     CourseDiscoveryController,
@@ -136,6 +152,8 @@ import { StudentResultsRepository } from './repositories/student-results.reposit
     LearnerDashboardController,
     LearnerSessionController,
     AcademyProtectionController,
+    LearnerCompletionController,
+    CourseCompletionRuleController,
   ],
   providers: [
     CourseDiscoveryService,
@@ -167,8 +185,19 @@ import { StudentResultsRepository } from './repositories/student-results.reposit
     Phase2MaintenanceService,
     Phase2MaintenanceScheduler,
     Phase2MaintenanceProcessor,
+    // P64 Phase 3
+    QuizAttemptsRepository,
+    QuizAttemptEngineService,
+    CourseCompletionService,
+    QuizDeadlineProducer,
+    QuizDeadlineProcessor,
   ],
   exports: [
+    ContentGrantSigner,
+    QuizAttemptEngineService,
+    CourseCompletionService,
+    QuizAttemptsRepository,
+    QuizzesRepository,
     EnrollmentsService,
     EnrollmentsRepository,
     // P64 Phase 2 — `AcademyStudentsService.block` and the enrollment

@@ -220,7 +220,10 @@ describe('Course/Lesson Progress (e2e)', () => {
       .expect(201);
 
     expect(final.body.completionState).toBe('completed');
-    expect(final.body.certificateStatus).toBe('eligible');
+    // P64 Phase 3 (AD-11, D6): eligibility now means a certificate can be
+    // issued, which needs certificates enabled on the course (and the rollout
+    // flag); a course that never enabled them reports `unavailable` honestly.
+    expect(final.body.certificateStatus).toBe('unavailable');
     expect(final.body.percentage).toBe(100);
 
     const enrollment = await request(app.getHttpServer())

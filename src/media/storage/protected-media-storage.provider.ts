@@ -150,6 +150,25 @@ export class ProtectedMediaStorage implements OnModuleInit {
    * this clamp catches, and the environment variable is already capped at
    * one hour by `env.validation.ts`.
    */
+  /**
+   * P64 Phase 3 — a presign whose lifetime is a DIFFERENT purpose from a
+   * lesson-content grant: certificate downloads (one hour, capped at one
+   * hour by `env.validation.ts`). Never used for lesson content, whose
+   * TTL stays the grant signer's business.
+   */
+  presignGetWithTtl(key: string, ttlSeconds: number): Promise<string> {
+    const expiresIn = Math.max(60, Math.min(Math.floor(ttlSeconds), 3600));
+    return getSignedUrl(
+      this.client,
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ResponseCacheControl: 'private, no-store',
+      }),
+      { expiresIn },
+    );
+  }
+
   presignGet(key: string, ttlSeconds?: number): Promise<string> {
     const expiresIn = Math.min(
       ttlSeconds ?? this.defaultTtlSeconds,
