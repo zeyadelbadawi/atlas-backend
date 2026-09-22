@@ -36,6 +36,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import type { MediaAsset, Prisma, VideoSecurityTier } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
@@ -86,6 +87,7 @@ export class ProtectedMediaService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly entitlementEnforcementService: EntitlementEnforcementService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
     private readonly storage: ProtectedMediaStorage,
@@ -97,6 +99,86 @@ export class ProtectedMediaService {
     configService: ConfigService,
   ) {
     this.config = configService.getOrThrow<ProtectedMediaConfig>('protectedMedia');
+  }
+
+  /**
+   * P64 Phase 3 (S12) — a STUDENT's assignment attachment into the
+   * protected tier. Authorization here is the student's own active,
+   * unblocked membership of the academy (the same rule
+   * `MediaService.uploadForSubmission` applied to the public tier); the
+   * caller has already proven the active enrollment. The object is keyed
+   * under `submissions/<studentId>/` and the row records the uploader, so
+   * "must be a protected asset uploaded by the student" is a database
+   * fact the submit path re-checks, never a convention.
+   */
+  async uploadSubmissionAttachment(
+    academyId: string,
+    organizationId: string,
+    studentUserId: string,
+    courseId: string,
+    input: UploadProtectedFileInput,
+  ): Promise<MediaAsset> {
+    const buffer = decodeBase64Payload(input.file);
+    if (buffer.length > this.config.maxUploadBytes) {
+      throw new BadRequestException({
+        messageKey: 'errors.media.fileTooLarge',
+        details: { maxBytes: this.config.maxUploadBytes },
+      });
+    }
+    const kind = detectFileKind(buffer);
+    if (!kind) {
+      throw new BadRequestException({ messageKey: 'errors.media.unsupportedFileType' });
+    }
+    await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      studentUserId,
+      async (tx) => {
+        const membership = await this.academyStudentsRepository.findForUserInAcademy(
+          tx,
+          academyId,
+          studentUserId,
+        );
+        if (!membership || membership.status !== 'active' || membership.blockedAt) {
+          throw new ForbiddenException({
+            messageKey: 'errors.enrollment.academyMembershipRequired',
+          });
+        }
+        await this.entitlementEnforcementService.assertStorageWithinLimit(
+          tx,
+          organizationId,
+          kind.assetType === 'video' ? 'videoStorage' : 'generalStorage',
+          buffer.length,
+        );
+      },
+    );
+
+    const id = randomUUID();
+    const storageKey = `academies/${academyId}/submissions/${studentUserId}/${id}.${kind.extension}`;
+    await this.storage.putObject(storageKey, buffer, kind.mimeType);
+
+    const asset = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) =>
+        tx.mediaAsset.create({
+          data: {
+            id,
+            academyId,
+            type: kind.assetType,
+            fileName: sanitizeFileName(input.fileName),
+            storageKey,
+            url: '',
+            mimeType: kind.mimeType,
+            sizeBytes: BigInt(buffer.length),
+            access: 'protected',
+            provider: 'r2',
+            processingStatus: 'ready',
+            courseId,
+            uploadedByUserId: studentUserId,
+          },
+        }),
+    );
+    await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
+    return asset;
   }
 
   async uploadProtectedFile(
@@ -312,8 +394,7 @@ export class ProtectedMediaService {
         // FINDING D-4 — an adapter with no webhook will never be told the
         // upload finished, so the client has to say so. Reported here
         // rather than inferred, so the uploader knows which call to make.
-        requiresCompletionCall: !provider.capabilities()
-          .reportsReadinessAsynchronously,
+        requiresCompletionCall: !provider.capabilities().reportsReadinessAsynchronously,
       };
     } catch (error) {
       // RELEASE THE RESERVATION. The quota was consumed for an upload that
@@ -374,7 +455,9 @@ export class ProtectedMediaService {
       // by a client claiming the upload is done — that would let an
       // uploader mark an asset ready before the provider had finished
       // processing it, and the first learner would get a broken player.
-      throw new BadRequestException({ messageKey: 'errors.media.completionNotApplicable' });
+      throw new BadRequestException({
+        messageKey: 'errors.media.completionNotApplicable',
+      });
     }
 
     const head = await this.storage.headObject(asset.providerId);

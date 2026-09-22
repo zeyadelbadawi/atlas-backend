@@ -53,7 +53,10 @@ export class ContentAccessLogRepository {
    * surfaced in the application log instead, where it is visible without
    * being load-bearing.
    */
-  async record(tx: Prisma.TransactionClient, entry: ContentAccessLogEntry): Promise<void> {
+  async record(
+    tx: Prisma.TransactionClient,
+    entry: ContentAccessLogEntry,
+  ): Promise<void> {
     try {
       // `createMany`, not `create`.
       //

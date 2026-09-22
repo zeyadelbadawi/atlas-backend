@@ -1,4 +1,3 @@
-/** `Assignment` response contract — matches `assignment.types.ts` field-for-field. */
 import type { Assignment as PrismaAssignment } from '@prisma/client';
 
 export interface AssignmentResponse {
@@ -12,6 +11,9 @@ export interface AssignmentResponse {
   readonly status: PrismaAssignment['status'];
   readonly dueAt?: string;
   readonly allowResubmission: boolean;
+  /** P64 Phase 3 — `block` refuses late work; `accept_flagged` accepts and marks it late. */
+  readonly latePolicy: PrismaAssignment['latePolicy'];
+  readonly requiredForCompletion: boolean;
 }
 
 export function toAssignmentResponse(assignment: PrismaAssignment): AssignmentResponse {
@@ -26,5 +28,7 @@ export function toAssignmentResponse(assignment: PrismaAssignment): AssignmentRe
     status: assignment.status,
     dueAt: assignment.dueAt?.toISOString(),
     allowResubmission: assignment.allowResubmission,
+    latePolicy: assignment.latePolicy,
+    requiredForCompletion: assignment.requiredForCompletion,
   };
 }

@@ -10,9 +10,13 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Header,
+  HttpCode,
   Param,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -22,6 +26,16 @@ import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { InstructorService } from '../services/instructor.service';
 import { GradeSubmissionDto } from '../dto/grade-submission.dto';
+import { QuizReviewService } from '../services/quiz-review.service';
+import {
+  GradeQuizAttemptDto,
+  InvalidateQuizAttemptDto,
+  QuizStudentOverrideDto,
+} from '../../learning/dto/quiz-attempt-engine.dto';
+import type {
+  QuizAttemptReviewResponse,
+  QuizStudentOverrideResponse,
+} from '../dto/quiz-review.contract';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type {
   AssignmentSubmissionReviewResponse,
@@ -41,7 +55,10 @@ import type { PaginatedResult } from '../../common/dto/pagination.contract';
 @Controller(['instructor', 'review'])
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
 export class InstructorController {
-  constructor(private readonly instructorService: InstructorService) {}
+  constructor(
+    private readonly instructorService: InstructorService,
+    private readonly quizReview: QuizReviewService,
+  ) {}
 
   @Get('dashboard')
   async getDashboard(
@@ -155,5 +172,108 @@ export class InstructorController {
       submissionId,
       body,
     );
+  }
+  // --- P64 Phase 3 — quiz review (§E.7) -------------------------------------
+
+  @Get('courses/:id/quizzes/:quizId/attempts/:attemptId')
+  async getQuizAttempt(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+    @Param('attemptId') attemptId: string,
+  ): Promise<QuizAttemptReviewResponse> {
+    return this.quizReview.getAttempt(
+      request.authContext!.userId,
+      courseId,
+      quizId,
+      attemptId,
+    );
+  }
+
+  @Post('courses/:id/quizzes/:quizId/attempts/:attemptId/grade')
+  @HttpCode(200)
+  async gradeQuizAttempt(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+    @Param('attemptId') attemptId: string,
+    @Body() body: GradeQuizAttemptDto,
+  ): Promise<QuizAttemptReviewResponse> {
+    return this.quizReview.gradeAttempt(
+      request.authContext!.userId,
+      courseId,
+      quizId,
+      attemptId,
+      body,
+    );
+  }
+
+  @Post('courses/:id/quizzes/:quizId/attempts/:attemptId/invalidate')
+  @HttpCode(200)
+  async invalidateQuizAttempt(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+    @Param('attemptId') attemptId: string,
+    @Body() body: InvalidateQuizAttemptDto,
+  ): Promise<QuizAttemptReviewResponse> {
+    return this.quizReview.invalidateAttempt(
+      request.authContext!.userId,
+      courseId,
+      quizId,
+      attemptId,
+      body,
+    );
+  }
+
+  @Get('courses/:id/quizzes/:quizId/overrides')
+  async listQuizOverrides(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+  ): Promise<QuizStudentOverrideResponse[]> {
+    return this.quizReview.listOverrides(request.authContext!.userId, courseId, quizId);
+  }
+
+  @Put('courses/:id/quizzes/:quizId/overrides')
+  async upsertQuizOverride(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+    @Body() body: QuizStudentOverrideDto,
+  ): Promise<QuizStudentOverrideResponse> {
+    return this.quizReview.upsertOverride(
+      request.authContext!.userId,
+      courseId,
+      quizId,
+      body,
+    );
+  }
+
+  @Delete('courses/:id/quizzes/:quizId/overrides/:studentId')
+  @HttpCode(204)
+  async deleteQuizOverride(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+    @Param('studentId') studentId: string,
+  ): Promise<void> {
+    await this.quizReview.deleteOverride(
+      request.authContext!.userId,
+      courseId,
+      quizId,
+      studentId,
+    );
+  }
+
+  @Get('courses/:id/quizzes/:quizId/integrity.csv')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Cache-Control', 'private, no-store')
+  async integrityCsv(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+  ): Promise<string> {
+    return this.quizReview.integrityCsv(request.authContext!.userId, courseId, quizId);
   }
 }

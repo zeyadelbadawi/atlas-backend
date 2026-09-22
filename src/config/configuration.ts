@@ -88,8 +88,6 @@ export interface SurfaceEnforcementConfig {
   readonly academyIds: readonly string[];
 }
 
-
-
 /**
  * One rollout flag, in the shape `SurfaceEnforcementConfig` already
  * proved: `on` everywhere, `off` nowhere, `allowlist` for the named
@@ -118,6 +116,16 @@ export interface LearningFeatureFlags {
   readonly devicesPolicy: FeatureFlagConfig;
   readonly learnerDashboardV2: FeatureFlagConfig;
   readonly playerV2: FeatureFlagConfig;
+  /** P64 Phase 3 (§S) — engine v2, integrity layer, certificates. */
+  readonly quizEngineV2: FeatureFlagConfig;
+  readonly quizIntegrity: FeatureFlagConfig;
+  readonly certificates: FeatureFlagConfig;
+}
+
+/** P64 Phase 3 (§D.6) — certificate delivery settings. */
+export interface CertificatesConfig {
+  /** Signed download link lifetime; a distinct purpose from content presigns. */
+  readonly linkTtlSeconds: number;
 }
 
 /**
@@ -481,6 +489,19 @@ export default () => {
       env.FLAG_LEARNER_DASHBOARD_V2_ACADEMY_IDS,
     ),
     playerV2: readFlag(env.FLAG_PLAYER_V2_MODE, env.FLAG_PLAYER_V2_ACADEMY_IDS),
+    quizEngineV2: readFlag(
+      env.FLAG_QUIZ_ENGINE_V2_MODE,
+      env.FLAG_QUIZ_ENGINE_V2_ACADEMY_IDS,
+    ),
+    quizIntegrity: readFlag(
+      env.FLAG_QUIZ_INTEGRITY_MODE,
+      env.FLAG_QUIZ_INTEGRITY_ACADEMY_IDS,
+    ),
+    certificates: readFlag(env.FLAG_CERTIFICATES_MODE, env.FLAG_CERTIFICATES_ACADEMY_IDS),
+  };
+
+  const certificates: CertificatesConfig = {
+    linkTtlSeconds: Number(env.CERTIFICATE_LINK_TTL_SECONDS ?? 3600),
   };
 
   const protectedMedia: ProtectedMediaConfig = {
@@ -499,7 +520,8 @@ export default () => {
     playbackTtlSeconds: Number(env.BASIC_VIDEO_PLAYBACK_TTL_SECONDS ?? 600),
     revocationEndpoint: env.BASIC_VIDEO_REVOCATION_ENDPOINT || undefined,
     revocationToken: env.BASIC_VIDEO_REVOCATION_TOKEN || undefined,
-    allowedOriginsConfigured: (env.BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED ?? 'false') === 'true',
+    allowedOriginsConfigured:
+      (env.BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED ?? 'false') === 'true',
   };
 
   const video: VideoProviderConfig = {
@@ -547,6 +569,7 @@ export default () => {
     identity,
     media,
     learningFeatureFlags,
+    certificates,
     protectedMedia,
     video,
     basicVideo,

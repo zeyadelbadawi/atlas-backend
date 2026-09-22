@@ -71,6 +71,9 @@ export class FeatureFlagsService {
       devicesPolicy: this.flag('devicesPolicy'),
       learnerDashboardV2: this.flag('learnerDashboardV2'),
       playerV2: this.flag('playerV2'),
+      quizEngineV2: this.flag('quizEngineV2'),
+      quizIntegrity: this.flag('quizIntegrity'),
+      certificates: this.flag('certificates'),
     };
   }
 }

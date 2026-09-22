@@ -106,7 +106,11 @@ class TestStreamProvider extends CloudflareStreamProvider {
   createDirectUpload(): Promise<CreatedDirectUpload> {
     providerCalls.stream += 1;
     const providerId = `cfuid${randomUUID().replace(/-/g, '')}`;
-    this.assets.set(providerId, { providerId, status: 'processing', durationSeconds: null });
+    this.assets.set(providerId, {
+      providerId,
+      status: 'processing',
+      durationSeconds: null,
+    });
     return Promise.resolve({
       providerId,
       uploadUrl: `https://upload.videodelivery.net/${providerId}`,
@@ -154,6 +158,9 @@ const flags: { value: LearningFeatureFlags } = {
     devicesPolicy: { mode: 'on', academyIds: [] },
     learnerDashboardV2: { mode: 'on', academyIds: [] },
     playerV2: { mode: 'on', academyIds: [] },
+    quizEngineV2: { mode: 'on', academyIds: [] },
+    quizIntegrity: { mode: 'on', academyIds: [] },
+    certificates: { mode: 'on', academyIds: [] },
   },
 };
 
@@ -191,7 +198,9 @@ describe('P64 Phase 2 — videoStorageMinutes quota (e2e)', () => {
         builder
           .overrideProvider(FeatureFlagsService)
           .useValue(
-            new FeatureFlagsService({ get: () => flags.value } as unknown as ConfigService),
+            new FeatureFlagsService({
+              get: () => flags.value,
+            } as unknown as ConfigService),
           )
           .overrideProvider(CloudflareStreamProvider)
           .useValue(
@@ -306,7 +315,8 @@ describe('P64 Phase 2 — videoStorageMinutes quota (e2e)', () => {
         type: 'video',
         status: 'active',
         fileName: `seeded-${suffix}.mp4`,
-        storageKey: provider === 'r2_worker' ? `academies/${academyId}/${suffix}.mp4` : '',
+        storageKey:
+          provider === 'r2_worker' ? `academies/${academyId}/${suffix}.mp4` : '',
         url: '',
         mimeType: 'video/mp4',
         sizeBytes: BigInt(sizeBytes),
@@ -348,9 +358,10 @@ describe('P64 Phase 2 — videoStorageMinutes quota (e2e)', () => {
   }
 
   /** The REPORTING aggregate — the number the staff Usage page shows. */
-  async function reportedUsage(
-    w: { org: { id: string }; owner: { auth: Record<string, string> } },
-  ) {
+  async function reportedUsage(w: {
+    org: { id: string };
+    owner: { auth: Record<string, string> };
+  }) {
     await recompute.recomputeOne(w.org.id);
     const response = await request(app.getHttpServer())
       .get(`/organizations/${w.org.id}/usage`)
@@ -539,7 +550,11 @@ describe('P64 Phase 2 — videoStorageMinutes quota (e2e)', () => {
       maxDurationSeconds: 9 * 60,
       courseId: w.course.id,
     }).expect(409);
-    expect(refused.body.error.details).toMatchObject({ used: 12, quota: 20, requested: 9 });
+    expect(refused.body.error.details).toMatchObject({
+      used: 12,
+      quota: 20,
+      requested: 9,
+    });
   });
 
   it('Normal-tier video does NOT additionally consume the videoStorage gigabyte quota (D5)', async () => {
@@ -552,7 +567,9 @@ describe('P64 Phase 2 — videoStorageMinutes quota (e2e)', () => {
     }).expect(201);
     expect(await putBytes(ticket.body.uploadUrl, faststartMp4(240))).toBe(200);
     await request(app.getHttpServer())
-      .post(`/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`)
+      .post(
+        `/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
+      )
       .set(w.owner.auth)
       .expect(201);
 
@@ -586,7 +603,9 @@ describe('P64 Phase 2 — videoStorageMinutes quota (e2e)', () => {
     // The real file is four minutes, not ten.
     expect(await putBytes(ticket.body.uploadUrl, faststartMp4(240))).toBe(200);
     await request(app.getHttpServer())
-      .post(`/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`)
+      .post(
+        `/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
+      )
       .set(w.owner.auth)
       .expect(201);
 

@@ -183,7 +183,8 @@ describe('Website Builder tenant isolation (e2e) — P9-TENANT-001..006', () => 
     await request(app.getHttpServer())
       .patch(`/academies/${academyA.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${ownerA.accessToken}`)
-      .send({ sections: [
+      .send({
+        sections: [
           {
             id: 'sec-cross',
             type: 'featuredCourses',
@@ -199,7 +200,13 @@ describe('Website Builder tenant isolation (e2e) — P9-TENANT-001..006', () => 
               showInstructor: true,
             },
           },
-        ], expectedVersion: await pageVersion(academyA.id, created.body.id, ownerA.accessToken) })
+        ],
+        expectedVersion: await pageVersion(
+          academyA.id,
+          created.body.id,
+          ownerA.accessToken,
+        ),
+      })
       .expect(400);
   });
 

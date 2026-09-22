@@ -117,7 +117,12 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
        * quietly serving unprotected local URLs.
        */
       provide: VIDEO_PROVIDER,
-      inject: [ConfigService, CloudflareStreamProvider, BasicVideoProvider, FakeVideoProvider],
+      inject: [
+        ConfigService,
+        CloudflareStreamProvider,
+        BasicVideoProvider,
+        FakeVideoProvider,
+      ],
       useFactory: (
         configService: ConfigService,
         cloudflare: CloudflareStreamProvider,
@@ -141,6 +146,8 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
   // must not be (see the P53 migration's header).
   exports: [
     MediaService,
+    // P64 Phase 3 — students upload submission attachments into the protected tier.
+    ProtectedMediaService,
     MEDIA_STORAGE_PROVIDER,
     // P64 Phase 2 — `LearningModule`'s `ContentGrantSigner` signs through
     // exactly these two seams, so the grant path and the upload path can

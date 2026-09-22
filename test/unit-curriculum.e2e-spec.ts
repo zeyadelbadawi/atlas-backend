@@ -84,7 +84,9 @@ describe('Unit curriculum — unified ordering (e2e)', () => {
     const lesson = await seedCourseLesson(admin, unit1.id, course.id, 'Intro', 0, {
       status: 'published',
     });
-    const quiz = await seedQuiz(admin, course.id, 'Chapter Quiz', { status: 'published' });
+    const quiz = await seedQuiz(admin, course.id, 'Chapter Quiz', {
+      status: 'published',
+    });
     const assignment = await seedAssignment(admin, course.id, 'Homework', {
       status: 'published',
     });
@@ -138,9 +140,13 @@ describe('Unit curriculum — unified ordering (e2e)', () => {
     const { owner, academy, course } = await arrange('two-units');
     const u1 = await seedCourseSection(admin, course.id, 'U1', 0);
     const u2 = await seedCourseSection(admin, course.id, 'U2', 1);
-    const l1 = await seedCourseLesson(admin, u1.id, course.id, 'L1', 0, { status: 'published' });
+    const l1 = await seedCourseLesson(admin, u1.id, course.id, 'L1', 0, {
+      status: 'published',
+    });
     const q1 = await seedQuiz(admin, course.id, 'Q1', { status: 'published' });
-    const l2 = await seedCourseLesson(admin, u2.id, course.id, 'L2', 0, { status: 'published' });
+    const l2 = await seedCourseLesson(admin, u2.id, course.id, 'L2', 0, {
+      status: 'published',
+    });
     const q2 = await seedQuiz(admin, course.id, 'Q2', { status: 'published' });
 
     const items = (unit: string) =>
@@ -187,8 +193,12 @@ describe('Unit curriculum — unified ordering (e2e)', () => {
       .get(`${base}/available-content`)
       .set(auth(owner.accessToken))
       .expect(200);
-    expect(available.body.some((i: { id: string; sectionId: string | null }) =>
-      i.id === quiz.id && i.sectionId === null)).toBe(true);
+    expect(
+      available.body.some(
+        (i: { id: string; sectionId: string | null }) =>
+          i.id === quiz.id && i.sectionId === null,
+      ),
+    ).toBe(true);
 
     await request(app.getHttpServer())
       .post(`${base}/sections/${unit.id}/items/attach`)
@@ -224,15 +234,21 @@ describe('Unit curriculum — unified ordering (e2e)', () => {
     const base = `/academies/${academy.id}/courses/${course.id}/sections/${unit.id}/items`;
 
     await request(app.getHttpServer())
-      .post(`${base}/attach`).set(auth(owner.accessToken))
-      .send({ type: 'quiz', itemId: quiz.id }).expect(201);
+      .post(`${base}/attach`)
+      .set(auth(owner.accessToken))
+      .send({ type: 'quiz', itemId: quiz.id })
+      .expect(201);
     await request(app.getHttpServer())
-      .post(`${base}/attach`).set(auth(owner.accessToken))
-      .send({ type: 'quiz', itemId: draftQuiz.id }).expect(201);
+      .post(`${base}/attach`)
+      .set(auth(owner.accessToken))
+      .send({ type: 'quiz', itemId: draftQuiz.id })
+      .expect(201);
     // Order: quiz, lesson (draft items present but must be filtered for student)
     await request(app.getHttpServer())
-      .patch(`${base}/order`).set(auth(owner.accessToken))
-      .send({ orderedIds: [quiz.id, lesson.id, draftLesson.id, draftQuiz.id] }).expect(204);
+      .patch(`${base}/order`)
+      .set(auth(owner.accessToken))
+      .send({ orderedIds: [quiz.id, lesson.id, draftLesson.id, draftQuiz.id] })
+      .expect(204);
 
     // Enrol a real student user and read the student curriculum as them.
     const student = await signUpAndSignIn(app, 'student');
@@ -248,7 +264,9 @@ describe('Unit curriculum — unified ordering (e2e)', () => {
     const ids = section.items.map((i: { id: string }) => i.id);
     // quiz then lesson; draft lesson and draft quiz excluded; no live_session.
     expect(ids).toEqual([quiz.id, lesson.id]);
-    expect(section.items.every((i: { type: string }) => i.type !== 'live_session')).toBe(true);
+    expect(section.items.every((i: { type: string }) => i.type !== 'live_session')).toBe(
+      true,
+    );
   });
 
   it('enforces authorization, ownership and academy isolation', async () => {
@@ -258,9 +276,7 @@ describe('Unit curriculum — unified ordering (e2e)', () => {
     const base = `/academies/${academy.id}/courses/${course.id}/sections/${unit.id}/items`;
 
     // Unauthenticated -> 401.
-    await request(app.getHttpServer())
-      .get(base)
-      .expect(401);
+    await request(app.getHttpServer()).get(base).expect(401);
 
     // A different academy's owner cannot reach this course's unit.
     const outsider = await arrange('authz-outsider');

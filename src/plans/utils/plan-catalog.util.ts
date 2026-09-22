@@ -62,7 +62,9 @@ export const PLAN_TIERS: readonly PlanTier[] = ['basic', 'growth', 'enterprise']
  *
  * An Atlas entitlement, never a provider billing value.
  */
-export const PLAN_TIER_BASELINE_VIDEO_STORAGE_MINUTES: Readonly<Record<PlanTier, number>> = {
+export const PLAN_TIER_BASELINE_VIDEO_STORAGE_MINUTES: Readonly<
+  Record<PlanTier, number>
+> = {
   basic: 500,
   growth: 2_000,
   enterprise: 5_000,
@@ -183,5 +185,7 @@ export function planKeyFor(family: PlanFamily, tier: PlanTier): string {
  * two families drifting apart the next time a tier is added.
  */
 export function planKeysForTiers(tiers: readonly PlanTier[]): string[] {
-  return PLAN_FAMILIES.flatMap((family) => tiers.map((tier) => PLAN_CATALOG[family][tier].key));
+  return PLAN_FAMILIES.flatMap((family) =>
+    tiers.map((tier) => PLAN_CATALOG[family][tier].key),
+  );
 }

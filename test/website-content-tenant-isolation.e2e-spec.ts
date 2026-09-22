@@ -204,7 +204,8 @@ describe('CMS Content Library tenant isolation (e2e) — P10-TENANT-001..006', (
     await request(app.getHttpServer())
       .patch(`/academies/${academyA.id}/website/pages/${page.body.id}`)
       .set('Authorization', `Bearer ${ownerA.accessToken}`)
-      .send({ sections: [
+      .send({
+        sections: [
           {
             id: 'sec-faq-cross',
             type: 'faq',
@@ -212,7 +213,9 @@ describe('CMS Content Library tenant isolation (e2e) — P10-TENANT-001..006', (
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { items: [], libraryEntryIds: [faqB.body.id] },
           },
-        ], expectedVersion: await pageVersion(academyA.id, page.body.id, ownerA.accessToken) })
+        ],
+        expectedVersion: await pageVersion(academyA.id, page.body.id, ownerA.accessToken),
+      })
       .expect(400);
   });
 });

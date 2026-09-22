@@ -70,10 +70,14 @@ export class LearnerDashboardController {
   async devices(@Req() request: Request): Promise<LearnerDevicesResponse> {
     const academyId = await this.requireHostAcademy(request);
     const context = learningRequestContext(request);
-    return this.learnerSessionService.listDevices(request.authContext!.userId, academyId, {
-      deviceCookie: context.deviceCookie,
-      sessionId: request.authContext!.sessionId,
-    });
+    return this.learnerSessionService.listDevices(
+      request.authContext!.userId,
+      academyId,
+      {
+        deviceCookie: context.deviceCookie,
+        sessionId: request.authContext!.sessionId,
+      },
+    );
   }
 
   /**

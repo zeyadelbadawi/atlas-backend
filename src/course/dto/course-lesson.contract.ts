@@ -77,7 +77,9 @@ export function toCourseLessonResponse(
     durationSeconds: lesson.durationSeconds,
     availableAt: lesson.availableAt?.toISOString() ?? null,
     ...(options?.lockState ? { lockState: options.lockState } : {}),
-    ...(options && 'lockReason' in options ? { lockReason: options.lockReason ?? null } : {}),
+    ...(options && 'lockReason' in options
+      ? { lockReason: options.lockReason ?? null }
+      : {}),
     createdAt: lesson.createdAt.toISOString(),
     updatedAt: lesson.updatedAt.toISOString(),
   };

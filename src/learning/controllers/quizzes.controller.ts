@@ -1,13 +1,17 @@
 /**
- * QuizzesController — `courses/:id/quizzes*` (master plan §10, P6; §22/§24
- * authoring, Phase 4/P24). Same flat, course-id-scoped shape as
- * `CourseProgressController`.
+ * Quizzes — learner and authoring surfaces under `/courses/:id/quizzes`.
  *
- * Route declaration order matters, exactly like
- * `CourseCurriculumController`'s own documented precedent: the literal
- * `quizzes/authoring` route is declared BEFORE the parameterized
- * `quizzes/:quizId` route, or Nest would match "authoring" as a `quizId`
- * value for the wrong handler.
+ * Every handler is authenticated only at the route; the real authorization
+ * (enrollment, authoring rights, attempt ownership) is inside the services,
+ * re-established per request under the caller's RLS user context.
+ *
+ * P64 Phase 3 — the attempt lifecycle is served by `QuizAttemptEngineService`:
+ *   POST   …/attempts                       start or resume (returns the attempt)
+ *   GET    …/attempts/:attemptId            the session: paper, saved answers, server clock, deadline
+ *   PUT    …/attempts/:attemptId/answers    autosave (monotonic revision)
+ *   POST   …/attempts/:attemptId/submit     submit (idempotent; partial allowed under engine v2)
+ *   POST   …/attempts/:attemptId/events     integrity events (batched ≤ 50)
+ *   GET    …/attempts/:attemptId/results    results by disclosure policy
  */
 import {
   Body,
@@ -18,24 +22,39 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { QuizzesService } from '../services/quizzes.service';
-import { SubmitQuizAttemptDto } from '../dto/submit-quiz-attempt.dto';
+import { QuizAttemptEngineService } from '../services/quiz-attempt-engine.service';
 import { CreateQuizDto } from '../dto/create-quiz.dto';
 import { UpdateQuizDto } from '../dto/update-quiz.dto';
+import {
+  RecordQuizAttemptEventsDto,
+  SaveQuizAnswersDto,
+  SubmitQuizAttemptV2Dto,
+} from '../dto/quiz-attempt-engine.dto';
 import type { QuizResponse } from '../dto/quiz.contract';
 import type { QuizAuthoringResponse } from '../dto/quiz-authoring.contract';
 import type { QuizAttemptResponse } from '../dto/quiz-attempt.contract';
+import type {
+  QuizAttemptResultsResponse,
+  QuizAttemptSessionResponse,
+  RecordEventsResponse,
+  SaveAnswersResponse,
+} from '../dto/quiz-attempt-session.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('courses')
 @UseGuards(JwtAuthGuard)
 export class QuizzesController {
-  constructor(private readonly quizzesService: QuizzesService) {}
+  constructor(
+    private readonly quizzesService: QuizzesService,
+    private readonly engine: QuizAttemptEngineService,
+  ) {}
 
   @Get(':id/quizzes')
   async getQuizzes(
@@ -45,7 +64,6 @@ export class QuizzesController {
     return this.quizzesService.getQuizzes(request.authContext!.userId, courseId);
   }
 
-  /** Phase 4 — every status (draft + published), author-only. Declared before `:quizId` — see this class's own doc comment. */
   @Get(':id/quizzes/authoring')
   async getQuizzesForAuthoring(
     @Req() request: Request,
@@ -57,7 +75,6 @@ export class QuizzesController {
     );
   }
 
-  /** Phase 4 — create a quiz with its complete question/option set. */
   @Post(':id/quizzes')
   async createQuiz(
     @Req() request: Request,
@@ -76,7 +93,6 @@ export class QuizzesController {
     return this.quizzesService.getQuiz(request.authContext!.userId, courseId, quizId);
   }
 
-  /** Phase 4 — the authoring counterpart of `getQuiz`, including `isCorrect`. Author-only. */
   @Get(':id/quizzes/:quizId/authoring')
   async getQuizForAuthoring(
     @Req() request: Request,
@@ -90,7 +106,6 @@ export class QuizzesController {
     );
   }
 
-  /** Phase 4 — update a quiz. `questions`, when present, replaces the whole question/option set — see `UpdateQuizDto`'s doc comment. */
   @Patch(':id/quizzes/:quizId')
   async updateQuiz(
     @Req() request: Request,
@@ -106,7 +121,6 @@ export class QuizzesController {
     );
   }
 
-  /** Phase 4 — real SQL DELETE, cascades to questions/options/attempts. */
   @Delete(':id/quizzes/:quizId')
   @HttpCode(204)
   async deleteQuiz(
@@ -114,7 +128,7 @@ export class QuizzesController {
     @Param('id') courseId: string,
     @Param('quizId') quizId: string,
   ): Promise<void> {
-    return this.quizzesService.deleteQuiz(request.authContext!.userId, courseId, quizId);
+    await this.quizzesService.deleteQuiz(request.authContext!.userId, courseId, quizId);
   }
 
   @Get(':id/quizzes/:quizId/attempts')
@@ -127,15 +141,44 @@ export class QuizzesController {
   }
 
   @Post(':id/quizzes/:quizId/attempts')
+  @HttpCode(201)
   async startAttempt(
     @Req() request: Request,
     @Param('id') courseId: string,
     @Param('quizId') quizId: string,
   ): Promise<QuizAttemptResponse> {
-    return this.quizzesService.startAttempt(
+    return this.engine.start(request.authContext!.userId, courseId, quizId);
+  }
+
+  @Get(':id/quizzes/:quizId/attempts/:attemptId')
+  async getAttemptSession(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+    @Param('attemptId') attemptId: string,
+  ): Promise<QuizAttemptSessionResponse> {
+    return this.engine.getSession(
       request.authContext!.userId,
       courseId,
       quizId,
+      attemptId,
+    );
+  }
+
+  @Put(':id/quizzes/:quizId/attempts/:attemptId/answers')
+  async saveAnswers(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+    @Param('attemptId') attemptId: string,
+    @Body() body: SaveQuizAnswersDto,
+  ): Promise<SaveAnswersResponse> {
+    return this.engine.saveAnswers(
+      request.authContext!.userId,
+      courseId,
+      quizId,
+      attemptId,
+      body,
     );
   }
 
@@ -145,14 +188,47 @@ export class QuizzesController {
     @Param('id') courseId: string,
     @Param('quizId') quizId: string,
     @Param('attemptId') attemptId: string,
-    @Body() body: SubmitQuizAttemptDto,
+    @Body() body: SubmitQuizAttemptV2Dto,
   ): Promise<QuizAttemptResponse> {
-    return this.quizzesService.submitAttempt(
+    return this.engine.submit(
       request.authContext!.userId,
       courseId,
       quizId,
       attemptId,
       body,
+    );
+  }
+
+  @Post(':id/quizzes/:quizId/attempts/:attemptId/events')
+  @HttpCode(200)
+  async recordEvents(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+    @Param('attemptId') attemptId: string,
+    @Body() body: RecordQuizAttemptEventsDto,
+  ): Promise<RecordEventsResponse> {
+    return this.engine.recordEvents(
+      request.authContext!.userId,
+      courseId,
+      quizId,
+      attemptId,
+      body,
+    );
+  }
+
+  @Get(':id/quizzes/:quizId/attempts/:attemptId/results')
+  async getResults(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('quizId') quizId: string,
+    @Param('attemptId') attemptId: string,
+  ): Promise<QuizAttemptResultsResponse> {
+    return this.engine.getResults(
+      request.authContext!.userId,
+      courseId,
+      quizId,
+      attemptId,
     );
   }
 }

@@ -87,7 +87,9 @@ function buildService(options: {
  * arithmetic, and the lock's real behaviour is only observable against a
  * real database (`P61-GRANT-018` does that with four concurrent requests).
  */
-const tx = { $queryRaw: jest.fn().mockResolvedValue([]) } as unknown as Prisma.TransactionClient;
+const tx = {
+  $queryRaw: jest.fn().mockResolvedValue([]),
+} as unknown as Prisma.TransactionClient;
 
 describe('EntitlementEnforcementService.assertWithinLimit — the zero-delta rule', () => {
   it('1. used === limit and additionalAmount === 0 → allowed', async () => {

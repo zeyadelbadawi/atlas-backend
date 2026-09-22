@@ -1,28 +1,15 @@
-/**
- * Nested request shapes for `CreateQuizDto`/`UpdateQuizDto` (Phase 4, P24)
- * — one question with its options, authored in one atomic quiz-save
- * action (see `QuizzesService.createQuiz`'s doc comment for why quiz
- * authoring is "whole quiz, replace-all-questions" rather than granular
- * per-question CRUD like `CourseSection`/`CourseLesson`).
- *
- * `isCorrect` is real request input here — the one and only place in
- * this codebase's DTOs it legitimately appears at all (contrast
- * `quiz.contract.ts`'s `QuizQuestionOptionResponse`, which structurally
- * never carries it). Cross-field rules the scoring engine actually
- * depends on (single_choice/true_false need exactly one correct option;
- * multiple_choice needs at least one; true_false needs exactly two
- * options) are enforced in `QuizzesService`, not here — the same "a plain
- * class-validator decorator can't express this cleanly" reasoning
- * `CreateAssignmentSubmissionDto`'s own doc comment already documents.
- */
 import {
   ArrayMaxSize,
   ArrayMinSize,
   IsBoolean,
   IsIn,
+  IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -32,11 +19,26 @@ import {
   MAX_QUIZ_QUESTION_PROMPT_LENGTH,
 } from './learning.constants';
 
-const QUIZ_QUESTION_TYPE_VALUES = [
+/**
+ * P64 Phase 3 — two new question types. `short_answer` carries the accepted
+ * answers (matched normalised, never shown to the learner before the
+ * disclosure policy allows); `essay` is graded manually by a reviewer.
+ * Choice questions still carry 2–N options; text questions carry none.
+ * Cross-field rules (option counts per type, correct-option counts) stay in
+ * `QuizzesService.assertValidQuestions`, exactly where they were.
+ */
+export const QUIZ_QUESTION_TYPE_VALUES = [
   'single_choice',
   'multiple_choice',
   'true_false',
+  'short_answer',
+  'essay',
 ] as const;
+
+export const MAX_QUESTION_POINTS = 100;
+export const MAX_ACCEPTED_ANSWERS = 20;
+export const MAX_ACCEPTED_ANSWER_LENGTH = 200;
+export const MAX_EXPLANATION_LENGTH = 2_000;
 
 export class QuizQuestionOptionInputDto {
   @IsNotEmpty()
@@ -57,9 +59,31 @@ export class QuizQuestionInputDto {
   @IsIn(QUIZ_QUESTION_TYPE_VALUES)
   readonly type!: (typeof QUIZ_QUESTION_TYPE_VALUES)[number];
 
-  @ArrayMinSize(2)
+  @IsOptional()
+  @ArrayMinSize(0)
   @ArrayMaxSize(MAX_QUIZ_OPTIONS_PER_QUESTION)
   @ValidateNested({ each: true })
   @Type(() => QuizQuestionOptionInputDto)
-  readonly options!: readonly QuizQuestionOptionInputDto[];
+  readonly options?: readonly QuizQuestionOptionInputDto[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(MAX_QUESTION_POINTS)
+  readonly points?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_EXPLANATION_LENGTH)
+  readonly explanation?: string;
+
+  @IsOptional()
+  @IsString()
+  readonly relatedLessonId?: string;
+
+  @IsOptional()
+  @ArrayMaxSize(MAX_ACCEPTED_ANSWERS)
+  @IsString({ each: true })
+  @MaxLength(MAX_ACCEPTED_ANSWER_LENGTH, { each: true })
+  readonly acceptedAnswers?: readonly string[];
 }

@@ -71,7 +71,8 @@ export class VideoProviderRegistry {
    * production.
    */
   forTier(tier: VideoSecurityTier): VideoProvider {
-    const key: MediaAssetProvider = tier === 'premium' ? 'cloudflare_stream' : 'r2_worker';
+    const key: MediaAssetProvider =
+      tier === 'premium' ? 'cloudflare_stream' : 'r2_worker';
     const provider = this.byKey.get(key);
     if (!provider) {
       throw new Error(`No video provider is registered for the ${tier} tier.`);
@@ -131,7 +132,8 @@ export class VideoProviderRegistry {
 
   /** Whether a tier can actually be used right now — the upload path's gate. */
   isTierAvailable(tier: VideoSecurityTier): boolean {
-    const key: MediaAssetProvider = tier === 'premium' ? 'cloudflare_stream' : 'r2_worker';
+    const key: MediaAssetProvider =
+      tier === 'premium' ? 'cloudflare_stream' : 'r2_worker';
     return this.byKey.get(key)?.isConfigured() ?? false;
   }
 }

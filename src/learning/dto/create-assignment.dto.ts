@@ -51,4 +51,14 @@ export class CreateAssignmentDto {
   @IsOptional()
   @IsBoolean()
   readonly allowResubmission?: boolean;
+
+  /** P64 Phase 3 (§D.4, S12) — what happens after `dueAt`. */
+  @IsOptional()
+  @IsIn(['block', 'accept_flagged'])
+  readonly latePolicy?: 'block' | 'accept_flagged';
+
+  /** P64 Phase 3 (AD-11) — must be graded before the course counts as complete. */
+  @IsOptional()
+  @IsBoolean()
+  readonly requiredForCompletion?: boolean;
 }

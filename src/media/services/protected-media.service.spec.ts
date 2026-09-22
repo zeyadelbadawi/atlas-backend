@@ -68,12 +68,16 @@ function harness(
 
   const service = new ProtectedMediaService(
     {
-      runInTenantContext: (_org: string, work: (t: Prisma.TransactionClient) => unknown) =>
-        Promise.resolve(work(tx)),
+      runInTenantContext: (
+        _org: string,
+        work: (t: Prisma.TransactionClient) => unknown,
+      ) => Promise.resolve(work(tx)),
     } as never,
     {
       findForUserInAcademy: () => Promise.resolve({ role: 'owner', status: 'active' }),
     } as never,
+    // P64 Phase 3 — AcademyStudentsRepository (student attachment uploads; unused here)
+    { findForUserInAcademy: () => Promise.resolve(null) } as never,
     {
       assertVideoMinutesWithinQuota: (_t: unknown, _o: string, minutes: number) => {
         quotaCalls.push(minutes);

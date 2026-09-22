@@ -54,7 +54,10 @@ export class VideoReconciliationService {
     const asset = await this.prisma.mediaAsset.findFirst({
       // Any provider that reports readiness asynchronously. Keyed on the
       // provider id, which is unique per provider by partial index.
-      where: { provider: { in: [...HOSTED_VIDEO_PROVIDERS] }, providerId: event.providerId },
+      where: {
+        provider: { in: [...HOSTED_VIDEO_PROVIDERS] },
+        providerId: event.providerId,
+      },
       select: {
         id: true,
         durationSeconds: true,

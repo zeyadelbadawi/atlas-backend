@@ -307,7 +307,9 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
   }
 
   /** The context a controller builds: identity from the token, academy from the HOST, device from the cookie. */
-  function context(overrides: Partial<ContentRequestContext> = {}): ContentRequestContext {
+  function context(
+    overrides: Partial<ContentRequestContext> = {},
+  ): ContentRequestContext {
     return {
       userId: null,
       sessionId: null,
@@ -995,7 +997,11 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
         contentService.getContent(
           w.course.id,
           w.previewLesson.id,
-          context({ userId: w.learner.id, sessionId: 's-rank', deviceCookie: cookies[2] }),
+          context({
+            userId: w.learner.id,
+            sessionId: 's-rank',
+            deviceCookie: cookies[2],
+          }),
         ),
         403,
         'errors.learning.deviceLimit',
@@ -1093,7 +1099,6 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
           context({ userId: w.learner.id, sessionId: 's-two', deviceCookie: 'dev-two' }),
         ),
       ).rejects.toBeInstanceOf(ConflictException);
-
     });
 
     it('FINDING SEC-2: the session-conflict refusal is recorded, not rolled back with the exception that caused it', async () => {
@@ -1139,7 +1144,11 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
       await contentService.getContent(
         w.course.id,
         w.previewLesson.id,
-        context({ userId: w.learner.id, sessionId: 's-first', deviceCookie: 'dev-first' }),
+        context({
+          userId: w.learner.id,
+          sessionId: 's-first',
+          deviceCookie: 'dev-first',
+        }),
       );
       const before = await admin.studentDevice.count({
         where: { userId: w.learner.id, academyId: w.academy.id },

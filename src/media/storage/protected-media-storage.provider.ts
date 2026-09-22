@@ -32,7 +32,10 @@ import {
   S3ServiceException,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type { MediaStorageConfig, ProtectedMediaConfig } from '../../config/configuration';
+import type {
+  MediaStorageConfig,
+  ProtectedMediaConfig,
+} from '../../config/configuration';
 
 const bucketsEnsured = new Set<string>();
 
@@ -45,7 +48,8 @@ export class ProtectedMediaStorage implements OnModuleInit {
 
   constructor(configService: ConfigService) {
     const media = configService.getOrThrow<MediaStorageConfig>('media');
-    const protectedMedia = configService.getOrThrow<ProtectedMediaConfig>('protectedMedia');
+    const protectedMedia =
+      configService.getOrThrow<ProtectedMediaConfig>('protectedMedia');
     this.bucket = protectedMedia.bucket;
     this.defaultTtlSeconds = protectedMedia.signedUrlTtlSeconds;
     // Endpoint, region and addressing style are properties of the R2
@@ -146,8 +150,30 @@ export class ProtectedMediaStorage implements OnModuleInit {
    * this clamp catches, and the environment variable is already capped at
    * one hour by `env.validation.ts`.
    */
+  /**
+   * P64 Phase 3 — a presign whose lifetime is a DIFFERENT purpose from a
+   * lesson-content grant: certificate downloads (one hour, capped at one
+   * hour by `env.validation.ts`). Never used for lesson content, whose
+   * TTL stays the grant signer's business.
+   */
+  presignGetWithTtl(key: string, ttlSeconds: number): Promise<string> {
+    const expiresIn = Math.max(60, Math.min(Math.floor(ttlSeconds), 3600));
+    return getSignedUrl(
+      this.client,
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ResponseCacheControl: 'private, no-store',
+      }),
+      { expiresIn },
+    );
+  }
+
   presignGet(key: string, ttlSeconds?: number): Promise<string> {
-    const expiresIn = Math.min(ttlSeconds ?? this.defaultTtlSeconds, this.defaultTtlSeconds);
+    const expiresIn = Math.min(
+      ttlSeconds ?? this.defaultTtlSeconds,
+      this.defaultTtlSeconds,
+    );
     return getSignedUrl(
       this.client,
       new GetObjectCommand({
@@ -163,7 +189,10 @@ export class ProtectedMediaStorage implements OnModuleInit {
   }
 
   presignPut(key: string, contentType: string, ttlSeconds?: number): Promise<string> {
-    const expiresIn = Math.min(ttlSeconds ?? this.defaultTtlSeconds, this.defaultTtlSeconds);
+    const expiresIn = Math.min(
+      ttlSeconds ?? this.defaultTtlSeconds,
+      this.defaultTtlSeconds,
+    );
     return getSignedUrl(
       this.client,
       new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType }),

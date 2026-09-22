@@ -30,10 +30,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import {
-  PLAN_FEATURE_KEYS,
-  PLAN_LIMIT_KEYS,
-} from '../../plans/dto/entitlement.types';
+import { PLAN_FEATURE_KEYS, PLAN_LIMIT_KEYS } from '../../plans/dto/entitlement.types';
 
 /** Mirrors `LocalizedText` (`{en, ar}`) — the P54 shape used by every bilingual field in Atlas. */
 export class PlanLocalizedTextDto {

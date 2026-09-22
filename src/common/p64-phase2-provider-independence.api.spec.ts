@@ -28,9 +28,7 @@ const SRC = resolve(__dirname, '..');
 /** Removes block and line comments and string-literal contents, leaving executable structure. */
 function strippedSource(relativePath: string): string {
   const raw = readFileSync(join(SRC, relativePath), 'utf8');
-  return raw
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1 ');
+  return raw.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1 ');
 }
 
 function walk(directory: string, out: string[] = []): string[] {

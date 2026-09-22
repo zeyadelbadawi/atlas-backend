@@ -18,6 +18,9 @@ export class Phase2MaintenanceProcessor extends WorkerHost {
 
   async process(job: Job<Phase2MaintenanceJobPayload>): Promise<void> {
     const result = await this.maintenanceService.run();
-    this.logger.log({ jobId: job.id, ...result }, 'P64 Phase 2 maintenance sweep complete');
+    this.logger.log(
+      { jobId: job.id, ...result },
+      'P64 Phase 2 maintenance sweep complete',
+    );
   }
 }
