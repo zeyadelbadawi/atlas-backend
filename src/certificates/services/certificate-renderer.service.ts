@@ -288,30 +288,46 @@ export class CertificateRendererService {
       .lineTo(signatureX + colWidth - 20, bandY + 40)
       .stroke()
       .restore();
-    this.text(doc, input.snapshot.signatoryName ?? input.snapshot.academyName, {
-      y: bandY + 46,
-      size: 11,
-      bold: true,
-      color: PALETTE.ink,
-      rtl,
-      x: signatureX,
-      width: colWidth,
-      align: 'center',
-    });
-    this.text(
-      doc,
-      input.snapshot.signatoryTitle ??
-        (rtl ? 'عن الأكاديمية' : 'On behalf of the academy'),
-      {
-        y: bandY + 60,
+    // When a signatory is configured, show the name (auto-fit to one line)
+    // over its title. When NONE is, the academy is already the masthead, so
+    // the block is just a short "Authorised by the academy" — never the long
+    // academy name wrapping into the title.
+    if (input.snapshot.signatoryName) {
+      this.text(doc, input.snapshot.signatoryName, {
+        y: bandY + 46,
+        size: this.fitSize(doc, input.snapshot.signatoryName, true, 11, 8, colWidth - 12),
+        bold: true,
+        color: PALETTE.ink,
+        rtl,
+        x: signatureX,
+        width: colWidth,
+        align: 'center',
+      });
+      this.text(
+        doc,
+        input.snapshot.signatoryTitle ??
+          (rtl ? 'عن الأكاديمية' : 'On behalf of the academy'),
+        {
+          y: bandY + 60,
+          size: 9,
+          color: PALETTE.inkSoft,
+          rtl,
+          x: signatureX,
+          width: colWidth,
+          align: 'center',
+        },
+      );
+    } else {
+      this.text(doc, rtl ? 'مُعتمَدة من الأكاديمية' : 'Authorised by the academy', {
+        y: bandY + 52,
         size: 9,
         color: PALETTE.inkSoft,
         rtl,
         x: signatureX,
         width: colWidth,
         align: 'center',
-      },
-    );
+      });
+    }
 
     // Centre seal.
     this.drawSeal(doc, centerX, bandY + 24, rtl);
