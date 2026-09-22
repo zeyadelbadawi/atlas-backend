@@ -34,6 +34,15 @@ export const CONTENT_ACCESS_REASONS = [
   'lessonUnavailable',
   /** Drip: the lesson has a future `available_at`. */
   'scheduled',
+  /**
+   * Sequential progression: the lesson is entitled and published, but an
+   * earlier item in the CURRENT curriculum order is not finished yet, so it
+   * is still locked. Derived from the same sequence the player sidebar draws
+   * from — a reorder cannot leave the two disagreeing. Distinct from
+   * `scheduled` (a clock) because the fix is "finish the previous item",
+   * not "wait".
+   */
+  'locked',
   /** The learner is at their registered-device cap and this browser is not one of them. */
   'deviceLimit',
   /** Another device currently holds the learning lease. */

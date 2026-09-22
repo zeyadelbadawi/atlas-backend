@@ -252,4 +252,81 @@ describe('Course/Lesson Progress (e2e)', () => {
       .send({ lessonId: foreignLesson.id })
       .expect(404);
   });
+
+  async function enrolledStudent(
+    courseAcademyId: string,
+    courseId: string,
+    label: string,
+  ) {
+    const student = await signUpAndSignIn(app, label);
+    await seedAcademyStudent(admin, courseAcademyId, student.userId);
+    await request(app.getHttpServer())
+      .post('/enrollments')
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ courseId })
+      .expect(201);
+    return student;
+  }
+
+  // Sequential progression is DERIVED from the live curriculum order, never
+  // from the stored `LessonProgress.status` (set at enrollment, never
+  // recomputed on a reorder). Before this fix the player sidebar (live) and
+  // completion enforcement (stale materialized status) disagreed after a
+  // reorder; both now consult the one `CourseSequenceService` derivation.
+  it('after a reorder, the now-FIRST lesson is completable though it was materialized locked', async () => {
+    const { course, lesson1, lesson2 } =
+      await seedEnrollableCourseWithLessons('reorder-first');
+    const student = await enrolledStudent(
+      course.academyId,
+      course.id,
+      'reorder-first-student',
+    );
+    await admin.courseLesson.update({ where: { id: lesson1.id }, data: { order: 1 } });
+    await admin.courseLesson.update({ where: { id: lesson2.id }, data: { order: 0 } });
+    await request(app.getHttpServer())
+      .post(`/courses/${course.id}/progress/complete-lesson`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ lessonId: lesson2.id })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/courses/${course.id}/progress/complete-lesson`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ lessonId: lesson1.id })
+      .expect(201);
+    const progress = await request(app.getHttpServer())
+      .get(`/courses/${course.id}/progress`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .expect(200);
+    expect(progress.body.completedLessons).toBe(2);
+  });
+
+  it('after a reorder, the now-SECOND lesson is refused until the now-first is completed', async () => {
+    const { course, lesson1, lesson2 } =
+      await seedEnrollableCourseWithLessons('reorder-second');
+    const student = await enrolledStudent(
+      course.academyId,
+      course.id,
+      'reorder-second-student',
+    );
+    await admin.courseLesson.update({ where: { id: lesson1.id }, data: { order: 1 } });
+    await admin.courseLesson.update({ where: { id: lesson2.id }, data: { order: 0 } });
+    const refused = await request(app.getHttpServer())
+      .post(`/courses/${course.id}/progress/complete-lesson`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ lessonId: lesson1.id })
+      .expect(403);
+    expect(refused.body.error?.messageKey ?? refused.body.messageKey).toBe(
+      'errors.progress.lessonLocked',
+    );
+    await request(app.getHttpServer())
+      .post(`/courses/${course.id}/progress/complete-lesson`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ lessonId: lesson2.id })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/courses/${course.id}/progress/complete-lesson`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ lessonId: lesson1.id })
+      .expect(201);
+  });
 });

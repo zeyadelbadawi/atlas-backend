@@ -334,6 +334,8 @@ export async function seedCourseLesson(
   overrides: {
     contentType?: 'text' | 'video' | 'file';
     status?: 'draft' | 'published';
+    contentUrl?: string;
+    videoAssetId?: string;
   } = {},
 ) {
   return admin.courseLesson.create({
@@ -344,6 +346,8 @@ export async function seedCourseLesson(
       order,
       contentType: overrides.contentType ?? 'text',
       status: overrides.status ?? 'draft',
+      contentUrl: overrides.contentUrl,
+      videoAssetId: overrides.videoAssetId,
     },
   });
 }

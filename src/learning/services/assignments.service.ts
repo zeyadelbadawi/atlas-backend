@@ -37,6 +37,7 @@ import type { SaveAssignmentDraftDto } from '../dto/save-assignment-draft.dto';
 import type { UploadMediaAssetDto } from '../../media/dto/upload-media-asset.dto';
 
 import { AssignmentsRepository } from '../repositories/assignments.repository';
+import { CourseSequenceService } from './course-sequence.service';
 import { toAssignmentResponse } from '../dto/assignment.contract';
 import type { AssignmentResponse } from '../dto/assignment.contract';
 import { toAssignmentSubmissionResponse } from '../dto/assignment-submission.contract';
@@ -77,7 +78,29 @@ export class AssignmentsService {
     private readonly courseCompletionService: CourseCompletionService,
     private readonly assignmentsRepository: AssignmentsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly courseSequence: CourseSequenceService,
   ) {}
+
+  /**
+   * Sequential progression, enforced on the server. An assignment stays
+   * locked until everything before it in the CURRENT curriculum order is
+   * finished, decided by the one live derivation the player sidebar uses so
+   * a reorder can never leave the two disagreeing. A submission or draft
+   * already in progress is never `locked` in the sequence, so this only ever
+   * blocks the first touch of an assignment whose prerequisites are unmet.
+   */
+  private async assertAssignmentUnlocked(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    courseId: string,
+    assignmentId: string,
+  ): Promise<void> {
+    const sequence = await this.courseSequence.getSequenceItems(tx, userId, courseId);
+    const item = sequence.find((entry) => entry.id === assignmentId);
+    if (item?.state === 'locked') {
+      throw new ForbiddenException({ messageKey: 'errors.assignment.locked' });
+    }
+  }
 
   /**
    * Phase 8 — this service runs entirely under `runInUserContext`, so
@@ -221,6 +244,7 @@ export class AssignmentsService {
         assignmentId,
       );
       if (!assignment) throw new NotFoundException({ messageKey: 'errors.notFound' });
+      await this.assertAssignmentUnlocked(tx, userId, courseId, assignmentId);
       const existing = await this.assignmentsRepository.findSubmission(
         tx,
         assignmentId,
@@ -295,6 +319,7 @@ export class AssignmentsService {
         assignmentId,
       );
       if (!assignment) throw new NotFoundException({ messageKey: 'errors.notFound' });
+      await this.assertAssignmentUnlocked(tx, userId, courseId, assignmentId);
       const existing = await this.assignmentsRepository.findSubmission(
         tx,
         assignmentId,

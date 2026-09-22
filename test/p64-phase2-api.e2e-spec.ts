@@ -1107,6 +1107,68 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     );
   });
 
+  // ---------------------------------------------------------------------
+  // P4 Issue 2 — the dashboard course BUILDER writes only the legacy
+  // `course_lessons.contentType`/`contentUrl` (+ `video_asset_id`) and never
+  // a `lesson_contents` row; the learner grant path now reconciles that so a
+  // builder-created lesson is not falsely `noContent`.
+  // ---------------------------------------------------------------------
+  it('a builder lesson with a YouTube contentUrl and no lesson_contents row delivers a YouTube embed', async () => {
+    const w = await world('builder-youtube', { family: 'normal', tier: 'basic' });
+    // Exactly what `CourseCurriculumService.createLesson` writes — no
+    // `lesson_contents` row is created.
+    const lesson = await seedCourseLesson(admin, w.section.id, w.course.id, 'yt', 0, {
+      status: 'published',
+      contentType: 'video',
+      contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    });
+    const student = await enrolledLearner(w, 'builder-youtube-student');
+    const res = await getContent(student, w.course.id, lesson.id).expect(200);
+    expect(res.body.kind).toBe('external');
+    expect(res.body.externalUrl).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    expect(res.body.externalEmbed?.videoId).toBe('dQw4w9WgXcQ');
+    // Honest labelling: Atlas hosts nothing here.
+    expect(res.body.protection.signedUrl).toBe(false);
+    expect(res.body.protection.tier).toBeNull();
+  });
+
+  it('a builder lesson with a hosted video asset and no lesson_contents row delivers the video', async () => {
+    const w = await world('builder-hosted', { family: 'normal', tier: 'basic' });
+    const ticket = await createUpload(w, {
+      fileName: 'builder.mp4',
+      maxDurationSeconds: 600,
+      courseId: w.course.id,
+    });
+    await admin.mediaAsset.update({
+      where: { id: ticket.body.assetId },
+      data: {
+        processingStatus: 'ready',
+        durationSeconds: 120,
+        durationSource: 'measured',
+      },
+    });
+    // The builder attaches the asset via `video_asset_id`; it does NOT create
+    // a `lesson_contents` row.
+    const lesson = await seedCourseLesson(admin, w.section.id, w.course.id, 'hosted', 0, {
+      status: 'published',
+      contentType: 'video',
+      videoAssetId: ticket.body.assetId,
+    });
+    const student = await enrolledLearner(w, 'builder-hosted-student');
+    const res = await getContent(student, w.course.id, lesson.id).expect(200);
+    expect(res.body.kind).toBe('video');
+    expect(res.body.video).toBeDefined();
+  });
+
+  it('a lesson with neither a content row nor any legacy content is still noContent', async () => {
+    const w = await world('builder-empty', { family: 'normal', tier: 'basic' });
+    const lesson = await seedCourseLesson(admin, w.section.id, w.course.id, 'empty', 0, {
+      status: 'published',
+    });
+    const student = await enrolledLearner(w, 'builder-empty-student');
+    await getContent(student, w.course.id, lesson.id).expect(404);
+  });
+
   it('content with no hosted video reports a null tier and no video-shaped claims', async () => {
     const w = await world('grant-text', { family: 'premium', tier: 'basic' });
     const textLesson = await seedCourseLesson(
@@ -1157,6 +1219,14 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     expect(text.body.video).toBeUndefined();
     expect(text.body.bodyHtml).toContain('Reading material');
 
+    // Sequential progression is now enforced on the content grant too: the
+    // external lesson sits AFTER the text lesson, so it stays locked until the
+    // text lesson is finished. This test is about tier reporting, not gating —
+    // finish the predecessor so the external lesson is reachable.
+    await admin.lessonProgress.updateMany({
+      where: { lessonId: textLesson.id },
+      data: { status: 'completed', completedAt: new Date() },
+    });
     const external = await getContent(student, w.course.id, externalLesson.id).expect(
       200,
     );
@@ -1323,6 +1393,13 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     const premiumGrant = await getContent(student, w.course.id, premiumLesson.id).expect(
       200,
     );
+    // The normal lesson sits after the premium one; finish the predecessor so
+    // the now-enforced sequential lock does not hide it (this test is about
+    // tier coexistence, not progression).
+    await admin.lessonProgress.updateMany({
+      where: { lessonId: premiumLesson.id },
+      data: { status: 'completed', completedAt: new Date() },
+    });
     const normalGrant = await getContent(student, w.course.id, normalLesson.id).expect(
       200,
     );
@@ -1748,26 +1825,26 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       return { lesson, assetId: ticket.assetId };
     }
 
-    it('THE REGRESSION: a lesson with a video asset but no content row is refused, and authoring content makes the learner grant succeed', async () => {
+    it('a lesson with an attached video asset delivers the video even before an explicit content row is authored, and authoring one keeps working', async () => {
       const w = await world('authoring-regression', { family: 'normal', tier: 'growth' });
       const { lesson, assetId } = await lessonAwaitingContent(w, 'awaiting-content');
       const student = await enrolledLearner(w, 'authoring-regression-student');
 
-      // Exactly what production did: entitled learner, attached asset, no
-      // content row. Still a 404 — but for a learner who has passed every
-      // entitlement check it names the real state, so the player says "no
-      // content yet" instead of guessing "still processing".
-      const refused = await getContent(student, w.course.id, lesson.id).expect(404);
-      expect(refused.body.error).toMatchObject({
-        messageKey: 'errors.learning.lessonNoContent',
-      });
+      // The dashboard course builder attaches a video via `video_asset_id`
+      // and never writes a `lesson_contents` row — its own comment calls
+      // student consumption "a separate, future module". That used to be a
+      // 404 `noContent` (P4 Issue 2, reproduced in production). The learner
+      // grant path now reconciles the legacy attachment: an attached, ready
+      // video IS the lesson's content and delivers.
+      const bridged = await getContent(student, w.course.id, lesson.id).expect(200);
+      expect(bridged.body.kind).toBe('video');
+      expect(bridged.body.video.url).toContain(BASIC_DELIVERY_HOST);
 
+      // Authoring an explicit content row still works and is unchanged.
       await putContent(w, w.owner.auth, lesson.id, {
         kind: 'video',
         mediaAssetId: assetId,
       }).expect(200);
-
-      // The same request, unchanged, now succeeds.
       const grant = await getContent(student, w.course.id, lesson.id).expect(200);
       expect(grant.body.video.url).toContain(BASIC_DELIVERY_HOST);
       expect(grant.body.protection).toMatchObject({ tier: 'normal', drm: false });

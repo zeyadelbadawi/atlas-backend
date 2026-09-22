@@ -29,6 +29,7 @@ import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-st
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { CourseProgressRepository } from '../repositories/course-progress.repository';
 import { CourseCompletionService } from './course-completion.service';
+import { CourseSequenceService } from './course-sequence.service';
 import { toCourseProgressResponse } from '../dto/course-progress.contract';
 import type { CourseProgressResponse } from '../dto/course-progress.contract';
 import type { CompleteLessonDto } from '../dto/complete-lesson.dto';
@@ -45,6 +46,7 @@ export class CourseProgressService {
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly courseProgressRepository: CourseProgressRepository,
     private readonly courseSectionsRepository: CourseSectionsRepository,
+    private readonly courseSequenceService: CourseSequenceService,
   ) {}
 
   /**
@@ -195,7 +197,20 @@ export class CourseProgressService {
       if (!lessonProgress || lessonProgress.courseId !== courseId) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
-      if (lessonProgress.status === 'locked') {
+      // Lock enforcement is DERIVED from the live curriculum order, never
+      // from the stored `LessonProgress.status`. That materialized flag was
+      // set from whatever order the course had at enrollment time and is
+      // never recomputed when an author reorders the curriculum, so it drifts
+      // from what the player sidebar shows (which the sequence already derives
+      // live) — the exact contradiction the reorder bug produced. Both now
+      // consult the one derivation in `CourseSequenceService`.
+      const sequence = await this.courseSequenceService.getSequenceItems(
+        tx,
+        userId,
+        courseId,
+      );
+      const sequenceItem = sequence.find((item) => item.id === payload.lessonId);
+      if (sequenceItem?.state === 'locked') {
         throw new ForbiddenException({ messageKey: 'errors.progress.lessonLocked' });
       }
 

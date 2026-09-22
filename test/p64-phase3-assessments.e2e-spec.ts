@@ -143,7 +143,15 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       pricingType: 'free',
     });
     const section = await seedCourseSection(admin, course.id, `${label}-s`, 0);
-    const lesson = await seedCourseLesson(admin, section.id, course.id, `${label}-l`, 0, {
+    // The quiz sits at ordinal 0 (created below) and the lesson at 1, so the
+    // quiz is FIRST in the curriculum sequence. Sequential progression is now
+    // enforced on the server (quiz start is refused while an earlier item is
+    // unfinished), so a quiz placed AFTER an incomplete lesson would be locked;
+    // these tests exercise quiz mechanics, not gating, so the quiz leads. The
+    // lesson is not `requiredToProgress`-gated by the non-required quiz before
+    // it, so it stays available for the completion tests. Progression gating
+    // itself is covered by its own dedicated tests.
+    const lesson = await seedCourseLesson(admin, section.id, course.id, `${label}-l`, 1, {
       status: 'published',
     });
     const instructor = await signUp(`${label}-instructor`);
@@ -1448,6 +1456,54 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       version: template.body.version + 1,
     });
     expect(updated.body.wording.ar.title).toBe('شهادة إنجاز');
+  });
+
+  it('sequential progression is enforced on quiz start: a quiz after an unfinished lesson is locked until the lesson is completed', async () => {
+    const w = await world('p3-seq-gate');
+    // Move the quiz AFTER the lesson (world seeds it first). The learner has
+    // not completed the lesson, so the quiz is now locked.
+    await admin.quiz.update({ where: { id: w.quiz.id }, data: { order: 5 } });
+    const locked = await http()
+      .post(attemptsPath(w))
+      .set(auth(w.student.token))
+      .expect(403);
+    expect(locked.body.error?.messageKey ?? locked.body.messageKey).toBe(
+      'errors.quiz.locked',
+    );
+    // Completing the lesson unlocks the quiz — the SAME derivation the sidebar
+    // uses now lets the attempt through.
+    await http()
+      .post(`/courses/${w.course.id}/progress/complete-lesson`)
+      .set(auth(w.student.token))
+      .send({ lessonId: w.lesson.id })
+      .expect(201);
+    const started = await http()
+      .post(attemptsPath(w))
+      .set(auth(w.student.token))
+      .expect(201);
+    expect(started.body.status).toBe('in_progress');
+  });
+
+  it('a live reorder changes the quiz gate: moving the quiz before the lesson unlocks its first attempt immediately', async () => {
+    const w = await world('p3-seq-reorder');
+    await admin.quiz.update({ where: { id: w.quiz.id }, data: { order: 5 } });
+    // Quiz after the unfinished lesson → locked.
+    const locked = await http()
+      .post(attemptsPath(w))
+      .set(auth(w.student.token))
+      .expect(403);
+    expect(locked.body.error?.messageKey ?? locked.body.messageKey).toBe(
+      'errors.quiz.locked',
+    );
+    // Author reorders the quiz to the front. Only the `order` columns change.
+    await admin.quiz.update({ where: { id: w.quiz.id }, data: { order: 0 } });
+    await admin.courseLesson.update({ where: { id: w.lesson.id }, data: { order: 1 } });
+    // The quiz is now first → startable, the lesson still unfinished.
+    const started = await http()
+      .post(attemptsPath(w))
+      .set(auth(w.student.token))
+      .expect(201);
+    expect(started.body.status).toBe('in_progress');
   });
 
   it('quiz authoring accepts the Phase 3 settings and question types and rejects contradictory ones', async () => {

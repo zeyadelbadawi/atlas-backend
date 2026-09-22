@@ -57,6 +57,7 @@ import {
 } from '@nestjs/common';
 import type {
   LessonContentKind,
+  MediaAsset,
   MediaAssetProvider,
   Prisma,
   VideoSecurityTier,
@@ -66,6 +67,7 @@ import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-st
 import { AccessPolicyService } from '../../tenancy/services/access-policy.service';
 import { StudentDeviceService } from '../../tenancy/services/student-device.service';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
+import { CourseSequenceService } from './course-sequence.service';
 import { ContentAccessLogRepository } from '../repositories/content-access-log.repository';
 import { ContentGrantSigner } from './content-grant.signer';
 import { AcademyOriginsService } from '../../media/video/academy-origins.service';
@@ -103,6 +105,66 @@ export interface ContentRequestContext {
  * hand (`notEnrolled`, `notAuthenticated`), and for those the honest
  * answer is null rather than a guess.
  */
+/**
+ * What `buildGrant` actually needs to deliver a lesson's content — a subset
+ * of a `lesson_contents` row that a synthesised legacy descriptor can also
+ * satisfy.
+ */
+interface EffectiveLessonContent {
+  readonly kind: LessonContentKind;
+  readonly bodyHtml: string | null;
+  readonly externalUrl: string | null;
+  readonly mediaAsset: MediaAsset | null;
+}
+
+/**
+ * The content to deliver for a lesson, reconciling the TWO representations
+ * that coexist in the product.
+ *
+ * The course BUILDER (dashboard) writes only the legacy
+ * `course_lessons.contentType` / `contentUrl` (and attaches a hosted video
+ * via `video_asset_id`) — its own comment says student consumption is "a
+ * separate, future module", and it never creates a `lesson_contents` row.
+ * The learner's unified player reads `lesson_contents`. So every lesson an
+ * author built in the dashboard — a YouTube link most visibly (P4 Issue 2),
+ * but also a hosted video — arrived at the player with no `lesson_contents`
+ * row and was refused as `noContent`.
+ *
+ * Rather than a second authoring step the builder never performs, or a
+ * migration that would still leave the two writers able to drift, the
+ * learner grant path understands BOTH: an authored `lesson_contents` row
+ * wins; otherwise the legacy fields are read into the same grant shape —
+ * a hosted `video_asset` is a video lesson, and a single opaque
+ * `content_url` becomes a YouTube embed (via `classifyExternalEmbed`) or an
+ * honest external link-out. No new model, no durable second copy: one
+ * read-time reconciliation onto the one grant contract.
+ */
+function effectiveLessonContent(lesson: {
+  content: EffectiveLessonContent | null;
+  videoAsset: { id: string } | null;
+  contentType: string | null;
+  contentUrl: string | null;
+}): EffectiveLessonContent | null {
+  if (lesson.content) return lesson.content;
+
+  // A hosted video is a video lesson; `buildGrant` signs it from
+  // `lesson.videoAsset`, so the descriptor only has to pass the guard.
+  if (lesson.videoAsset) {
+    return { kind: 'video', bodyHtml: null, externalUrl: null, mediaAsset: null };
+  }
+
+  const url = lesson.contentUrl?.trim();
+  if (url) {
+    // The builder stores every non-hosted source in one opaque URL. A
+    // YouTube link becomes an embed in `buildGrant`; anything else stays a
+    // link-out. Either way it is an unprotected external embed, reported
+    // honestly as such.
+    return { kind: 'external', bodyHtml: null, externalUrl: url, mediaAsset: null };
+  }
+
+  return null;
+}
+
 class ContentRefusal extends Error {
   constructor(
     readonly reason: ContentAccessReason,
@@ -131,6 +193,7 @@ export class LessonContentService {
     private readonly accessLog: ContentAccessLogRepository,
     private readonly rateLimiter: ContentGrantRateLimiter,
     private readonly metrics: LearningMetricsService,
+    private readonly courseSequence: CourseSequenceService,
   ) {}
 
   async getContent(
@@ -236,6 +299,24 @@ export class LessonContentService {
           if (lesson.availableAt && lesson.availableAt.getTime() > Date.now()) {
             throw new ContentRefusal('scheduled');
           }
+
+          // --- condition 6: sequential progression -------------------
+          // Entitled and published, but the curriculum may still gate it
+          // behind an unfinished earlier item. The player sidebar already
+          // shows this from `CourseSequenceService`; refusing the CONTENT
+          // grant from the same derivation is what makes the lock real
+          // rather than cosmetic — otherwise a deep link or a direct API
+          // call fetched a signed URL for a lesson the learner has not
+          // reached. A preview lesson and a staff previewer never get here.
+          const sequence = await this.courseSequence.getSequenceItems(
+            tx,
+            userId,
+            courseId,
+          );
+          const sequenceItem = sequence.find((item) => item.id === lessonId);
+          if (sequenceItem?.state === 'locked') {
+            throw new ContentRefusal('locked');
+          }
         }
 
         // Past this line the caller is entitled to the lesson, so the two
@@ -243,7 +324,12 @@ export class LessonContentService {
         // an unprocessed asset are different facts with different fixes,
         // and calling both "unavailable" left the player guessing
         // "processing" for a lesson nobody had written yet. Both still 404.
-        if (!lesson.content) throw new ContentRefusal('noContent');
+        //
+        // Content is read from the authored `lesson_contents` row OR, for a
+        // lesson the dashboard builder created (which never writes that row),
+        // reconciled from the legacy fields — see `effectiveLessonContent`.
+        const effectiveContent = effectiveLessonContent(lesson);
+        if (!effectiveContent) throw new ContentRefusal('noContent');
 
         // SEC-3 — the ASSET-READINESS refusal is hoisted above the lease.
         //
@@ -349,6 +435,7 @@ export class LessonContentService {
 
         const grant = await this.buildGrant(tx, {
           lesson,
+          content: effectiveContent,
           course,
           userId,
           sessionId: context.sessionId,
@@ -450,6 +537,7 @@ export class LessonContentService {
           videoAsset: true;
         };
       }>;
+      readonly content: EffectiveLessonContent;
       readonly course: { id: string; academyId: string; status: string; title: string };
       readonly userId: string | null;
       readonly sessionId: string | null;
@@ -458,8 +546,7 @@ export class LessonContentService {
       readonly staffPreview: boolean;
     },
   ): Promise<LessonContentGrantResponse> {
-    const { lesson, course } = args;
-    const content = lesson.content!;
+    const { lesson, course, content } = args;
 
     const academy = await tx.academy.findUnique({
       where: { id: course.academyId },
@@ -665,6 +752,8 @@ function refusalToHttp(reason: ContentAccessReason): Error {
       return new ForbiddenException({ messageKey: 'errors.learning.accessEnded' });
     case 'scheduled':
       return new ForbiddenException({ messageKey: 'errors.learning.lessonScheduled' });
+    case 'locked':
+      return new ForbiddenException({ messageKey: 'errors.learning.lessonLocked' });
     // Still 404s — the posture that unreachable content is indistinguishable
     // from non-existent content is kept, because these two are raised only
     // for a learner who has already passed every entitlement check. The key

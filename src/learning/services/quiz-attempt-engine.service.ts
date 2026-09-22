@@ -46,6 +46,7 @@ import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { QuizDeadlineProducer } from '../queue/quiz-deadline.producer';
 import { CourseCompletionService } from './course-completion.service';
+import { CourseSequenceService } from './course-sequence.service';
 import { assertActiveEnrollment } from './learning-access.util';
 import {
   aggregateResult,
@@ -141,6 +142,7 @@ export class QuizAttemptEngineService {
     private readonly metrics: LearningMetricsService,
     private readonly deadlines: QuizDeadlineProducer,
     private readonly completion: CourseCompletionService,
+    private readonly courseSequence: CourseSequenceService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -226,6 +228,21 @@ export class QuizAttemptEngineService {
         }
         if (window === 'late_blocked') {
           throw new ForbiddenException({ messageKey: 'errors.quiz.pastDue' });
+        }
+
+        // Sequential progression, enforced on the server (not just rendered).
+        // A quiz stays locked until everything before it in the CURRENT
+        // curriculum order is finished — a preceding lesson completed, a
+        // preceding `requiredToProgress` quiz passed. The same live
+        // derivation the player sidebar draws from decides it, so reordering
+        // the curriculum can never leave the sidebar and the attempt API
+        // disagreeing. Only the FIRST attempt is gated: a quiz with any prior
+        // attempt is `failed`/`in_progress`/`passed` in the sequence, never
+        // `locked`, so retries are never blocked by this.
+        const sequence = await this.courseSequence.getSequenceItems(tx, userId, courseId);
+        const sequenceItem = sequence.find((item) => item.id === quizId);
+        if (sequenceItem?.state === 'locked') {
+          throw new ForbiddenException({ messageKey: 'errors.quiz.locked' });
         }
 
         const timeMultiplier = override ? Number(override.timeMultiplier) : 1;
