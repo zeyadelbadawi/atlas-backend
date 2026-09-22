@@ -110,6 +110,15 @@ jobs:
       - name: Prisma — apply migrations (proves the migration pipeline against a real database)
         run: npm run prisma:migrate:deploy
 
+      # The e2e suites are written against a seeded database — the plan
+      # catalog, the demo organisations and the seeded staff are the
+      # fixtures `plans-catalog`, `checkout-plan-catalog-fix`,
+      # `p62-entitlement-concurrency` and the Playwright journeys read.
+      # The seed is idempotent (upserts), which is also why "run 2" of the
+      # e2e step needs no re-seed.
+      - name: Prisma — seed (the fixtures the e2e suites are written against)
+        run: npx prisma db seed
+
       - name: Unit tests
         run: npm run test
 
