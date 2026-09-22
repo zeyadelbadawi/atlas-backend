@@ -33,6 +33,11 @@ jobs:
 
     env:
       NODE_ENV: test
+      # The shared runner's PostgreSQL is slow enough that the seed-heavy
+      # suites trip Prisma's 5 s interactive-transaction default and answer
+      # 500 where a real outcome is expected. Production keeps the default.
+      PRISMA_INTERACTIVE_TX_TIMEOUT_MS: '20000'
+      PRISMA_INTERACTIVE_TX_MAX_WAIT_MS: '10000'
       DATABASE_URL: postgresql://atlas:atlas_ci_password@localhost:5432/atlas_ci?schema=public
       REDIS_URL: redis://localhost:6379
       CORS_ALLOWED_ORIGINS: http://localhost:5173
@@ -109,6 +114,15 @@ jobs:
 
       - name: Prisma — apply migrations (proves the migration pipeline against a real database)
         run: npm run prisma:migrate:deploy
+
+      # The e2e suites are written against a seeded database — the plan
+      # catalog, the demo organisations and the seeded staff are the
+      # fixtures `plans-catalog`, `checkout-plan-catalog-fix`,
+      # `p62-entitlement-concurrency` and the Playwright journeys read.
+      # The seed is idempotent (upserts), which is also why "run 2" of the
+      # e2e step needs no re-seed.
+      - name: Prisma — seed (the fixtures the e2e suites are written against)
+        run: npx prisma db seed
 
       - name: Unit tests
         run: npm run test
