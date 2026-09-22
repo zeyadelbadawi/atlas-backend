@@ -1458,6 +1458,35 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     expect(updated.body.wording.ar.title).toBe('شهادة إنجاز');
   });
 
+  it('P4 Issue 4: course progress percentage counts the whole sequence, not lessons alone', async () => {
+    const w = await world('p4-progress', { passingScore: 50 });
+    const progressPath = `/courses/${w.course.id}/progress`;
+
+    // Two items: the lesson and the quiz. Nothing done yet → 0%.
+    let prog = await http().get(progressPath).set(auth(w.student.token)).expect(200);
+    expect(prog.body.percentage).toBe(0);
+
+    // Passing the quiz alone (no lesson completed) is real progress: 1 of 2
+    // items. Before this fix the lesson-only figure stayed 0.
+    const attempt = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${attempt.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: correctAnswers(w) })
+      .expect(201);
+    prog = await http().get(progressPath).set(auth(w.student.token)).expect(200);
+    expect(prog.body.percentage).toBe(50);
+
+    // Completing the lesson too → the whole sequence is done → 100%.
+    await http()
+      .post(`${progressPath}/complete-lesson`)
+      .set(auth(w.student.token))
+      .send({ lessonId: w.lesson.id })
+      .expect(201);
+    prog = await http().get(progressPath).set(auth(w.student.token)).expect(200);
+    expect(prog.body.percentage).toBe(100);
+  });
+
   it('sequential progression is enforced on quiz start: a quiz after an unfinished lesson is locked until the lesson is completed', async () => {
     const w = await world('p3-seq-gate');
     // Move the quiz AFTER the lesson (world seeds it first). The learner has

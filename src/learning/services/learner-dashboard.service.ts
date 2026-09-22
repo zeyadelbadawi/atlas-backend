@@ -26,6 +26,7 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { ACTIVE_ENROLLMENT_STATUSES } from '../dto/learning.constants';
+import { computeItemProgress } from './course-completion.service';
 import type {
   ContinueLearningItem,
   LearnerAnnouncement,
@@ -78,6 +79,17 @@ export class LearnerDashboardService {
 
       const courseIds = enrollments.map((row) => row.courseId);
 
+      // P4 Issue 4 — the ring's percentage is the WHOLE unified sequence
+      // (lessons + quizzes + assignments), not lessons alone. Computed
+      // read-only here from batched counts so `/me` is correct immediately
+      // for every enrollment, including ones whose materialised figure
+      // predates this fix; `recompute` keeps the stored value in step.
+      const percentageByCourseId = await this.computeItemPercentages(
+        tx,
+        userId,
+        enrollments,
+      );
+
       const continueLearning: ContinueLearningItem[] = enrollments
         .filter((row) => row.progress && row.progress.completionState !== 'completed')
         // Most recently touched first. `lastActivityAt` rather than
@@ -93,7 +105,9 @@ export class LearnerDashboardService {
           courseId: row.courseId,
           courseTitle: row.course.title,
           courseThumbnailUrl: row.course.thumbnailUrl,
-          percentage: Number(row.progress?.percentage ?? 0),
+          percentage:
+            percentageByCourseId.get(row.courseId) ??
+            Number(row.progress?.percentage ?? 0),
           completedLessons: row.progress?.completedLessons ?? 0,
           totalLessons: row.progress?.totalLessons ?? 0,
           nextItemId: row.progress?.currentLessonId ?? null,
@@ -280,6 +294,99 @@ export class LearnerDashboardService {
       select: { courseId: true },
     });
     return rows.map((row) => row.courseId);
+  }
+
+  /**
+   * Overall-progress percentage per course, across the whole unified
+   * sequence (P4 Issue 4). Batched — four queries for every enrollment on
+   * the page, not four per enrollment — and read-only. Lesson counts come
+   * from the already-materialised progress row; quiz and assignment state is
+   * read fresh so the figure is right even before the next `recompute`.
+   */
+  private async computeItemPercentages(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    enrollments: readonly {
+      courseId: string;
+      progress: { completedLessons: number; totalLessons: number } | null;
+    }[],
+  ): Promise<Map<string, number>> {
+    const courseIds = enrollments.map((row) => row.courseId);
+    if (courseIds.length === 0) return new Map();
+
+    const [quizzes, quizResults, assignments, submissions] = await Promise.all([
+      tx.quiz.findMany({
+        where: { courseId: { in: courseIds }, status: 'published' },
+        select: { id: true, courseId: true },
+      }),
+      tx.quizResult.findMany({
+        where: { studentId: userId, quiz: { courseId: { in: courseIds } } },
+        select: { quizId: true, passed: true, pendingGrading: true },
+      }),
+      tx.assignment.findMany({
+        where: { courseId: { in: courseIds }, status: 'published' },
+        select: { id: true, courseId: true },
+      }),
+      tx.assignmentSubmission.findMany({
+        where: { studentId: userId, assignment: { courseId: { in: courseIds } } },
+        select: { assignmentId: true, status: true, gradingStatus: true },
+      }),
+    ]);
+
+    const resultByQuiz = new Map(quizResults.map((row) => [row.quizId, row]));
+    const submissionByAssignment = new Map(
+      submissions.map((row) => [row.assignmentId, row]),
+    );
+    const quizzesByCourse = new Map<string, { id: string }[]>();
+    for (const quiz of quizzes) {
+      (
+        quizzesByCourse.get(quiz.courseId) ??
+        quizzesByCourse.set(quiz.courseId, []).get(quiz.courseId)!
+      ).push(quiz);
+    }
+    const assignmentsByCourse = new Map<string, { id: string }[]>();
+    for (const assignment of assignments) {
+      (
+        assignmentsByCourse.get(assignment.courseId) ??
+        assignmentsByCourse.set(assignment.courseId, []).get(assignment.courseId)!
+      ).push(assignment);
+    }
+
+    const percentages = new Map<string, number>();
+    for (const enrollment of enrollments) {
+      const lessons = {
+        total: enrollment.progress?.totalLessons ?? 0,
+        completed: enrollment.progress?.completedLessons ?? 0,
+      };
+      const courseQuizzes = (quizzesByCourse.get(enrollment.courseId) ?? []).map(
+        (quiz) => {
+          const result = resultByQuiz.get(quiz.id);
+          return {
+            passed: result?.passed ?? false,
+            pendingGrading: result?.pendingGrading ?? false,
+          };
+        },
+      );
+      const courseAssignments = (assignmentsByCourse.get(enrollment.courseId) ?? []).map(
+        (assignment) => {
+          const submission = submissionByAssignment.get(assignment.id);
+          return {
+            submitted:
+              submission?.status === 'submitted' ||
+              submission?.gradingStatus === 'graded',
+          };
+        },
+      );
+      percentages.set(
+        enrollment.courseId,
+        computeItemProgress({
+          lessons,
+          quizzes: courseQuizzes,
+          assignments: courseAssignments,
+        }).percentage,
+      );
+    }
+    return percentages;
   }
 
   private async upcomingDeadlines(

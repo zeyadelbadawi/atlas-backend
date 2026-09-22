@@ -52,6 +52,34 @@ import {
   type CertificateIssueJobPayload,
 } from '../../certificates/queue/certificate-jobs.types';
 
+/**
+ * Overall course progress across the WHOLE unified sequence — lessons,
+ * quizzes and assignments — not lessons alone.
+ *
+ * P4 Issue 4: the `/me` ring stayed at 0 for a learner whose progress was a
+ * passed quiz or a submitted assignment, and mis-stated it for any course
+ * that is not lesson-only, because `course_progress.percentage` counted only
+ * lessons and `recompute` never even wrote it. This is the one definition of
+ * "how far through the course am I" — a finished item is a completed lesson,
+ * a passed (or submitted-and-awaiting-grade) quiz, or a submitted assignment,
+ * matching what the player sequence treats as finished.
+ */
+export function computeItemProgress(args: {
+  readonly lessons: { readonly total: number; readonly completed: number };
+  readonly quizzes: readonly {
+    readonly passed: boolean;
+    readonly pendingGrading: boolean;
+  }[];
+  readonly assignments: readonly { readonly submitted: boolean }[];
+}): { completed: number; total: number; percentage: number } {
+  const total = args.lessons.total + args.quizzes.length + args.assignments.length;
+  const completed =
+    args.lessons.completed +
+    args.quizzes.filter((quiz) => quiz.passed || quiz.pendingGrading).length +
+    args.assignments.filter((assignment) => assignment.submitted).length;
+  return { completed, total, percentage: total > 0 ? (completed / total) * 100 : 0 };
+}
+
 export interface CompletionRecomputeResult {
   readonly evaluation: CompletionEvaluation;
   readonly rule: CompletionRule;
@@ -94,6 +122,7 @@ export class CourseCompletionService {
         'unavailable' | 'eligible' | 'issued' | 'revoked';
       readonly completionState: 'incomplete' | 'in_progress' | 'completed';
       readonly completedAt: Date | null;
+      readonly itemProgress: { completed: number; total: number; percentage: number };
     }
   > {
     const course = await tx.course.findUnique({
@@ -182,6 +211,15 @@ export class CourseCompletionService {
       assignmentEvidence,
     );
 
+    const itemProgress = computeItemProgress({
+      lessons: {
+        total: lessonRows.length,
+        completed: lessonRows.filter((row) => row.status === 'completed').length,
+      },
+      quizzes: quizEvidence,
+      assignments: assignmentEvidence,
+    });
+
     return {
       evaluation,
       rule,
@@ -190,6 +228,7 @@ export class CourseCompletionService {
       currentCertificateStatus: progress?.certificateStatus ?? 'unavailable',
       completionState: progress?.completionState ?? 'incomplete',
       completedAt: progress?.completedAt ?? null,
+      itemProgress,
     };
   }
 
@@ -254,6 +293,11 @@ export class CourseCompletionService {
       completedAt: completed ? (evaluated.completedAt ?? now) : null,
       overallScore: evaluation.overallScore,
       certificateStatus,
+      // P4 Issue 4 — the authoritative overall-progress figure the `/me` ring
+      // reads, across the whole sequence, not lessons alone. Materialised here
+      // so every recompute (lesson complete, quiz finalize, assignment submit
+      // or grade) keeps it live.
+      percentage: evaluated.itemProgress.percentage,
     };
     const updated = await tx.courseProgress.updateMany({
       where: { enrollmentId: enrollment.id },
@@ -265,10 +309,7 @@ export class CourseCompletionService {
           enrollmentId: enrollment.id,
           totalLessons: evaluation.lessons.total,
           completedLessons: evaluation.lessons.completed,
-          percentage:
-            evaluation.lessons.total > 0
-              ? (evaluation.lessons.completed / evaluation.lessons.total) * 100
-              : 0,
+          // `percentage` is the full-sequence figure from `progressData`.
           ...progressData,
         },
       });

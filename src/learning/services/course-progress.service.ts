@@ -159,6 +159,12 @@ export class CourseProgressService {
         this.academyStudentsRepository,
       );
       await this.backfillLessonProgress(tx, enrollment, courseId);
+      // P4 Issue 4 — self-heal the materialised overall-progress figure the
+      // same way the lesson rows self-heal above. `recompute` is idempotent
+      // and now writes the full-sequence `percentage`, so opening a course
+      // (or its progress page) brings a pre-existing enrollment's stale
+      // lesson-only percentage up to date without waiting for the next change.
+      await this.courseCompletionService.recompute(tx, enrollment);
       const courseProgress = await this.courseProgressRepository.findByEnrollmentId(
         tx,
         enrollment.id,
