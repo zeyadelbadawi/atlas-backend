@@ -18,7 +18,13 @@ export class CreateAssignmentSubmissionDto {
   @MaxLength(MAX_ASSIGNMENT_RESPONSE_LENGTH)
   readonly response?: string;
 
+  /** Pre-Phase-3 public attachment URL; kept for compatibility, ignored when `attachmentAssetId` is set. */
   @IsOptional()
   @IsString()
   readonly attachmentUrl?: string;
+
+  /** P64 Phase 3 (S12) — a protected asset the student uploaded themselves. */
+  @IsOptional()
+  @IsString()
+  readonly attachmentAssetId?: string;
 }

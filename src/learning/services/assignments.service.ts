@@ -17,6 +17,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -29,14 +30,27 @@ import { AcademyMembersRepository } from '../../academy/repositories/academy-mem
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
-import { MediaService } from '../../media/services/media.service';
+import { ProtectedMediaService } from '../../media/services/protected-media.service';
+import { ContentGrantSigner } from './content-grant.signer';
+import { CourseCompletionService } from './course-completion.service';
+import type { SaveAssignmentDraftDto } from '../dto/save-assignment-draft.dto';
 import type { UploadMediaAssetDto } from '../../media/dto/upload-media-asset.dto';
-import type { MediaAssetResponse } from '../../media/dto/media-asset.contract';
+
 import { AssignmentsRepository } from '../repositories/assignments.repository';
 import { toAssignmentResponse } from '../dto/assignment.contract';
 import type { AssignmentResponse } from '../dto/assignment.contract';
 import { toAssignmentSubmissionResponse } from '../dto/assignment-submission.contract';
-import type { AssignmentSubmissionResponse } from '../dto/assignment-submission.contract';
+import type {
+  AssignmentSubmissionResponse,
+  SubmissionAttachmentResponse,
+} from '../dto/assignment-submission.contract';
+
+export interface SubmissionAttachmentUploadResponse {
+  readonly assetId: string;
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+}
 import type { CreateAssignmentSubmissionDto } from '../dto/create-assignment-submission.dto';
 import type { CreateAssignmentDto } from '../dto/create-assignment.dto';
 import type { UpdateAssignmentDto } from '../dto/update-assignment.dto';
@@ -58,7 +72,9 @@ export class AssignmentsService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly academiesRepository: AcademiesRepository,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
-    private readonly mediaService: MediaService,
+    private readonly protectedMediaService: ProtectedMediaService,
+    private readonly contentGrantSigner: ContentGrantSigner,
+    private readonly courseCompletionService: CourseCompletionService,
     private readonly assignmentsRepository: AssignmentsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
@@ -165,30 +181,34 @@ export class AssignmentsService {
         assignmentId,
       );
       if (!assignment) throw new NotFoundException({ messageKey: 'errors.notFound' });
-
       const submission = await this.assignmentsRepository.findSubmission(
         tx,
         assignmentId,
         userId,
       );
-      return submission ? toAssignmentSubmissionResponse(submission) : null;
+      if (!submission) return null;
+      return toAssignmentSubmissionResponse(
+        submission,
+        await this.signAttachment(tx, submission.attachmentAssetId),
+      );
     });
   }
 
-  async submitAssignment(
+  /**
+   * P64 Phase 3 (§D.4) — draft autosave. A draft never changes a
+   * submitted answer: while a submission is `submitted`/graded and
+   * resubmission is off, the draft is refused; with resubmission on, the
+   * draft is kept beside the submitted text until the learner resubmits.
+   */
+  async saveDraft(
     userId: string,
     courseId: string,
     assignmentId: string,
-    payload: CreateAssignmentSubmissionDto,
+    payload: SaveAssignmentDraftDto,
   ): Promise<AssignmentSubmissionResponse> {
-    // Mirrors the frontend's own `assignmentSubmissionSchema` `.refine()`
-    // (`learning.schemas.ts`) — never trust the client-side check alone.
-    if (!payload.response?.trim() && !payload.attachmentUrl) {
-      throw new BadRequestException({ messageKey: 'errors.assignment.responseRequired' });
-    }
-
+    const now = new Date();
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(
+      const enrollment = await assertActiveEnrollment(
         tx,
         this.enrollmentsRepository,
         userId,
@@ -201,82 +221,212 @@ export class AssignmentsService {
         assignmentId,
       );
       if (!assignment) throw new NotFoundException({ messageKey: 'errors.notFound' });
-
       const existing = await this.assignmentsRepository.findSubmission(
         tx,
         assignmentId,
         userId,
       );
-
-      if (existing) {
-        if (!assignment.allowResubmission) {
-          throw new ConflictException({
-            messageKey: 'errors.assignment.alreadySubmitted',
-          });
-        }
-        // "Keep the latest row" — master plan §5.4's explicit instruction
-        // (no `assignment_submission_history` table; see
-        // `schema.prisma`'s P6 header comment). A resubmission also
-        // clears any prior grade — a grade against superseded content
-        // would be misleading, and no P6 endpoint writes these fields
-        // anyway (grading is P7 scope).
-        const updated = await this.assignmentsRepository.updateSubmission(
-          tx,
-          existing.id,
-          {
-            status: 'submitted',
-            response: payload.response,
-            attachmentUrl: payload.attachmentUrl,
-            submittedAt: new Date(),
-            gradingStatus: 'ungraded',
-            score: null,
-            feedback: null,
-            gradedAt: null,
-            grader: { disconnect: true },
-          },
-        );
-        return toAssignmentSubmissionResponse(updated);
+      if (existing && existing.status === 'submitted' && !assignment.allowResubmission) {
+        throw new ConflictException({ messageKey: 'errors.assignment.alreadySubmitted' });
       }
-
-      const created = await this.assignmentsRepository.createSubmission(tx, {
-        assignment: { connect: { id: assignmentId } },
-        student: { connect: { id: userId } },
-        status: 'submitted',
-        response: payload.response,
-        attachmentUrl: payload.attachmentUrl,
-        submittedAt: new Date(),
-        gradingStatus: 'ungraded',
-      });
-      return toAssignmentSubmissionResponse(created);
+      if (payload.attachmentAssetId) {
+        await this.assertOwnedProtectedAttachment(
+          tx,
+          payload.attachmentAssetId,
+          userId,
+          enrollment.academyId,
+        );
+      }
+      const draftData = {
+        draftResponse: payload.response ?? null,
+        draftSavedAt: now,
+        ...(payload.attachmentAssetId !== undefined
+          ? {
+              attachmentAsset:
+                payload.attachmentAssetId === null
+                  ? { disconnect: true }
+                  : { connect: { id: payload.attachmentAssetId } },
+            }
+          : {}),
+      };
+      const row = existing
+        ? await this.assignmentsRepository.updateSubmission(tx, existing.id, draftData)
+        : await this.assignmentsRepository.createSubmission(tx, {
+            assignment: { connect: { id: assignmentId } },
+            student: { connect: { id: userId } },
+            status: 'draft',
+            gradingStatus: 'ungraded',
+            ...draftData,
+          });
+      return toAssignmentSubmissionResponse(
+        row,
+        await this.signAttachment(tx, row.attachmentAssetId),
+      );
     });
   }
 
+  async submitAssignment(
+    userId: string,
+    courseId: string,
+    assignmentId: string,
+    payload: CreateAssignmentSubmissionDto,
+  ): Promise<AssignmentSubmissionResponse> {
+    const now = new Date();
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const enrollment = await assertActiveEnrollment(
+        tx,
+        this.enrollmentsRepository,
+        userId,
+        courseId,
+        this.academyStudentsRepository,
+      );
+      const assignment = await this.assignmentsRepository.findPublishedById(
+        tx,
+        courseId,
+        assignmentId,
+      );
+      if (!assignment) throw new NotFoundException({ messageKey: 'errors.notFound' });
+      const existing = await this.assignmentsRepository.findSubmission(
+        tx,
+        assignmentId,
+        userId,
+      );
+      // The submitted content: the payload, else the saved draft.
+      const response = payload.response?.trim()
+        ? payload.response
+        : (existing?.draftResponse ?? undefined);
+      const attachmentAssetId =
+        payload.attachmentAssetId ??
+        (payload.attachmentUrl ? undefined : (existing?.attachmentAssetId ?? undefined));
+      if (!response?.trim() && !payload.attachmentUrl && !attachmentAssetId) {
+        throw new BadRequestException({
+          messageKey: 'errors.assignment.responseRequired',
+        });
+      }
+      if (attachmentAssetId) {
+        await this.assertOwnedProtectedAttachment(
+          tx,
+          attachmentAssetId,
+          userId,
+          enrollment.academyId,
+        );
+      }
+      // S12 — the due date is enforced by policy.
+      const isLate =
+        assignment.dueAt !== null && now.getTime() > assignment.dueAt.getTime();
+      if (isLate && assignment.latePolicy === 'block') {
+        throw new ForbiddenException({
+          messageKey: 'errors.assignment.pastDue',
+          details: { dueAt: assignment.dueAt },
+        });
+      }
+      const wasSubmitted =
+        existing?.status === 'submitted' || existing?.gradingStatus === 'graded';
+      if (wasSubmitted && !assignment.allowResubmission) {
+        throw new ConflictException({ messageKey: 'errors.assignment.alreadySubmitted' });
+      }
+      const submittedData = {
+        status: 'submitted' as const,
+        response,
+        attachmentUrl: attachmentAssetId
+          ? null
+          : (payload.attachmentUrl ?? existing?.attachmentUrl ?? null),
+        ...(attachmentAssetId !== undefined
+          ? {
+              attachmentAsset: attachmentAssetId
+                ? { connect: { id: attachmentAssetId } }
+                : { disconnect: true },
+            }
+          : {}),
+        submittedAt: now,
+        isLate,
+        draftResponse: null,
+        draftSavedAt: null,
+        submittedRevision: (existing?.submittedRevision ?? 0) + 1,
+        gradingStatus: 'ungraded' as const,
+        score: null,
+        feedback: null,
+        gradedAt: null,
+      };
+      const row = existing
+        ? await this.assignmentsRepository.updateSubmission(tx, existing.id, {
+            ...submittedData,
+            ...(existing.gradedBy ? { grader: { disconnect: true } } : {}),
+          })
+        : await this.assignmentsRepository.createSubmission(tx, {
+            assignment: { connect: { id: assignmentId } },
+            student: { connect: { id: userId } },
+            ...submittedData,
+          });
+      // AD-11: a submission moves the course to "in progress" at least, and
+      // a graded resubmission back to ungraded may un-complete it.
+      await this.courseCompletionService.recompute(tx, enrollment, now);
+      return toAssignmentSubmissionResponse(
+        row,
+        await this.signAttachment(tx, row.attachmentAssetId),
+      );
+    });
+  }
+
+  /** S12 — the attachment must be a PROTECTED asset this student uploaded into this academy. */
+  private async assertOwnedProtectedAttachment(
+    tx: Prisma.TransactionClient,
+    assetId: string,
+    userId: string,
+    academyId: string,
+  ): Promise<void> {
+    const asset = await tx.mediaAsset.findUnique({
+      where: { id: assetId },
+      select: {
+        id: true,
+        access: true,
+        academyId: true,
+        uploadedByUserId: true,
+        status: true,
+      },
+    });
+    if (
+      !asset ||
+      asset.access !== 'protected' ||
+      asset.academyId !== academyId ||
+      asset.uploadedByUserId !== userId ||
+      asset.status !== 'active'
+    ) {
+      throw new BadRequestException({
+        messageKey: 'errors.assignment.attachmentNotOwned',
+      });
+    }
+  }
+
+  private async signAttachment(
+    tx: Prisma.TransactionClient,
+    assetId: string | null,
+  ): Promise<SubmissionAttachmentResponse | null> {
+    if (!assetId) return null;
+    const asset = await tx.mediaAsset.findUnique({ where: { id: assetId } });
+    if (!asset) return null;
+    const signed = await this.contentGrantSigner.signFile(asset);
+    return {
+      assetId: asset.id,
+      fileName: asset.fileName,
+      mimeType: asset.mimeType,
+      sizeBytes: Number(asset.sizeBytes),
+      url: signed.url,
+      expiresAt: signed.expiresAt.toISOString(),
+    };
+  }
+
   /**
-   * Phase 4 (P24) — uploads a real file for the current student's
-   * upcoming submission and returns its real, permanent R2 URL, to be
-   * passed as `attachmentUrl` in the normal `submitAssignment` call that
-   * follows — the same two-step "upload, then reference the resulting
-   * URL in an otherwise-ordinary form submission" flow
-   * `LessonFormDialog`'s own `MediaLibraryDialog` integration (Phase 0)
-   * already established, not a new upload pattern.
-   *
-   * Resolution chain mirrors `EnrollmentsService.createEnrollment`'s own
-   * precedent exactly: `resolveAcademyIdForPublishedCourse`/
-   * `resolveOrganizationId` are both real, context-free reads (safe to
-   * call with no tenant/user context yet), used here to reach the
-   * organization id `MediaService.uploadForSubmission`'s own
-   * `runInTenantContext` calls need. The enrollment check runs first,
-   * under a bare `runInUserContext` — the same authorization
-   * `getAssignments`/`submitAssignment` already use — so an unenrolled
-   * caller is rejected before any of that resolution work, let alone any
-   * real R2 I/O, ever happens.
+   * P64 Phase 3 (S12) — submission attachments go to the PROTECTED tier,
+   * owned by the student. The response deliberately carries no durable
+   * URL: the learner's submission view signs a short-lived link per read.
    */
   async uploadSubmissionAttachment(
     userId: string,
     courseId: string,
     payload: UploadMediaAssetDto,
-  ): Promise<MediaAssetResponse> {
-    await this.tenancyContextService.runInUserContext(userId, (tx) =>
+  ): Promise<SubmissionAttachmentUploadResponse> {
+    const enrollment = await this.tenancyContextService.runInUserContext(userId, (tx) =>
       assertActiveEnrollment(
         tx,
         this.enrollmentsRepository,
@@ -285,26 +435,24 @@ export class AssignmentsService {
         this.academyStudentsRepository,
       ),
     );
-
-    const academyId =
-      await this.coursesRepository.resolveAcademyIdForPublishedCourse(courseId);
-    if (!academyId) throw new NotFoundException({ messageKey: 'errors.notFound' });
-
+    const academyId = enrollment.academyId;
     const organizationId =
       await this.academyStudentsRepository.resolveOrganizationId(academyId);
     if (!organizationId) throw new NotFoundException({ messageKey: 'errors.notFound' });
-
-    return this.mediaService.uploadForSubmission(
+    const asset = await this.protectedMediaService.uploadSubmissionAttachment(
       academyId,
       organizationId,
-      payload,
       userId,
+      courseId,
+      { fileName: payload.fileName, file: payload.dataUrl, courseId },
     );
+    return {
+      assetId: asset.id,
+      fileName: asset.fileName,
+      mimeType: asset.mimeType,
+      sizeBytes: Number(asset.sizeBytes),
+    };
   }
-
-  // -------------------------------------------------------------------
-  // Phase 4 (P24) — authoring.
-  // -------------------------------------------------------------------
 
   async getAssignmentsForAuthoring(
     userId: string,
@@ -379,6 +527,8 @@ export class AssignmentsService {
         status: payload.status,
         dueAt: payload.dueAt ? new Date(payload.dueAt) : undefined,
         allowResubmission: payload.allowResubmission,
+        latePolicy: payload.latePolicy,
+        requiredForCompletion: payload.requiredForCompletion,
       });
 
       const { organizationId, role } = await this.resolveAuditAttribution(
@@ -433,6 +583,8 @@ export class AssignmentsService {
         status: payload.status,
         dueAt: payload.dueAt ? new Date(payload.dueAt) : undefined,
         allowResubmission: payload.allowResubmission,
+        latePolicy: payload.latePolicy,
+        requiredForCompletion: payload.requiredForCompletion,
       });
 
       const { organizationId, role } = await this.resolveAuditAttribution(

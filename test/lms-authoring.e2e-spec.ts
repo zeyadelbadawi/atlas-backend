@@ -413,37 +413,34 @@ describe('LMS Authoring (e2e) — Phase 4', () => {
       })
       .expect(201);
     /*
-     * A RELATIVE url, not an absolute one. This assertion used to demand
-     * `stringContaining('http')`, which encoded the very defect that was
-     * fixed: the stored "public URL" pointed at R2's S3 API endpoint, which
-     * requires a SigV4 signature, so every `<img src>` rendered broken.
-     * Atlas serves its own media now, and a relative path is what makes it
-     * resolve on the dashboard, on academy subdomains and on connected
-     * custom domains without any per-origin configuration.
-     *
-     * Submission attachments share the media pipeline by design, so they
-     * get the same URL shape — which is why this suite noticed.
+     * P64 Phase 3 (§D.4): submission attachments are PROTECTED media now.
+     * The upload answers with the asset id only — never a public
+     * `/public/media` path and never the R2 endpoint — and the student
+     * references it by id at submit time. The learner's own view carries a
+     * short-lived signed link instead.
      */
-    expect(uploaded.body.url).toMatch(
-      /^\/api\/v1\/public\/media\/academies\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.png$/,
-    );
-    expect(uploaded.body.url).not.toContain('r2.cloudflarestorage.com');
-    expect(uploaded.body.type).toBe('image');
+    expect(uploaded.body).not.toHaveProperty('url');
+    expect(uploaded.body.assetId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(uploaded.body.mimeType).toBe('image/png');
 
     // Real R2/`media_assets` row — never base64-in-database.
     const mediaRow = await admin.mediaAsset.findUnique({
-      where: { id: uploaded.body.id },
+      where: { id: uploaded.body.assetId },
     });
     expect(mediaRow).not.toBeNull();
     expect(mediaRow!.academyId).toBe(academy.id);
+    expect(mediaRow!.uploadedByUserId).toBe(student.userId);
+    expect(mediaRow!.url).not.toContain('r2.cloudflarestorage.com');
+    expect(mediaRow!.url).not.toContain('/public/media/');
 
     const submission = await request(app.getHttpServer())
       .post(`/courses/${course.id}/assignments/${assignmentId}/submission`)
       .set('Authorization', `Bearer ${student.accessToken}`)
-      .send({ response: 'Here is my work.', attachmentUrl: uploaded.body.url })
+      .send({ response: 'Here is my work.', attachmentAssetId: uploaded.body.assetId })
       .expect(201);
-    expect(submission.body.attachmentUrl).toBe(uploaded.body.url);
-    expect(submission.body.attachmentUrl).not.toEqual(expect.stringContaining('base64'));
+    expect(submission.body.attachment.assetId).toBe(uploaded.body.assetId);
+    expect(submission.body.attachment.url).toEqual(expect.stringContaining('http'));
+    expect(submission.body.attachment.url).not.toEqual(expect.stringContaining('base64'));
 
     const graded = await request(app.getHttpServer())
       .post(

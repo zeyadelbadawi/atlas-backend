@@ -21,6 +21,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { QuizQuestionInputDto } from './quiz-question-input.dto';
+import { QuizSettingsFieldsDto } from './quiz-settings.dto';
 import {
   MAX_QUIZ_DESCRIPTION_LENGTH,
   MAX_QUIZ_QUESTIONS,
@@ -30,7 +31,7 @@ import {
 
 const QUIZ_STATUS_VALUES = ['draft', 'published'] as const;
 
-export class CreateQuizDto {
+export class CreateQuizDto extends QuizSettingsFieldsDto {
   @IsNotEmpty()
   @IsString()
   @MaxLength(MAX_QUIZ_TITLE_LENGTH)

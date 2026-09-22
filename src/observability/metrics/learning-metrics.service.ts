@@ -123,6 +123,74 @@ export class LearningMetricsService {
     ['tier'],
   );
 
+  // --- P64 Phase 3 (§U) ---------------------------------------------------
+  private readonly quizAttemptsStarted = counter(
+    'atlas_quiz_attempts_started_total',
+    'Quiz attempts started, by whether a deadline was set.',
+    ['kind'],
+  );
+  private readonly quizAttemptsSubmitted = counter(
+    'atlas_quiz_attempts_submitted_total',
+    'Quiz attempts finalised, by reason (submit, timeout, integrity, review).',
+    ['reason'],
+  );
+  private readonly quizAutosaveLag = histogram(
+    'atlas_quiz_autosave_duration_ms',
+    'Server time to apply an autosave (the §U autosave-lag signal).',
+    [],
+    [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000],
+  );
+  private readonly quizSweepFinalized = counter(
+    'atlas_quiz_deadline_sweep_finalized_total',
+    'Overdue attempts finalised by the sweep rather than the delayed job (rises when jobs are lost).',
+    [],
+  );
+  private readonly integrityEvents = counter(
+    'atlas_quiz_integrity_events_total',
+    'Integrity events recorded, by type.',
+    ['type'],
+  );
+  private readonly certificatesIssued = counter(
+    'atlas_certificates_issued_total',
+    'Certificates issued, by trigger (automatic, manual, regenerated).',
+    ['trigger'],
+  );
+  private readonly certificateRenders = counter(
+    'atlas_certificate_renders_total',
+    'Certificate PDF render outcomes.',
+    ['result'],
+  );
+  private readonly certificateVerifications = counter(
+    'atlas_certificate_verifications_total',
+    'Public verification lookups, by outcome (issued, revoked, unknown).',
+    ['result'],
+  );
+
+  recordQuizAttemptStarted(kind: 'timed' | 'untimed'): void {
+    this.safely(() => this.quizAttemptsStarted.inc({ kind }));
+  }
+  recordQuizAttemptSubmitted(reason: string): void {
+    this.safely(() => this.quizAttemptsSubmitted.inc({ reason }));
+  }
+  recordQuizAutosave(durationMs: number): void {
+    this.safely(() => this.quizAutosaveLag.observe(durationMs));
+  }
+  recordQuizDeadlineSweepFinalized(): void {
+    this.safely(() => this.quizSweepFinalized.inc());
+  }
+  recordIntegrityEvent(type: string): void {
+    this.safely(() => this.integrityEvents.inc({ type }));
+  }
+  recordCertificateIssued(trigger: 'automatic' | 'manual' | 'regenerated'): void {
+    this.safely(() => this.certificatesIssued.inc({ trigger }));
+  }
+  recordCertificateRender(ok: boolean): void {
+    this.safely(() => this.certificateRenders.inc({ result: ok ? 'ok' : 'error' }));
+  }
+  recordCertificateVerification(result: 'issued' | 'revoked' | 'unknown'): void {
+    this.safely(() => this.certificateVerifications.inc({ result }));
+  }
+
   constructor() {
     if (!defaultsCollected) {
       collectDefaultMetrics({ register: registry });

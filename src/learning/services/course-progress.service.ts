@@ -28,20 +28,19 @@ import { CourseSectionsRepository } from '../../course/repositories/course-secti
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { CourseProgressRepository } from '../repositories/course-progress.repository';
+import { CourseCompletionService } from './course-completion.service';
 import { toCourseProgressResponse } from '../dto/course-progress.contract';
 import type { CourseProgressResponse } from '../dto/course-progress.contract';
 import type { CompleteLessonDto } from '../dto/complete-lesson.dto';
 import { assertActiveEnrollment } from './learning-access.util';
 import { MINIMUM_WATCHED_RATIO } from '../dto/learning.constants';
-import {
-  deriveCertificateStatus,
-  deriveCompletionState,
-} from './progress-computation.util';
+import { deriveCompletionState } from './progress-computation.util';
 
 @Injectable()
 export class CourseProgressService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
+    private readonly courseCompletionService: CourseCompletionService,
     private readonly enrollmentsRepository: EnrollmentsRepository,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly courseProgressRepository: CourseProgressRepository,
@@ -99,7 +98,6 @@ export class CourseProgressService {
           currentLessonId:
             existingRows.find((row) => row.status !== 'completed')?.lessonId ?? null,
           completionState,
-          certificateStatus: deriveCertificateStatus(completionState),
         });
       }
       return;
@@ -143,7 +141,6 @@ export class CourseProgressService {
       percentage: totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0,
       currentLessonId: currentLesson?.lessonId ?? null,
       completionState,
-      certificateStatus: deriveCertificateStatus(completionState),
     });
   }
 
@@ -258,23 +255,16 @@ export class CourseProgressService {
         const completedLessons = allLessonProgress.filter(
           (row) => row.status === 'completed',
         ).length;
-        const completionState = deriveCompletionState(completedLessons, totalLessons);
         const currentLesson = allLessonProgress.find((row) => row.status !== 'completed');
-
         await this.courseProgressRepository.updateCourseProgress(tx, enrollment.id, {
           completedLessons,
           percentage: totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0,
           currentLessonId: currentLesson?.lessonId ?? null,
-          completionState,
-          certificateStatus: deriveCertificateStatus(completionState),
         });
-
-        if (completionState === 'completed' && enrollment.status !== 'completed') {
-          await this.enrollmentsRepository.update(tx, enrollment.id, {
-            status: 'completed',
-            completedAt: new Date(),
-          });
-        }
+        // P64 Phase 3 (AD-11): completion, completedAt, certificate status and the
+        // enrollment's completed flag come from the rule evaluator, never from a
+        // lesson count alone.
+        await this.courseCompletionService.recompute(tx, enrollment);
       }
 
       const courseProgress = await this.courseProgressRepository.findByEnrollmentId(
@@ -356,26 +346,18 @@ export class CourseProgressService {
         const completedLessons = allLessonProgress.filter(
           (row) => row.status === 'completed',
         ).length;
-        const completionState = deriveCompletionState(completedLessons, totalLessons);
         const currentLesson = allLessonProgress.find((row) => row.status !== 'completed');
 
         await this.courseProgressRepository.updateCourseProgress(tx, enrollment.id, {
           completedLessons,
           percentage: totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0,
           currentLessonId: currentLesson?.lessonId ?? null,
-          completionState,
-          certificateStatus: deriveCertificateStatus(completionState),
         });
 
-        // A course that is no longer complete must not leave the
-        // enrollment claiming it is — the roster, the certificate status
-        // and the learner's own list all read that field.
-        if (completionState !== 'completed' && enrollment.status === 'completed') {
-          await this.enrollmentsRepository.update(tx, enrollment.id, {
-            status: 'enrolled',
-            completedAt: null,
-          });
-        }
+        // P64 Phase 3 (AD-11): a course that is no longer complete must not
+        // leave the enrollment claiming it is — the evaluator decides, and it
+        // never touches an already-issued certificate (D7).
+        await this.courseCompletionService.recompute(tx, enrollment);
       }
 
       const courseProgress = await this.courseProgressRepository.findByEnrollmentId(

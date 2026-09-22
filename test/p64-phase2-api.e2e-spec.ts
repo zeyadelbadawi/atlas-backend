@@ -182,6 +182,9 @@ const flags: { value: LearningFeatureFlags } = {
     devicesPolicy: { mode: 'on', academyIds: [] },
     learnerDashboardV2: { mode: 'on', academyIds: [] },
     playerV2: { mode: 'on', academyIds: [] },
+    quizEngineV2: { mode: 'on', academyIds: [] },
+    quizIntegrity: { mode: 'on', academyIds: [] },
+    certificates: { mode: 'on', academyIds: [] },
   },
 };
 
@@ -193,6 +196,9 @@ function allFlags(mode: 'on' | 'off'): LearningFeatureFlags {
     devicesPolicy: { mode, academyIds: [] },
     learnerDashboardV2: { mode, academyIds: [] },
     playerV2: { mode, academyIds: [] },
+    quizEngineV2: { mode, academyIds: [] },
+    quizIntegrity: { mode, academyIds: [] },
+    certificates: { mode, academyIds: [] },
   };
 }
 

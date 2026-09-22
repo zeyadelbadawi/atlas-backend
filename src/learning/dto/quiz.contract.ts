@@ -28,6 +28,31 @@ export interface QuizQuestionResponse {
   readonly type: PrismaQuizQuestion['type'];
   readonly options?: readonly QuizQuestionOptionResponse[];
   readonly order: number;
+  readonly points: number;
+}
+
+/**
+ * P64 Phase 3 — the settings a learner may know BEFORE starting (time
+ * limit, window, attempts, integrity disclosure). Never the answers.
+ */
+export interface QuizLearnerSettingsResponse {
+  readonly mode: PrismaQuiz['mode'];
+  readonly timeLimitSeconds: number | null;
+  readonly availableFrom: string | null;
+  readonly availableUntil: string | null;
+  readonly dueAt: string | null;
+  readonly latePolicy: PrismaQuiz['latePolicy'];
+  readonly gradingPolicy: PrismaQuiz['gradingPolicy'];
+  readonly layout: PrismaQuiz['layout'];
+  readonly questionsPerAttempt: number | null;
+  readonly showScore: PrismaQuiz['showScore'];
+  readonly showAnswers: PrismaQuiz['showAnswers'];
+  readonly integrityMode: PrismaQuiz['integrityMode'];
+  readonly maxViolations: number;
+  readonly requireFullscreen: boolean;
+  readonly requiredToProgress: boolean;
+  readonly requiredForCompletion: boolean;
+  readonly hideTimer: boolean;
 }
 
 export interface QuizResponse {
@@ -40,7 +65,32 @@ export interface QuizResponse {
   readonly questionCount: number;
   readonly passingScore?: number;
   readonly maxAttempts?: number;
+  readonly settings: QuizLearnerSettingsResponse;
   readonly questions?: readonly QuizQuestionResponse[];
+}
+
+export function toQuizLearnerSettingsResponse(
+  quiz: PrismaQuiz,
+): QuizLearnerSettingsResponse {
+  return {
+    mode: quiz.mode,
+    timeLimitSeconds: quiz.timeLimitSeconds,
+    availableFrom: quiz.availableFrom?.toISOString() ?? null,
+    availableUntil: quiz.availableUntil?.toISOString() ?? null,
+    dueAt: quiz.dueAt?.toISOString() ?? null,
+    latePolicy: quiz.latePolicy,
+    gradingPolicy: quiz.gradingPolicy,
+    layout: quiz.layout,
+    questionsPerAttempt: quiz.questionsPerAttempt,
+    showScore: quiz.showScore,
+    showAnswers: quiz.showAnswers,
+    integrityMode: quiz.integrityMode,
+    maxViolations: quiz.maxViolations,
+    requireFullscreen: quiz.requireFullscreen,
+    requiredToProgress: quiz.requiredToProgress,
+    requiredForCompletion: quiz.requiredForCompletion,
+    hideTimer: quiz.hideTimer,
+  };
 }
 
 export function toQuizQuestionOptionResponse(
@@ -59,6 +109,7 @@ export function toQuizQuestionResponse(
     type: question.type,
     options: question.options?.map(toQuizQuestionOptionResponse),
     order: question.order,
+    points: question.points,
   };
 }
 
@@ -78,6 +129,7 @@ export function toQuizResponse(
     questionCount,
     passingScore: quiz.passingScore ?? undefined,
     maxAttempts: quiz.maxAttempts ?? undefined,
+    settings: toQuizLearnerSettingsResponse(quiz),
     questions: quiz.questions?.map(toQuizQuestionResponse),
   };
 }

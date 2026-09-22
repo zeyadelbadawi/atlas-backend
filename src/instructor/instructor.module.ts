@@ -22,11 +22,21 @@ import { CourseModule } from '../course/course.module';
 import { AcademyModule } from '../academy/academy.module';
 import { InstructorController } from './controllers/instructor.controller';
 import { InstructorService } from './services/instructor.service';
+import { LearningModule } from '../learning/learning.module';
+import { MetricsModule } from '../observability/metrics/metrics.module';
+import { QuizReviewService } from './services/quiz-review.service';
 import { InstructorRepository } from './repositories/instructor.repository';
 
 @Module({
-  imports: [AuthCoreModule, TenancyModule, CourseModule, AcademyModule],
+  imports: [
+    AuthCoreModule,
+    TenancyModule,
+    CourseModule,
+    AcademyModule,
+    LearningModule,
+    MetricsModule,
+  ],
   controllers: [InstructorController],
-  providers: [InstructorService, InstructorRepository],
+  providers: [InstructorService, InstructorRepository, QuizReviewService],
 })
 export class InstructorModule {}

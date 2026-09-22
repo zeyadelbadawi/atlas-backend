@@ -42,6 +42,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import {
+  CERTIFICATE_ANONYMIZE_JOB,
+  CERTIFICATE_JOBS_QUEUE,
+  type CertificateAnonymizeJobPayload,
+} from '../../certificates/queue/certificate-jobs.types';
 import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { SessionRevocationService } from './session-revocation.service';
@@ -77,6 +84,7 @@ export class AccountDeletionService {
   private readonly logger = new Logger(AccountDeletionService.name);
 
   constructor(
+    @InjectQueue(CERTIFICATE_JOBS_QUEUE) private readonly certificateQueue: Queue,
     private readonly prisma: PrismaService,
     private readonly tenancyContextService: TenancyContextService,
     private readonly sessionRevocationService: SessionRevocationService,
@@ -126,6 +134,10 @@ export class AccountDeletionService {
     // anonymisation failed, the account would already have lost its
     // memberships rather than being left half-deleted with full access.
     await this.removeMemberships(userId);
+    // P64 Phase 3 (§D.6): certificates keep their issuance facts but lose the
+    // holder's name; done on the certificate queue so this module never
+    // imports the certificates module (which imports identity).
+    await this.enqueueCertificateAnonymisation(userId);
 
     const sessionIds = await this.anonymiseAndRevoke(userId, input);
 
@@ -193,6 +205,24 @@ export class AccountDeletionService {
    * success — a silent no-op, and the reason this method exists
    * separately from the anonymisation transaction.
    */
+  private async enqueueCertificateAnonymisation(userId: string): Promise<void> {
+    const payload: CertificateAnonymizeJobPayload = { userId };
+    try {
+      await this.certificateQueue.add(CERTIFICATE_ANONYMIZE_JOB, payload, {
+        jobId: `certificate-anonymize:${userId}`,
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: true,
+        removeOnFail: { count: 1_000 },
+      });
+    } catch (error) {
+      this.logger.error(
+        { userId, error: error instanceof Error ? error.message : String(error) },
+        'Could not enqueue certificate anonymisation; retry from the platform tooling.',
+      );
+    }
+  }
+
   private async removeMemberships(userId: string): Promise<void> {
     // Same trap as `archiveOwnedAcademies`: this read is RLS-protected.
     // The P2 self-membership SELECT policy keys on `app.current_user_id`,

@@ -48,6 +48,8 @@ interface RawItem {
   readonly isPreview: boolean;
   readonly dueAt: Date | null;
   readonly availableAt: Date | null;
+  /** Quizzes only (P64 Phase 3): must be PASSED before later items unlock. */
+  readonly requiredToProgress: boolean;
 }
 
 @Injectable()
@@ -136,6 +138,9 @@ export class CourseSequenceService {
             sectionId: true,
             order: true,
             createdAt: true,
+            requiredToProgress: true,
+            availableFrom: true,
+            dueAt: true,
           },
         }),
         tx.assignment.findMany({
@@ -193,6 +198,15 @@ export class CourseSequenceService {
         if (!current || rank(mapped) > rank(current))
           quizState.set(attempt.quizId, mapped);
       }
+      // P64 Phase 3 — the quiz's EFFECTIVE result (grading policy) decides
+      // "passed", not whichever attempt happens to rank highest.
+      const results = await tx.quizResult.findMany({
+        where: { studentId: userId, quiz: { courseId } },
+        select: { quizId: true, passed: true },
+      });
+      for (const result of results) {
+        if (result.passed) quizState.set(result.quizId, 'passed');
+      }
 
       const submissions = await tx.assignmentSubmission.findMany({
         where: { studentId: userId, assignment: { courseId } },
@@ -222,6 +236,7 @@ export class CourseSequenceService {
           isPreview: lesson.isPreview,
           dueAt: null,
           availableAt: lesson.availableAt,
+          requiredToProgress: true,
         })),
         ...quizzes.map((quiz) => ({
           id: quiz.id,
@@ -232,8 +247,9 @@ export class CourseSequenceService {
           createdAt: quiz.createdAt,
           durationSeconds: null,
           isPreview: false,
-          dueAt: null,
-          availableAt: null,
+          dueAt: quiz.dueAt,
+          availableAt: quiz.availableFrom,
+          requiredToProgress: quiz.requiredToProgress,
         })),
         ...assignments.map((assignment) => ({
           id: assignment.id,
@@ -246,6 +262,7 @@ export class CourseSequenceService {
           isPreview: false,
           dueAt: assignment.dueAt,
           availableAt: null,
+          requiredToProgress: false,
         })),
         ...liveSessions.map((session) => ({
           id: session.id,
@@ -258,6 +275,7 @@ export class CourseSequenceService {
           isPreview: false,
           dueAt: session.scheduledStartAt,
           availableAt: session.scheduledStartAt,
+          requiredToProgress: false,
         })),
       ];
 
@@ -268,6 +286,7 @@ export class CourseSequenceService {
       // `backfillLessonProgress` already treats the curriculum: an item is
       // locked while anything before it in the whole course is unfinished.
       let previousFinished = true;
+      let blockedByQuiz = false;
 
       sections.forEach((section, sectionIndex) => {
         const inSection = raw
@@ -285,6 +304,7 @@ export class CourseSequenceService {
             now,
             accessEnded,
             previousFinished,
+            blockedByQuiz,
             lessonState,
             quizState,
             assignmentState,
@@ -305,7 +325,20 @@ export class CourseSequenceService {
             dueAt: item.dueAt?.toISOString() ?? null,
             availableAt: item.availableAt?.toISOString() ?? null,
           });
-          previousFinished = isFinished(state);
+          // A quiz that is not required to progress never blocks what follows;
+          // a required one blocks until it is PASSED, with its own reason.
+          if (item.type === 'quiz') {
+            if (item.requiredToProgress) {
+              blockedByQuiz = state !== 'passed';
+              previousFinished = state === 'passed';
+            } else {
+              blockedByQuiz = false;
+              previousFinished = true;
+            }
+          } else {
+            blockedByQuiz = false;
+            previousFinished = isFinished(state);
+          }
         });
       });
 
@@ -355,7 +388,10 @@ function mapQuizState(status: string): SequenceItemState {
     case 'passed':
       return 'passed';
     case 'failed':
+    case 'expired':
       return 'failed';
+    case 'invalidated':
+      return 'available';
     case 'submitted':
       return 'submitted';
     case 'in_progress':
@@ -370,6 +406,7 @@ function deriveState(args: {
   readonly now: Date;
   readonly accessEnded: boolean;
   readonly previousFinished: boolean;
+  readonly blockedByQuiz: boolean;
   readonly lessonState: Map<string, string>;
   readonly quizState: Map<string, SequenceItemState>;
   readonly assignmentState: Map<string, SequenceItemState>;
@@ -405,7 +442,10 @@ function deriveState(args: {
   // Sequential unlock. A preview lesson is deliberately never locked by
   // it: preview exists to be opened before anything else has been.
   if (!args.previousFinished && !item.isPreview) {
-    return { state: 'locked', lockReason: 'previousIncomplete' };
+    return {
+      state: 'locked',
+      lockReason: args.blockedByQuiz ? 'quizNotPassed' : 'previousIncomplete',
+    };
   }
 
   if (item.type === 'assignment' && item.dueAt && item.dueAt.getTime() < now.getTime()) {

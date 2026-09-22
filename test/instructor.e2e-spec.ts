@@ -203,8 +203,10 @@ describe('Instructor Operations (e2e)', () => {
       .get(`/courses/${course.id}/assignments/${assignment.id}/submission`)
       .set('Authorization', `Bearer ${student.accessToken}`)
       .expect(200);
-    expect(studentView.body).not.toHaveProperty('grade');
-    expect(studentView.body).not.toHaveProperty('gradingStatus');
+    // P64 Phase 3 (§D.4): the learner's own submission view now carries the
+    // grade and feedback — the pre-Phase-3 contract deliberately hid them.
+    expect(studentView.body.gradingStatus).toBe('graded');
+    expect(studentView.body.grade).toMatchObject({ score: 88, feedback: 'Solid work.' });
   });
 
   it('master plan §18 scenario 5: an instructor NOT assigned to Course X cannot grade its submissions, regardless of which course id is supplied', async () => {

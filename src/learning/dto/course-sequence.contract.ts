@@ -59,6 +59,8 @@ export const SEQUENCE_LOCK_REASONS = [
   'notStarted',
   /** Access to the course has ended (revoked, refunded, expired). */
   'accessEnded',
+  /** P64 Phase 3: an earlier quiz marked "required to progress" has not been passed yet. */
+  'quizNotPassed',
 ] as const;
 export type SequenceLockReason = (typeof SEQUENCE_LOCK_REASONS)[number];
 

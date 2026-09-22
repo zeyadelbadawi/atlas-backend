@@ -23,6 +23,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Req,
   Res,
   UseGuards,
@@ -30,13 +31,14 @@ import {
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { AssignmentsService } from '../services/assignments.service';
+import { SaveAssignmentDraftDto } from '../dto/save-assignment-draft.dto';
+import type { SubmissionAttachmentUploadResponse } from '../services/assignments.service';
 import { CreateAssignmentSubmissionDto } from '../dto/create-assignment-submission.dto';
 import { CreateAssignmentDto } from '../dto/create-assignment.dto';
 import { UpdateAssignmentDto } from '../dto/update-assignment.dto';
 import { UploadMediaAssetDto } from '../../media/dto/upload-media-asset.dto';
 import type { AssignmentResponse } from '../dto/assignment.contract';
 import type { AssignmentSubmissionResponse } from '../dto/assignment-submission.contract';
-import type { MediaAssetResponse } from '../../media/dto/media-asset.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('courses')
@@ -176,12 +178,27 @@ export class AssignmentsController {
    * fact; see `AssignmentsService.uploadSubmissionAttachment`'s own doc
    * comment.
    */
+  @Put(':id/assignments/:assignmentId/submission/draft')
+  async saveDraft(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('assignmentId') assignmentId: string,
+    @Body() body: SaveAssignmentDraftDto,
+  ): Promise<AssignmentSubmissionResponse> {
+    return this.assignmentsService.saveDraft(
+      request.authContext!.userId,
+      courseId,
+      assignmentId,
+      body,
+    );
+  }
+
   @Post(':id/assignments/:assignmentId/submission/attachment')
   async uploadSubmissionAttachment(
     @Req() request: Request,
     @Param('id') courseId: string,
     @Body() body: UploadMediaAssetDto,
-  ): Promise<MediaAssetResponse> {
+  ): Promise<SubmissionAttachmentUploadResponse> {
     return this.assignmentsService.uploadSubmissionAttachment(
       request.authContext!.userId,
       courseId,

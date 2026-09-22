@@ -76,6 +76,8 @@ function harness(
     {
       findForUserInAcademy: () => Promise.resolve({ role: 'owner', status: 'active' }),
     } as never,
+    // P64 Phase 3 — AcademyStudentsRepository (student attachment uploads; unused here)
+    { findForUserInAcademy: () => Promise.resolve(null) } as never,
     {
       assertVideoMinutesWithinQuota: (_t: unknown, _o: string, minutes: number) => {
         quotaCalls.push(minutes);

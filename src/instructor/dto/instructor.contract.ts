@@ -113,6 +113,17 @@ export interface GradeResponse {
 
 export interface AssignmentSubmissionReviewResponse {
   readonly id: string;
+  /** P64 Phase 3 (S12) — short-lived signed link to the protected attachment; present on the detail view. */
+  readonly attachment?: {
+    readonly assetId: string;
+    readonly fileName: string;
+    readonly mimeType: string;
+    readonly sizeBytes: number;
+    readonly url: string;
+    readonly expiresAt: string;
+  } | null;
+  readonly isLate: boolean;
+  readonly submittedRevision: number;
   readonly assignmentId: string;
   readonly studentId: string;
   readonly studentName: string;
@@ -127,10 +138,14 @@ export interface AssignmentSubmissionReviewResponse {
 export function toAssignmentSubmissionReviewResponse(
   submission: PrismaAssignmentSubmission,
   studentName: string,
+  attachment?: AssignmentSubmissionReviewResponse['attachment'],
 ): AssignmentSubmissionReviewResponse {
   const hasGrade = submission.gradingStatus === 'graded';
   return {
     id: submission.id,
+    attachment,
+    isLate: submission.isLate,
+    submittedRevision: submission.submittedRevision,
     assignmentId: submission.assignmentId,
     studentId: submission.studentId,
     studentName,
