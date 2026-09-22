@@ -41,7 +41,10 @@ export class QuizDeadlineProducer {
         removeOnFail: { count: 1_000 },
       });
     } catch (error) {
-      this.logger.warn(
+      // `error`, not `warn`: a scheduling failure on every attempt is how the
+      // colon-in-job-id defect hid for a whole release (22 Sep 2026). The
+      // maintenance sweep still finalises the attempt within ten minutes.
+      this.logger.error(
         { attemptId, error: error instanceof Error ? error.message : String(error) },
         'Could not schedule the quiz deadline job; the maintenance sweep will finalise the attempt.',
       );
