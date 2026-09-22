@@ -306,6 +306,32 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
     };
   }
 
+  /**
+   * Marks a lesson complete for the world's learner (creating the
+   * `lesson_progress` row `seedEnrollment` does not materialise), so a LATER
+   * lesson is not held behind it by the now-enforced sequential progression.
+   * These grant-shape tests are about the grant, not gating.
+   */
+  async function completeLessonForLearner(
+    w: { enrollment: { id: string }; course: { id: string } },
+    lesson: { id: string; sectionId: string },
+  ): Promise<void> {
+    await admin.lessonProgress.upsert({
+      where: {
+        enrollmentId_lessonId: { enrollmentId: w.enrollment.id, lessonId: lesson.id },
+      },
+      create: {
+        enrollmentId: w.enrollment.id,
+        lessonId: lesson.id,
+        sectionId: lesson.sectionId,
+        courseId: w.course.id,
+        status: 'completed',
+        completedAt: new Date(),
+      },
+      update: { status: 'completed', completedAt: new Date() },
+    });
+  }
+
   /** The context a controller builds: identity from the token, academy from the HOST, device from the cookie. */
   function context(
     overrides: Partial<ContentRequestContext> = {},
@@ -650,6 +676,7 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
   describe('the grant', () => {
     it('carries no durable URL and expires with its shortest credential', async () => {
       const w = await world('p2sec-grant-shape');
+      await completeLessonForLearner(w, w.videoLesson);
       const grant = await contentService.getContent(
         w.course.id,
         w.fileLesson.id,
@@ -668,6 +695,7 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
 
     it('FINDING SEC-1: an entitled learner’s grant actually contains the file it signed', async () => {
       const w = await world('p2sec-file-grant');
+      await completeLessonForLearner(w, w.videoLesson);
       const grant = await contentService.getContent(
         w.course.id,
         w.fileLesson.id,

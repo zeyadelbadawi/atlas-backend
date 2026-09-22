@@ -612,6 +612,30 @@ describe('P64 Phase 2 — a Premium → Normal downgrade migrates nothing (D11, 
 
     const premiumGrant = (await grantFor(world, premiumLesson.id, learner).expect(200))
       .body;
+    // Sequential progression is now enforced on the content grant: the normal
+    // lesson sits after the premium one, so finish the predecessor before
+    // fetching it (this test is about tier coexistence, not gating). The
+    // enrollment is seeded directly, so the progress row is created here.
+    const learnerEnrollment = await admin.enrollment.findFirstOrThrow({
+      where: { studentId: learner.userId, courseId: world.courseId },
+    });
+    await admin.lessonProgress.upsert({
+      where: {
+        enrollmentId_lessonId: {
+          enrollmentId: learnerEnrollment.id,
+          lessonId: premiumLesson.id,
+        },
+      },
+      create: {
+        enrollmentId: learnerEnrollment.id,
+        lessonId: premiumLesson.id,
+        sectionId: premiumLesson.sectionId,
+        courseId: world.courseId,
+        status: 'completed',
+        completedAt: new Date(),
+      },
+      update: { status: 'completed', completedAt: new Date() },
+    });
     const normalGrant = (await grantFor(world, normalLesson.id, learner).expect(200))
       .body;
 
