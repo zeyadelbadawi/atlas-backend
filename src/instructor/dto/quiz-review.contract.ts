@@ -57,6 +57,27 @@ export interface QuizAttemptReviewResponse extends QuizAttemptResponse {
   readonly events: readonly AttemptEventResponse[];
   readonly gradedByName: string | null;
   readonly invalidatedByName: string | null;
+  /**
+   * The integrity mode in force FOR THIS ATTEMPT, read from its settings
+   * snapshot — `off` when the quiz had integrity off OR the academy's
+   * `quiz.integrity` flag was not on when the attempt ran. It lets the
+   * reviewer tell "integrity was not watching" from "integrity was watching
+   * and recorded nothing" (P4 Issue 5): an empty event list means different
+   * things in those two cases, and reporting both as "no events" read as the
+   * whole feature being broken.
+   */
+  readonly integrityMode: 'off' | 'monitor' | 'warn' | 'strict';
+}
+
+/** Reads the effective integrity mode from an attempt's frozen settings snapshot. */
+function snapshotIntegrityMode(
+  snapshot: PrismaQuizAttempt['settingsSnapshot'],
+): 'off' | 'monitor' | 'warn' | 'strict' {
+  const mode =
+    snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+      ? (snapshot as Record<string, unknown>).integrityMode
+      : undefined;
+  return mode === 'monitor' || mode === 'warn' || mode === 'strict' ? mode : 'off';
 }
 
 export interface QuizStudentOverrideResponse {
@@ -148,6 +169,7 @@ export function toAttemptReviewResponse(
     })),
     gradedByName: names.gradedBy,
     invalidatedByName: names.invalidatedBy,
+    integrityMode: snapshotIntegrityMode(attempt.settingsSnapshot),
   };
 }
 

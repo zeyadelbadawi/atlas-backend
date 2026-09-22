@@ -780,6 +780,10 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       .expect(200);
     expect(review.body.events).toHaveLength(3);
     expect(review.body.violationCount).toBe(2);
+    // P4 Issue 5 — the reviewer response says whether integrity was WATCHING
+    // this attempt, so an empty event list can be told apart from an
+    // unmonitored one. This attempt recorded violations, so it was active.
+    expect(review.body.integrityMode).not.toBe('off');
     const csv = await http()
       .get(`${reviewPath(w)}/integrity.csv`)
       .set(auth(w.owner.token))
@@ -1456,6 +1460,30 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       version: template.body.version + 1,
     });
     expect(updated.body.wording.ar.title).toBe('شهادة إنجاز');
+
+    // P4 Issue 7 — the branding save must accept an UPLOADED media reference,
+    // which the media library returns as the app-relative
+    // `/api/v1/public/media/...` path, not just an absolute URL. A bare
+    // `@IsUrl` rejected it as "not a valid URL".
+    const withUploadedLogo = await http()
+      .put(`/academies/${w.academy.id}/certificate-template`)
+      .set(auth(w.manager.token))
+      .send({
+        logoUrl: `/api/v1/public/media/academies/${w.academy.id}/logo-123.png`,
+        signatureUrl: 'https://cdn.example.com/sign.png',
+      })
+      .expect(200);
+    expect(withUploadedLogo.body.logoUrl).toBe(
+      `/api/v1/public/media/academies/${w.academy.id}/logo-123.png`,
+    );
+    expect(withUploadedLogo.body.signatureUrl).toBe('https://cdn.example.com/sign.png');
+
+    // A genuinely malformed value is still rejected — validation is not weakened.
+    await http()
+      .put(`/academies/${w.academy.id}/certificate-template`)
+      .set(auth(w.manager.token))
+      .send({ logoUrl: 'not a url at all' })
+      .expect(400);
   });
 
   it('P4 Issue 4: course progress percentage counts the whole sequence, not lessons alone', async () => {

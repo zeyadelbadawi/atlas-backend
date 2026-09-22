@@ -5,11 +5,49 @@ import {
   IsObject,
   IsOptional,
   IsString,
-  IsUrl,
   MaxLength,
   ValidateIf,
+  registerDecorator,
+  type ValidationOptions,
 } from 'class-validator';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
+
+/** The relative path prefix `toMediaAssetUrl` emits for an uploaded public asset. */
+const UPLOADED_MEDIA_PREFIX = '/api/v1/public/media/';
+
+/**
+ * A certificate's logo/signature is EITHER an external image URL an author
+ * pasted, OR — far more commonly — an image they uploaded, whose reference is
+ * the app-relative public-media path `toMediaAssetUrl` returns
+ * (`/api/v1/public/media/...`). The certificate branding save used a bare
+ * `@IsUrl`, which rejected that relative reference as "not a valid URL" — the
+ * exact P4 Issue 7 failure, since the media library only ever hands back that
+ * relative form. This accepts both without weakening `@IsUrl` anywhere else;
+ * the renderer resolves the relative form to an absolute URL before fetching.
+ */
+function IsUploadedMediaOrUrl(options?: ValidationOptions) {
+  return function (object: object, propertyName: string): void {
+    registerDecorator({
+      name: 'isUploadedMediaOrUrl',
+      target: object.constructor,
+      propertyName,
+      options: { message: 'validation:invalidUrl', ...options },
+      validator: {
+        validate(value: unknown): boolean {
+          if (value === null || value === undefined) return true;
+          if (typeof value !== 'string') return false;
+          if (value.startsWith(UPLOADED_MEDIA_PREFIX)) return true;
+          try {
+            const parsed = new URL(value);
+            return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+          } catch {
+            return false;
+          }
+        },
+      },
+    });
+  };
+}
 
 export class ListCertificatesQueryDto extends CollectionQueryDto {
   @IsOptional()
@@ -67,13 +105,13 @@ export class UpdateCertificateTemplateDto {
 
   @IsOptional()
   @ValidateIf((o) => o.logoUrl !== null)
-  @IsUrl({ require_tld: false, protocols: ['https', 'http'] })
+  @IsUploadedMediaOrUrl()
   @MaxLength(2000)
   readonly logoUrl?: string | null;
 
   @IsOptional()
   @ValidateIf((o) => o.signatureUrl !== null)
-  @IsUrl({ require_tld: false, protocols: ['https', 'http'] })
+  @IsUploadedMediaOrUrl()
   @MaxLength(2000)
   readonly signatureUrl?: string | null;
 

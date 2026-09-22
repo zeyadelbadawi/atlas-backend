@@ -915,9 +915,19 @@ export class CertificatesService {
     if (!certificate || certificate.academyId !== academyId) return 'skipped';
     const snapshot = certificate.snapshot as unknown as CertificateSnapshot;
     const locale = certificate.locale === 'ar' ? 'ar' : 'en';
+    // The logo/signature may be an uploaded media reference — the app-relative
+    // `/api/v1/public/media/...` path (P4 Issue 7). The renderer fetches over
+    // HTTP and cannot resolve a relative path, so make them absolute against
+    // the platform domain here, where that config lives, without mutating the
+    // stored snapshot.
+    const renderSnapshot: CertificateSnapshot = {
+      ...snapshot,
+      logoUrl: this.absolutePublicMediaUrl(snapshot.logoUrl),
+      signatureUrl: this.absolutePublicMediaUrl(snapshot.signatureUrl),
+    };
     try {
       const { pdf, warnings } = await this.renderer.render({
-        snapshot,
+        snapshot: renderSnapshot,
         serial: certificate.serial,
         verificationCode: certificate.verificationCode,
         verificationCodeDisplay: formatVerificationCode(certificate.verificationCode),
@@ -1081,10 +1091,25 @@ export class CertificatesService {
   }
 
   verifyUrl(code: string): string {
-    const base = this.platformDomain?.baseDomain
+    return `${this.publicBaseUrl()}/verify/${formatVerificationCode(code)}`;
+  }
+
+  private publicBaseUrl(): string {
+    return this.platformDomain?.baseDomain
       ? `https://${this.platformDomain.baseDomain}`
       : 'http://localhost:3001';
-    return `${base}/verify/${formatVerificationCode(code)}`;
+  }
+
+  /**
+   * Resolves an uploaded-media reference (the app-relative
+   * `/api/v1/public/media/...` path) to an absolute URL the renderer can
+   * fetch. An already-absolute URL (an author's external logo) and null pass
+   * through unchanged.
+   */
+  private absolutePublicMediaUrl(url: string | null): string | null {
+    if (!url) return url;
+    if (url.startsWith('/')) return `${this.publicBaseUrl()}${url}`;
+    return url;
   }
 }
 
