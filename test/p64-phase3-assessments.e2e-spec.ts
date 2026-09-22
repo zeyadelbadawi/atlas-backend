@@ -36,6 +36,13 @@ import type { LearningFeatureFlags } from '../src/config/configuration';
 import { QuizAttemptEngineService } from '../src/learning/services/quiz-attempt-engine.service';
 import { CertificatesService } from '../src/certificates/services/certificates.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
+import { getQueueToken } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
+import { Phase2MaintenanceService } from '../src/learning/services/phase2-maintenance.service';
+import {
+  QUIZ_DEADLINE_QUEUE,
+  quizDeadlineJobId,
+} from '../src/learning/queue/quiz-deadline.types';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -382,6 +389,62 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     expect(await engine.finalizeOverdueAttempt(attempt.id, w.student.userId)).toBe(
       'skipped',
     );
+  });
+
+  it('the delayed deadline job itself finalises an attempt through the BullMQ worker (reason timeout, graded as-is)', async () => {
+    // Production validation, 22 Sep 2026: the job was scheduled but never
+    // observed to fire; this pins the whole path — producer → Redis →
+    // worker → engine — rather than only the engine method the sweep calls.
+    const w = await world('p3-deadline-job', {
+      quiz: { timeLimitSeconds: 600 },
+      passingScore: 50,
+    });
+    const attempt = await start(w);
+    await http()
+      .put(`${attemptsPath(w)}/${attempt.id}/answers`)
+      .set(auth(w.student.token))
+      .send({
+        revision: 1,
+        answers: [{ questionId: w.q1.id, selectedOptionIds: [w.q1Correct.id] }],
+      })
+      .expect(200);
+    const queue = app.get<Queue>(getQueueToken(QUIZ_DEADLINE_QUEUE));
+    const job = await queue.getJob(quizDeadlineJobId(attempt.id));
+    expect(job).toBeDefined();
+    // Move the deadline into the past, then release the delayed job now
+    // instead of waiting ten minutes for its timer.
+    await admin.quizAttempt.update({
+      where: { id: attempt.id },
+      data: { deadlineAt: new Date(Date.now() - 120_000) },
+    });
+    await job!.promote();
+    const deadlineToFinalize = Date.now() + 15_000;
+    let row = await admin.quizAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
+    while (row.status === 'in_progress' && Date.now() < deadlineToFinalize) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      row = await admin.quizAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
+    }
+    expect(row.status).toBe('passed');
+    expect(row.autoSubmitted).toBe(true);
+    expect(row.autoSubmittedReason).toBe('timeout');
+    expect(Number(row.score)).toBe(50);
+  });
+
+  it('the maintenance sweep job finalises overdue attempts (the safety net for a lost deadline job)', async () => {
+    const w = await world('p3-maintenance-sweep', {
+      quiz: { timeLimitSeconds: 600 },
+      passingScore: 50,
+    });
+    const attempt = await start(w);
+    await admin.quizAttempt.update({
+      where: { id: attempt.id },
+      data: { deadlineAt: new Date(Date.now() - 120_000) },
+    });
+    const result = await app.get(Phase2MaintenanceService).run();
+    expect(result.finalizedOverdueQuizAttempts).toBeGreaterThanOrEqual(1);
+    const row = await admin.quizAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
+    expect(row.status).toBe('failed'); // nothing answered: 0 of 2, graded as-is, never "expired"
+    expect(row.autoSubmittedReason).toBe('timeout');
   });
 
   it('submit is idempotent; under engine v2 a partial submit grades unanswered questions as incorrect', async () => {
@@ -1211,6 +1274,63 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
         tx.certificate.count({ where: { id: issued.id } }),
       ),
     ).toBe(1);
+  });
+
+  it('deleting the learner account anonymises their certificate snapshot through the queued job', async () => {
+    // The job id used to contain a colon, which BullMQ refuses for a
+    // two-segment custom id; the enqueue failed silently and no certificate
+    // was ever anonymised (22 Sep 2026). This pins the whole path.
+    const w = await world('p3-anon', { passingScore: 50 });
+    await http()
+      .put(`/academies/${w.academy.id}/courses/${w.course.id}/completion-rule`)
+      .set(auth(w.owner.token))
+      .send({ requiredQuizIds: [w.quiz.id], certificatesEnabled: true })
+      .expect(200);
+    await http()
+      .post(`/courses/${w.course.id}/progress/complete-lesson`)
+      .set(auth(w.student.token))
+      .send({ lessonId: w.lesson.id })
+      .expect(201);
+    const a1 = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${a1.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: [{ questionId: w.q1.id, selectedOptionIds: [w.q1Correct.id] }] })
+      .expect(201);
+    await certificates.issueAutomatically(w.enrollmentId, w.academy.id);
+    const before = await admin.certificate.findUniqueOrThrow({
+      where: { enrollmentId: w.enrollmentId },
+    });
+    expect((before.snapshot as { learnerName: string }).learnerName).not.toBe(
+      'Deleted account',
+    );
+
+    await http()
+      .post('/users/me/delete')
+      .set(auth(w.student.token))
+      .send({ confirm: true, reason: 'no_longer_needed' })
+      .expect(200);
+
+    const until = Date.now() + 15_000;
+    let after = await admin.certificate.findUniqueOrThrow({ where: { id: before.id } });
+    while (
+      (after.snapshot as { learnerName: string }).learnerName !== 'Deleted account' &&
+      Date.now() < until
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      after = await admin.certificate.findUniqueOrThrow({ where: { id: before.id } });
+    }
+    const snapshot = after.snapshot as {
+      learnerName: string;
+      learnerEmailMasked: string;
+      anonymizedAt?: string;
+    };
+    expect(snapshot.learnerName).toBe('Deleted account');
+    expect(snapshot.learnerEmailMasked).toBe('');
+    expect(snapshot.anonymizedAt).toBeDefined();
+    // Serial and code survive: a verifier can still confirm the certificate existed.
+    expect(after.serial).toBe(before.serial);
+    expect(after.verificationCode).toBe(before.verificationCode);
   });
 
   it('a manual issuance by an owner is audited and refused for an ineligible enrollment unless forced; the certificate template is owner/manager only', async () => {

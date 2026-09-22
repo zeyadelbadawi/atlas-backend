@@ -23,10 +23,16 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { ContentAccessLogRepository } from '../repositories/content-access-log.repository';
 import { VideoReconciliationService } from '../../media/services/video-reconciliation.service';
 import { CONTENT_ACCESS_LOG_RETENTION_DAYS } from '../queue/phase2-maintenance.types';
+import { QuizAttemptEngineService } from './quiz-attempt-engine.service';
 
 export interface Phase2MaintenanceResult {
   readonly prunedAccessLogRows: number;
   readonly reconciledVideos: number;
+  /**
+   * P64 Phase 3 (AD-8) — timed attempts past `deadline + grace` that the
+   * delayed job did not finalise, finalised by this sweep instead.
+   */
+  readonly finalizedOverdueQuizAttempts: number;
 }
 
 @Injectable()
@@ -37,13 +43,47 @@ export class Phase2MaintenanceService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly accessLog: ContentAccessLogRepository,
     private readonly reconciliation: VideoReconciliationService,
+    private readonly quizEngine: QuizAttemptEngineService,
   ) {}
 
   async run(): Promise<Phase2MaintenanceResult> {
     return {
       prunedAccessLogRows: await this.pruneAccessLog(),
       reconciledVideos: await this.pollStalledVideos(),
+      finalizedOverdueQuizAttempts: await this.finalizeOverdueQuizAttempts(),
     };
+  }
+
+  /**
+   * P64 Phase 3 (AD-8) — the auto-submit safety net the master plan
+   * promises ("auto-submit by job and by sweep"). The delayed
+   * `quiz-deadlines` job is the fast path; this sweep bounds the damage
+   * when that job is lost, never scheduled, or never fires — which is
+   * exactly what the 22 Sep 2026 production validation observed: the
+   * engine's `finalizeOverdue` existed but nothing ever called it, so an
+   * abandoned attempt stayed `in_progress` until its learner next read it.
+   * The learner-facing outcome was already correct (every read, save and
+   * submit finalises lazily); what was missing was the finalisation
+   * happening at all for attempts nobody comes back to — the reviewer's
+   * attempt list, completion, and the auto-submit metric all waited on it.
+   */
+  private async finalizeOverdueQuizAttempts(): Promise<number> {
+    try {
+      const finalized = await this.quizEngine.finalizeOverdue();
+      if (finalized > 0) {
+        this.logger.warn(
+          { finalized },
+          'Finalised overdue quiz attempts by sweep; their delayed deadline jobs did not fire.',
+        );
+      }
+      return finalized;
+    } catch (error) {
+      this.logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Overdue quiz attempt sweep failed; the next run will retry.',
+      );
+      return 0;
+    }
   }
 
   /**

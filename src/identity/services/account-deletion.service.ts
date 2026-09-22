@@ -209,7 +209,8 @@ export class AccountDeletionService {
     const payload: CertificateAnonymizeJobPayload = { userId };
     try {
       await this.certificateQueue.add(CERTIFICATE_ANONYMIZE_JOB, payload, {
-        jobId: `certificate-anonymize:${userId}`,
+        // No colon: BullMQ refuses two-segment custom ids containing `:` (see `quizDeadlineJobId`).
+        jobId: `certificate-anonymize-${userId}`,
         attempts: 5,
         backoff: { type: 'exponential', delay: 5_000 },
         removeOnComplete: true,
