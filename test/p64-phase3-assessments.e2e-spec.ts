@@ -872,6 +872,15 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     });
     const base = `/courses/${w.course.id}/assignments/${assignment.id}/submission`;
 
+    // The very first keystroke in an assignment the learner never opened
+    // before arrives as a draft with NO attachment, which the client sends
+    // as `attachmentAssetId: null`. That must create the row, not 500.
+    await http()
+      .put(`${base}/draft`)
+      .set(auth(w.student.token))
+      .send({ response: 'First keystroke', attachmentAssetId: null })
+      .expect(200);
+
     const draft = await http()
       .put(`${base}/draft`)
       .set(auth(w.student.token))

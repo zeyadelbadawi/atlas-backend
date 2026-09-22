@@ -539,8 +539,14 @@ export class QuizAttemptEngineService {
           throw new BadRequestException({ messageKey: 'errors.quiz.incompleteAnswers' });
         }
       }
+      // A submit that lands after the deadline (inside the grace window)
+      // is what the client does when its countdown reaches zero: the
+      // server's clock says time ran out, so the attempt is recorded as
+      // auto-submitted for reason "timeout" — the same outcome the
+      // deadline job produces when the client never got to send it.
+      const timedOut = attempt.deadlineAt !== null && now >= attempt.deadlineAt;
       const outcome = await this.finalizeInTransaction(tx, attempt, quiz, {
-        reason: 'submit',
+        reason: timedOut ? 'timeout' : 'submit',
         now,
         enrollment,
         answers,
