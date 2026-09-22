@@ -237,26 +237,35 @@ export class AssignmentsService {
           enrollment.academyId,
         );
       }
-      const draftData = {
+      const draftFields = {
         draftResponse: payload.response ?? null,
         draftSavedAt: now,
-        ...(payload.attachmentAssetId !== undefined
-          ? {
-              attachmentAsset:
-                payload.attachmentAssetId === null
-                  ? { disconnect: true }
-                  : { connect: { id: payload.attachmentAssetId } },
-            }
-          : {}),
       };
+      // `null` detaches — meaningful only on an existing row. A brand-new
+      // draft with no attachment simply has none (Prisma's `create` has no
+      // `disconnect`; sending one was a 500 the first time a learner typed
+      // into an assignment they had never opened before).
+      const attach =
+        payload.attachmentAssetId !== undefined && payload.attachmentAssetId !== null
+          ? { attachmentAsset: { connect: { id: payload.attachmentAssetId } } }
+          : {};
+      const detach =
+        payload.attachmentAssetId === null
+          ? { attachmentAsset: { disconnect: true } }
+          : {};
       const row = existing
-        ? await this.assignmentsRepository.updateSubmission(tx, existing.id, draftData)
+        ? await this.assignmentsRepository.updateSubmission(tx, existing.id, {
+            ...draftFields,
+            ...attach,
+            ...detach,
+          })
         : await this.assignmentsRepository.createSubmission(tx, {
             assignment: { connect: { id: assignmentId } },
             student: { connect: { id: userId } },
             status: 'draft',
             gradingStatus: 'ungraded',
-            ...draftData,
+            ...draftFields,
+            ...attach,
           });
       return toAssignmentSubmissionResponse(
         row,
