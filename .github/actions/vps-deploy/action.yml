@@ -39,6 +39,17 @@ inputs:
     required: false
     default: ''
     description: Zoom OAuth redirect URI, synced into the VPS .env.
+  feature_flags:
+    description: >-
+      P64 Phase 3 rollout — newline-separated FLAG_*=value lines, sourced from
+      GitHub repository VARIABLES by the workflow (never secrets). Only keys
+      starting with FLAG_ are accepted and empty values are dropped, so an
+      unset variable can never blank a working flag. Reuses the one
+      authorised env-sync path (`deploy.sh --sync-env`), so a rollout is a
+      variable change plus a deploy — audited in both places — and nothing is
+      hand-edited on the VPS.
+    required: false
+    default: ''
   zoom_webhook_secret_token:
     required: false
     default: ''
@@ -58,6 +69,7 @@ runs:
         ZOOM_OAUTH_CLIENT_SECRET: ${{ inputs.zoom_client_secret }}
         ZOOM_OAUTH_REDIRECT_URI: ${{ inputs.zoom_redirect_uri }}
         ZOOM_WEBHOOK_SECRET_TOKEN: ${{ inputs.zoom_webhook_secret_token }}
+        FEATURE_FLAGS: ${{ inputs.feature_flags }}
       run: |
         set -euo pipefail
 
@@ -83,6 +95,17 @@ runs:
           'ZOOM_OAUTH_REDIRECT_URI', 'ZOOM_WEBHOOK_SECRET_TOKEN',
         ]
         lines = [f"{k}={os.environ[k]}" for k in keys if os.environ.get(k)]
+        # P64 feature flags: FLAG_* keys only; values limited to what a mode
+        # or a comma-separated list of academy ids can contain.
+        import re
+        for raw in os.environ.get('FEATURE_FLAGS', '').splitlines():
+            raw = raw.strip()
+            if not raw or '=' not in raw:
+                continue
+            k, v = raw.split('=', 1)
+            k, v = k.strip(), v.strip()
+            if re.fullmatch(r'FLAG_[A-Z0-9_]+', k) and v and re.fullmatch(r'[A-Za-z0-9_,-]+', v):
+                lines.append(f"{k}={v}")
         print(base64.b64encode("\n".join(lines).encode()).decode() if lines else "")
         PYEOF
         )

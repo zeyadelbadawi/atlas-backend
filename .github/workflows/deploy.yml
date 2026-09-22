@@ -118,6 +118,27 @@ jobs:
           zoom_client_secret: ${{ secrets.ZOOM_OAUTH_CLIENT_SECRET }}
           zoom_redirect_uri: ${{ secrets.ZOOM_OAUTH_REDIRECT_URI }}
           zoom_webhook_secret_token: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}
+          # P64 rollout flags come from repository VARIABLES (Settings →
+          # Variables), one per line; unset ones are dropped by the action.
+          feature_flags: |
+            FLAG_QUIZ_ENGINE_V2_MODE=${{ vars.FLAG_QUIZ_ENGINE_V2_MODE }}
+            FLAG_QUIZ_ENGINE_V2_ACADEMY_IDS=${{ vars.FLAG_QUIZ_ENGINE_V2_ACADEMY_IDS }}
+            FLAG_QUIZ_INTEGRITY_MODE=${{ vars.FLAG_QUIZ_INTEGRITY_MODE }}
+            FLAG_QUIZ_INTEGRITY_ACADEMY_IDS=${{ vars.FLAG_QUIZ_INTEGRITY_ACADEMY_IDS }}
+            FLAG_CERTIFICATES_MODE=${{ vars.FLAG_CERTIFICATES_MODE }}
+            FLAG_CERTIFICATES_ACADEMY_IDS=${{ vars.FLAG_CERTIFICATES_ACADEMY_IDS }}
+            FLAG_LEARNER_DASHBOARD_V2_MODE=${{ vars.FLAG_LEARNER_DASHBOARD_V2_MODE }}
+            FLAG_LEARNER_DASHBOARD_V2_ACADEMY_IDS=${{ vars.FLAG_LEARNER_DASHBOARD_V2_ACADEMY_IDS }}
+            FLAG_PLAYER_V2_MODE=${{ vars.FLAG_PLAYER_V2_MODE }}
+            FLAG_PLAYER_V2_ACADEMY_IDS=${{ vars.FLAG_PLAYER_V2_ACADEMY_IDS }}
+            FLAG_CONTENT_PROTECTED_MODE=${{ vars.FLAG_CONTENT_PROTECTED_MODE }}
+            FLAG_CONTENT_PROTECTED_ACADEMY_IDS=${{ vars.FLAG_CONTENT_PROTECTED_ACADEMY_IDS }}
+            FLAG_VIDEO_NORMAL_MODE=${{ vars.FLAG_VIDEO_NORMAL_MODE }}
+            FLAG_VIDEO_NORMAL_ACADEMY_IDS=${{ vars.FLAG_VIDEO_NORMAL_ACADEMY_IDS }}
+            FLAG_VIDEO_PREMIUM_MODE=${{ vars.FLAG_VIDEO_PREMIUM_MODE }}
+            FLAG_VIDEO_PREMIUM_ACADEMY_IDS=${{ vars.FLAG_VIDEO_PREMIUM_ACADEMY_IDS }}
+            FLAG_DEVICES_POLICY_MODE=${{ vars.FLAG_DEVICES_POLICY_MODE }}
+            FLAG_DEVICES_POLICY_ACADEMY_IDS=${{ vars.FLAG_DEVICES_POLICY_ACADEMY_IDS }}
 
   # 3. MIGRATION DEPLOYMENT — dispatch only, with the input explicitly set.
   #
@@ -150,3 +171,24 @@ jobs:
           zoom_client_secret: ${{ secrets.ZOOM_OAUTH_CLIENT_SECRET }}
           zoom_redirect_uri: ${{ secrets.ZOOM_OAUTH_REDIRECT_URI }}
           zoom_webhook_secret_token: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}
+          # P64 rollout flags come from repository VARIABLES (Settings →
+          # Variables), one per line; unset ones are dropped by the action.
+          feature_flags: |
+            FLAG_QUIZ_ENGINE_V2_MODE=${{ vars.FLAG_QUIZ_ENGINE_V2_MODE }}
+            FLAG_QUIZ_ENGINE_V2_ACADEMY_IDS=${{ vars.FLAG_QUIZ_ENGINE_V2_ACADEMY_IDS }}
+            FLAG_QUIZ_INTEGRITY_MODE=${{ vars.FLAG_QUIZ_INTEGRITY_MODE }}
+            FLAG_QUIZ_INTEGRITY_ACADEMY_IDS=${{ vars.FLAG_QUIZ_INTEGRITY_ACADEMY_IDS }}
+            FLAG_CERTIFICATES_MODE=${{ vars.FLAG_CERTIFICATES_MODE }}
+            FLAG_CERTIFICATES_ACADEMY_IDS=${{ vars.FLAG_CERTIFICATES_ACADEMY_IDS }}
+            FLAG_LEARNER_DASHBOARD_V2_MODE=${{ vars.FLAG_LEARNER_DASHBOARD_V2_MODE }}
+            FLAG_LEARNER_DASHBOARD_V2_ACADEMY_IDS=${{ vars.FLAG_LEARNER_DASHBOARD_V2_ACADEMY_IDS }}
+            FLAG_PLAYER_V2_MODE=${{ vars.FLAG_PLAYER_V2_MODE }}
+            FLAG_PLAYER_V2_ACADEMY_IDS=${{ vars.FLAG_PLAYER_V2_ACADEMY_IDS }}
+            FLAG_CONTENT_PROTECTED_MODE=${{ vars.FLAG_CONTENT_PROTECTED_MODE }}
+            FLAG_CONTENT_PROTECTED_ACADEMY_IDS=${{ vars.FLAG_CONTENT_PROTECTED_ACADEMY_IDS }}
+            FLAG_VIDEO_NORMAL_MODE=${{ vars.FLAG_VIDEO_NORMAL_MODE }}
+            FLAG_VIDEO_NORMAL_ACADEMY_IDS=${{ vars.FLAG_VIDEO_NORMAL_ACADEMY_IDS }}
+            FLAG_VIDEO_PREMIUM_MODE=${{ vars.FLAG_VIDEO_PREMIUM_MODE }}
+            FLAG_VIDEO_PREMIUM_ACADEMY_IDS=${{ vars.FLAG_VIDEO_PREMIUM_ACADEMY_IDS }}
+            FLAG_DEVICES_POLICY_MODE=${{ vars.FLAG_DEVICES_POLICY_MODE }}
+            FLAG_DEVICES_POLICY_ACADEMY_IDS=${{ vars.FLAG_DEVICES_POLICY_ACADEMY_IDS }}
