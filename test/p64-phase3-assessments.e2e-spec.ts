@@ -346,6 +346,15 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       })
       .expect(409);
     expect(late.body.messageKey ?? late.body.error?.messageKey).toBeDefined();
+    // The finalisation the refused save performed must have COMMITTED —
+    // before 22 Sep 2026 the 409 was thrown inside the same transaction
+    // and rolled it back, so the row stayed `in_progress` until the
+    // results read below finalised it (which is why this test passed).
+    const afterLateSave = await admin.quizAttempt.findUniqueOrThrow({
+      where: { id: attempt.id },
+    });
+    expect(afterLateSave.status).toBe('passed');
+    expect(afterLateSave.autoSubmittedReason).toBe('timeout');
     const results = await http()
       .get(`${attemptsPath(w)}/${attempt.id}/results`)
       .set(auth(w.student.token))
@@ -359,6 +368,70 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     // The late answers were never applied.
     const row = await admin.quizAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
     expect(row.answersRevision).toBe(1);
+  });
+
+  it('an abandoned expired attempt is finalised (committed) by the next start, session read or event batch, and a new attempt can then be started', async () => {
+    // Production, 22 Sep 2026: a learner whose open attempt had expired got
+    // 409 "expired" on every start, forever — the finalisation ran and was
+    // rolled back with the 409.
+    const w = await world('p3-expired-restart', {
+      quiz: { timeLimitSeconds: 600 },
+      maxAttempts: 3,
+    });
+    const first = await start(w);
+    await admin.quizAttempt.update({
+      where: { id: first.id },
+      data: { deadlineAt: new Date(Date.now() - 120_000) },
+    });
+    // Session read: 409, but the row is finalised for good.
+    await http()
+      .get(`${attemptsPath(w)}/${first.id}`)
+      .set(auth(w.student.token))
+      .expect(409);
+    let row = await admin.quizAttempt.findUniqueOrThrow({ where: { id: first.id } });
+    expect(row.status).toBe('failed'); // nothing answered, graded as-is
+    expect(row.autoSubmittedReason).toBe('timeout');
+
+    // A second attempt whose expiry is discovered by a late SUBMIT (past the
+    // grace window): refused, and the finalisation commits. (An event batch
+    // is deliberately not a refusal — integrity events are recorded, never
+    // a wall — so it is not exercised here.)
+    const second = await start(w);
+    expect(second.id).not.toBe(first.id);
+    await admin.quizAttempt.update({
+      where: { id: second.id },
+      data: { deadlineAt: new Date(Date.now() - 120_000) },
+    });
+    await http()
+      .post(`${attemptsPath(w)}/${second.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: correctAnswers(w) })
+      .expect(409);
+    row = await admin.quizAttempt.findUniqueOrThrow({ where: { id: second.id } });
+    expect(row.status).toBe('failed'); // the late answers were never applied
+    expect(row.autoSubmittedReason).toBe('timeout');
+
+    // A third attempt whose expiry is discovered by the next START: the
+    // start answers 409 once (the paper the learner was resuming is dead),
+    // the row is finalised, and the start after that opens a new paper.
+    const third = await start(w);
+    await admin.quizAttempt.update({
+      where: { id: third.id },
+      data: { deadlineAt: new Date(Date.now() - 120_000) },
+    });
+    await http().post(attemptsPath(w)).set(auth(w.student.token)).expect(409);
+    row = await admin.quizAttempt.findUniqueOrThrow({ where: { id: third.id } });
+    expect(row.status).toBe('failed');
+    expect(row.autoSubmittedReason).toBe('timeout');
+    // Cap is 3 and all three are used: the next start is refused for THAT
+    // reason, not as "expired" — proving the open attempt is gone.
+    const capped = await http()
+      .post(attemptsPath(w))
+      .set(auth(w.student.token))
+      .expect(403);
+    expect(capped.body.error?.messageKey ?? capped.body.messageKey).toBe(
+      'errors.quiz.maxAttemptsReached',
+    );
   });
 
   it('the sweep finalises an overdue attempt whose delayed job never fired; unanswered questions count as incorrect', async () => {

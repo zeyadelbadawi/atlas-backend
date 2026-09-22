@@ -850,6 +850,7 @@ Nine steps, in this order. Nothing below has been run; each needs explicit autho
 | DL-36 | 2026-09-22 | **Two-segment custom BullMQ job ids containing `:` are refused by BullMQ 5.x** (`Custom Id cannot contain :`, unless the id has exactly three segments). `quiz-deadline:<attemptId>` and `certificate-anonymize:<userId>` were therefore never enqueued; the producers' best-effort catches logged warnings nobody read, and no test drove a job through the real worker. Found on production. Fixed with colon-free ids, the overdue-attempt sweep wired into the ten-minute maintenance job (it had no caller), error-level logging on scheduling failure, and e2e tests through the worker for the deadline job, the sweep and the anonymisation. Rule going forward: every custom job id is a unit-tested constant without `:`. | Fix branch (PR #11) |
 | DL-37 | 2026-09-22 | **Learner-session Chrome journeys were not driven by the implementer on production.** The browser tooling refuses to inject session tokens and the implementer must not type passwords; a learner session on the academy site is therefore only obtainable by a person. Every server behaviour behind those journeys was verified on production through the API exactly as the frontend calls it, every public surface was verified in Chrome, and the UI journeys themselves are LOCAL VERIFIED by Playwright J1/J4. The record labels them NOT VERIFIED in Chrome rather than claiming otherwise; the owner can complete them by signing in as the disposable learner. | Recorded |
 | DL-38 | 2026-09-22 | **Disposable production fixtures** created for the validation (all named "TEMPORARY … (disposable)"): QA owner `p3qa.1790097390@…`, organisation `53aa6b05…` with academy `60037b11…` (`p3-validation`), its course/quiz/assignment, learner `p3learner.1790098085@…`, instructor `p3instr.…`, a second owner `p3qa2.…` with organisation `a2b05c32…` and academy `4d04b689…` (`p3-isolation`) for the cross-academy checks, and one accidental organisation `87a06dcf…` created from the Platform Owner form. They are archived once the fix PRs are re-verified (attempt `a7b17e99…` is kept `in_progress` until the deployed sweep finalises it). | Open — archive after re-verification |
+| DL-39 | 2026-09-22 | **PR / CodeRabbit workflow dropped for the remaining Phase 3 work** (owner instruction, evening of 22 Sep): the organisation's CodeRabbit credits are exhausted and the owner does not want review ceremony. From here: fix locally → run the relevant tests → commit → push directly to `main` → let the normal deploy run → verify production → repeat. No feature branches, no pull requests, no review waits, no confirmation requests. Every security, migration, testing and production-safety rule stays; protected GitHub/environment controls are never bypassed; CodeRabbit is recorded as unavailable, never as a clean review. Phase 4 and the certificate redesign wait until Phase 3 is genuinely complete. | Recorded — governs the rest of Phase 3 |
 
 ## Implementation Change Log
 
@@ -1090,7 +1091,7 @@ Three defects in the journeys' own setup were found and fixed rather than worked
 
 ### Phase 3 — record
 
-- **Status: DEPLOYED TO PRODUCTION AND VALIDATED ON THE CANARY ACADEMY — six defects found by that validation are on fix branches (see "Defects" below); final status is set when they are merged, deployed and re-verified** (22 Sep 2026). Every number below was observed in this session; nothing is filled from expectation. Labels: VERIFIED = observed on production; LOCAL VERIFIED = observed only against the local real stack; NOT VERIFIED = not observed.
+- **Status: DEPLOYED TO PRODUCTION, VALIDATED ON THE CANARY ACADEMY, DEFECTS FIXED AND RE-VERIFIED ON PRODUCTION** (22 Sep 2026). Seven Phase 3 defects were found by that validation (see "Defects" below); all are deployed and re-verified. Every number below was observed in this session; nothing is filled from expectation. Labels: VERIFIED = observed on production; LOCAL VERIFIED = observed only against the local real stack; NOT VERIFIED = not observed.
 
 **Git / PR.**
 
@@ -1100,14 +1101,15 @@ Three defects in the journeys' own setup were found and fixed rather than worked
 | atlas-backend | `feat/p64-phase3` (Phase 3, 91 files) | #7 → `chore/ci-green` | merged by the owner | `15548d6` |
 | atlas-backend | `fix/p64-phase3-followups` | #9 → `main` | merged | `111f0e3` — the SHA the production migration ran against |
 | atlas-backend | `feat/ci-managed-feature-flags` (DL-35) | #10 → `main` | merged | `f497ff1` — current production backend |
-| atlas-backend | `fix/p64-phase3-prod-validation` (DL-36) | #11 → `main` | **open** — see Defects | — |
+| atlas-backend | `fix/p64-phase3-prod-validation` (DL-36) | #11 → `main` | merged | `eb4aead` — deploy run `35767638750` |
+| atlas-backend | direct push to `main` (DL-39) | — | pushed | expired-attempt commit fix (defect 9); SHA and deploy run in the change log |
 | atlas-front | `feat/p64-phase3-foundation` (58 files) | #4 → `main` | merged | `bf51918` |
 | atlas-front | `feat/p64-phase3` (screens + journeys) | #5 → #4 | merged | `8a6a193` |
 | atlas-front | `fix/main` interim | #7 → `main` | merged by the owner | `d38969d` |
 | atlas-front | `feat/p64-phase3` (foundation + screens + journeys) | #6 → `main` | merged | `ad5a1b8` — current production frontend |
-| atlas-front | `fix/p64-phase3-prod-validation` | #8 → `main` | **open** — see Defects | — |
+| atlas-front | `fix/p64-phase3-prod-validation` | #8 → `main` | merged | `3c5ee3d` — deploy run `35765587586`, live bundle `/assets/index-Udfu9cd0.js` |
 
-**CodeRabbit.** Backend #7: review not run (file limit, then insufficient usage credits on the organisation — DL-31). Backend #9 and #10, frontend #6: review requested; no actionable inline finding was raised on them. Fix PRs backend #11 and frontend #8: review requested at opening; outcome recorded in the change log when the loop closes. Nothing is claimed as a clean review where the service did not run.
+**CodeRabbit.** Backend #7: review not run (file limit, then insufficient usage credits on the organisation — DL-31). Backend #9 and #10, frontend #6: review requested; no actionable inline finding was raised on them. Fix PRs: frontend #8 — one actionable finding (the chrome-free loading / unavailable / not-found fallbacks rendered outside the website theme scope; the dark loading skeleton seen on production), fixed in `ac0c685` and confirmed by the reviewer; backend #11 — four documentation-consistency findings on this record, fixed in `a68693f` and confirmed. **CodeRabbit is unavailable from here on: the organisation's monthly credits are exhausted and the owner dropped the PR/review workflow for the remaining Phase 3 work (DL-39).** Later Phase 3 changes are self-reviewed and pushed to `main` directly; none is claimed as reviewed.
 
 **CI.**
 
@@ -1131,6 +1133,7 @@ Three defects in the journeys' own setup were found and fixed rather than worked
 | Frontend deploy SHA | **`ad5a1b8`** (run `35757465316`); the live bundle `/assets/index-Cn2x9WpE.js` carries the Phase 3 markers. |
 | Flags | Canary (§T): `FLAG_QUIZ_ENGINE_V2_MODE`, `FLAG_QUIZ_INTEGRITY_MODE`, `FLAG_CERTIFICATES_MODE` = `allowlist`, each `_ACADEMY_IDS` = `60037b11-8855-4b85-98f9-963a38874519` (the disposable validation academy), set as GitHub repository variables and synced by the deploy (DL-35). `GET …/completion-rule` on that academy answers `certificatesFeatureEnabled: true`; all other academies keep the legacy behaviour. |
 | Public verification endpoint | `GET /api/v1/verify/:code` answers 200 `{valid:false}` for an unknown code on both hosts (was 404 before the deploy). |
+| Fix deploys (code only) | Frontend `3c5ee3d` (run `35765587586`); backend `eb4aead` (run `35767638750`: "No pending migrations; skipping backup and pre-migration counts", Backend healthy 18:36:56Z, Caddy healthy, last-good digests recorded); backend expired-attempt fix by direct push (change log). No migration in any of them. |
 
 **Real production validation (22 Sep 2026, canary academy `p3-validation.atlass.dpdns.org`, disposable fixtures — DL-38).** Two lenses were used against the live deployment: the production API called exactly as the frontend calls it (learner requests through the academy host with the `atlas_device` cookie, staff requests through the platform host), and real Chrome for every surface reachable without a learner session.
 
@@ -1140,7 +1143,10 @@ Three defects in the journeys' own setup were found and fixed rather than worked
 | Timed quiz: `serverNow` + `remainingSeconds` on resume; 120 s limit honoured | VERIFIED (API) |
 | Autosave: client sends `revision + 1`, server answers `applied:true`; a repeat of the same revision answers `applied:false` and changes nothing | VERIFIED (API) |
 | Reload / resume: saved answers, revision and `lastSavedAt` returned | VERIFIED (API) |
-| Deadline / timeout: read after `deadline + 30 s` finalises the attempt with `autoSubmitted:true`, reason `timeout`, graded as-is (1 of 2 → 50, passed at passing score 50), never auto-failed | VERIFIED (API) — but see defect 1: the delayed job itself did not fire |
+| Deadline / timeout: read after `deadline + 30 s` finalises the attempt with `autoSubmitted:true`, reason `timeout`, graded as-is (1 of 2 → 50, passed at passing score 50), never auto-failed | VERIFIED (API) — the job itself was defect 1, re-verified below |
+| Delayed auto-submit job (after backend `eb4aead`): attempt `56eb6cc0…` started 18:44:23Z, deadline 18:45:24.609Z, left untouched; finalised at **18:45:54.688Z** (79 ms after `deadline + 30 s`), reason `timeout`, autosaved answer graded 1 of 2 → 50, passed | VERIFIED (production, via the reviewer's read which does not finalise) |
+| Maintenance sweep (after backend `eb4aead`): attempt `a7b17e99…`, expired 17:48:39Z, nobody reading it; finalised at **18:40:00.268Z** by the ten-minute sweep, reason `timeout`, score 0 (nothing answered) | VERIFIED (production) |
+| Revoked certificate page after frontend `3c5ee3d`: `/verify/RGGVD9RDEBDW` shows the revoked banner with the date, facts and a "Revoked" badge in EN and AR; the panel is light amber (`rgb(253,245,232)`) with dark text while the visitor's OS prefers dark; Arabic heading and subtitle on `/ar` | VERIFIED (Chrome) |
 | Integrity events: four events recorded with server timestamps, `violationCount 3`, `action: warn`, attempt stays `in_progress`; the reviewer's attempt detail shows the timeline and `integrityFlagged` | VERIFIED (API) |
 | Results / disclosure: score, per-question correctness, correct options, explanations, accepted answers per policy `immediately` | VERIFIED (API) |
 | Assignment draft → read back → final submit → resubmit refused `409 errors.assignment.alreadySubmitted` | VERIFIED (API) |
@@ -1173,8 +1179,9 @@ Three defects in the journeys' own setup were found and fixed rather than worked
 | 6 | A | With the visitor's OS in dark mode, the success/warning panels on the academy site were dark surfaces with dark text (≈1.6:1). | Status tokens were not part of `.website-theme-scope`, so they fell through to the dashboard's `.dark` values. | Frontend #8: light status tokens added to the scope. |
 | 7 | B | `GET /api/config` answers 404 on every page load. | Pre-existing runtime-config probe, handled silently by `loadRuntimeConfig`. | None — recorded. |
 | 8 | G | The plan's "sweep" and "anonymisation" statements were true of the code but not of the running system. | Defects 2 and 3. | This record and DL-36. |
+| 9 | A | After an abandoned attempt expired, every new start answered `409 errors.quiz.attemptExpired` — forever before defect 2's fix, for up to ten minutes after it — and a session read of an expired attempt answered 409 without finalising it (attempt 1 at 17:36:03Z, attempt 4 at 18:38:21Z/18:38:41Z, both still `in_progress` afterwards). | `start`, `getSession`, `saveAnswers` and `submit` finalised the expired attempt and then threw the 409 **inside the same interactive transaction**, which rolled the finalisation back. Only the results read (which does not throw) and the sweep ever committed one. | Direct push to `main` (DL-39): the transaction returns an `ExpiredAttempt` marker and the caller throws after the commit; the timeout e2e now asserts the row is finalised before any results read, and a new scenario restarts after abandoned attempts through the session read, a late submit and the next start, ending at the attempt cap. |
 
-**Final phase status: IN PROGRESS — fix PRs backend #11 and frontend #8 must complete the review loop, merge, deploy (code only; no migration) and be re-verified on production (attempt `a7b17e99…` finalised by the sweep; `/verify/RGGVD9RDEBDW` showing the revoked banner in EN and AR).** Then the disposable fixtures are archived (DL-38) and Phase 4 starts (DL-15).
+**Final phase status: see the closing entry at the end of this record** — set once defect 9's deploy is verified on production, the disposable fixtures are archived (DL-38) and the learner-session Chrome journeys are either completed by the owner or recorded as NOT VERIFIED (DL-37).
 
 ### Phase 4 — record
 - Status: Not Started

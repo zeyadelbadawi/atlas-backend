@@ -105,6 +105,27 @@ const ANSWER_VALIDATION_KEYS: Record<string, string> = {
   wrongAnswerShape: 'errors.quiz.invalidOption',
 };
 
+/**
+ * RETURNED from inside a transaction — never thrown there — when an open
+ * attempt turned out to be past `deadline + grace`. The finalisation that
+ * just ran must COMMIT; throwing the 409 inside the same interactive
+ * transaction rolled it back, so the attempt stayed `in_progress`, every
+ * later start answered "expired" again, and only the results read (which
+ * does not throw) or the sweep could ever finalise it — observed on
+ * production, 22 Sep 2026. The caller throws `expiredAttempt()` after the
+ * transaction has returned.
+ */
+class ExpiredAttempt {
+  constructor(readonly attemptId: string) {}
+}
+
+function expiredAttempt(attemptId: string): never {
+  throw new ConflictException({
+    messageKey: 'errors.quiz.attemptExpired',
+    details: { attemptId },
+  });
+}
+
 @Injectable()
 export class QuizAttemptEngineService {
   private readonly logger = new Logger(QuizAttemptEngineService.name);
@@ -138,8 +159,9 @@ export class QuizAttemptEngineService {
     const engineV2 = this.featureFlags.isEnabledForAcademy('quizEngineV2', academyId);
     const integrityOn = this.featureFlags.isEnabledForAcademy('quizIntegrity', academyId);
 
-    const { attempt, quiz, scheduled } =
-      await this.tenancyContextService.runInUserContext(userId, async (tx) => {
+    const started = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
         const enrollment = await assertActiveEnrollment(
           tx,
           this.enrollmentsRepository,
@@ -170,11 +192,7 @@ export class QuizAttemptEngineService {
               now,
               enrollment,
             });
-            const finalized = await this.attempts.findById(tx, open.id);
-            throw new ConflictException({
-              messageKey: 'errors.quiz.attemptExpired',
-              details: { attemptId: finalized?.id ?? open.id },
-            });
+            return new ExpiredAttempt(open.id);
           }
           return { attempt: open, quiz: quizRow, scheduled: null };
         }
@@ -273,7 +291,10 @@ export class QuizAttemptEngineService {
           gradingStatus: 'not_required',
         });
         return { attempt: created, quiz: quizRow, scheduled: deadlineAt };
-      });
+      },
+    );
+    if (started instanceof ExpiredAttempt) expiredAttempt(started.attemptId);
+    const { attempt, quiz, scheduled } = started;
 
     if (scheduled) {
       await this.deadlines.schedule(attempt.id, userId, scheduled, now);
@@ -301,65 +322,67 @@ export class QuizAttemptEngineService {
     attemptId: string,
   ): Promise<QuizAttemptSessionResponse> {
     const now = new Date();
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      await assertActiveEnrollment(
-        tx,
-        this.enrollmentsRepository,
-        userId,
-        courseId,
-        this.academyStudentsRepository,
-      );
-      const { attempt, quiz } = await this.loadOwnAttempt(
-        tx,
-        userId,
-        courseId,
-        quizId,
-        attemptId,
-      );
-      if (attempt.status === 'in_progress' && isPastGrace(attempt.deadlineAt, now)) {
-        const enrollment = await this.enrollmentsRepository.findByStudentAndCourse(
+    const session = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        await assertActiveEnrollment(
+          tx,
+          this.enrollmentsRepository,
+          userId,
+          courseId,
+          this.academyStudentsRepository,
+        );
+        const { attempt, quiz } = await this.loadOwnAttempt(
           tx,
           userId,
           courseId,
+          quizId,
+          attemptId,
         );
-        await this.finalizeInTransaction(tx, attempt, quiz, {
-          reason: 'timeout',
-          now,
-          enrollment,
-        });
-        throw new ConflictException({
-          messageKey: 'errors.quiz.attemptExpired',
-          details: { attemptId },
-        });
-      }
-      const snapshot = this.snapshotOf(attempt, quiz);
-      const questions = this.attemptQuestions(quiz, attempt);
-      const override = await this.attempts.findOverride(tx, quizId, userId);
-      const used = await this.attempts.countForStudent(tx, userId, quizId);
-      return {
-        attemptId: attempt.id,
-        quizId,
-        status: attempt.status,
-        attemptNumber: attempt.attemptNumber,
-        startedAt: (attempt.startedAt ?? attempt.createdAt).toISOString(),
-        deadlineAt: attempt.deadlineAt?.toISOString() ?? null,
-        serverNow: now.toISOString(),
-        remainingSeconds: remainingSeconds(attempt.deadlineAt, now),
-        revision: attempt.answersRevision,
-        lastSavedAt: attempt.lastSavedAt?.toISOString() ?? null,
-        violationCount: attempt.violationCount,
-        settings: settingsToResponse(snapshot),
-        questions: questions.map((question) =>
-          toSessionQuestion(question, snapshot.optionOrder[question.id]),
-        ),
-        answers: this.answersOf(attempt).map(toAnswerResponse),
-        attemptsUsed: used,
-        attemptsAllowed:
-          quiz.maxAttempts === null
-            ? null
-            : quiz.maxAttempts + (override?.extraAttempts ?? 0),
-      };
-    });
+        if (attempt.status === 'in_progress' && isPastGrace(attempt.deadlineAt, now)) {
+          const enrollment = await this.enrollmentsRepository.findByStudentAndCourse(
+            tx,
+            userId,
+            courseId,
+          );
+          await this.finalizeInTransaction(tx, attempt, quiz, {
+            reason: 'timeout',
+            now,
+            enrollment,
+          });
+          return new ExpiredAttempt(attemptId);
+        }
+        const snapshot = this.snapshotOf(attempt, quiz);
+        const questions = this.attemptQuestions(quiz, attempt);
+        const override = await this.attempts.findOverride(tx, quizId, userId);
+        const used = await this.attempts.countForStudent(tx, userId, quizId);
+        return {
+          attemptId: attempt.id,
+          quizId,
+          status: attempt.status,
+          attemptNumber: attempt.attemptNumber,
+          startedAt: (attempt.startedAt ?? attempt.createdAt).toISOString(),
+          deadlineAt: attempt.deadlineAt?.toISOString() ?? null,
+          serverNow: now.toISOString(),
+          remainingSeconds: remainingSeconds(attempt.deadlineAt, now),
+          revision: attempt.answersRevision,
+          lastSavedAt: attempt.lastSavedAt?.toISOString() ?? null,
+          violationCount: attempt.violationCount,
+          settings: settingsToResponse(snapshot),
+          questions: questions.map((question) =>
+            toSessionQuestion(question, snapshot.optionOrder[question.id]),
+          ),
+          answers: this.answersOf(attempt).map(toAnswerResponse),
+          attemptsUsed: used,
+          attemptsAllowed:
+            quiz.maxAttempts === null
+              ? null
+              : quiz.maxAttempts + (override?.extraAttempts ?? 0),
+        };
+      },
+    );
+    if (session instanceof ExpiredAttempt) expiredAttempt(session.attemptId);
+    return session;
   }
 
   // ---------------------------------------------------------------------
@@ -408,10 +431,7 @@ export class QuizAttemptEngineService {
             now,
             enrollment,
           });
-          throw new ConflictException({
-            messageKey: 'errors.quiz.attemptExpired',
-            details: { attemptId },
-          });
+          return new ExpiredAttempt(attemptId);
         }
         // Stale revisions are ignored, never applied: the newest server-
         // confirmed answer set wins, and the client learns the revision it
@@ -448,6 +468,7 @@ export class QuizAttemptEngineService {
       },
     );
     this.metrics.recordQuizAutosave(Number(process.hrtime.bigint() - started) / 1e6);
+    if (response instanceof ExpiredAttempt) expiredAttempt(response.attemptId);
     return response;
   }
 
@@ -463,102 +484,106 @@ export class QuizAttemptEngineService {
     dto: SubmitQuizAttemptV2Dto,
   ): Promise<QuizAttemptResponse> {
     const now = new Date();
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      const enrollment = await assertActiveEnrollment(
-        tx,
-        this.enrollmentsRepository,
-        userId,
-        courseId,
-        this.academyStudentsRepository,
-      );
-      await this.enrollmentsRepository.lockForUpdate(tx, enrollment.id);
-      const { attempt, quiz } = await this.loadOwnAttempt(
-        tx,
-        userId,
-        courseId,
-        quizId,
-        attemptId,
-      );
-      const override = await this.attempts.findOverride(tx, quizId, userId);
-      const disclosure = (finalized: QuizAttempt) =>
-        this.disclosureFor(quiz, finalized, override?.extraAttempts ?? 0, now);
-
-      if (attempt.status !== 'in_progress') {
-        // Idempotent: a finalised attempt is returned as-is; anything else
-        // (invalidated) cannot be submitted.
-        if (attempt.status === 'invalidated' || attempt.status === 'not_started') {
-          throw new BadRequestException({
-            messageKey: 'errors.quiz.attemptAlreadySubmitted',
-          });
-        }
-        const used = await this.attempts.countForStudent(tx, userId, quizId);
-        return toQuizAttemptResponse(
-          attempt,
-          canStartAttempt(used, quiz.maxAttempts, override?.extraAttempts ?? 0),
-          await disclosure(attempt),
+    const submitted = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const enrollment = await assertActiveEnrollment(
+          tx,
+          this.enrollmentsRepository,
+          userId,
+          courseId,
+          this.academyStudentsRepository,
         );
-      }
-      if (isPastGrace(attempt.deadlineAt, now)) {
-        await this.finalizeInTransaction(tx, attempt, quiz, {
-          reason: 'timeout',
+        await this.enrollmentsRepository.lockForUpdate(tx, enrollment.id);
+        const { attempt, quiz } = await this.loadOwnAttempt(
+          tx,
+          userId,
+          courseId,
+          quizId,
+          attemptId,
+        );
+        const override = await this.attempts.findOverride(tx, quizId, userId);
+        const disclosure = (finalized: QuizAttempt) =>
+          this.disclosureFor(quiz, finalized, override?.extraAttempts ?? 0, now);
+
+        if (attempt.status !== 'in_progress') {
+          // Idempotent: a finalised attempt is returned as-is; anything else
+          // (invalidated) cannot be submitted.
+          if (attempt.status === 'invalidated' || attempt.status === 'not_started') {
+            throw new BadRequestException({
+              messageKey: 'errors.quiz.attemptAlreadySubmitted',
+            });
+          }
+          const used = await this.attempts.countForStudent(tx, userId, quizId);
+          return toQuizAttemptResponse(
+            attempt,
+            canStartAttempt(used, quiz.maxAttempts, override?.extraAttempts ?? 0),
+            await disclosure(attempt),
+          );
+        }
+        if (isPastGrace(attempt.deadlineAt, now)) {
+          await this.finalizeInTransaction(tx, attempt, quiz, {
+            reason: 'timeout',
+            now,
+            enrollment,
+          });
+          return new ExpiredAttempt(attemptId);
+        }
+
+        const snapshot = this.snapshotOf(attempt, quiz);
+        const questions = this.attemptQuestions(quiz, attempt);
+        let answers = this.answersOf(attempt);
+        if (dto.answers) {
+          if (dto.revision !== undefined && dto.revision < attempt.answersRevision) {
+            // A stale final payload never overwrites newer autosaved answers.
+          } else {
+            const submitted = this.normalizeAnswers(dto.answers);
+            const problem = validateAnswers(questions, submitted);
+            if (problem)
+              throw new BadRequestException({
+                messageKey: ANSWER_VALIDATION_KEYS[problem],
+              });
+            answers = submitted;
+          }
+        }
+        // Legacy behaviour (engine v2 off): every question must be answered.
+        if (!snapshot.engineV2) {
+          const answered = new Set(
+            answers
+              .filter(
+                (a) => (a.selectedOptionIds?.length ?? 0) > 0 || (a.text ?? '').trim(),
+              )
+              .map((a) => a.questionId),
+          );
+          if (questions.some((q) => !answered.has(q.id))) {
+            throw new BadRequestException({
+              messageKey: 'errors.quiz.incompleteAnswers',
+            });
+          }
+        }
+        // A submit that lands after the deadline (inside the grace window)
+        // is what the client does when its countdown reaches zero: the
+        // server's clock says time ran out, so the attempt is recorded as
+        // auto-submitted for reason "timeout" — the same outcome the
+        // deadline job produces when the client never got to send it.
+        const timedOut = attempt.deadlineAt !== null && now >= attempt.deadlineAt;
+        const outcome = await this.finalizeInTransaction(tx, attempt, quiz, {
+          reason: timedOut ? 'timeout' : 'submit',
           now,
           enrollment,
+          answers,
+          revision: dto.revision,
         });
-        throw new ConflictException({
-          messageKey: 'errors.quiz.attemptExpired',
-          details: { attemptId },
-        });
-      }
-
-      const snapshot = this.snapshotOf(attempt, quiz);
-      const questions = this.attemptQuestions(quiz, attempt);
-      let answers = this.answersOf(attempt);
-      if (dto.answers) {
-        if (dto.revision !== undefined && dto.revision < attempt.answersRevision) {
-          // A stale final payload never overwrites newer autosaved answers.
-        } else {
-          const submitted = this.normalizeAnswers(dto.answers);
-          const problem = validateAnswers(questions, submitted);
-          if (problem)
-            throw new BadRequestException({
-              messageKey: ANSWER_VALIDATION_KEYS[problem],
-            });
-          answers = submitted;
-        }
-      }
-      // Legacy behaviour (engine v2 off): every question must be answered.
-      if (!snapshot.engineV2) {
-        const answered = new Set(
-          answers
-            .filter(
-              (a) => (a.selectedOptionIds?.length ?? 0) > 0 || (a.text ?? '').trim(),
-            )
-            .map((a) => a.questionId),
+        const used = await this.attempts.countForStudent(tx, userId, quizId);
+        return toQuizAttemptResponse(
+          outcome.attempt,
+          canStartAttempt(used, quiz.maxAttempts, override?.extraAttempts ?? 0),
+          await disclosure(outcome.attempt),
         );
-        if (questions.some((q) => !answered.has(q.id))) {
-          throw new BadRequestException({ messageKey: 'errors.quiz.incompleteAnswers' });
-        }
-      }
-      // A submit that lands after the deadline (inside the grace window)
-      // is what the client does when its countdown reaches zero: the
-      // server's clock says time ran out, so the attempt is recorded as
-      // auto-submitted for reason "timeout" — the same outcome the
-      // deadline job produces when the client never got to send it.
-      const timedOut = attempt.deadlineAt !== null && now >= attempt.deadlineAt;
-      const outcome = await this.finalizeInTransaction(tx, attempt, quiz, {
-        reason: timedOut ? 'timeout' : 'submit',
-        now,
-        enrollment,
-        answers,
-        revision: dto.revision,
-      });
-      const used = await this.attempts.countForStudent(tx, userId, quizId);
-      return toQuizAttemptResponse(
-        outcome.attempt,
-        canStartAttempt(used, quiz.maxAttempts, override?.extraAttempts ?? 0),
-        await disclosure(outcome.attempt),
-      );
-    });
+      },
+    );
+    if (submitted instanceof ExpiredAttempt) expiredAttempt(submitted.attemptId);
+    return submitted;
   }
 
   // ---------------------------------------------------------------------
