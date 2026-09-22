@@ -63,9 +63,7 @@ export class PlansService {
     // Platform-Owner-only catalog state; the Add-ons Management page reads
     // the full catalog through its own platform endpoint.
     const addOns = await this.addOnsRepository.findAll();
-    return addOns
-      .filter((addOn) => addOn.catalogStatus !== 'draft')
-      .map(toAddOnResponse);
+    return addOns.filter((addOn) => addOn.catalogStatus !== 'draft').map(toAddOnResponse);
   }
 
   async getAddOnByKey(key: string): Promise<AddOnResponse> {

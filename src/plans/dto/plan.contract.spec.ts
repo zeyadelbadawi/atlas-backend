@@ -150,7 +150,9 @@ describe('toPlanResponse — plan family and tier (P64 Phase 2, D10)', () => {
     // data problem for an operator to fix, not something the mapper may
     // quietly "correct" — inferring `premium` from a key would be exactly
     // the hard-wiring D10 forbids, one layer up.
-    const response = toPlanResponse(buildPlan({ key: 'premium_growth', family: 'normal' }));
+    const response = toPlanResponse(
+      buildPlan({ key: 'premium_growth', family: 'normal' }),
+    );
 
     expect(response.family).toBe('normal');
   });

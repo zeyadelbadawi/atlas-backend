@@ -47,10 +47,7 @@ import type { AuditFieldChange } from '../../audit-log/services/audit-log-writer
 import { StaleResourceVersionException } from '../../concurrency/errors/stale-resource-version.exception';
 import { toPlanResponse } from '../../plans/dto/plan.contract';
 import type { PlanResponse } from '../../plans/dto/plan.contract';
-import {
-  assertValidFeatures,
-  assertValidLimits,
-} from '../dto/update-plan.dto';
+import { assertValidFeatures, assertValidLimits } from '../dto/update-plan.dto';
 import type {
   ArchivePlanDto,
   CreatePlanDto,
@@ -230,7 +227,12 @@ export class PlatformPlansService {
         data.description = payload.description;
       }
       if (payload.nameLocalized !== undefined) {
-        track(generalChanges, 'nameLocalized', existing.nameLocalized, payload.nameLocalized);
+        track(
+          generalChanges,
+          'nameLocalized',
+          existing.nameLocalized,
+          payload.nameLocalized,
+        );
         data.nameLocalized = payload.nameLocalized as unknown as Prisma.InputJsonValue;
       }
       if (payload.descriptionLocalized !== undefined) {
@@ -244,7 +246,12 @@ export class PlatformPlansService {
           payload.descriptionLocalized as unknown as Prisma.InputJsonValue;
       }
       if (payload.displayOrder !== undefined) {
-        track(generalChanges, 'displayOrder', existing.displayOrder, payload.displayOrder);
+        track(
+          generalChanges,
+          'displayOrder',
+          existing.displayOrder,
+          payload.displayOrder,
+        );
         data.displayOrder = payload.displayOrder;
       }
       if (payload.limits !== undefined) {
@@ -260,7 +267,12 @@ export class PlatformPlansService {
         data.pricing = payload.pricing as unknown as Prisma.InputJsonValue;
       }
       if (payload.trialEligible !== undefined) {
-        track(trialChanges, 'trialEligible', existing.trialEligible, payload.trialEligible);
+        track(
+          trialChanges,
+          'trialEligible',
+          existing.trialEligible,
+          payload.trialEligible,
+        );
         data.trialEligible = payload.trialEligible;
       }
       if (payload.trialDurationDays !== undefined) {

@@ -83,7 +83,6 @@ export function toAuditLogEntryDetailResponse(
     changes:
       (entry.changes as Record<string, { from: unknown; to: unknown }> | null) ??
       undefined,
-    requestContext:
-      (entry.requestContext as Record<string, unknown> | null) ?? undefined,
+    requestContext: (entry.requestContext as Record<string, unknown> | null) ?? undefined,
   };
 }

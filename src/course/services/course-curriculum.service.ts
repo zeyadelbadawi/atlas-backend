@@ -312,9 +312,11 @@ export class CourseCurriculumService {
           // it. That distinction matters here — detaching a video and
           // "not mentioning the video" are different requests.
           ...(payload.videoAssetId !== undefined
-            ? { videoAsset: payload.videoAssetId
-                ? { connect: { id: payload.videoAssetId } }
-                : { disconnect: true } }
+            ? {
+                videoAsset: payload.videoAssetId
+                  ? { connect: { id: payload.videoAssetId } }
+                  : { disconnect: true },
+              }
             : {}),
           ...(payload.isPreview !== undefined ? { isPreview: payload.isPreview } : {}),
           ...(payload.availableAt !== undefined

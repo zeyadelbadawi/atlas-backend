@@ -32,10 +32,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
-import {
-  DEFAULT_PAGE,
-  DEFAULT_PAGE_SIZE,
-} from '../../common/dto/collection-query.dto';
+import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 
 /**
@@ -83,48 +80,45 @@ export class PlanHistoryService {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
-    return this.tenancyContextService.runInUserContext(
-      platformOwnerId,
-      async (tx) => {
-        const where = {
-          targetType: 'plan',
-          targetId: plan.id,
-          action: { in: [...PLAN_HISTORY_ACTIONS] },
-        };
+    return this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
+      const where = {
+        targetType: 'plan',
+        targetId: plan.id,
+        action: { in: [...PLAN_HISTORY_ACTIONS] },
+      };
 
-        const [rows, totalItems] = await Promise.all([
-          tx.auditLogEntry.findMany({
-            where,
-            // Newest first: "what changed most recently" is the question a
-            // price history is opened to answer.
-            orderBy: { occurredAt: 'desc' },
-            skip: (page - 1) * pageSize,
-            take: pageSize,
-            include: {
-              actor: { select: { id: true, name: true, email: true } },
-            },
-          }),
-          tx.auditLogEntry.count({ where }),
-        ]);
+      const [rows, totalItems] = await Promise.all([
+        tx.auditLogEntry.findMany({
+          where,
+          // Newest first: "what changed most recently" is the question a
+          // price history is opened to answer.
+          orderBy: { occurredAt: 'desc' },
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+          include: {
+            actor: { select: { id: true, name: true, email: true } },
+          },
+        }),
+        tx.auditLogEntry.count({ where }),
+      ]);
 
-        return {
-          items: rows.map((row) => ({
-            id: row.id,
-            action: row.action,
-            actor: {
-              id: row.actor.id,
-              name: row.actor.name,
-              email: row.actor.email ?? undefined,
-            },
-            occurredAt: row.occurredAt.toISOString(),
-            changes:
-              (row.changes as Record<string, { from: unknown; to: unknown }> | null) ??
-              undefined,
-            context: (row.context as Record<string, unknown> | null) ?? undefined,
-          })),
-          pagination: buildPaginationMeta(page, pageSize, totalItems),
-        };
-      },
-    );
+      return {
+        items: rows.map((row) => ({
+          id: row.id,
+          action: row.action,
+          actor: {
+            id: row.actor.id,
+            name: row.actor.name,
+            email: row.actor.email ?? undefined,
+          },
+          occurredAt: row.occurredAt.toISOString(),
+          changes:
+            (row.changes as Record<string, { from: unknown; to: unknown }> | null) ??
+            undefined,
+          context: (row.context as Record<string, unknown> | null) ?? undefined,
+        })),
+        pagination: buildPaginationMeta(page, pageSize, totalItems),
+      };
+    });
   }
 }

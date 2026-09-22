@@ -123,11 +123,11 @@ export class CloudflareStreamProvider implements VideoProvider {
   isConfigured(): boolean {
     return Boolean(
       this.config.accountId &&
-        this.config.apiToken &&
-        this.config.signingKeyId &&
-        this.config.signingKeyPem &&
-        this.config.customerSubdomain &&
-        this.config.webhookSecret,
+      this.config.apiToken &&
+      this.config.signingKeyId &&
+      this.config.signingKeyPem &&
+      this.config.customerSubdomain &&
+      this.config.webhookSecret,
     );
   }
 

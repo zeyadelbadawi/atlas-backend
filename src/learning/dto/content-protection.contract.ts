@@ -49,7 +49,8 @@ export function resolveContentProtection(value: unknown): AcademyContentProtecti
   const text = raw.watermarkText;
   return {
     watermark: bool('watermark'),
-    watermarkText: typeof text === 'string' && text.trim().length > 0 ? text.trim() : null,
+    watermarkText:
+      typeof text === 'string' && text.trim().length > 0 ? text.trim() : null,
     disableDownload: bool('disableDownload'),
     disablePip: bool('disablePip'),
     disableContextMenu: bool('disableContextMenu'),

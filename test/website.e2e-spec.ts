@@ -455,9 +455,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .expect(400);
 
     // And it says WHICH field, so the editor can name the section.
-    const fields = refused.body.error.violations.map(
-      (v: { field: string }) => v.field,
-    );
+    const fields = refused.body.error.violations.map((v: { field: string }) => v.field);
     expect(fields).toContain('0.config.title.en');
     expect(fields).toContain('0.config.body.en');
   });
@@ -483,7 +481,14 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     const updated = await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: validSections, expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+      .send({
+        sections: validSections,
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(200);
     expect(updated.body.sections).toHaveLength(1);
     expect(updated.body.sections[0].config.title).toEqual({
@@ -495,7 +500,8 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: [
+      .send({
+        sections: [
           {
             id: 'sec-x',
             type: 'maliciousInjectedType',
@@ -503,14 +509,21 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { html: '<script>alert(1)</script>' },
           },
-        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+        ],
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(400);
 
     // Missing required field for a registered type.
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: [
+      .send({
+        sections: [
           {
             id: 'sec-y',
             type: 'hero',
@@ -518,21 +531,35 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: {},
           },
-        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+        ],
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(400);
 
     // Duplicate section ids within one page.
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: [...validSections, { ...validSections[0] }], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+      .send({
+        sections: [...validSections, { ...validSections[0] }],
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(400);
 
     // A CTA URL using a disallowed scheme is rejected (stored-XSS boundary).
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: [
+      .send({
+        sections: [
           {
             id: 'sec-cta',
             type: 'cta',
@@ -543,7 +570,13 @@ describe('Website Builder & Theme Engine (e2e)', () => {
               cta: { label: 'Go', url: 'javascript:alert(1)' },
             },
           },
-        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+        ],
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(400);
   });
 
@@ -584,13 +617,27 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: baseSection([realCourse.id]), expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+      .send({
+        sections: baseSection([realCourse.id]),
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(200);
 
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: baseSection(['fabricated-course-id']), expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+      .send({
+        sections: baseSection(['fabricated-course-id']),
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(400);
 
     // A real course, but owned by a DIFFERENT academy — must never be
@@ -598,7 +645,14 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: baseSection([otherAcademyCourse.id]), expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+      .send({
+        sections: baseSection([otherAcademyCourse.id]),
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(400);
   });
 
@@ -625,7 +679,8 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: [
+      .send({
+        sections: [
           {
             id: 'sec-faq',
             type: 'faq',
@@ -640,7 +695,13 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { items: [], libraryEntryIds: [testimonialEntry.body.id] },
           },
-        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+        ],
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(200);
 
     // Draft entries (never published) are still legitimate references —
@@ -653,7 +714,8 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: [
+      .send({
+        sections: [
           {
             id: 'sec-faq-draft',
             type: 'faq',
@@ -661,13 +723,20 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { items: [], libraryEntryIds: [draftFaqEntry.body.id] },
           },
-        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+        ],
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(200);
 
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: [
+      .send({
+        sections: [
           {
             id: 'sec-faq-bad',
             type: 'faq',
@@ -675,13 +744,20 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { items: [], libraryEntryIds: ['fabricated-faq-id'] },
           },
-        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+        ],
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(400);
 
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections: [
+      .send({
+        sections: [
           {
             id: 'sec-testimonials-bad',
             type: 'testimonials',
@@ -689,7 +765,13 @@ describe('Website Builder & Theme Engine (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { items: [], libraryEntryIds: ['fabricated-testimonial-id'] },
           },
-        ], expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+        ],
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(400);
   });
 
@@ -720,7 +802,14 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ sections, expectedVersion: await pageVersion(academy.id, created.body.id, owner.accessToken) })
+      .send({
+        sections,
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
       .expect(200);
 
     const reordered = await request(app.getHttpServer())
@@ -780,14 +869,24 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     const toggled = await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${homePage.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ visible: false, expectedVersion: await pageVersion(academy.id, homePage.id, owner.accessToken) })
+      .send({
+        visible: false,
+        expectedVersion: await pageVersion(academy.id, homePage.id, owner.accessToken),
+      })
       .expect(200);
     expect(toggled.body.visible).toBe(false);
 
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${courseDetailsPage.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ visible: false, expectedVersion: await pageVersion(academy.id, courseDetailsPage.id, owner.accessToken) })
+      .send({
+        visible: false,
+        expectedVersion: await pageVersion(
+          academy.id,
+          courseDetailsPage.id,
+          owner.accessToken,
+        ),
+      })
       .expect(403);
   });
 

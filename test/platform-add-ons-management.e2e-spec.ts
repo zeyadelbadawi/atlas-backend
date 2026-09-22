@@ -103,7 +103,11 @@ describe('Platform Add-ons Management (real Postgres, RLS enforced)', () => {
         },
       });
       const org = await admin.organization.create({
-        data: { name: `${suite}-${label}`, slug: `org-${suite}-${label}`, ownerUserId: owner.id },
+        data: {
+          name: `${suite}-${label}`,
+          slug: `org-${suite}-${label}`,
+          ownerUserId: owner.id,
+        },
       });
       await admin.tenantAddOn.create({
         data: { organizationId: org.id, addOnId: published.id, status },

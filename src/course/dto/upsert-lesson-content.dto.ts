@@ -26,7 +26,14 @@
  * lessons backfilled by the migration keep working; authoring new ones
  * waits for a reviewed sanitiser.
  */
-import { IsIn, IsNotEmpty, IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUrl,
+  MaxLength,
+} from 'class-validator';
 
 /** Every kind the column models. `text` parses here and is refused in the service, so the refusal carries a reason rather than a validation error that cannot explain itself. */
 export const LESSON_CONTENT_KINDS = ['text', 'video', 'file', 'external'] as const;

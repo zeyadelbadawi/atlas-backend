@@ -16,7 +16,10 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { MediaAsset } from '@prisma/client';
-import type { ProtectedMediaConfig, VideoProviderConfig } from '../../config/configuration';
+import type {
+  ProtectedMediaConfig,
+  VideoProviderConfig,
+} from '../../config/configuration';
 import { ProtectedMediaStorage } from '../../media/storage/protected-media-storage.provider';
 import { VideoProviderRegistry } from '../../media/video/video-provider.registry';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
@@ -48,7 +51,8 @@ export class ContentGrantSigner {
     private readonly metrics: LearningMetricsService,
     configService: ConfigService,
   ) {
-    this.protectedConfig = configService.getOrThrow<ProtectedMediaConfig>('protectedMedia');
+    this.protectedConfig =
+      configService.getOrThrow<ProtectedMediaConfig>('protectedMedia');
     this.videoConfig = configService.getOrThrow<VideoProviderConfig>('video');
   }
 

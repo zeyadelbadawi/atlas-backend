@@ -76,7 +76,12 @@ export class PlaybackService {
 
       const lesson = await tx.courseLesson.findFirst({
         where: { id: input.lessonId, courseId },
-        select: { id: true, durationSeconds: true, completionRule: true, videoAsset: { select: { durationSeconds: true } } },
+        select: {
+          id: true,
+          durationSeconds: true,
+          completionRule: true,
+          videoAsset: { select: { durationSeconds: true } },
+        },
       });
       if (!lesson) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
@@ -87,7 +92,8 @@ export class PlaybackService {
       );
       if (!progress) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-      const duration = lesson.durationSeconds ?? lesson.videoAsset?.durationSeconds ?? null;
+      const duration =
+        lesson.durationSeconds ?? lesson.videoAsset?.durationSeconds ?? null;
       const now = new Date();
       const update = applyPlaybackHeartbeat(
         {

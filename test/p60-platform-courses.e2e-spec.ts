@@ -183,9 +183,7 @@ describe('P60 platform course console (e2e) — P60-COURSE-001..014', () => {
 
   it('P60-COURSE-001 — both routes refuse an UNAUTHENTICATED caller', async () => {
     await request(app.getHttpServer()).get('/platform-courses').expect(401);
-    await request(app.getHttpServer())
-      .get(`/platform-courses/${courseAId}`)
-      .expect(401);
+    await request(app.getHttpServer()).get(`/platform-courses/${courseAId}`).expect(401);
   });
 
   it('P60-COURSE-002 — a real TENANT OWNER is refused on both routes', async () => {

@@ -133,7 +133,10 @@ describe('Subscription expiration enforcement (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ title: 'Before expiry', expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken) })
+      .send({
+        title: 'Before expiry',
+        expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken),
+      })
       .expect(200);
 
     await expire(org.id);
@@ -141,7 +144,10 @@ describe('Subscription expiration enforcement (e2e)', () => {
     const refused = await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ title: 'After expiry', expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken) })
+      .send({
+        title: 'After expiry',
+        expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken),
+      })
       .expect(403);
 
     expect(refused.body.error.code).toBe('SUBSCRIPTION_REQUIRED');
@@ -200,7 +206,10 @@ describe('Subscription expiration enforcement (e2e)', () => {
     const refused = await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ title: 'During the gap', expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken) })
+      .send({
+        title: 'During the gap',
+        expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken),
+      })
       .expect(403);
 
     expect(refused.body.error.details.reason).toBe('trial_ended');
@@ -309,13 +318,27 @@ describe('Subscription expiration enforcement (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${expired.academy.id}/website/pages/${expired.page.id}`)
       .set('Authorization', `Bearer ${expired.owner.accessToken}`)
-      .send({ title: 'Refused', expectedVersion: await pageVersion(expired.academy.id, expired.page.id, expired.owner.accessToken) })
+      .send({
+        title: 'Refused',
+        expectedVersion: await pageVersion(
+          expired.academy.id,
+          expired.page.id,
+          expired.owner.accessToken,
+        ),
+      })
       .expect(403);
 
     await request(app.getHttpServer())
       .patch(`/academies/${healthy.academy.id}/website/pages/${healthy.page.id}`)
       .set('Authorization', `Bearer ${healthy.owner.accessToken}`)
-      .send({ title: 'Still fine', expectedVersion: await pageVersion(healthy.academy.id, healthy.page.id, healthy.owner.accessToken) })
+      .send({
+        title: 'Still fine',
+        expectedVersion: await pageVersion(
+          healthy.academy.id,
+          healthy.page.id,
+          healthy.owner.accessToken,
+        ),
+      })
       .expect(200);
   });
 
@@ -326,7 +349,10 @@ describe('Subscription expiration enforcement (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ title: 'Refused', expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken) })
+      .send({
+        title: 'Refused',
+        expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken),
+      })
       .expect(403);
 
     await admin.tenantSubscription.update({
@@ -342,7 +368,10 @@ describe('Subscription expiration enforcement (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ title: 'Working again', expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken) })
+      .send({
+        title: 'Working again',
+        expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken),
+      })
       .expect(200);
   });
 
@@ -367,7 +396,10 @@ describe('Subscription expiration enforcement (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ title: 'Still allowed during grace', expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken) })
+      .send({
+        title: 'Still allowed during grace',
+        expectedVersion: await pageVersion(academy.id, page.id, owner.accessToken),
+      })
       .expect(200);
   });
 });

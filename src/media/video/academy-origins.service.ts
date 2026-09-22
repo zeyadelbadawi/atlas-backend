@@ -29,7 +29,10 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Prisma } from '@prisma/client';
 import type { AppConfig, PlatformDomainRuntimeConfig } from '../../config/configuration';
-import { resolveCanonicalHost, resolveSubdomainHost } from '../../domain/utils/canonical-host.util';
+import {
+  resolveCanonicalHost,
+  resolveSubdomainHost,
+} from '../../domain/utils/canonical-host.util';
 
 @Injectable()
 export class AcademyOriginsService {
@@ -39,8 +42,8 @@ export class AcademyOriginsService {
     tx: Prisma.TransactionClient,
     academyId: string,
   ): Promise<readonly string[]> {
-    const baseDomain = this.configService.get<PlatformDomainRuntimeConfig>('platformDomain')
-      ?.baseDomain;
+    const baseDomain =
+      this.configService.get<PlatformDomainRuntimeConfig>('platformDomain')?.baseDomain;
 
     const [allocation, connection] = await Promise.all([
       tx.subdomainAllocation.findUnique({ where: { academyId } }),

@@ -289,7 +289,10 @@ export interface VideoProvider {
    * edge refuses a manifest request from anywhere else (Phase 2 §D.4/§H).
    * Called on domain go-live and release, not per request.
    */
-  syncAllowedOrigins(providerId: string, allowedOrigins: readonly string[]): Promise<void>;
+  syncAllowedOrigins(
+    providerId: string,
+    allowedOrigins: readonly string[],
+  ): Promise<void>;
 }
 
 export const VIDEO_PROVIDER = Symbol('VIDEO_PROVIDER');

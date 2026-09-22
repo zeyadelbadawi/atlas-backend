@@ -1,5 +1,15 @@
 /** Lesson create/update requests — match `CreateCourseLessonPayload`/`UpdateCourseLessonPayload` (`course.types.ts`). Same "no `order` field, append-only" rule as sections. */
-import { IsBoolean, IsISO8601, IsIn, IsNotEmpty, IsOptional, IsString, IsUrl, MaxLength, ValidateIf } from 'class-validator';
+import {
+  IsBoolean,
+  IsISO8601,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUrl,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
 import {
   COURSE_LESSON_CONTENT_TYPE_VALUES,
   COURSE_LESSON_STATUS_VALUES,

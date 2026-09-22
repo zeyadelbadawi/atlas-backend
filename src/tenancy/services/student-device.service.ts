@@ -63,20 +63,28 @@ export function hashDeviceCookie(value: string): string {
  */
 export function deriveDeviceLabel(userAgent: string | undefined): string {
   if (!userAgent) return 'Unknown device';
-  const browser =
-    /Edg\//.test(userAgent) ? 'Edge'
-    : /OPR\//.test(userAgent) ? 'Opera'
-    : /Chrome\//.test(userAgent) ? 'Chrome'
-    : /Firefox\//.test(userAgent) ? 'Firefox'
-    : /Safari\//.test(userAgent) ? 'Safari'
-    : null;
-  const platform =
-    /iPhone|iPad|iPod/.test(userAgent) ? 'iOS'
-    : /Android/.test(userAgent) ? 'Android'
-    : /Mac OS X|Macintosh/.test(userAgent) ? 'macOS'
-    : /Windows/.test(userAgent) ? 'Windows'
-    : /Linux/.test(userAgent) ? 'Linux'
-    : null;
+  const browser = /Edg\//.test(userAgent)
+    ? 'Edge'
+    : /OPR\//.test(userAgent)
+      ? 'Opera'
+      : /Chrome\//.test(userAgent)
+        ? 'Chrome'
+        : /Firefox\//.test(userAgent)
+          ? 'Firefox'
+          : /Safari\//.test(userAgent)
+            ? 'Safari'
+            : null;
+  const platform = /iPhone|iPad|iPod/.test(userAgent)
+    ? 'iOS'
+    : /Android/.test(userAgent)
+      ? 'Android'
+      : /Mac OS X|Macintosh/.test(userAgent)
+        ? 'macOS'
+        : /Windows/.test(userAgent)
+          ? 'Windows'
+          : /Linux/.test(userAgent)
+            ? 'Linux'
+            : null;
   if (browser && platform) return `${browser} on ${platform}`;
   if (browser) return browser;
   if (platform) return platform;
@@ -162,7 +170,12 @@ export class StudentDeviceService {
 
     const activeDeviceCount = await tx.studentDevice.count({ where: activeWhere });
     if (activeDeviceCount >= args.maxDevices) {
-      return { device: null, issueCookieValue: null, atCapacity: true, activeDeviceCount };
+      return {
+        device: null,
+        issueCookieValue: null,
+        atCapacity: true,
+        activeDeviceCount,
+      };
     }
 
     const cookieValue = randomBytes(32).toString('hex');

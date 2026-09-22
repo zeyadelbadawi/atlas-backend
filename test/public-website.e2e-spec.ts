@@ -81,7 +81,8 @@ describe('Public Website Runtime (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academyId}/website/pages/${page.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ visible: true,
+      .send({
+        visible: true,
         sections: [
           {
             id: 'sec-hero',
@@ -90,7 +91,9 @@ describe('Public Website Runtime (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { title: `Welcome to ${slug}` },
           },
-        ], expectedVersion: await pageVersion(academyId, page.body.id, owner.accessToken) })
+        ],
+        expectedVersion: await pageVersion(academyId, page.body.id, owner.accessToken),
+      })
       .expect(200);
 
     await request(app.getHttpServer())
@@ -158,7 +161,8 @@ describe('Public Website Runtime (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ visible: true,
+      .send({
+        visible: true,
         sections: [
           {
             id: 'sec-hero',
@@ -167,7 +171,9 @@ describe('Public Website Runtime (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { title: 'SECRET DRAFT CONTENT' },
           },
-        ], expectedVersion: await pageVersion(academy.id, page.body.id, owner.accessToken) })
+        ],
+        expectedVersion: await pageVersion(academy.id, page.body.id, owner.accessToken),
+      })
       .expect(200);
 
     // Known academy id, known page id, known slug, guessed slug — every
@@ -210,7 +216,8 @@ describe('Public Website Runtime (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/pages/${page.body.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ visible: false,
+      .send({
+        visible: false,
         sections: [
           {
             id: 'sec-hero',
@@ -219,7 +226,9 @@ describe('Public Website Runtime (e2e)', () => {
             visibility: { desktop: true, tablet: true, mobile: true },
             config: { title: 'HIDDEN SECRET CONTENT' },
           },
-        ], expectedVersion: await pageVersion(academy.id, page.body.id, owner.accessToken) })
+        ],
+        expectedVersion: await pageVersion(academy.id, page.body.id, owner.accessToken),
+      })
       .expect(200);
     await request(app.getHttpServer())
       .post(`/academies/${academy.id}/website/publish`)

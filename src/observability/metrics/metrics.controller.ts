@@ -17,7 +17,15 @@
  * infrastructure, not a business API, and a scrape configuration should
  * not have to follow a product's version bumps.
  */
-import { Controller, Get, Header, Res, UseGuards, Version, VERSION_NEUTRAL } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Header,
+  Res,
+  UseGuards,
+  Version,
+  VERSION_NEUTRAL,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';

@@ -182,9 +182,9 @@ describe('BasicVideoProvider.issuePlaybackToken', () => {
     expect(() =>
       provider.verifyGateToken(`${payload}.${flipped}${signature.slice(1)}`),
     ).not.toThrow();
-    expect(provider.verifyGateToken(`${payload}.${flipped}${signature.slice(1)}`).valid).toBe(
-      false,
-    );
+    expect(
+      provider.verifyGateToken(`${payload}.${flipped}${signature.slice(1)}`).valid,
+    ).toBe(false);
   });
 
   it('rejects a token of the wrong length without throwing', () => {
@@ -200,7 +200,9 @@ describe('BasicVideoProvider.issuePlaybackToken', () => {
     const provider = providerWith();
     const descriptor = await provider.issuePlaybackToken(request);
     const wellAfterExpiry = new Date(Date.now() + 2 * 60 * 60 * 1000);
-    expect(provider.verifyGateToken(descriptor.token!, wellAfterExpiry).valid).toBe(false);
+    expect(provider.verifyGateToken(descriptor.token!, wellAfterExpiry).valid).toBe(
+      false,
+    );
   });
 
   it('carries the binding identifiers so a revocation can name a session', async () => {

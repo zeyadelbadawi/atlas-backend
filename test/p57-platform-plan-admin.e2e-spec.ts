@@ -153,8 +153,14 @@ describe('P57 platform plan administration (e2e) — P57-PLAN-001..016', () => {
 
   it('P57-PLAN-001 — every write route refuses an UNAUTHENTICATED caller', async () => {
     await request(app.getHttpServer()).post('/platform-plans').send({}).expect(401);
-    await request(app.getHttpServer()).patch('/platform-plans/growth').send({}).expect(401);
-    await request(app.getHttpServer()).post('/platform-plans/growth/archive').send({}).expect(401);
+    await request(app.getHttpServer())
+      .patch('/platform-plans/growth')
+      .send({})
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/platform-plans/growth/archive')
+      .send({})
+      .expect(401);
     await request(app.getHttpServer()).get('/platform-plans/growth/history').expect(401);
   });
 
@@ -162,7 +168,11 @@ describe('P57 platform plan administration (e2e) — P57-PLAN-001..016', () => {
     // Not a permission string: `PlatformOwnerGuard` reads the user's own
     // `is_platform_owner` column, which no organization role can grant.
     const auth = { Authorization: `Bearer ${tenantOwnerToken}` };
-    await request(app.getHttpServer()).post('/platform-plans').set(auth).send({}).expect(403);
+    await request(app.getHttpServer())
+      .post('/platform-plans')
+      .set(auth)
+      .send({})
+      .expect(403);
     await request(app.getHttpServer())
       .patch('/platform-plans/growth')
       .set(auth)

@@ -97,7 +97,10 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
       .post('/auth/sign-in')
       .send({ email, password: PASSWORD })
       .expect(200);
-    return { userId: signIn.body.user.id as string, token: signIn.body.accessToken as string };
+    return {
+      userId: signIn.body.user.id as string,
+      token: signIn.body.accessToken as string,
+    };
   }
 
   async function seedTenant(label: string, limits: Record<string, number | 'unlimited'>) {
@@ -207,7 +210,9 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
     const owner = await signUp('p62-grant-owner');
     const org = await seedOrganizationWithOwner(admin, owner.userId, 'p62-grant-org');
     createdOrgIds.push(org.id);
-    const plan = await seedPlan(admin, 'p62-grant-plan', { limits: LIMITS({ academies: 1 }) });
+    const plan = await seedPlan(admin, 'p62-grant-plan', {
+      limits: LIMITS({ academies: 1 }),
+    });
     createdPlanIds.push(plan.id);
     await seedTenantSubscription(admin, org.id, plan.id, {
       status: 'active',
@@ -327,7 +332,7 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
     await expect(assertStaffSeat(org.id)).rejects.toBeDefined();
   }, 60_000);
 
-  it('P62-STAFF-006 — one tenant\'s staff usage never counts against another', async () => {
+  it("P62-STAFF-006 — one tenant's staff usage never counts against another", async () => {
     const a = await seedTenant('p62-staff-tenant-a', { staff: 1 });
     const b = await seedTenant('p62-staff-tenant-b', { staff: 1 });
     const academyA = await seedAcademy(admin, a.org.id, 'p62-staff-a-academy');
@@ -342,9 +347,15 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
     // P61 semantics hold for `staff` like every other key: a customer
     // granted 2 keeps 2 after the catalog is cut to 0.
     const owner = await signUp('p62-staff-grant-owner');
-    const org = await seedOrganizationWithOwner(admin, owner.userId, 'p62-staff-grant-org');
+    const org = await seedOrganizationWithOwner(
+      admin,
+      owner.userId,
+      'p62-staff-grant-org',
+    );
     createdOrgIds.push(org.id);
-    const plan = await seedPlan(admin, 'p62-staff-grant-plan', { limits: LIMITS({ staff: 0 }) });
+    const plan = await seedPlan(admin, 'p62-staff-grant-plan', {
+      limits: LIMITS({ staff: 0 }),
+    });
     createdPlanIds.push(plan.id);
     await seedTenantSubscription(admin, org.id, plan.id, {
       status: 'active',
@@ -359,9 +370,15 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
 
   it('P62-STAFF-008 — an inactive subscription refuses a staff seat regardless of the number', async () => {
     const owner = await signUp('p62-staff-inactive-owner');
-    const org = await seedOrganizationWithOwner(admin, owner.userId, 'p62-staff-inactive-org');
+    const org = await seedOrganizationWithOwner(
+      admin,
+      owner.userId,
+      'p62-staff-inactive-org',
+    );
     createdOrgIds.push(org.id);
-    const plan = await seedPlan(admin, 'p62-staff-inactive-plan', { limits: LIMITS({ staff: 100 }) });
+    const plan = await seedPlan(admin, 'p62-staff-inactive-plan', {
+      limits: LIMITS({ staff: 100 }),
+    });
     createdPlanIds.push(plan.id);
     await seedTenantSubscription(admin, org.id, plan.id, { status: 'expired' });
 

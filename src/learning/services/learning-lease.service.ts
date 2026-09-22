@@ -43,7 +43,12 @@ export interface LeaseHolder {
 }
 
 export type LeaseOutcome =
-  | { readonly status: 'acquired'; readonly lease: LeaseHolder; readonly ttlSeconds: number; readonly heartbeatSeconds: number }
+  | {
+      readonly status: 'acquired';
+      readonly lease: LeaseHolder;
+      readonly ttlSeconds: number;
+      readonly heartbeatSeconds: number;
+    }
   | { readonly status: 'held_by_other'; readonly holder: LeaseHolder }
   /** Redis is unreachable. The caller decides; `LessonContentService` allows delivery and logs, because a cache outage must not become a content outage. */
   | { readonly status: 'unavailable' };
@@ -137,9 +142,7 @@ export class LearningLeaseService {
           };
         }
         const now = await this.read(key);
-        return now
-          ? { status: 'held_by_other', holder: now }
-          : { status: 'unavailable' };
+        return now ? { status: 'held_by_other', holder: now } : { status: 'unavailable' };
       }
 
       if (existing.deviceId === args.deviceId && existing.sessionId === args.sessionId) {
