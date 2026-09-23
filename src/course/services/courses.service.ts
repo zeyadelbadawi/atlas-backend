@@ -166,6 +166,15 @@ export class CoursesService {
           pricingAmountMinorUnits: toMinorUnits(payload.pricing.amount),
           pricingCurrency:
             payload.pricing.type === 'paid' ? payload.pricing.currency : undefined,
+          // P64 Phase 4 catalog metadata. Scalar-list defaults ([]) mean an
+          // omitted `outcomes`/`requirements` simply stays empty.
+          level: payload.level,
+          language: payload.language,
+          ...(payload.outcomes ? { outcomes: payload.outcomes } : {}),
+          ...(payload.requirements ? { requirements: payload.requirements } : {}),
+          ...(payload.introVideoAssetId
+            ? { introVideoAsset: { connect: { id: payload.introVideoAssetId } } }
+            : {}),
         });
 
         await this.auditLogWriterService.write(tx, {
@@ -235,6 +244,22 @@ export class CoursesService {
                   pricingAmountMinorUnits: toMinorUnits(payload.pricing.amount) ?? null,
                   pricingCurrency:
                     payload.pricing.type === 'paid' ? payload.pricing.currency : null,
+                }
+              : {}),
+            // P64 Phase 4 catalog metadata. Scalar fields follow the same
+            // "undefined means don't touch" rule as the ones above; the
+            // scalar lists are replaced wholesale only when the key is sent.
+            level: payload.level,
+            language: payload.language,
+            ...(payload.outcomes !== undefined ? { outcomes: payload.outcomes } : {}),
+            ...(payload.requirements !== undefined
+              ? { requirements: payload.requirements }
+              : {}),
+            ...(payload.introVideoAssetId !== undefined
+              ? {
+                  introVideoAsset: payload.introVideoAssetId
+                    ? { connect: { id: payload.introVideoAssetId } }
+                    : { disconnect: true },
                 }
               : {}),
           };

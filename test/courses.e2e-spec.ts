@@ -455,4 +455,162 @@ describe('Course Management (e2e) — functional/contract', () => {
     expect(ids).toContain(published.id);
     expect(ids).toHaveLength(1);
   });
+
+  // -------------------------------------------------------------------
+  // P64 Phase 4 — catalog metadata authoring (level / language /
+  // outcomes / requirements) round-trips through create, the read
+  // response, and update (including clearing the list fields).
+  // -------------------------------------------------------------------
+
+  it('persists catalog metadata on create and round-trips it through the read response', async () => {
+    const owner = await signUpAndSignIn(app, 'course-catmeta');
+    const org = await seedOrganizationWithOwner(
+      admin,
+      owner.userId,
+      'course-catmeta-org',
+    );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'course-catmeta');
+    const academy = await seedManagedAcademy(
+      admin,
+      org.id,
+      owner.userId,
+      'course-catmeta-academy',
+    );
+    const slug = `course-catmeta-${Date.now()}`;
+
+    const created = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/courses`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        title: 'Catalog Metadata Course',
+        slug,
+        visibility: 'public',
+        pricing: { type: 'free' },
+        level: 'intermediate',
+        language: 'en',
+        outcomes: ['Ship real features', 'Reason about tenancy'],
+        requirements: ['Comfortable with TypeScript'],
+      })
+      .expect(201);
+    expect(created.body).toMatchObject({
+      level: 'intermediate',
+      language: 'en',
+      outcomes: ['Ship real features', 'Reason about tenancy'],
+      requirements: ['Comfortable with TypeScript'],
+    });
+    const courseId = created.body.id as string;
+
+    const fetched = await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/courses/${courseId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(fetched.body).toMatchObject({
+      level: 'intermediate',
+      language: 'en',
+      outcomes: ['Ship real features', 'Reason about tenancy'],
+      requirements: ['Comfortable with TypeScript'],
+    });
+  });
+
+  it('update mutates catalog metadata and can clear the list fields', async () => {
+    const owner = await signUpAndSignIn(app, 'course-catmeta-upd');
+    const org = await seedOrganizationWithOwner(
+      admin,
+      owner.userId,
+      'course-catmeta-upd-org',
+    );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'course-catmeta-upd');
+    const academy = await seedManagedAcademy(
+      admin,
+      org.id,
+      owner.userId,
+      'course-catmeta-upd-academy',
+    );
+    const slug = `course-catmeta-upd-${Date.now()}`;
+
+    const created = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/courses`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        title: 'To Be Updated',
+        slug,
+        visibility: 'private',
+        pricing: { type: 'free' },
+        level: 'beginner',
+        language: 'ar',
+        outcomes: ['old outcome'],
+        requirements: ['old requirement'],
+      })
+      .expect(201);
+    const courseId = created.body.id as string;
+
+    const updated = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/courses/${courseId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        level: 'advanced',
+        language: 'fr',
+        outcomes: ['new outcome A', 'new outcome B'],
+        requirements: [],
+      })
+      .expect(200);
+    expect(updated.body).toMatchObject({
+      level: 'advanced',
+      language: 'fr',
+      outcomes: ['new outcome A', 'new outcome B'],
+      requirements: [],
+    });
+
+    // Fields not sent are left untouched (level stays 'advanced' here).
+    const patchedAgain = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/courses/${courseId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ language: 'de' })
+      .expect(200);
+    expect(patchedAgain.body).toMatchObject({
+      level: 'advanced',
+      language: 'de',
+      outcomes: ['new outcome A', 'new outcome B'],
+    });
+  });
+
+  it('rejects an invalid level and an over-long language on create (400)', async () => {
+    const owner = await signUpAndSignIn(app, 'course-catmeta-val');
+    const org = await seedOrganizationWithOwner(
+      admin,
+      owner.userId,
+      'course-catmeta-val-org',
+    );
+    await seedActiveSubscriptionForOrg(admin, org.id, 'course-catmeta-val');
+    const academy = await seedManagedAcademy(
+      admin,
+      org.id,
+      owner.userId,
+      'course-catmeta-val-academy',
+    );
+
+    await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/courses`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        title: 'Bad Level',
+        slug: `course-catmeta-val-${Date.now()}`,
+        visibility: 'private',
+        pricing: { type: 'free' },
+        level: 'expert',
+      })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/courses`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        title: 'Bad Language',
+        slug: `course-catmeta-val2-${Date.now()}`,
+        visibility: 'private',
+        pricing: { type: 'free' },
+        language: 'x'.repeat(80),
+      })
+      .expect(400);
+  });
 });

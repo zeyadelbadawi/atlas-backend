@@ -4,6 +4,8 @@
  * frontend's own `createCourseSchema` (`course.schemas.ts`) exactly.
  */
 import {
+  ArrayMaxSize,
+  IsArray,
   IsIn,
   IsNotEmpty,
   IsObject,
@@ -15,9 +17,15 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
+  COURSE_LEVEL_VALUES,
   COURSE_SLUG_REGEX,
   COURSE_VISIBILITY_VALUES,
   MAX_COURSE_DESCRIPTION_LENGTH,
+  MAX_COURSE_LANGUAGE_LENGTH,
+  MAX_COURSE_OUTCOME_LENGTH,
+  MAX_COURSE_OUTCOMES,
+  MAX_COURSE_REQUIREMENT_LENGTH,
+  MAX_COURSE_REQUIREMENTS,
   MAX_COURSE_SHORT_DESCRIPTION_LENGTH,
   MAX_COURSE_TITLE_LENGTH,
   MAX_COURSE_SLUG_LENGTH,
@@ -66,4 +74,33 @@ export class CreateCourseDto {
   @IsNotEmpty()
   @IsIn(COURSE_VISIBILITY_VALUES)
   readonly visibility!: (typeof COURSE_VISIBILITY_VALUES)[number];
+
+  // ---- P64 Phase 4 catalog metadata (all optional at authoring time) ----
+
+  @IsOptional()
+  @IsIn(COURSE_LEVEL_VALUES)
+  readonly level?: (typeof COURSE_LEVEL_VALUES)[number];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_COURSE_LANGUAGE_LENGTH)
+  readonly language?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_COURSE_OUTCOMES)
+  @IsString({ each: true })
+  @MaxLength(MAX_COURSE_OUTCOME_LENGTH, { each: true })
+  readonly outcomes?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_COURSE_REQUIREMENTS)
+  @IsString({ each: true })
+  @MaxLength(MAX_COURSE_REQUIREMENT_LENGTH, { each: true })
+  readonly requirements?: string[];
+
+  @IsOptional()
+  @IsString()
+  readonly introVideoAssetId?: string;
 }
