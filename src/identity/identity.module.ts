@@ -132,6 +132,12 @@ import { AcademySurfaceService } from './services/academy-surface.service';
     // it. Exported rather than duplicated so "which academy is this host"
     // keeps exactly one definition, shared with the Phase 1 sign-in path.
     AcademySurfaceService,
+    // Invitation CREATION reuses the SAME address-trust gate as sign-up
+    // (`AuthService.register`): the invited email must clear the disposable
+    // and deliverability checks before an invite is bound to it. Exported
+    // so `AcademyStudentsService` shares this one instance rather than
+    // standing up a second, weaker "email validator".
+    EmailRiskService,
   ],
 })
 export class IdentityModule {}

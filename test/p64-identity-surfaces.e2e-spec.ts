@@ -580,6 +580,169 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
     expect(membership.source).toBe('invite');
   });
 
+  // -------------------------------------------------------------------
+  // Invitation CREATION email trust — an invite may only be BOUND to an
+  // address that clears the SAME gate sign-up applies
+  // (`AuthService.register` → `EmailRiskService.evaluate`): disposable
+  // blocking (always on) plus deliverability (DNS, off in `test`). This
+  // is the same architecture as sign-up, not a second validator; Atlas
+  // cannot prove mailbox ownership at creation, so ownership is still
+  // proven only at redemption (the invited email must register and clear
+  // the same gate). The enforcement is server-side in
+  // `AcademyStudentsService.createInvite`.
+  // -------------------------------------------------------------------
+
+  // Unlike the `createInvite` helper above, this returns the raw response
+  // so a rejection can be asserted.
+  function postInvite(
+    academyId: string,
+    ownerToken: string,
+    body: Record<string, unknown>,
+  ) {
+    return request(app.getHttpServer())
+      .post(`/academies/${academyId}/invites`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send(body);
+  }
+
+  it('a legitimate email-bound invite is created (normal address clears the gate)', async () => {
+    const { academy, owner } = await inviteAcademy('invite-trust-ok');
+    const invitedEmail = uniqueTestEmail('invite-trust-ok-invitee');
+    const res = await postInvite(academy.id, owner.token, {
+      email: invitedEmail,
+      maxUses: 1,
+      expiresInDays: 7,
+    }).expect(201);
+    expect(res.body.id).toBeTruthy();
+
+    const stored = await admin.academyInvite.findUniqueOrThrow({
+      where: { id: res.body.id },
+    });
+    expect(stored.email).toBe(invitedEmail);
+  });
+
+  it('a mixed-case invited address is normalized and still accepted at creation', async () => {
+    const { academy, owner } = await inviteAcademy('invite-trust-norm');
+    const localPart = `invite-trust-norm-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
+    const res = await postInvite(academy.id, owner.token, {
+      email: `${localPart}@Example.COM`,
+      maxUses: 1,
+    }).expect(201);
+
+    const stored = await admin.academyInvite.findUniqueOrThrow({
+      where: { id: res.body.id },
+    });
+    // Normalized before both the trust check and storage (lowercase); the
+    // gate sees the canonical form, so case never smuggles a domain past it.
+    expect(stored.email).toBe(`${localPart}@example.com`);
+  });
+
+  it('an invite bound to a DISPOSABLE provider is REJECTED and no invite row is written', async () => {
+    // `mailinator.com` is in the community disposable dataset; that half of
+    // the gate is local and always active, in `test` too. Same key as
+    // sign-up refuses — never disclosing which check tripped.
+    const { academy, owner } = await inviteAcademy('invite-trust-disposable');
+    const before = await admin.academyInvite.count({
+      where: { academyId: academy.id },
+    });
+
+    const refused = await postInvite(academy.id, owner.token, {
+      email: `invite-trust-disp-${Date.now()}@mailinator.com`,
+      maxUses: 1,
+    }).expect(400);
+    expect(refused.body.error.messageKey).toBe('errors.auth.emailNotAcceptable');
+    // The rejection never names the domain, the list, or the mechanism.
+    const serialised = JSON.stringify(refused.body);
+    expect(serialised).not.toContain('mailinator');
+    expect(serialised.toLowerCase()).not.toContain('disposable');
+
+    const after = await admin.academyInvite.count({
+      where: { academyId: academy.id },
+    });
+    expect(after).toBe(before);
+  });
+
+  it('several distinct throwaway providers are all rejected at invite creation', async () => {
+    const { academy, owner } = await inviteAcademy('invite-trust-throwaway');
+    for (const domain of ['guerrillamail.com', 'yopmail.com', '10minutemail.com']) {
+      const refused = await postInvite(academy.id, owner.token, {
+        email: `invite-trust-${Date.now()}@${domain}`,
+        maxUses: 1,
+      }).expect(400);
+      expect(refused.body.error.messageKey).toBe('errors.auth.emailNotAcceptable');
+    }
+    const count = await admin.academyInvite.count({
+      where: { academyId: academy.id },
+    });
+    expect(count).toBe(0);
+  });
+
+  it('an OPEN (no-email) invite bypasses the address gate — backward compatible', async () => {
+    // No address is bound, so there is nothing to trust or reject; the
+    // gate applies only to email-bound invites.
+    const { academy, owner } = await inviteAcademy('invite-trust-open');
+    const res = await postInvite(academy.id, owner.token, {
+      maxUses: 5,
+      expiresInDays: 7,
+    }).expect(201);
+    const stored = await admin.academyInvite.findUniqueOrThrow({
+      where: { id: res.body.id },
+    });
+    expect(stored.email).toBeNull();
+  });
+
+  it('the API itself enforces the gate — a direct request cannot bind a throwaway address (no frontend involved)', async () => {
+    // There is no frontend in this test: the request goes straight to the
+    // authoritative endpoint. Frontend validation is not a security control;
+    // the refusal must come from the server, on the API path itself.
+    const { academy, owner } = await inviteAcademy('invite-trust-api');
+    const refused = await postInvite(academy.id, owner.token, {
+      email: `invite-trust-api-${Date.now()}@mailinator.com`,
+      maxUses: 1,
+      expiresInDays: 7,
+    }).expect(400);
+    expect(refused.body.error.messageKey).toBe('errors.auth.emailNotAcceptable');
+    const count = await admin.academyInvite.count({
+      where: { academyId: academy.id },
+    });
+    expect(count).toBe(0);
+  });
+
+  // HONEST LIMITATION — mailbox OWNERSHIP is not proven at creation time.
+  // The invite is created bound to the normalized address, but ownership
+  // is proven only when the invited person registers with that exact
+  // address (bound by `claim_academy_invite`) and clears the same gate.
+  // This test documents that the redemption binding still holds after a
+  // trust-checked creation.
+  it('a trust-checked email-bound invite is still redeemable ONLY by the invited address', async () => {
+    const { academy, owner } = await inviteAcademy('invite-trust-redeem');
+    const invitedEmail = uniqueTestEmail('invite-trust-redeem-invitee');
+    const invite = await createInvite(academy.id, owner.token, {
+      email: invitedEmail,
+      maxUses: 1,
+      expiresInDays: 7,
+    });
+
+    // A different (also legitimate) address cannot claim it...
+    const attacker = uniqueTestEmail('invite-trust-redeem-attacker');
+    const refused = await registerWithInvite(
+      academy.id,
+      attacker,
+      invite.token,
+    ).expect(400);
+    expect(refused.body.error.messageKey).toBe('errors.auth.inviteInvalid');
+
+    // ...and the invited address still can (ownership proven here, at
+    // redemption, not at creation).
+    await registerWithInvite(academy.id, invitedEmail, invite.token).expect(201);
+    const membership = await admin.academyStudent.findFirstOrThrow({
+      where: { academyId: academy.id, user: { email: invitedEmail } },
+    });
+    expect(membership.source).toBe('invite');
+  });
+
   it('an APPROVAL academy registers the learner as pending and refuses access until approved', async () => {
     const { academy, owner } = await seedAcademyWithOwner('approval');
     await admin.academy.update({

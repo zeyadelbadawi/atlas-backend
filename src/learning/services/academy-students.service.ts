@@ -67,6 +67,7 @@ import {
   hashOpaqueToken,
 } from '../../identity/utils/opaque-token.util';
 import { normalizeEmail } from '../../identity/utils/email.util';
+import { EmailRiskService } from '../../identity/services/email-risk.service';
 import { RefreshTokensRepository } from '../../identity/repositories/refresh-tokens.repository';
 import { SessionRevocationService } from '../../identity/services/session-revocation.service';
 import { LearningLeaseService } from './learning-lease.service';
@@ -97,6 +98,7 @@ export class AcademyStudentsService {
     private readonly sessionRevocationService: SessionRevocationService,
     private readonly learningLeaseService: LearningLeaseService,
     private readonly gateRevocation: VideoGateRevocationService,
+    private readonly emailRiskService: EmailRiskService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -785,6 +787,35 @@ export class AcademyStudentsService {
       userId,
       async (tx) => {
         const role = await this.assertCanManageStudents(tx, academyId, userId);
+
+        // Stored through the project's canonical normalization so the
+        // redemption-time equality against the registrant's normalized
+        // email is exact (trim + lowercase); NULL stays an open invite.
+        const invitedEmail = payload.email ? normalizeEmail(payload.email) : null;
+
+        // Bind an invite to a specific address only if that address clears
+        // the SAME trust gate sign-up applies (`AuthService.register` →
+        // `EmailRiskService.evaluate`): disposable-provider blocking plus,
+        // where enabled, DNS deliverability. This is the same architecture,
+        // not a second regex/blacklist — an admin cannot mint an invite
+        // that trusts a throwaway or undeliverable mailbox, and the invite
+        // then trusts an email the redeemer's own sign-up would have to
+        // clear anyway. Atlas cannot prove mailbox OWNERSHIP at creation
+        // (the recipient has done nothing yet); ownership is proven later,
+        // when the redeemer registers with that exact address (bound by
+        // `claim_academy_invite`) and clears the same gate. Open invites
+        // (no email) are unaffected and stay backward compatible.
+        if (invitedEmail) {
+          const verdict = await this.emailRiskService.evaluate(invitedEmail);
+          if (!verdict.acceptable) {
+            // One generic key, matching sign-up: never disclose whether the
+            // domain was listed or merely lacked a mail exchanger.
+            throw new BadRequestException({
+              messageKey: 'errors.auth.emailNotAcceptable',
+            });
+          }
+        }
+
         const rawToken = generateOpaqueToken();
         const days = payload.expiresInDays ?? 14;
         const row = await tx.academyInvite.create({
@@ -792,10 +823,7 @@ export class AcademyStudentsService {
             academyId,
             tokenHash: hashOpaqueToken(rawToken),
             createdBy: userId,
-            // Stored through the project's canonical normalization so the
-            // redemption-time equality against the registrant's normalized
-            // email is exact (trim + lowercase); NULL stays an open invite.
-            email: payload.email ? normalizeEmail(payload.email) : null,
+            email: invitedEmail,
             maxUses: payload.maxUses ?? 1,
             expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
           },
