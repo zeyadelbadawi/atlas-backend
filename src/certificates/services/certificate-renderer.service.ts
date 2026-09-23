@@ -71,12 +71,15 @@ const LTR_CONTENT = /[0-9٠-٩۰-۹A-Za-z]/;
  * Arabic (and any pure-Latin line) untouched. A small, dependency-free bidi
  * for the one shape certificates use: an RTL line with embedded LTR spans.
  */
-function reorderMixedRtl(value: string): string {
+export function reorderMixedRtl(value: string): string {
   const chars = [...value];
   if (!chars.some((c) => ARABIC_LETTER.test(c))) return value; // pure LTR line
   type Cls = 'R' | 'L' | 'N';
   const cls: Cls[] = chars.map((c) =>
-    ARABIC_LETTER.test(c) ? 'R' : LTR_CONTENT.test(c) || LTR_GLUE.test(c) ? 'L' : 'N',
+    // LTR content FIRST — Arabic-Indic digits also match ARABIC_LETTER but must
+    // read left-to-right. Everything else (spaces, punctuation) is neutral and
+    // is resolved by its neighbours below.
+    LTR_CONTENT.test(c) ? 'L' : ARABIC_LETTER.test(c) ? 'R' : 'N',
   );
   // Resolve neutrals (spaces): a neutral run joins an LTR span only when it is
   // flanked by LTR on both sides; otherwise it belongs to the RTL base.

@@ -1,4 +1,4 @@
-import { CertificateRendererService } from './certificate-renderer.service';
+import { CertificateRendererService, reorderMixedRtl } from './certificate-renderer.service';
 import type { CertificateSnapshot } from '../dto/certificate.contract';
 import { DEFAULT_WORDING } from '../dto/certificate.contract';
 
@@ -124,5 +124,35 @@ describe('CertificateRendererService', () => {
       locale: 'en',
     });
     expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+});
+
+describe('reorderMixedRtl (certificate Arabic bidi)', () => {
+  // fontkit reverses the whole Arabic run, so the helper PRE-reverses each
+  // LTR span; the assertions below are the pre-reversed form that fontkit then
+  // flips back to correct visual order.
+  it('leaves a pure Arabic line untouched', () => {
+    expect(reorderMixedRtl('شهادة إتمام')).toBe('شهادة إتمام');
+  });
+
+  it('leaves a pure Latin line untouched', () => {
+    expect(reorderMixedRtl('Dr. Jordan Hayes')).toBe('Dr. Jordan Hayes');
+  });
+
+  it('pre-reverses Arabic-Indic digit runs so the year is not flipped', () => {
+    // "٢٠٢٦" (2026) must survive fontkit's reversal, so it is stored reversed.
+    const out = reorderMixedRtl('سبتمبر ٢٠٢٦');
+    expect(out).toContain('٦٢٠٢');
+  });
+
+  it('pre-reverses an embedded Latin name so it is not flipped', () => {
+    const out = reorderMixedRtl('بإشراف: Dr. Jordan Hayes');
+    // The Latin span is stored reversed; fontkit re-reverses to "Dr. Jordan Hayes".
+    expect(out).toContain('seyaH nadroJ');
+  });
+
+  it('is an involution on the LTR spans (double application restores them)', () => {
+    const original = 'الدرجة ٩٦٪ • أُكملت في ٢٠ سبتمبر ٢٠٢٦';
+    expect(reorderMixedRtl(reorderMixedRtl(original))).toBe(original);
   });
 });
