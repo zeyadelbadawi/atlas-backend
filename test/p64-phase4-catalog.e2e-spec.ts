@@ -23,6 +23,7 @@ import {
   seedAcademyMember,
   seedActiveSubscriptionForOrg,
   seedCourse,
+  seedCourseCategory,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import { uniqueTestEmail } from './utils/test-app';
@@ -268,5 +269,60 @@ describe('Public Catalog v2 (e2e)', () => {
     const res = await courses(academy.id).expect(200);
     expect(res.body.items).toHaveLength(1);
     expect(res.body.items[0].title).toBe(`Public ${stamp}`);
+  });
+
+  // ---- recommendations ----
+
+  it('recommends same-academy courses, same category first, excluding the course itself', async () => {
+    const { academy } = await seedServingAcademy('cat-recs');
+    const stamp = Date.now();
+    const cat = await seedCourseCategory(admin, academy.id, `recs-cat-${stamp}`);
+    const source = await seedCourse(admin, academy.id, `Source ${stamp}`, {
+      status: 'published',
+      visibility: 'public',
+      categoryId: cat.id,
+    });
+    const sameCat = await seedCourse(admin, academy.id, `SameCat ${stamp}`, {
+      status: 'published',
+      visibility: 'public',
+      categoryId: cat.id,
+    });
+    const otherCat = await seedCourse(admin, academy.id, `OtherCat ${stamp}`, {
+      status: 'published',
+      visibility: 'public',
+    });
+    // A draft must never be recommended.
+    await seedCourse(admin, academy.id, `DraftRec ${stamp}`, {
+      status: 'draft',
+      visibility: 'public',
+    });
+
+    const res = await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}/courses/${source.id}/recommendations`)
+      .expect(200);
+    const ids = res.body.map((c: { id: string }) => c.id);
+    expect(ids).not.toContain(source.id); // never itself
+    expect(ids).toContain(sameCat.id);
+    expect(ids).toContain(otherCat.id);
+    expect(ids).toHaveLength(2);
+    // Same-category course leads.
+    expect(ids[0]).toBe(sameCat.id);
+  });
+
+  it('recommendations for a draft/unknown course return 404', async () => {
+    const { academy } = await seedServingAcademy('cat-recs-hidden');
+    const stamp = Date.now();
+    const draft = await seedCourse(admin, academy.id, `Hidden ${stamp}`, {
+      status: 'draft',
+      visibility: 'public',
+    });
+    await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}/courses/${draft.id}/recommendations`)
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(
+        `/public/websites/${academy.id}/courses/00000000-0000-0000-0000-000000000000/recommendations`,
+      )
+      .expect(404);
   });
 });

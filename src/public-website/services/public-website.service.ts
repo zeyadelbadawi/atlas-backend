@@ -501,6 +501,48 @@ export class PublicWebsiteService {
   }
 
   /**
+   * P64 Phase 4 — "related courses" for a course-details page: other
+   * published+public courses of the SAME academy (never cross-academy,
+   * §H), same category first. `null` under the usual public gating; an
+   * empty array when the academy has no other public courses.
+   */
+  async getPublicCourseRecommendations(
+    academyId: string,
+    courseId: string,
+    limit = 8,
+  ): Promise<CourseResponse[] | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+
+    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      const course = await this.findPublishedPublicCourseByIdOrSlug(
+        tx,
+        academyId,
+        courseId,
+      );
+      if (!course) return null;
+      const recommendations = await this.coursesRepository.findRecommendations(
+        tx,
+        academyId,
+        course.id,
+        course.categoryId ?? null,
+        limit,
+      );
+      const { sectionCounts, lessonCounts } =
+        await this.coursesRepository.countSectionsAndLessonsBatch(
+          tx,
+          recommendations.map((c) => c.id),
+        );
+      return recommendations.map((c) =>
+        toCourseResponse(c, {
+          totalSections: sectionCounts.get(c.id) ?? 0,
+          totalLessons: lessonCounts.get(c.id) ?? 0,
+        }),
+      );
+    });
+  }
+
+  /**
    * P64 Phase 1 — the public course page is addressed by id OR by the
    * academy-scoped slug (the production website linked `/courses/{slug}`
    * while this API resolved ids only, and every such page 404'd). The

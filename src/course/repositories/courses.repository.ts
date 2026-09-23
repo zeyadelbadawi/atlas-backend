@@ -476,6 +476,49 @@ export class CoursesRepository {
     });
   }
 
+  /**
+   * P64 Phase 4 — in-academy recommendations for a course-details page.
+   * Published+public courses of the SAME academy, never the course itself,
+   * preferring the same category first (so a related course leads) and then
+   * filling with other courses, each block newest-first. Academy-scoped by
+   * construction, so recommendations never cross academies (master plan
+   * §H). RLS still applies (published+public only) as a second gate.
+   */
+  async findRecommendations(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    excludeCourseId: string,
+    categoryId: string | null,
+    limit: number,
+  ): Promise<CourseWithRelations[]> {
+    // One query, then order in JS: putting "same category first" cannot be
+    // expressed as a SQL `ORDER BY` here, and splitting it into two filtered
+    // queries hits the NULL pitfall (`categoryId != x` excludes NULL-category
+    // rows). Fetch a bounded candidate window newest-first, then stable-sort
+    // same-category to the front and slice.
+    const candidates = await tx.course.findMany({
+      where: {
+        academyId,
+        status: 'published',
+        visibility: 'public',
+        id: { not: excludeCourseId },
+      },
+      include: { category: true, instructors: INSTRUCTOR_INCLUDE },
+      orderBy: { createdAt: 'desc' },
+      // A generous window so the JS re-ordering has enough same-category rows
+      // to promote before the slice; bounded so a huge catalog stays cheap.
+      take: Math.max(limit * 4, 40),
+    });
+
+    const ordered = categoryId
+      ? [
+          ...candidates.filter((c) => c.categoryId === categoryId),
+          ...candidates.filter((c) => c.categoryId !== categoryId),
+        ]
+      : candidates;
+    return ordered.slice(0, limit);
+  }
+
   /** Phase P15 — `PlatformAcademyDetail.courses` (id/title/status refs only) and `courseCount`. Meaningful only inside `runInUserContext(platformOwnerId)` (the `courses_platform_select` policy); capped, not paginated, matching `AcademiesRepository.findRefsForOrganization`'s identical precedent. */
   findRefsForAcademy(
     tx: Prisma.TransactionClient,

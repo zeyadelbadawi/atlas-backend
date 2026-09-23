@@ -171,6 +171,20 @@ export class PublicWebsiteController {
     return summary;
   }
 
+  /** P64 Phase 4 — related courses (same academy, same category first) for the course-details page. */
+  @Get(':academyId/courses/:courseId/recommendations')
+  async getCourseRecommendations(
+    @Param('academyId') academyId: string,
+    @Param('courseId') courseId: string,
+  ): Promise<CourseResponse[]> {
+    const result = await this.publicWebsiteService.getPublicCourseRecommendations(
+      academyId,
+      courseId,
+    );
+    if (!result) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return result;
+  }
+
   /** Phase 6 — the real backend destination for the public Contact section's form. See `PublicWebsiteService.submitContactMessage`'s own doc comment. */
   @Post(':academyId/contact')
   @HttpCode(201)
