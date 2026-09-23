@@ -1,0 +1,105 @@
+# Atlas — Prometheus alerting rules (P64 Phase 4 §U).
+#
+# Every expression references only series emitted by
+# `src/observability/metrics/learning-metrics.service.ts`; the spec
+# `src/observability/metrics/alert-rules.spec.ts` fails the build if a rule
+# names a series that does not exist there, so this file cannot drift from
+# the code. Labels here carry ids and enum values only — never PII.
+#
+# Receiver wiring (Alertmanager routes/receivers) is an infrastructure action
+# on the production host and is documented in ./README.md; it is not part of
+# the application deploy.
+groups:
+  - name: atlas-commerce
+    rules:
+      - alert: AtlasCheckoutApprovalBacklog
+        expr: |
+          sum(increase(atlas_checkout_orders_total{state="pending_payment"}[24h]))
+            - sum(increase(atlas_checkout_orders_total{state="paid"}[24h])) > 20
+        for: 1h
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "Course orders are entering payment review faster than they are approved"
+          description: "Over the last 24h, {{ $value }} more orders reached pending_payment than were approved. Check the platform payment review queue."
+      - alert: AtlasCheckoutApprovalSlow
+        expr: |
+          histogram_quantile(0.95, sum(rate(atlas_checkout_approval_latency_seconds_bucket[6h])) by (le)) > 172800
+        for: 30m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "p95 proof-to-approval latency above 48h"
+          description: "Learners are waiting more than two days for manual payment review (p95 = {{ $value | humanizeDuration }})."
+      - alert: AtlasCheckoutRefundSpike
+        expr: |
+          sum(increase(atlas_checkout_orders_total{state="refunded"}[24h])) > 5
+            and sum(increase(atlas_checkout_orders_total{state="refunded"}[24h]))
+                / clamp_min(sum(increase(atlas_checkout_orders_total{state="paid"}[24h])), 1) > 0.25
+        for: 15m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "Refunds exceed 25% of paid orders over 24h"
+
+  - name: atlas-catalog
+    rules:
+      - alert: AtlasPublicCatalogSlow
+        expr: |
+          histogram_quantile(0.95, sum(rate(atlas_public_catalog_query_duration_ms_bucket[10m])) by (le)) > 1000
+        for: 10m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "Public catalog p95 query time above 1s"
+          description: "The public course list is slow (p95 = {{ $value }} ms). Check the courses indexes and the FTS filters."
+
+  - name: atlas-retention
+    rules:
+      - alert: AtlasRetentionSweepFailing
+        expr: |
+          sum(increase(atlas_retention_sweep_runs_total{result="error"}[24h])) by (table) > 0
+        for: 5m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "Retention sweep reported errors for {{ $labels.table }}"
+          description: "The maintenance sweep failed to prune {{ $labels.table }} in the last 24h. Check the worker logs (a missing platform owner or a DB error)."
+      - alert: AtlasRetentionSweepSilent
+        expr: |
+          sum(increase(atlas_retention_sweep_runs_total[48h])) by (table) == 0
+        for: 1h
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "No retention sweep run recorded for {{ $labels.table }} in 48h"
+          description: "The Phase 2 maintenance job may not be scheduled or the worker is down."
+
+  - name: atlas-learning
+    rules:
+      - alert: AtlasGrantRefusalSurge
+        expr: |
+          sum(rate(atlas_content_grants_total{result="refused"}[15m]))
+            / clamp_min(sum(rate(atlas_content_grants_total[15m])), 0.001) > 0.3
+        for: 15m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "More than 30% of protected-content grant requests are being refused"
+          description: "Could be a sharing wave (device limits / session conflicts) or a token-signing problem. Break down by kind and tier."
+      - alert: AtlasVideoWebhookSignatureFailures
+        expr: |
+          increase(atlas_video_webhook_signature_failures_total[10m]) > 0
+        for: 0m
+        labels: { severity: critical, team: atlas }
+        annotations:
+          summary: "Video provider webhook signature failures"
+          description: "Requests to the video webhook failed HMAC verification — possible misconfiguration or a forged caller."
+      - alert: AtlasQuizIntegrityEventSurge
+        expr: |
+          sum(rate(atlas_quiz_integrity_events_total[30m])) > 5 * sum(rate(atlas_quiz_integrity_events_total[6h] offset 1d))
+            and sum(rate(atlas_quiz_integrity_events_total[30m])) > 0.5
+        for: 30m
+        labels: { severity: info, team: atlas }
+        annotations:
+          summary: "Quiz integrity events are 5x above the daily baseline"
+      - alert: AtlasCertificateRenderFailures
+        expr: |
+          sum(increase(atlas_certificate_renders_total{result="error"}[1h])) > 3
+        for: 10m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "Certificate PDF renders are failing"
