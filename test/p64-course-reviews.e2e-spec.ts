@@ -359,4 +359,108 @@ describe('Course Reviews (e2e)', () => {
       .expect(401);
     await request(app.getHttpServer()).get('/courses/x/reviews/moderation').expect(401);
   });
+
+  // -------------------------------------------------------------------
+  // Public (approved) surface — anonymous reads through the
+  // serving-eligibility-gated public catalog.
+  // -------------------------------------------------------------------
+
+  it('exposes only APPROVED reviews publicly and aggregates the rating over them', async () => {
+    const { owner, academy, course } = await seedAcademyWithCourse('rev-public');
+    const l1 = await seedEnrolledLearner('rev-public-l1', academy.id, course.id);
+    const l2 = await seedEnrolledLearner('rev-public-l2', academy.id, course.id);
+    const l3 = await seedEnrolledLearner('rev-public-l3', academy.id, course.id);
+
+    const approved1 = await request(app.getHttpServer())
+      .post(`/courses/${course.id}/reviews`)
+      .set(auth(l1.accessToken))
+      .send({ rating: 4, body: 'solid' })
+      .expect(201);
+    const approved2 = await request(app.getHttpServer())
+      .post(`/courses/${course.id}/reviews`)
+      .set(auth(l2.accessToken))
+      .send({ rating: 2, body: 'meh' })
+      .expect(201);
+    // l3's review stays pending (never moderated).
+    await request(app.getHttpServer())
+      .post(`/courses/${course.id}/reviews`)
+      .set(auth(l3.accessToken))
+      .send({ rating: 5, body: 'should not count' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/courses/${course.id}/reviews/${approved1.body.id}/approve`)
+      .set(auth(owner.accessToken))
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/courses/${course.id}/reviews/${approved2.body.id}/approve`)
+      .set(auth(owner.accessToken))
+      .expect(201);
+
+    // Public list (no auth): only the two approved reviews, not the pending one.
+    const publicList = await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}/courses/${course.id}/reviews`)
+      .expect(200);
+    expect(publicList.body.items).toHaveLength(2);
+    const ids = publicList.body.items.map((r: { id: string }) => r.id).sort();
+    expect(ids).toEqual([approved1.body.id, approved2.body.id].sort());
+    expect(
+      publicList.body.items.every((r: { status: string }) => r.status === 'approved'),
+    ).toBe(true);
+
+    // Rating aggregate: mean of 4 and 2 = 3.0 over 2 approved reviews.
+    const rating = await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}/courses/${course.id}/rating`)
+      .expect(200);
+    expect(rating.body).toMatchObject({
+      courseId: course.id,
+      averageRating: 3,
+      totalReviews: 2,
+    });
+    expect(rating.body.distribution['4']).toBe(1);
+    expect(rating.body.distribution['2']).toBe(1);
+    expect(rating.body.distribution['5']).toBe(0);
+  });
+
+  it('a course with no approved reviews returns a zeroed public rating (visible, not null)', async () => {
+    const { academy, course } = await seedAcademyWithCourse('rev-public-zero');
+    const learner = await seedEnrolledLearner('rev-public-zero-l', academy.id, course.id);
+    // A pending review must not move the public number.
+    await request(app.getHttpServer())
+      .post(`/courses/${course.id}/reviews`)
+      .set(auth(learner.accessToken))
+      .send({ rating: 5 })
+      .expect(201);
+
+    const rating = await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}/courses/${course.id}/rating`)
+      .expect(200);
+    expect(rating.body).toMatchObject({ averageRating: 0, totalReviews: 0 });
+
+    const list = await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}/courses/${course.id}/reviews`)
+      .expect(200);
+    expect(list.body.items).toHaveLength(0);
+  });
+
+  it('a draft/private course is not publicly visible for reviews or rating (404)', async () => {
+    const { academy } = await seedAcademyWithCourse('rev-public-hidden');
+    const draft = await seedCourse(admin, academy.id, 'rev-hidden-draft', {
+      status: 'draft',
+      visibility: 'public',
+    });
+    const priv = await seedCourse(admin, academy.id, 'rev-hidden-private', {
+      status: 'published',
+      visibility: 'private',
+    });
+
+    for (const c of [draft, priv]) {
+      await request(app.getHttpServer())
+        .get(`/public/websites/${academy.id}/courses/${c.id}/reviews`)
+        .expect(404);
+      await request(app.getHttpServer())
+        .get(`/public/websites/${academy.id}/courses/${c.id}/rating`)
+        .expect(404);
+    }
+  });
 });

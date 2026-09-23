@@ -60,6 +60,15 @@ import { toPublicCourseCurriculumResponse } from '../dto/public-course-curriculu
 import type { PublicCourseCurriculumSectionResponse } from '../dto/public-course-curriculum.contract';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { CourseReviewsRepository } from '../../learning/repositories/course-reviews.repository';
+import {
+  buildRatingSummary,
+  toCourseReviewResponse,
+} from '../../learning/dto/course-review.contract';
+import type {
+  CourseRatingSummary,
+  CourseReviewResponse,
+} from '../../learning/dto/course-review.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { PublicWebsiteStatisticsResponse } from '../dto/public-statistics.contract';
 import type { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
@@ -84,6 +93,7 @@ export class PublicWebsiteService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly contactSubmissionsRepository: ContactSubmissionsRepository,
     private readonly coursesRepository: CoursesRepository,
+    private readonly courseReviewsRepository: CourseReviewsRepository,
     private readonly courseSectionsRepository: CourseSectionsRepository,
     private readonly academiesRepository: AcademiesRepository,
     // Decides whether this tenant may be served publicly at all.
@@ -422,6 +432,71 @@ export class PublicWebsiteService {
         course.id,
       );
       return toPublicCourseCurriculumResponse(sections);
+    });
+  }
+
+  /**
+   * P64 Phase 4 — the public, approved reviews of a published+public
+   * course. Gated the same way as every other public read: serving
+   * eligibility resolves the org, then the course must resolve as
+   * published+public in THIS academy (defense in depth beyond the
+   * `course_reviews_public_select` RLS policy, and it also canonicalises a
+   * slug to the real course id before the review lookup). `null` when the
+   * academy is not served or the course is not publicly visible.
+   */
+  async getPublicCourseReviews(
+    academyId: string,
+    courseId: string,
+    query: { page?: number; pageSize?: number },
+  ): Promise<PaginatedResult<CourseReviewResponse> | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+
+    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      const course = await this.findPublishedPublicCourseByIdOrSlug(
+        tx,
+        academyId,
+        courseId,
+      );
+      if (!course) return null;
+      const page = query.page ?? DEFAULT_PAGE;
+      const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
+      const { items, totalItems } =
+        await this.courseReviewsRepository.listApprovedByCourse(tx, course.id, {
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        });
+      return {
+        items: items.map(toCourseReviewResponse),
+        pagination: buildPaginationMeta(page, pageSize, totalItems),
+      };
+    });
+  }
+
+  /**
+   * P64 Phase 4 — the aggregate rating signal a catalog/course-details page
+   * renders. Computed only over approved reviews of a published+public
+   * course; `null` under the same gating as the list above. A course with
+   * no approved reviews returns a real zeroed summary (average 0, total 0),
+   * not `null` — `null` means "not publicly visible", zero means "visible,
+   * no reviews yet".
+   */
+  async getPublicCourseRatingSummary(
+    academyId: string,
+    courseId: string,
+  ): Promise<CourseRatingSummary | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+
+    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      const course = await this.findPublishedPublicCourseByIdOrSlug(
+        tx,
+        academyId,
+        courseId,
+      );
+      if (!course) return null;
+      const ratings = await this.courseReviewsRepository.approvedRatings(tx, course.id);
+      return buildRatingSummary(course.id, ratings);
     });
   }
 

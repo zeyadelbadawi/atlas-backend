@@ -31,6 +31,7 @@ import { PublicWebsiteController } from './controllers/public-website.controller
 import { PublicWebsiteService } from './services/public-website.service';
 import { PublicWebsiteCacheService } from './services/public-website-cache.service';
 import { PublicHostnameResolutionRepository } from './repositories/public-hostname-resolution.repository';
+import { CourseReviewsRepository } from '../learning/repositories/course-reviews.repository';
 import { PlansModule } from '../plans/plans.module';
 
 @Module({
@@ -47,6 +48,11 @@ import { PlansModule } from '../plans/plans.module';
     PublicWebsiteService,
     PublicWebsiteCacheService,
     PublicHostnameResolutionRepository,
+    // P64 Phase 4 — the public approved-reviews list + rating summary read
+    // through this stateless repository (also provided in LearningModule for
+    // the authenticated surface; a repository holds no state, so a second
+    // instance here is equivalent and avoids importing the whole module).
+    CourseReviewsRepository,
   ],
 })
 export class PublicWebsiteModule {}

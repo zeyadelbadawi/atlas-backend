@@ -29,6 +29,11 @@ import {
 import { PublicWebsiteService } from '../services/public-website.service';
 import { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
 import { CourseListQueryDto } from '../../course/dto/course-list-query.dto';
+import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
+import type {
+  CourseRatingSummary,
+  CourseReviewResponse,
+} from '../../learning/dto/course-review.contract';
 import type { HostnameResolutionResponse } from '../dto/hostname-resolution.contract';
 import type { WebsiteConfigurationResponse } from '../../website/dto/website-configuration.contract';
 import type { WebsitePageResponse } from '../../website/dto/website-page.contract';
@@ -134,6 +139,36 @@ export class PublicWebsiteController {
     );
     if (!curriculum) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return curriculum;
+  }
+
+  /** P64 Phase 4 — the public, approved reviews of a published+public course. */
+  @Get(':academyId/courses/:courseId/reviews')
+  async getCourseReviews(
+    @Param('academyId') academyId: string,
+    @Param('courseId') courseId: string,
+    @Query() query: CollectionQueryDto,
+  ): Promise<PaginatedResult<CourseReviewResponse>> {
+    const result = await this.publicWebsiteService.getPublicCourseReviews(
+      academyId,
+      courseId,
+      { page: query.page, pageSize: query.pageSize },
+    );
+    if (!result) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return result;
+  }
+
+  /** P64 Phase 4 — the aggregate rating (mean + histogram) over approved reviews. */
+  @Get(':academyId/courses/:courseId/rating')
+  async getCourseRating(
+    @Param('academyId') academyId: string,
+    @Param('courseId') courseId: string,
+  ): Promise<CourseRatingSummary> {
+    const summary = await this.publicWebsiteService.getPublicCourseRatingSummary(
+      academyId,
+      courseId,
+    );
+    if (!summary) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return summary;
   }
 
   /** Phase 6 — the real backend destination for the public Contact section's form. See `PublicWebsiteService.submitContactMessage`'s own doc comment. */
