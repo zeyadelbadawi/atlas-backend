@@ -405,5 +405,66 @@ describe('Media Library (e2e)', () => {
         .get(`/public/media/academies/${a.academy.id}/${b.asset.id}.png`)
         .expect(404);
     });
+
+    // S11 (master plan §D.5/§L) — range requests, so a browser can seek
+    // within an audio/video asset instead of re-downloading it whole.
+    it('advertises byte-range support on a full 200 response', async () => {
+      const { asset } = await uploadPng('media-range-full');
+      const response = await request(app.getHttpServer())
+        .get(stripApiPrefix(asset.url))
+        .expect(200);
+      expect(response.headers['accept-ranges']).toBe('bytes');
+      expect(Number(response.headers['content-length'])).toBe(REAL_PNG_BYTE_LENGTH);
+    });
+
+    it('serves a satisfiable range as 206 Partial Content with the right slice', async () => {
+      const { asset } = await uploadPng('media-range-partial');
+      const full = Buffer.from(REAL_PNG_BASE64, 'base64');
+
+      const response = await request(app.getHttpServer())
+        .get(stripApiPrefix(asset.url))
+        .set('Range', 'bytes=0-9')
+        .expect(206);
+
+      expect(response.headers['content-range']).toBe(`bytes 0-9/${REAL_PNG_BYTE_LENGTH}`);
+      expect(response.headers['accept-ranges']).toBe('bytes');
+      expect(Number(response.headers['content-length'])).toBe(10);
+      expect(Buffer.compare(response.body, full.subarray(0, 10))).toBe(0);
+    });
+
+    it('serves an open-ended range to the last byte', async () => {
+      const { asset } = await uploadPng('media-range-open');
+      const full = Buffer.from(REAL_PNG_BASE64, 'base64');
+
+      const response = await request(app.getHttpServer())
+        .get(stripApiPrefix(asset.url))
+        .set('Range', `bytes=${REAL_PNG_BYTE_LENGTH - 5}-`)
+        .expect(206);
+
+      expect(response.headers['content-range']).toBe(
+        `bytes ${REAL_PNG_BYTE_LENGTH - 5}-${REAL_PNG_BYTE_LENGTH - 1}/${REAL_PNG_BYTE_LENGTH}`,
+      );
+      expect(Buffer.compare(response.body, full.subarray(REAL_PNG_BYTE_LENGTH - 5))).toBe(
+        0,
+      );
+    });
+
+    it('answers an unsatisfiable range with 416 and the real size', async () => {
+      const { asset } = await uploadPng('media-range-416');
+      const response = await request(app.getHttpServer())
+        .get(stripApiPrefix(asset.url))
+        .set('Range', `bytes=${REAL_PNG_BYTE_LENGTH + 100}-${REAL_PNG_BYTE_LENGTH + 200}`)
+        .expect(416);
+      expect(response.headers['content-range']).toBe(`bytes */${REAL_PNG_BYTE_LENGTH}`);
+    });
+
+    it('ignores a malformed range header and serves the whole file (200)', async () => {
+      const { asset } = await uploadPng('media-range-malformed');
+      const response = await request(app.getHttpServer())
+        .get(stripApiPrefix(asset.url))
+        .set('Range', 'bytes=not-a-range')
+        .expect(200);
+      expect(Number(response.headers['content-length'])).toBe(REAL_PNG_BYTE_LENGTH);
+    });
   });
 });

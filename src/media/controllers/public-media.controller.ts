@@ -51,9 +51,10 @@ import {
   Header,
   NotFoundException,
   Param,
+  Req,
   Res,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { Inject } from '@nestjs/common';
 import {
   MEDIA_STORAGE_PROVIDER,
@@ -104,6 +105,7 @@ export class PublicMediaController {
   async serve(
     @Param('academyId') academyId: string,
     @Param('fileName') fileName: string,
+    @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {
     if (!UUID_PATTERN.test(academyId)) {
@@ -130,12 +132,39 @@ export class PublicMediaController {
     }
 
     response.setHeader('Content-Type', contentType);
-    response.setHeader('Content-Length', body.byteLength);
     // Belt and braces for a route that returns caller-influenced bytes:
     // stops a browser from re-interpreting a stored file as something
     // other than the type declared above.
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.end(body);
+    // S11 (master plan §D.5/§L) — advertise range support so a browser can
+    // seek within an audio/video asset instead of re-downloading it whole.
+    response.setHeader('Accept-Ranges', 'bytes');
+
+    const rangeHeader = request.headers.range;
+    if (rangeHeader) {
+      const parsed = parseByteRange(rangeHeader, body.byteLength);
+      if (parsed === 'unsatisfiable') {
+        // 416 must carry the real size so the client can retry correctly.
+        response.setHeader('Content-Range', `bytes */${body.byteLength}`);
+        response.status(416).end();
+        return;
+      }
+      if (parsed) {
+        const slice = body.subarray(parsed.start, parsed.end + 1);
+        response.setHeader(
+          'Content-Range',
+          `bytes ${parsed.start}-${parsed.end}/${body.byteLength}`,
+        );
+        response.setHeader('Content-Length', slice.byteLength);
+        response.status(206).end(slice);
+        return;
+      }
+      // A malformed range header is ignored (RFC 7233 §3.1): fall through and
+      // serve the whole representation with 200.
+    }
+
+    response.setHeader('Content-Length', body.byteLength);
+    response.status(200).end(body);
   }
 }
 
@@ -144,4 +173,45 @@ function splitFileName(fileName: string): readonly [string, string | undefined] 
   const index = fileName.lastIndexOf('.');
   if (index <= 0) return [fileName, undefined];
   return [fileName.slice(0, index), fileName.slice(index + 1)];
+}
+
+/**
+ * Parses a single-range `Range: bytes=…` header against a known size
+ * (RFC 7233). Returns the inclusive `{start,end}` for a satisfiable range,
+ * `'unsatisfiable'` for a well-formed range entirely past the end (→ 416),
+ * or `null` for anything we don't honour (multiple ranges, a syntactically
+ * invalid header) so the caller serves the whole representation with 200.
+ * Only `bytes` and a single range are supported — enough for media seeking,
+ * and a bounded surface for a public endpoint.
+ */
+export function parseByteRange(
+  header: string,
+  size: number,
+): { start: number; end: number } | 'unsatisfiable' | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match) return null;
+  const [, rawStart, rawEnd] = match;
+  if (rawStart === '' && rawEnd === '') return null;
+
+  let start: number;
+  let end: number;
+  if (rawStart === '') {
+    // Suffix range: the last N bytes.
+    const suffix = Number(rawEnd);
+    if (suffix === 0) return 'unsatisfiable';
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(rawStart);
+    end = rawEnd === '' ? size - 1 : Number(rawEnd);
+  }
+
+  if (!Number.isInteger(start) || !Number.isInteger(end)) return null;
+  // A start at or past the end is unsatisfiable (416) even when the header
+  // left the end open (`bytes=2000-`), so this precedes the inverted-range
+  // check, which would otherwise mask it as a plain malformed range.
+  if (start >= size) return 'unsatisfiable';
+  if (start > end) return null;
+  if (end >= size) end = size - 1;
+  return { start, end };
 }
