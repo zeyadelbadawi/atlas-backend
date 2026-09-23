@@ -62,6 +62,26 @@ import {
   isExactQuestionCoverage,
   scoreQuizAttempt,
 } from './quiz-scoring.util';
+import { canStartAttempt } from './quiz-engine.util';
+import { QuizAttemptsRepository } from '../repositories/quiz-attempts.repository';
+
+/**
+ * The learner's own effective attempt allowance for one quiz, override
+ * included. This is the single authoritative "attempts left" source and
+ * uses the same `canStartAttempt` rule as the engine (start/session/
+ * submit/results), so every learner surface agrees. Overrides REPLACE
+ * (the stored `extraAttempts` is an absolute value, one row per
+ * quiz+student), so `attemptsAllowed = maxAttempts + extraAttempts`.
+ */
+function effectiveAttemptAllowance(
+  maxAttempts: number | null,
+  extraAttempts: number,
+): { extraAttempts: number; attemptsAllowed: number | null } {
+  return {
+    extraAttempts,
+    attemptsAllowed: maxAttempts === null ? null : maxAttempts + Math.max(0, extraAttempts),
+  };
+}
 
 @Injectable()
 export class QuizzesService {
@@ -74,6 +94,7 @@ export class QuizzesService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly academiesRepository: AcademiesRepository,
     private readonly quizzesRepository: QuizzesRepository,
+    private readonly quizAttemptsRepository: QuizAttemptsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
@@ -142,7 +163,15 @@ export class QuizzesService {
         quizId,
       );
       if (!quiz) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      return toQuizResponse(quiz, quiz.questions.length);
+      // The caller's OWN effective allowance (override included), so the
+      // learner intro card shows a granted extra attempt immediately from a
+      // single authoritative source instead of recomputing from maxAttempts.
+      const override = await this.quizAttemptsRepository.findOverride(tx, quizId, userId);
+      return toQuizResponse(
+        quiz,
+        quiz.questions.length,
+        effectiveAttemptAllowance(quiz.maxAttempts, override?.extraAttempts ?? 0),
+      );
     });
   }
 
@@ -167,7 +196,14 @@ export class QuizzesService {
         userId,
         quizId,
       );
-      const canRetry = canStartAnotherAttempt(totalItems, quiz.maxAttempts);
+      // Override-aware, same rule as the engine (start/session/results), so
+      // this list endpoint no longer disagrees with the rest of the surface.
+      const override = await this.quizAttemptsRepository.findOverride(tx, quizId, userId);
+      const canRetry = canStartAttempt(
+        totalItems,
+        quiz.maxAttempts,
+        override?.extraAttempts ?? 0,
+      );
 
       return {
         items: items.map((attempt) => toQuizAttemptResponse(attempt, canRetry)),

@@ -952,6 +952,63 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       .expect(204);
   });
 
+  it('a granted extra attempt surfaces on every learner surface from one override-aware source (P4 Issue A)', async () => {
+    const w = await world('p4a-override-visible', { maxAttempts: 1 });
+    const quizPath = `/courses/${w.course.id}/quizzes/${w.quiz.id}`;
+
+    // Exhaust the single attempt.
+    const a1 = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${a1.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: correctAnswers(w) })
+      .expect(201);
+
+    // BEFORE any override: the learner-facing quiz detail and attempts list
+    // both agree there is no headroom.
+    const detail0 = await http().get(quizPath).set(auth(w.student.token)).expect(200);
+    expect(detail0.body).toMatchObject({
+      maxAttempts: 1,
+      attemptsAllowed: 1,
+      extraAttempts: 0,
+    });
+    const list0 = await http().get(attemptsPath(w)).set(auth(w.student.token)).expect(200);
+    expect(list0.body.items.every((a: { canRetry: boolean }) => a.canRetry === false)).toBe(
+      true,
+    );
+    await http().post(attemptsPath(w)).set(auth(w.student.token)).expect(403);
+
+    // Reviewer grants +3.
+    await http()
+      .put(`${reviewPath(w)}/overrides`)
+      .set(auth(w.instructor.token))
+      .send({ studentId: w.student.userId, extraAttempts: 3 })
+      .expect(200);
+
+    // The extra attempt is now visible WITHOUT a new attempt existing yet:
+    // quiz detail (the intro card's source) reflects it immediately, and the
+    // attempts list canRetry flips true — the same figure the engine uses.
+    const detail1 = await http().get(quizPath).set(auth(w.student.token)).expect(200);
+    expect(detail1.body).toMatchObject({ attemptsAllowed: 4, extraAttempts: 3 });
+    const list1 = await http().get(attemptsPath(w)).set(auth(w.student.token)).expect(200);
+    expect(list1.body.items.some((a: { canRetry: boolean }) => a.canRetry === true)).toBe(
+      true,
+    );
+
+    // Overrides REPLACE (absolute value), they do not accumulate: a later
+    // grant of +1 lowers the allowance to 2, it does not raise it to 5.
+    await http()
+      .put(`${reviewPath(w)}/overrides`)
+      .set(auth(w.instructor.token))
+      .send({ studentId: w.student.userId, extraAttempts: 1 })
+      .expect(200);
+    const detail2 = await http().get(quizPath).set(auth(w.student.token)).expect(200);
+    expect(detail2.body).toMatchObject({ attemptsAllowed: 2, extraAttempts: 1 });
+
+    // The override headroom is real: the learner can start again.
+    await http().post(attemptsPath(w)).set(auth(w.student.token)).expect(201);
+  });
+
   it('RLS agrees independently: events, results and overrides of one academy are invisible to a foreign reviewer and to a foreign learner', async () => {
     const w = await world('p3-rls');
     const other = await world('p3-rls-other');

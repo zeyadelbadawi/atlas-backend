@@ -65,6 +65,17 @@ export interface QuizResponse {
   readonly questionCount: number;
   readonly passingScore?: number;
   readonly maxAttempts?: number;
+  /**
+   * The caller's OWN effective attempt allowance, override included. This
+   * is the single authoritative figure the learner UI must use for
+   * "attempts left" — it is `maxAttempts + the student's extraAttempts
+   * override`, or `null` when attempts are unlimited (`maxAttempts` null).
+   * Undefined only on the list endpoints, which are not per-student.
+   * Same source of truth as the engine's `canStartAttempt`.
+   */
+  readonly attemptsAllowed?: number | null;
+  /** The caller's own `extraAttempts` override for this quiz (0 when none). */
+  readonly extraAttempts?: number;
   readonly settings: QuizLearnerSettingsResponse;
   readonly questions?: readonly QuizQuestionResponse[];
 }
@@ -118,6 +129,7 @@ export function toQuizResponse(
     questions?: (PrismaQuizQuestion & { options?: PrismaQuizQuestionOption[] })[];
   },
   questionCount: number,
+  perStudent?: { readonly extraAttempts: number; readonly attemptsAllowed: number | null },
 ): QuizResponse {
   return {
     id: quiz.id,
@@ -129,6 +141,12 @@ export function toQuizResponse(
     questionCount,
     passingScore: quiz.passingScore ?? undefined,
     maxAttempts: quiz.maxAttempts ?? undefined,
+    ...(perStudent
+      ? {
+          attemptsAllowed: perStudent.attemptsAllowed,
+          extraAttempts: perStudent.extraAttempts,
+        }
+      : {}),
     settings: toQuizLearnerSettingsResponse(quiz),
     questions: quiz.questions?.map(toQuizQuestionResponse),
   };
