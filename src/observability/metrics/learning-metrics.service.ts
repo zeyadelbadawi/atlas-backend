@@ -24,6 +24,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Counter, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 
+/**
+ * P64 Phase 4 (§D.5) — the checkout lifecycle states worth counting.
+ * `created` is the order coming into existence (it is born `draft`); every
+ * other value is the transition INTO that status.
+ */
+export type CheckoutOrderMetricState =
+  'created' | 'pending_payment' | 'paid' | 'expired' | 'cancelled' | 'refunded';
+
+/** P64 Phase 4 (§D.5) — the tables the retention sweep prunes. */
+export type RetentionSweepTable = 'content_access_log' | 'quiz_attempt_events';
+
 /** One registry for the process. Module-scoped so a second `INestApplication` (every e2e spec boots one) does not re-register and throw. */
 const registry = new Registry();
 let defaultsCollected = false;
@@ -189,6 +200,69 @@ export class LearningMetricsService {
   }
   recordCertificateVerification(result: 'issued' | 'revoked' | 'unknown'): void {
     this.safely(() => this.certificateVerifications.inc({ result }));
+  }
+
+  // --- P64 Phase 4 (§D.5 / §U) -----------------------------------------------
+  /** Checkout orders by lifecycle state — `created`, then one increment per transition. The funnel (created → pending_payment → paid) and its leaks (expired, cancelled, refunded) are both read from this one series. */
+  private readonly checkoutOrders = counter(
+    'atlas_checkout_orders_total',
+    'Course-checkout orders, by lifecycle state (created, then each transition).',
+    ['state'],
+  );
+  /** Seconds between a buyer submitting a payment proof and a platform reviewer approving it — the manual-review queue's latency, which is the buyer's wait. Buckets run from a minute to a week because that is the honest range of a human review. */
+  private readonly checkoutApprovalLatency = histogram(
+    'atlas_checkout_approval_latency_seconds',
+    'Seconds from a payment proof being submitted to its platform approval.',
+    [],
+    [
+      60,
+      300,
+      900,
+      1800,
+      3600,
+      4 * 3600,
+      12 * 3600,
+      24 * 3600,
+      3 * 24 * 3600,
+      7 * 24 * 3600,
+    ],
+  );
+  /** Database time of the public course-catalog list — the highest-traffic anonymous read, and the one a slow tenant query surfaces on first. */
+  private readonly publicCatalogQueryDuration = histogram(
+    'atlas_public_catalog_query_duration_ms',
+    'Database time of the public course-catalog list query.',
+    [],
+    [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
+  );
+  /** Rows the retention sweep actually deleted, by table. A flat line here while data ages is the "retention rule nobody runs" bug made visible. */
+  private readonly retentionPrunedRows = counter(
+    'atlas_retention_sweep_pruned_rows_total',
+    'Rows deleted by the retention sweep, by table.',
+    ['table'],
+  );
+  /** Sweep executions by table and outcome — `error` is what to alert on, since the sweep itself never throws. */
+  private readonly retentionSweepRuns = counter(
+    'atlas_retention_sweep_runs_total',
+    'Retention sweep executions, by table and outcome.',
+    ['table', 'result'],
+  );
+
+  recordCheckoutOrderState(state: CheckoutOrderMetricState): void {
+    this.safely(() => this.checkoutOrders.inc({ state }));
+  }
+  recordCheckoutApprovalLatency(seconds: number): void {
+    this.safely(() => this.checkoutApprovalLatency.observe(seconds));
+  }
+  recordPublicCatalogQuery(durationMs: number): void {
+    this.safely(() => this.publicCatalogQueryDuration.observe(durationMs));
+  }
+  recordRetentionPruned(table: RetentionSweepTable, rows: number): void {
+    this.safely(() => this.retentionPrunedRows.inc({ table }, rows));
+  }
+  recordRetentionSweepRun(table: RetentionSweepTable, ok: boolean): void {
+    this.safely(() =>
+      this.retentionSweepRuns.inc({ table, result: ok ? 'ok' : 'error' }),
+    );
   }
 
   constructor() {

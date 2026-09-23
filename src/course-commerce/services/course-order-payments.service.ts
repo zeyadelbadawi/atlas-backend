@@ -52,6 +52,7 @@ import {
 } from '../../billing/dto/billing.constants';
 import { buildCourseOrderPaymentProofStorageKey } from '../../billing/utils/payment-proof-key.util';
 import { applyBasisPoints } from '../../billing/utils/commission-math.util';
+import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import type { PaymentMethodCapabilitiesResponse } from '../../billing/dto/payment-method.contract';
 import { CourseOrdersService } from './course-orders.service';
 import { toCourseOrderPaymentResponse } from '../dto/course-order-payment.contract';
@@ -82,6 +83,7 @@ export class CourseOrderPaymentsService {
     private readonly commissionService: CommissionService,
     private readonly paymentProviderRegistry: PaymentProviderRegistry,
     private readonly paymentProofStorageService: PaymentProofStorageService,
+    private readonly metrics: LearningMetricsService,
   ) {}
 
   async createPayment(
@@ -102,6 +104,9 @@ export class CourseOrderPaymentsService {
             where: { id: order.id },
             data: { status: 'expired' },
           });
+          // P64 Phase 4 (§D.5) — the lazy expiry IS the transition; an
+          // already-expired order re-read here is not counted again.
+          this.metrics.recordCheckoutOrderState('expired');
         }
         throw new ConflictException({ messageKey: 'errors.courseOrder.expired' });
       }
@@ -226,6 +231,7 @@ export class CourseOrderPaymentsService {
           where: { id: order.id },
           data: { status: 'pending_payment' },
         });
+        this.metrics.recordCheckoutOrderState('pending_payment');
       }
 
       const withRelations = await this.paymentsRepository.findByIdAnyOrganization(

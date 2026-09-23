@@ -39,6 +39,7 @@ import { CourseOrdersRepository } from '../repositories/course-orders.repository
 import { CourseOrderRefundsRepository } from '../repositories/course-order-refunds.repository';
 import { RevenueLedgerEntriesRepository } from '../repositories/revenue-ledger-entries.repository';
 import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { REFUND_WINDOW_DAYS } from '../dto/course-commerce.constants';
 import {
   toCourseOrderRefundResponse,
@@ -60,6 +61,7 @@ export class CourseOrderRefundsService {
     private readonly enrollmentsRepository: EnrollmentsRepository,
     private readonly revenueLedgerEntriesRepository: RevenueLedgerEntriesRepository,
     private readonly notificationFanoutService: NotificationFanoutService,
+    private readonly metrics: LearningMetricsService,
   ) {}
 
   async requestRefund(
@@ -159,6 +161,7 @@ export class CourseOrderRefundsService {
         }
 
         await this.courseOrdersRepository.update(tx, fresh.id, { status: 'refunded' });
+        this.metrics.recordCheckoutOrderState('refunded');
 
         // Enrollment reversal (§23's recommended default, this phase's
         // product direction): a full refund revokes course access rather
