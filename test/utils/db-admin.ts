@@ -298,6 +298,12 @@ export async function seedCourse(
     pricingType?: 'free' | 'paid';
     pricingAmountMinorUnits?: bigint;
     pricingCurrency?: string;
+    description?: string;
+    shortDescription?: string;
+    level?: 'beginner' | 'intermediate' | 'advanced' | 'all_levels';
+    language?: string;
+    outcomes?: string[];
+    requirements?: string[];
   } = {},
 ) {
   const slug = `${titleLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -312,6 +318,12 @@ export async function seedCourse(
       pricingType: overrides.pricingType ?? 'free',
       pricingAmountMinorUnits: overrides.pricingAmountMinorUnits,
       pricingCurrency: overrides.pricingCurrency,
+      description: overrides.description,
+      shortDescription: overrides.shortDescription,
+      level: overrides.level,
+      language: overrides.language,
+      ...(overrides.outcomes ? { outcomes: overrides.outcomes } : {}),
+      ...(overrides.requirements ? { requirements: overrides.requirements } : {}),
     },
   });
 }

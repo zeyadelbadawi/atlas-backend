@@ -64,7 +64,14 @@ export interface CourseListFilter {
   readonly visibility?: Course['visibility'];
   readonly categoryId?: string;
   readonly pricingType?: Course['pricingType'];
-  readonly sortBy?: 'title' | 'createdAt' | 'updatedAt' | 'publishedAt';
+  /** P64 Phase 4 catalog v2 filters. */
+  readonly level?: Course['level'];
+  readonly language?: string;
+  readonly priceMinMinorUnits?: number;
+  readonly priceMaxMinorUnits?: number;
+  /** `mode:'selected'` — restrict to exactly these ids (bounded by the caller). */
+  readonly ids?: readonly string[];
+  readonly sortBy?: 'title' | 'createdAt' | 'updatedAt' | 'publishedAt' | 'price';
   readonly sortDirection?: 'asc' | 'desc';
   readonly skip: number;
   readonly take: number;
@@ -389,22 +396,66 @@ export class CoursesRepository {
     tx: Prisma.TransactionClient,
     filter: Omit<CourseListFilter, 'status' | 'visibility'>,
   ): Promise<{ items: CourseWithRelations[]; totalItems: number }> {
+    const priceRange =
+      filter.priceMinMinorUnits !== undefined || filter.priceMaxMinorUnits !== undefined
+        ? {
+            pricingAmountMinorUnits: {
+              ...(filter.priceMinMinorUnits !== undefined
+                ? { gte: BigInt(filter.priceMinMinorUnits) }
+                : {}),
+              ...(filter.priceMaxMinorUnits !== undefined
+                ? { lte: BigInt(filter.priceMaxMinorUnits) }
+                : {}),
+            },
+          }
+        : {};
+
     const where: Prisma.CourseWhereInput = {
       status: 'published',
       visibility: 'public',
       ...(filter.academyId ? { academyId: filter.academyId } : {}),
       ...(filter.categoryId ? { categoryId: filter.categoryId } : {}),
       ...(filter.pricingType ? { pricingType: filter.pricingType } : {}),
+      ...(filter.level ? { level: filter.level } : {}),
+      ...(filter.language ? { language: filter.language } : {}),
+      ...(filter.ids && filter.ids.length > 0
+        ? { id: { in: filter.ids as string[] } }
+        : {}),
+      ...priceRange,
+      // Catalog v2 search spans title, short description and description
+      // (was title-only). Academy-scoped, so the per-academy row count is
+      // bounded; the global relevance-ranked FTS endpoint stays `/search`.
       ...(filter.search
-        ? { title: { contains: filter.search, mode: 'insensitive' as const } }
+        ? {
+            OR: [
+              { title: { contains: filter.search, mode: 'insensitive' as const } },
+              {
+                shortDescription: {
+                  contains: filter.search,
+                  mode: 'insensitive' as const,
+                },
+              },
+              {
+                description: { contains: filter.search, mode: 'insensitive' as const },
+              },
+            ],
+          }
         : {}),
     };
+
+    // `price` sort maps to the stored minor-units amount; free courses (null)
+    // sort last on asc via Prisma's nulls handling default, which is acceptable
+    // for a catalog price sort.
+    const orderBy: Prisma.CourseOrderByWithRelationInput =
+      filter.sortBy === 'price'
+        ? { pricingAmountMinorUnits: filter.sortDirection ?? 'asc' }
+        : { [filter.sortBy ?? 'createdAt']: filter.sortDirection ?? 'desc' };
 
     const [items, totalItems] = await Promise.all([
       tx.course.findMany({
         where,
         include: { category: true, instructors: INSTRUCTOR_INCLUDE },
-        orderBy: { [filter.sortBy ?? 'createdAt']: filter.sortDirection ?? 'desc' },
+        orderBy,
         skip: filter.skip,
         take: filter.take,
       }),

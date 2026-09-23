@@ -47,6 +47,12 @@ export interface CourseResponse {
   readonly category?: CourseCategoryResponse;
   readonly instructors: readonly CourseInstructorSummaryResponse[];
   readonly stats?: CourseStatsResponse;
+  /** P64 Phase 4 — catalog metadata. `outcomes`/`requirements` default to []. */
+  readonly level?: PrismaCourse['level'];
+  readonly language?: string;
+  readonly outcomes: readonly string[];
+  readonly requirements: readonly string[];
+  readonly introVideoAssetId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly publishedAt?: string;
@@ -92,6 +98,11 @@ export function toCourseResponse(
       avatar: instructor.user.avatarUrl ?? undefined,
     })),
     stats,
+    level: course.level ?? undefined,
+    language: course.language ?? undefined,
+    outcomes: course.outcomes ?? [],
+    requirements: course.requirements ?? [],
+    introVideoAssetId: course.introVideoAssetId ?? undefined,
     createdAt: course.createdAt.toISOString(),
     updatedAt: course.updatedAt.toISOString(),
     publishedAt: course.publishedAt?.toISOString(),

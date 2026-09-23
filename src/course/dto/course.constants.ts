@@ -18,5 +18,19 @@ export const MAX_LESSON_DESCRIPTION_LENGTH = 2000;
 export const COURSE_STATUS_VALUES = ['draft', 'published', 'archived'] as const;
 export const COURSE_VISIBILITY_VALUES = ['public', 'private'] as const;
 export const COURSE_PRICING_TYPE_VALUES = ['free', 'paid'] as const;
+export const COURSE_LEVEL_VALUES = [
+  'beginner',
+  'intermediate',
+  'advanced',
+  'all_levels',
+] as const;
+/** P64 Phase 4 catalog sort keys (public catalog). */
+export const COURSE_CATALOG_SORT_VALUES = [
+  'title',
+  'createdAt',
+  'updatedAt',
+  'publishedAt',
+  'price',
+] as const;
 export const COURSE_LESSON_CONTENT_TYPE_VALUES = ['text', 'video', 'file'] as const;
 export const COURSE_LESSON_STATUS_VALUES = ['draft', 'published'] as const;
