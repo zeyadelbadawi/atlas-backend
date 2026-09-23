@@ -11,6 +11,7 @@ import { CurrentAuthContext } from '../../identity/decorators/auth-context.decor
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { PlatformMetricsService } from '../services/platform-metrics.service';
 import type { PlatformMetricsOverviewResponse } from '../dto/platform-metrics.contract';
+import type { PlatformVideoMetricsResponse } from '../dto/platform-video-metrics.contract';
 
 @Controller('platform-metrics')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
@@ -22,5 +23,13 @@ export class PlatformMetricsController {
     @CurrentAuthContext() auth: AuthContext,
   ): Promise<PlatformMetricsOverviewResponse> {
     return this.platformMetricsService.getOverview(auth.userId);
+  }
+
+  /** P64 Phase 4 §E.5 — video minutes / provider health. Same three guards as the overview. */
+  @Get('video')
+  async getVideo(
+    @CurrentAuthContext() auth: AuthContext,
+  ): Promise<PlatformVideoMetricsResponse> {
+    return this.platformMetricsService.getVideoOverview(auth.userId);
   }
 }

@@ -30,6 +30,7 @@ import { safeChangePercent, safeRatePercent } from '../utils/metric-math.util';
 import { currentCalendarMonth, previousCalendarMonth } from '../utils/date-range.util';
 import { pickDominantCurrencyAmount } from '../utils/currency-aggregation.util';
 import type { PlatformMetricsOverviewResponse } from '../dto/platform-metrics.contract';
+import type { PlatformVideoMetricsResponse } from '../dto/platform-video-metrics.contract';
 
 /**
  * No infrastructure/APM monitoring pipeline exists anywhere in this
@@ -117,6 +118,43 @@ export class PlatformMetricsService {
       systemHealthPercent: NO_MONITORING_BASELINE_PERCENT,
       storageUsagePercent: safeRatePercent(storage.usedGb, storage.quotaGb),
       apiUptimePercent: NO_MONITORING_BASELINE_PERCENT,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /** P64 Phase 4 §E.5 — video minutes per tier, assets per provider, processing health. Separate from `getOverview` on purpose (its contract is a fixed seven KPIs). */
+  async getVideoOverview(platformOwnerId: string): Promise<PlatformVideoMetricsResponse> {
+    const inventory = await this.tenancyContextService.runInUserContext(
+      platformOwnerId,
+      (tx) => this.platformScaleRepository.videoInventory(tx),
+    );
+
+    const byTier = inventory.byTier.map((row) => ({
+      tier: (row.tier === 'normal' || row.tier === 'premium' ? row.tier : 'none') as
+        'normal' | 'premium' | 'none',
+      assets: row.assets,
+      storedMinutes: Math.round((row.seconds / 60) * 10) / 10,
+      storedGb: Math.round((row.bytes / 1024 ** 3) * 100) / 100,
+    }));
+
+    const processing = { pending: 0, processing: 0, ready: 0, failed: 0 };
+    for (const row of inventory.byProcessing) {
+      if (row.status in processing) {
+        processing[row.status as keyof typeof processing] = row.assets;
+      }
+    }
+
+    return {
+      totalVideoAssets: byTier.reduce((sum, row) => sum + row.assets, 0),
+      totalStoredMinutes:
+        Math.round(byTier.reduce((sum, row) => sum + row.storedMinutes, 0) * 10) / 10,
+      totalStoredGb:
+        Math.round(byTier.reduce((sum, row) => sum + row.storedGb, 0) * 100) / 100,
+      byTier,
+      byProvider: Object.fromEntries(
+        inventory.byProvider.map((row) => [row.provider, row.assets]),
+      ),
+      processing,
       generatedAt: new Date().toISOString(),
     };
   }

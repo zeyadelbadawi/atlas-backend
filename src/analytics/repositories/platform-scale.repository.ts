@@ -73,6 +73,47 @@ export class PlatformScaleRepository {
     return { usedGb: row?.used_gb ?? 0, quotaGb: row?.quota_gb ?? 0 };
   }
 
+  /**
+   * P64 Phase 4 §E.5 — the platform's video inventory: stored minutes and
+   * asset counts per security tier, assets per provider, and the processing
+   * pipeline's state (a growing `failed`/`processing` count IS the provider
+   * health signal the dashboard shows). Active assets only; `durationSeconds`
+   * is NULL until processing reports it, so minutes count ready assets.
+   * Runs under the platform owner's RLS context like every read here.
+   */
+  async videoInventory(tx: Prisma.TransactionClient): Promise<{
+    byTier: { tier: string | null; assets: number; seconds: number; bytes: number }[];
+    byProvider: { provider: string; assets: number }[];
+    byProcessing: { status: string; assets: number }[];
+  }> {
+    const [byTier, byProvider, byProcessing] = await Promise.all([
+      tx.$queryRaw<
+        { tier: string | null; assets: number; seconds: number; bytes: number }[]
+      >`
+        SELECT "security_tier"::text AS tier,
+               COUNT(*)::int AS assets,
+               COALESCE(SUM("duration_seconds"), 0)::float AS seconds,
+               COALESCE(SUM("size_bytes"), 0)::float AS bytes
+        FROM "media_assets"
+        WHERE "type" = 'video' AND "status" = 'active'
+        GROUP BY "security_tier"
+      `,
+      tx.$queryRaw<{ provider: string; assets: number }[]>`
+        SELECT "provider"::text AS provider, COUNT(*)::int AS assets
+        FROM "media_assets"
+        WHERE "type" = 'video' AND "status" = 'active'
+        GROUP BY "provider"
+      `,
+      tx.$queryRaw<{ status: string; assets: number }[]>`
+        SELECT "processing_status"::text AS status, COUNT(*)::int AS assets
+        FROM "media_assets"
+        WHERE "type" = 'video' AND "status" = 'active'
+        GROUP BY "processing_status"
+      `,
+    ]);
+    return { byTier, byProvider, byProcessing };
+  }
+
   // --- Unprotected tables (no RLS) ------------------------------------
 
   countUsers(asOf?: Date): Promise<number> {
