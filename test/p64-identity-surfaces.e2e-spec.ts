@@ -336,6 +336,250 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
     expect(membership.status).toBe('active');
   });
 
+  // -------------------------------------------------------------------
+  // Issue A — an invite addressed to a specific email is redeemable ONLY
+  // by that email. The binding is enforced inside claim_academy_invite's
+  // single atomic UPDATE, so it holds against a hand-crafted API request.
+  // -------------------------------------------------------------------
+
+  async function inviteAcademy(label: string) {
+    const seeded = await seedAcademyWithOwner(label);
+    await admin.academy.update({
+      where: { id: seeded.academy.id },
+      data: { registrationPolicy: 'invite' },
+    });
+    return seeded;
+  }
+
+  async function createInvite(
+    academyId: string,
+    ownerToken: string,
+    body: Record<string, unknown>,
+  ) {
+    const res = await request(app.getHttpServer())
+      .post(`/academies/${academyId}/invites`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send(body)
+      .expect(201);
+    return { id: res.body.id as string, token: res.body.token as string };
+  }
+
+  function registerWithInvite(
+    academyId: string,
+    email: string,
+    inviteToken: string,
+  ) {
+    return request(app.getHttpServer()).post('/auth/register').send({
+      name: 'Invitee',
+      email,
+      password: PASSWORD,
+      academyId,
+      inviteToken,
+    });
+  }
+
+  it('an email-bound invite admits the invited email', async () => {
+    const { academy, owner } = await inviteAcademy('invite-bound-ok');
+    const invitedEmail = uniqueTestEmail('invite-bound-ok-invitee');
+    const invite = await createInvite(academy.id, owner.token, {
+      email: invitedEmail,
+      maxUses: 1,
+      expiresInDays: 7,
+    });
+
+    await registerWithInvite(academy.id, invitedEmail, invite.token).expect(201);
+
+    const membership = await admin.academyStudent.findFirstOrThrow({
+      where: { academyId: academy.id, user: { email: invitedEmail } },
+    });
+    expect(membership.source).toBe('invite');
+    expect(membership.status).toBe('active');
+  });
+
+  it('an email-bound invite refuses a different authenticated email (server-side) and stays unconsumed', async () => {
+    const { academy, owner } = await inviteAcademy('invite-bound-mismatch');
+    const invitedEmail = uniqueTestEmail('invite-bound-invitee');
+    const invite = await createInvite(academy.id, owner.token, {
+      email: invitedEmail,
+      maxUses: 1,
+      expiresInDays: 7,
+    });
+
+    const attacker = uniqueTestEmail('invite-bound-attacker');
+    const refused = await registerWithInvite(academy.id, attacker, invite.token).expect(
+      400,
+    );
+    expect(refused.body.error.messageKey).toBe('errors.auth.inviteInvalid');
+
+    // No account and no membership were created for the wrong email...
+    const stolen = await admin.academyStudent.findFirst({
+      where: { academyId: academy.id, user: { email: attacker } },
+    });
+    expect(stolen).toBeNull();
+    // ...and the invite was NOT consumed, so the real invitee can still use it.
+    const row = await admin.academyInvite.findUniqueOrThrow({
+      where: { id: invite.id },
+    });
+    expect(row.usedCount).toBe(0);
+    await registerWithInvite(academy.id, invitedEmail, invite.token).expect(201);
+  });
+
+  it('the email binding follows the canonical normalization (trim + lowercase)', async () => {
+    const { academy, owner } = await inviteAcademy('invite-bound-norm');
+    const localPart = `invite-norm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // Staff type the invited address in mixed case; it is stored canonically.
+    const invite = await createInvite(academy.id, owner.token, {
+      email: `${localPart}@Example.COM`,
+      maxUses: 1,
+      expiresInDays: 7,
+    });
+    const stored = await admin.academyInvite.findUniqueOrThrow({
+      where: { id: invite.id },
+    });
+    expect(stored.email).toBe(`${localPart}@example.com`);
+
+    // The invitee registers with the canonical (lowercased) address — matches.
+    await registerWithInvite(
+      academy.id,
+      `${localPart}@example.com`,
+      invite.token,
+    ).expect(201);
+  });
+
+  it('an expired email-bound invite is refused', async () => {
+    const { academy, owner } = await inviteAcademy('invite-bound-expired');
+    const invitedEmail = uniqueTestEmail('invite-bound-expired-invitee');
+    const invite = await createInvite(academy.id, owner.token, {
+      email: invitedEmail,
+      maxUses: 1,
+      expiresInDays: 7,
+    });
+    await admin.academyInvite.update({
+      where: { id: invite.id },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+
+    const refused = await registerWithInvite(
+      academy.id,
+      invitedEmail,
+      invite.token,
+    ).expect(400);
+    expect(refused.body.error.messageKey).toBe('errors.auth.inviteInvalid');
+  });
+
+  it('a revoked email-bound invite is refused', async () => {
+    const { academy, owner } = await inviteAcademy('invite-bound-revoked');
+    const invitedEmail = uniqueTestEmail('invite-bound-revoked-invitee');
+    const invite = await createInvite(academy.id, owner.token, {
+      email: invitedEmail,
+      maxUses: 1,
+      expiresInDays: 7,
+    });
+    await request(app.getHttpServer())
+      .delete(`/academies/${academy.id}/invites/${invite.id}`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(204);
+
+    const refused = await registerWithInvite(
+      academy.id,
+      invitedEmail,
+      invite.token,
+    ).expect(400);
+    expect(refused.body.error.messageKey).toBe('errors.auth.inviteInvalid');
+  });
+
+  it('an already-used single-use email-bound invite is refused on replay', async () => {
+    const { academy, owner } = await inviteAcademy('invite-bound-replay');
+    const invitedEmail = uniqueTestEmail('invite-bound-replay-invitee');
+    const invite = await createInvite(academy.id, owner.token, {
+      email: invitedEmail,
+      maxUses: 1,
+      expiresInDays: 7,
+    });
+    await registerWithInvite(academy.id, invitedEmail, invite.token).expect(201);
+
+    // Same invited email, same token, but the single use is spent.
+    const replayEmail = uniqueTestEmail('invite-bound-replay-second');
+    await admin.academyInvite.update({
+      where: { id: invite.id },
+      data: { email: replayEmail },
+    });
+    const refused = await registerWithInvite(
+      academy.id,
+      replayEmail,
+      invite.token,
+    ).expect(400);
+    expect(refused.body.error.messageKey).toBe('errors.auth.inviteInvalid');
+  });
+
+  it("an invite for Academy A cannot be redeemed into Academy B", async () => {
+    const a = await inviteAcademy('invite-bound-cross-a');
+    const b = await inviteAcademy('invite-bound-cross-b');
+    const invitedEmail = uniqueTestEmail('invite-bound-cross-invitee');
+    const invite = await createInvite(a.academy.id, a.owner.token, {
+      email: invitedEmail,
+      maxUses: 1,
+      expiresInDays: 7,
+    });
+
+    // Right email, right token, but pointed at the other academy.
+    const refused = await registerWithInvite(
+      b.academy.id,
+      invitedEmail,
+      invite.token,
+    ).expect(400);
+    expect(refused.body.error.messageKey).toBe('errors.auth.inviteInvalid');
+
+    const row = await admin.academyInvite.findUniqueOrThrow({
+      where: { id: invite.id },
+    });
+    expect(row.usedCount).toBe(0);
+  });
+
+  it('a manual API request with a mismatched email cannot bypass the binding', async () => {
+    // The redemption endpoint IS the public API; there is no hidden path.
+    // A caller who holds the raw token and hand-crafts the register body
+    // with any email but the invited one is still refused at the DB claim.
+    const { academy, owner } = await inviteAcademy('invite-bound-manual');
+    const invitedEmail = uniqueTestEmail('invite-bound-manual-invitee');
+    const invite = await createInvite(academy.id, owner.token, {
+      email: invitedEmail,
+      maxUses: 5, // even with uses to spare, the wrong email cannot claim one
+      expiresInDays: 7,
+    });
+
+    for (const forged of [
+      uniqueTestEmail('invite-bound-manual-x1'),
+      // A well-formed address that merely resembles the invitee's local part.
+      `not-${invitedEmail}`,
+      uniqueTestEmail('invite-bound-manual-x2'),
+    ]) {
+      const refused = await registerWithInvite(academy.id, forged, invite.token).expect(
+        400,
+      );
+      expect(refused.body.error.messageKey).toBe('errors.auth.inviteInvalid');
+    }
+    const row = await admin.academyInvite.findUniqueOrThrow({
+      where: { id: invite.id },
+    });
+    expect(row.usedCount).toBe(0);
+  });
+
+  it('an open (no-email) invite still works for any registrant (backward compatible)', async () => {
+    const { academy, owner } = await inviteAcademy('invite-bound-open');
+    const invite = await createInvite(academy.id, owner.token, {
+      maxUses: 1,
+      expiresInDays: 7,
+    });
+    const anyEmail = uniqueTestEmail('invite-bound-open-anyone');
+    await registerWithInvite(academy.id, anyEmail, invite.token).expect(201);
+
+    const membership = await admin.academyStudent.findFirstOrThrow({
+      where: { academyId: academy.id, user: { email: anyEmail } },
+    });
+    expect(membership.source).toBe('invite');
+  });
+
   it('an APPROVAL academy registers the learner as pending and refuses access until approved', async () => {
     const { academy, owner } = await seedAcademyWithOwner('approval');
     await admin.academy.update({

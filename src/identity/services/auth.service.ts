@@ -255,6 +255,10 @@ export class AuthService {
       ? await this.academySurfaceService.admissionForNewLearner(
           academyId,
           input.inviteToken,
+          // `email` is already `normalizeEmail(input.email)` (top of this
+          // method) — an invite bound to a specific address is redeemable
+          // only by the identity being created for that same address.
+          email,
         )
       : undefined;
 

@@ -98,11 +98,25 @@ export class AcademySurfaceService {
     return policy;
   }
 
-  /** Redeems one use of an invite token atomically; `false` when unknown, expired, revoked or exhausted. */
-  async claimInvite(academyId: string, rawToken: string | undefined): Promise<boolean> {
+  /**
+   * Redeems one use of an invite token atomically; `false` when unknown,
+   * expired, revoked, exhausted, or addressed to a different email.
+   *
+   * `email` MUST already be canonically normalized (`normalizeEmail`).
+   * The email binding is enforced inside `claim_academy_invite`'s single
+   * conditional UPDATE — an invite created for a specific address is
+   * redeemable only by that address; an invite with no address stays open
+   * to any registrant. The check lives in SQL, not here, so it holds
+   * atomically and cannot be bypassed by a hand-crafted API request.
+   */
+  async claimInvite(
+    academyId: string,
+    rawToken: string | undefined,
+    email: string,
+  ): Promise<boolean> {
     if (!rawToken) return false;
     const rows = await this.prisma.$queryRaw<{ claimed: boolean }[]>(
-      Prisma.sql`SELECT claim_academy_invite(${academyId}, ${hashOpaqueToken(rawToken)}) AS claimed`,
+      Prisma.sql`SELECT claim_academy_invite(${academyId}, ${hashOpaqueToken(rawToken)}, ${email}) AS claimed`,
     );
     return rows[0]?.claimed === true;
   }
@@ -115,6 +129,7 @@ export class AcademySurfaceService {
   async admissionForNewLearner(
     academyId: string,
     inviteToken: string | undefined,
+    email: string,
   ): Promise<{ status: 'active' | 'pending'; source: 'self_signup' | 'invite' }> {
     const policy = await this.registrationPolicy(academyId);
     switch (policy) {
@@ -126,7 +141,10 @@ export class AcademySurfaceService {
         if (!inviteToken) {
           throw new ForbiddenException({ messageKey: 'errors.auth.inviteRequired' });
         }
-        const claimed = await this.claimInvite(academyId, inviteToken);
+        // `email` is the canonically normalized address the account is
+        // being created with; the claim refuses a token addressed to a
+        // different email (server-side, atomic).
+        const claimed = await this.claimInvite(academyId, inviteToken, email);
         if (!claimed) {
           throw new BadRequestException({ messageKey: 'errors.auth.inviteInvalid' });
         }

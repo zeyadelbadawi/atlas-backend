@@ -66,6 +66,7 @@ import {
   generateOpaqueToken,
   hashOpaqueToken,
 } from '../../identity/utils/opaque-token.util';
+import { normalizeEmail } from '../../identity/utils/email.util';
 import { RefreshTokensRepository } from '../../identity/repositories/refresh-tokens.repository';
 import { SessionRevocationService } from '../../identity/services/session-revocation.service';
 import { LearningLeaseService } from './learning-lease.service';
@@ -791,7 +792,10 @@ export class AcademyStudentsService {
             academyId,
             tokenHash: hashOpaqueToken(rawToken),
             createdBy: userId,
-            email: payload.email?.toLowerCase() ?? null,
+            // Stored through the project's canonical normalization so the
+            // redemption-time equality against the registrant's normalized
+            // email is exact (trim + lowercase); NULL stays an open invite.
+            email: payload.email ? normalizeEmail(payload.email) : null,
             maxUses: payload.maxUses ?? 1,
             expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
           },
