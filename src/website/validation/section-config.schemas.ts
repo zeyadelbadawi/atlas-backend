@@ -52,10 +52,13 @@
  */
 import { z } from 'zod';
 import {
+  COURSE_CATALOG_SORT_VALUES,
   FEATURE_ICON_OPTIONS,
+  MAX_COURSE_CATALOG_PAGE_SIZE,
   MAX_LONG_TEXT,
   MAX_SECTION_ITEMS,
   MAX_SHORT_TEXT,
+  MIN_COURSE_CATALOG_PAGE_SIZE,
   SECTION_TYPES,
 } from '../constants/website.constants';
 import { isSafeExternalUrl } from './url-safety.util';
@@ -159,6 +162,22 @@ export const featuredCoursesSectionSchema = z.object({
   count: z.number().int().min(1).max(MAX_SECTION_ITEMS),
   showPrice: z.boolean(),
   showInstructor: z.boolean(),
+});
+
+/** P64 Phase 4 §E.1 — mirrors the frontend `courseCatalogSectionSchema` field for field. */
+export const courseCatalogSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  pageSize: z
+    .number()
+    .int()
+    .min(MIN_COURSE_CATALOG_PAGE_SIZE)
+    .max(MAX_COURSE_CATALOG_PAGE_SIZE),
+  defaultSort: z.enum(COURSE_CATALOG_SORT_VALUES),
+  showSearch: z.boolean(),
+  showLevelFilter: z.boolean(),
+  showPricingFilter: z.boolean(),
+  showSort: z.boolean(),
 });
 
 const statisticItemSchema = z.object({
@@ -269,6 +288,7 @@ const SECTION_CONFIG_SCHEMAS = {
   hero: heroSectionSchema,
   about: aboutSectionSchema,
   featuredCourses: featuredCoursesSectionSchema,
+  courseCatalog: courseCatalogSectionSchema,
   statistics: statisticsSectionSchema,
   features: featuresSectionSchema,
   testimonials: testimonialsSectionSchema,
@@ -319,6 +339,11 @@ export const sectionInstanceSchema = z.discriminatedUnion('type', [
     ...sectionInstanceBase,
     type: z.literal('featuredCourses'),
     config: featuredCoursesSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('courseCatalog'),
+    config: courseCatalogSectionSchema,
   }),
   z.object({
     ...sectionInstanceBase,

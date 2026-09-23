@@ -1,6 +1,7 @@
 import {
   aboutSectionSchema,
   contactSectionSchema,
+  courseCatalogSectionSchema,
   featuredCoursesSectionSchema,
   featuresSectionSchema,
   gallerySectionSchema,
@@ -153,6 +154,65 @@ describe('heroSectionSchema', () => {
 describe('aboutSectionSchema', () => {
   it('rejects a missing required `body`', () => {
     expect(aboutSectionSchema.safeParse({ title: 'About us' }).success).toBe(false);
+  });
+});
+
+// P64 Phase 4 §E.1 — the backend must accept exactly the shape the frontend
+// `courseCatalogSectionSchema` produces, or an Owner cannot save a page
+// containing the catalog section.
+describe('courseCatalogSectionSchema', () => {
+  const base = {
+    title: 'All courses',
+    pageSize: 12,
+    defaultSort: 'newest',
+    showSearch: true,
+    showLevelFilter: true,
+    showPricingFilter: true,
+    showSort: true,
+  };
+
+  it('accepts the frontend default config', () => {
+    expect(courseCatalogSectionSchema.safeParse(base).success).toBe(true);
+  });
+
+  it('accepts every sort value the frontend offers', () => {
+    for (const defaultSort of ['newest', 'title', 'priceAsc', 'priceDesc']) {
+      expect(courseCatalogSectionSchema.safeParse({ ...base, defaultSort }).success).toBe(
+        true,
+      );
+    }
+  });
+
+  it('rejects an unknown sort value', () => {
+    expect(
+      courseCatalogSectionSchema.safeParse({ ...base, defaultSort: 'random' }).success,
+    ).toBe(false);
+  });
+
+  it('bounds pageSize to 6–48', () => {
+    expect(courseCatalogSectionSchema.safeParse({ ...base, pageSize: 5 }).success).toBe(
+      false,
+    );
+    expect(courseCatalogSectionSchema.safeParse({ ...base, pageSize: 49 }).success).toBe(
+      false,
+    );
+    expect(courseCatalogSectionSchema.safeParse({ ...base, pageSize: 6 }).success).toBe(
+      true,
+    );
+    expect(courseCatalogSectionSchema.safeParse({ ...base, pageSize: 48 }).success).toBe(
+      true,
+    );
+  });
+
+  it('is accepted as a section instance type', () => {
+    const result = sectionInstanceSchema.safeParse({
+      id: 'sec-catalog',
+      type: 'courseCatalog',
+      enabled: true,
+      visibility: { desktop: true, tablet: true, mobile: true },
+      config: base,
+    });
+    expect(result.success).toBe(true);
   });
 });
 

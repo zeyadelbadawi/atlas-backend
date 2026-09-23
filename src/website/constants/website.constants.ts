@@ -97,6 +97,8 @@ export const SECTION_TYPES = [
   'hero',
   'about',
   'featuredCourses',
+  // P64 Phase 4 §E.1 — the filterable, server-paginated public catalog.
+  'courseCatalog',
   'statistics',
   'features',
   'testimonials',
@@ -105,6 +107,17 @@ export const SECTION_TYPES = [
   'instructors',
   'gallery',
   'contact',
+] as const;
+
+/** `courseCatalog` page-size bounds — match the frontend `website.constants.ts` exactly. */
+export const MIN_COURSE_CATALOG_PAGE_SIZE = 6;
+export const MAX_COURSE_CATALOG_PAGE_SIZE = 48;
+/** Matches the frontend `COURSE_CATALOG_SORT_VALUES` exactly. */
+export const COURSE_CATALOG_SORT_VALUES = [
+  'newest',
+  'title',
+  'priceAsc',
+  'priceDesc',
 ] as const;
 
 /** Matches `WEBSITE_THEME_KEYS` (`website-theme.types.ts`) exactly — a client-side, code-registered catalog; the backend only records which key was picked, never validates against a server-side theme table (master plan §21 P9: "only implement what the frontend already defines"). */
