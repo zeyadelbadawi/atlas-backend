@@ -124,6 +124,7 @@ model User {
   academyStudentships                           AcademyStudent[]
   courseInstructorships                         CourseInstructor[]
   enrollments                                   Enrollment[]
+  courseReviews                                 CourseReview[]                           @relation("CourseReviewAuthor")
   quizAttempts                                  QuizAttempt[]                            @relation("QuizAttemptStudent")
   quizAttemptsGraded                            QuizAttempt[]                            @relation("QuizAttemptGrader")
   quizAttemptsInvalidated                       QuizAttempt[]                            @relation("QuizAttemptInvalidator")
@@ -557,6 +558,7 @@ model Academy {
   invites                AcademyInvite[]
   courseCategories       CourseCategory[]
   courses                Course[]
+  courseReviews          CourseReview[]
   announcements          Announcement[]
   blogPosts              BlogPost[]
   mediaAssets            MediaAsset[]
@@ -1217,6 +1219,28 @@ enum CoursePricingType {
   @@map("course_pricing_type")
 }
 
+/// P64 Phase 4 — catalog difficulty level shown on the course card/details
+/// and offered as a catalog filter. Nullable on `Course` (unset = unlabelled).
+enum CourseLevel {
+  beginner
+  intermediate
+  advanced
+  all_levels
+
+  @@map("course_level")
+}
+
+/// P64 Phase 4 — moderation state of a learner's course review. A review is
+/// public only when `approved` (and the course is published+public); the
+/// learner always sees their own review; owner/manager moderate.
+enum CourseReviewStatus {
+  pending
+  approved
+  rejected
+
+  @@map("course_review_status")
+}
+
 /// Matches `CourseLessonContentType` (`course.types.ts`) exactly.
 enum CourseLessonContentType {
   text
@@ -1299,6 +1323,18 @@ model Course {
   pricingType             CoursePricingType        @default(free) @map("pricing_type")
   pricingAmountMinorUnits BigInt?                  @map("pricing_amount_minor_units")
   pricingCurrency         String?                  @map("pricing_currency")
+  /// P64 Phase 4 — catalog metadata surfaced on the public course card and
+  /// details page (search/filter/sort). All additive and nullable/empty by
+  /// default, so existing courses are unaffected. `outcomes`/`requirements`
+  /// are ordered lists ("what you will learn" / prerequisites). Course
+  /// duration is NOT stored — it is aggregated from lesson `durationSeconds`
+  /// at read time to avoid a denormalised field going stale.
+  level                   CourseLevel?             @map("level")
+  language                String?
+  outcomes                String[]                 @default([]) @map("outcomes")
+  requirements            String[]                 @default([]) @map("requirements")
+  introVideoAssetId       String?                  @map("intro_video_asset_id")
+  introVideoAsset         MediaAsset?              @relation("CourseIntroVideo", fields: [introVideoAssetId], references: [id], onDelete: SetNull)
   /// P64 Phase 3 (AD-11) — the completion rule. The default is exactly
   /// today's rule: every published lesson completed, plus whichever quizzes
   /// and assignments are individually marked `required_for_completion`
@@ -1339,6 +1375,7 @@ model Course {
   lessonResources LessonResource[]
   mediaAssets     MediaAsset[]
   certificates    Certificate[]
+  reviews         CourseReview[]
 
   @@unique([academyId, slug])
   @@index([academyId, status, visibility])
@@ -1349,6 +1386,32 @@ model Course {
   @@index([createdAt(sort: Desc)])
   @@index([searchVector], type: Gin)
   @@map("courses")
+}
+
+/// P64 Phase 4 — a learner's review of a course they are enrolled in. One
+/// review per (course, student) — a rating (1–5) and an optional body — with
+/// a moderation `status`. FORCE RLS: public read only when `approved` and the
+/// course is published+public; the learner reads/writes their own; owner /
+/// manager moderate. `academyId` is denormalised for academy-scoped reads and
+/// RLS without a course join.
+model CourseReview {
+  id        String             @id @default(uuid())
+  courseId  String             @map("course_id")
+  course    Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  academyId String             @map("academy_id")
+  academy   Academy            @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  studentId String             @map("student_id")
+  student   User               @relation("CourseReviewAuthor", fields: [studentId], references: [id], onDelete: Cascade)
+  rating    Int
+  body      String?
+  status    CourseReviewStatus @default(pending)
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+
+  @@unique([courseId, studentId])
+  @@index([courseId, status])
+  @@index([academyId])
+  @@map("course_reviews")
 }
 
 /// Join table — mirrors master plan §5.3's `course_instructors` exactly
@@ -3002,6 +3065,7 @@ model MediaAsset {
   lessonContents        LessonContent[]
   lessonResources       LessonResource[]
   lessonVideoFor        CourseLesson[]
+  introVideoForCourses  Course[]              @relation("CourseIntroVideo")
   submissionAttachments AssignmentSubmission[] @relation("SubmissionAttachment")
 
   @@index([academyId, status, type])
