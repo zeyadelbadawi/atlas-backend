@@ -49,6 +49,7 @@ import { CourseOrdersRepository } from '../repositories/course-orders.repository
 import { CourseOrderPaymentApplicationService } from './course-order-payment-application.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import {
   toCourseOrderPaymentResponse,
   type CourseOrderPaymentResponse,
@@ -79,6 +80,7 @@ export class PlatformCourseOrderPaymentsService {
     private readonly courseOrderPaymentApplicationService: CourseOrderPaymentApplicationService,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly notificationFanoutService: NotificationFanoutService,
+    private readonly metrics: LearningMetricsService,
   ) {}
 
   async getPayments(
@@ -141,6 +143,14 @@ export class PlatformCourseOrderPaymentsService {
           throw new ConflictException({ messageKey: 'errors.payment.notPendingReview' });
         }
 
+        // P64 Phase 4 (§D.5) — the buyer's wait is measured from the proof
+        // they submitted, not from the Payment row (which predates it).
+        const latestProof = await this.paymentProofsRepository.findLatestForPayment(
+          tx,
+          paymentId,
+        );
+        const approvedAt = new Date();
+
         await this.paymentReviewsRepository.create(tx, {
           payment: { connect: { id: paymentId } },
           status: 'approved',
@@ -191,9 +201,22 @@ export class PlatformCourseOrderPaymentsService {
           tx,
           paymentId,
         );
-        return { response: toCourseOrderPaymentResponse(final!), courseTitle };
+        return {
+          response: toCourseOrderPaymentResponse(final!),
+          courseTitle,
+          proofUploadedAt: latestProof?.uploadedAt ?? null,
+          approvedAt,
+        };
       },
     );
+
+    // Observed only once the approval has actually committed — a rolled-back
+    // review is not an approval and must not shorten the histogram.
+    if (result.proofUploadedAt) {
+      this.metrics.recordCheckoutApprovalLatency(
+        (result.approvedAt.getTime() - result.proofUploadedAt.getTime()) / 1000,
+      );
+    }
 
     await this.notificationFanoutService.sendEmailAfterCommit(
       courseOrder.studentId,

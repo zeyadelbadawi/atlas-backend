@@ -31,4 +31,13 @@ export const PHASE2_MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
 /** `content_access_log` retention window (§F). */
 export const CONTENT_ACCESS_LOG_RETENTION_DAYS = 90;
 
+/**
+ * `quiz_attempt_events` retention window (P64 Phase 4 §D.5). Twice the
+ * access-log window because an integrity dispute (a flagged attempt, an
+ * appealed invalidation) surfaces on a term's timescale, not a week's.
+ * The `quiz_attempt_events_retention_delete` RLS policy encodes the same
+ * 180 days independently, so a wrong cutoff here cannot widen the delete.
+ */
+export const QUIZ_ATTEMPT_EVENTS_RETENTION_DAYS = 180;
+
 export type Phase2MaintenanceJobPayload = Record<string, never>;

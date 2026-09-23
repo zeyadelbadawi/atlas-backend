@@ -79,6 +79,7 @@ import {
   toContactSubmissionResponse,
   type ContactSubmissionResponse,
 } from '../../academy/dto/contact-submission.contract';
+import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 
 @Injectable()
 export class PublicWebsiteService {
@@ -99,6 +100,7 @@ export class PublicWebsiteService {
     // Decides whether this tenant may be served publicly at all.
     private readonly subscriptionAccessService: SubscriptionAccessService,
     private readonly platformDomainService: PlatformDomainService,
+    private readonly metrics: LearningMetricsService,
   ) {}
 
   /** P63g — the effective base domain (environment first, then the configured row), never only the env var. */
@@ -318,6 +320,10 @@ export class PublicWebsiteService {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
+    // P64 Phase 4 (§D.5) — the catalog query is timed around the repository
+    // call itself (transaction included), the same way the quiz engine
+    // times an autosave; the cache and count-batch below are not part of it.
+    const catalogStarted = process.hrtime.bigint();
     const { items, totalItems } = await this.tenancyContextService.runInTenantContext(
       organizationId,
       (tx) =>
@@ -337,6 +343,9 @@ export class PublicWebsiteService {
           skip: (page - 1) * pageSize,
           take: pageSize,
         }),
+    );
+    this.metrics.recordPublicCatalogQuery(
+      Number(process.hrtime.bigint() - catalogStarted) / 1e6,
     );
 
     const { sectionCounts, lessonCounts } =

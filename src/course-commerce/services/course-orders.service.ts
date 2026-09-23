@@ -27,6 +27,7 @@ import { CoursesRepository } from '../../course/repositories/courses.repository'
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { EnrollmentsRepository } from '../../learning/repositories/enrollments.repository';
 import { OrganizationPaymentSettingsService } from '../../billing/services/organization-payment-settings.service';
+import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { CourseOrdersRepository } from '../repositories/course-orders.repository';
 import { COURSE_ORDER_EXPIRY_MINUTES } from '../dto/course-commerce.constants';
 import { toCourseOrderResponse } from '../dto/course-order.contract';
@@ -53,6 +54,7 @@ export class CourseOrdersService {
     private readonly enrollmentsRepository: EnrollmentsRepository,
     private readonly organizationPaymentSettingsService: OrganizationPaymentSettingsService,
     private readonly courseOrdersRepository: CourseOrdersRepository,
+    private readonly metrics: LearningMetricsService,
   ) {}
 
   async createOrder(
@@ -144,6 +146,9 @@ export class CourseOrdersService {
           expiresAt,
           idempotencyKey: payload.idempotencyKey,
         });
+        // P64 Phase 4 (§D.5) — counted only for a genuinely new order; the
+        // idempotent replays above return without reaching here.
+        this.metrics.recordCheckoutOrderState('created');
         return toCourseOrderResponse(created);
       } catch (error) {
         // Two concurrent requests replaying the same idempotency key raced

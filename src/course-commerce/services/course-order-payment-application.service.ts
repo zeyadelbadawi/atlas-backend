@@ -46,6 +46,7 @@ import { applyBasisPoints } from '../../billing/utils/commission-math.util';
 import { CourseOrdersRepository } from '../repositories/course-orders.repository';
 import { RevenueLedgerEntriesRepository } from '../repositories/revenue-ledger-entries.repository';
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
+import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 
 @Injectable()
 export class CourseOrderPaymentApplicationService {
@@ -57,6 +58,7 @@ export class CourseOrderPaymentApplicationService {
     private readonly enrollmentsService: EnrollmentsService,
     private readonly coursesRepository: CoursesRepository,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
+    private readonly metrics: LearningMetricsService,
   ) {}
 
   /**
@@ -93,6 +95,9 @@ export class CourseOrderPaymentApplicationService {
       status: 'paid',
       paidAt: new Date(),
     });
+    // P64 Phase 4 (§D.5) — recorded here, at the ONE place any caller
+    // (manual review today, a gateway webhook tomorrow) completes an order.
+    this.metrics.recordCheckoutOrderState('paid');
 
     const course = await this.coursesRepository.findById(tx, courseOrder.courseId);
     if (course) {
