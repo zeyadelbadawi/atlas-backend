@@ -35,15 +35,25 @@ import { DashboardMetricsRepository } from './repositories/dashboard-metrics.rep
 import { StudentAnalyticsController } from './controllers/student-analytics.controller';
 import { StudentAnalyticsService } from './services/student-analytics.service';
 import { StudentAnalyticsRepository } from './repositories/student-analytics.repository';
+import { AcademyReportsController } from './controllers/academy-reports.controller';
+import { AcademyReportsService } from './services/academy-reports.service';
+import { AcademyReportsRepository } from './repositories/academy-reports.repository';
 
 @Module({
   imports: [AuthCoreModule, TenancyModule, AcademyModule, PlansModule, BillingModule],
-  controllers: [DashboardController, StudentAnalyticsController],
+  controllers: [
+    DashboardController,
+    StudentAnalyticsController,
+    AcademyReportsController,
+  ],
   providers: [
     DashboardService,
     DashboardMetricsRepository,
     StudentAnalyticsService,
     StudentAnalyticsRepository,
+    // P64 Phase 4 — owner reports (integrity summaries, sharing signals).
+    AcademyReportsService,
+    AcademyReportsRepository,
   ],
 })
 export class DashboardModule {}
