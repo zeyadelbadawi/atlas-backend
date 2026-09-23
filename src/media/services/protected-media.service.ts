@@ -283,7 +283,6 @@ export class ProtectedMediaService {
           academyId,
           organizationId,
         });
-        const tierProvider = this.videoProviders.forTier(resolved.tier);
 
         // Phase 2 §S — the per-academy rollout flag for THIS tier. Kept
         // separate per tier because the Normal tier can canary immediately
@@ -295,6 +294,17 @@ export class ProtectedMediaService {
         if (!this.videoProviders.isTierAvailable(resolved.tier)) {
           throw new ForbiddenException({ messageKey: 'errors.media.videoNotEnabled' });
         }
+
+        // Resolve the adapter ONLY AFTER the tier is confirmed available.
+        // `VideoProviderRegistry.forTier` throws a raw `Error` for an
+        // unconfigured tier (see its own comment: the caller "turns this
+        // into the same `videoNotEnabled` refusal"). Calling it before the
+        // `isTierAvailable` gate above let that raw throw pre-empt the
+        // intended `videoNotEnabled` refusal and surface as a 500 in any
+        // environment where the tier's provider is unconfigured — exactly
+        // the production Normal-tier state before BASIC_VIDEO_* is set.
+        // Ordering the gate first makes the documented promise true.
+        const tierProvider = this.videoProviders.forTier(resolved.tier);
         if (input.courseId) {
           const course = await tx.course.findFirst({
             where: { id: input.courseId, academyId },

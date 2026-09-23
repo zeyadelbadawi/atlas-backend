@@ -88,7 +88,17 @@ function harness(
     { enqueueOne: () => Promise.resolve() } as never,
     { maxTtlSeconds: 600 } as never,
     {
-      forTier: () => provider,
+      // Faithful to the REAL VideoProviderRegistry: `forTier` throws a raw
+      // Error for an unconfigured tier (the same condition `isTierAvailable`
+      // reports as false). A mock that always returned an adapter hid the
+      // ordering bug where this raw throw pre-empted the `videoNotEnabled`
+      // refusal and surfaced as a 500.
+      forTier: () => {
+        if (options.tierAvailable === false) {
+          throw new Error('The tier is not configured.');
+        }
+        return provider;
+      },
       forProvider: () => provider,
       isTierAvailable: () => options.tierAvailable ?? true,
     } as never,
@@ -194,7 +204,12 @@ describe('ProtectedMediaService.createVideoUpload', () => {
     ).rejects.toMatchObject({ response: { messageKey: 'errors.media.videoNotEnabled' } });
   });
 
-  it('refuses when the tier has no configured provider', async () => {
+  it('refuses when the tier has no configured provider — with the CLEAN videoNotEnabled refusal, not a raw 500', async () => {
+    // Regression: `forTier` was called BEFORE this gate. With a faithful
+    // registry mock (raw throw for an unconfigured tier) the old ordering
+    // rejected with a bare `Error` (→ 500), never the intended
+    // `videoNotEnabled` ForbiddenException. `toMatchObject` on `response`
+    // fails for a raw Error, so this now genuinely pins the ordering.
     const { service } = harness({ tierAvailable: false });
     await expect(
       service.createVideoUpload('a', 'o', 'u', {
