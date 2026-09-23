@@ -58,6 +58,7 @@ import { EnrollmentsController } from './controllers/enrollments.controller';
 import { CourseProgressController } from './controllers/course-progress.controller';
 import { QuizzesController } from './controllers/quizzes.controller';
 import { AssignmentsController } from './controllers/assignments.controller';
+import { CourseReviewsController } from './controllers/course-reviews.controller';
 import { CourseContentController } from './controllers/course-content.controller';
 import { AcademyStudentsController } from './controllers/academy-students.controller';
 import { AcademyStudentsService } from './services/academy-students.service';
@@ -92,11 +93,13 @@ import { EnrollmentsService } from './services/enrollments.service';
 import { CourseProgressService } from './services/course-progress.service';
 import { QuizzesService } from './services/quizzes.service';
 import { AssignmentsService } from './services/assignments.service';
+import { CourseReviewsService } from './services/course-reviews.service';
 import { CourseContentService } from './services/course-content.service';
 import { EnrollmentsRepository } from './repositories/enrollments.repository';
 import { CourseProgressRepository } from './repositories/course-progress.repository';
 import { QuizzesRepository } from './repositories/quizzes.repository';
 import { AssignmentsRepository } from './repositories/assignments.repository';
+import { CourseReviewsRepository } from './repositories/course-reviews.repository';
 import { StudentResultsService } from './services/student-results.service';
 import { StudentResultsRepository } from './repositories/student-results.repository';
 // --- P64 Phase 3 ---
@@ -141,6 +144,7 @@ import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.t
     CourseProgressController,
     QuizzesController,
     AssignmentsController,
+    CourseReviewsController,
     CourseContentController,
     AcademyStudentsController,
     // Phase 9 — the student-facing "My Results" surface.
@@ -161,6 +165,7 @@ import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.t
     CourseProgressService,
     QuizzesService,
     AssignmentsService,
+    CourseReviewsService,
     CourseContentService,
     AcademyStudentsService,
     AcademyRosterRepository,
@@ -169,6 +174,7 @@ import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.t
     CourseProgressRepository,
     QuizzesRepository,
     AssignmentsRepository,
+    CourseReviewsRepository,
     StudentResultsRepository,
     // --- P64 Phase 2 ---
     LessonContentService,
