@@ -86,4 +86,43 @@ describe('CertificateRendererService', () => {
     expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
     expect(warnings.some((w) => w.startsWith('logo:'))).toBe(true);
   });
+
+  it('renders with a custom palette from the snapshot (P4 Issue G)', async () => {
+    const { pdf } = await renderer.render({
+      snapshot: snapshot({
+        palette: {
+          primary: '#6E1E2B',
+          accent: '#C2A05A',
+          text: '#2A1418',
+          background: '#FDFAF6',
+        },
+      }),
+      serial: 'LLH-2026-000004',
+      verificationCode: 'ABCDEFGHJK25',
+      verificationCodeDisplay: 'ABCD-EFGH-JK25',
+      verifyUrl: 'https://atlass.dpdns.org/verify/ABCD-EFGH-JK25',
+      issuedAt: new Date(),
+      version: 1,
+      locale: 'en',
+    });
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('renders an OLD snapshot with no palette using the original design (backward compatible)', async () => {
+    const legacy = snapshot();
+    // Simulate an already-issued certificate whose snapshot predates the
+    // palette field.
+    delete (legacy as { palette?: unknown }).palette;
+    const { pdf } = await renderer.render({
+      snapshot: legacy,
+      serial: 'LLH-2026-000005',
+      verificationCode: 'ABCDEFGHJK26',
+      verificationCodeDisplay: 'ABCD-EFGH-JK26',
+      verifyUrl: 'https://atlass.dpdns.org/verify/ABCD-EFGH-JK26',
+      issuedAt: new Date(),
+      version: 1,
+      locale: 'en',
+    });
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+  });
 });

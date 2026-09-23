@@ -1543,6 +1543,219 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       .expect(400);
   });
 
+  // -------------------------------------------------------------------
+  // P4 Issues F & G — certificate palette, live preview, readiness
+  // -------------------------------------------------------------------
+
+  const DEFAULT_PALETTE = {
+    primary: '#1f4e5f',
+    accent: '#b08a3e',
+    text: '#14303a',
+    background: '#fcfbf7',
+  };
+
+  it('P4 Issue G: the template exposes the four colour roles, defaulting to the original Atlas design, and persists a valid palette', async () => {
+    const w = await world('p4g-palette');
+    const templatePath = `/academies/${w.academy.id}/certificate-template`;
+
+    const initial = await http()
+      .get(templatePath)
+      .set(auth(w.owner.token))
+      .expect(200);
+    expect(initial.body.palette).toEqual(DEFAULT_PALETTE);
+
+    const saved = await http()
+      .put(templatePath)
+      .set(auth(w.owner.token))
+      .send({
+        primaryColor: '#6E1E2B',
+        accentColor: '#C2A05A',
+        textColor: '#2A1418',
+        backgroundColor: '#FDFAF6',
+      })
+      .expect(200);
+    expect(saved.body.palette).toEqual({
+      primary: '#6e1e2b',
+      accent: '#c2a05a',
+      text: '#2a1418',
+      background: '#fdfaf6',
+    });
+
+    // Persisted, not just echoed.
+    const reread = await http().get(templatePath).set(auth(w.manager.token)).expect(200);
+    expect(reread.body.palette.primary).toBe('#6e1e2b');
+  });
+
+  it('P4 Issue G: the palette is validated for readability — bad contrast, a dark background and malformed hex are rejected', async () => {
+    const w = await world('p4g-contrast');
+    const templatePath = `/academies/${w.academy.id}/certificate-template`;
+
+    // Text that does not clear 4.5:1 on the background.
+    const lowText = await http()
+      .put(templatePath)
+      .set(auth(w.owner.token))
+      .send({ textColor: '#BBBBBB', backgroundColor: '#FFFFFF' })
+      .expect(400);
+    expect(JSON.stringify(lowText.body)).toContain('errors.certificate.textContrastTooLow');
+
+    // A dark background is refused (print-friendliness).
+    await http()
+      .put(templatePath)
+      .set(auth(w.owner.token))
+      .send({ textColor: '#FFFFFF', backgroundColor: '#101010' })
+      .expect(400);
+
+    // A primary colour with too little contrast on the paper.
+    await http()
+      .put(templatePath)
+      .set(auth(w.owner.token))
+      .send({ primaryColor: '#F5EFE2', backgroundColor: '#FCFBF7' })
+      .expect(400);
+
+    // Malformed hex is rejected, not silently coerced.
+    await http()
+      .put(templatePath)
+      .set(auth(w.owner.token))
+      .send({ primaryColor: 'teal' })
+      .expect(400);
+
+    // The rejected writes never changed the stored palette.
+    const after = await http().get(templatePath).set(auth(w.owner.token)).expect(200);
+    expect(after.body.palette).toEqual(DEFAULT_PALETTE);
+  });
+
+  it('P4 Issue G: the live preview renders a real PDF from the draft, in EN and AR, and is owner/manager-only', async () => {
+    const w = await world('p4g-preview');
+    const previewPath = `/academies/${w.academy.id}/certificate-template/preview`;
+
+    for (const locale of ['en', 'ar'] as const) {
+      const res = await http()
+        .post(`${previewPath}?locale=${locale}`)
+        .set(auth(w.owner.token))
+        .buffer(true)
+        .send({ primaryColor: '#25503C', accentColor: '#B4914A' })
+        .expect(200);
+      expect(res.headers['content-type']).toContain('application/pdf');
+      const buf: Buffer = Buffer.isBuffer(res.body)
+        ? res.body
+        : Buffer.from(res.text ?? '', 'binary');
+      expect(buf.length).toBeGreaterThan(1000);
+      expect(buf.subarray(0, 4).toString('latin1')).toBe('%PDF');
+    }
+
+    // A course instructor (not owner/manager) cannot preview branding.
+    await http()
+      .post(`${previewPath}?locale=en`)
+      .set(auth(w.instructor.token))
+      .send({})
+      .expect(403);
+
+    // A foreign academy's owner cannot preview this academy's template.
+    const other = await world('p4g-preview-foreign');
+    await http()
+      .post(`${previewPath}?locale=en`)
+      .set(auth(other.owner.token))
+      .send({})
+      .expect((res) => {
+        if (![403, 404].includes(res.status)) {
+          throw new Error(`expected 403/404, got ${res.status}`);
+        }
+      });
+  });
+
+  it('P4 Issue F: a configured course issues a certificate even when the certificates feature flag does NOT enable the academy', async () => {
+    const w = await world('p4f-readiness');
+    // Certificates flag OFF for this academy; the quiz engine stays on so the
+    // learner can still complete the course.
+    flags.value = { ...allFlags('on'), certificates: { mode: 'off', academyIds: [] } };
+
+    await http()
+      .put(`/academies/${w.academy.id}/courses/${w.course.id}/completion-rule`)
+      .set(auth(w.owner.token))
+      .send({ requiredQuizIds: [w.quiz.id], certificatesEnabled: true, certificateMinScore: 50 })
+      .expect(200);
+
+    await http()
+      .post(`/courses/${w.course.id}/progress/complete-lesson`)
+      .set(auth(w.student.token))
+      .send({ lessonId: w.lesson.id })
+      .expect(201);
+    const a1 = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${a1.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: [{ questionId: w.q1.id, selectedOptionIds: [w.q1Correct.id] }] })
+      .expect(201);
+
+    // Readiness follows the course config, not the flag: completion says enabled.
+    const completion = await http()
+      .get(`/learning/courses/${w.course.id}/completion`)
+      .set(auth(w.student.token))
+      .expect(200);
+    expect(completion.body.completed).toBe(true);
+    expect(completion.body.certificate.enabled).toBe(true);
+
+    // And a certificate actually issues despite the flag being off.
+    await certificates.issueAutomatically(w.enrollmentId, w.academy.id);
+    const issued = await admin.certificate.findUniqueOrThrow({
+      where: { enrollmentId: w.enrollmentId },
+    });
+    expect(issued.status).toBe('issued');
+  });
+
+  it('P4 Issue G: an issued certificate keeps its own palette when the template is later recoloured (immutability)', async () => {
+    const w = await world('p4g-immutable');
+    await http()
+      .put(`/academies/${w.academy.id}/courses/${w.course.id}/completion-rule`)
+      .set(auth(w.owner.token))
+      .send({ certificatesEnabled: true })
+      .expect(200);
+    const issuedResp = await http()
+      .post(`/academies/${w.academy.id}/enrollments/${w.enrollmentId}/certificate`)
+      .set(auth(w.owner.token))
+      .send({ force: true, reason: 'test' })
+      .expect(201);
+    const certId = issuedResp.body.id as string;
+
+    const before = await admin.certificate.findUniqueOrThrow({ where: { id: certId } });
+    const snapBefore = before.snapshot as { palette?: Record<string, string> };
+    expect(snapBefore.palette).toEqual(DEFAULT_PALETTE);
+
+    // Recolour the template afterwards.
+    await http()
+      .put(`/academies/${w.academy.id}/certificate-template`)
+      .set(auth(w.owner.token))
+      .send({ primaryColor: '#6E1E2B', textColor: '#2A1418', backgroundColor: '#FDFAF6' })
+      .expect(200);
+
+    // The issued certificate's frozen palette is untouched, and it still renders.
+    const after = await admin.certificate.findUniqueOrThrow({ where: { id: certId } });
+    expect((after.snapshot as { palette?: unknown }).palette).toEqual(DEFAULT_PALETTE);
+    await expect(
+      certificates.renderCertificate(certId, w.academy.id),
+    ).resolves.not.toThrow();
+  });
+
+  it('P4 Issue G: a foreign owner cannot read or update another academy templates palette (tenant isolation)', async () => {
+    const w = await world('p4g-iso');
+    const other = await world('p4g-iso-foreign');
+    const templatePath = `/academies/${w.academy.id}/certificate-template`;
+    await http().get(templatePath).set(auth(other.owner.token)).expect((res) => {
+      if (![403, 404].includes(res.status)) {
+        throw new Error(`expected 403/404, got ${res.status}`);
+      }
+    });
+    await http()
+      .put(templatePath)
+      .set(auth(other.owner.token))
+      .send({ primaryColor: '#000000' })
+      .expect((res) => {
+        if (![403, 404].includes(res.status)) {
+          throw new Error(`expected 403/404, got ${res.status}`);
+        }
+      });
+  });
+
   it('P4 Issue 4: course progress percentage counts the whole sequence, not lessons alone', async () => {
     const w = await world('p4-progress', { passingScore: 50 });
     const progressPath = `/courses/${w.course.id}/progress`;

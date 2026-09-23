@@ -20,6 +20,10 @@ import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import sharp from 'sharp';
 import type { CertificateSnapshot } from '../dto/certificate.contract';
+import {
+  deriveRenderPalette,
+  type RenderPalette,
+} from '../certificate-palette.util';
 
 export interface RenderInput {
   readonly snapshot: CertificateSnapshot;
@@ -49,6 +53,59 @@ const ARABIC_RANGE = new RegExp(
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const IMAGE_TIMEOUT_MS = 5_000;
 
+const ARABIC_LETTER = new RegExp(
+  '[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]',
+);
+// Digits (Western, Arabic-Indic, Extended Arabic-Indic) and Latin letters read
+// LEFT-TO-RIGHT even inside Arabic. Arabic-Indic digits sit inside the Arabic
+// block, so this MUST be tested before ARABIC_LETTER.
+const LTR_CONTENT = /[0-9٠-٩۰-۹A-Za-z]/;
+
+/**
+ * pdfkit has no Unicode Bidi Algorithm: fontkit reverses an entire run that
+ * contains Arabic, which is right for Arabic letters but flips embedded
+ * numbers ("2026" → "٦٢٠٢", "96%" → "٦٩") and Latin names ("Dr. Jordan Hayes"
+ * → reversed). Arabic-Indic digits sit inside the Arabic block, so they are
+ * caught too. This pre-reverses each maximal left-to-right sub-run so that
+ * fontkit's whole-run reversal lands it back the right way, leaving pure
+ * Arabic (and any pure-Latin line) untouched. A small, dependency-free bidi
+ * for the one shape certificates use: an RTL line with embedded LTR spans.
+ */
+function reorderMixedRtl(value: string): string {
+  const chars = [...value];
+  if (!chars.some((c) => ARABIC_LETTER.test(c))) return value; // pure LTR line
+  type Cls = 'R' | 'L' | 'N';
+  const cls: Cls[] = chars.map((c) =>
+    ARABIC_LETTER.test(c) ? 'R' : LTR_CONTENT.test(c) || LTR_GLUE.test(c) ? 'L' : 'N',
+  );
+  // Resolve neutrals (spaces): a neutral run joins an LTR span only when it is
+  // flanked by LTR on both sides; otherwise it belongs to the RTL base.
+  for (let i = 0; i < cls.length; i++) {
+    if (cls[i] !== 'N') continue;
+    let l = i - 1;
+    while (l >= 0 && cls[l] === 'N') l--;
+    let r = i + 1;
+    while (r < cls.length && cls[r] === 'N') r++;
+    const left = l >= 0 ? cls[l] : 'R';
+    const right = r < cls.length ? cls[r] : 'R';
+    cls[i] = left === 'L' && right === 'L' ? 'L' : 'R';
+  }
+  // Reverse each maximal LTR span in place; fontkit re-reverses it to correct.
+  let i = 0;
+  while (i < chars.length) {
+    if (cls[i] !== 'L') {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < chars.length && cls[j] === 'L') j++;
+    const span = chars.slice(i, j).reverse();
+    for (let k = 0; k < span.length; k++) chars[i + k] = span[k];
+    i = j;
+  }
+  return chars.join('');
+}
+
 /** Drops C0 control characters (keeps tab/newline/CR) so a pasted name cannot inject PDF operators. */
 function stripControlCharacters(value: string): string {
   let out = '';
@@ -71,15 +128,10 @@ const MARGIN = 48;
  * from many colours; the gold appears only on the frame, the seal and two
  * short rules, so it reads as a foil accent rather than decoration.
  */
-const PALETTE = {
-  paper: '#FCFBF7',
-  ink: '#14303A',
-  inkSoft: '#5A6B71',
-  accentDeep: '#1F4E5F',
-  gold: '#B08A3E',
-  goldSoft: '#D8C089',
-  rule: '#D9D3C4',
-} as const;
+// The palette is no longer a module constant: each render derives its full
+// set from the certificate's own (immutable, per-snapshot) four colour roles
+// via deriveRenderPalette, so the Client Owner's chosen colours drive the PDF
+// while an old snapshot with no palette still yields the original design.
 
 @Injectable()
 export class CertificateRendererService {
@@ -141,10 +193,13 @@ export class CertificateRendererService {
     const wording = input.snapshot.wording[input.locale];
     const contentWidth = PAGE_WIDTH - MARGIN * 2;
     const centerX = PAGE_WIDTH / 2;
+    // The certificate's own colours (frozen in its snapshot). Old snapshots
+    // with no palette derive the original Atlas design.
+    const palette = deriveRenderPalette(input.snapshot.palette);
 
     // A warm off-white ground so the ink and gold read as print, not screen.
-    doc.save().rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT).fill(PALETTE.paper).restore();
-    this.drawFrame(doc);
+    doc.save().rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT).fill(palette.paper).restore();
+    this.drawFrame(doc, palette);
 
     // ---- Masthead: academy identity (logo, or the Atlas mark as the
     // deterministic fallback) + academy name in a quiet, tracked line. ----
@@ -159,7 +214,7 @@ export class CertificateRendererService {
     } else {
       // No academy logo configured → Atlas is the identity here, drawn as a
       // small wordmark so the certificate is never unbranded.
-      this.drawAtlasWordmark(doc, centerX, y + markHeight / 2, false);
+      this.drawAtlasWordmark(doc, centerX, y + markHeight / 2, false, palette);
     }
     y += markHeight + 14;
 
@@ -167,7 +222,7 @@ export class CertificateRendererService {
       y,
       size: 12,
       bold: true,
-      color: PALETTE.inkSoft,
+      color: palette.inkSoft,
       rtl,
       characterSpacing: rtl ? 0 : 2.4,
     });
@@ -178,12 +233,12 @@ export class CertificateRendererService {
       y,
       size: 30,
       bold: true,
-      color: PALETTE.ink,
+      color: palette.ink,
       rtl,
       characterSpacing: rtl ? 0 : 3,
     });
     y += 42;
-    this.goldRule(doc, centerX, y, 90);
+    this.goldRule(doc, centerX, y, 90, palette);
     y += 22;
 
     // ---- Presentation lines and the learner name (the focal point). ----
@@ -193,7 +248,7 @@ export class CertificateRendererService {
       {
         y,
         size: 12,
-        color: PALETTE.inkSoft,
+        color: palette.inkSoft,
         rtl,
       },
     );
@@ -212,16 +267,16 @@ export class CertificateRendererService {
         contentWidth - 40,
       ),
       bold: true,
-      color: PALETTE.ink,
+      color: palette.ink,
       rtl,
     });
     y += 50;
     // A hairline flourish under the name, its width tied to the name length.
-    this.nameFlourish(doc, centerX, y);
+    this.nameFlourish(doc, centerX, y, palette);
     y += 16;
 
     // ---- Body wording + the course title. ----
-    this.text(doc, wording.body, { y, size: 12, color: PALETTE.inkSoft, rtl });
+    this.text(doc, wording.body, { y, size: 12, color: palette.inkSoft, rtl });
     y += 24;
     this.text(doc, input.snapshot.courseTitle, {
       y,
@@ -234,7 +289,7 @@ export class CertificateRendererService {
         contentWidth - 40,
       ),
       bold: true,
-      color: PALETTE.accentDeep,
+      color: palette.accentDeep,
       rtl,
     });
     y += 34;
@@ -258,7 +313,7 @@ export class CertificateRendererService {
     this.text(doc, metaParts.join(rtl ? '  •  ' : '   •   '), {
       y,
       size: 11,
-      color: PALETTE.inkSoft,
+      color: palette.inkSoft,
       rtl,
     });
     y += 16;
@@ -266,7 +321,7 @@ export class CertificateRendererService {
       const line = rtl
         ? `بإشراف: ${input.snapshot.instructors.join('، ')}`
         : `Instructor${input.snapshot.instructors.length > 1 ? 's' : ''}: ${input.snapshot.instructors.join(', ')}`;
-      this.text(doc, line, { y, size: 10, color: PALETTE.inkSoft, rtl });
+      this.text(doc, line, { y, size: 10, color: palette.inkSoft, rtl });
     }
 
     // ---- Bottom band: signature (start side), the gold verification seal
@@ -283,7 +338,7 @@ export class CertificateRendererService {
     doc
       .save()
       .lineWidth(0.8)
-      .strokeColor(PALETTE.rule)
+      .strokeColor(palette.rule)
       .moveTo(signatureX + 20, bandY + 40)
       .lineTo(signatureX + colWidth - 20, bandY + 40)
       .stroke()
@@ -297,7 +352,7 @@ export class CertificateRendererService {
         y: bandY + 46,
         size: this.fitSize(doc, input.snapshot.signatoryName, true, 11, 8, colWidth - 12),
         bold: true,
-        color: PALETTE.ink,
+        color: palette.ink,
         rtl,
         x: signatureX,
         width: colWidth,
@@ -310,7 +365,7 @@ export class CertificateRendererService {
         {
           y: bandY + 60,
           size: 9,
-          color: PALETTE.inkSoft,
+          color: palette.inkSoft,
           rtl,
           x: signatureX,
           width: colWidth,
@@ -321,7 +376,7 @@ export class CertificateRendererService {
       this.text(doc, rtl ? 'مُعتمَدة من الأكاديمية' : 'Authorised by the academy', {
         y: bandY + 52,
         size: 9,
-        color: PALETTE.inkSoft,
+        color: palette.inkSoft,
         rtl,
         x: signatureX,
         width: colWidth,
@@ -330,7 +385,7 @@ export class CertificateRendererService {
     }
 
     // Centre seal.
-    this.drawSeal(doc, centerX, bandY + 24, rtl);
+    this.drawSeal(doc, centerX, bandY + 24, rtl, palette);
 
     // QR + verification code column.
     const qrSize = 64;
@@ -339,7 +394,7 @@ export class CertificateRendererService {
     this.text(doc, rtl ? 'تحقّق من صحّتها' : 'Scan to verify', {
       y: bandY + 58,
       size: 8,
-      color: PALETTE.inkSoft,
+      color: palette.inkSoft,
       rtl,
       x: qrColX,
       width: colWidth,
@@ -349,7 +404,7 @@ export class CertificateRendererService {
       y: bandY + 68,
       size: 10,
       bold: true,
-      color: PALETTE.ink,
+      color: palette.ink,
       rtl: false,
       x: qrColX,
       width: colWidth,
@@ -361,7 +416,7 @@ export class CertificateRendererService {
     doc
       .save()
       .lineWidth(0.8)
-      .strokeColor(PALETTE.rule)
+      .strokeColor(palette.rule)
       .moveTo(MARGIN + 6, PAGE_HEIGHT - 52)
       .lineTo(PAGE_WIDTH - MARGIN - 6, PAGE_HEIGHT - 52)
       .stroke()
@@ -378,7 +433,7 @@ export class CertificateRendererService {
     this.text(doc, footerLeft, {
       y: PAGE_HEIGHT - 44,
       size: 8,
-      color: PALETTE.inkSoft,
+      color: palette.inkSoft,
       rtl,
       x: MARGIN + 6,
       width: contentWidth - 12,
@@ -391,7 +446,7 @@ export class CertificateRendererService {
         y: PAGE_HEIGHT - 44,
         size: 8,
         bold: true,
-        color: PALETTE.accentDeep,
+        color: palette.accentDeep,
         rtl,
         x: MARGIN + 6,
         width: contentWidth - 12,
@@ -407,7 +462,7 @@ export class CertificateRendererService {
         {
           y: PAGE_HEIGHT - 33,
           size: 7,
-          color: PALETTE.inkSoft,
+          color: palette.inkSoft,
           rtl,
           x: MARGIN,
           width: contentWidth,
@@ -459,11 +514,15 @@ export class CertificateRendererService {
     const x = opts.x ?? MARGIN;
     const width = opts.width ?? PAGE_WIDTH - MARGIN * 2;
     const isArabic = ARABIC_RANGE.test(safe);
+    // Bidi: fix numbers and embedded Latin inside an Arabic line before
+    // fontkit's whole-run RTL reversal (see reorderMixedRtl). Pure Arabic and
+    // pure Latin lines are returned unchanged.
+    const shaped = isArabic ? reorderMixedRtl(safe) : safe;
     doc
       .font(this.fontFor(safe, opts.bold ?? false))
       .fontSize(opts.size)
       .fillColor(opts.color ?? '#000000')
-      .text(safe, x, opts.y, {
+      .text(shaped, x, opts.y, {
         width,
         align: opts.align ?? 'center',
         lineBreak: true,
@@ -478,16 +537,16 @@ export class CertificateRendererService {
   }
 
   /** The double frame: a thin ink rule, a gold hairline inside it, and a short gold accent at each corner. */
-  private drawFrame(doc: PDFKit.PDFDocument): void {
+  private drawFrame(doc: PDFKit.PDFDocument, palette: RenderPalette): void {
     doc.save();
     doc
       .lineWidth(1.4)
-      .strokeColor(PALETTE.ink)
+      .strokeColor(palette.ink)
       .rect(22, 22, PAGE_WIDTH - 44, PAGE_HEIGHT - 44)
       .stroke();
     doc
       .lineWidth(0.8)
-      .strokeColor(PALETTE.gold)
+      .strokeColor(palette.gold)
       .rect(29, 29, PAGE_WIDTH - 58, PAGE_HEIGHT - 58)
       .stroke();
     // Corner accents — short double rules that read as inlaid foil.
@@ -498,7 +557,7 @@ export class CertificateRendererService {
       [29, PAGE_HEIGHT - 29, 1, -1],
       [PAGE_WIDTH - 29, PAGE_HEIGHT - 29, -1, -1],
     ];
-    doc.lineWidth(1.6).strokeColor(PALETTE.gold);
+    doc.lineWidth(1.6).strokeColor(palette.gold);
     for (const [cx, cy, sx, sy] of insets) {
       doc
         .moveTo(cx, cy + sy * len)
@@ -515,18 +574,19 @@ export class CertificateRendererService {
     centerX: number,
     y: number,
     half: number,
+    palette: RenderPalette,
   ): void {
     doc.save();
     doc
       .lineWidth(1)
-      .strokeColor(PALETTE.gold)
+      .strokeColor(palette.gold)
       .moveTo(centerX - half, y)
       .lineTo(centerX - 8, y)
       .moveTo(centerX + 8, y)
       .lineTo(centerX + half, y)
       .stroke();
     doc
-      .fillColor(PALETTE.gold)
+      .fillColor(palette.gold)
       .moveTo(centerX, y - 4)
       .lineTo(centerX + 4, y)
       .lineTo(centerX, y + 4)
@@ -536,11 +596,16 @@ export class CertificateRendererService {
   }
 
   /** A tapered hairline under the learner's name. */
-  private nameFlourish(doc: PDFKit.PDFDocument, centerX: number, y: number): void {
+  private nameFlourish(
+    doc: PDFKit.PDFDocument,
+    centerX: number,
+    y: number,
+    palette: RenderPalette,
+  ): void {
     doc.save();
     doc
       .lineWidth(0.8)
-      .strokeColor(PALETTE.goldSoft)
+      .strokeColor(palette.goldSoft)
       .moveTo(centerX - 120, y)
       .lineTo(centerX + 120, y)
       .stroke();
@@ -558,15 +623,16 @@ export class CertificateRendererService {
     centerX: number,
     midY: number,
     small: boolean,
+    palette: RenderPalette,
   ): void {
     const r = small ? 12 : 15;
     const markX = centerX - (small ? 34 : 44);
     doc.save();
-    doc.lineWidth(1.6).strokeColor(PALETTE.gold).circle(markX, midY, r).stroke();
+    doc.lineWidth(1.6).strokeColor(palette.gold).circle(markX, midY, r).stroke();
     doc
       .font(this.fontFor('A', true))
       .fontSize(small ? 13 : 16)
-      .fillColor(PALETTE.ink)
+      .fillColor(palette.ink)
       .text('A', markX - r, midY - (small ? 7 : 9), {
         width: r * 2,
         align: 'center',
@@ -575,7 +641,7 @@ export class CertificateRendererService {
     doc
       .font(this.fontFor('ATLAS', true))
       .fontSize(small ? 15 : 19)
-      .fillColor(PALETTE.ink)
+      .fillColor(palette.ink)
       .text('ATLAS', markX + r + 8, midY - (small ? 8 : 10), {
         lineBreak: false,
         characterSpacing: 3,
@@ -589,12 +655,18 @@ export class CertificateRendererService {
    * credential rather than a printout. Drawn, so it needs no asset and
    * scales crisply.
    */
-  private drawSeal(doc: PDFKit.PDFDocument, cx: number, cy: number, rtl: boolean): void {
+  private drawSeal(
+    doc: PDFKit.PDFDocument,
+    cx: number,
+    cy: number,
+    rtl: boolean,
+    palette: RenderPalette,
+  ): void {
     doc.save();
-    doc.lineWidth(1.4).strokeColor(PALETTE.gold).circle(cx, cy, 34).stroke();
-    doc.lineWidth(0.8).strokeColor(PALETTE.goldSoft).circle(cx, cy, 28).stroke();
+    doc.lineWidth(1.4).strokeColor(palette.gold).circle(cx, cy, 34).stroke();
+    doc.lineWidth(0.8).strokeColor(palette.goldSoft).circle(cx, cy, 28).stroke();
     // A ring of short ticks between the two circles.
-    doc.lineWidth(1).strokeColor(PALETTE.gold);
+    doc.lineWidth(1).strokeColor(palette.gold);
     for (let i = 0; i < 36; i++) {
       const a = (i / 36) * Math.PI * 2;
       doc
@@ -605,7 +677,7 @@ export class CertificateRendererService {
     // Centred check mark.
     doc
       .lineWidth(2.2)
-      .strokeColor(PALETTE.accentDeep)
+      .strokeColor(palette.accentDeep)
       .moveTo(cx - 9, cy)
       .lineTo(cx - 2, cy + 8)
       .lineTo(cx + 11, cy - 8)
@@ -614,7 +686,7 @@ export class CertificateRendererService {
       y: cy + 40,
       size: 7,
       bold: true,
-      color: PALETTE.gold,
+      color: palette.gold,
       rtl,
       x: cx - 40,
       width: 80,

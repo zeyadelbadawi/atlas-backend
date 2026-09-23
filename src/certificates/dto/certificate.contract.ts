@@ -9,6 +9,11 @@
 import type { Certificate, CertificateTemplate } from '@prisma/client';
 import { formatVerificationCode } from '../certificate-serial.util';
 import type { CertificateWithNames } from '../certificates.repository';
+import {
+  type CertificatePalette,
+  DEFAULT_PALETTE,
+  paletteFromTemplate,
+} from '../certificate-palette.util';
 
 export interface CertificateSnapshot {
   readonly learnerName: string;
@@ -31,6 +36,12 @@ export interface CertificateSnapshot {
   readonly signatoryName: string | null;
   readonly signatoryTitle: string | null;
   readonly wording: CertificateWordingByLocale;
+  /**
+   * The four palette roles frozen at issuance, so a later template recolour
+   * never changes an already-issued certificate. Optional: older snapshots
+   * omit it and render with DEFAULT_PALETTE (the original Atlas design).
+   */
+  readonly palette?: CertificatePalette;
   readonly locale: string;
   /** Present after account deletion: the learner's name was replaced. */
   readonly anonymizedAt?: string;
@@ -66,6 +77,7 @@ export interface CertificateTemplateResponse {
   readonly signatoryName: string | null;
   readonly signatoryTitle: string | null;
   readonly wording: CertificateWordingByLocale;
+  readonly palette: CertificatePalette;
   readonly version: number;
   readonly isDefault: boolean;
   readonly updatedAt: string;
@@ -101,11 +113,16 @@ export function toTemplateResponse(
     signatoryName: template.signatoryName,
     signatoryTitle: template.signatoryTitle,
     wording: parseWording(template.wording),
+    palette: paletteFromTemplate(template),
     version: template.version,
     isDefault: template.isDefault,
     updatedAt: template.updatedAt.toISOString(),
   };
 }
+
+/** Re-exported so the service can build a snapshot palette without a second import. */
+export { DEFAULT_PALETTE };
+export type { CertificatePalette };
 
 /** The learner's certificate (and the staff list row). Never the storage key. */
 export interface CertificateResponse {

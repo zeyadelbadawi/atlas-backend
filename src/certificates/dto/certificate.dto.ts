@@ -5,6 +5,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   ValidateIf,
   registerDecorator,
@@ -131,4 +132,23 @@ export class UpdateCertificateTemplateDto {
   @IsObject()
   @Type(() => Object)
   readonly wording?: { en?: CertificateWordingDto; ar?: CertificateWordingDto };
+
+  // Constrained palette (4 roles). Format is checked here; cross-field
+  // readability/contrast is enforced in the service (assertReadablePalette),
+  // where all four values are known together.
+  @IsOptional()
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'errors.certificate.invalidColor' })
+  readonly primaryColor?: string;
+
+  @IsOptional()
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'errors.certificate.invalidColor' })
+  readonly accentColor?: string;
+
+  @IsOptional()
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'errors.certificate.invalidColor' })
+  readonly textColor?: string;
+
+  @IsOptional()
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'errors.certificate.invalidColor' })
+  readonly backgroundColor?: string;
 }

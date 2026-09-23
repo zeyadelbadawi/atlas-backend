@@ -28,6 +28,7 @@ import {
   Put,
   Query,
   Req,
+  StreamableFile,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
@@ -221,5 +222,31 @@ export class AcademyCertificatesController {
       request.authContext!.userId,
       body,
     );
+  }
+
+  /**
+   * Live preview: render a SAMPLE certificate from the DRAFT (unsaved) config
+   * through the real PDF renderer, so the editor preview is byte-for-byte the
+   * same design the learner will receive. Nothing is persisted.
+   */
+  @Post(':id/certificate-template/preview')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Header('Content-Type', 'application/pdf')
+  @Header('Cache-Control', 'private, no-store')
+  async previewTemplate(
+    @Req() request: Request,
+    @Body() body: UpdateCertificateTemplateDto,
+    @Query('locale') locale?: string,
+  ): Promise<StreamableFile> {
+    const { academyId, organizationId } = request.academyContext!;
+    const { pdf } = await this.certificates.previewTemplate(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body,
+      locale === 'ar' ? 'ar' : 'en',
+    );
+    return new StreamableFile(pdf, { type: 'application/pdf' });
   }
 }

@@ -22,7 +22,6 @@ import { Queue } from 'bullmq';
 import type { CourseCompletionState, Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
-import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
@@ -104,7 +103,6 @@ export class CourseCompletionService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly academiesRepository: AcademiesRepository,
-    private readonly featureFlags: FeatureFlagsService,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly enrollmentsRepository: EnrollmentsRepository,
@@ -252,10 +250,6 @@ export class CourseCompletionService {
     } = evaluated;
 
     const completed = evaluation.completed;
-    const certificatesFlagOn = this.featureFlags.isEnabledForAcademy(
-      'certificates',
-      enrollment.academyId,
-    );
     const minScoreMet =
       certificateMinScore === null ||
       (evaluation.overallScore !== null &&
@@ -270,7 +264,7 @@ export class CourseCompletionService {
       currentCertificateStatus === 'eligible'
     ) {
       certificateStatus =
-        completed && certificatesEnabled && certificatesFlagOn && minScoreMet
+        completed && certificatesEnabled && minScoreMet
           ? 'eligible'
           : 'unavailable';
     }
@@ -402,10 +396,6 @@ export class CourseCompletionService {
           status: true,
         },
       });
-      const flagOn = this.featureFlags.isEnabledForAcademy(
-        'certificates',
-        enrollment.academyId,
-      );
       return {
         courseId,
         courseTitle: course.title,
@@ -419,7 +409,9 @@ export class CourseCompletionService {
         assignments: evaluated.evaluation.requiredAssignments,
         missing: evaluated.evaluation.missing,
         certificate: {
-          enabled: evaluated.certificatesEnabled && flagOn,
+          // Follows the course's own certificate configuration, not a
+          // rollout allowlist (P4 Issue F).
+          enabled: evaluated.certificatesEnabled,
           status: evaluated.currentCertificateStatus,
           minScore: evaluated.certificateMinScore,
           certificateId: certificate?.id ?? null,
@@ -499,10 +491,11 @@ export class CourseCompletionService {
       certificatesEnabled: course.certificatesEnabled,
       certificateMinScore: course.certificateMinScore,
       certificateTemplateId: course.certificateTemplateId,
-      certificatesFeatureEnabled: this.featureFlags.isEnabledForAcademy(
-        'certificates',
-        academyId,
-      ),
+      // Certificates are a standard capability now: any academy may award them
+      // by configuring the template and enabling the course toggle. This no
+      // longer depends on a rollout allowlist (P4 Issue F), so the owner's
+      // "Issue certificate" course toggle is never falsely disabled.
+      certificatesFeatureEnabled: true,
       quizzes,
       assignments,
       publishedLessons,

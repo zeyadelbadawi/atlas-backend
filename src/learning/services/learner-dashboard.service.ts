@@ -21,7 +21,6 @@
  * academy filter and RLS agree: the filter narrows to one academy, RLS
  * independently refuses anything that is not theirs.
  */
-import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -46,7 +45,6 @@ const DEADLINE_HORIZON_DAYS = 30;
 export class LearnerDashboardService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
-    private readonly featureFlags: FeatureFlagsService,
   ) {}
 
   async getOverview(userId: string, academyId: string): Promise<LearnerOverviewResponse> {
@@ -141,15 +139,18 @@ export class LearnerDashboardService {
         .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
         .slice(0, OVERVIEW_LIMIT);
 
-      const certificatesEnabled = this.featureFlags.isEnabledForAcademy(
-        'certificates',
-        academyId,
-      );
-      const issuedCertificates = certificatesEnabled
-        ? await tx.certificate.count({
-            where: { studentId: userId, academyId, status: 'issued' },
-          })
-        : 0;
+      // Certificates follow course configuration now, not a rollout allowlist
+      // (P4 Issue F): always count what the learner has actually earned, and
+      // treat certificates as available if they have any or the academy awards
+      // them on any course.
+      const issuedCertificates = await tx.certificate.count({
+        where: { studentId: userId, academyId, status: 'issued' },
+      });
+      const certificatesEnabled =
+        issuedCertificates > 0 ||
+        (await tx.course.count({
+          where: { academyId, certificatesEnabled: true },
+        })) > 0;
       return {
         academyId,
         continueLearning: continueLearning.map((item) => ({

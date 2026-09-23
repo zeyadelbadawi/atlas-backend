@@ -32,7 +32,6 @@ import type { Certificate, Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
-import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
@@ -67,6 +66,10 @@ import {
   type CertificateTemplateResponse,
   type CertificateVerificationResponse,
 } from '../dto/certificate.contract';
+import {
+  assertReadablePalette,
+  paletteFromTemplate,
+} from '../certificate-palette.util';
 import type {
   IssueCertificateDto,
   ListCertificatesQueryDto,
@@ -84,6 +87,22 @@ const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 const VERIFY_MIN_DURATION_MS = 150;
 const DEFAULT_TEMPLATE_NAME = 'Standard';
 
+/** Placeholder people/courses for the editor's live preview (never persisted). */
+const SAMPLE_PREVIEW_DATA = {
+  en: {
+    learnerName: 'Alexandra Whitmore',
+    courseTitle: 'Advanced Data Analysis & Visualization',
+    academyName: 'Your Academy',
+    instructor: 'Dr. Jordan Hayes',
+  },
+  ar: {
+    learnerName: 'فاطمة عبد الرحمن الزهراني',
+    courseTitle: 'تحليل البيانات المتقدم والتصور المرئي',
+    academyName: 'أكاديميتك',
+    instructor: 'د. خالد المنصوري',
+  },
+} as const;
+
 type StaffScope =
   | { readonly kind: 'academy'; readonly role: string }
   | { readonly kind: 'courses'; readonly courseIds: readonly string[] };
@@ -98,7 +117,6 @@ export class CertificatesService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly academiesRepository: AcademiesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
-    private readonly featureFlags: FeatureFlagsService,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly notifications: NotificationFanoutService,
     private readonly metrics: LearningMetricsService,
@@ -235,7 +253,10 @@ export class CertificatesService {
     if (existing && existing.status === 'issued') return null;
     if (existing && existing.status === 'revoked' && !input.force) return null;
 
-    const flagOn = this.featureFlags.isEnabledForAcademy('certificates', input.academyId);
+    // Readiness follows the academy's ACTUAL configuration — the course's
+    // `certificatesEnabled` toggle (which requires a configured template) —
+    // not an env rollout allowlist. Configuring certificates is therefore
+    // enough to make an academy certificate-ready (P4 Issue F root cause).
     const progress = enrollment.progress;
     const completed = progress?.completionState === 'completed';
     const overallScore =
@@ -246,9 +267,11 @@ export class CertificatesService {
       enrollment.course.certificateMinScore === null ||
       (overallScore !== null && overallScore >= enrollment.course.certificateMinScore);
     const eligible =
-      flagOn && enrollment.course.certificatesEnabled && completed && minScoreMet;
+      enrollment.course.certificatesEnabled && completed && minScoreMet;
     if (!eligible && !input.force) return null;
-    if (input.force && !flagOn) {
+    // Force-issue (owner override) still requires the course to award a
+    // certificate at all; it only bypasses the completion/score gate.
+    if (input.force && !enrollment.course.certificatesEnabled) {
       throw new ForbiddenException({ messageKey: 'errors.certificate.featureDisabled' });
     }
 
@@ -331,6 +354,7 @@ export class CertificatesService {
       signatoryName: template.signatoryName,
       signatoryTitle: template.signatoryTitle,
       wording: parseWording(template.wording),
+      palette: paletteFromTemplate(template),
       locale,
     };
 
@@ -589,6 +613,7 @@ export class CertificatesService {
           signatoryName: template.signatoryName,
           signatoryTitle: template.signatoryTitle,
           wording: parseWording(template.wording),
+          palette: paletteFromTemplate(template),
           // Frozen at issuance, deliberately carried forward:
           completedAt: original.completedAt,
           overallScore: original.overallScore,
@@ -711,11 +736,18 @@ export class CertificatesService {
     userId: string,
     academyId: string,
   ): Promise<{ enabled: boolean; items: CertificateResponse[] }> {
-    const enabled = this.featureFlags.isEnabledForAcademy('certificates', academyId);
-    const items = await this.tenancyContextService.runInUserContext(userId, (tx) =>
-      this.repository.findManyForStudent(tx, userId, academyId),
-    );
-    return { enabled, items: items.map((row) => toCertificateResponse(row)) };
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const items = await this.repository.findManyForStudent(tx, userId, academyId);
+      // Certificates follow course configuration now, not a rollout allowlist
+      // (P4 Issue F). The academy "issues certificates" if any of its courses
+      // awards one; otherwise the learner simply has an empty list.
+      const enabled =
+        items.length > 0 ||
+        (await tx.course.count({
+          where: { academyId, certificatesEnabled: true },
+        })) > 0;
+      return { enabled, items: items.map((row) => toCertificateResponse(row)) };
+    });
   }
 
   async getForLearner(
@@ -853,6 +885,24 @@ export class CertificatesService {
             ar: { ...parseWording(template.wording).ar, ...(dto.wording.ar ?? {}) },
           })
         : undefined;
+      // Merge any provided colour roles over the template's current palette,
+      // then enforce readability/contrast across all four together (one
+      // authoritative check). A single bad colour is rejected with a clear key
+      // rather than silently coerced.
+      const paletteTouched =
+        dto.primaryColor !== undefined ||
+        dto.accentColor !== undefined ||
+        dto.textColor !== undefined ||
+        dto.backgroundColor !== undefined;
+      const current = paletteFromTemplate(template);
+      const palette = paletteTouched
+        ? assertReadablePalette({
+            primary: dto.primaryColor ?? current.primary,
+            accent: dto.accentColor ?? current.accent,
+            text: dto.textColor ?? current.text,
+            background: dto.backgroundColor ?? current.background,
+          })
+        : undefined;
       const updated = await this.repository.updateTemplate(tx, template.id, {
         ...(dto.name !== undefined ? { name: dto.name } : {}),
         ...(dto.logoUrl !== undefined ? { logoUrl: dto.logoUrl } : {}),
@@ -862,6 +912,14 @@ export class CertificatesService {
           ? { signatoryTitle: dto.signatoryTitle }
           : {}),
         ...(wording ? { wording: wording as unknown as Prisma.InputJsonValue } : {}),
+        ...(palette
+          ? {
+              primaryColor: palette.primary,
+              accentColor: palette.accent,
+              textColor: palette.text,
+              backgroundColor: palette.background,
+            }
+          : {}),
         version: template.version + 1,
       });
       await this.auditLogWriterService.write(tx, {
@@ -876,6 +934,85 @@ export class CertificatesService {
         context: { version: updated.version },
       });
       return toTemplateResponse(updated);
+    });
+  }
+
+  /**
+   * Render a SAMPLE certificate from a DRAFT template config (unsaved), so the
+   * editor's live preview is produced by the real PDF renderer — the preview
+   * can never diverge from the issued PDF because it is the same code path,
+   * the same layout and the same palette. Nothing is persisted.
+   */
+  async previewTemplate(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    dto: UpdateCertificateTemplateDto,
+    locale: 'en' | 'ar',
+  ): Promise<{ pdf: Buffer; warnings: readonly string[] }> {
+    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      await this.assertManagingRole(tx, academyId, userId);
+      const academy = await tx.academy.findUnique({
+        where: { id: academyId },
+        select: { name: true, slug: true, logoUrl: true },
+      });
+      const template = await this.ensureDefaultTemplate(
+        tx,
+        academyId,
+        academy?.name ?? '',
+        academy?.logoUrl ?? null,
+      );
+      const current = paletteFromTemplate(template);
+      const palette = assertReadablePalette({
+        primary: dto.primaryColor ?? current.primary,
+        accent: dto.accentColor ?? current.accent,
+        text: dto.textColor ?? current.text,
+        background: dto.backgroundColor ?? current.background,
+      });
+      const wording = parseWording({
+        en: { ...parseWording(template.wording).en, ...(dto.wording?.en ?? {}) },
+        ar: { ...parseWording(template.wording).ar, ...(dto.wording?.ar ?? {}) },
+      });
+      const logoUrl = dto.logoUrl !== undefined ? dto.logoUrl : template.logoUrl;
+      const signatureUrl =
+        dto.signatureUrl !== undefined ? dto.signatureUrl : template.signatureUrl;
+      const signatoryName =
+        dto.signatoryName !== undefined ? dto.signatoryName : template.signatoryName;
+      const signatoryTitle =
+        dto.signatoryTitle !== undefined ? dto.signatoryTitle : template.signatoryTitle;
+      const sample = SAMPLE_PREVIEW_DATA[locale];
+      const snapshot: CertificateSnapshot = {
+        learnerName: sample.learnerName,
+        learnerEmailMasked: 'l•••@example.com',
+        courseTitle: sample.courseTitle,
+        courseSlug: 'sample-course',
+        academyName: academy?.name ?? sample.academyName,
+        academySlug: academy?.slug ?? 'academy',
+        instructors: [sample.instructor],
+        completedAt: new Date().toISOString(),
+        overallScore: 96,
+        scoreSummary: [],
+        templateVersion: template.version,
+        templateId: template.id,
+        logoUrl: this.absolutePublicMediaUrl(logoUrl),
+        signatureUrl: this.absolutePublicMediaUrl(signatureUrl),
+        signatoryName,
+        signatoryTitle,
+        wording,
+        palette,
+        locale,
+      };
+      const { pdf, warnings } = await this.renderer.render({
+        snapshot,
+        serial: 'PREVIEW-0000-000000',
+        verificationCode: 'PREVIEWCODE00',
+        verificationCodeDisplay: formatVerificationCode('PREVIEWCODE00'),
+        verifyUrl: `${this.publicBaseUrl()}/verify/PREVIEW`,
+        issuedAt: new Date(),
+        version: 1,
+        locale,
+      });
+      return { pdf, warnings };
     });
   }
 

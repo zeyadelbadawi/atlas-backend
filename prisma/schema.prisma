@@ -2357,6 +2357,17 @@ model CertificateTemplate {
   signatoryTitle String?  @map("signatory_title")
   /// `{ en: { title, body }, ar: { title, body } }`
   wording        Json     @default("{}")
+  /// Constrained certificate palette (4 roles). Defaults reproduce the
+  /// original Atlas design exactly, so existing templates render unchanged.
+  /// Primary = dominant brand colour (title, course, seal, primary rules);
+  /// Accent = metallic foil accent (fine rules, corner marks, seal ring);
+  /// Text = body/heading ink; Background = paper. Softer tints (secondary
+  /// text, rules) are DERIVED from these at render time, never stored, so the
+  /// set stays small and always internally consistent.
+  primaryColor    String  @default("#1F4E5F") @map("primary_color")
+  accentColor     String  @default("#B08A3E") @map("accent_color")
+  textColor       String  @default("#14303A") @map("text_color")
+  backgroundColor String  @default("#FCFBF7") @map("background_color")
   version        Int      @default(1)
   isDefault      Boolean  @default(false) @map("is_default")
   createdAt      DateTime @default(now()) @map("created_at")
