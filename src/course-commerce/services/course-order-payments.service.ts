@@ -53,7 +53,11 @@ import {
 import { buildCourseOrderPaymentProofStorageKey } from '../../billing/utils/payment-proof-key.util';
 import { applyBasisPoints } from '../../billing/utils/commission-math.util';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
-import type { PaymentMethodCapabilitiesResponse } from '../../billing/dto/payment-method.contract';
+import {
+  toPaymentMethodResponse,
+  type PaymentMethodCapabilitiesResponse,
+  type PaymentMethodResponse,
+} from '../../billing/dto/payment-method.contract';
 import { CourseOrdersService } from './course-orders.service';
 import { toCourseOrderPaymentResponse } from '../dto/course-order-payment.contract';
 import type { CourseOrderPaymentResponse } from '../dto/course-order-payment.contract';
@@ -85,6 +89,90 @@ export class CourseOrderPaymentsService {
     private readonly paymentProofStorageService: PaymentProofStorageService,
     private readonly metrics: LearningMetricsService,
   ) {}
+
+  /**
+   * The payment methods this learner may use for THEIR OWN order
+   * (P64 Phase 4).
+   *
+   * Exists because the learner checkout has no other honest source for
+   * this list. `GET /payment-methods` is the platform catalog behind
+   * `ManagementSurfaceGuard` — staff only — so a learner asking it gets
+   * `managementSurfaceOnly` and the checkout page renders its "not
+   * available for purchase yet" state for every learner, whatever the
+   * academy has configured.
+   *
+   * The filter below is deliberately the SAME decision `createPayment`
+   * makes a few lines down, read branch for branch off
+   * `paymentCollectionMode`: a method offered here is a method the
+   * server will accept, and one it would refuse is never shown. Keeping
+   * both in this class is what stops them drifting apart.
+   *
+   * Two gates, as everywhere a learner addresses a row by id:
+   * `findOrderOrThrow` filters on `studentId` AND the read runs in the
+   * caller's own context, so `course_orders` RLS has to agree
+   * independently. A misconfigured academy yields an empty list, never
+   * an error — "no methods" is a real answer the page already renders.
+   *
+   * Payability is NOT re-decided here. `createPayment` owns the order
+   * state machine and reports expiry//`notPayable` with its own precise
+   * messages; duplicating that here would give the same truth two
+   * places to disagree.
+   */
+  async listAvailableMethods(
+    studentId: string,
+    orderId: string,
+  ): Promise<PaymentMethodResponse[]> {
+    return this.tenancyContextService.runInUserContext(studentId, async (tx) => {
+      const order = await this.courseOrdersService.findOrderOrThrow(
+        tx,
+        studentId,
+        orderId,
+      );
+
+      const settings = await this.organizationPaymentSettingsService.getPaymentSettings(
+        order.organizationId,
+      );
+
+      if (settings.paymentCollectionMode === 'unconfigured') {
+        return [];
+      }
+
+      if (settings.paymentCollectionMode === 'atlas_payments') {
+        // Atlas Payments is not usable until an effective commission
+        // resolves — `createPayment` refuses with
+        // `commissionNotConfigured`, so offering a method here would be
+        // offering one that cannot be paid.
+        const resolution =
+          await this.commissionService.resolveEffectiveCommissionForOrganization(
+            tx,
+            order.organizationId,
+          );
+        if (!resolution.resolved) return [];
+        const methods = await this.paymentMethodsRepository.findAllEnabledByProvider(
+          ATLAS_MANUAL_PROVIDER_KEY,
+        );
+        return methods.map(toPaymentMethodResponse);
+      }
+
+      // organization_gateway — only a verified, enabled credential whose
+      // adapter actually resolves can take money, exactly as below.
+      const credential =
+        await this.organizationGatewayCredentialsRepository.findForResponse(
+          tx,
+          order.organizationId,
+        );
+      if (!credential || credential.status !== 'verified' || !credential.enabled) {
+        return [];
+      }
+      if (!this.paymentProviderRegistry.tryResolve(credential.providerKey)) {
+        return [];
+      }
+      const methods = await this.paymentMethodsRepository.findAllEnabledByProvider(
+        credential.providerKey,
+      );
+      return methods.map(toPaymentMethodResponse);
+    });
+  }
 
   async createPayment(
     studentId: string,

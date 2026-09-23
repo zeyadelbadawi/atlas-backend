@@ -46,6 +46,24 @@ export class PaymentMethodsRepository {
     return { items, totalItems };
   }
 
+  /**
+   * P64 Phase 4 — the learner checkout's method list.
+   *
+   * Filtered by provider in SQL rather than in the caller because the
+   * only providers a learner may ever be offered are the one their
+   * academy's payment settings resolve to; a caller-side filter over
+   * `findAllEnabled()` would read the whole catalog (1,272 fixture rows
+   * in this dev database, see `findManyEnabledPaginated`) to keep a
+   * handful. Ordering matches the catalog's own `displayOrder`, so the
+   * learner sees methods in the order the platform intends.
+   */
+  findAllEnabledByProvider(provider: string): Promise<PaymentMethod[]> {
+    return this.prisma.paymentMethod.findMany({
+      where: { enabled: true, provider },
+      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    });
+  }
+
   findByKey(key: string): Promise<PaymentMethod | null> {
     return this.prisma.paymentMethod.findUnique({ where: { key } });
   }

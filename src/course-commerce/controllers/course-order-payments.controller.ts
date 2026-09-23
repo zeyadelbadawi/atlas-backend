@@ -21,11 +21,32 @@ import { CourseOrderPaymentsService } from '../services/course-order-payments.se
 import { CreateCourseOrderPaymentDto } from '../dto/create-course-order-payment.dto';
 import { SubmitCourseOrderPaymentProofDto } from '../dto/submit-course-order-payment-proof.dto';
 import type { CourseOrderPaymentResponse } from '../dto/course-order-payment.contract';
+import type { PaymentMethodResponse } from '../../billing/dto/payment-method.contract';
 
 @Controller('course-orders')
 @UseGuards(JwtAuthGuard)
 export class CourseOrderPaymentsController {
   constructor(private readonly courseOrderPaymentsService: CourseOrderPaymentsService) {}
+
+  /**
+   * P64 Phase 4 — the learner checkout's method list, scoped to the
+   * caller's own order. The platform catalog at `GET /payment-methods`
+   * is `ManagementSurfaceGuard`-only by design; this is the learner
+   * surface's equivalent and shows only what would actually be accepted
+   * for this order. Self-scoped like every other route here: the order
+   * id is checked against `request.authContext.userId`, never trusted
+   * from the path alone.
+   */
+  @Get(':id/payment-methods')
+  async listMethods(
+    @Req() request: Request,
+    @Param('id') orderId: string,
+  ): Promise<PaymentMethodResponse[]> {
+    return this.courseOrderPaymentsService.listAvailableMethods(
+      request.authContext!.userId,
+      orderId,
+    );
+  }
 
   @Post(':id/payments')
   async create(
