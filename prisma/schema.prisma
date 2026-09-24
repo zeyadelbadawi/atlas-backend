@@ -174,8 +174,13 @@ model User {
 
   /// P64 Phase 2 — the learner's registered devices and their own
   /// content-access history.
-  studentDevices   StudentDevice[]
-  contentAccessLog ContentAccessLog[]
+  studentDevices       StudentDevice[]
+  contentAccessLog     ContentAccessLog[]
+  /// P64 Communications.
+  communicationOutbox  CommunicationOutbox[]
+  communicationDigests CommunicationDigest[]
+  authEmailChallenges  AuthEmailChallenge[]
+  trustedDevices       TrustedDevice[]
 
   @@index([status])
   @@index([searchVector], type: Gin)
@@ -415,6 +420,8 @@ model Organization {
   /// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21).
   auditLogEntries      AuditLogEntry[]
   supportCases         SupportCase[]
+  /// P64 Communications C5/C6.
+  lifecycleState       TenantLifecycleState?
 
   @@index([status])
   @@index([searchVector], type: Gin)
@@ -2410,16 +2417,16 @@ model QuizStudentOverride {
 /// locale. Versioned so an issued certificate can name the exact template
 /// it was rendered from.
 model CertificateTemplate {
-  id             String   @id @default(uuid())
-  academyId      String   @map("academy_id")
-  academy        Academy  @relation(fields: [academyId], references: [id], onDelete: Cascade)
-  name           String
-  logoUrl        String?  @map("logo_url")
-  signatureUrl   String?  @map("signature_url")
-  signatoryName  String?  @map("signatory_name")
-  signatoryTitle String?  @map("signatory_title")
+  id              String   @id @default(uuid())
+  academyId       String   @map("academy_id")
+  academy         Academy  @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  name            String
+  logoUrl         String?  @map("logo_url")
+  signatureUrl    String?  @map("signature_url")
+  signatoryName   String?  @map("signatory_name")
+  signatoryTitle  String?  @map("signatory_title")
   /// `{ en: { title, body }, ar: { title, body } }`
-  wording        Json     @default("{}")
+  wording         Json     @default("{}")
   /// Constrained certificate palette (4 roles). Defaults reproduce the
   /// original Atlas design exactly, so existing templates render unchanged.
   /// Primary = dominant brand colour (title, course, seal, primary rules);
@@ -2427,14 +2434,14 @@ model CertificateTemplate {
   /// Text = body/heading ink; Background = paper. Softer tints (secondary
   /// text, rules) are DERIVED from these at render time, never stored, so the
   /// set stays small and always internally consistent.
-  primaryColor    String  @default("#1F4E5F") @map("primary_color")
-  accentColor     String  @default("#B08A3E") @map("accent_color")
-  textColor       String  @default("#14303A") @map("text_color")
-  backgroundColor String  @default("#FCFBF7") @map("background_color")
-  version        Int      @default(1)
-  isDefault      Boolean  @default(false) @map("is_default")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  primaryColor    String   @default("#1F4E5F") @map("primary_color")
+  accentColor     String   @default("#B08A3E") @map("accent_color")
+  textColor       String   @default("#14303A") @map("text_color")
+  backgroundColor String   @default("#FCFBF7") @map("background_color")
+  version         Int      @default(1)
+  isDefault       Boolean  @default(false) @map("is_default")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   courses Course[]
 
@@ -2815,6 +2822,11 @@ enum MediaAssetType {
 enum MediaAssetStatus {
   active
   archived
+  /// P64 Communications C6 — hosted video bytes were deleted after the
+  /// retention window. The row is a tombstone: lessons say "removed after
+  /// inactivity" instead of showing a broken player, and quota recompute
+  /// ignores it.
+  deleted
 
   @@map("media_asset_status")
 }
@@ -3057,6 +3069,13 @@ model MediaAsset {
   /// P64 Phase 3 (S12) — who uploaded this object (students' submission attachments); null for staff/library uploads made before Phase 3.
   uploadedByUserId String?               @map("uploaded_by_user_id")
   course           Course?               @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  /// P64 Communications C6 — retention tombstone facts. Set only after the
+  /// provider confirmed the bytes are gone; a failed attempt records
+  /// `deletionFailedAt` and leaves `status` untouched.
+  deletedAt        DateTime?             @map("deleted_at")
+  deletionReason   String?               @map("deletion_reason")
+  deletionFailedAt DateTime?             @map("deletion_failed_at")
+  bytesFreed       BigInt?               @map("bytes_freed")
 
   /// Phase 12 — set when this asset was imported from a session recording.
   liveSessionRecordingFiles LiveSessionRecordingFile[]
@@ -3065,7 +3084,7 @@ model MediaAsset {
   lessonContents        LessonContent[]
   lessonResources       LessonResource[]
   lessonVideoFor        CourseLesson[]
-  introVideoForCourses  Course[]              @relation("CourseIntroVideo")
+  introVideoForCourses  Course[]               @relation("CourseIntroVideo")
   submissionAttachments AssignmentSubmission[] @relation("SubmissionAttachment")
 
   @@index([academyId, status, type])
@@ -4866,30 +4885,293 @@ enum NotificationPriority {
 }
 
 model Notification {
-  id             String               @id @default(uuid())
-  userId         String               @map("user_id")
-  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String                     @id @default(uuid())
+  userId         String                     @map("user_id")
+  user           User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
   type           NotificationType
   priority       NotificationPriority
-  titleKey       String               @map("title_key")
-  messageKey     String               @map("message_key")
+  titleKey       String                     @map("title_key")
+  messageKey     String                     @map("message_key")
   /// Interpolation values for `titleKey`/`messageKey` — matches
   /// `Notification.values` (frontend) exactly, resolved client-side via
   /// `t(titleKey, values)`.
   values         Json?
-  isRead         Boolean              @default(false) @map("is_read")
-  actionUrl      String?              @map("action_url")
-  actionLabelKey String?              @map("action_label_key")
+  isRead         Boolean                    @default(false) @map("is_read")
+  actionUrl      String?                    @map("action_url")
+  actionLabelKey String?                    @map("action_label_key")
   metadata       Json?
   /// Natural idempotency key — see this section's header comment. Null for
   /// event types that intentionally never dedupe.
-  dedupeKey      String?              @map("dedupe_key")
-  createdAt      DateTime             @default(now()) @map("created_at")
-  updatedAt      DateTime             @updatedAt @map("updated_at")
+  dedupeKey      String?                    @map("dedupe_key")
+  /// P64 Communications — feed retention class from the event catalogue
+  /// (`standard` 180 d, `extended` 365 d for billing/security/account).
+  /// Pruned by the maintenance sweep under `notifications_retention_delete`.
+  retentionClass NotificationRetentionClass @default(standard) @map("retention_class")
+  createdAt      DateTime                   @default(now()) @map("created_at")
+  updatedAt      DateTime                   @updatedAt @map("updated_at")
 
   @@unique([userId, dedupeKey])
   @@index([userId, isRead, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+/// P64 Communications — retention class of a feed row (see the event catalogue).
+enum NotificationRetentionClass {
+  standard
+  extended
+
+  @@map("notification_retention_class")
+}
+
+enum CommunicationCategory {
+  security
+  transactional
+  lifecycle
+  engagement
+  operational
+
+  @@map("communication_category")
+}
+
+enum CommunicationOutboxState {
+  pending
+  dispatched
+  deferred
+  suppressed
+  failed
+
+  @@map("communication_outbox_state")
+}
+
+enum CommunicationChannel {
+  email
+  in_app
+
+  @@map("communication_channel")
+}
+
+enum CommunicationDeliveryStatus {
+  queued
+  sent
+  delivered
+  bounced
+  complained
+  failed
+  suppressed
+  deferred
+
+  @@map("communication_delivery_status")
+}
+
+enum CommunicationSuppressionReason {
+  hard_bounce
+  soft_bounce
+  complaint
+  manual
+  invalid
+
+  @@map("communication_suppression_reason")
+}
+
+enum CommunicationDigestState {
+  open
+  sent
+  empty
+
+  @@map("communication_digest_state")
+}
+
+/// P64 Communications C1 — the transactional outbox. Written INSIDE the
+/// caller's transaction next to the business change (the same "row in the
+/// transaction, delivery after commit" discipline P17's fan-out
+/// established), drained by the `communications` BullMQ worker. The row is
+/// the durable intent; the queue job is only a hint — a 1-minute sweeper
+/// re-enqueues anything left `pending`/`deferred` past `availableAt`.
+///
+/// The recipient is a USER ID, never an address: the email is read from
+/// `users` at dispatch, so an anonymised account is never mailed and no
+/// caller can supply a recipient. Invites are the one non-user target and
+/// point at `academy_invites` instead.
+model CommunicationOutbox {
+  id                String                   @id @default(uuid())
+  /// Catalogue key, e.g. `learner.payment.approved` — stable audit vocabulary.
+  key               String
+  category          CommunicationCategory
+  recipientUserId   String?                  @map("recipient_user_id")
+  recipient         User?                    @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+  recipientInviteId String?                  @map("recipient_invite_id")
+  /// Tenancy snapshot for owner/manager visibility and for branding.
+  organizationId    String?                  @map("organization_id")
+  academyId         String?                  @map("academy_id")
+  entityType        String?                  @map("entity_type")
+  entityId          String?                  @map("entity_id")
+  /// Natural idempotency key per recipient (`payment:{id}` etc.). Null for
+  /// events that intentionally never dedupe.
+  dedupeKey         String?                  @map("dedupe_key")
+  locale            String                   @default("en")
+  /// `academy` | `platform` — which brand/host the email renders under.
+  branding          String                   @default("platform")
+  values            Json?
+  /// The channel policy resolved at emit time, e.g. `{"inApp":true,"email":"always"}`.
+  channels          Json
+  priority          NotificationPriority     @default(medium)
+  state             CommunicationOutboxState @default(pending)
+  availableAt       DateTime                 @default(now()) @map("available_at")
+  attempts          Int                      @default(0)
+  lastError         String?                  @map("last_error")
+  digestId          String?                  @map("digest_id")
+  digest            CommunicationDigest?     @relation(fields: [digestId], references: [id], onDelete: SetNull)
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  dispatchedAt      DateTime?                @map("dispatched_at")
+
+  deliveries CommunicationDelivery[]
+
+  @@unique([recipientUserId, dedupeKey])
+  @@index([state, availableAt])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([recipientUserId, createdAt(sort: Desc)])
+  @@map("communication_outbox")
+}
+
+/// P64 Communications C1 — one row per channel attempt. `providerMessageId`
+/// is what provider webhooks key on; `templateVersion` makes a copy change
+/// traceable to the email a person actually received.
+model CommunicationDelivery {
+  id                String                      @id @default(uuid())
+  outboxId          String                      @map("outbox_id")
+  outbox            CommunicationOutbox         @relation(fields: [outboxId], references: [id], onDelete: Cascade)
+  channel           CommunicationChannel
+  provider          String?
+  providerMessageId String?                     @map("provider_message_id")
+  status            CommunicationDeliveryStatus @default(queued)
+  errorCode         String?                     @map("error_code")
+  attempts          Int                         @default(0)
+  templateVersion   String?                     @map("template_version")
+  sentAt            DateTime?                   @map("sent_at")
+  createdAt         DateTime                    @default(now()) @map("created_at")
+  updatedAt         DateTime                    @updatedAt @map("updated_at")
+
+  @@index([providerMessageId])
+  @@index([status, updatedAt])
+  @@index([outboxId])
+  @@map("communication_deliveries")
+}
+
+/// P64 Communications C0 — addresses that must not be mailed. Keyed on a
+/// SHA-256 of the canonical address (never the address itself) so the
+/// table leaks nothing if read. Fed by provider webhooks and the platform
+/// console. `expiresAt` null = permanent (complaints, hard bounces).
+model CommunicationSuppression {
+  id          String                         @id @default(uuid())
+  emailHash   String                         @unique @map("email_hash")
+  emailDomain String?                        @map("email_domain")
+  reason      CommunicationSuppressionReason
+  source      String
+  note        String?
+  createdAt   DateTime                       @default(now()) @map("created_at")
+  expiresAt   DateTime?                      @map("expires_at")
+
+  @@index([reason, createdAt(sort: Desc)])
+  @@map("communication_suppressions")
+}
+
+/// P64 Communications C3 — a batch window per recipient and kind
+/// (`staff_daily`, `platform_ops_daily`, `learner_engagement_daily`).
+/// Deferred outbox rows attach to the open digest; the hourly digest job
+/// sends due windows in the recipient's local hour.
+model CommunicationDigest {
+  id              String                   @id @default(uuid())
+  recipientUserId String                   @map("recipient_user_id")
+  recipient       User                     @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+  kind            String
+  windowStart     DateTime                 @map("window_start")
+  windowEnd       DateTime                 @map("window_end")
+  itemCount       Int                      @default(0) @map("item_count")
+  state           CommunicationDigestState @default(open)
+  sentAt          DateTime?                @map("sent_at")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+
+  items CommunicationOutbox[]
+
+  @@unique([recipientUserId, kind, windowStart])
+  @@index([state, windowEnd])
+  @@map("communication_digests")
+}
+
+/// P64 Communications C4 — an email OTP challenge. A TABLE, not Redis, so
+/// it is auditable and survives a cache flush; the attempt counter that
+/// throttles guesses still lives in Redis beside the 2FA one. `codeHash`
+/// is HMAC-SHA256(serverSecret, salt || code): a database read yields
+/// nothing a verifier can replay.
+model AuthEmailChallenge {
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  surface           String
+  academyId         String?   @map("academy_id")
+  codeHash          String    @map("code_hash")
+  salt              String
+  attempts          Int       @default(0)
+  resends           Int       @default(0)
+  deviceFingerprint String?   @map("device_fingerprint")
+  ipAddress         String?   @map("ip_address")
+  expiresAt         DateTime  @map("expires_at")
+  consumedAt        DateTime? @map("consumed_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("auth_email_challenges")
+}
+
+/// P64 Communications C4 — a browser this user has proven email ownership
+/// from. Separate from `student_devices` (the CONTENT device cap) on
+/// purpose: trust is about authentication, the cap is about playback.
+/// `tokenHash` is SHA-256 of the `atlas_trust` cookie value. Revoked on
+/// password change/reset, "sign out everywhere", and by the user.
+model TrustedDevice {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  surface    String
+  tokenHash  String    @unique @map("token_hash")
+  label      String
+  userAgent  String?   @map("user_agent")
+  lastUsedAt DateTime  @default(now()) @map("last_used_at")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("trusted_devices")
+}
+
+/// P64 Communications C5/C6 — where a tenant is in the post-trial /
+/// post-subscription sequence and the hosted-video retention clock. The
+/// subscription sweep evaluates it every tick and emits the next step's
+/// event when its condition holds, so nothing is scheduled far ahead and a
+/// reactivation simply stops producing steps.
+model TenantLifecycleState {
+  id                  String       @id @default(uuid())
+  organizationId      String       @unique @map("organization_id")
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// `active` | `trial_sequence` | `paid_sequence` | `retention_warning` | `deletion_scheduled` | `deleted` | `held`
+  phase               String       @default("active")
+  /// `trial` | `paid` — which retention window applies.
+  origin              String?
+  /// The date inactivity is measured from (trial end / grace end / cancellation effective date).
+  anchorAt            DateTime?    @map("anchor_at")
+  lastStep            String?      @map("last_step")
+  lastStepAt          DateTime?    @map("last_step_at")
+  deletionScheduledAt DateTime?    @map("deletion_scheduled_at")
+  legalHold           Boolean      @default(false) @map("legal_hold")
+  holdReason          String?      @map("hold_reason")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+  createdAt           DateTime     @default(now()) @map("created_at")
+
+  @@index([phase, deletionScheduledAt])
+  @@map("tenant_lifecycle_state")
 }
 
 // ---------------------------------------------------------------------------
