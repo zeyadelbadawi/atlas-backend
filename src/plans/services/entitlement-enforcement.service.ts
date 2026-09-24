@@ -27,9 +27,11 @@
  *     Add-ons into the actual numeric limit — the exact same computation
  *     `TenantSubscriptionService.getUsage` already performs for the
  *     read-only Usage page, never a second, parallel entitlement formula.
- *   - `isTrialPeriodOver` (`trial.util.ts`) for the "has this trial's
- *     clock already run out, even if the scheduled sweep hasn't flipped
- *     the row yet" fail-closed check (Decision 6).
+ *   - `resolveEffectiveSubscriptionStatus`
+ *     (`subscription-effective-status.util.ts`) for the "has this trial's
+ *     clock — or this paid period's grace window — already run out, even
+ *     if the scheduled sweep hasn't flipped the row yet" fail-closed check
+ *     (Decision 6, extended to paid periods by the expiry enforcement).
  *
  * Every rejection is a real Nest `HttpException` carrying a `messageKey`
  * (and a stable `code`) — `AllExceptionsFilter` (already existing, no
@@ -40,14 +42,20 @@
  * in this codebase (e.g. `AcademiesService.assertCanManage`), not a new
  * error shape invented for Phase 2.
  */
-import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+} from '@nestjs/common';
 import { resolveSubscriptionLimits } from '../utils/granted-limits.util';
 import type { Prisma } from '@prisma/client';
 import { TenantSubscriptionsRepository } from '../repositories/tenant-subscriptions.repository';
 import { TenantAddOnsRepository } from '../repositories/tenant-add-ons.repository';
 import { EntitlementService } from './entitlement.service';
 import { TenantUsageRecomputeService } from './tenant-usage-recompute.service';
-import { isTrialPeriodOver } from '../utils/trial.util';
+import { resolveEffectiveSubscriptionStatus } from '../utils/subscription-effective-status.util';
+import { PLANS_CLOCK, type Clock } from '../utils/clock';
 import { bytesToGb } from '../utils/storage-units.util';
 import type {
   EffectiveEntitlements,
@@ -117,6 +125,7 @@ export class EntitlementEnforcementService {
     private readonly tenantAddOnsRepository: TenantAddOnsRepository,
     private readonly entitlementService: EntitlementService,
     private readonly tenantUsageRecomputeService: TenantUsageRecomputeService,
+    @Inject(PLANS_CLOCK) private readonly clock: Clock,
   ) {}
 
   /**
@@ -399,10 +408,17 @@ export class EntitlementEnforcementService {
       });
     }
 
-    if (
-      INACTIVE_STATUSES.has(subscription.status) ||
-      isTrialPeriodOver(subscription, new Date())
-    ) {
+    // The EFFECTIVE status: a trial past `trialEndsAt`, a paid period past
+    // its grace end, or a cancel-at-period-end past `currentPeriodEnd` is
+    // inactive here the instant the clock says so, whether or not the
+    // sweep has persisted it yet. `grace_period` is deliberately NOT in
+    // `INACTIVE_STATUSES` — the customer keeps consuming entitlements
+    // while a late renewal is sorted out.
+    const { effectiveStatus } = resolveEffectiveSubscriptionStatus(
+      subscription,
+      this.clock.now(),
+    );
+    if (INACTIVE_STATUSES.has(effectiveStatus)) {
       throw new ForbiddenException({
         messageKey: 'errors.entitlement.subscriptionInactive',
         code: 'ENTITLEMENT_SUBSCRIPTION_INACTIVE',

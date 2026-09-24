@@ -67,3 +67,15 @@ export const SUBSCRIPTION_SWEEP_MAX_RECOMPUTE_PER_TICK = 10000;
 export const SUBSCRIPTION_SWEEP_QUERY_PAGE_SIZE = 500;
 
 export type SubscriptionSweepJobPayload = Record<string, never>;
+
+/**
+ * Expiry enforcement — how long a PAID subscription keeps working after
+ * `currentPeriodEnd` before it is `expired`. During this window the row is
+ * `grace_period` (set by the sweep, or derived live by
+ * `resolveEffectiveSubscriptionStatus` if the sweep has not yet run) and
+ * the tenant keeps full access; the day after it ends, mutations are
+ * refused and public websites stop being served. Seven days is the owner-
+ * approved value; it is a product decision, not a technical one.
+ */
+export const GRACE_PERIOD_DAYS = 7;
+export const GRACE_PERIOD_MS = GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000;

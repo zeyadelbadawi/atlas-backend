@@ -76,6 +76,7 @@ function buildService(options: {
     { findManyForOrganization: jest.fn().mockResolvedValue([]) } as never,
     new EntitlementService(),
     { computeLiveCounts } as never,
+    { now: () => new Date() },
   );
 
   return { service, computeLiveCounts };

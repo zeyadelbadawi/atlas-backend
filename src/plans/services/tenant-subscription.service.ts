@@ -96,6 +96,7 @@ export class TenantSubscriptionService {
       lifecycle: state.lifecycle,
       hasAccess: state.hasAccess,
       ...(state.status ? { status: state.status } : {}),
+      ...(state.effectiveStatus ? { effectiveStatus: state.effectiveStatus } : {}),
       ...(plan ? { plan } : {}),
       ...(state.trialEndsAt ? { trialEndsAt: state.trialEndsAt.toISOString() } : {}),
       ...(state.trialDaysRemaining === undefined
@@ -104,6 +105,8 @@ export class TenantSubscriptionService {
       ...(state.currentPeriodEnd
         ? { currentPeriodEnd: state.currentPeriodEnd.toISOString() }
         : {}),
+      ...(state.graceEndsAt ? { graceEndsAt: state.graceEndsAt.toISOString() } : {}),
+      ...(state.accessEndsAt ? { accessEndsAt: state.accessEndsAt.toISOString() } : {}),
       trialAvailable,
     };
   }

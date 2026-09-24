@@ -20,7 +20,12 @@
  * change — the frontend never performs this mutation itself, only reacts
  * to `Payment.status === 'succeeded'` afterward.
  */
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { limitsToGrant } from '../../plans/utils/granted-limits.util';
 import { Prisma } from '@prisma/client';
 import type { Checkout, Payment, SubscriptionBillingCycle } from '@prisma/client';
@@ -30,6 +35,7 @@ import { PlansRepository } from '../../plans/repositories/plans.repository';
 import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
 import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
 import { TenantAddOnsRepository } from '../../plans/repositories/tenant-add-ons.repository';
+import { PLANS_CLOCK, type Clock } from '../../plans/utils/clock';
 
 function addPeriod(start: Date, billingCycle: SubscriptionBillingCycle | null): Date {
   const end = new Date(start);
@@ -53,6 +59,7 @@ export class PaymentApplicationService {
     private readonly addOnsRepository: AddOnsRepository,
     private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
     private readonly tenantAddOnsRepository: TenantAddOnsRepository,
+    @Inject(PLANS_CLOCK) private readonly clock: Clock,
   ) {}
 
   /**
@@ -115,7 +122,29 @@ export class PaymentApplicationService {
         throw new NotFoundException({ messageKey: 'errors.checkout.planNoLongerExists' });
       }
 
-      const now = new Date();
+      const now = this.clock.now();
+      /*
+        RENEWAL BEFORE EXPIRY EXTENDS; RENEWAL AFTER EXPIRY RESTARTS.
+        A customer who pays while their paid period is still running
+        (`active`, or `grace_period` whose period end is somehow still
+        ahead) has bought the NEXT period, so it starts where the current
+        one ends — paying early must never forfeit days already paid for.
+        Any other state (a lapsed period, a grace window, a trial, a
+        cancelled or expired row) starts fresh from now: there is no
+        remaining paid time to add to. `upsertForPlanPurchase` resets
+        `graceEndsAt` and `cancelAtPeriodEnd` on every purchase, so a
+        cancel-then-renew customer is simply active again.
+      */
+      const existing = await this.tenantSubscriptionsRepository.findByOrganizationId(
+        tx,
+        checkout.organizationId,
+      );
+      const extendsCurrentPeriod =
+        existing !== null &&
+        (existing.status === 'active' || existing.status === 'grace_period') &&
+        existing.currentPeriodEnd !== null &&
+        existing.currentPeriodEnd.getTime() > now.getTime();
+      const periodStart = extendsCurrentPeriod ? existing.currentPeriodEnd! : now;
       // Phase P19 (`Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` P0-3):
       // `upsertForPlanPurchase` now creates the Organization's first-ever
       // `tenant_subscriptions` row itself when none exists yet, rather
@@ -141,8 +170,8 @@ export class PaymentApplicationService {
           // customer did not ask for.
           grantedLimits: limitsToGrant(plan) as unknown as Prisma.InputJsonValue,
           billingCycle: checkout.billingCycle,
-          currentPeriodStart: now,
-          currentPeriodEnd: addPeriod(now, checkout.billingCycle),
+          currentPeriodStart: periodStart,
+          currentPeriodEnd: addPeriod(periodStart, checkout.billingCycle),
         },
       );
       return;

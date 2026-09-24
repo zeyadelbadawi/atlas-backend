@@ -21,14 +21,22 @@
  */
 import type { PlanResponse } from './plan.contract';
 import type { SubscriptionLifecycle } from '../services/subscription-access.service';
+import type { EffectiveSubscriptionStatus } from '../utils/subscription-effective-status.util';
 
 export interface SubscriptionLifecycleResponse {
   /** The authoritative state. The frontend switches on this and derives nothing. */
   readonly lifecycle: SubscriptionLifecycle;
   /** True when gated product areas may be used at all. */
   readonly hasAccess: boolean;
-  /** The raw subscription status, for display and debugging. */
+  /** The raw (STORED) subscription status, for display and debugging. */
   readonly status?: string;
+  /**
+   * Expiry enforcement — the status the row would have if the sweep had
+   * run at this instant, which is what `lifecycle`/`hasAccess` are derived
+   * from. Equals `status` except between a dated transition and the next
+   * sweep tick. Present whenever a subscription row exists.
+   */
+  readonly effectiveStatus?: EffectiveSubscriptionStatus;
   /**
    * The plan this state refers to — the one being trialed, the one
    * subscribed to, or the one whose trial just ended (which is what makes
@@ -41,6 +49,19 @@ export interface SubscriptionLifecycleResponse {
   /** Whole days left in an active trial. 0 on the final day, never negative. */
   readonly trialDaysRemaining?: number;
   readonly currentPeriodEnd?: string;
+  /**
+   * Expiry enforcement — the end of the grace window: present while
+   * `lifecycle` is `grace_period`, and on an `expired` row that went
+   * through grace (so the recovery screen can say when access ended).
+   */
+  readonly graceEndsAt?: string;
+  /**
+   * Expiry enforcement — when access ENDS if nothing changes: the trial
+   * end for a trial, `currentPeriodEnd` for a subscription cancelling at
+   * period end, the grace end for a live or in-grace paid subscription.
+   * Absent once access has already ended, and for undated states.
+   */
+  readonly accessEndsAt?: string;
   /**
    * Whether this ACCOUNT may still redeem its one lifetime Free Trial.
    *

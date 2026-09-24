@@ -166,6 +166,9 @@ export class SubscriptionSweepService {
 
   async run(): Promise<void> {
     const expiredCount = await this.subscriptionExpiryService.expireDueTrials();
+    // Expiry enforcement — the paid half of the lifecycle, beside the
+    // trial half. Same platform-owner context, same tick.
+    const paidPeriods = await this.subscriptionExpiryService.expireDuePaidPeriods();
 
     const platformOwner = await this.usersRepository.findFirstPlatformOwnerId();
     if (!platformOwner) {
@@ -266,6 +269,7 @@ export class SubscriptionSweepService {
     this.logger.log(
       {
         expiredCount,
+        paidPeriods,
         recomputeEnqueuedCount,
         publishedAnnouncementCount,
         publishedBlogPostCount,
