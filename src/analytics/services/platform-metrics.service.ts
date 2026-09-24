@@ -31,6 +31,13 @@ import { currentCalendarMonth, previousCalendarMonth } from '../utils/date-range
 import { pickDominantCurrencyAmount } from '../utils/currency-aggregation.util';
 import type { PlatformMetricsOverviewResponse } from '../dto/platform-metrics.contract';
 import type { PlatformVideoMetricsResponse } from '../dto/platform-video-metrics.contract';
+import type { PlatformCommerceMetricsResponse } from '../dto/platform-commerce-metrics.contract';
+import type { PlatformDeliveryMetricsResponse } from '../dto/platform-delivery-metrics.contract';
+import { REPORT_WINDOW_DEFAULT_DAYS } from '../dto/platform-metrics-query.dto';
+import {
+  CONTENT_ACCESS_LOG_RETENTION_DAYS,
+  QUIZ_ATTEMPT_EVENTS_RETENTION_DAYS,
+} from '../../learning/queue/phase2-maintenance.types';
 
 /**
  * No infrastructure/APM monitoring pipeline exists anywhere in this
@@ -44,6 +51,19 @@ import type { PlatformVideoMetricsResponse } from '../dto/platform-video-metrics
  * revisit once real monitoring exists (§19).
  */
 const NO_MONITORING_BASELINE_PERCENT = 100;
+
+/**
+ * P64 Phase 4 §E.5 — the same per-request read ceiling
+ * `AcademyReportsService` applies (`MAX_ACCESS_ROWS` / `MAX_EVENT_ROWS`):
+ * a percentile or a per-reason breakdown is computed over at most this
+ * many most-recent rows and the response says so via `truncated`.
+ */
+const MAX_OPS_SAMPLE_ROWS = 50_000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const daysAgo = (days: number, now: Date): Date =>
+  new Date(now.getTime() - days * DAY_MS);
 
 @Injectable()
 export class PlatformMetricsService {
@@ -156,6 +176,159 @@ export class PlatformMetricsService {
       ),
       processing,
       generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * P64 Phase 4 §E.5 — `GET /platform-metrics/commerce?days=`: course-order
+   * funnel, manual-review backlog and throughput, proof→approval latency,
+   * refunds and recognised revenue for the trailing `days` window. Every
+   * read runs under the platform owner's RLS context (`course_orders_
+   * platform_select`, `payments_platform_review_select`, `payment_proofs_
+   * platform_review_select`, `payment_reviews_platform_review_select`,
+   * `course_order_refunds_platform_select`).
+   */
+  async getCommerceOverview(
+    platformOwnerId: string,
+    days: number = REPORT_WINDOW_DEFAULT_DAYS,
+  ): Promise<PlatformCommerceMetricsResponse> {
+    const now = new Date();
+    const from = daysAgo(days, now);
+
+    const [ordersByStatus, awaitingReview, reviewsByStatus, latency, refunds, revenue] =
+      await this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => [
+        await this.platformScaleRepository.courseOrdersCreatedByStatus(tx, from),
+        await this.platformScaleRepository.courseOrderPaymentsAwaitingReview(tx),
+        await this.platformScaleRepository.courseOrderPaymentReviewsByStatus(tx, from),
+        await this.platformScaleRepository.courseOrderApprovalLatency(
+          tx,
+          from,
+          MAX_OPS_SAMPLE_ROWS,
+        ),
+        await this.platformScaleRepository.courseOrderRefundCounts(tx, from),
+        await this.platformScaleRepository.paidOrderRevenueByCurrency(tx, from),
+      ]);
+
+    // Every `CourseOrderStatus` value, explicitly — an unmapped status
+    // would silently vanish from `created`'s breakdown otherwise.
+    const orders = {
+      created: 0,
+      draft: 0,
+      pendingPayment: 0,
+      paid: 0,
+      expired: 0,
+      refunded: 0,
+      cancelled: 0,
+    };
+    const orderStatusKeys: Record<string, keyof typeof orders> = {
+      draft: 'draft',
+      pending_payment: 'pendingPayment',
+      paid: 'paid',
+      expired: 'expired',
+      refunded: 'refunded',
+      cancelled: 'cancelled',
+    };
+    for (const row of ordersByStatus) {
+      const key = orderStatusKeys[row.status];
+      if (key) orders[key] += row.orders;
+      orders.created += row.orders;
+    }
+
+    const reviews = { approved: 0, rejected: 0 };
+    for (const row of reviewsByStatus) {
+      if (row.status in reviews)
+        reviews[row.status as keyof typeof reviews] = row.reviews;
+    }
+
+    return {
+      windowDays: days,
+      orders,
+      payments: {
+        awaitingReview,
+        approvedInWindow: reviews.approved,
+        rejectedInWindow: reviews.rejected,
+      },
+      approvalLatencySeconds: {
+        p50: latency.sampleSize === 0 ? null : latency.p50,
+        p95: latency.sampleSize === 0 ? null : latency.p95,
+        sampleSize: latency.sampleSize,
+        truncated: latency.sampleSize >= MAX_OPS_SAMPLE_ROWS,
+      },
+      refunds: {
+        requestedInWindow: refunds.requested,
+        completedInWindow: refunds.completed,
+      },
+      revenue: {
+        paidByCurrency: Object.fromEntries(
+          revenue.map((row) => [row.currency, Math.round(row.minorUnits)]),
+        ),
+      },
+      generatedAt: now.toISOString(),
+    };
+  }
+
+  /**
+   * P64 Phase 4 §E.5 — `GET /platform-metrics/delivery?days=`: protected-
+   * content access decisions in the window, the video inventory (reusing
+   * `getVideoOverview` verbatim) and the retention backlog (rows past
+   * `CONTENT_ACCESS_LOG_RETENTION_DAYS` / `QUIZ_ATTEMPT_EVENTS_RETENTION_
+   * DAYS` the Phase 2 sweep has not pruned yet). RLS: `content_access_log_
+   * platform_select`, `quiz_attempt_events_platform_select`,
+   * `media_assets_platform_select`.
+   */
+  async getDeliveryOverview(
+    platformOwnerId: string,
+    days: number = REPORT_WINDOW_DEFAULT_DAYS,
+  ): Promise<PlatformDeliveryMetricsResponse> {
+    const now = new Date();
+    const from = daysAgo(days, now);
+
+    const [decisions, backlog] = await this.tenancyContextService.runInUserContext(
+      platformOwnerId,
+      async (tx) => [
+        await this.platformScaleRepository.contentAccessDecisions(
+          tx,
+          from,
+          MAX_OPS_SAMPLE_ROWS,
+        ),
+        await this.platformScaleRepository.retentionBacklog(
+          tx,
+          daysAgo(CONTENT_ACCESS_LOG_RETENTION_DAYS, now),
+          daysAgo(QUIZ_ATTEMPT_EVENTS_RETENTION_DAYS, now),
+        ),
+      ],
+    );
+    const video = await this.getVideoOverview(platformOwnerId);
+
+    let granted = 0;
+    let refused = 0;
+    let sampled = 0;
+    const refusedByReason: Record<string, number> = {};
+    for (const row of decisions) {
+      sampled += row.rows;
+      if (row.result === 'granted') {
+        granted += row.rows;
+        continue;
+      }
+      refused += row.rows;
+      const reason = row.reason ?? 'other';
+      refusedByReason[reason] = (refusedByReason[reason] ?? 0) + row.rows;
+    }
+
+    return {
+      windowDays: days,
+      grants: {
+        granted,
+        refused,
+        refusedByReason,
+        truncated: sampled >= MAX_OPS_SAMPLE_ROWS,
+      },
+      video,
+      retention: {
+        contentAccessLogRowsPastWindow: backlog.contentAccessLogRows,
+        quizAttemptEventsPastWindow: backlog.quizAttemptEventRows,
+      },
+      generatedAt: now.toISOString(),
     };
   }
 
