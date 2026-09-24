@@ -14,6 +14,18 @@
  * auth guard at all (`PublicWebsiteController`'s own doc comment).
  * Published lessons only, same rule `CourseContentService` already
  * applies for enrolled students.
+ *
+ * `isPreview` IS public, and deliberately so. The schema's own
+ * architecture note on `LessonContent` states the split: the lesson row
+ * "stays publicly listable (title, order, duration, preview flag)" while
+ * its CONTENT has no public RLS policy and is reachable only through
+ * `LessonContentService.getContent()`, which re-decides entitlement when
+ * the bytes are asked for. The flag was simply never projected here, so a
+ * visitor could not see which lesson is the free sample even though
+ * `getContent` already serves it to them anonymously (its `isOpenPreview`
+ * short-circuit, behind `OptionalJwtAuthGuard`). Publishing the flag tells
+ * the visitor what the server was already willing to give them; it grants
+ * nothing new, and the content gate is untouched.
  */
 import type {
   CourseLesson as PrismaCourseLesson,
@@ -25,6 +37,8 @@ export interface PublicCourseCurriculumLessonResponse {
   readonly title: string;
   readonly order: number;
   readonly contentType: PrismaCourseLesson['contentType'];
+  /** The free sample. `LessonContentService` serves this lesson's content to anonymous visitors. */
+  readonly isPreview: boolean;
 }
 
 export interface PublicCourseCurriculumSectionResponse {
@@ -48,6 +62,7 @@ export function toPublicCourseCurriculumResponse(
         title: lesson.title,
         order: lesson.order,
         contentType: lesson.contentType,
+        isPreview: lesson.isPreview,
       })),
   }));
 }
