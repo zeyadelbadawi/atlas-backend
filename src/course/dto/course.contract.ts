@@ -30,6 +30,21 @@ export interface CourseInstructorSummaryResponse {
 export interface CourseStatsResponse {
   readonly totalSections: number;
   readonly totalLessons: number;
+  /**
+   * P64 Phase 4 — what a catalog card must be able to say about a course
+   * WITHOUT a second request per card (the acceptance criterion names
+   * "level, duration, price, preview badge", and the rating block on the
+   * details page). Aggregated in one batched query per page of results;
+   * absent on internal (non-catalog) reads, which is why every field is
+   * optional here rather than defaulted to a misleading zero.
+   */
+  /** Sum of published lessons' `durationSeconds`; null when no lesson declares one. */
+  readonly durationSeconds?: number | null;
+  /** True when at least one PUBLISHED lesson is a free preview. */
+  readonly hasPreview?: boolean;
+  /** Mean of APPROVED reviews, 0 when there are none. */
+  readonly averageRating?: number;
+  readonly totalReviews?: number;
 }
 
 export interface CourseResponse {

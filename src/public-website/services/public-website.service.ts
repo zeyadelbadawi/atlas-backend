@@ -348,17 +348,22 @@ export class PublicWebsiteService {
       Number(process.hrtime.bigint() - catalogStarted) / 1e6,
     );
 
-    const { sectionCounts, lessonCounts } =
+    const ids = items.map((course) => course.id);
+    const [{ sectionCounts, lessonCounts }, aggregates] =
       await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
-        this.coursesRepository.countSectionsAndLessonsBatch(
-          tx,
-          items.map((course) => course.id),
-        ),
+        Promise.all([
+          this.coursesRepository.countSectionsAndLessonsBatch(tx, ids),
+          this.coursesRepository.catalogAggregatesBatch(tx, ids),
+        ]),
       );
     const withStats = items.map((course) =>
       toCourseResponse(course, {
         totalSections: sectionCounts.get(course.id) ?? 0,
         totalLessons: lessonCounts.get(course.id) ?? 0,
+        durationSeconds: aggregates.durationSeconds.get(course.id) ?? null,
+        hasPreview: aggregates.hasPreview.has(course.id),
+        averageRating: aggregates.ratings.get(course.id)?.average ?? 0,
+        totalReviews: aggregates.ratings.get(course.id)?.total ?? 0,
       }),
     );
 
@@ -399,18 +404,24 @@ export class PublicWebsiteService {
           courseId,
         );
         if (!course) return null;
-        const [totalSections, totalLessons] = await Promise.all([
+        const [totalSections, totalLessons, aggregates] = await Promise.all([
           this.coursesRepository.countSections(tx, course.id),
           this.coursesRepository.countLessons(tx, course.id),
+          this.coursesRepository.catalogAggregatesBatch(tx, [course.id]),
         ]);
-        return { course, totalSections, totalLessons };
+        return { course, totalSections, totalLessons, aggregates };
       },
     );
     if (!result) return null;
 
-    return toCourseResponse(result.course, {
+    const { course, aggregates } = result;
+    return toCourseResponse(course, {
       totalSections: result.totalSections,
       totalLessons: result.totalLessons,
+      durationSeconds: aggregates.durationSeconds.get(course.id) ?? null,
+      hasPreview: aggregates.hasPreview.has(course.id),
+      averageRating: aggregates.ratings.get(course.id)?.average ?? 0,
+      totalReviews: aggregates.ratings.get(course.id)?.total ?? 0,
     });
   }
 

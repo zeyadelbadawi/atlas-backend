@@ -348,6 +348,64 @@ export class CoursesRepository {
    * mid-page and threw. Missing entries mean zero, not absent — callers
    * should read via `?? 0`.
    */
+  /**
+   * P64 Phase 4 — the per-course aggregates a catalog card renders
+   * (duration, preview badge, rating), for one page of results in three
+   * grouped queries instead of three per card. Published lessons only,
+   * matching what the public curriculum lists; approved reviews only,
+   * matching what the public rating endpoint reports — the card and the
+   * details page must never disagree about the same number.
+   */
+  async catalogAggregatesBatch(
+    tx: Prisma.TransactionClient,
+    courseIds: readonly string[],
+  ): Promise<{
+    durationSeconds: Map<string, number | null>;
+    hasPreview: Set<string>;
+    ratings: Map<string, { average: number; total: number }>;
+  }> {
+    if (courseIds.length === 0) {
+      return { durationSeconds: new Map(), hasPreview: new Set(), ratings: new Map() };
+    }
+    const ids = courseIds as string[];
+    const [durations, previews, reviews] = await Promise.all([
+      tx.courseLesson.groupBy({
+        by: ['courseId'],
+        where: { courseId: { in: ids }, status: 'published' },
+        _sum: { durationSeconds: true },
+      }),
+      tx.courseLesson.groupBy({
+        by: ['courseId'],
+        where: { courseId: { in: ids }, status: 'published', isPreview: true },
+        _count: { _all: true },
+      }),
+      tx.courseReview.groupBy({
+        by: ['courseId'],
+        where: { courseId: { in: ids }, status: 'approved' },
+        _avg: { rating: true },
+        _count: { _all: true },
+      }),
+    ]);
+    return {
+      durationSeconds: new Map(
+        durations.map((g) => [g.courseId, g._sum.durationSeconds ?? null]),
+      ),
+      hasPreview: new Set(
+        previews.filter((g) => g._count._all > 0).map((g) => g.courseId),
+      ),
+      ratings: new Map(
+        reviews.map((g) => [
+          g.courseId,
+          {
+            // One decimal, like the public rating endpoint.
+            average: Math.round((g._avg.rating ?? 0) * 10) / 10,
+            total: g._count._all,
+          },
+        ]),
+      ),
+    };
+  }
+
   async countSectionsAndLessonsBatch(
     tx: Prisma.TransactionClient,
     courseIds: readonly string[],

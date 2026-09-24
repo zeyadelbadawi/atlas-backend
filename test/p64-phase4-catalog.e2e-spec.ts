@@ -21,9 +21,13 @@ import {
   createAdminPrisma,
   seedAcademy,
   seedAcademyMember,
+  seedAcademyStudent,
   seedActiveSubscriptionForOrg,
   seedCourse,
   seedCourseCategory,
+  seedCourseLesson,
+  seedCourseSection,
+  seedEnrollment,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import { uniqueTestEmail } from './utils/test-app';
@@ -324,5 +328,103 @@ describe('Public Catalog v2 (e2e)', () => {
         `/public/websites/${academy.id}/courses/00000000-0000-0000-0000-000000000000/recommendations`,
       )
       .expect(404);
+  });
+
+  it('P64 Phase 4 — a catalog card can say duration, preview and rating without a second request', async () => {
+    // Published lessons only for duration and preview — a draft preview is
+    // not something a visitor can open, so it must not earn the badge —
+    // and approved reviews only for the rating, so the card never disagrees
+    // with the details page's own rating endpoint.
+    const owner = await signUpAndSignIn(app, 'cat-agg-owner');
+    const org = await seedOrganizationWithOwner(admin, owner.userId, 'cat-agg-org');
+    await seedActiveSubscriptionForOrg(admin, org.id, 'cat-agg');
+    const academy = await seedAcademy(admin, org.id, 'cat-agg-academy');
+    const course = await seedCourse(admin, academy.id, 'Aggregates Course', {
+      status: 'published',
+      visibility: 'public',
+    });
+    const section = await seedCourseSection(admin, course.id, 'S', 0);
+    const l1 = await seedCourseLesson(admin, section.id, course.id, 'L1', 0, {
+      status: 'published',
+    });
+    const l2 = await seedCourseLesson(admin, section.id, course.id, 'L2', 1, {
+      status: 'published',
+    });
+    const draft = await seedCourseLesson(
+      admin,
+      section.id,
+      course.id,
+      'Draft preview',
+      2,
+      {
+        status: 'draft',
+      },
+    );
+    await admin.courseLesson.update({
+      where: { id: l1.id },
+      data: { durationSeconds: 300 },
+    });
+    await admin.courseLesson.update({
+      where: { id: l2.id },
+      data: { durationSeconds: 120 },
+    });
+    await admin.courseLesson.update({
+      where: { id: draft.id },
+      data: { isPreview: true, durationSeconds: 999 },
+    });
+
+    const a = await signUpAndSignIn(app, 'cat-agg-a');
+    const b = await signUpAndSignIn(app, 'cat-agg-b');
+    for (const [u, rating, status] of [
+      [a, 5, 'approved'],
+      [b, 3, 'approved'],
+    ] as const) {
+      await seedAcademyStudent(admin, academy.id, u.userId);
+      await seedEnrollment(admin, u.userId, course.id, academy.id, {
+        status: 'enrolled',
+      });
+      await admin.courseReview.create({
+        data: {
+          courseId: course.id,
+          academyId: academy.id,
+          studentId: u.userId,
+          rating,
+          status,
+        },
+      });
+    }
+    const c = await signUpAndSignIn(app, 'cat-agg-c');
+    await seedAcademyStudent(admin, academy.id, c.userId);
+    await seedEnrollment(admin, c.userId, course.id, academy.id, { status: 'enrolled' });
+    await admin.courseReview.create({
+      data: {
+        courseId: course.id,
+        academyId: academy.id,
+        studentId: c.userId,
+        rating: 1,
+        status: 'pending',
+      },
+    });
+
+    const list = await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}/courses`)
+      .expect(200);
+    const item = list.body.items.find((x: { id: string }) => x.id === course.id);
+    expect(item.stats.durationSeconds).toBe(420);
+    expect(item.stats.hasPreview).toBe(false);
+    expect(item.stats.averageRating).toBe(4);
+    expect(item.stats.totalReviews).toBe(2);
+
+    // Publishing the preview lesson earns the badge — and only then.
+    await admin.courseLesson.update({
+      where: { id: draft.id },
+      data: { status: 'published' },
+    });
+    const details = await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}/courses/${course.id}`)
+      .expect(200);
+    expect(details.body.stats.hasPreview).toBe(true);
+    expect(details.body.stats.durationSeconds).toBe(1419);
+    expect(details.body.stats.averageRating).toBe(4);
   });
 });
