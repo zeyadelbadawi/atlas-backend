@@ -628,7 +628,7 @@ Serialized by the lead: every schema change, every merge, every push/deploy, eve
 | W-OUT outbox/catalogue/dispatcher/templates | C1 | worker (`ws-outbox`) | IN PROGRESS | | | | migrates the 17 producers; adds `PLATFORM_WEB_URL` + link builder |
 | W-OTP | C4 | worker | PENDING | | | | |
 | W-EVT missing events + digests | C3 | worker | PENDING | | | | |
-| W-FE2 OTP/trusted devices/comms settings UI | C4/C2 | worker | PENDING | | | | |
+| W-FE2 OTP/trusted devices/comms settings UI | C4/C2 | worker (`ws-otp-ui`) | IN PROGRESS | | | | codes against the OTP / trusted-device / communication-settings contracts fixed by the lead |
 | W-LIFE lifecycle + retention | C5/C6 | worker | PENDING | | | | |
 | W-FE3 retention/lifecycle/comms analytics UI | C6/C7 | worker | PENDING | | | | |
 
