@@ -24,8 +24,11 @@
  * real `(recipient_user_id, dedupe_key)` unique constraint and is reported
  * as `{ created: false }`, never thrown — and, because a failed statement
  * aborts a Postgres transaction, each of the two inserts runs inside its
- * own SAVEPOINT so that report leaves the CALLER's transaction usable
- * (see `withSavepoint`).
+ * own SAVEPOINT so that report leaves the CALLER's transaction usable.
+ * The notification insert carries its own (inside
+ * `NotificationsRepository.create`, where the swallow lives, so that
+ * every caller of that repository is safe and not just this one); the
+ * outbox insert below wraps itself in `withSavepoint` here.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -33,6 +36,7 @@ import { Prisma } from '@prisma/client';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { NotificationsRepository } from '../../notification-events/repositories/notifications.repository';
 import { RedisService } from '../../redis/redis.service';
+import { withSavepoint } from '../../common/database/savepoint.util';
 import {
   COMMUNICATION_CATALOG,
   type CommunicationCatalogEntry,
@@ -96,24 +100,21 @@ export class CommunicationService {
     const locale = await this.resolveLocale(tx, entry, input);
 
     if (entry.channels.inApp === 'always') {
-      const created = await this.withSavepoint(
-        tx,
-        dedupeKey !== null,
-        () =>
-          this.notificationsRepository.create(tx, {
-            userId: input.recipientUserId,
-            type: entry.notificationType,
-            priority: entry.priority,
-            titleKey: entry.titleKey,
-            messageKey: entry.messageKey,
-            values,
-            actionUrl,
-            actionLabelKey: entry.actionLabelKey,
-            dedupeKey,
-            retentionClass: entry.retentionClass,
-          }),
-        (result) => result === false,
-      );
+      // No savepoint here: `create` runs its own around the INSERT it is
+      // allowed to lose, so a deduped call already returns with the
+      // caller's transaction intact.
+      const created = await this.notificationsRepository.create(tx, {
+        userId: input.recipientUserId,
+        type: entry.notificationType,
+        priority: entry.priority,
+        titleKey: entry.titleKey,
+        messageKey: entry.messageKey,
+        values,
+        actionUrl,
+        actionLabelKey: entry.actionLabelKey,
+        dedupeKey,
+        retentionClass: entry.retentionClass,
+      });
       // A deduped in-app row means this event was already emitted once;
       // never open a second delivery intent for it.
       if (!created) return { created: false, outboxId: null };
@@ -133,7 +134,7 @@ export class CommunicationService {
     };
 
     try {
-      await this.withSavepoint(
+      await this.withOutboxSavepoint(
         tx,
         dedupeKey !== null,
         () => tx.$executeRaw`
@@ -160,64 +161,32 @@ export class CommunicationService {
   }
 
   /**
-   * Runs one INSERT that may collide on a dedupe key inside a SAVEPOINT.
+   * Runs the outbox INSERT inside a SAVEPOINT when it can collide.
    *
-   * Reporting a duplicate as `{ created: false }` rather than throwing is
-   * only half the contract: in PostgreSQL a failed statement ABORTS the
-   * enclosing transaction, and every statement after it — including the
-   * caller's own business writes and the eventual COMMIT — fails or
-   * silently becomes a ROLLBACK. Catching the unique violation therefore
-   * does not, on its own, leave the caller's transaction usable; the
-   * emitting service would see "current transaction is aborted" on its
-   * very next query, and a retried live-session announcement would take
-   * every other student's notification (and the caller's writes) down with
-   * the one duplicate.
-   *
-   * `ROLLBACK TO SAVEPOINT` is the one statement Postgres accepts in an
-   * aborted transaction, and it restores it to exactly the state it had
-   * before this INSERT. Skipped entirely when the key never dedupes:
-   * with a NULL `dedupe_key` no unique violation is possible, so the two
-   * extra round-trips would buy nothing.
+   * The reasoning is `withSavepoint`'s own (see
+   * `src/common/database/savepoint.util.ts`): catching the unique
+   * violation below is only half of an idempotent insert, because in
+   * PostgreSQL the failed statement has already aborted the CALLER's
+   * transaction — a retried live-session announcement would otherwise
+   * take every other student's row, and the emitting service's own
+   * writes, down with the one duplicate. Skipped when the key never
+   * dedupes: with a NULL `dedupe_key` no unique violation is possible,
+   * so the two extra round-trips would buy nothing.
    */
-  private async withSavepoint<T>(
+  private withOutboxSavepoint<T>(
     tx: Prisma.TransactionClient,
     guard: boolean,
     work: () => Promise<T>,
-    collided: (result: T) => boolean = () => false,
   ): Promise<T> {
     if (!guard) return work();
-    // Identifier, never a bound parameter — Postgres does not accept one
-    // for a savepoint name. Hex from `randomUUID`, so nothing a caller
-    // controls ever reaches it, and nesting cannot reuse a name.
-    const name = `comm_emit_${randomUUID().replace(/-/g, '')}`;
-    await tx.$executeRawUnsafe(`SAVEPOINT "${name}"`);
-    try {
-      const result = await work();
-      await tx.$executeRawUnsafe(
-        collided(result)
-          ? `ROLLBACK TO SAVEPOINT "${name}"`
-          : `RELEASE SAVEPOINT "${name}"`,
-      );
-      return result;
-    } catch (error) {
-      await this.rollbackToSavepoint(tx, name);
-      throw error;
-    }
-  }
-
-  private async rollbackToSavepoint(
-    tx: Prisma.TransactionClient,
-    name: string,
-  ): Promise<void> {
-    try {
-      await tx.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT "${name}"`);
-    } catch (error) {
-      // Never mask the original failure with the cleanup's own.
-      this.logger.warn(
-        { error: error instanceof Error ? error.message : String(error) },
-        'Could not roll back to the emit savepoint; the caller transaction stays aborted.',
-      );
-    }
+    return withSavepoint(tx, work, {
+      onCleanupError: (error) =>
+        // Never mask the original failure with the cleanup's own.
+        this.logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'Could not roll back to the emit savepoint; the caller transaction stays aborted.',
+        ),
+    });
   }
 
   /**

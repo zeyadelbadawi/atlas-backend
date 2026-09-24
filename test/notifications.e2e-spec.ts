@@ -267,5 +267,99 @@ describe('Notifications — P17 (e2e)', () => {
       expect(first).toBe(true);
       expect(second).toBe(true);
     });
+
+    /**
+     * N11 calls the writer twice in two SEPARATE transactions, which is
+     * why it never caught this: the aborted transaction simply rolled
+     * back with nothing else in it. A real producer does not stop at the
+     * notification — it reads the row back, updates the order, or loops
+     * over every enrolled student — and in PostgreSQL the swallowed
+     * unique violation leaves that transaction aborted, so every
+     * statement after it fails and the COMMIT silently becomes a
+     * ROLLBACK. These two assert the recovery for the FAN-OUT caller;
+     * `p64-comm-outbox.e2e-spec.ts` asserts it for `emit`.
+     */
+    it('N13: a deduped notify leaves the caller’s transaction usable (the business write must still commit)', async () => {
+      const user = await signUpAndSignIn(app, 'notif-dedupe-tx');
+      const dedupeKey = `dedupe-tx-${user.userId}`;
+      await seedNotification(user.userId, dedupeKey);
+
+      const probedName = `renamed-${Date.now()}`;
+      const outcome = await tenancyContextService.runInUserContext(
+        user.userId,
+        async (tx) => {
+          const second = await notificationFanoutService.notify(tx, {
+            userId: user.userId,
+            type: 'system',
+            priority: 'medium',
+            titleKey: 'notifications:events.provisioningCompleted.title',
+            messageKey: 'notifications:events.provisioningCompleted.message',
+            values: { academyName: 'Test Academy' },
+            dedupeKey,
+          });
+          // Both halves of what a real producer does after notifying:
+          // read something back, then write.
+          const readBack = await tx.$queryRaw<
+            { id: string }[]
+          >`SELECT "id" FROM "notifications" WHERE "dedupe_key" = ${dedupeKey}`;
+          await tx.$executeRaw`UPDATE "users" SET "name" = ${probedName} WHERE "id" = ${user.userId}`;
+          return { second, readBack };
+        },
+      );
+
+      expect(outcome.second).toBe(false);
+      expect(outcome.readBack).toHaveLength(1);
+      // An aborted transaction turns its COMMIT into a silent ROLLBACK,
+      // which would leave the ORIGINAL name here.
+      expect((await admin.user.findUnique({ where: { id: user.userId } }))!.name).toBe(
+        probedName,
+      );
+      expect(await admin.notification.count({ where: { dedupeKey } })).toBe(1);
+    });
+
+    it('N14: one duplicate in a fan-out loop does not take the other recipients down with it', async () => {
+      const [first, second] = await Promise.all([
+        signUpAndSignIn(app, 'notif-loop-first'),
+        signUpAndSignIn(app, 'notif-loop-second'),
+      ]);
+      const sharedEvent = `loop-${first.userId}`;
+      // The first recipient was already told on a previous run of the job.
+      await seedNotification(first.userId, sharedEvent);
+
+      // The job is retried: one transaction, every recipient in a loop —
+      // exactly `LiveSessionNotificationsService`'s shape.
+      const outcomes = await tenancyContextService.runInUserContext(
+        first.userId,
+        async (tx) => {
+          const a = await notificationFanoutService.notify(tx, {
+            userId: first.userId,
+            type: 'system',
+            priority: 'medium',
+            titleKey: 'notifications:events.provisioningCompleted.title',
+            messageKey: 'notifications:events.provisioningCompleted.message',
+            values: { academyName: 'Test Academy' },
+            dedupeKey: sharedEvent,
+          });
+          const b = await notificationFanoutService.notify(tx, {
+            userId: second.userId,
+            type: 'system',
+            priority: 'medium',
+            titleKey: 'notifications:events.provisioningCompleted.title',
+            messageKey: 'notifications:events.provisioningCompleted.message',
+            values: { academyName: 'Test Academy' },
+            dedupeKey: `${sharedEvent}-second`,
+          });
+          return { a, b };
+        },
+      );
+
+      expect(outcomes.a).toBe(false);
+      expect(outcomes.b).toBe(true);
+      expect(
+        await admin.notification.count({
+          where: { userId: second.userId, dedupeKey: `${sharedEvent}-second` },
+        }),
+      ).toBe(1);
+    });
   });
 });

@@ -47,6 +47,7 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type { Notification } from '@prisma/client';
+import { withSavepoint } from '../../common/database/savepoint.util';
 
 /**
  * `CourseOrderRefundsService`'s own identical-in-spirit helper (P13)
@@ -172,11 +173,24 @@ export class NotificationsRepository {
   /**
    * Returns `true` if a NEW row was actually inserted, `false` if it was a
    * dedupe no-op (a real `P2002` unique-constraint violation on
-   * `(user_id, dedupe_key)`, caught and swallowed) — the caller
-   * (`NotificationFanoutService`) uses this to decide whether to also send
-   * an email (never re-emailing on a deduped retry). No `ON CONFLICT`
-   * clause — see this class's own header comment for the real RLS bug
-   * that requires avoiding it.
+   * `(user_id, dedupe_key)`, caught and swallowed) — the callers
+   * (`NotificationFanoutService`, `CommunicationService.emit`) use this to
+   * decide whether to also open a delivery intent (never re-sending on a
+   * deduped retry). No `ON CONFLICT` clause — see this class's own header
+   * comment for the real RLS bug that requires avoiding it.
+   *
+   * The INSERT runs inside a SAVEPOINT whenever a collision is POSSIBLE
+   * (i.e. whenever `dedupeKey` is non-null). Swallowing the unique
+   * violation without one would hand the CALLER an aborted transaction:
+   * in PostgreSQL a failed statement poisons the whole transaction, so a
+   * caller that has just been told "already notified, carry on" fails on
+   * its very next statement and has its COMMIT silently downgraded to a
+   * ROLLBACK — losing the business writes it made BEFORE calling here.
+   * The savepoint lives in this method rather than at one call site on
+   * purpose: swallowing the violation is this method's contract, so the
+   * recovery that makes swallowing safe has to be part of it too, for
+   * every caller. Skipped when `dedupeKey` is null — no unique violation
+   * is possible then and the two extra round-trips would buy nothing.
    */
   async create(
     tx: Prisma.TransactionClient,
@@ -197,8 +211,10 @@ export class NotificationsRepository {
     // `DEFAULT now()` from the migration, but is set explicitly anyway
     // for clarity/consistency with `updated_at`).
     const now = new Date();
-    try {
-      await tx.$executeRaw`
+
+    const insert = async (): Promise<boolean> => {
+      try {
+        await tx.$executeRaw`
         INSERT INTO "notifications"
           ("id", "user_id", "type", "priority", "title_key", "message_key", "values",
            "action_url", "action_label_key", "metadata", "dedupe_key", "retention_class",
@@ -210,10 +226,14 @@ export class NotificationsRepository {
           ${retentionClass}::"notification_retention_class", ${now}, ${now}
         )
       `;
-      return true;
-    } catch (error) {
-      if (isUniqueConstraintViolation(error)) return false;
-      throw error;
-    }
+        return true;
+      } catch (error) {
+        if (isUniqueConstraintViolation(error)) return false;
+        throw error;
+      }
+    };
+
+    if (dedupeKey === null) return insert();
+    return withSavepoint(tx, insert, { collided: (created) => !created });
   }
 }
