@@ -58,7 +58,10 @@ describe('P64 Phase 4 — public course preview (e2e)', () => {
 
   async function arrange(
     label: string,
-    opts: { courseStatus?: 'draft' | 'published'; previewLessonStatus?: 'draft' | 'published' } = {},
+    opts: {
+      courseStatus?: 'draft' | 'published';
+      previewLessonStatus?: 'draft' | 'published';
+    } = {},
   ) {
     const ownerEmail = uniqueTestEmail(`${label}-owner`);
     const password = 'correct-horse-battery';
@@ -71,7 +74,11 @@ describe('P64 Phase 4 — public course preview (e2e)', () => {
       .send({ email: ownerEmail, password })
       .expect(200);
 
-    const org = await seedOrganizationWithOwner(admin, signIn.body.user.id, `${label}-org`);
+    const org = await seedOrganizationWithOwner(
+      admin,
+      signIn.body.user.id,
+      `${label}-org`,
+    );
     await seedActiveSubscriptionForOrg(admin, org.id, label);
     const academy = await seedAcademy(admin, org.id, `${label}-academy`);
     const course = await seedCourse(admin, academy.id, `${label}-course`, {
