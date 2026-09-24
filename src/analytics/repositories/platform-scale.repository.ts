@@ -114,6 +114,176 @@ export class PlatformScaleRepository {
     return { byTier, byProvider, byProcessing };
   }
 
+  // --- P64 Phase 4 §E.5 — commerce / delivery ops (tx, RLS) -----------
+
+  /**
+   * `course_orders` created in `[from, now]`, bucketed by CURRENT status.
+   * One `GROUP BY`; the service maps every `CourseOrderStatus` value.
+   */
+  async courseOrdersCreatedByStatus(
+    tx: Prisma.TransactionClient,
+    from: Date,
+  ): Promise<{ status: string; orders: number }[]> {
+    return tx.$queryRaw<{ status: string; orders: number }[]>`
+      SELECT "status"::text AS status, COUNT(*)::int AS orders
+      FROM "course_orders"
+      WHERE "created_at" >= ${from}
+      GROUP BY "status"
+    `;
+  }
+
+  /** Course-order payments (`course_order_id IS NOT NULL`) whose manual review is still `pending` — all time, it is a backlog. */
+  async courseOrderPaymentsAwaitingReview(tx: Prisma.TransactionClient): Promise<number> {
+    const rows = await tx.$queryRaw<{ pending: number }[]>`
+      SELECT COUNT(*)::int AS pending
+      FROM "payments"
+      WHERE "course_order_id" IS NOT NULL AND "review_status" = 'pending'
+    `;
+    return rows[0]?.pending ?? 0;
+  }
+
+  /** `payment_reviews` decisions on course-order payments with `reviewed_at >= from`, per decision status (`approved` | `rejected`). */
+  async courseOrderPaymentReviewsByStatus(
+    tx: Prisma.TransactionClient,
+    from: Date,
+  ): Promise<{ status: string; reviews: number }[]> {
+    return tx.$queryRaw<{ status: string; reviews: number }[]>`
+      SELECT r."status"::text AS status, COUNT(*)::int AS reviews
+      FROM "payment_reviews" r
+      JOIN "payments" p ON p."id" = r."payment_id"
+      WHERE p."course_order_id" IS NOT NULL AND r."reviewed_at" >= ${from}
+      GROUP BY r."status"
+    `;
+  }
+
+  /**
+   * Proof-upload → approval latency over the `cap` most recent approvals
+   * of course-order payments in `[from, now]`. Measured exactly the way
+   * `PlatformCourseOrderPaymentsService.approve` reports it to Prometheus:
+   * from the LATEST proof uploaded at or before the decision. An approval
+   * with no proof row has nothing to measure and is excluded from the
+   * sample. Percentiles are computed in SQL (`percentile_cont`) over the
+   * capped sample, never by fetching rows; `sampleSize` reports how many
+   * were included so the caller can flag truncation.
+   */
+  async courseOrderApprovalLatency(
+    tx: Prisma.TransactionClient,
+    from: Date,
+    cap: number,
+  ): Promise<{ sampleSize: number; p50: number | null; p95: number | null }> {
+    const rows = await tx.$queryRaw<
+      { sample_size: number; p50: number | null; p95: number | null }[]
+    >`
+      WITH samples AS (
+        SELECT EXTRACT(EPOCH FROM (r."reviewed_at" - pp."uploaded_at"))::float AS seconds
+        FROM "payment_reviews" r
+        JOIN "payments" p ON p."id" = r."payment_id"
+        JOIN LATERAL (
+          SELECT MAX(pr."uploaded_at") AS uploaded_at
+          FROM "payment_proofs" pr
+          WHERE pr."payment_id" = r."payment_id" AND pr."uploaded_at" <= r."reviewed_at"
+        ) pp ON TRUE
+        WHERE r."status" = 'approved'
+          AND p."course_order_id" IS NOT NULL
+          AND r."reviewed_at" >= ${from}
+          AND pp."uploaded_at" IS NOT NULL
+        ORDER BY r."reviewed_at" DESC
+        LIMIT ${cap}
+      )
+      SELECT COUNT(*)::int AS sample_size,
+             (percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds))::float AS p50,
+             (percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds))::float AS p95
+      FROM samples
+    `;
+    const row = rows[0];
+    return {
+      sampleSize: row?.sample_size ?? 0,
+      p50: row?.p50 ?? null,
+      p95: row?.p95 ?? null,
+    };
+  }
+
+  /** `course_order_refunds`: requested in the window (any status) and completed (`succeeded`, `processed_at`) in the window. */
+  async courseOrderRefundCounts(
+    tx: Prisma.TransactionClient,
+    from: Date,
+  ): Promise<{ requested: number; completed: number }> {
+    const rows = await tx.$queryRaw<{ requested: number; completed: number }[]>`
+      SELECT
+        COUNT(*) FILTER (WHERE "requested_at" >= ${from})::int AS requested,
+        COUNT(*) FILTER (
+          WHERE "status" = 'succeeded' AND "processed_at" IS NOT NULL AND "processed_at" >= ${from}
+        )::int AS completed
+      FROM "course_order_refunds"
+    `;
+    return { requested: rows[0]?.requested ?? 0, completed: rows[0]?.completed ?? 0 };
+  }
+
+  /**
+   * Frozen snapshot price of orders CURRENTLY `paid` with `paid_at >= from`,
+   * summed per snapshot currency — the `CheckoutSnapshot` discipline: the
+   * price the buyer actually agreed to, never the live course price.
+   */
+  async paidOrderRevenueByCurrency(
+    tx: Prisma.TransactionClient,
+    from: Date,
+  ): Promise<{ currency: string; minorUnits: number }[]> {
+    const rows = await tx.$queryRaw<{ currency: string; minor_units: number }[]>`
+      SELECT "snapshot"->'price'->>'currency' AS currency,
+             COALESCE(SUM(("snapshot"->'price'->>'amountMinorUnits')::numeric), 0)::float AS minor_units
+      FROM "course_orders"
+      WHERE "status" = 'paid' AND "paid_at" IS NOT NULL AND "paid_at" >= ${from}
+      GROUP BY 1
+    `;
+    return rows
+      .filter((r) => r.currency !== null)
+      .map((r) => ({ currency: r.currency, minorUnits: r.minor_units }));
+  }
+
+  /**
+   * `content_access_log` decisions in `[from, now]`, grouped by result and
+   * reason, over the `cap` most recent rows (the same 50 000 ceiling
+   * `AcademyReportsService` applies, so a runaway window can never
+   * become a full-table aggregate).
+   */
+  async contentAccessDecisions(
+    tx: Prisma.TransactionClient,
+    from: Date,
+    cap: number,
+  ): Promise<{ result: string; reason: string | null; rows: number }[]> {
+    return tx.$queryRaw<{ result: string; reason: string | null; rows: number }[]>`
+      SELECT s."result"::text AS result, s."reason" AS reason, COUNT(*)::int AS rows
+      FROM (
+        SELECT "result", "reason"
+        FROM "content_access_log"
+        WHERE "created_at" >= ${from}
+        ORDER BY "created_at" DESC
+        LIMIT ${cap}
+      ) s
+      GROUP BY s."result", s."reason"
+    `;
+  }
+
+  /** Rows the retention sweep should already have removed: `content_access_log.created_at` / `quiz_attempt_events.server_at` older than their cutoffs. */
+  async retentionBacklog(
+    tx: Prisma.TransactionClient,
+    accessLogCutoff: Date,
+    quizEventsCutoff: Date,
+  ): Promise<{ contentAccessLogRows: number; quizAttemptEventRows: number }> {
+    const [accessLog, quizEvents] = await Promise.all([
+      tx.$queryRaw<{ rows: number }[]>`
+        SELECT COUNT(*)::int AS rows FROM "content_access_log" WHERE "created_at" < ${accessLogCutoff}
+      `,
+      tx.$queryRaw<{ rows: number }[]>`
+        SELECT COUNT(*)::int AS rows FROM "quiz_attempt_events" WHERE "server_at" < ${quizEventsCutoff}
+      `,
+    ]);
+    return {
+      contentAccessLogRows: accessLog[0]?.rows ?? 0,
+      quizAttemptEventRows: quizEvents[0]?.rows ?? 0,
+    };
+  }
+
   // --- Unprotected tables (no RLS) ------------------------------------
 
   countUsers(asOf?: Date): Promise<number> {
