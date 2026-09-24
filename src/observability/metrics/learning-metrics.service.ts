@@ -22,7 +22,7 @@
  * is describing.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { Counter, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
+import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 
 /**
  * P64 Phase 4 (§D.5) — the checkout lifecycle states worth counting.
@@ -39,13 +39,24 @@ export type RetentionSweepTable = 'content_access_log' | 'quiz_attempt_events';
 const registry = new Registry();
 let defaultsCollected = false;
 
-function counter(name: string, help: string, labelNames: readonly string[]): Counter {
+/** Shared with `CommunicationMetricsService` so every `atlas_*` series lands in the ONE registry `/metrics` renders. */
+export function counter(
+  name: string,
+  help: string,
+  labelNames: readonly string[],
+): Counter {
   const existing = registry.getSingleMetric(name);
   if (existing) return existing as Counter;
   return new Counter({ name, help, labelNames: [...labelNames], registers: [registry] });
 }
 
-function histogram(
+export function gauge(name: string, help: string, labelNames: readonly string[]): Gauge {
+  const existing = registry.getSingleMetric(name);
+  if (existing) return existing as Gauge;
+  return new Gauge({ name, help, labelNames: [...labelNames], registers: [registry] });
+}
+
+export function histogram(
   name: string,
   help: string,
   labelNames: readonly string[],

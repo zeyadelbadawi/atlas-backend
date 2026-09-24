@@ -12,13 +12,15 @@ import { Global, Module } from '@nestjs/common';
 import { AuthCoreModule } from '../../identity/auth-core.module';
 import { IdentityModule } from '../../identity/identity.module';
 import { LearningMetricsService } from './learning-metrics.service';
+import { CommunicationMetricsService } from '../../communications/services/communication-metrics.service';
 import { MetricsController } from './metrics.controller';
 
 @Global()
 @Module({
   imports: [AuthCoreModule, IdentityModule],
   controllers: [MetricsController],
-  providers: [LearningMetricsService],
-  exports: [LearningMetricsService],
+  // P64 Communications — same registry, same global reach.
+  providers: [LearningMetricsService, CommunicationMetricsService],
+  exports: [LearningMetricsService, CommunicationMetricsService],
 })
 export class MetricsModule {}

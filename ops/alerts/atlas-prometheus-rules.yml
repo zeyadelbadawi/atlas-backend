@@ -103,3 +103,41 @@ groups:
         labels: { severity: warning, team: atlas }
         annotations:
           summary: "Certificate PDF renders are failing"
+
+  # P64 Communications — series emitted by
+  # `src/communications/services/communication-metrics.service.ts`.
+  - name: atlas-communications
+    rules:
+      - alert: AtlasEmailQuotaHigh
+        expr: |
+          max(atlas_comm_quota_used_ratio) by (provider, window) > 0.8
+        for: 10m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "Email provider {{ $labels.provider }} has used over 80% of its {{ $labels.window }} quota"
+          description: "{{ $labels.provider }} is at {{ $value | humanizePercentage }} of its {{ $labels.window }} send budget. Engagement/operational mail stops at 70%, lifecycle at 85%; only security/transactional mail continues past that."
+      - alert: AtlasEmailQuotaCritical
+        expr: |
+          max(atlas_comm_quota_used_ratio) by (provider, window) > 0.95
+        for: 5m
+        labels: { severity: critical, team: atlas }
+        annotations:
+          summary: "Email provider {{ $labels.provider }} is about to exhaust its {{ $labels.window }} quota"
+          description: "{{ $labels.provider }} is at {{ $value | humanizePercentage }} of its {{ $labels.window }} budget; the registry will fall through to the next provider, and security email fails once every provider is exhausted."
+      - alert: AtlasEmailBounceRate
+        expr: |
+          sum(increase(atlas_comm_email_delivery_events_total{event=~"bounced|soft_bounced"}[24h]))
+            / clamp_min(sum(increase(atlas_comm_email_sends_total{result="sent"}[24h])), 1) > 0.02
+        for: 30m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "Email bounce rate above 2% over 24h"
+          description: "{{ $value | humanizePercentage }} of accepted sends bounced in the last 24h. Free-tier providers suspend senders around this level — check the suppression list and the recipient sources."
+      - alert: AtlasEmailWebhookSignatureFailures
+        expr: |
+          sum(increase(atlas_comm_webhook_signature_failures_total[15m])) by (provider) > 0
+        for: 1m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "Email delivery webhooks for {{ $labels.provider }} are failing verification"
+          description: "{{ $value }} inbound webhook(s) for {{ $labels.provider }} failed signature/secret verification in 15m. Either the shared secret rotated or something other than the provider is posting to the endpoint."

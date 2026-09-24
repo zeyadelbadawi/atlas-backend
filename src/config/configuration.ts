@@ -305,11 +305,23 @@ export interface PaymentConfigurationConfig {
 }
 
 /** Phase P17 — Notifications, Email & Search configuration (master plan §12, §21). */
+export type EmailProviderName = EnvVariables['EMAIL_PROVIDER'];
+
+/** P17 + P64 Communications — see `env.validation.ts` for each variable's semantics. */
 export interface EmailConfig {
-  readonly provider: EnvVariables['EMAIL_PROVIDER'];
+  /** Legacy single-provider alias; `providers` is what the registry reads. */
+  readonly provider: EmailProviderName;
+  /** Ordered fallback chain (`EMAIL_PROVIDERS`, default `[provider]`). */
+  readonly providers: readonly EmailProviderName[];
+  /** Legacy `EMAIL_API_KEY` (Resend). */
   readonly apiKey?: string;
+  readonly resendApiKey?: string;
+  readonly brevoApiKey?: string;
   readonly fromEmail?: string;
   readonly fromName: string;
+  readonly replyTo?: string;
+  readonly brevoWebhookSecret?: string;
+  readonly resendWebhookSecret?: string;
 }
 
 /** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
@@ -554,11 +566,31 @@ export default () => {
     credentialEncryptionKeyHex: env.PAYMENT_CREDENTIALS_ENCRYPTION_KEY,
   };
 
+  const emailProvider: EmailProviderName = env.EMAIL_PROVIDER ?? 'stub';
+  // `env` is raw `process.env` here (see this factory's header comment),
+  // so `EMAIL_PROVIDERS` is the untransformed comma string — parsed again
+  // exactly as `validateEnv` did; entries are already validated there.
+  const rawEmailProviders = (env as unknown as { EMAIL_PROVIDERS?: string })
+    .EMAIL_PROVIDERS;
+  const emailProviders = (
+    typeof rawEmailProviders === 'string' && rawEmailProviders.trim()
+      ? rawEmailProviders
+          .split(',')
+          .map((entry) => entry.trim().toLowerCase())
+          .filter(Boolean)
+      : [emailProvider]
+  ) as EmailProviderName[];
   const email: EmailConfig = {
-    provider: env.EMAIL_PROVIDER ?? 'stub',
+    provider: emailProvider,
+    providers: emailProviders,
     apiKey: env.EMAIL_API_KEY || undefined,
+    resendApiKey: env.RESEND_API_KEY || undefined,
+    brevoApiKey: env.BREVO_API_KEY || undefined,
     fromEmail: env.EMAIL_FROM_EMAIL || undefined,
     fromName: env.EMAIL_FROM_NAME ?? 'Atlas',
+    replyTo: env.EMAIL_REPLY_TO || undefined,
+    brevoWebhookSecret: env.BREVO_WEBHOOK_SECRET || undefined,
+    resendWebhookSecret: env.RESEND_WEBHOOK_SECRET || undefined,
   };
 
   return {

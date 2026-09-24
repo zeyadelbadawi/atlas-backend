@@ -10,10 +10,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const RULES_PATH = resolve(__dirname, '../../../ops/alerts/atlas-prometheus-rules.yml');
-const SERVICE_PATH = resolve(__dirname, 'learning-metrics.service.ts');
+const SERVICE_PATHS = [
+  resolve(__dirname, 'learning-metrics.service.ts'),
+  // P64 Communications — same registry, second service file.
+  resolve(__dirname, '../../communications/services/communication-metrics.service.ts'),
+];
 
 const rules = readFileSync(RULES_PATH, 'utf8');
-const service = readFileSync(SERVICE_PATH, 'utf8');
+const service = SERVICE_PATHS.map((path) => readFileSync(path, 'utf8')).join('\n');
 
 const emittedSeries = new Set(
   [...service.matchAll(/'(atlas_[a-z0-9_]+)'/g)].map((m) => m[1]),
@@ -30,7 +34,7 @@ function ruleBlocks(text: string): string[] {
   return text.split(/\n\s*- alert: /).slice(1);
 }
 
-describe('alert rules stay in sync with LearningMetricsService', () => {
+describe('alert rules stay in sync with the metrics services', () => {
   it('registers at least the Phase 4 series in the service (guard against a stale regex)', () => {
     for (const name of [
       'atlas_checkout_orders_total',
@@ -38,6 +42,8 @@ describe('alert rules stay in sync with LearningMetricsService', () => {
       'atlas_public_catalog_query_duration_ms',
       'atlas_retention_sweep_runs_total',
       'atlas_content_grants_total',
+      'atlas_comm_quota_used_ratio',
+      'atlas_comm_email_sends_total',
     ]) {
       expect(emittedSeries.has(name)).toBe(true);
     }
@@ -65,5 +71,20 @@ describe('alert rules stay in sync with LearningMetricsService', () => {
     expect(rules).toContain('AtlasRetentionSweepFailing');
     expect(rules).toContain('AtlasRetentionSweepSilent');
     expect(rules).toMatch(/atlas_retention_sweep_runs_total\{result="error"\}/);
+  });
+
+  it('covers the P64 Communications quota, bounce-rate and webhook-verification alerts', () => {
+    for (const name of [
+      'AtlasEmailQuotaHigh',
+      'AtlasEmailQuotaCritical',
+      'AtlasEmailBounceRate',
+      'AtlasEmailWebhookSignatureFailures',
+    ]) {
+      expect(rules).toContain(name);
+    }
+    expect(rules).toMatch(/atlas_comm_quota_used_ratio\) by \(provider, window\) > 0\.8/);
+    expect(rules).toMatch(
+      /atlas_comm_quota_used_ratio\) by \(provider, window\) > 0\.95/,
+    );
   });
 });
