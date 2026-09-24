@@ -620,12 +620,12 @@ Serialized by the lead: every schema change, every merge, every push/deploy, eve
 | Workstream | Phase | Owner | Status | Commits | Deploy runs | Production verification | Notes |
 |---|---|---|---|---|---|---|---|
 | Plan update (this record) | — | lead | DONE | see below | — | n/a | approval recorded |
-| M1/M2/M3 schema | C0–C6 | lead | PENDING | | | | |
+| Foundation schema (M1+M2+M3 as one additive migration `20261013000000_p64_comm_foundation`) | C0–C6 | lead | DONE locally (applied via `migrate deploy`, client regenerated, tsc 0, notifications e2e 12/12) — production application pending the gated run | `112c481` | | PENDING | 7 tables + RLS, `notifications.retention_class`, `media_assets` tombstone columns |
 | Lead C0 (link builder, verify-email route, real links) | C0 | lead | PENDING | | | | |
-| W-EXP expiry enforcement | C5a | worker | PENDING | | | | AD-5 |
-| W-PROV Brevo/registry/webhooks/suppression/quota | C0/C1 | worker | PENDING | | | | needs owner host env to go live |
-| W-FE1 notification centre + preferences UI | C2 | worker | PENDING | | | | |
-| W-OUT outbox/catalogue/dispatcher/templates | C1 | worker | PENDING | | | | |
+| W-EXP expiry enforcement | C5a | worker (`ws-expiry`) | IN PROGRESS | | | | AD-5 |
+| W-PROV Brevo/registry/webhooks/suppression/quota | C0/C1 | worker (`ws-provider`) | IN PROGRESS | | | | needs owner host env to go live (BL-1) |
+| W-FE1 notification centre + preferences UI | C2 | worker (`ws-notif-ui`) | IN PROGRESS | | | | codes against the preferences contract W-OUT ships |
+| W-OUT outbox/catalogue/dispatcher/templates | C1 | worker (`ws-outbox`) | IN PROGRESS | | | | migrates the 17 producers; adds `PLATFORM_WEB_URL` + link builder |
 | W-OTP | C4 | worker | PENDING | | | | |
 | W-EVT missing events + digests | C3 | worker | PENDING | | | | |
 | W-FE2 OTP/trusted devices/comms settings UI | C4/C2 | worker | PENDING | | | | |
