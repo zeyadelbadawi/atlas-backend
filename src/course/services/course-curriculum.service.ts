@@ -241,6 +241,18 @@ export class CourseCurriculumService {
         await this.assertCourseInAcademy(tx, courseId, academyId);
         await this.assertSectionInCourse(tx, sectionId, courseId);
 
+        // Same tenancy check the update path makes, and for the same
+        // reason: an id alone proves nothing, so without this an author
+        // could attach another academy's video by guessing and the grant
+        // path would sign it because the lesson claims it.
+        if (payload.videoAssetId) {
+          const asset = await tx.mediaAsset.findFirst({
+            where: { id: payload.videoAssetId, academyId, type: 'video' },
+            select: { id: true },
+          });
+          if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+
         const { _max } = await this.lessonsRepository.maxOrder(tx, sectionId);
         const created = await this.lessonsRepository.create(tx, {
           section: { connect: { id: sectionId } },
@@ -251,6 +263,23 @@ export class CourseCurriculumService {
           contentUrl: payload.contentUrl,
           status: payload.status,
           order: (_max.order ?? -1) + 1,
+          // These four were declared by `CreateCourseLessonDto` and
+          // persisted by nothing, so a lesson created as a free preview,
+          // with a video, a drip date or a watched-ratio rule came back
+          // 201 and silently had none of them — the author had to save a
+          // second time through `updateLesson` for any of it to stick.
+          // `null` clears, `undefined` leaves the column at its default,
+          // matching the update path's distinction exactly.
+          ...(payload.videoAssetId
+            ? { videoAsset: { connect: { id: payload.videoAssetId } } }
+            : {}),
+          ...(payload.isPreview !== undefined ? { isPreview: payload.isPreview } : {}),
+          ...(payload.availableAt !== undefined
+            ? { availableAt: payload.availableAt ? new Date(payload.availableAt) : null }
+            : {}),
+          ...(payload.completionRule !== undefined
+            ? { completionRule: payload.completionRule }
+            : {}),
         });
 
         await this.auditLogWriterService.write(tx, {
@@ -262,7 +291,16 @@ export class CourseCurriculumService {
           targetType: 'course_lesson',
           targetId: created.id,
           targetLabel: created.title,
-          context: { courseId, sectionId },
+          // Named for the same reason the update path names them: the
+          // video link and the preview flag are what a reviewer looks for.
+          context: {
+            courseId,
+            sectionId,
+            ...(payload.videoAssetId !== undefined
+              ? { videoAssetId: payload.videoAssetId }
+              : {}),
+            ...(payload.isPreview !== undefined ? { isPreview: payload.isPreview } : {}),
+          },
         });
 
         return created;

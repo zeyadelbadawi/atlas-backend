@@ -119,6 +119,107 @@ describe('Course Curriculum — sections/lessons (e2e)', () => {
     ]);
   });
 
+  it('createLesson persists every field its own DTO declares — preview, drip date and completion rule', async () => {
+    // These were declared by `CreateCourseLessonDto` and written by
+    // nothing: a lesson created as a free preview came back 201 with the
+    // flag silently dropped, and the author had to save a second time
+    // through `updateLesson` before it stuck. That made the public course
+    // preview unreachable for any lesson created in one step.
+    const owner = await signUpAndSignIn(app, 'curriculum-create-fields');
+    const org = await seedOrganizationWithOwner(
+      admin,
+      owner.userId,
+      'curriculum-create-fields-org',
+    );
+    const academy = await seedManagedAcademy(
+      admin,
+      org.id,
+      owner.userId,
+      'curriculum-create-fields-academy',
+    );
+    const course = await seedCourse(admin, academy.id, 'Create Fields Course');
+    const section = await seedCourseSection(admin, course.id, 'Only', 0);
+
+    const availableAt = '2027-01-01T00:00:00.000Z';
+    const created = await request(app.getHttpServer())
+      .post(
+        `/academies/${academy.id}/courses/${course.id}/sections/${section.id}/lessons`,
+      )
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        title: 'Free sample',
+        contentType: 'video',
+        status: 'published',
+        isPreview: true,
+        availableAt,
+        completionRule: 'watched_ratio',
+      })
+      .expect(201);
+
+    // The response contract exposes `isPreview` and `availableAt` but not
+    // `completionRule`, so the stored row below is the authority on that
+    // one rather than the body.
+    expect(created.body.isPreview).toBe(true);
+    expect(new Date(created.body.availableAt).toISOString()).toBe(availableAt);
+
+    // And it is the stored row that changed, not just the response.
+    const row = await admin.courseLesson.findUnique({
+      where: { id: created.body.id },
+      select: { isPreview: true, completionRule: true, availableAt: true },
+    });
+    expect(row?.isPreview).toBe(true);
+    expect(row?.completionRule).toBe('watched_ratio');
+    expect(row?.availableAt?.toISOString()).toBe(availableAt);
+  });
+
+  it('createLesson refuses to attach another academy\u2019s video, exactly as updateLesson does', async () => {
+    const owner = await signUpAndSignIn(app, 'curriculum-create-xtenant');
+    const org = await seedOrganizationWithOwner(
+      admin,
+      owner.userId,
+      'curriculum-create-xtenant-org',
+    );
+    const mine = await seedManagedAcademy(
+      admin,
+      org.id,
+      owner.userId,
+      'curriculum-create-xtenant-mine',
+    );
+    const theirs = await seedManagedAcademy(
+      admin,
+      org.id,
+      owner.userId,
+      'curriculum-create-xtenant-theirs',
+    );
+    const course = await seedCourse(admin, mine.id, 'Cross Tenant Course');
+    const section = await seedCourseSection(admin, course.id, 'Only', 0);
+
+    const foreignAsset = await admin.mediaAsset.create({
+      data: {
+        academyId: theirs.id,
+        type: 'video',
+        fileName: 'theirs.mp4',
+        storageKey: `academies/${theirs.id}/theirs.mp4`,
+        url: 'https://example.invalid/theirs.mp4',
+        mimeType: 'video/mp4',
+        sizeBytes: BigInt(1024),
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/academies/${mine.id}/courses/${course.id}/sections/${section.id}/lessons`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        title: 'Borrowed video',
+        contentType: 'video',
+        videoAssetId: foreignAsset.id,
+      })
+      .expect(404);
+
+    const lessons = await admin.courseLesson.count({ where: { sectionId: section.id } });
+    expect(lessons).toBe(0);
+  });
+
   it('reorderSections persists the full new order (explicit move-up/move-down semantics, not drag-and-drop)', async () => {
     const owner = await signUpAndSignIn(app, 'curriculum-reorder');
     const org = await seedOrganizationWithOwner(
