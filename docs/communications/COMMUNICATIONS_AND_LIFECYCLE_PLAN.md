@@ -1,6 +1,6 @@
 # Atlas Communications, Email Infrastructure, In-App Notifications & Lifecycle Automation — Initiative Plan
 
-**STATUS: PROPOSED — AWAITING OWNER APPROVAL. No implementation has occurred.**
+**STATUS: APPROVED — IN PROGRESS (owner approval 24 September 2026; see "Approved decisions and execution record" at the end of this document).** Sections §1–§50 and the Owner summary below are the proposal as approved and are preserved as written; implementation status, decisions, evidence and remaining work are tracked in the execution record, which is append-and-update only. The cross-project acceptance layer is `docs/ATLAS_PRODUCT_QUALITY_MASTER_PLAN.md`; every phase here must satisfy it.
 No code, migration, schema, provider configuration, cron job, authentication or notification behaviour was changed to produce this document, and no email was sent. It was written from a read-only inspection of both repositories and current provider documentation on 24 September 2026.
 
 **Relationship to Phase 4.** This is a *parallel* initiative. Phase 4 of `ATLAS_SECURE_LEARNING_MASTER_PLAN.md` remains **open / in progress** with every blocker recorded there unchanged (production verification of learner and Platform Owner surfaces, hosted-video infrastructure, alert receiver wiring, the seed fixture gap). Where this plan needs something Phase 4 has not delivered, it is listed in §K as a dependency, not assumed.
@@ -564,3 +564,77 @@ The outbox + quota + provider-order design scales by configuration: at ~5k/month
 6. Approve the retention windows (90 d former-trial / 180 d former-paid), the four-warning sequence, that only hosted video bytes are deleted, `warn_only` for the first full window, and whether to build "download before deletion".
 7. Confirm the preference model: security and transactional emails cannot be disabled by users; engagement/reminders can; no marketing category until a consent model exists.
 8. Confirm the seven-phase order and that C2/C3/C4 may run as parallel worker streams under the DL-41 orchestration rules.
+
+
+---
+
+# Approved decisions and execution record (append-and-update; history is never rewritten)
+
+## AD. Approved business / product decisions (owner, 24 Sep 2026)
+
+| # | Decision | Consequence for this plan |
+|---|---|---|
+| AD-1 | **No production email has ever been sent from Atlas.** The owner's **Gmail address is the approved sender identity** (From). Sender identity ≠ delivery provider ≠ SMTP infrastructure. | C0 verifies the Gmail address as a *sender* at Brevo and Resend (single-sender verification, no domain DNS required); DMARC alignment for gmail.com is not achievable, so deliverability rides on the providers' shared reputation — recorded as a known limitation until a custom domain is approved. |
+| AD-2 | **Brevo = primary provider, Resend = fallback.** Clean provider abstraction; no provider logic leaking into the product. | §15 provider order `brevo,resend`; fallback rule: Resend is used when Brevo rejects (5xx / 429 / quota exhausted for the message's class) or is unconfigured; recorded per delivery. |
+| AD-3 | **Brevo Free plan and its "Sent with Brevo" footer are accepted for the initial phase.** No engineering effort on footer removal; no plan upgrade for it. | Explicit business decision; templates must look correct with the injected LTR footer under RTL content (§13 note). |
+| AD-4 | **OTP policy approved as proposed** (§12), production-grade, never weakening existing controls. | Phase C4 as specified. |
+| AD-5 | **Trial and paid-subscription lifetimes approved as proposed** (§26–§27) **plus a mandatory requirement: expiration must be server-authoritative and actually enforced** for trials and paid periods; the existing defect "access remains after the period ended" is in scope now, with regression tests for the ten listed cases. | New phase **C5a Expiry enforcement** pulled forward and made a dependency of everything lifecycle-related; see §EX below. |
+| AD-6 | **Video retention windows and warning behaviour approved as proposed** (§31–§32), enforced server-side, tested and observable. | Phase C6 as specified (warn-only for the first full window remains part of the approved behaviour). |
+| AD-7 | **Preference model approved** (§23): security-critical never disableable; transactional/lifecycle/engagement distinct; no marketing behaviour without a consent model. | Phase C2 as specified. |
+| AD-8 | **Parallel execution approved** under the DL-41 orchestration rules (lead = integration/deploy authority; workers never push, deploy, migrate, or alter this plan). | Dependency graph in §DG. |
+
+## EX. Expiry enforcement requirement (AD-5) — discovery and design
+
+Discovered (D2 report, verified in code): paid subscriptions **never expire** — nothing reads `currentPeriodEnd`, `markExpired` is dead code, `cancelAtPeriodEnd` is never acted on, `grace_period`/`graceEndsAt` are never set. Trials expire only through the 15-minute sweep; `SubscriptionAccessService.getAccessState` already closes the sweep gap for trials by checking `trialEndsAt` against the clock, but nothing equivalent exists for paid periods, so an `active` row whose `currentPeriodEnd` has passed keeps full access indefinitely — the defect the owner reports.
+
+Design (server-authoritative, defence in depth):
+1. **Effective entitlement is computed, never trusted from the row.** `SubscriptionAccessService` derives `effectiveStatus` from `(status, trialEndsAt, currentPeriodEnd, graceEndsAt, cancelAtPeriodEnd, now)`: `trialing` past `trialEndsAt` → `trial_expired`; `active` past `currentPeriodEnd` → `grace_period` until `currentPeriodEnd + 7 d` (§27) unless `cancelAtPeriodEnd`, in which case → `cancelled`; `grace_period` past `graceEndsAt` → `expired`. Every consumer of access state (`SubscriptionAccessInterceptor`, `isServingEligible`, `EntitlementEnforcementService`, the lifecycle endpoint, the JWT/refresh path where subscription claims are embedded) uses the effective status, so a stale row, stale cache, stale session or a failed sweep cannot grant access.
+2. **The sweep persists what the computation already decided** (`active→grace_period→expired`, `trialing→trial_expired`, `cancelAtPeriodEnd→cancelled`), so the row catches up and lifecycle events fire; a missed or delayed sweep changes nothing about access.
+3. **Caches**: the public-website serving-eligibility cache (60 s) keys on effective status and is invalidated on every transition; the frontend `useSubscriptionLifecycleState` refetches on window focus and on 402/403 entitlement responses.
+4. **Renewal**: a payment approved before expiry extends from `currentPeriodEnd`; after expiry it starts a new period from approval time; both restore `active` immediately (existing `upsertForPlanPurchase`, adjusted for the extend-vs-restart rule).
+5. **Regression tests** (e2e, fake clock): the ten owner-listed cases plus "sweep disabled → access still refused after period end", "grace ends → expired", "cancelAtPeriodEnd → cancelled at period end, no grace".
+
+## DG. Dependency graph and parallel workstreams
+
+```
+M1 schema (outbox, deliveries, suppressions, digests, notifications retention)  ─┐
+M2 schema (auth_email_challenges, trusted_devices)                               ─┼─ lead, serialized, one gated migration run per wave
+M3 schema (tenant_lifecycle_state, media_assets tombstone columns)               ─┘
+
+Wave 1 (parallel)                     Wave 2 (parallel, after M1/M2 + wave-1 audits)      Wave 3 (after wave 2)
+  W-EXP  expiry enforcement (C5a)       W-OUT  outbox + catalogue + dispatcher + templates    W-LIFE lifecycle sequences (C5) + video retention (C6)
+  W-PROV Brevo adapter, provider        W-OTP  OTP + trusted devices + auth audit (C4)        W-FE3  retention page, lifecycle states, comms analytics
+         registry/fallback, webhooks,   W-FE2  OTP screens, trusted devices, comms settings        tab, platform comms settings (C7 UI)
+         suppression, quota (C0/B)      W-EVT  missing transactional events + digests (C3)
+  W-FE1  notification centre (learner
+         + management), preference
+         matrix UI (C2 UI)
+  Lead   link builder + PLATFORM_WEB_URL,
+         /auth/verify-email (mgmt), real
+         links in reset/verify (C0)
+```
+Serialized by the lead: every schema change, every merge, every push/deploy, every gated migration run, every production verification and every update to this record.
+
+## ST. Workstream status (living)
+
+| Workstream | Phase | Owner | Status | Commits | Deploy runs | Production verification | Notes |
+|---|---|---|---|---|---|---|---|
+| Plan update (this record) | — | lead | DONE | see below | — | n/a | approval recorded |
+| M1/M2/M3 schema | C0–C6 | lead | PENDING | | | | |
+| Lead C0 (link builder, verify-email route, real links) | C0 | lead | PENDING | | | | |
+| W-EXP expiry enforcement | C5a | worker | PENDING | | | | AD-5 |
+| W-PROV Brevo/registry/webhooks/suppression/quota | C0/C1 | worker | PENDING | | | | needs owner host env to go live |
+| W-FE1 notification centre + preferences UI | C2 | worker | PENDING | | | | |
+| W-OUT outbox/catalogue/dispatcher/templates | C1 | worker | PENDING | | | | |
+| W-OTP | C4 | worker | PENDING | | | | |
+| W-EVT missing events + digests | C3 | worker | PENDING | | | | |
+| W-FE2 OTP/trusted devices/comms settings UI | C4/C2 | worker | PENDING | | | | |
+| W-LIFE lifecycle + retention | C5/C6 | worker | PENDING | | | | |
+| W-FE3 retention/lifecycle/comms analytics UI | C6/C7 | worker | PENDING | | | | |
+
+## BL. Known blockers (living)
+
+| # | Blocker | Type | Autonomous? | Status |
+|---|---|---|---|---|
+| BL-1 | Provider go-live needs owner actions on the host: Brevo account + single-sender verification of the Gmail address (confirmation email to that inbox) + API key; Resend account + sender verification + API key; webhook secrets; values `EMAIL_PROVIDERS=brevo,resend`, `BREVO_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM_EMAIL=<gmail>`, `EMAIL_FROM_NAME`, `PLATFORM_WEB_URL`, `BREVO_WEBHOOK_SECRET`, `RESEND_WEBHOOK_SECRET` in `/opt/atlas` env | credential / human | No | OPEN — code ships stub-safe; production email delivery is PRODUCTION VERIFICATION PENDING until set |
+| BL-2 | Real-provider video deletion verification depends on Phase 4 blocker (2) (video infrastructure unset) | infrastructure | No | OPEN — C6 verified against `FakeVideoProvider` |
