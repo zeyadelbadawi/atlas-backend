@@ -14,18 +14,16 @@
  * only ever one definition of "how to query the `notifications` table,"
  * never two.
  *
- * Needs `IdentityModule` (for `EMAIL_PROVIDER`/`UsersRepository`).
+ * P64 Communications: email delivery moved to `CommunicationsModule`'s
+ * outbox; this module keeps only the in-app writer and the repository.
  */
 import { Global, Module } from '@nestjs/common';
-import { IdentityModule } from '../identity/identity.module';
 import { NotificationsRepository } from './repositories/notifications.repository';
-import { EmailService } from './services/email.service';
 import { NotificationFanoutService } from './services/notification-fanout.service';
 
 @Global()
 @Module({
-  imports: [IdentityModule],
-  providers: [NotificationsRepository, EmailService, NotificationFanoutService],
+  providers: [NotificationsRepository, NotificationFanoutService],
   exports: [NotificationsRepository, NotificationFanoutService],
 })
 export class NotificationEventsModule {}

@@ -35,7 +35,7 @@ import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
 import type { ExtractedZoomDeauthorization } from '../utils/zoom-deauthorization.util';
 
 /**
@@ -69,7 +69,7 @@ export class LiveProviderDeauthorizationService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly usersRepository: UsersRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
-    private readonly fanout: NotificationFanoutService,
+    private readonly communications: CommunicationService,
   ) {}
 
   async handle(event: ExtractedZoomDeauthorization): Promise<DeauthorizationOutcome> {
@@ -265,21 +265,20 @@ export class LiveProviderDeauthorizationService {
       select: { userId: true },
     });
 
+    /*
+      Keyed (catalogue) on the connection AND the moment Zoom reported, so
+      a redelivery of the same event dedupes while a genuine later
+      deauthorization (after a reconnect) still notifies. Inside the
+      caller's transaction: the sweep picks the rows up.
+    */
     for (const owner of owners) {
-      await this.fanout.notify(tx, {
-        userId: owner.userId,
-        type: 'security',
-        priority: 'high',
-        titleKey: 'notifications:liveProvider.deauthorized.title',
-        messageKey: 'notifications:liveProvider.deauthorized.message',
-        actionUrl: '/dashboard/add-ons/live-sessions/connection',
-        actionLabelKey: 'notifications:liveProvider.action.reconnect',
-        /*
-          Keyed on the connection AND the moment Zoom reported, so a
-          redelivery of the same event dedupes while a genuine later
-          deauthorization (after a reconnect) still notifies.
-        */
-        dedupeKey: `live_provider.deauthorized:${args.connectionId}:${args.deauthorizedAt.toISOString()}`,
+      await this.communications.emit(tx, {
+        key: 'live_provider.deauthorized',
+        recipientUserId: owner.userId,
+        organizationId: args.organizationId,
+        academyId: args.academyId,
+        entity: { type: 'live_provider_connection', id: args.connectionId },
+        values: { deauthorizedAt: args.deauthorizedAt.toISOString() },
       });
     }
   }

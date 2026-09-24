@@ -516,6 +516,15 @@ const EnvSchema = z.object({
   EMAIL_API_KEY: z.string().min(1).optional(),
   EMAIL_FROM_EMAIL: z.string().email().optional(),
   EMAIL_FROM_NAME: z.string().min(1).default('Atlas'),
+
+  // --- P64 Communications ---
+  // The platform web app's public origin, used by the email link builder
+  // for platform-branded links (billing, dashboard, account). Defaults to
+  // the local Vite origin outside production; REQUIRED in production
+  // (checked in `validateEnv` below) because an email link built from a
+  // localhost default would be a broken link in a real inbox. Never read
+  // from a request header.
+  PLATFORM_WEB_URL: z.string().trim().url().optional(),
 });
 
 export type EnvVariables = z.infer<typeof EnvSchema>;
@@ -613,6 +622,31 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
       throw new Error(
         `VIDEO_PROVIDER=cloudflare_stream requires ${missing.join(', ')} — refusing to start ` +
           'with the real video provider selected but no credentials to sign playback with.',
+      );
+    }
+  }
+
+  // PLATFORM_WEB_URL is where an email's links point. It must never fall
+  // back to a localhost default in production — but requiring it outright
+  // would refuse to start every existing deployment, none of which sets
+  // it, for a value Atlas can already derive: the platform host IS
+  // `PLATFORM_BASE_DOMAIN`, which production has had since P63. So the
+  // rule is "derive it, or refuse" rather than "demand it": an explicit
+  // value still wins (a separate marketing host, a staging origin), and a
+  // deployment with neither is the only one that cannot build a link and
+  // is refused.
+  if (parsed.data.NODE_ENV === 'production' && !parsed.data.PLATFORM_WEB_URL) {
+    if (parsed.data.PLATFORM_BASE_DOMAIN) {
+      parsed.data.PLATFORM_WEB_URL = `https://${parsed.data.PLATFORM_BASE_DOMAIN}`;
+    } else if (parsed.data.EMAIL_PROVIDER !== 'stub') {
+      // Only a deployment that can actually SEND is refused. A localhost
+      // link inside a real email is a broken product; a deployment on the
+      // stub sends nothing at all, so there is no bad link to protect
+      // anyone from and no reason to keep it from starting.
+      throw new Error(
+        'PLATFORM_WEB_URL or PLATFORM_BASE_DOMAIN is required when NODE_ENV=production and a ' +
+          'real email provider is configured — refusing to send email links that would point ' +
+          'at a localhost default.',
       );
     }
   }

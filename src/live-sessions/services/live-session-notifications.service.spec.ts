@@ -6,23 +6,35 @@
  * a class of 200 twice; too tight and the second reschedule — the one that
  * actually matters — is silently swallowed and everybody turns up on the
  * wrong day.
+ *
+ * WHERE THE RULES LIVE NOW. The service used to pass `dedupeKey`,
+ * `priority` and the translation keys itself; the communications
+ * catalogue owns all three since every event became a catalogue entry.
+ * The behaviour is unchanged, so this spec still proves it — it just
+ * proves each half where it now lives: the service is checked on WHO it
+ * emits for and WHAT it passes, and the catalogue on the keys and
+ * priority it derives from that payload.
  */
 import { Test } from '@nestjs/testing';
 import { LiveSessionNotificationsService } from './live-session-notifications.service';
 import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import {
+  COMMUNICATION_CATALOG,
+  type CommunicationEventKey,
+} from '../../communications/catalog/communication-catalog';
 
 describe('LiveSessionNotificationsService.notifyEnrolledStudents', () => {
   let service: LiveSessionNotificationsService;
-  let notify: jest.Mock;
+  let emit: jest.Mock;
   let enrollmentFindMany: jest.Mock;
 
   const MONDAY = new Date('2026-10-05T10:00:00Z');
   const FRIDAY = new Date('2026-10-09T10:00:00Z');
 
   beforeEach(async () => {
-    notify = jest.fn().mockResolvedValue(true);
+    emit = jest.fn().mockResolvedValue({ created: true, outboxId: 'outbox-1' });
     enrollmentFindMany = jest
       .fn()
       .mockResolvedValue([{ studentId: 'student-1' }, { studentId: 'student-2' }]);
@@ -32,7 +44,7 @@ describe('LiveSessionNotificationsService.notifyEnrolledStudents', () => {
         LiveSessionNotificationsService,
         { provide: PrismaService, useValue: {} },
         { provide: TenancyContextService, useValue: {} },
-        { provide: NotificationFanoutService, useValue: { notify } },
+        { provide: CommunicationService, useValue: { emit } },
       ],
     }).compile();
 
@@ -54,14 +66,19 @@ describe('LiveSessionNotificationsService.notifyEnrolledStudents', () => {
       event,
     });
 
-  const keysFor = (event: string) =>
-    notify.mock.calls
-      .map((call) => call[1].dedupeKey as string)
-      .filter((key) => key.includes(`:${event}`));
+  /** The dedupe keys the catalogue derives from what the service actually emitted. */
+  const keysFor = (event: string): string[] =>
+    emit.mock.calls
+      .map(([, input]) => input as { key: CommunicationEventKey })
+      .filter((input) => input.key === `live_session.${event}`)
+      .map((input) => {
+        const dedupe = COMMUNICATION_CATALOG[input.key].dedupe;
+        return String(dedupe?.(input as never) ?? '');
+      });
 
   it('notifies every enrolled student', async () => {
     await send('scheduled', MONDAY);
-    expect(notify).toHaveBeenCalledTimes(2);
+    expect(emit).toHaveBeenCalledTimes(2);
   });
 
   /*
@@ -83,7 +100,7 @@ describe('LiveSessionNotificationsService.notifyEnrolledStudents', () => {
   it('produces an identical key when the same announcement is retried', async () => {
     await send('rescheduled', FRIDAY);
     const first = keysFor('rescheduled');
-    notify.mockClear();
+    emit.mockClear();
     await send('rescheduled', FRIDAY);
     expect(keysFor('rescheduled')).toEqual(first);
   });
@@ -98,7 +115,7 @@ describe('LiveSessionNotificationsService.notifyEnrolledStudents', () => {
   it('produces a DIFFERENT key for a second reschedule to a new time', async () => {
     await send('rescheduled', MONDAY);
     const monday = keysFor('rescheduled');
-    notify.mockClear();
+    emit.mockClear();
     await send('rescheduled', FRIDAY);
     expect(keysFor('rescheduled')).not.toEqual(monday);
   });
@@ -107,7 +124,7 @@ describe('LiveSessionNotificationsService.notifyEnrolledStudents', () => {
   it('produces a different starting-soon key after a reschedule', async () => {
     await send('starting_soon', MONDAY);
     const monday = keysFor('starting_soon');
-    notify.mockClear();
+    emit.mockClear();
     await send('starting_soon', FRIDAY);
     expect(keysFor('starting_soon')).not.toEqual(monday);
   });
@@ -122,7 +139,7 @@ describe('LiveSessionNotificationsService.notifyEnrolledStudents', () => {
     async (event) => {
       await send(event, MONDAY);
       const monday = keysFor(event);
-      notify.mockClear();
+      emit.mockClear();
       await send(event, FRIDAY);
       expect(keysFor(event)).toEqual(monday);
     },
@@ -130,16 +147,12 @@ describe('LiveSessionNotificationsService.notifyEnrolledStudents', () => {
 
   it('keys separately per student, so one student cannot swallow another notification', async () => {
     await send('scheduled', MONDAY);
-    const keys = notify.mock.calls.map((call) => call[1].dedupeKey);
-    expect(new Set(keys).size).toBe(2);
+    expect(new Set(keysFor('scheduled')).size).toBe(2);
   });
 
-  it('marks a cancellation high priority and a reminder medium', async () => {
-    await send('cancelled', MONDAY);
-    expect(notify.mock.calls[0][1].priority).toBe('high');
-    notify.mockClear();
-    await send('starting_soon', MONDAY);
-    expect(notify.mock.calls[0][1].priority).toBe('medium');
+  it('marks a cancellation high priority and a reminder medium', () => {
+    expect(COMMUNICATION_CATALOG['live_session.cancelled'].priority).toBe('high');
+    expect(COMMUNICATION_CATALOG['live_session.starting_soon'].priority).toBe('medium');
   });
 
   /*
@@ -149,9 +162,22 @@ describe('LiveSessionNotificationsService.notifyEnrolledStudents', () => {
    */
   it('sends translation keys and raw values, never rendered text', async () => {
     await send('rescheduled', FRIDAY);
-    const payload = notify.mock.calls[0][1];
-    expect(payload.titleKey).toBe('notifications:liveSession.rescheduled.title');
-    expect(payload.messageKey).toBe('notifications:liveSession.rescheduled.message');
-    expect(payload.values.startsAt).toBe(FRIDAY.toISOString());
+    const [, input] = emit.mock.calls[0];
+    const entry = COMMUNICATION_CATALOG['live_session.rescheduled'];
+    expect(entry.titleKey).toBe('notifications:liveSession.rescheduled.title');
+    expect(entry.messageKey).toBe('notifications:liveSession.rescheduled.message');
+    expect((input as { values: { startsAt: string } }).values.startsAt).toBe(
+      FRIDAY.toISOString(),
+    );
+  });
+
+  /* Email is deliberately not a channel for these — the feed is enough. */
+  it('keeps live-session announcements in-app only', () => {
+    for (const event of ['scheduled', 'rescheduled', 'cancelled', 'starting_soon'] as const) {
+      expect(COMMUNICATION_CATALOG[`live_session.${event}`].channels).toEqual({
+        inApp: 'always',
+        email: 'never',
+      });
+    }
   });
 });

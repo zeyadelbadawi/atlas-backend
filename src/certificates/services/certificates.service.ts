@@ -33,7 +33,8 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { ProtectedMediaStorage } from '../../media/storage/protected-media-storage.provider';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
@@ -66,10 +67,7 @@ import {
   type CertificateTemplateResponse,
   type CertificateVerificationResponse,
 } from '../dto/certificate.contract';
-import {
-  assertReadablePalette,
-  paletteFromTemplate,
-} from '../certificate-palette.util';
+import { assertReadablePalette, paletteFromTemplate } from '../certificate-palette.util';
 import type {
   IssueCertificateDto,
   ListCertificatesQueryDto,
@@ -118,7 +116,7 @@ export class CertificatesService {
     private readonly academiesRepository: AcademiesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
-    private readonly notifications: NotificationFanoutService,
+    private readonly communications: CommunicationService,
     private readonly metrics: LearningMetricsService,
     private readonly storage: ProtectedMediaStorage,
     private readonly repository: CertificatesRepository,
@@ -266,8 +264,7 @@ export class CertificatesService {
     const minScoreMet =
       enrollment.course.certificateMinScore === null ||
       (overallScore !== null && overallScore >= enrollment.course.certificateMinScore);
-    const eligible =
-      enrollment.course.certificatesEnabled && completed && minScoreMet;
+    const eligible = enrollment.course.certificatesEnabled && completed && minScoreMet;
     if (!eligible && !input.force) return null;
     // Force-issue (owner override) still requires the course to award a
     // certificate at all; it only bypasses the completion/score gate.
@@ -462,29 +459,24 @@ export class CertificatesService {
   ): Promise<void> {
     await this.enqueueRender(certificate.id, certificate.academyId);
     const snapshot = certificate.snapshot as unknown as CertificateSnapshot;
-    const notified = await this.tenancyContextService.runInTenantContext(
+    const emitted: EmitResult = await this.tenancyContextService.runInTenantContext(
       organizationId,
       (tx) =>
-        this.notifications.notify(tx, {
-          userId: certificate.studentId,
-          type: 'activity',
-          priority: 'medium',
-          titleKey: 'notifications:events.certificateIssued.title',
-          messageKey: 'notifications:events.certificateIssued.message',
-          values: { courseTitle: snapshot.courseTitle },
-          actionUrl: '/my/certificates',
-          dedupeKey: `certificate.issued:${certificate.id}:${certificate.version}`,
+        this.communications.emit(tx, {
+          key: 'certificate.issued',
+          recipientUserId: certificate.studentId,
+          organizationId,
+          academyId: certificate.academyId,
+          entity: { type: 'certificate', id: certificate.id },
+          values: {
+            courseTitle: snapshot.courseTitle,
+            academyName: snapshot.academyName,
+            verificationCode: formatVerificationCode(certificate.verificationCode),
+            version: certificate.version,
+          },
         }),
     );
-    await this.notifications.sendEmailAfterCommit(certificate.studentId, notified, {
-      template: 'certificate_issued',
-      values: {
-        courseTitle: snapshot.courseTitle,
-        academyName: snapshot.academyName,
-        verificationCode: formatVerificationCode(certificate.verificationCode),
-        locale: certificate.locale,
-      },
-    });
+    await this.communications.enqueueAfterCommit(emitted.outboxId);
   }
 
   // ---------------------------------------------------------------------
@@ -533,28 +525,23 @@ export class CertificatesService {
           },
         });
         const snapshot = certificate.snapshot as unknown as CertificateSnapshot;
-        const notified = await this.notifications.notify(tx, {
-          userId: certificate.studentId,
-          type: 'activity',
-          priority: 'high',
-          titleKey: 'notifications:events.certificateRevoked.title',
-          messageKey: 'notifications:events.certificateRevoked.message',
-          values: { courseTitle: snapshot.courseTitle },
-          actionUrl: '/my/certificates',
-          dedupeKey: `certificate.revoked:${certificateId}:${now.getTime()}`,
+        const emitted = await this.communications.emit(tx, {
+          key: 'certificate.revoked',
+          recipientUserId: certificate.studentId,
+          organizationId,
+          academyId: certificate.academyId,
+          entity: { type: 'certificate', id: certificateId },
+          values: {
+            courseTitle: snapshot.courseTitle,
+            academyName: snapshot.academyName,
+            revokedAtMs: now.getTime(),
+          },
         });
-        return { ...certificate, notified, snapshotForEmail: snapshot };
+        return { ...certificate, emitted };
       },
     );
-    if ('notified' in revoked) {
-      await this.notifications.sendEmailAfterCommit(revoked.studentId, revoked.notified, {
-        template: 'certificate_revoked',
-        values: {
-          courseTitle: revoked.snapshotForEmail.courseTitle,
-          academyName: revoked.snapshotForEmail.academyName,
-          locale: revoked.locale,
-        },
-      });
+    if ('emitted' in revoked) {
+      await this.communications.enqueueAfterCommit(revoked.emitted.outboxId);
     }
     return this.getForAcademy(academyId, organizationId, actorUserId, certificateId);
   }

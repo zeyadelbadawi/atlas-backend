@@ -87,6 +87,8 @@ export interface CreateNotificationInput {
   readonly metadata?: Record<string, unknown>;
   /** Null/omitted = never deduped (see schema.prisma's own doc comment on this table). */
   readonly dedupeKey?: string | null;
+  /** P64 Communications — feed retention class from the catalogue; defaults to `standard`. */
+  readonly retentionClass?: 'standard' | 'extended';
 }
 
 @Injectable()
@@ -185,6 +187,7 @@ export class NotificationsRepository {
     const metadataJson =
       input.metadata === undefined ? null : JSON.stringify(input.metadata);
     const dedupeKey = input.dedupeKey ?? null;
+    const retentionClass = input.retentionClass ?? 'standard';
 
     // `updated_at` has no DB-level default — Prisma's `@updatedAt` is
     // normally populated by Prisma CLIENT itself on every `.create()`/
@@ -198,12 +201,13 @@ export class NotificationsRepository {
       await tx.$executeRaw`
         INSERT INTO "notifications"
           ("id", "user_id", "type", "priority", "title_key", "message_key", "values",
-           "action_url", "action_label_key", "metadata", "dedupe_key", "created_at", "updated_at")
+           "action_url", "action_label_key", "metadata", "dedupe_key", "retention_class",
+           "created_at", "updated_at")
         VALUES (
           ${id}, ${input.userId}, ${input.type}::"notification_type", ${input.priority}::"notification_priority",
           ${input.titleKey}, ${input.messageKey}, ${valuesJson}::jsonb,
           ${input.actionUrl ?? null}, ${input.actionLabelKey ?? null}, ${metadataJson}::jsonb, ${dedupeKey},
-          ${now}, ${now}
+          ${retentionClass}::"notification_retention_class", ${now}, ${now}
         )
       `;
       return true;

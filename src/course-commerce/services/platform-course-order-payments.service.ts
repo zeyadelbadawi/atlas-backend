@@ -48,7 +48,8 @@ import { PaymentProofStorageService } from '../../billing/storage/payment-proof-
 import { CourseOrdersRepository } from '../repositories/course-orders.repository';
 import { CourseOrderPaymentApplicationService } from './course-order-payment-application.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import {
   toCourseOrderPaymentResponse,
@@ -79,7 +80,7 @@ export class PlatformCourseOrderPaymentsService {
     private readonly courseOrdersRepository: CourseOrdersRepository,
     private readonly courseOrderPaymentApplicationService: CourseOrderPaymentApplicationService,
     private readonly auditLogWriterService: AuditLogWriterService,
-    private readonly notificationFanoutService: NotificationFanoutService,
+    private readonly communicationService: CommunicationService,
     private readonly metrics: LearningMetricsService,
   ) {}
 
@@ -129,7 +130,7 @@ export class PlatformCourseOrderPaymentsService {
       paymentId,
     );
 
-    let notifiedNew = false;
+    let emitted: EmitResult = { created: false, outboxId: null };
     const result = await this.tenancyContextService.runInTenantAndUserContext(
       courseOrder.organizationId,
       reviewerId,
@@ -187,14 +188,13 @@ export class PlatformCourseOrderPaymentsService {
 
         // Phase P17 — notify the buyer, same transaction as the state change.
         const courseTitle = extractCourseTitle(reloadedOrder?.snapshot);
-        notifiedNew = await this.notificationFanoutService.notify(tx, {
-          userId: courseOrder.studentId,
-          type: 'billing',
-          priority: 'medium',
-          titleKey: 'notifications:events.courseOrderPaid.title',
-          messageKey: 'notifications:events.courseOrderPaid.message',
+        emitted = await this.communicationService.emit(tx, {
+          key: 'course.order.paid',
+          recipientUserId: courseOrder.studentId,
+          organizationId: courseOrder.organizationId,
+          academyId: reloadedOrder?.academyId,
+          entity: { type: 'payment', id: paymentId },
           values: { courseTitle },
-          dedupeKey: `course_order_paid:${paymentId}`,
         });
 
         const final = await this.paymentsRepository.findByIdAnyOrganization(
@@ -218,11 +218,7 @@ export class PlatformCourseOrderPaymentsService {
       );
     }
 
-    await this.notificationFanoutService.sendEmailAfterCommit(
-      courseOrder.studentId,
-      notifiedNew,
-      { template: 'course_order_paid', values: { courseTitle: result.courseTitle } },
-    );
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
 
     return result.response;
   }
@@ -237,7 +233,7 @@ export class PlatformCourseOrderPaymentsService {
       paymentId,
     );
 
-    let notifiedNew = false;
+    let emitted: EmitResult = { created: false, outboxId: null };
     const result = await this.tenancyContextService.runInTenantAndUserContext(
       courseOrder.organizationId,
       reviewerId,
@@ -283,14 +279,13 @@ export class PlatformCourseOrderPaymentsService {
           courseOrder.id,
         );
         const courseTitle = extractCourseTitle(orderForTitle?.snapshot);
-        notifiedNew = await this.notificationFanoutService.notify(tx, {
-          userId: courseOrder.studentId,
-          type: 'billing',
-          priority: 'high',
-          titleKey: 'notifications:events.courseOrderPaymentFailed.title',
-          messageKey: 'notifications:events.courseOrderPaymentFailed.message',
+        emitted = await this.communicationService.emit(tx, {
+          key: 'course.order.payment_failed',
+          recipientUserId: courseOrder.studentId,
+          organizationId: courseOrder.organizationId,
+          academyId: orderForTitle?.academyId,
+          entity: { type: 'payment', id: paymentId },
           values: { courseTitle },
-          dedupeKey: `course_order_payment_failed:${paymentId}`,
         });
 
         const final = await this.paymentsRepository.findByIdAnyOrganization(
@@ -301,14 +296,7 @@ export class PlatformCourseOrderPaymentsService {
       },
     );
 
-    await this.notificationFanoutService.sendEmailAfterCommit(
-      courseOrder.studentId,
-      notifiedNew,
-      {
-        template: 'course_order_payment_failed',
-        values: { courseTitle: result.courseTitle },
-      },
-    );
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
 
     return result.response;
   }

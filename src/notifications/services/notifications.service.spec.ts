@@ -132,8 +132,17 @@ describe('NotificationsService', () => {
       });
 
       expect(result).toEqual({ email: false, push: true, sms: true });
+      // The legacy switch and the communications `engagement` category
+      // are the same intent expressed twice, so writing one writes the
+      // other: a user who turns email off here must not still receive
+      // engagement mail through the new preference model.
       expect(mergePreferences).toHaveBeenCalledWith('user-1', {
-        notifications: { email: false, push: true, sms: true },
+        notifications: {
+          email: false,
+          push: true,
+          sms: true,
+          categories: { engagement: { email: false } },
+        },
       });
     });
   });

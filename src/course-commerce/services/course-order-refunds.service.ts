@@ -38,7 +38,8 @@ import { PaymentsRepository } from '../../billing/repositories/payments.reposito
 import { CourseOrdersRepository } from '../repositories/course-orders.repository';
 import { CourseOrderRefundsRepository } from '../repositories/course-order-refunds.repository';
 import { RevenueLedgerEntriesRepository } from '../repositories/revenue-ledger-entries.repository';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { REFUND_WINDOW_DAYS } from '../dto/course-commerce.constants';
 import {
@@ -60,7 +61,7 @@ export class CourseOrderRefundsService {
     private readonly paymentsRepository: PaymentsRepository,
     private readonly enrollmentsRepository: EnrollmentsRepository,
     private readonly revenueLedgerEntriesRepository: RevenueLedgerEntriesRepository,
-    private readonly notificationFanoutService: NotificationFanoutService,
+    private readonly communicationService: CommunicationService,
     private readonly metrics: LearningMetricsService,
   ) {}
 
@@ -77,7 +78,7 @@ export class CourseOrderRefundsService {
     );
     if (!order) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-    let notifiedNew = false;
+    let emitted: EmitResult = { created: false, outboxId: null };
     const courseTitle =
       (order.snapshot as { course?: { title?: string } } | null)?.course?.title ??
       'your course';
@@ -217,24 +218,20 @@ export class CourseOrderRefundsService {
         }
 
         // Phase P17 — notify the buyer, same transaction as the refund itself.
-        notifiedNew = await this.notificationFanoutService.notify(tx, {
-          userId: studentId,
-          type: 'billing',
-          priority: 'medium',
-          titleKey: 'notifications:events.courseOrderRefunded.title',
-          messageKey: 'notifications:events.courseOrderRefunded.message',
+        emitted = await this.communicationService.emit(tx, {
+          key: 'course.order.refunded',
+          recipientUserId: studentId,
+          organizationId: fresh.organizationId,
+          academyId: fresh.academyId,
+          entity: { type: 'course_order', id: fresh.id },
           values: { courseTitle },
-          dedupeKey: `course_order_refunded:${fresh.id}`,
         });
 
         return toCourseOrderRefundResponse(refund);
       },
     );
 
-    await this.notificationFanoutService.sendEmailAfterCommit(studentId, notifiedNew, {
-      template: 'course_order_refunded',
-      values: { courseTitle },
-    });
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
 
     return result;
   }

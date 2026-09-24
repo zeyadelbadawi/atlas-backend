@@ -53,7 +53,8 @@ import { PlatformDomainService } from '../../domain/services/platform-domain.ser
 import { buildFullHost } from '../../domain/utils/effective-base-domain.util';
 import { ProvisioningRequestsRepository } from '../repositories/provisioning-requests.repository';
 import { ProvisioningStepsRepository } from '../repositories/provisioning-steps.repository';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import { WebsiteConfigurationService } from '../../website/services/website-configuration.service';
 import { WebsiteGenerationService } from '../../website/services/website-generation.service';
 import { WEBSITE_THEME_KEYS } from '../../website/constants/website.constants';
@@ -185,7 +186,7 @@ export class ProvisioningOrchestratorService {
     private readonly academiesService: AcademiesService,
     private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
     private readonly platformDomainService: PlatformDomainService,
-    private readonly notificationFanoutService: NotificationFanoutService,
+    private readonly communicationService: CommunicationService,
     private readonly websiteConfigurationService: WebsiteConfigurationService,
     private readonly websiteGenerationService: WebsiteGenerationService,
     private readonly usersRepository: UsersRepository,
@@ -318,7 +319,7 @@ export class ProvisioningOrchestratorService {
     }
 
     const isFinalizationStep = stepKey === 'finalization';
-    const { shouldContinue, notifiedNew, shouldAutoCreateSupportCase } =
+    const { shouldContinue, outboxId, shouldAutoCreateSupportCase } =
       await this.runTenant(organizationId, async (tx) => {
         if (outcome.result === 'failed') {
           await this.provisioningStepsRepository.markFailed(
@@ -336,14 +337,13 @@ export class ProvisioningOrchestratorService {
           // here (e.g. a later statement in this block failing) leaves no
           // misleading notification behind, matching master plan §21 P17's
           // own atomicity requirement.
-          const created = await this.notificationFanoutService.notify(tx, {
-            userId: request.requestedByUserId,
-            type: 'system',
-            priority: 'high',
-            titleKey: 'notifications:events.provisioningFailed.title',
-            messageKey: 'notifications:events.provisioningFailed.message',
-            values: { academyName: request.requestedAcademyName },
-            dedupeKey: `provisioning_failed:${provisioningRequestId}:${stepKey}`,
+          const created = await this.communicationService.emit(tx, {
+            key: 'provisioning.failed',
+            recipientUserId: request.requestedByUserId,
+            organizationId: request.organizationId,
+            academyId: request.academyId,
+            entity: { type: 'provisioning_request', id: provisioningRequestId },
+            values: { academyName: request.requestedAcademyName, stepKey },
           });
 
           // Phase 8 — reuses `attemptCount`, the existing "how many times
@@ -361,7 +361,7 @@ export class ProvisioningOrchestratorService {
 
           return {
             shouldContinue: false,
-            notifiedNew: created,
+            outboxId: created.outboxId,
             shouldAutoCreateSupportCase,
           };
         }
@@ -382,52 +382,31 @@ export class ProvisioningOrchestratorService {
 
         await this.advanceRequestAfterStep(tx, provisioningRequestId, stepKey);
 
-        let created = false;
+        let created: EmitResult = { created: false, outboxId: null };
         if (isFinalizationStep) {
-          created = await this.notificationFanoutService.notify(tx, {
-            userId: request.requestedByUserId,
-            type: 'system',
-            priority: 'medium',
-            titleKey: 'notifications:events.provisioningCompleted.title',
-            messageKey: 'notifications:events.provisioningCompleted.message',
+          created = await this.communicationService.emit(tx, {
+            key: 'provisioning.completed',
+            recipientUserId: request.requestedByUserId,
+            organizationId: request.organizationId,
+            academyId: request.academyId,
+            entity: { type: 'provisioning_request', id: provisioningRequestId },
             values: { academyName: request.requestedAcademyName },
-            dedupeKey: `provisioning_completed:${provisioningRequestId}`,
           });
         }
 
         return {
           shouldContinue: !isFinalizationStep,
-          notifiedNew: created,
+          outboxId: created.outboxId,
           shouldAutoCreateSupportCase: false,
         };
       });
 
-    // Step 2 of the notification contract — only after the transaction
-    // above has actually committed (see `NotificationFanoutService`'s own
-    // doc comment on why this is a separate call, never inside the `tx`
-    // callback above). `notifiedNew` (the real dedupe result from step 1,
-    // never a hardcoded `true`) decides whether an email actually goes
-    // out — a redelivered/retried call that already notified once never
-    // double-emails.
-    if (outcome.result === 'failed') {
-      await this.notificationFanoutService.sendEmailAfterCommit(
-        request.requestedByUserId,
-        notifiedNew,
-        {
-          template: 'provisioning_failed',
-          values: { academyName: request.requestedAcademyName },
-        },
-      );
-    } else if (isFinalizationStep) {
-      await this.notificationFanoutService.sendEmailAfterCommit(
-        request.requestedByUserId,
-        notifiedNew,
-        {
-          template: 'provisioning_completed',
-          values: { academyName: request.requestedAcademyName },
-        },
-      );
-    }
+    // Step 2 of the communication contract — only after the transaction
+    // above has actually committed: a hint to the dispatcher that the
+    // outbox row (written inside the `tx` callback above, or not at all on
+    // a deduped retry) exists. Delivery, channel and preference decisions
+    // are the dispatcher's, never this orchestrator's.
+    await this.communicationService.enqueueAfterCommit(outboxId);
 
     // Phase 8 — a separate, best-effort write after the failure
     // transaction above has already committed, mirroring the email step

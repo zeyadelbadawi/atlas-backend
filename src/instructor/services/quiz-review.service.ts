@@ -21,7 +21,8 @@ import { AcademyMembersRepository } from '../../academy/repositories/academy-mem
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import {
   assertCanReviewCourse,
@@ -69,7 +70,7 @@ export class QuizReviewService {
     private readonly engine: QuizAttemptEngineService,
     private readonly completion: CourseCompletionService,
     private readonly auditLogWriterService: AuditLogWriterService,
-    private readonly notifications: NotificationFanoutService,
+    private readonly communications: CommunicationService,
     private readonly metrics: LearningMetricsService,
   ) {}
 
@@ -250,17 +251,15 @@ export class QuizReviewService {
           where: { studentId: attempt.studentId, courseId },
           select: { id: true, academyId: true },
         });
-        let notified = false;
+        let emitted: EmitResult = { created: false, outboxId: null };
         if (!score.pendingManual) {
-          notified = await this.notifications.notify(tx, {
-            userId: attempt.studentId,
-            type: 'activity',
-            priority: 'medium',
-            titleKey: 'notifications:events.quizGraded.title',
-            messageKey: 'notifications:events.quizGraded.message',
-            values: { quizTitle: quiz.title, score: score.score },
-            actionUrl: `/my/courses/${courseId}/activities/${quizId}`,
-            dedupeKey: `quiz_attempt.graded:${attemptId}`,
+          emitted = await this.communications.emit(tx, {
+            key: 'assessment.quiz.graded',
+            recipientUserId: attempt.studentId,
+            organizationId,
+            academyId: context.academyId,
+            entity: { type: 'quiz_attempt', id: attemptId },
+            values: { quizTitle: quiz.title, score: score.score, courseId, quizId },
           });
         }
         return {
@@ -268,7 +267,7 @@ export class QuizReviewService {
           attempt,
           enrollment,
           finalized: !score.pendingManual,
-          notified,
+          emitted,
           score: score.score,
         };
       },
@@ -282,14 +281,7 @@ export class QuizReviewService {
         result.attempt.studentId,
         result.enrollment,
       );
-      await this.notifications.sendEmailAfterCommit(
-        result.attempt.studentId,
-        result.notified,
-        {
-          template: 'quiz_attempt_graded',
-          values: { quizTitle: result.quiz.title, score: result.score },
-        },
-      );
+      await this.communications.enqueueAfterCommit(result.emitted.outboxId);
     }
     return this.getAttempt(userId, courseId, quizId, attemptId);
   }

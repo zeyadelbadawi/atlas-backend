@@ -312,6 +312,14 @@ export interface EmailConfig {
   readonly fromName: string;
 }
 
+/** P64 Communications — link building and platform branding for outbound email. */
+export interface CommunicationsConfig {
+  /** Public origin of the platform web app (`PLATFORM_WEB_URL`), no trailing slash. */
+  readonly platformWebUrl: string;
+  /** The platform's display name in email branding; reuses `EMAIL_FROM_NAME`. */
+  readonly platformName: string;
+}
+
 /** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
 export interface IdentityConfig {
   readonly jwtAccessSecret: string;
@@ -561,8 +569,14 @@ export default () => {
     fromName: env.EMAIL_FROM_NAME ?? 'Atlas',
   };
 
+  const communications: CommunicationsConfig = {
+    platformWebUrl: (env.PLATFORM_WEB_URL || 'http://localhost:3001').replace(/\/+$/, ''),
+    platformName: env.EMAIL_FROM_NAME ?? 'Atlas',
+  };
+
   return {
     app,
+    communications,
     database,
     redis,
     observability,

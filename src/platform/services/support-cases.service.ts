@@ -49,7 +49,7 @@ import {
 } from '../../media/utils/file-validation.util';
 import type { MediaStorageConfig } from '../../config/configuration';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
 import {
   toSupportCaseDetailResponse,
   toSupportCaseSummaryResponse,
@@ -79,7 +79,7 @@ export class SupportCasesService {
     private readonly supportCaseMessagesRepository: SupportCaseMessagesRepository,
     private readonly supportCaseMessageAttachmentsRepository: SupportCaseMessageAttachmentsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
-    private readonly notificationFanoutService: NotificationFanoutService,
+    private readonly communicationService: CommunicationService,
     @Inject(MEDIA_STORAGE_PROVIDER)
     private readonly storageProvider: MediaStorageProvider,
     configService: ConfigService,
@@ -134,51 +134,57 @@ export class SupportCasesService {
     caseId: string,
     payload: UpdateSupportCaseStatusDto,
   ): Promise<SupportCaseDetailResponse> {
-    return this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
-      const before = await this.loadCaseOrThrow(tx, caseId);
+    let statusOutboxId: string | null = null;
+    const response = await this.tenancyContextService.runInUserContext(
+      platformOwnerId,
+      async (tx) => {
+        const before = await this.loadCaseOrThrow(tx, caseId);
 
-      const updated = await this.supportCasesRepository.updateStatus(
-        tx,
-        caseId,
-        payload.status,
-      );
-      await this.auditLogWriterService.write(tx, {
-        actorUserId: platformOwnerId,
-        organizationId: updated.organizationId ?? undefined,
-        action: 'support_case.status_changed',
-        targetType: 'support_case',
-        targetId: caseId,
-        targetLabel: updated.subject,
-        context: { status: payload.status },
-      });
-
-      // Phase P17 — notify the case's requester (in-app only; no email
-      // template for a status change alone — see this phase's own
-      // "do not email every in-app notification by default" instruction).
-      // No requester attached (a case created without one) → nothing to
-      // notify, not an error.
-      if (before.requesterUserId) {
-        await this.notificationFanoutService.notify(tx, {
-          userId: before.requesterUserId,
-          type: 'activity',
-          priority: 'low',
-          titleKey: 'notifications:events.supportCaseStatusChanged.title',
-          messageKey: 'notifications:events.supportCaseStatusChanged.message',
-          values: { subject: updated.subject, status: payload.status },
-          dedupeKey: `support_case_status_changed:${caseId}:${payload.status}`,
+        const updated = await this.supportCasesRepository.updateStatus(
+          tx,
+          caseId,
+          payload.status,
+        );
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: platformOwnerId,
+          organizationId: updated.organizationId ?? undefined,
+          action: 'support_case.status_changed',
+          targetType: 'support_case',
+          targetId: caseId,
+          targetLabel: updated.subject,
+          context: { status: payload.status },
         });
-      }
 
-      const messages = await this.supportCaseMessagesRepository.findManyForCase(
-        tx,
-        caseId,
-      );
-      return toSupportCaseDetailResponse(
-        updated,
-        messages,
-        await this.findThreadAttachments(tx, messages),
-      );
-    });
+        // Phase P17 — notify the case's requester (in-app only; no email
+        // template for a status change alone — see this phase's own
+        // "do not email every in-app notification by default" instruction).
+        // No requester attached (a case created without one) → nothing to
+        // notify, not an error.
+        if (before.requesterUserId) {
+          const emitted = await this.communicationService.emit(tx, {
+            key: 'support.case.status_changed',
+            recipientUserId: before.requesterUserId,
+            organizationId: updated.organizationId,
+            academyId: updated.academyId,
+            entity: { type: 'support_case', id: caseId },
+            values: { subject: updated.subject, status: payload.status },
+          });
+          statusOutboxId = emitted.outboxId;
+        }
+
+        const messages = await this.supportCaseMessagesRepository.findManyForCase(
+          tx,
+          caseId,
+        );
+        return toSupportCaseDetailResponse(
+          updated,
+          messages,
+          await this.findThreadAttachments(tx, messages),
+        );
+      },
+    );
+    await this.communicationService.enqueueAfterCommit(statusOutboxId);
+    return response;
   }
 
   async postReply(
@@ -194,9 +200,7 @@ export class SupportCasesService {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
 
-    let notifiedNew = false;
-    let recipientUserId: string | null = null;
-    let subjectForEmail = '';
+    let replyOutboxId: string | null = null;
 
     const result = await this.tenancyContextService.runInUserContext(
       platformOwnerId,
@@ -222,25 +226,18 @@ export class SupportCasesService {
         // Phase P17 — notify the requester a reply landed (master plan
         // §12's own explicit email producer list names "Support (reply)").
         if (supportCase.requesterUserId) {
-          recipientUserId = supportCase.requesterUserId;
-          subjectForEmail = supportCase.subject;
-          notifiedNew = await this.notificationFanoutService.notify(tx, {
-            userId: supportCase.requesterUserId,
-            type: 'activity',
-            priority: 'medium',
-            titleKey: 'notifications:events.supportCaseReply.title',
-            messageKey: 'notifications:events.supportCaseReply.message',
+          // Never deduped (catalogue): posting a reply is a single,
+          // human-initiated action with no redelivery risk and no natural
+          // key before the message row exists.
+          const emitted = await this.communicationService.emit(tx, {
+            key: 'support.case.reply',
+            recipientUserId: supportCase.requesterUserId,
+            organizationId: supportCase.organizationId,
+            academyId: supportCase.academyId,
+            entity: { type: 'support_case', id: caseId },
             values: { subject: supportCase.subject },
-            // No dedupe key — unlike a webhook/queued job, posting a reply
-            // is a single, direct, human-initiated action with no
-            // redelivery risk, and there is no stable natural key
-            // available before the message row itself is created (its own
-            // `id` doesn't exist yet at this point). A genuine duplicate
-            // reply notification would only occur if this exact HTTP
-            // request were somehow re-executed, not a realistic risk this
-            // phase needs to guard against.
-            dedupeKey: null,
           });
+          replyOutboxId = emitted.outboxId;
         }
 
         const messages = await this.supportCaseMessagesRepository.findManyForCase(
@@ -255,16 +252,7 @@ export class SupportCasesService {
       },
     );
 
-    if (recipientUserId) {
-      await this.notificationFanoutService.sendEmailAfterCommit(
-        recipientUserId,
-        notifiedNew,
-        {
-          template: 'support_case_reply',
-          values: { subject: subjectForEmail },
-        },
-      );
-    }
+    await this.communicationService.enqueueAfterCommit(replyOutboxId);
 
     return result;
   }

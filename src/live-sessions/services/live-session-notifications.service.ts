@@ -33,59 +33,33 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
-
-/** The existing `NotificationType` that fits — no new enum member needed. */
-const LIVE_SESSION_NOTIFICATION_TYPE = 'activity';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
+import type { CommunicationEventKey } from '../../communications/catalog/communication-catalog';
 
 type LiveSessionEvent = 'scheduled' | 'rescheduled' | 'cancelled' | 'starting_soon';
 
-/**
- * Events whose dedupe key must include the time being announced.
- *
- * `scheduled` and `cancelled` each happen once in a session's life, so the
- * session id alone identifies them. The other two are ABOUT a specific
- * time, and keying them on the session alone is silently wrong:
- *
- *   rescheduled  — an instructor who moves a class to Tuesday and then
- *                  again to Wednesday would have the second announcement
- *                  swallowed as a duplicate, leaving every student holding
- *                  the Tuesday time. The reschedule nobody heard about is
- *                  exactly the one that matters.
- *   starting_soon— the reminder belongs to the occurrence. After a
- *                  reschedule the session genuinely deserves a second
- *                  reminder, for the new time.
- *
- * Including the start instant makes both correct without weakening
- * deduplication: a RETRIED job announces the same time and is still
- * collapsed to one notification, which is what dedupe is actually for.
- */
-const TIME_SPECIFIC_EVENTS: ReadonlySet<LiveSessionEvent> = new Set([
-  'rescheduled',
-  'starting_soon',
-]);
+/** Catalogue key per lifecycle event (P64 Communications). */
+const LIVE_SESSION_EVENT_KEYS = {
+  scheduled: 'live_session.scheduled',
+  rescheduled: 'live_session.rescheduled',
+  cancelled: 'live_session.cancelled',
+  starting_soon: 'live_session.starting_soon',
+} as const satisfies Record<LiveSessionEvent, CommunicationEventKey>;
 
-function dedupeKeyFor(
-  args: {
-    readonly liveSessionId: string;
-    readonly scheduledStartAt: Date;
-    readonly event: LiveSessionEvent;
-  },
-  studentId: string,
-): string {
-  const base = `live-session:${args.liveSessionId}:${args.event}`;
-  const occurrence = TIME_SPECIFIC_EVENTS.has(args.event)
-    ? `:${args.scheduledStartAt.getTime()}`
-    : '';
-  return `${base}${occurrence}:${studentId}`;
-}
+/*
+  Dedupe lives in the catalogue now (`live_session.*` keys): `scheduled`
+  and `cancelled` key on the session alone; `rescheduled` and
+  `starting_soon` include the announced start instant (`startsAtMs`), so a
+  second reschedule is never swallowed while a retried job still collapses.
+*/
 
 @Injectable()
 export class LiveSessionNotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenancyContextService: TenancyContextService,
-    private readonly fanout: NotificationFanoutService,
+    private readonly communications: CommunicationService,
   ) {}
 
   /**
@@ -117,23 +91,23 @@ export class LiveSessionNotificationsService {
       select: { studentId: true },
     });
 
+    // Inside the caller's transaction, so no after-commit hint is
+    // available here: the one-minute sweep picks these rows up. Values
+    // are resolved by the CLIENT's own i18n for the in-app feed; the
+    // catalogue keeps these keys in-app only, exactly as before.
     for (const enrollment of enrollments) {
-      await this.fanout.notify(tx, {
-        userId: enrollment.studentId,
-        type: LIVE_SESSION_NOTIFICATION_TYPE,
-        priority: args.event === 'cancelled' ? 'high' : 'medium',
-        titleKey: `notifications:liveSession.${args.event}.title`,
-        messageKey: `notifications:liveSession.${args.event}.message`,
-        // Values are resolved by the CLIENT's own i18n, which is what
-        // keeps a notification correct in whichever language the reader
-        // has chosen rather than the language of whoever triggered it.
+      await this.communications.emit(tx, {
+        key: LIVE_SESSION_EVENT_KEYS[args.event],
+        recipientUserId: enrollment.studentId,
+        academyId: args.academyId,
+        entity: { type: 'live_session', id: args.liveSessionId },
         values: {
           title: args.title,
           startsAt: args.scheduledStartAt.toISOString(),
+          startsAtMs: args.scheduledStartAt.getTime(),
+          courseId: args.courseId,
+          studentId: enrollment.studentId,
         },
-        actionUrl: `/dashboard/learning/courses/${args.courseId}`,
-        actionLabelKey: 'notifications:liveSession.action.openCourse',
-        dedupeKey: dedupeKeyFor(args, enrollment.studentId),
       });
     }
   }
@@ -160,27 +134,20 @@ export class LiveSessionNotificationsService {
     });
     if (!session) return;
 
-    const wasNew = await this.tenancyContextService.runInTenantContext(
+    const emitted: EmitResult = await this.tenancyContextService.runInTenantContext(
       organizationId,
       (tx) =>
-        this.fanout.notify(tx, {
-          userId: session.hostUserId,
-          type: LIVE_SESSION_NOTIFICATION_TYPE,
-          priority: 'medium',
-          titleKey: 'notifications:liveSession.recordingAvailable.title',
-          messageKey: 'notifications:liveSession.recordingAvailable.message',
+        this.communications.emit(tx, {
+          key: 'live_session.recording_available',
+          recipientUserId: session.hostUserId,
+          organizationId,
+          entity: { type: 'live_session', id: liveSessionId },
           values: { title: session.title },
-          actionUrl: `/dashboard/add-ons/live-sessions/recordings`,
-          actionLabelKey: 'notifications:liveSession.action.openRecordings',
-          dedupeKey: `live-session:${liveSessionId}:recording-available`,
         }),
     );
 
-    // Step 2, AFTER the transaction above has committed — a failed email
-    // must never roll back the notification, per the fan-out contract.
-    await this.fanout.sendEmailAfterCommit(session.hostUserId, wasNew, {
-      template: 'live_session_recording_available',
-      values: { title: session.title },
-    });
+    // Step 2, AFTER the transaction above has committed — a hint to the
+    // dispatcher; delivery can never roll back the notification.
+    await this.communications.enqueueAfterCommit(emitted.outboxId);
   }
 }

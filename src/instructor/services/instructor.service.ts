@@ -33,7 +33,7 @@ import { AcademiesRepository } from '../../academy/repositories/academies.reposi
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { ContentGrantSigner } from '../../learning/services/content-grant.signer';
 import { CourseCompletionService } from '../../learning/services/course-completion.service';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
 import {
   InstructorRepository,
   type EnrollmentWithStudent,
@@ -97,7 +97,7 @@ export class InstructorService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly contentGrantSigner: ContentGrantSigner,
     private readonly courseCompletionService: CourseCompletionService,
-    private readonly notifications: NotificationFanoutService,
+    private readonly communications: CommunicationService,
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly coursesRepository: CoursesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
@@ -613,23 +613,25 @@ export class InstructorService {
           where: { studentId: submission.studentId, courseId },
           select: { id: true, academyId: true },
         });
-        const notified = await this.notifications.notify(tx, {
-          userId: submission.studentId,
-          type: 'activity',
-          priority: 'medium',
-          titleKey: 'notifications:events.assignmentGraded.title',
-          messageKey: 'notifications:events.assignmentGraded.message',
-          values: { assignmentTitle: assignment.title, score: payload.score ?? null },
-          actionUrl: `/my/courses/${courseId}/activities/${assignmentId}`,
-          dedupeKey: `assignment_submission.graded:${submissionId}:${graded.submittedRevision}`,
+        const emitted = await this.communications.emit(tx, {
+          key: 'assessment.assignment.graded',
+          recipientUserId: submission.studentId,
+          organizationId,
+          academyId: course?.academyId,
+          entity: { type: 'assignment_submission', id: submissionId },
+          values: {
+            assignmentTitle: assignment.title,
+            score: payload.score ?? null,
+            courseId,
+            assignmentId,
+            revision: graded.submittedRevision,
+          },
         });
         return {
           graded,
           studentName: submission.student.name,
-          studentId: submission.studentId,
           enrollment,
-          notified,
-          assignmentTitle: assignment.title,
+          emitted,
         };
       },
     );
@@ -640,10 +642,7 @@ export class InstructorService {
         academyId: result.enrollment.academyId,
       });
     }
-    await this.notifications.sendEmailAfterCommit(result.studentId, result.notified, {
-      template: 'assignment_graded',
-      values: { assignmentTitle: result.assignmentTitle, score: payload.score ?? '' },
-    });
+    await this.communications.enqueueAfterCommit(result.emitted.outboxId);
     return toAssignmentSubmissionReviewResponse(result.graded, result.studentName);
   }
 }

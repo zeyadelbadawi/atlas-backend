@@ -120,8 +120,24 @@ export class NotificationsService {
     userId: string,
     dto: NotificationPreferencesDto,
   ): Promise<NotificationPreferencesDto> {
+    // P64 Communications — `mergePreferences` merges at the TOP level, so
+    // the whole `notifications` sub-object is rewritten here: carry the
+    // communication `categories` across and keep `engagement.email` in
+    // step with the legacy flag so the two surfaces never disagree.
+    const user = await this.usersRepository.findById(userId);
+    const existing = ((
+      user?.preferences as { notifications?: Record<string, unknown> } | null
+    )?.notifications ?? {}) as { categories?: Record<string, unknown> };
+    const categories = {
+      ...(existing.categories ?? {}),
+      engagement: {
+        ...((existing.categories?.engagement as Record<string, unknown> | undefined) ??
+          {}),
+        email: dto.email,
+      },
+    };
     const updated = await this.usersRepository.mergePreferences(userId, {
-      notifications: { email: dto.email, push: dto.push, sms: dto.sms },
+      notifications: { email: dto.email, push: dto.push, sms: dto.sms, categories },
     });
     return resolveNotificationPreferences(updated.preferences);
   }

@@ -11,7 +11,8 @@ import { toCurrentUser } from '../dto/contracts';
 import type { CurrentUserResponse, UserPreferences } from '../dto/contracts';
 import { UserOrganizationsService } from '../../tenancy/services/user-organizations.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import { PrincipalResolverService } from '../../tenancy/services/principal-resolver.service';
 import { SurfaceEnforcementService } from '../../tenancy/services/surface-enforcement.service';
 import type { Principal } from '../../tenancy/services/principal-resolver.service';
@@ -24,7 +25,7 @@ export class UsersService {
     private readonly passwordHasher: PasswordHasherService,
     private readonly userOrganizationsService: UserOrganizationsService,
     private readonly tenancyContextService: TenancyContextService,
-    private readonly notificationFanoutService: NotificationFanoutService,
+    private readonly communicationService: CommunicationService,
     private readonly principalResolver: PrincipalResolverService,
     private readonly surfaceEnforcement: SurfaceEnforcementService,
   ) {}
@@ -125,19 +126,16 @@ export class UsersService {
     // its own small transaction just for the notification insert, the
     // same narrow exception `AuditLogWriterService.writeBestEffort`
     // documents for this exact situation (P1's password-reset-confirm).
-    const notifiedNew = await this.tenancyContextService.runInUserContext(userId, (tx) =>
-      this.notificationFanoutService.notify(tx, {
-        userId,
-        type: 'security',
-        priority: 'high',
-        titleKey: 'notifications:events.passwordChanged.title',
-        messageKey: 'notifications:events.passwordChanged.message',
-        dedupeKey: null,
-      }),
+    const emitted: EmitResult = await this.tenancyContextService.runInUserContext(
+      userId,
+      (tx) =>
+        this.communicationService.emit(tx, {
+          key: 'auth.password.changed',
+          recipientUserId: userId,
+          entity: { type: 'user', id: userId },
+        }),
     );
-    await this.notificationFanoutService.sendEmailAfterCommit(userId, notifiedNew, {
-      template: 'password_changed',
-    });
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
   }
 
   private async requireUser(userId: string) {

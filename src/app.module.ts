@@ -54,6 +54,7 @@ import { AuditLogModule } from './audit-log/audit-log.module';
 import { PlatformModule } from './platform/platform.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { NotificationEventsModule } from './notification-events/notification-events.module';
+import { CommunicationsModule } from './communications/communications.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SearchModule } from './search/search.module';
 import { DashboardModule } from './dashboard/dashboard.module';
@@ -161,6 +162,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     // `@Global()` — same reasoning as `AuditLogModule` immediately above,
     // for `NotificationFanoutService`/`NotificationsRepository` (P17).
     NotificationEventsModule,
+    CommunicationsModule,
     HealthModule,
     // P64 Phase 2 §U — the first metrics registry in the codebase.
     MetricsModule,

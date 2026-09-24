@@ -39,6 +39,13 @@ export type RetentionSweepTable = 'content_access_log' | 'quiz_attempt_events';
 const registry = new Registry();
 let defaultsCollected = false;
 
+/**
+ * P64 Communications — the same process registry, so series registered by
+ * another metrics class (`CommunicationMetricsService`) land in the one
+ * `GET /metrics` scrape rather than a second registry nobody reads.
+ */
+export const METRICS_REGISTRY: Registry = registry;
+
 function counter(name: string, help: string, labelNames: readonly string[]): Counter {
   const existing = registry.getSingleMetric(name);
   if (existing) return existing as Counter;

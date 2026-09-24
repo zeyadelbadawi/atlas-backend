@@ -42,7 +42,8 @@ import { PaymentProofsRepository } from '../repositories/payment-proofs.reposito
 import { PaymentProofStorageService } from '../storage/payment-proof-storage.service';
 import { PaymentApplicationService } from './payment-application.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
-import { NotificationFanoutService } from '../../notification-events/services/notification-fanout.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import { toPaymentResponse } from '../dto/payment.contract';
 import type { PaymentResponse } from '../dto/payment.contract';
 import type { PaymentListQueryDto } from '../dto/payment-list-query.dto';
@@ -66,7 +67,7 @@ export class PlatformPaymentService {
     private readonly paymentProofStorageService: PaymentProofStorageService,
     private readonly paymentApplicationService: PaymentApplicationService,
     private readonly auditLogWriterService: AuditLogWriterService,
-    private readonly notificationFanoutService: NotificationFanoutService,
+    private readonly communicationService: CommunicationService,
   ) {}
 
   async getPayments(
@@ -112,9 +113,7 @@ export class PlatformPaymentService {
   ): Promise<PaymentResponse> {
     const payment = await this.loadReviewablePayment(reviewerId, paymentId);
 
-    let notifiedNew = false;
-    let recipientUserId: string | null = null;
-    let notifiedAmountValues: { amount: number; currency: string } | null = null;
+    let emitted: EmitResult = { created: false, outboxId: null };
     const result = await this.tenancyContextService.runInTenantAndUserContext(
       payment.organizationId,
       reviewerId,
@@ -162,19 +161,15 @@ export class PlatformPaymentService {
           payment.organizationId,
         );
         if (organization) {
-          recipientUserId = organization.ownerUserId;
-          notifiedAmountValues = {
-            amount: this.toDisplayAmount(fresh.amountMinorUnits),
-            currency: fresh.currency,
-          };
-          notifiedNew = await this.notificationFanoutService.notify(tx, {
-            userId: organization.ownerUserId,
-            type: 'billing',
-            priority: 'medium',
-            titleKey: 'notifications:events.platformPaymentApproved.title',
-            messageKey: 'notifications:events.platformPaymentApproved.message',
-            values: notifiedAmountValues,
-            dedupeKey: `payment_approved:${paymentId}`,
+          emitted = await this.communicationService.emit(tx, {
+            key: 'platform.payment.approved',
+            recipientUserId: organization.ownerUserId,
+            organizationId: payment.organizationId,
+            entity: { type: 'payment', id: paymentId },
+            values: {
+              amount: this.toDisplayAmount(fresh.amountMinorUnits),
+              currency: fresh.currency,
+            },
           });
         }
 
@@ -199,16 +194,7 @@ export class PlatformPaymentService {
       payment.organizationId,
     );
 
-    if (recipientUserId && notifiedAmountValues) {
-      await this.notificationFanoutService.sendEmailAfterCommit(
-        recipientUserId,
-        notifiedNew,
-        {
-          template: 'platform_payment_approved',
-          values: notifiedAmountValues,
-        },
-      );
-    }
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
 
     return result;
   }
@@ -220,10 +206,7 @@ export class PlatformPaymentService {
   ): Promise<PaymentResponse> {
     const payment = await this.loadReviewablePayment(reviewerId, paymentId);
 
-    let notifiedNew = false;
-    let recipientUserId: string | null = null;
-    let notifiedValues: { amount: number; currency: string; reason?: string } | null =
-      null;
+    let emitted: EmitResult = { created: false, outboxId: null };
     const result = await this.tenancyContextService.runInTenantAndUserContext(
       payment.organizationId,
       reviewerId,
@@ -269,20 +252,16 @@ export class PlatformPaymentService {
           payment.organizationId,
         );
         if (organization) {
-          recipientUserId = organization.ownerUserId;
-          notifiedValues = {
-            amount: this.toDisplayAmount(fresh.amountMinorUnits),
-            currency: fresh.currency,
-            reason: payload.notes,
-          };
-          notifiedNew = await this.notificationFanoutService.notify(tx, {
-            userId: organization.ownerUserId,
-            type: 'billing',
-            priority: 'high',
-            titleKey: 'notifications:events.platformPaymentRejected.title',
-            messageKey: 'notifications:events.platformPaymentRejected.message',
-            values: notifiedValues,
-            dedupeKey: `payment_rejected:${paymentId}`,
+          emitted = await this.communicationService.emit(tx, {
+            key: 'platform.payment.rejected',
+            recipientUserId: organization.ownerUserId,
+            organizationId: payment.organizationId,
+            entity: { type: 'payment', id: paymentId },
+            values: {
+              amount: this.toDisplayAmount(fresh.amountMinorUnits),
+              currency: fresh.currency,
+              reason: payload.notes,
+            },
           });
         }
 
@@ -294,16 +273,7 @@ export class PlatformPaymentService {
       },
     );
 
-    if (recipientUserId && notifiedValues) {
-      await this.notificationFanoutService.sendEmailAfterCommit(
-        recipientUserId,
-        notifiedNew,
-        {
-          template: 'platform_payment_rejected',
-          values: notifiedValues,
-        },
-      );
-    }
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
 
     return result;
   }
