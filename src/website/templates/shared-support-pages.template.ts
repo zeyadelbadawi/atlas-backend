@@ -31,14 +31,21 @@ export function buildSharedSupportPages(): readonly WebsiteTemplatePage[] {
     {
       coreType: 'courses',
       sections: [
+        // P64 Phase 4 §E.1 — the Courses page IS the catalog. It used to be
+        // seeded with a `featuredCourses` block ("latest 9"), which gave
+        // every new academy a single oversized card with no search, filter,
+        // sort, rating, duration or preview badge on the one page the plan
+        // requires all of those. `featuredCourses` remains the right block
+        // for the HOME page; the catalog is what belongs here.
         {
-          type: 'featuredCourses',
+          type: 'courseCatalog',
           dynamicDefaults: {
-            mode: 'latest',
-            layout: 'grid',
-            count: 9,
-            showPrice: true,
-            showInstructor: true,
+            pageSize: 12,
+            defaultSort: 'newest',
+            showSearch: true,
+            showLevelFilter: true,
+            showPricingFilter: true,
+            showSort: true,
           },
           starterContent: {
             title: lt('Our Courses', 'دوراتنا'),

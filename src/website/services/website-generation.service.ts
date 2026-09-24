@@ -109,6 +109,8 @@ const EMPTY_MODE_MINIMUMS: Partial<Record<SectionType, Record<string, unknown>>>
     ),
   },
   featuredCourses: { title: lt('Our Courses', 'دوراتنا') },
+  // P64 Phase 4 — the Courses page's catalog needs a title in minimal mode too.
+  courseCatalog: { title: lt('Our Courses', 'دوراتنا') },
   cta: {
     title: lt('Get Started', 'ابدأ الآن'),
     cta: { label: lt('Learn More', 'اعرف المزيد') },
