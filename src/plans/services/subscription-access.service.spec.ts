@@ -19,6 +19,7 @@ import { SubscriptionAccessService } from './subscription-access.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { TenantSubscriptionsRepository } from '../repositories/tenant-subscriptions.repository';
 import { PublicHostnameResolutionRepository } from '../../public-website/repositories/public-hostname-resolution.repository';
+import { PLANS_CLOCK } from '../utils/clock';
 
 const ORG = 'org-1';
 
@@ -66,6 +67,7 @@ describe('SubscriptionAccessService — lifecycle', () => {
           provide: PublicHostnameResolutionRepository,
           useValue: { resolveAcademyOrganization: jest.fn() },
         },
+        { provide: PLANS_CLOCK, useValue: { now: () => new Date() } },
       ],
     }).compile();
 
@@ -180,5 +182,93 @@ describe('SubscriptionAccessService — lifecycle', () => {
       const state = await service.getAccessState(ORG);
       expect(state.hasAccess).toBe(true);
     }
+  });
+
+  // --- Expiry enforcement: paid periods end on the clock, sweep or not ----
+
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it('an active row past currentPeriodEnd is in grace — still working, with the grace end reported', async () => {
+    const periodEnd = new Date(Date.now() - DAY);
+    findByOrganizationId.mockResolvedValue(
+      row({ status: 'active', currentPeriodEnd: periodEnd }),
+    );
+
+    const state = await service.getAccessState(ORG);
+
+    expect(state.hasAccess).toBe(true);
+    expect(state.lifecycle).toBe('grace_period');
+    expect(state.status).toBe('active');
+    expect(state.effectiveStatus).toBe('grace_period');
+    expect(state.graceEndsAt).toEqual(new Date(periodEnd.getTime() + 7 * DAY));
+    expect(state.accessEndsAt).toEqual(state.graceEndsAt);
+  });
+
+  it('an active row whose derived grace window is also over is expired — even though the sweep never wrote it', async () => {
+    findByOrganizationId.mockResolvedValue(
+      row({ status: 'active', currentPeriodEnd: new Date(Date.now() - 8 * DAY) }),
+    );
+
+    const state = await service.getAccessState(ORG);
+
+    expect(state.hasAccess).toBe(false);
+    expect(state.lifecycle).toBe('expired');
+    expect(state.reason).toBe('expired');
+    expect(state.effectiveStatus).toBe('expired');
+    await expect(service.assertHasAccess(ORG)).rejects.toMatchObject({
+      response: { code: 'SUBSCRIPTION_REQUIRED', details: { reason: 'expired' } },
+    });
+    expect(await service.isServingEligible(ORG)).toBe(false);
+  });
+
+  it('a stored grace_period row past graceEndsAt is expired', async () => {
+    findByOrganizationId.mockResolvedValue(
+      row({
+        status: 'grace_period',
+        currentPeriodEnd: new Date(Date.now() - 10 * DAY),
+        graceEndsAt: new Date(Date.now() - 1),
+      }),
+    );
+    const state = await service.getAccessState(ORG);
+    expect(state.hasAccess).toBe(false);
+    expect(state.lifecycle).toBe('expired');
+  });
+
+  it('cancel-at-period-end ends access AT the period end, with no grace', async () => {
+    findByOrganizationId.mockResolvedValue(
+      row({
+        status: 'active',
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: new Date(Date.now() - 1),
+      }),
+    );
+    const state = await service.getAccessState(ORG);
+    expect(state.hasAccess).toBe(false);
+    expect(state.lifecycle).toBe('expired');
+    expect(state.effectiveStatus).toBe('cancelled');
+  });
+
+  it('reports accessEndsAt for every working state', async () => {
+    const trialEnd = new Date(Date.now() + 2 * DAY);
+    findByOrganizationId.mockResolvedValue(
+      row({ status: 'trialing', trialEndsAt: trialEnd }),
+    );
+    expect((await service.getAccessState(ORG)).accessEndsAt).toEqual(trialEnd);
+
+    const periodEnd = new Date(Date.now() + 10 * DAY);
+    findByOrganizationId.mockResolvedValue(
+      row({ status: 'active', currentPeriodEnd: periodEnd }),
+    );
+    const active = await service.getAccessState(ORG);
+    expect(active.lifecycle).toBe('active');
+    expect(active.accessEndsAt).toEqual(new Date(periodEnd.getTime() + 7 * DAY));
+    expect(active.graceEndsAt).toBeUndefined();
+
+    findByOrganizationId.mockResolvedValue(
+      row({ status: 'active', currentPeriodEnd: periodEnd, cancelAtPeriodEnd: true }),
+    );
+    const cancelling = await service.getAccessState(ORG);
+    expect(cancelling.lifecycle).toBe('cancelled_active');
+    expect(cancelling.accessEndsAt).toEqual(periodEnd);
   });
 });

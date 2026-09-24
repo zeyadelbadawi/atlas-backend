@@ -149,6 +149,10 @@ export class CommunicationDispatchService {
         html: plan.rendered.html,
         idempotencyKey: plan.row.id,
         tags: { key: plan.row.key, category: plan.row.category },
+        // The quota line the registry reserves against — a per-category
+        // budget is the whole point of having categories, so losing it
+        // here would bill every outbox email to the default line.
+        category: plan.row.category,
       });
       await this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
         await tx.communicationDelivery.create({
@@ -710,6 +714,9 @@ export class CommunicationDispatchService {
       html: plan.rendered.html,
       idempotencyKey: `digest-${digestId}`,
       tags: { key: DIGEST_TEMPLATE },
+      // A digest exists to BATCH engagement mail; it is never security or
+      // transactional, whatever the individual events inside it were.
+      category: 'engagement',
     });
     await this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
       const sentAt = new Date();

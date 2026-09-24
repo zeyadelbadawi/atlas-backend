@@ -10,8 +10,9 @@
  *
  * WHY IT IS A SEPARATE SERVICE AND NOT A SECOND COPY OF THE RULE. The
  * definition of "inactive" lives in exactly one place —
- * `SUBSCRIPTION_INACTIVE_STATUSES` plus `isTrialPeriodOver` — and both
- * services read it. A second, drifting definition is how a tenant ends up
+ * `SUBSCRIPTION_INACTIVE_STATUSES` applied to the EFFECTIVE status from
+ * `resolveEffectiveSubscriptionStatus` — and both services read it. A
+ * second, drifting definition is how a tenant ends up
  * blocked from creating a course but allowed to publish a website, which is
  * worse than either answer applied consistently.
  *
@@ -21,10 +22,15 @@
  * rule and the right one commercially, because a customer who resubscribes
  * must find their work exactly where they left it.
  */
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { TenantSubscriptionsRepository } from '../repositories/tenant-subscriptions.repository';
-import { isTrialPeriodOver } from '../utils/trial.util';
+import {
+  resolveEffectiveSubscriptionStatus,
+  resolveGraceEndsAt,
+  type EffectiveSubscriptionStatus,
+} from '../utils/subscription-effective-status.util';
+import { PLANS_CLOCK, type Clock } from '../utils/clock';
 import { PublicHostnameResolutionRepository } from '../../public-website/repositories/public-hostname-resolution.repository';
 
 /**
@@ -65,6 +71,8 @@ export const SUBSCRIPTION_REQUIRED_CODE = 'SUBSCRIPTION_REQUIRED';
  *   trial_expired  -> "continue with <the plan you trialed>"
  *   expired        -> "your subscription has ended"    (was a payer)
  *   cancelled_active -> "your subscription ends on <date>" (still working)
+ *   grace_period   -> "your period ended on <date>; renew before <graceEndsAt>"
+ *                     (still working — expiry enforcement, additive)
  */
 export type SubscriptionLifecycle =
   | 'no_organization'
@@ -73,6 +81,7 @@ export type SubscriptionLifecycle =
   | 'trial_expired'
   | 'active'
   | 'cancelled_active'
+  | 'grace_period'
   | 'expired';
 
 export interface SubscriptionAccessState {
@@ -81,9 +90,25 @@ export interface SubscriptionAccessState {
   readonly lifecycle: SubscriptionLifecycle;
   /** Present when access is refused — what the UI explains to the customer. */
   readonly reason?: 'no_subscription' | 'no_plan' | 'expired' | 'trial_ended';
+  /** The STORED status column, for display and debugging. */
   readonly status?: string;
+  /**
+   * The status the row would have if the sweep had run at this instant —
+   * what every decision here is actually made from. Differs from `status`
+   * only between a dated transition and the next sweep tick.
+   */
+  readonly effectiveStatus?: EffectiveSubscriptionStatus;
   readonly trialEndsAt?: Date | null;
   readonly currentPeriodEnd?: Date | null;
+  /** The end of the grace window, whenever one applies (stored, or derived as `currentPeriodEnd` + 7 days). */
+  readonly graceEndsAt?: Date | null;
+  /**
+   * When access ends if nothing changes: `trialEndsAt` for a trial,
+   * `currentPeriodEnd` for a subscription cancelling at period end, the
+   * grace end for a live or in-grace paid subscription. Absent once access
+   * has already ended, and for undated states.
+   */
+  readonly accessEndsAt?: Date | null;
   /** Days left in an active trial — 0 on its final day, never negative. */
   readonly trialDaysRemaining?: number;
 }
@@ -117,6 +142,7 @@ export class SubscriptionAccessService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
     private readonly publicHostnameResolutionRepository: PublicHostnameResolutionRepository,
+    @Inject(PLANS_CLOCK) private readonly clock: Clock,
   ) {}
 
   /**
@@ -164,12 +190,14 @@ export class SubscriptionAccessService {
   /**
    * The authoritative read, computed live.
    *
-   * `isTrialPeriodOver` is evaluated against the clock rather than trusting
-   * `status` alone, because the sweep that flips `trialing` to `expired`
-   * runs on a schedule: between a trial ending and the sweep noticing,
-   * `status` still says `trialing` and is wrong. Enforcing on the date
-   * closes that window instead of depending on a background job having run
-   * — the same reasoning `EntitlementEnforcementService` already applies.
+   * Decided from the EFFECTIVE status (`resolveEffectiveSubscriptionStatus`)
+   * rather than the stored column, because the sweep that persists
+   * `trialing -> trial_expired`, `active -> grace_period` and
+   * `grace_period -> expired` runs on a schedule: between a dated
+   * transition and the sweep noticing, `status` is simply wrong. Deciding
+   * on the clock closes that window for every dated state — trials always
+   * had this (`isTrialPeriodOver`); paid periods did not, which is how an
+   * `active` row past `currentPeriodEnd` kept full access indefinitely.
    */
   async getAccessState(organizationId: string): Promise<SubscriptionAccessState> {
     const subscription = await this.tenancyContextService.runInTenantContext(
@@ -177,7 +205,7 @@ export class SubscriptionAccessService {
       (tx) => this.tenantSubscriptionsRepository.findByOrganizationId(tx, organizationId),
     );
 
-    const now = new Date();
+    const now = this.clock.now();
 
     // No row at all. Still reachable for organizations created before the
     // bootstrap service existed, so it keeps its own honest answer rather
@@ -186,66 +214,95 @@ export class SubscriptionAccessService {
       return { hasAccess: false, lifecycle: 'no_plan', reason: 'no_subscription' };
     }
 
+    const effective = resolveEffectiveSubscriptionStatus(subscription, now);
+    const base = {
+      status: subscription.status,
+      effectiveStatus: effective.effectiveStatus,
+      trialEndsAt: subscription.trialEndsAt,
+      currentPeriodEnd: subscription.currentPeriodEnd,
+    };
+
     // A NEW CUSTOMER, NOT A LAPSED ONE. Checked before anything else so
     // that no later branch can reclassify it — this is precisely the
     // state that used to fall through into `expired`.
-    if (subscription.status === 'no_plan') {
-      return {
-        hasAccess: false,
-        lifecycle: 'no_plan',
-        reason: 'no_plan',
-        status: subscription.status,
-      };
+    if (effective.effectiveStatus === 'no_plan') {
+      return { hasAccess: false, lifecycle: 'no_plan', reason: 'no_plan', ...base };
     }
 
     // Either the sweep has already flipped the row, or it has not yet and
-    // the clock says otherwise. Both are the same answer to the customer,
-    // and checking the clock as well is what closes the window between a
-    // trial ending and the scheduled sweep noticing.
-    if (subscription.status === 'trial_expired' || isTrialPeriodOver(subscription, now)) {
+    // the clock says otherwise. Both are the same answer to the customer.
+    if (effective.effectiveStatus === 'trial_expired') {
       return {
         hasAccess: false,
         lifecycle: 'trial_expired',
         reason: 'trial_ended',
-        status: subscription.status,
-        trialEndsAt: subscription.trialEndsAt,
+        ...base,
       };
     }
 
-    if (SUBSCRIPTION_INACTIVE_STATUSES.has(subscription.status)) {
+    if (SUBSCRIPTION_INACTIVE_STATUSES.has(effective.effectiveStatus)) {
       return {
         hasAccess: false,
         lifecycle: 'expired',
         reason: 'expired',
-        status: subscription.status,
-        trialEndsAt: subscription.trialEndsAt,
-        currentPeriodEnd: subscription.currentPeriodEnd,
+        ...base,
+        // A stored grace end (or a derived one, for an `active` row the
+        // sweep never reached) is still reported so the recovery screen
+        // can say when access actually ended.
+        ...(effective.graceEndsAt ? { graceEndsAt: effective.graceEndsAt } : {}),
       };
     }
 
-    if (subscription.status === 'trialing') {
+    if (effective.effectiveStatus === 'trialing') {
       return {
         hasAccess: true,
         lifecycle: 'trialing',
-        status: subscription.status,
-        trialEndsAt: subscription.trialEndsAt,
-        currentPeriodEnd: subscription.currentPeriodEnd,
+        ...base,
+        accessEndsAt: subscription.trialEndsAt,
         trialDaysRemaining: daysRemaining(subscription.trialEndsAt, now),
+      };
+    }
+
+    // PAID PERIOD OVER, STILL WORKING. The sweep may or may not have
+    // written `grace_period` yet; either way the customer keeps access
+    // until the grace end and is told exactly when that is.
+    if (effective.effectiveStatus === 'grace_period') {
+      const graceEndsAt = effective.graceEndsAt ?? resolveGraceEndsAt(subscription);
+      return {
+        hasAccess: true,
+        lifecycle: 'grace_period',
+        ...base,
+        graceEndsAt,
+        accessEndsAt: graceEndsAt,
       };
     }
 
     // CANCELLED BUT STILL PAID FOR is not expired, and must not be shown
     // as such: the customer bought this time and keeps it until
-    // `currentPeriodEnd`. The expiry sweep is what eventually ends it.
+    // `currentPeriodEnd` — at which point it becomes `cancelled`, with no
+    // grace (the customer asked for it to end).
     const isCancelledButActive =
-      subscription.cancelAtPeriodEnd && LIVE_PAID_STATUSES.has(subscription.status);
+      subscription.cancelAtPeriodEnd && LIVE_PAID_STATUSES.has(effective.effectiveStatus);
 
+    if (isCancelledButActive) {
+      return {
+        hasAccess: true,
+        lifecycle: 'cancelled_active',
+        ...base,
+        accessEndsAt: subscription.currentPeriodEnd,
+      };
+    }
+
+    // `active` (and `past_due`/`paused`, which the product treats as
+    // working). A dated period's access runs to the end of its grace
+    // window if it is never renewed; an undated one has no end to report.
+    const graceEndsAt =
+      effective.effectiveStatus === 'active' ? resolveGraceEndsAt(subscription) : null;
     return {
       hasAccess: true,
-      lifecycle: isCancelledButActive ? 'cancelled_active' : 'active',
-      status: subscription.status,
-      trialEndsAt: subscription.trialEndsAt,
-      currentPeriodEnd: subscription.currentPeriodEnd,
+      lifecycle: 'active',
+      ...base,
+      ...(graceEndsAt ? { accessEndsAt: graceEndsAt } : {}),
     };
   }
 

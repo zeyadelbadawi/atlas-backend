@@ -1,9 +1,20 @@
 /**
  * The `communications` BullMQ queue — P64 Communications C1.
  *
- * Four job names on ONE queue, one processor (the established "one queue,
- * one repeatable job, one processor" rule of `SubscriptionSweepScheduler`,
- * extended to a small family of related jobs rather than four queues):
+ * FIVE job names on ONE queue, and exactly ONE processor (the established
+ * "one queue, one repeatable job, one processor" rule of
+ * `SubscriptionSweepScheduler`, extended to a small family of related
+ * jobs rather than five queues).
+ *
+ * "Exactly one" is load-bearing, not tidiness: BullMQ hands each job to
+ * whichever WORKER on that queue takes it first, not to the one that
+ * understands its name. A second `@Processor('communications')` therefore
+ * does not "handle its own jobs" — it competes for ALL of them, and every
+ * job that lands on the worker that does not know the name is dropped by
+ * that worker's `default` branch. Two workers on this queue means roughly
+ * half the outbox emails and half the delivery webhooks silently vanish.
+ * Add a job NAME here and a `case` to `CommunicationsProcessor`; never a
+ * second processor class.
  *
  *   - `dispatch` — one job per outbox row, enqueued after the emitting
  *     transaction commits. The row is the durable intent; this job is only
@@ -14,6 +25,8 @@
  *   - `digest`   — hourly, sends every digest window that has closed.
  *   - `prune`    — daily retention: outbox/deliveries/digests past 90 days,
  *     `notifications` past their retention class.
+ *   - `webhook`  — one job per inbound provider delivery event, enqueued
+ *     by the webhook route so the HTTP handler answers 202 immediately.
  *
  * Job ids never contain `:` (P64 Phase 3 finding — BullMQ treats a colon
  * in a custom id as a key separator).
@@ -24,6 +37,8 @@ export const COMMUNICATION_JOB_DISPATCH = 'dispatch';
 export const COMMUNICATION_JOB_SWEEP = 'sweep';
 export const COMMUNICATION_JOB_DIGEST = 'digest';
 export const COMMUNICATION_JOB_PRUNE = 'prune';
+/** Inbound provider delivery events (bounce/complaint/delivered). */
+export const COMMUNICATION_JOB_WEBHOOK = 'webhook';
 
 export const COMMUNICATION_SWEEP_REPEAT_JOB_ID = 'communications-sweep-repeat';
 export const COMMUNICATION_DIGEST_REPEAT_JOB_ID = 'communications-digest-repeat';

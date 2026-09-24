@@ -89,7 +89,16 @@ async function bootstrap(): Promise<void> {
     same "verify the exact bytes, never a re-serialization" rule applies
     for exactly the reason recorded above.
   */
-  const SIGNED_BODY_PATHS = [...ZOOM_SIGNED_PATHS, '/api/v1/webhooks/video'];
+  /*
+    P64 Communications — Resend's Svix signature covers the exact bytes
+    too, and Brevo's URL-secret check runs before the same raw body is
+    parsed; one capture rule for the whole `/webhooks/email/*` family.
+  */
+  const SIGNED_BODY_PATHS = [
+    ...ZOOM_SIGNED_PATHS,
+    '/api/v1/webhooks/video',
+    '/api/v1/webhooks/email',
+  ];
   app.useBodyParser('json', {
     limit: bodyLimitBytes,
     verify: (

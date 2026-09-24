@@ -20,6 +20,7 @@
 import {
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -28,6 +29,8 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
 import { PaymentsRepository } from '../../billing/repositories/payments.repository';
 import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
+import { resolveEffectiveSubscriptionStatus } from '../../plans/utils/subscription-effective-status.util';
+import { PLANS_CLOCK, type Clock } from '../../plans/utils/clock';
 import { SubdomainAllocationsRepository } from '../../domain/repositories/subdomain-allocations.repository';
 import { DomainConnectionsRepository } from '../../domain/repositories/domain-connections.repository';
 import { ProvisioningRequestsRepository } from '../repositories/provisioning-requests.repository';
@@ -66,6 +69,7 @@ export class ProvisioningRequestsService {
     private readonly provisioningProducer: ProvisioningProducer,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly organizationMembershipsRepository: OrganizationMembershipsRepository,
+    @Inject(PLANS_CLOCK) private readonly clock: Clock,
   ) {}
 
   /**
@@ -167,15 +171,21 @@ export class ProvisioningRequestsService {
         // running, this gate was open. Checking `trialEndsAt` directly
         // closes that window rather than depending on a background job
         // having run.
-        const trialHasLapsed =
-          subscription?.status === 'trialing' &&
-          subscription.trialEndsAt !== null &&
-          subscription.trialEndsAt.getTime() <= Date.now();
+        //
+        // Expiry enforcement generalised that to every dated state: the
+        // EFFECTIVE status decides, so a paid period past its grace end
+        // (or a cancel-at-period-end past its period end) is refused here
+        // the instant the clock says so, and a `grace_period` tenant —
+        // still entitled, still paying — is not.
+        const effectiveStatus = subscription
+          ? resolveEffectiveSubscriptionStatus(subscription, this.clock.now())
+              .effectiveStatus
+          : null;
 
         if (
-          !subscription ||
-          (subscription.status !== 'active' && subscription.status !== 'trialing') ||
-          trialHasLapsed
+          effectiveStatus !== 'active' &&
+          effectiveStatus !== 'trialing' &&
+          effectiveStatus !== 'grace_period'
         ) {
           throw new ConflictException({
             messageKey: 'errors.provisioning.subscriptionRequired',

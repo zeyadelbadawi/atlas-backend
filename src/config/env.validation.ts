@@ -508,14 +508,42 @@ const EnvSchema = z.object({
   // third-party account this codebase doesn't yet have. `'resend'` is the
   // one real, simple-HTTP-API provider this phase wires (see
   // `resend-email.provider.ts`'s own doc comment for why Resend).
-  EMAIL_PROVIDER: z.enum(['stub', 'resend']).default('stub'),
-  // Required only when EMAIL_PROVIDER=resend — validated below via
-  // `.superRefine`, mirroring `validateEnv`'s existing
-  // NODE_ENV=production → CORS_ALLOWED_ORIGINS-required cross-field
-  // precedent exactly, rather than a second, ad hoc check elsewhere.
+  // P64 Communications — `EMAIL_PROVIDER` is now the SINGLE-PROVIDER
+  // ALIAS of `EMAIL_PROVIDERS` (kept so every existing env keeps working).
+  EMAIL_PROVIDER: z.enum(['stub', 'resend', 'brevo']).default('stub'),
+  // P64 Communications — the ordered fallback chain the
+  // `EmailProviderRegistry` tries (comma list of `stub|brevo|resend`, e.g.
+  // `brevo,resend`: Brevo PRIMARY, Resend FALLBACK — the approved
+  // production shape). Unset → `[EMAIL_PROVIDER]`.
+  EMAIL_PROVIDERS: z
+    .string()
+    .transform((value) =>
+      value
+        .split(',')
+        .map((entry) => entry.trim().toLowerCase())
+        .filter(Boolean),
+    )
+    .pipe(z.array(z.enum(['stub', 'resend', 'brevo'])).min(1))
+    .optional(),
+  // Per-provider keys. `EMAIL_API_KEY` is the LEGACY Resend key (P17) and
+  // is still accepted as a fallback for `RESEND_API_KEY`. A real provider
+  // listed without its key or without `EMAIL_FROM_EMAIL` refuses to boot
+  // (checked in `validateEnv` below, the same cross-field precedent as
+  // NODE_ENV=production → CORS_ALLOWED_ORIGINS).
   EMAIL_API_KEY: z.string().min(1).optional(),
+  RESEND_API_KEY: z.string().min(1).optional(),
+  BREVO_API_KEY: z.string().min(1).optional(),
+  // Sender identity: the owner's single-sender-verified address (no domain
+  // DNS) — the same value on every provider.
   EMAIL_FROM_EMAIL: z.string().email().optional(),
   EMAIL_FROM_NAME: z.string().min(1).default('Atlas'),
+  EMAIL_REPLY_TO: z.string().email().optional(),
+  // Inbound delivery-webhook authentication. Brevo has no HMAC: the secret
+  // travels in the webhook URL (`?secret=`). Resend signs via Svix
+  // (`whsec_...`). Unset → that provider's webhook endpoint refuses
+  // everything (fail closed).
+  BREVO_WEBHOOK_SECRET: z.string().min(16).optional(),
+  RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
 
   // --- P64 Communications ---
   // The platform web app's public origin, used by the email link builder
@@ -635,14 +663,19 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
   // value still wins (a separate marketing host, a staging origin), and a
   // deployment with neither is the only one that cannot build a link and
   // is refused.
+  const emailProviders = parsed.data.EMAIL_PROVIDERS ?? [parsed.data.EMAIL_PROVIDER];
+  const canActuallySend = emailProviders.some((provider) => provider !== 'stub');
+
   if (parsed.data.NODE_ENV === 'production' && !parsed.data.PLATFORM_WEB_URL) {
     if (parsed.data.PLATFORM_BASE_DOMAIN) {
       parsed.data.PLATFORM_WEB_URL = `https://${parsed.data.PLATFORM_BASE_DOMAIN}`;
-    } else if (parsed.data.EMAIL_PROVIDER !== 'stub') {
-      // Only a deployment that can actually SEND is refused. A localhost
-      // link inside a real email is a broken product; a deployment on the
-      // stub sends nothing at all, so there is no bad link to protect
-      // anyone from and no reason to keep it from starting.
+    } else if (canActuallySend) {
+      // Only a deployment that can actually SEND is refused — i.e. one
+      // with a real provider anywhere in `EMAIL_PROVIDERS`, not just in
+      // the legacy singular alias. A localhost link inside a real email
+      // is a broken product; a deployment on the stub alone sends
+      // nothing, so there is no bad link to protect anyone from and no
+      // reason to keep it from starting.
       throw new Error(
         'PLATFORM_WEB_URL or PLATFORM_BASE_DOMAIN is required when NODE_ENV=production and a ' +
           'real email provider is configured — refusing to send email links that would point ' +
@@ -651,11 +684,22 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
     }
   }
 
-  if (parsed.data.EMAIL_PROVIDER === 'resend') {
-    if (!parsed.data.EMAIL_API_KEY || !parsed.data.EMAIL_FROM_EMAIL) {
+  if (emailProviders.includes('resend')) {
+    const resendKey = parsed.data.RESEND_API_KEY ?? parsed.data.EMAIL_API_KEY;
+    if (!resendKey || !parsed.data.EMAIL_FROM_EMAIL) {
       throw new Error(
-        'EMAIL_API_KEY and EMAIL_FROM_EMAIL are required when EMAIL_PROVIDER=resend — refusing ' +
-          'to start with a real provider selected but no credentials/sender to actually send from.',
+        'RESEND_API_KEY (or legacy EMAIL_API_KEY) and EMAIL_FROM_EMAIL are required when resend is ' +
+          'listed in EMAIL_PROVIDERS/EMAIL_PROVIDER — refusing to start with a real provider ' +
+          'selected but no credentials/sender to actually send from.',
+      );
+    }
+  }
+  if (emailProviders.includes('brevo')) {
+    if (!parsed.data.BREVO_API_KEY || !parsed.data.EMAIL_FROM_EMAIL) {
+      throw new Error(
+        'BREVO_API_KEY and EMAIL_FROM_EMAIL are required when brevo is listed in ' +
+          'EMAIL_PROVIDERS/EMAIL_PROVIDER — refusing to start with a real provider selected ' +
+          'but no credentials/sender to actually send from.',
       );
     }
   }

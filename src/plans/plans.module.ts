@@ -42,6 +42,8 @@ import { EntitlementService } from './services/entitlement.service';
 import { EntitlementEnforcementService } from './services/entitlement-enforcement.service';
 import { SubscriptionAccessService } from './services/subscription-access.service';
 import { PublicHostnameResolutionRepository } from '../public-website/repositories/public-hostname-resolution.repository';
+import { PublicWebsiteCacheService } from '../public-website/services/public-website-cache.service';
+import { PLANS_CLOCK, SystemClock } from './utils/clock';
 import { TenantUsageRecomputeService } from './services/tenant-usage-recompute.service';
 import { SubscriptionExpiryService } from './services/subscription-expiry.service';
 import { SubscriptionSweepService } from './services/subscription-sweep.service';
@@ -109,6 +111,14 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     // Resolves `:academyId` to its Organization for the global
     // subscription interceptor — ownership only, never authorisation.
     PublicHostnameResolutionRepository,
+    // Provided here rather than by importing `PublicWebsiteModule`, which
+    // imports THIS module — the same reason `PublicHostnameResolutionRepository`
+    // is listed directly. `RedisService` it depends on is global.
+    PublicWebsiteCacheService,
+    // The module's one clock. Production always gets real time; the
+    // expiry-enforcement e2e suite overrides this token to stand exactly
+    // 1 ms either side of a period end without sleeping.
+    { provide: PLANS_CLOCK, useClass: SystemClock },
     TenantUsageRecomputeService,
     SubscriptionExpiryService,
     SubscriptionSweepService,
@@ -164,6 +174,10 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     // verbatim (it already re-establishes its own `runInTenantContext`)
     // rather than re-deriving entitlements a second time.
     TenantSubscriptionService,
+    // Exported so `BillingModule` (renewal arithmetic) and
+    // `ProvisioningModule` (the effective-status gate) share the SAME
+    // clock as every access decision — one instant per module graph.
+    PLANS_CLOCK,
   ],
 })
 export class PlansModule {}

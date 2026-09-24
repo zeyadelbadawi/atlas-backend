@@ -173,7 +173,12 @@ describe('LiveSessionNotificationsService.notifyEnrolledStudents', () => {
 
   /* Email is deliberately not a channel for these — the feed is enough. */
   it('keeps live-session announcements in-app only', () => {
-    for (const event of ['scheduled', 'rescheduled', 'cancelled', 'starting_soon'] as const) {
+    for (const event of [
+      'scheduled',
+      'rescheduled',
+      'cancelled',
+      'starting_soon',
+    ] as const) {
       expect(COMMUNICATION_CATALOG[`live_session.${event}`].channels).toEqual({
         inApp: 'always',
         email: 'never',

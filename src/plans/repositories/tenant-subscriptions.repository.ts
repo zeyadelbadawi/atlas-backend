@@ -95,20 +95,122 @@ export class TenantSubscriptionsRepository {
   }
 
   /**
-   * Phase 2 — the sweep's own write half, relying on the new
-   * `tenant_subscriptions_platform_update` policy (P22 migration) added
-   * specifically because this is the first genuinely cross-tenant WRITE
-   * to this table (every prior write, `upsertForPlanPurchase`, always ran
-   * inside that one organization's own tenant context).
+   * Expiry enforcement — the paid-period sweep's platform-wide reads.
+   *
+   * Cursor-paginated by `organizationId` (the primary key, so the order
+   * is total and a page never skips or repeats a row), mirroring
+   * `OrganizationsRepository.findStaleUsageOrganizationIds`. Meaningful
+   * only inside `runInUserContext(<a real platform-owner id>)` — the
+   * `tenant_subscriptions_platform_select` policy — for the same reason as
+   * `findManyDueForTrialExpiry`: a periodic cross-tenant sweep has no one
+   * organization to seed a tenant context with.
+   *
+   * `findManyDueForPeriodEnd` returns every `active` row whose paid period
+   * is over (`currentPeriodEnd <= now`); what it becomes — `grace_period`,
+   * `cancelled` or, if the sweep is very late, straight to `expired` — is
+   * decided by `resolveEffectiveSubscriptionStatus`, never here.
+   * `findManyDueForGraceExpiry` returns every `grace_period` row whose
+   * window has closed (`graceEndsAt <= now`).
    */
-  markExpired(
+  findManyDueForPeriodEnd(
+    tx: Prisma.TransactionClient,
+    now: Date,
+    cursor: string | undefined,
+    take: number,
+  ): Promise<TenantSubscription[]> {
+    return tx.tenantSubscription.findMany({
+      where: {
+        status: 'active',
+        currentPeriodEnd: { lte: now },
+        ...(cursor ? { organizationId: { gt: cursor } } : {}),
+      },
+      orderBy: { organizationId: 'asc' },
+      take,
+    });
+  }
+
+  findManyDueForGraceExpiry(
+    tx: Prisma.TransactionClient,
+    now: Date,
+    cursor: string | undefined,
+    take: number,
+  ): Promise<TenantSubscription[]> {
+    return tx.tenantSubscription.findMany({
+      where: {
+        status: 'grace_period',
+        graceEndsAt: { lte: now },
+        ...(cursor ? { organizationId: { gt: cursor } } : {}),
+      },
+      orderBy: { organizationId: 'asc' },
+      take,
+    });
+  }
+
+  /**
+   * Expiry enforcement — the sweep's write half for PAID periods, relying
+   * on the `tenant_subscriptions_platform_update` policy (P22 migration)
+   * exactly as `markTrialExpired` does.
+   *
+   * Every transition is a GUARDED `updateMany` — the predicate names the
+   * exact stored state the transition leaves from, so a row a concurrent
+   * sweep tick (or a renewal landing mid-tick) has already moved on
+   * matches zero rows and reports `false`, and no transition is ever
+   * applied twice or applied on top of a newer state. That predicate, not
+   * a lock, is what makes the sweep idempotent.
+   *
+   * `trialEndsAt` is never touched by any of these: it is the historical
+   * record of a trial this customer may once have had, and clearing it
+   * would make the row look eligible for `startTrial` again.
+   */
+  async markGraceStarted(
     tx: Prisma.TransactionClient,
     organizationId: string,
-  ): Promise<TenantSubscription> {
-    return tx.tenantSubscription.update({
-      where: { organizationId },
-      data: { status: 'expired', trialEndsAt: null },
+    graceEndsAt: Date,
+  ): Promise<boolean> {
+    const result = await tx.tenantSubscription.updateMany({
+      where: { organizationId, status: 'active', cancelAtPeriodEnd: false },
+      data: { status: 'grace_period', graceEndsAt },
     });
+    return result.count === 1;
+  }
+
+  /** `active` + `cancelAtPeriodEnd` past `currentPeriodEnd` → `cancelled`. No grace: the customer asked for it to end. */
+  async markCancelledAtPeriodEnd(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<boolean> {
+    const result = await tx.tenantSubscription.updateMany({
+      where: { organizationId, status: 'active', cancelAtPeriodEnd: true },
+      data: { status: 'cancelled' },
+    });
+    return result.count === 1;
+  }
+
+  /**
+   * `grace_period` (or an `active` row whose derived grace window is
+   * ALSO already over — a sweep that has not run for more than the grace
+   * length) → `expired`. `graceEndsAt` is written so the row records when
+   * access actually ended, even when the sweep skipped the intermediate
+   * `grace_period` write.
+   *
+   * REPAIRED: this method existed since Phase 2 (`status: 'expired',
+   * trialEndsAt: null`, unguarded) and was never called by anything once
+   * Phase 11 moved trials to `markTrialExpired` — the paid half of the
+   * lifecycle had no writer at all.
+   */
+  async markExpired(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    graceEndsAt: Date,
+  ): Promise<boolean> {
+    const result = await tx.tenantSubscription.updateMany({
+      where: {
+        organizationId,
+        OR: [{ status: 'grace_period' }, { status: 'active', cancelAtPeriodEnd: false }],
+      },
+      data: { status: 'expired', graceEndsAt },
+    });
+    return result.count === 1;
   }
 
   /**

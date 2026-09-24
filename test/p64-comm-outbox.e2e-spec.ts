@@ -43,8 +43,14 @@ import { CommunicationDispatchService } from '../src/communications/services/com
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
 import type { EmitInput } from '../src/communications/services/communication.service';
-import { StubEmailProvider } from '../src/identity/services/stub-email.provider';
-import type { TransactionalEmailInput } from '../src/identity/services/email-provider.interface';
+import {
+  StubEmailProvider,
+  STUB_PROVIDER_NAME,
+} from '../src/communications/providers/stub-email.provider';
+import type {
+  EmailSendInput,
+  EmailSendResult,
+} from '../src/identity/services/email-provider.interface';
 
 jest.setTimeout(60000);
 
@@ -62,7 +68,7 @@ describe('P64 Communications — outbox, dispatch, preferences, RLS (e2e)', () =
   let communications: CommunicationService;
   let dispatcher: CommunicationDispatchService;
   let stubEmailProvider: StubEmailProvider;
-  let sent: TransactionalEmailInput[];
+  let sent: EmailSendInput[];
   let sendSpy: jest.SpyInstance;
 
   beforeAll(async () => {
@@ -82,14 +88,31 @@ describe('P64 Communications — outbox, dispatch, preferences, RLS (e2e)', () =
     communications = app.get(CommunicationService, { strict: false });
     dispatcher = app.get(CommunicationDispatchService, { strict: false });
 
-    // Every email actually handed to the provider, in order — the stub
+    // Every email the OUTBOX handed to the provider, in order — the stub
     // itself only keeps the LAST one per address, which cannot answer
     // "exactly once".
+    //
+    // Scoped to outbox sends on purpose. `send` is now the single method
+    // every email in the process goes through, auth's verification and
+    // password-reset mail included, and these specs create accounts —
+    // so an unfiltered array would mix a registration's verification
+    // email into "how many emails did dispatching this row produce?".
+    // The dispatcher tags every send with the catalogue `key:`; auth's
+    // legacy messages carry bare `email_verification`/`password_reset`
+    // tags instead (`providers/legacy-messages.ts`), which is the
+    // distinction used here.
     sent = [];
     sendSpy = jest
-      .spyOn(stubEmailProvider, 'sendTransactionalEmail')
-      .mockImplementation(async (input: TransactionalEmailInput) => {
-        sent.push(input);
+      .spyOn(stubEmailProvider, 'send')
+      .mockImplementation(async (input: EmailSendInput) => {
+        if ((input.tags ?? []).some((tag) => tag.startsWith('key:'))) sent.push(input);
+        // Mirrors the real stub's own result shape (`STUB_PROVIDER_NAME`),
+        // so the delivery row this spec asserts on is the row production
+        // would have written.
+        return {
+          providerMessageId: `spy-${sendSpy.mock.calls.length}`,
+          provider: STUB_PROVIDER_NAME,
+        } satisfies EmailSendResult;
       });
   });
 
@@ -424,7 +447,10 @@ describe('P64 Communications — outbox, dispatch, preferences, RLS (e2e)', () =
       expect(email[0].status).toBe('sent');
       expect(email[0].templateVersion).toBe('platform.payment.approved@1');
       expect(email[0].sentAt).not.toBeNull();
-      expect(email[0].provider).toBe('StubEmailProvider');
+      // The provider RECORDS ITSELF now (`EmailSendResult.provider`),
+      // rather than the transport guessing from the class name — so a
+      // Brevo-then-Resend failover writes which one actually accepted it.
+      expect(email[0].provider).toBe(STUB_PROVIDER_NAME);
     });
 
     it('renders the English subject for a recipient with no language preference', async () => {

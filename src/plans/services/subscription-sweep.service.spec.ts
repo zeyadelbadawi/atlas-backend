@@ -48,7 +48,10 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
   let sweepCursorRepository: { read: jest.Mock; write: jest.Mock };
   let tenantUsageRecomputeProducer: { enqueueOne: jest.Mock };
   let usersRepository: { findFirstPlatformOwnerId: jest.Mock };
-  let subscriptionExpiryService: { expireDueTrials: jest.Mock };
+  let subscriptionExpiryService: {
+    expireDueTrials: jest.Mock;
+    expireDuePaidPeriods: jest.Mock;
+  };
   let announcementsRepository: { publishDueScheduled: jest.Mock };
   let blogPostsRepository: { publishDueScheduled: jest.Mock };
 
@@ -59,7 +62,12 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
     usersRepository = {
       findFirstPlatformOwnerId: jest.fn().mockResolvedValue({ id: 'platform-owner-1' }),
     };
-    subscriptionExpiryService = { expireDueTrials: jest.fn().mockResolvedValue(0) };
+    subscriptionExpiryService = {
+      expireDueTrials: jest.fn().mockResolvedValue(0),
+      expireDuePaidPeriods: jest
+        .fn()
+        .mockResolvedValue({ graceStarted: 0, cancelled: 0, expired: 0 }),
+    };
     // Phase 6 added scheduled-content publishing as the sweep's third
     // responsibility (`run()` calls both of these alongside the usage
     // scan). They are stubbed rather than asserted on because this file

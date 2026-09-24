@@ -11,8 +11,16 @@
  *
  * Owns the `communications` queue (dispatch/sweep/digest/prune), the
  * catalogue, templates, link builder, preferences endpoint and metrics.
- * Binds the suppression lookup to a no-op; the provider registry replaces
- * that binding when it ships.
+ *
+ * `COMMUNICATION_SUPPRESSION` is bound to the REAL `SuppressionService`
+ * (reachable because `IdentityModule`, imported below, re-exports
+ * `CommunicationsProvidersModule`). The dispatcher therefore checks the
+ * hashed suppression list — fed by the providers' delivery webhooks —
+ * before every send, so an address that hard-bounced or filed a spam
+ * complaint is never mailed again, whatever the catalogue says. The
+ * no-op in `communication-suppression.interface.ts` stays as the port's
+ * default for unit tests that construct the dispatcher directly; binding
+ * it HERE would silently mail suppressed addresses in production.
  */
 import { Global, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
@@ -29,10 +37,8 @@ import { CommunicationBrandingService } from './services/communication-branding.
 import { CommunicationPreferencesService } from './services/communication-preferences.service';
 import { EmailTransport } from './services/email-transport';
 import { LinkBuilderService } from './services/link-builder.service';
-import {
-  COMMUNICATION_SUPPRESSION,
-  NoopCommunicationSuppression,
-} from './services/communication-suppression.interface';
+import { COMMUNICATION_SUPPRESSION } from './services/communication-suppression.interface';
+import { SuppressionService } from './services/suppression.service';
 import { CommunicationMetricsService } from './metrics/communication-metrics.service';
 import { CommunicationPreferencesController } from './controllers/communication-preferences.controller';
 
@@ -50,7 +56,7 @@ import { CommunicationPreferencesController } from './controllers/communication-
     EmailTransport,
     LinkBuilderService,
     CommunicationBrandingService,
-    { provide: COMMUNICATION_SUPPRESSION, useClass: NoopCommunicationSuppression },
+    { provide: COMMUNICATION_SUPPRESSION, useExisting: SuppressionService },
     CommunicationsProducer,
     CommunicationService,
     CommunicationDispatchService,
