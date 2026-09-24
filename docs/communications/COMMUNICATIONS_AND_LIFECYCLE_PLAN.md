@@ -621,7 +621,7 @@ Serialized by the lead: every schema change, every merge, every push/deploy, eve
 |---|---|---|---|---|---|---|---|
 | Plan update (this record) | — | lead | DONE | see below | — | n/a | approval recorded |
 | Foundation schema (M1+M2+M3 as one additive migration `20261013000000_p64_comm_foundation`) | C0–C6 | lead | DONE locally (applied via `migrate deploy`, client regenerated, tsc 0, notifications e2e 12/12) — production application pending the gated run | `112c481` | | PENDING | 7 tables + RLS, `notifications.retention_class`, `media_assets` tombstone columns |
-| Lead C0 (link builder, verify-email route, real links) | C0 | lead | PENDING | | | | |
+| Lead C0 (verify-email route on the management host) | C0 | lead | DONE locally (frontend `main`, not yet pushed) | atlas-front `f503ba1` | | PENDING | link builder + real links in reset/verification emails are delivered by W-OUT (`PLATFORM_WEB_URL`) |
 | W-EXP expiry enforcement | C5a | worker (`ws-expiry`) | IN PROGRESS | | | | AD-5 |
 | W-PROV Brevo/registry/webhooks/suppression/quota | C0/C1 | worker (`ws-provider`) | IN PROGRESS | | | | needs owner host env to go live (BL-1) |
 | W-FE1 notification centre + preferences UI | C2 | worker (`ws-notif-ui`) | IN PROGRESS | | | | codes against the preferences contract W-OUT ships |
