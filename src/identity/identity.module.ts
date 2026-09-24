@@ -9,7 +9,6 @@
  */
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
-import { ConfigService } from '@nestjs/config';
 import { AuthCoreModule } from './auth-core.module';
 import { AuthController } from './controllers/auth.controller';
 import { UsersController } from './controllers/users.controller';
@@ -17,10 +16,7 @@ import { AuthService } from './services/auth.service';
 import { UsersService } from './services/users.service';
 import { PasswordHasherService } from './services/password-hasher.service';
 import { AuthRateLimiterService } from './services/auth-rate-limiter.service';
-import { EMAIL_PROVIDER } from './services/email-provider.interface';
-import { StubEmailProvider } from './services/stub-email.provider';
-import { ResendEmailProvider } from './services/resend-email.provider';
-import type { EmailConfig } from '../config/configuration';
+import { CommunicationsProvidersModule } from '../communications/communications-providers.module';
 import { UsersRepository } from './repositories/users.repository';
 import { RefreshTokensRepository } from './repositories/refresh-tokens.repository';
 import { PasswordResetTokensRepository } from './repositories/password-reset-tokens.repository';
@@ -52,6 +48,8 @@ import { AcademySurfaceService } from './services/academy-surface.service';
     // depends on `AuthCoreModule` (never on `IdentityModule`), so this
     // stays a clean DAG — no `forwardRef` needed.
     TenancyModule,
+    // P64 Communications — adapters, registry, quota, suppression, webhook.
+    CommunicationsProvidersModule,
   ],
   // `TwoFactorController` is listed before `AuthController` so its
   // `/auth/2fa/*` routes are registered ahead of any broader `/auth/*`
@@ -63,32 +61,10 @@ import { AcademySurfaceService } from './services/academy-surface.service';
     AcademySurfaceService,
     PasswordHasherService,
     AuthRateLimiterService,
-    // Phase P17 — `EMAIL_PROVIDER` resolves to whichever concrete
-    // implementation `EMAIL_PROVIDER` (the env var) selects, decided once
-    // at DI-container build time via `useFactory` (never re-read per
-    // call). Both concrete providers are still registered unconditionally
-    // (cheap — `ResendEmailProvider` does nothing at construction time,
-    // only when actually called) so a test can keep injecting
-    // `StubEmailProvider` directly (`peekLastPasswordResetToken`/
-    // `peekLastTransactionalEmail`) and see the exact same singleton the
-    // token resolves to whenever `EMAIL_PROVIDER=stub` (the default —
-    // matches every test/dev environment today), the same "one singleton,
-    // never two divergent instances" guarantee the previous `useExisting`
-    // wiring already established.
-    StubEmailProvider,
-    ResendEmailProvider,
-    {
-      provide: EMAIL_PROVIDER,
-      useFactory: (
-        configService: ConfigService,
-        stub: StubEmailProvider,
-        resend: ResendEmailProvider,
-      ) => {
-        const email = configService.getOrThrow<EmailConfig>('email');
-        return email.provider === 'resend' ? resend : stub;
-      },
-      inject: [ConfigService, StubEmailProvider, ResendEmailProvider],
-    },
+    // P64 Communications — `EMAIL_PROVIDER` now resolves to
+    // `EmailProviderRegistry` (Brevo primary → Resend fallback, or the stub
+    // in dev/test), provided by `CommunicationsProvidersModule` and
+    // re-exported below so every existing injection site is unchanged.
     UsersRepository,
     RefreshTokensRepository,
     PasswordResetTokensRepository,
@@ -122,10 +98,13 @@ import { AcademySurfaceService } from './services/academy-surface.service';
   // note already documents for admin-initiated account creation without
   // an invitation/email system).
   exports: [
-    StubEmailProvider,
+    // P64 Communications — `EMAIL_PROVIDER` and `StubEmailProvider` now come
+    // from `CommunicationsProvidersModule`; Nest re-exports at module
+    // granularity, so the whole module is exported (its own export list is
+    // deliberately small: token, registry, stub, quota, suppression, producer).
+    CommunicationsProvidersModule,
     UsersRepository,
     PlatformOwnerGuard,
-    EMAIL_PROVIDER,
     PasswordHasherService,
     // P64 Phase 2 — the learner surface scopes every read by the academy
     // the request HOST resolved to, and this is the service that resolves

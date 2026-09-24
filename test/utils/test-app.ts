@@ -98,7 +98,21 @@ export async function createTestApp(
     .getOrThrow<MediaStorageConfig>('media');
   // Generous headroom above the real ceiling — same reasoning as
   // `main.ts`'s identical computation (see its own doc comment).
-  app.useBodyParser('json', { limit: mediaConfig.maxUploadBytes * 3 });
+  app.useBodyParser('json', {
+    limit: mediaConfig.maxUploadBytes * 3,
+    // Mirrors `main.ts`'s raw-body capture for signed webhook paths (no
+    // global prefix/version in the test app, so the bare route).
+    verify: (
+      request: { url?: string; rawBody?: Buffer },
+      _res: unknown,
+      buffer: Buffer,
+    ) => {
+      const url = request.url;
+      if (url && ['/webhooks/email', '/webhooks/video'].some((p) => url.startsWith(p))) {
+        request.rawBody = Buffer.from(buffer);
+      }
+    },
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
