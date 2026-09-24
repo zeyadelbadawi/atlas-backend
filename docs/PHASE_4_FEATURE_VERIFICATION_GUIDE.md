@@ -171,7 +171,7 @@ learner's manual payment is what creates the enrolment (Learner §5).
 
 | Feature | Role | URL | Expected UI | Required data | Flag | Verification status |
 |---|---|---|---|---|---|---|
-| Catalog page | Anonymous | `/courses` (academy site) | search, filters, sort, metadata cards, RTL | ≥1 published public course | none (ungated) | Production-verified after migration `20261012000003` (see Master Plan) |
+| Catalog page | Anonymous | `/courses` (academy site) | search, filters, sort, metadata cards, RTL | ≥1 published public course | none (ungated) | **Production-verified** on `ssfsdf3232.atlass.dpdns.org` after migration `20261012000003` — EN and `/ar` (RTL), controls, live count, lesson-count meta on the card |
 | Course details revamp | Anonymous | `/courses/<id>` | state-aware CTA, badges, outcomes, reviews, related | authored metadata | none | Production-verified (owner site, EN + AR) |
 | Free preview | Anonymous | details → Preview | dialog plays sample | one published preview lesson | none | Local real-Chrome (J6) + production contract (`isPreview` live) |
 | Registration / sign-in | Anonymous | `/sign-up`, `/sign-in` | forms | — | none | Production-verified |
@@ -183,8 +183,8 @@ learner's manual payment is what creates the enrolment (Learner §5).
 | Reports | Client Owner / Manager | `…/reports` | integrity / sharing / quota | events | none | Production-verified (AR, empty states) |
 | Course Catalog block | Client Owner | Website → Pages | section in Courses page + picker | — | none | Production-verified (picker); page block after migration |
 | Platform video summary | Platform Owner | `/dashboard/platform` | summary card | video assets | none | Deployed; needs a Platform Owner session to view |
-| Analytics → Commerce | Platform Owner | `/dashboard/analytics/commerce` | orders, revenue, backlog, latency, refunds | orders | none | See Master Plan change log for deploy + verification status |
-| Analytics → Content delivery | Platform Owner | `/dashboard/analytics/delivery` | grants, video, retention | access log | none | See Master Plan change log for deploy + verification status |
+| Analytics → Commerce | Platform Owner | `/dashboard/analytics/commerce` | orders, revenue, backlog, latency, refunds | orders | none | Deployed (backend run 35963991021, frontend 35964098559); route live and guarded (401), page chunk served; needs a Platform Owner session to view |
+| Analytics → Content delivery | Platform Owner | `/dashboard/analytics/delivery` | grants, video, retention | access log | none | Deployed (same runs); route live and guarded (401), page chunk served; needs a Platform Owner session to view |
 
 ## Known Limitations / Blockers
 
