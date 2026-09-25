@@ -934,6 +934,14 @@ model TenantSubscription {
   updatedAt          DateTime                  @updatedAt @map("updated_at")
 
   @@index([planId])
+  // P64 C5 — the lifecycle sweep filters by `status` plus ONE of these
+  // dates on every tick (trial steps by `trial_ends_at`, renewal and
+  // grace by `current_period_end`, expiry and the post-expiry follow-ups
+  // by `grace_ends_at`). Without these it is a seq scan per tick; the
+  // table is small today, which is exactly when an index is free to add.
+  @@index([status, trialEndsAt])
+  @@index([status, currentPeriodEnd])
+  @@index([status, graceEndsAt])
   @@map("tenant_subscriptions")
 }
 
