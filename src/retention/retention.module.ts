@@ -21,12 +21,16 @@
  */
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { AuthCoreModule } from '../identity/auth-core.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { IdentityModule } from '../identity/identity.module';
 import { PlansModule } from '../plans/plans.module';
 import { MediaModule } from '../media/media.module';
 import { VideoRetentionRepository } from './repositories/video-retention.repository';
+import { TenantRetentionViewRepository } from './repositories/tenant-retention-view.repository';
 import { VideoRetentionService } from './services/video-retention.service';
+import { TenantRetentionViewService } from './services/tenant-retention-view.service';
+import { TenantRetentionController } from './controllers/tenant-retention.controller';
 import { VideoRetentionDeletionService } from './services/video-retention-deletion.service';
 import { VideoRetentionProducer } from './queue/video-retention.producer';
 import { VideoRetentionProcessor } from './queue/video-retention.processor';
@@ -35,6 +39,16 @@ import { VIDEO_RETENTION_QUEUE } from './queue/video-retention.types';
 
 @Module({
   imports: [
+    /*
+      `JwtAuthGuard` and the `AccessTokenService` behind it, for the
+      customer-facing controller below. Imported DIRECTLY rather than
+      relied on transitively: `PlansModule` imports `AuthCoreModule` but
+      does not re-export it, and Nest resolves providers per module
+      graph — a guard that cannot be constructed fails the whole
+      application at boot, not at request time. No cycle:
+      `AuthCoreModule` depends on neither this module nor `PlansModule`.
+    */
+    AuthCoreModule,
     // `TenancyContextService` — every read and write in this module runs
     // under a real RLS context, never `runWithoutContext`.
     TenancyModule,
@@ -49,8 +63,20 @@ import { VIDEO_RETENTION_QUEUE } from './queue/video-retention.types';
     MediaModule,
     BullModule.registerQueue({ name: VIDEO_RETENTION_QUEUE }),
   ],
+  controllers: [
+    /*
+      P64 C6 customer surface — `GET /organizations/:id/retention`, the
+      read behind `/dashboard/tenant/retention`. The warning emails have
+      always linked there; until this controller existed the link had no
+      destination. Read-only: it adds a window onto the sweep's own
+      decisions and changes none of them.
+    */
+    TenantRetentionController,
+  ],
   providers: [
     VideoRetentionRepository,
+    TenantRetentionViewRepository,
+    TenantRetentionViewService,
     VideoRetentionService,
     VideoRetentionDeletionService,
     VideoRetentionProducer,
@@ -62,6 +88,9 @@ import { VIDEO_RETENTION_QUEUE } from './queue/video-retention.types';
     // the deletion directly, exactly as `TenantLifecycleService` is.
     VideoRetentionService,
     VideoRetentionDeletionService,
+    // Exported so the e2e suite can assert the owner-facing payload
+    // directly as well as over HTTP.
+    TenantRetentionViewService,
   ],
 })
 export class RetentionModule {}
