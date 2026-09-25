@@ -139,8 +139,35 @@ can grant `is_platform_owner` back, so that would be an unrecoverable
 lockout. Audited as `account.deleted_by_platform_owner` with the operator
 as actor.
 
-Backend `2965719`. **`PARTIAL` because the frontend management surface
-does not exist yet** and production verification is pending.
+Backend `2965719`, live in production only after the hotfix below.
+Production-probed: `401` on the real route, `404` on a nonexistent sibling,
+so the 401 means registered-and-guarded rather than a catch-all.
+
+### `IMPLEMENTED` — Platform Owner deletion surface (26 Sep 2026)
+
+Frontend `933a7d4`. The action lives on the user DETAIL page, not the
+directory listing: only the detail page shows email, status, roles and
+memberships together, which is what an operator needs to be sure they have
+the right person. A delete button on a paginated row is how the wrong
+account gets removed.
+
+The impact list is built from the server's plan and labels each group with
+the treatment it actually receives. Destructive emphasis is reserved for the
+groups genuinely destroyed — painting the retained audit and payment rows
+red would say they are being erased. Each row carries an icon **and** the
+treatment in words, so the distinction survives greyscale and
+colour-blindness. Confirmation is the target's email, typed (trimmed,
+case-insensitive). The dialog cannot be dismissed mid-flight and the outcome
+renders in place rather than as a toast.
+
+Also fixed a pre-existing defect found here: `PlatformUserAccountStatus`
+omitted `deleted` although the backend enum has carried it since Phase 10.6,
+so an already-deleted account rendered an untranslated status label.
+
+### `IMPLEMENTED` — Nest module-graph guard (26 Sep 2026)
+
+`src/platform/controllers/deletion-module-graph.spec.ts`, backend `a5ce4ec`.
+See §13.
 
 ---
 
@@ -151,7 +178,7 @@ does not exist yet** and production verification is pending.
 | **Public R2 objects are never deleted** | **High** | `MediaStorageProvider` exposes only `putObject`/`getObject`. There is no delete capability on the public bucket *at all*. Every logo, thumbnail and marketing image stays fetchable at its public URL forever, after archive and after account deletion. |
 | **Cloudflare Stream videos are never deleted** | **High** | `deleteAsset` exists and works, but its only caller is the video-retention sweep. Deleting a course or lesson leaves the video playable and still billing storage minutes. |
 | **Certificate PDFs are orphaned** | Medium | Anonymisation nulls `storageKey` and re-renders, but never deletes the previous PDF — which carries the real learner's name — from the protected bucket. A live PII retention leak. |
-| **No Platform Owner management UI** | High | The API exists as of `2965719`; the page a Platform Owner would use does not. Backend capability without its surface is not product-complete (Quality Master Plan §9). |
+| ~~No Platform Owner management UI~~ | — | **Closed** by frontend `933a7d4`. |
 | **No organization teardown** | Medium | Academies are archived; the `Organization` row and its subscription state are left active. |
 | **No deleted-course learner tombstone** | Medium | An archived course simply vanishes from the learner's view. |
 | **Learning leases not revoked** | Medium | `LearningLeaseService.revokeAll` exists and is exactly the right primitive, but no deletion path calls it. A learner mid-playback continues until the lease TTL. |
@@ -338,6 +365,38 @@ with no exceptions:
 4. Archived content remains in the search index unless queries filter on status (§3).
 5. Learner access on Client Owner deletion is an **assumption, not an owner decision** (§4).
 6. `quiz-deadlines` has no confirmed execution-time existence guard (§6).
+
+---
+
+## 13. The outage this work caused, and the guard that now prevents it
+
+`IMPLEMENTED`
+
+On 25 September 2026, backend `2965719` added
+`PlatformUserManagementController` to `PlatformModule` injecting
+`AccountDeletionService`, which `IdentityModule` provided but never
+exported. **Nest resolves dependency injection at bootstrap, not at compile
+time.** `tsc` passed. `nest build` passed. The image built and pushed. Then
+`atlas-backend-1` came up unhealthy, `docker compose up --wait` failed the
+deploy, and every `/api/v1` route answered **502 for roughly two and a half
+hours** — while Caddy went on serving the frontend perfectly, which is why
+the site looked alive.
+
+Two deploys burned before the cause was visible, because the docs-only
+commit stacked on top failed identically: the break was in the module graph,
+not in anything that commit touched.
+
+Fixed by `131ad8d` (one `exports` entry). Guarded by
+`deletion-module-graph.spec.ts`, which reads the same decorator metadata
+Nest reads — the controller's `design:paramtypes` and the module's
+`exports` — and fails when an injected dependency is not exported. Proven to
+bite: removing the export fails it and names the service.
+
+**The rule that follows.** Nothing in the build pipeline models the
+injector. A cross-module provider that is not exported is invisible to every
+check Atlas runs until the container refuses to start. Any new controller or
+service that crosses a module boundary must either be covered by that spec
+or added to it.
 
 ---
 
