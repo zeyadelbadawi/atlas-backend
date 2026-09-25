@@ -73,6 +73,9 @@ import { SessionRevocationService } from '../../identity/services/session-revoca
 import { LearningLeaseService } from './learning-lease.service';
 import { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
 import type { GateRevocationReason } from '../../media/video/video-gate-revocation.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { CommunicationEventKey } from '../../communications/catalog/communication-catalog';
+import type { EmitResult } from '../../communications/services/communication.service';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
@@ -99,6 +102,7 @@ export class AcademyStudentsService {
     private readonly learningLeaseService: LearningLeaseService,
     private readonly gateRevocation: VideoGateRevocationService,
     private readonly emailRiskService: EmailRiskService,
+    private readonly communicationService: CommunicationService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -281,13 +285,18 @@ export class AcademyStudentsService {
     studentUserId: string,
     payload: BlockStudentDto,
   ): Promise<AcademyRosterStudentResponse> {
+    // ONE instant for the row and for the communication's dedupe key, so
+    // a retried request reproduces the same key rather than telling the
+    // learner twice (§19).
+    const decidedAt = new Date();
     const result = await this.mutateMembership(
       academyId,
       organizationId,
       actingUserId,
       studentUserId,
-      { blockedAt: new Date(), blockedReason: payload.reason ?? null },
+      { blockedAt: decidedAt, blockedReason: payload.reason ?? null },
       'academy.student.blocked',
+      { event: 'roster.student.blocked', decidedAt },
     );
 
     // Blocking must END the sessions this learner already holds on THIS
@@ -327,7 +336,8 @@ export class AcademyStudentsService {
     // minutes.
     await this.gateRevocation.revokeSessions(sessionIds, 'academy_membership_blocked');
 
-    return result;
+    await this.communicationService.enqueueAfterCommit(result.outboxId);
+    return result.response;
   }
 
   async unblock(
@@ -336,14 +346,18 @@ export class AcademyStudentsService {
     actingUserId: string,
     studentUserId: string,
   ): Promise<AcademyRosterStudentResponse> {
-    return this.mutateMembership(
+    const decidedAt = new Date();
+    const result = await this.mutateMembership(
       academyId,
       organizationId,
       actingUserId,
       studentUserId,
       { blockedAt: null, blockedReason: null },
       'academy.student.unblocked',
+      { event: 'roster.student.unblocked', decidedAt },
     );
+    await this.communicationService.enqueueAfterCommit(result.outboxId);
+    return result.response;
   }
 
   async approve(
@@ -352,19 +366,23 @@ export class AcademyStudentsService {
     actingUserId: string,
     studentUserId: string,
   ): Promise<AcademyRosterStudentResponse> {
-    return this.mutateMembership(
+    const decidedAt = new Date();
+    const result = await this.mutateMembership(
       academyId,
       organizationId,
       actingUserId,
       studentUserId,
       { status: 'active' },
       'academy.student.approved',
+      { event: 'roster.student.approved', decidedAt },
       (row) => {
         if (row.status !== 'pending') {
           throw new ConflictException({ messageKey: 'errors.academy.studentNotPending' });
         }
       },
     );
+    await this.communicationService.enqueueAfterCommit(result.outboxId);
+    return result.response;
   }
 
   async reject(
@@ -373,21 +391,33 @@ export class AcademyStudentsService {
     actingUserId: string,
     studentUserId: string,
   ): Promise<AcademyRosterStudentResponse> {
-    return this.mutateMembership(
+    const decidedAt = new Date();
+    const result = await this.mutateMembership(
       academyId,
       organizationId,
       actingUserId,
       studentUserId,
       { status: 'inactive' },
       'academy.student.rejected',
+      { event: 'roster.student.rejected', decidedAt },
       (row) => {
         if (row.status !== 'pending') {
           throw new ConflictException({ messageKey: 'errors.academy.studentNotPending' });
         }
       },
     );
+    await this.communicationService.enqueueAfterCommit(result.outboxId);
+    return result.response;
   }
 
+  /**
+   * P64 Communications C3 — the four roster decisions a learner must be
+   * told about (plan §8 G2/G3, §10: "approved/rejected/blocked →
+   * **always**"). The `emit` happens INSIDE the same transaction as the
+   * membership UPDATE and the audit row, so a decision that rolls back
+   * tells nobody; `enqueueAfterCommit` is the caller's job, once the
+   * transaction has returned.
+   */
   private async mutateMembership(
     academyId: string,
     organizationId: string,
@@ -395,9 +425,14 @@ export class AcademyStudentsService {
     studentUserId: string,
     data: Prisma.AcademyStudentUpdateInput,
     action: string,
+    notification: { readonly event: CommunicationEventKey; readonly decidedAt: Date },
     precondition?: (row: { status: string }) => void,
-  ): Promise<AcademyRosterStudentResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+  ): Promise<{
+    readonly response: AcademyRosterStudentResponse;
+    readonly outboxId: string | null;
+  }> {
+    let emitted: EmitResult = { created: false, outboxId: null };
+    const response = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actingUserId,
       async (tx) => {
@@ -422,6 +457,19 @@ export class AcademyStudentsService {
           targetLabel: membership.user.email,
         });
 
+        const academy = await this.academiesRepository.findById(tx, academyId);
+        emitted = await this.communicationService.emit(tx, {
+          key: notification.event,
+          recipientUserId: studentUserId,
+          organizationId,
+          academyId,
+          entity: { type: 'academy_student', id: membership.id },
+          values: {
+            decidedAtMs: notification.decidedAt.getTime(),
+            academyName: academy?.name ?? '',
+          },
+        });
+
         const fresh = await this.rosterRepository.findMembership(
           tx,
           academyId,
@@ -440,6 +488,7 @@ export class AcademyStudentsService {
         });
       },
     );
+    return { response, outboxId: emitted.outboxId };
   }
 
   // ---------------------------------------------------------------------
@@ -453,7 +502,8 @@ export class AcademyStudentsService {
     studentUserId: string,
     payload: ManualEnrollDto,
   ): Promise<RosterEnrollmentResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let emitted: EmitResult = { created: false, outboxId: null };
+    const response = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actingUserId,
       async (tx) => {
@@ -482,6 +532,10 @@ export class AcademyStudentsService {
           course.id,
         );
         let enrollmentId: string;
+        // The instant the grant takes effect — the communication's dedupe
+        // key, so a re-grant after a revocation is a SECOND piece of news
+        // and a retried request is not (§19).
+        let grantedAt = new Date();
         if (existing) {
           if (isEnrollmentActive(existing)) {
             throw new ConflictException({
@@ -491,7 +545,7 @@ export class AcademyStudentsService {
           // Re-grant: the row keeps its history; lifecycle columns reset.
           await this.enrollmentsRepository.update(tx, existing.id, {
             status: 'enrolled',
-            enrolledAt: new Date(),
+            enrolledAt: grantedAt,
             revokedAt: null,
             revokeReason: null,
             expiresAt,
@@ -518,6 +572,7 @@ export class AcademyStudentsService {
             { accessSource: 'manual', expiresAt },
           );
           enrollmentId = created.id;
+          grantedAt = created.enrolledAt ?? grantedAt;
         }
 
         await this.auditLogWriterService.write(tx, {
@@ -531,6 +586,25 @@ export class AcademyStudentsService {
           targetLabel: `${membership.user.email} → ${course.title}`,
         });
 
+        // P64 Communications C3 (plan §8 C2) — the learner was never told
+        // that staff had given them a course. Same transaction as the
+        // enrollment write and the audit row.
+        const academy = await this.academiesRepository.findById(tx, academyId);
+        emitted = await this.communicationService.emit(tx, {
+          key: 'enrollment.granted',
+          recipientUserId: studentUserId,
+          organizationId,
+          academyId,
+          entity: { type: 'enrollment', id: enrollmentId },
+          values: {
+            grantedAtMs: grantedAt.getTime(),
+            courseId: course.id,
+            courseTitle: course.title,
+            academyName: academy?.name ?? '',
+            expiresAtDate: expiresAt ? expiresAt.toISOString().slice(0, 10) : '',
+          },
+        });
+
         const rows = await this.rosterRepository.findEnrollmentsForStudent(
           tx,
           academyId,
@@ -540,6 +614,8 @@ export class AcademyStudentsService {
         return toRosterEnrollmentResponse(row, isEnrollmentActive(row));
       },
     );
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    return response;
   }
 
   async revoke(
@@ -549,6 +625,9 @@ export class AcademyStudentsService {
     enrollmentId: string,
     payload: RevokeEnrollmentDto,
   ): Promise<RosterEnrollmentResponse> {
+    // One instant for the row and for the dedupe key; see `block`.
+    const revokedAt = new Date();
+    let emitted: EmitResult = { created: false, outboxId: null };
     const revoked = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actingUserId,
@@ -562,7 +641,7 @@ export class AcademyStudentsService {
           const reason = payload.reason ?? 'manual';
           await this.enrollmentsRepository.update(tx, enrollment.id, {
             status: 'unavailable',
-            revokedAt: new Date(),
+            revokedAt,
             revokeReason: reason,
           });
           // The label names WHO lost access to WHAT, exactly like
@@ -583,6 +662,25 @@ export class AcademyStudentsService {
             targetLabel: `${student?.user.email ?? enrollment.studentId} → ${
               course?.title ?? enrollment.courseId
             } · ${reason}`,
+          });
+
+          // P64 Communications C3 (plan §8 C3, §10 "access change must
+          // reach them"). Inside the revocation's own transaction, and
+          // only on the branch that actually revoked — a second call on an
+          // already-revoked enrollment is a no-op here as it is there.
+          const academy = await this.academiesRepository.findById(tx, academyId);
+          emitted = await this.communicationService.emit(tx, {
+            key: 'enrollment.revoked',
+            recipientUserId: enrollment.studentId,
+            organizationId,
+            academyId,
+            entity: { type: 'enrollment', id: enrollment.id },
+            values: {
+              revokedAtMs: revokedAt.getTime(),
+              courseId: enrollment.courseId,
+              courseTitle: course?.title ?? '',
+              academyName: academy?.name ?? '',
+            },
           });
         }
         return {
@@ -616,6 +714,8 @@ export class AcademyStudentsService {
       academyId,
       'enrollment_revoked',
     );
+
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
     return revoked.response;
   }
 
@@ -656,7 +756,8 @@ export class AcademyStudentsService {
     enrollmentId: string,
     payload: UpdateEnrollmentExpiryDto,
   ): Promise<RosterEnrollmentResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let emitted: EmitResult = { created: false, outboxId: null };
+    const response = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actingUserId,
       async (tx) => {
@@ -680,9 +781,33 @@ export class AcademyStudentsService {
           targetId: enrollment.id,
           targetLabel: expiresAt ? expiresAt.toISOString() : 'cleared',
         });
+
+        // P64 Communications C3 (plan §8 C4). The dedupe key is the new
+        // expiry itself, so re-saving the SAME date tells nobody twice
+        // while moving it always does.
+        const [academy, course] = await Promise.all([
+          this.academiesRepository.findById(tx, academyId),
+          this.coursesRepository.findById(tx, enrollment.courseId),
+        ]);
+        emitted = await this.communicationService.emit(tx, {
+          key: 'enrollment.expiry_changed',
+          recipientUserId: enrollment.studentId,
+          organizationId,
+          academyId,
+          entity: { type: 'enrollment', id: enrollment.id },
+          values: {
+            expiresAtMs: expiresAt ? expiresAt.getTime() : '',
+            expiresAtDate: expiresAt ? expiresAt.toISOString().slice(0, 10) : '',
+            courseId: enrollment.courseId,
+            courseTitle: course?.title ?? '',
+            academyName: academy?.name ?? '',
+          },
+        });
         return this.readEnrollment(tx, academyId, enrollment.studentId, enrollment.id);
       },
     );
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    return response;
   }
 
   private async readEnrollment(

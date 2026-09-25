@@ -63,6 +63,8 @@ import { toCourseOrderPaymentResponse } from '../dto/course-order-payment.contra
 import type { CourseOrderPaymentResponse } from '../dto/course-order-payment.contract';
 import type { CreateCourseOrderPaymentDto } from '../dto/create-course-order-payment.dto';
 import type { SubmitCourseOrderPaymentProofDto } from '../dto/submit-course-order-payment-proof.dto';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import { randomUUID } from 'node:crypto';
 
 const NON_TERMINAL_PAYMENT_STATUSES = new Set([
@@ -88,6 +90,7 @@ export class CourseOrderPaymentsService {
     private readonly paymentProviderRegistry: PaymentProviderRegistry,
     private readonly paymentProofStorageService: PaymentProofStorageService,
     private readonly metrics: LearningMetricsService,
+    private readonly communicationService: CommunicationService,
   ) {}
 
   /**
@@ -367,63 +370,94 @@ export class CourseOrderPaymentsService {
       });
     }
 
-    return this.tenancyContextService.runInUserContext(studentId, async (tx) => {
-      const order = await this.courseOrdersService.findOrderOrThrow(
-        tx,
-        studentId,
-        orderId,
-      );
-      const payment = await this.paymentsRepository.findByIdAnyOrganization(
-        tx,
-        paymentId,
-      );
-      if (
-        !payment ||
-        payment.courseOrderId !== order.id ||
-        payment.payerUserId !== studentId
-      ) {
-        throw new NotFoundException({ messageKey: 'errors.notFound' });
-      }
-      if (!NON_TERMINAL_PAYMENT_STATUSES.has(payment.status)) {
-        throw new ConflictException({ messageKey: 'errors.payment.notEditable' });
-      }
+    let emitted: EmitResult = { created: false, outboxId: null };
+    const response = await this.tenancyContextService.runInUserContext(
+      studentId,
+      async (tx) => {
+        const order = await this.courseOrdersService.findOrderOrThrow(
+          tx,
+          studentId,
+          orderId,
+        );
+        const payment = await this.paymentsRepository.findByIdAnyOrganization(
+          tx,
+          paymentId,
+        );
+        if (
+          !payment ||
+          payment.courseOrderId !== order.id ||
+          payment.payerUserId !== studentId
+        ) {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        if (!NON_TERMINAL_PAYMENT_STATUSES.has(payment.status)) {
+          throw new ConflictException({ messageKey: 'errors.payment.notEditable' });
+        }
 
-      const method = await this.paymentMethodsRepository.findByKey(payment.methodKey);
-      const capabilities = method?.capabilities as unknown as
-        { supportsProof: boolean } | undefined;
-      if (!capabilities?.supportsProof) {
-        throw new ConflictException({ messageKey: 'errors.payment.proofNotSupported' });
-      }
+        const method = await this.paymentMethodsRepository.findByKey(payment.methodKey);
+        const capabilities = method?.capabilities as unknown as
+          { supportsProof: boolean } | undefined;
+        if (!capabilities?.supportsProof) {
+          throw new ConflictException({ messageKey: 'errors.payment.proofNotSupported' });
+        }
 
-      const id = randomUUID();
-      const storageKey = buildCourseOrderPaymentProofStorageKey(
-        order.academyId,
-        paymentId,
-        kind.extension,
-        id,
-      );
-      await this.paymentProofStorageService.putObject(storageKey, buffer, kind.mimeType);
+        const id = randomUUID();
+        const storageKey = buildCourseOrderPaymentProofStorageKey(
+          order.academyId,
+          paymentId,
+          kind.extension,
+          id,
+        );
+        await this.paymentProofStorageService.putObject(
+          storageKey,
+          buffer,
+          kind.mimeType,
+        );
 
-      await this.paymentProofsRepository.create(tx, {
-        id,
-        payment: { connect: { id: paymentId } },
-        fileName: sanitizeFileName(payload.fileName),
-        storageKey,
-        mimeType: kind.mimeType,
-        note: payload.note,
-      });
+        await this.paymentProofsRepository.create(tx, {
+          id,
+          payment: { connect: { id: paymentId } },
+          fileName: sanitizeFileName(payload.fileName),
+          storageKey,
+          mimeType: kind.mimeType,
+          note: payload.note,
+        });
 
-      await this.paymentsRepository.update(tx, paymentId, {
-        reviewStatus: 'pending',
-        nextAction: { type: 'awaiting_manual_review' },
-      });
+        await this.paymentsRepository.update(tx, paymentId, {
+          reviewStatus: 'pending',
+          nextAction: { type: 'awaiting_manual_review' },
+        });
 
-      const withRelations = await this.paymentsRepository.findByIdAnyOrganization(
-        tx,
-        paymentId,
-      );
-      return toCourseOrderPaymentResponse(withRelations!);
-    });
+        // P64 Communications C3 (plan §8 D3, §10: "proof submitted →
+        // **always** (receipt) to learner"). The learner had no confirmation
+        // at all that the file they uploaded had arrived — the next thing
+        // they heard was the approval or the rejection, days later. The
+        // receipt is written in the SAME transaction as the proof row and
+        // the `awaiting_manual_review` flip, so a rolled-back submission
+        // promises nothing.
+        const snapshot = order.snapshot as { course?: { title?: string } } | null;
+        emitted = await this.communicationService.emit(tx, {
+          key: 'course.order.proof_submitted',
+          recipientUserId: studentId,
+          organizationId: order.organizationId,
+          academyId: order.academyId,
+          entity: { type: 'payment_proof', id },
+          values: {
+            courseTitle: snapshot?.course?.title ?? '',
+            amount: (Number(payment.amountMinorUnits) / 100).toFixed(2),
+            currency: payment.currency,
+          },
+        });
+
+        const withRelations = await this.paymentsRepository.findByIdAnyOrganization(
+          tx,
+          paymentId,
+        );
+        return toCourseOrderPaymentResponse(withRelations!);
+      },
+    );
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    return response;
   }
 
   /** Streams the latest proof's bytes for the current buyer's own course-order Payment — see `PaymentService.getProofFile`'s identical precedent. */

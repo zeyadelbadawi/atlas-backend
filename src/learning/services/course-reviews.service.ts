@@ -25,6 +25,8 @@ import { CourseInstructorsRepository } from '../../course/repositories/course-in
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import { assertActiveEnrollment, assertCanReviewCourse } from './learning-access.util';
 import type {
   CreateCourseReviewDto,
@@ -74,6 +76,7 @@ export class CourseReviewsService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly communicationService: CommunicationService,
   ) {}
 
   // ------------------------------------------------------------------
@@ -271,35 +274,59 @@ export class CourseReviewsService {
     reviewId: string,
     status: 'approved' | 'rejected',
   ): Promise<CourseReviewResponse> {
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      const context = await assertCanReviewCourse(
-        tx,
-        this.coursesRepository,
-        this.academyMembersRepository,
-        this.courseInstructorsRepository,
-        userId,
-        courseId,
-      );
-      const existing = await this.courseReviewsRepository.findById(tx, reviewId);
-      // Belt-and-braces: the review must exist AND belong to the course the
-      // caller is authorised to moderate. RLS already scopes the read; this
-      // stops a valid reviewer of course A from moderating course B's row.
-      if (!existing || existing.courseId !== courseId) {
-        throw new NotFoundException({ messageKey: 'errors.notFound' });
-      }
-      const review = await this.courseReviewsRepository.update(tx, reviewId, { status });
-      await this.auditLogWriterService.write(tx, {
-        actorUserId: userId,
-        academyId: context.academyId,
-        role: context.reviewerRole,
-        action:
-          status === 'approved' ? 'course_review.approved' : 'course_review.rejected',
-        targetType: 'course_review',
-        targetId: reviewId,
-        targetLabel: courseId,
-      });
-      return toCourseReviewResponse(review);
-    });
+    let emitted: EmitResult = { created: false, outboxId: null };
+    const response = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const context = await assertCanReviewCourse(
+          tx,
+          this.coursesRepository,
+          this.academyMembersRepository,
+          this.courseInstructorsRepository,
+          userId,
+          courseId,
+        );
+        const existing = await this.courseReviewsRepository.findById(tx, reviewId);
+        // Belt-and-braces: the review must exist AND belong to the course the
+        // caller is authorised to moderate. RLS already scopes the read; this
+        // stops a valid reviewer of course A from moderating course B's row.
+        if (!existing || existing.courseId !== courseId) {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        const review = await this.courseReviewsRepository.update(tx, reviewId, {
+          status,
+        });
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          academyId: context.academyId,
+          role: context.reviewerRole,
+          action:
+            status === 'approved' ? 'course_review.approved' : 'course_review.rejected',
+          targetType: 'course_review',
+          targetId: reviewId,
+          targetLabel: courseId,
+        });
+
+        // P64 Communications C3 (plan §8 F2, §10 "learner: yes | never —
+        // low stakes; feed only"). The AUTHOR is told, in the feed only:
+        // emailing someone that their review was rejected reads as a
+        // reprimand, and emailing that it was approved is noise. Same
+        // transaction as the status write, so a rolled-back moderation
+        // tells nobody. Never emitted to the moderator acting here — the
+        // recipient is read from the review row, not from the request.
+        const course = await this.coursesRepository.findById(tx, courseId);
+        emitted = await this.communicationService.emit(tx, {
+          key: 'review.moderated',
+          recipientUserId: existing.studentId,
+          academyId: context.academyId,
+          entity: { type: 'course_review', id: reviewId },
+          values: { status, courseId, courseTitle: course?.title ?? '' },
+        });
+        return toCourseReviewResponse(review);
+      },
+    );
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    return response;
   }
 
   /** A reviewer removes a review from their course. */

@@ -58,6 +58,9 @@ const STUDENT_ID = 's2222222-2222-4222-8222-222222222222';
 const STARTS_AT_MS = 1790000000000;
 const REVOKED_AT_MS = 1790000009999;
 const DEAUTHORIZED_AT = '2026-09-25T10:00:00.000Z';
+/** The instant a C3 roster/enrollment transition happened — see §19 on repeating events. */
+const DECIDED_AT_MS = 1790000005555;
+const EXPIRES_AT_MS = 1793000000000;
 
 /**
  * The pre-outbox dedupe string for every migrated key, and the values the
@@ -159,6 +162,48 @@ const EXPECTED_DEDUPE: Record<
   'certificate.revoked': {
     values: { revokedAtMs: REVOKED_AT_MS },
     expected: `certificate.revoked:${ENTITY_ID}:${REVOKED_AT_MS}`,
+  },
+
+  // --- Enrollment access and roster decisions (P64 Communications C3).
+  // These keys are NEW, so there is no pre-migration string to preserve —
+  // what the table pins instead is the shape chosen here, which becomes
+  // the persisted `notifications.dedupe_key` from the first deploy on and
+  // is then just as unchangeable as the twenty above.
+  'enrollment.granted': {
+    values: { grantedAtMs: DECIDED_AT_MS, courseId: 'c1' },
+    expected: `enrollment.granted:${ENTITY_ID}:${DECIDED_AT_MS}`,
+  },
+  'enrollment.revoked': {
+    values: { revokedAtMs: DECIDED_AT_MS },
+    expected: `enrollment.revoked:${ENTITY_ID}:${DECIDED_AT_MS}`,
+  },
+  'enrollment.expiry_changed': {
+    values: { expiresAtMs: EXPIRES_AT_MS, courseId: 'c1' },
+    expected: `enrollment.expiry_changed:${ENTITY_ID}:${EXPIRES_AT_MS}`,
+  },
+  'roster.student.approved': {
+    values: { decidedAtMs: DECIDED_AT_MS },
+    expected: `roster.student.approved:${ENTITY_ID}:${DECIDED_AT_MS}`,
+  },
+  'roster.student.rejected': {
+    values: { decidedAtMs: DECIDED_AT_MS },
+    expected: `roster.student.rejected:${ENTITY_ID}:${DECIDED_AT_MS}`,
+  },
+  'roster.student.blocked': {
+    values: { decidedAtMs: DECIDED_AT_MS },
+    expected: `roster.student.blocked:${ENTITY_ID}:${DECIDED_AT_MS}`,
+  },
+  'roster.student.unblocked': {
+    values: { decidedAtMs: DECIDED_AT_MS },
+    expected: `roster.student.unblocked:${ENTITY_ID}:${DECIDED_AT_MS}`,
+  },
+  'course.order.proof_submitted': {
+    values: {},
+    expected: `course_order_proof_submitted:${ENTITY_ID}`,
+  },
+  'review.moderated': {
+    values: { status: 'approved', courseId: 'c1' },
+    expected: `course_review.moderated:${ENTITY_ID}:approved`,
   },
 };
 
@@ -294,6 +339,48 @@ describe('COMMUNICATION_CATALOG', () => {
       );
       // The reschedule nobody hears about is exactly the one that matters.
       expect(first).not.toBe(second);
+    });
+
+    it('distinguishes a re-grant of the same enrollment from the first grant', () => {
+      // Granted → revoked → granted again is a real sequence, and the
+      // SECOND grant is the one the learner most needs to hear about. A
+      // dedupe key on the enrollment id alone would swallow it.
+      const entry = COMMUNICATION_CATALOG['enrollment.granted'];
+      expect(entry.dedupe(context({ grantedAtMs: DECIDED_AT_MS }))).not.toBe(
+        entry.dedupe(context({ grantedAtMs: DECIDED_AT_MS + 86_400_000 })),
+      );
+    });
+
+    it('distinguishes a second roster decision on the same membership', () => {
+      for (const key of [
+        'roster.student.approved',
+        'roster.student.rejected',
+        'roster.student.blocked',
+        'roster.student.unblocked',
+      ] as const) {
+        const entry = COMMUNICATION_CATALOG[key];
+        expect(entry.dedupe(context({ decidedAtMs: DECIDED_AT_MS }))).not.toBe(
+          entry.dedupe(context({ decidedAtMs: DECIDED_AT_MS + 1000 })),
+        );
+      }
+    });
+
+    it('treats a cleared enrollment expiry as its own distinct key', () => {
+      const entry = COMMUNICATION_CATALOG['enrollment.expiry_changed'];
+      const cleared = entry.dedupe(context({}));
+      expect(cleared).toBe(`enrollment.expiry_changed:${ENTITY_ID}:cleared`);
+      // Setting the SAME date twice is not news; moving it is.
+      expect(entry.dedupe(context({ expiresAtMs: EXPIRES_AT_MS }))).toBe(
+        entry.dedupe(context({ expiresAtMs: EXPIRES_AT_MS })),
+      );
+      expect(entry.dedupe(context({ expiresAtMs: EXPIRES_AT_MS }))).not.toBe(cleared);
+    });
+
+    it('distinguishes the two outcomes of moderating one review', () => {
+      const entry = COMMUNICATION_CATALOG['review.moderated'];
+      expect(entry.dedupe(context({ status: 'approved' }))).not.toBe(
+        entry.dedupe(context({ status: 'rejected' })),
+      );
     });
 
     it('distinguishes two versions of the same certificate', () => {
