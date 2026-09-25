@@ -39,6 +39,7 @@ import { template as rosterStudentBlocked } from './keys/roster.student.blocked'
 import { template as rosterStudentUnblocked } from './keys/roster.student.unblocked';
 import { template as courseOrderProofSubmitted } from './keys/course.order.proof_submitted';
 import { template as reviewModerated } from './keys/review.moderated';
+import { template as reviewSubmitted } from './keys/review.submitted';
 import { template as enrollmentSelfEnrolled } from './keys/enrollment.self_enrolled';
 import { template as courseOrderCreated } from './keys/course.order.created';
 import { template as courseOrderExpired } from './keys/course.order.expired';
@@ -86,6 +87,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'roster.student.unblocked': rosterStudentUnblocked,
   'course.order.proof_submitted': courseOrderProofSubmitted,
   'review.moderated': reviewModerated,
+  'review.submitted': reviewSubmitted,
   'enrollment.self_enrolled': enrollmentSelfEnrolled,
   'course.order.created': courseOrderCreated,
   'course.order.expired': courseOrderExpired,

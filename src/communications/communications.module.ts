@@ -37,6 +37,7 @@ import { CommunicationBrandingService } from './services/communication-branding.
 import { CommunicationPreferencesService } from './services/communication-preferences.service';
 import { EmailTransport } from './services/email-transport';
 import { LinkBuilderService } from './services/link-builder.service';
+import { AcademyStaffRecipientsService } from './services/academy-staff-recipients.service';
 import { COMMUNICATION_SUPPRESSION } from './services/communication-suppression.interface';
 import { SuppressionService } from './services/suppression.service';
 import { CommunicationMetricsService } from './metrics/communication-metrics.service';
@@ -58,6 +59,7 @@ import { PlatformCommunicationsHealthService } from './services/platform-communi
     PlatformCommunicationsHealthService,
     EmailTransport,
     LinkBuilderService,
+    AcademyStaffRecipientsService,
     CommunicationBrandingService,
     { provide: COMMUNICATION_SUPPRESSION, useExisting: SuppressionService },
     CommunicationsProducer,
@@ -73,6 +75,7 @@ import { PlatformCommunicationsHealthService } from './services/platform-communi
     CommunicationPreferencesService,
     CommunicationMetricsService,
     LinkBuilderService,
+    AcademyStaffRecipientsService,
     EmailTransport,
     COMMUNICATION_SUPPRESSION,
   ],

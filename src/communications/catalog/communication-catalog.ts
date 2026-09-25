@@ -690,6 +690,38 @@ const CATALOG = {
   // reprimand. The dedupe is per (review, outcome): clicking "approve"
   // twice is not two pieces of news, approving a review that was
   // rejected is.
+  /**
+   * A learner's review is waiting for moderation — a STAFF work item.
+   *
+   * `email: 'digest'` rather than `always`: a moderator on a busy academy
+   * would otherwise receive one mail per review, which is how a useful
+   * signal becomes a filter rule. The in-app row is immediate; the mail
+   * is batched.
+   *
+   * `operational`, not `engagement`: it is work someone is expected to
+   * do, so it is not silenced by the engagement toggle — but it is still
+   * digestible, which is the distinction `operational` exists to carry.
+   */
+  'review.submitted': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'digest' },
+    priority: 'low',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    // One work item per review per moderator. A re-submitted review is a
+    // NEW thing to moderate, so the status transition instant is in the
+    // key — otherwise an edited review would silently never be re-queued.
+    dedupe: ({ entity, values }) =>
+      `course_review.submitted:${entity.id}:${str(values, 'submittedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'review.submitted',
+    titleKey: 'notifications:events.reviewSubmitted.title',
+    messageKey: 'notifications:events.reviewSubmitted.message',
+    actionUrl: () => `/dashboard/reviews`,
+  },
   'review.moderated': {
     category: 'engagement',
     audience: 'learner',

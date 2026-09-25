@@ -210,6 +210,13 @@ const EXPECTED_DEDUPE: Record<
     values: { status: 'approved', courseId: 'c1' },
     expected: `course_review.moderated:${ENTITY_ID}:approved`,
   },
+  // A STAFF work item. The submission instant is in the key because a
+  // re-submitted review is a new thing to moderate — without it an edited
+  // review would dedupe against the original and never be re-queued.
+  'review.submitted': {
+    values: { submittedAtMs: 1790000000000, courseTitle: 'Algebra' },
+    expected: `course_review.submitted:${ENTITY_ID}:1790000000000`,
+  },
 
   // --- P64 Communications C3, second pass (plan §8 B1-B4/C1/D1-D2/E4-E6/H1).
   // New keys again: what is pinned is the shape chosen, which becomes the
