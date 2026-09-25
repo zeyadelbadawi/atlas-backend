@@ -13,6 +13,7 @@ import { AuthCoreModule } from './auth-core.module';
 import { AuthController } from './controllers/auth.controller';
 import { UsersController } from './controllers/users.controller';
 import { AuthService } from './services/auth.service';
+import { AccountSetupService } from './services/account-setup.service';
 import { UsersService } from './services/users.service';
 import { PasswordHasherService } from './services/password-hasher.service';
 import { AuthRateLimiterService } from './services/auth-rate-limiter.service';
@@ -68,6 +69,7 @@ import { TrustedDevicesController } from './controllers/trusted-devices.controll
     UsersController,
   ],
   providers: [
+    AccountSetupService,
     AuthService,
     UsersService,
     AcademySurfaceService,
@@ -117,6 +119,7 @@ import { TrustedDevicesController } from './controllers/trusted-devices.controll
   // note already documents for admin-initiated account creation without
   // an invitation/email system).
   exports: [
+    AccountSetupService,
     // P64 Communications — `EMAIL_PROVIDER` and `StubEmailProvider` now come
     // from `CommunicationsProvidersModule`; Nest re-exports at module
     // granularity, so the whole module is exported (its own export list is

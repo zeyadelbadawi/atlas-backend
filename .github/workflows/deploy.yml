@@ -155,6 +155,14 @@ jobs:
             FLAG_VIDEO_PREMIUM_ACADEMY_IDS=${{ vars.FLAG_VIDEO_PREMIUM_ACADEMY_IDS }}
             FLAG_DEVICES_POLICY_MODE=${{ vars.FLAG_DEVICES_POLICY_MODE }}
             FLAG_DEVICES_POLICY_ACADEMY_IDS=${{ vars.FLAG_DEVICES_POLICY_ACADEMY_IDS }}
+            # P64 Communications C4/C5/C6. These were absent from this
+            # list, so the host could never receive them at ALL — the
+            # features were off by construction rather than by choice, and
+            # setting the repository variable would have changed nothing.
+            FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT=${{ vars.FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT }}
+            FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY=${{ vars.FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY }}
+            FLAG_LIFECYCLE_SEQUENCES_MODE=${{ vars.FLAG_LIFECYCLE_SEQUENCES_MODE }}
+            FLAG_VIDEO_RETENTION_MODE=${{ vars.FLAG_VIDEO_RETENTION_MODE }}
 
   # 3. MIGRATION DEPLOYMENT — dispatch only, with the input explicitly set.
   #
@@ -224,3 +232,11 @@ jobs:
             FLAG_VIDEO_PREMIUM_ACADEMY_IDS=${{ vars.FLAG_VIDEO_PREMIUM_ACADEMY_IDS }}
             FLAG_DEVICES_POLICY_MODE=${{ vars.FLAG_DEVICES_POLICY_MODE }}
             FLAG_DEVICES_POLICY_ACADEMY_IDS=${{ vars.FLAG_DEVICES_POLICY_ACADEMY_IDS }}
+            # P64 Communications C4/C5/C6. These were absent from this
+            # list, so the host could never receive them at ALL — the
+            # features were off by construction rather than by choice, and
+            # setting the repository variable would have changed nothing.
+            FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT=${{ vars.FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT }}
+            FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY=${{ vars.FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY }}
+            FLAG_LIFECYCLE_SEQUENCES_MODE=${{ vars.FLAG_LIFECYCLE_SEQUENCES_MODE }}
+            FLAG_VIDEO_RETENTION_MODE=${{ vars.FLAG_VIDEO_RETENTION_MODE }}

@@ -378,6 +378,77 @@ const CATALOG = {
    * academy is attached (`CommunicationBrandingService.forOutbox`), which
    * is exactly what a management-surface sign-in wants.
    */
+  /**
+   * An account created FOR someone by their academy's owner.
+   *
+   * `security`, not `transactional`: it carries a credential-bearing link
+   * and must never be silenceable. In-app is `never` — the recipient has
+   * no session and cannot have a feed; a row nobody can read would be a
+   * lie in the retention count.
+   *
+   * Never deduped. Re-inviting is how a Client Owner recovers a member
+   * who lost the link, and a dedupe key would silently swallow the
+   * second attempt.
+   *
+   * The token lives ONLY in the href. `setup=1` makes the shared
+   * reset-password page say "Set your password" instead of "Reset" —
+   * same flow, same token rules, correct wording for someone who never
+   * had a password.
+   */
+  'academy.member.invited': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'account',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    // PLATFORM-branded, like `auth.password.reset`, because the
+    // destination decides the host: `/auth/reset-password` is mounted on
+    // the MANAGEMENT surface only. An academy host mounts its recovery
+    // pages at the root (`/reset-password`), so an academy-branded link
+    // would 404 into that site's CMS catch-all. One destination that
+    // works for all three roles beats per-role host branching that only
+    // helps students. The copy still names the academy — that comes from
+    // `values`, not from branding.
+    branding: 'platform',
+    template: 'academy.member.invited',
+    titleKey: 'notifications:events.academyMemberInvited.title',
+    messageKey: 'notifications:events.academyMemberInvited.message',
+    actionUrl: ({ values }) =>
+      `/auth/reset-password?token=${str(values, 'token')}&setup=1`,
+  },
+  'academy.learner.invited': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'account',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    // PLATFORM-branded, like `auth.password.reset`, because the
+    // destination decides the host: `/auth/reset-password` is mounted on
+    // the MANAGEMENT surface only. An academy host mounts its recovery
+    // pages at the root (`/reset-password`), so an academy-branded link
+    // would 404 into that site's CMS catch-all. One destination that
+    // works for all three roles beats per-role host branching that only
+    // helps students. The copy still names the academy — that comes from
+    // `values`, not from branding.
+    branding: 'academy',
+    template: 'academy.member.invited',
+    titleKey: 'notifications:events.academyMemberInvited.title',
+    messageKey: 'notifications:events.academyMemberInvited.message',
+    // The ACADEMY host mounts its recovery pages at the ROOT
+    // (`/reset-password`), not under `/auth` — and a learner signs in
+    // there, not on the management surface, so sending them to
+    // `/auth/...` would set the password on a host they are then refused
+    // sign-in on (403 by surface enforcement, which is correct).
+    actionUrl: ({ values }) => `/reset-password?token=${str(values, 'token')}&setup=1`,
+  },
   'auth.email.otp': {
     category: 'security',
     audience: 'platform',

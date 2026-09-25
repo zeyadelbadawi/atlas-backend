@@ -39,6 +39,7 @@ import { template as rosterStudentBlocked } from './keys/roster.student.blocked'
 import { template as rosterStudentUnblocked } from './keys/roster.student.unblocked';
 import { template as courseOrderProofSubmitted } from './keys/course.order.proof_submitted';
 import { template as reviewModerated } from './keys/review.moderated';
+import { template as academyMemberInvited } from './keys/academy.member.invited';
 import { template as reviewSubmitted } from './keys/review.submitted';
 import { template as rosterStudentAwaitingApproval } from './keys/roster.student.awaiting_approval';
 import { template as enrollmentSelfEnrolled } from './keys/enrollment.self_enrolled';
@@ -136,6 +137,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'retention.video.warning_24h': retentionVideoWarning24h,
   'retention.video.deleted': retentionVideoDeleted,
   'retention.video.deletion_failed': retentionVideoDeletionFailed,
+  'academy.member.invited': academyMemberInvited,
   'review.submitted': reviewSubmitted,
   'roster.student.awaiting_approval': rosterStudentAwaitingApproval,
   'enrollment.self_enrolled': enrollmentSelfEnrolled,

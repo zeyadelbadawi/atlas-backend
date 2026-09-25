@@ -331,6 +331,8 @@ const EXPECTED_DEDUPE: Record<
     values: { academyName: 'Falcon' },
     expected: `roster.student.awaiting_approval:${ENTITY_ID}`,
   },
+  'academy.member.invited': { values: {}, expected: null },
+  'academy.learner.invited': { values: {}, expected: null },
   'review.submitted': {
     values: { submittedAtMs: 1790000000000, courseTitle: 'Algebra' },
     expected: `course_review.submitted:${ENTITY_ID}:1790000000000`,
@@ -398,6 +400,9 @@ const EXPECTED_DEDUPE: Record<
 
 /** Keys whose contract is "fire every time" — a dedupe key here is a bug. */
 const NEVER_DEDUPED_KEYS: readonly CommunicationEventKey[] = [
+  // Re-inviting is how an owner recovers a member who lost the link.
+  'academy.member.invited',
+  'academy.learner.invited',
   'auth.password.changed',
   'auth.email.otp',
   'auth.email.verification',

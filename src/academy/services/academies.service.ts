@@ -18,6 +18,8 @@ import { Prisma } from '@prisma/client';
 import type { AcademyMember, AcademyMemberRole } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { AccountSetupService } from '../../identity/services/account-setup.service';
+import type { AcademyMemberInviteRole } from '../../identity/services/account-setup.service';
 import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
@@ -174,6 +176,7 @@ export class AcademiesService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly academiesRepository: AcademiesRepository,
+    private readonly accountSetupService: AccountSetupService,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly organizationsRepository: OrganizationsRepository,
@@ -227,17 +230,48 @@ export class AcademiesService {
    * letting the caller report the pre-existing "that email has no Atlas
    * account yet" 404 unchanged.
    */
+  /**
+   * Reports whether the account was CREATED here, because only a brand-new
+   * person needs the onboarding email — an existing Atlas user being added
+   * to a second academy already has a password and knows what Atlas is.
+   */
   private async findOrCreateUserByEmail(
     email: string,
     name?: string,
     password?: string,
-  ): Promise<User | null> {
+  ): Promise<{ user: User; created: boolean } | null> {
     const existing = await this.usersRepository.findByEmail(email);
-    if (existing) return existing;
+    if (existing) return { user: existing, created: false };
     if (!name || !password) return null;
 
     const passwordHash = await this.passwordHasherService.hash(password);
-    return this.usersRepository.create({ email, passwordHash, name });
+    const user = await this.usersRepository.create({ email, passwordHash, name });
+    return { user, created: true };
+  }
+
+  /**
+   * The onboarding email for an account somebody else just created.
+   *
+   * Best-effort and AFTER the creating transaction: a transient mail
+   * failure must not stop an owner adding a member, and the person can
+   * always recover with "forgot password" because the account exists.
+   */
+  private async inviteNewMember(
+    userId: string,
+    academyId: string,
+    role: AcademyMemberInviteRole,
+    email: string,
+  ): Promise<void> {
+    const academy = await this.tenancyContextService.runWithoutContext((tx) =>
+      tx.academy.findUnique({ where: { id: academyId }, select: { name: true } }),
+    );
+    await this.accountSetupService.sendInvite({
+      userId,
+      academyId,
+      academyName: academy?.name ?? '',
+      role,
+      email,
+    });
   }
 
   async list(query: ListAcademiesQueryDto): Promise<PaginatedResult<AcademyResponse>> {
@@ -722,7 +756,7 @@ export class AcademiesService {
     actingUserId: string,
     payload: AddAcademyManagerDto,
   ): Promise<AcademyMemberResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actingUserId,
       async (tx) => {
@@ -761,7 +795,7 @@ export class AcademiesService {
           await this.academyMembersRepository.findForUserInAcademy(
             tx,
             academyId,
-            targetUser.id,
+            targetUser.user.id,
           );
         if (existingAcademyMembership) {
           throw new ConflictException({
@@ -773,12 +807,12 @@ export class AcademiesService {
           await this.organizationMembershipsRepository.findForUserInOrganization(
             tx,
             organizationId,
-            targetUser.id,
+            targetUser.user.id,
           );
         if (!existingOrgMembership) {
           await this.organizationMembershipsRepository.create(tx, {
             organizationId,
-            userId: targetUser.id,
+            userId: targetUser.user.id,
             role: 'manager',
             permissions: ORGANIZATION_MANAGER_PERMISSIONS,
             isPrimary: false,
@@ -787,7 +821,7 @@ export class AcademiesService {
 
         const created = await this.createAcademyMember(tx, organizationId, {
           academyId,
-          userId: targetUser.id,
+          userId: targetUser.user.id,
           role: 'manager',
         });
 
@@ -797,15 +831,33 @@ export class AcademiesService {
           action: 'academy.manager.added',
           targetType: 'academy_member',
           targetId: created.id,
-          targetLabel: targetUser.email,
+          targetLabel: targetUser.user.email,
         });
 
-        return toAcademyMemberResponse({
-          ...created,
-          user: { id: targetUser.id, name: targetUser.name, email: targetUser.email },
-        });
+        return {
+          member: toAcademyMemberResponse({
+            ...created,
+            user: {
+              id: targetUser.user.id,
+              name: targetUser.user.name,
+              email: targetUser.user.email,
+            },
+          }),
+          invitedUserId: targetUser.created ? targetUser.user.id : null,
+          email: targetUser.user.email,
+        };
       },
     );
+
+    if (result.invitedUserId) {
+      await this.inviteNewMember(
+        result.invitedUserId,
+        academyId,
+        'manager',
+        result.email,
+      );
+    }
+    return result.member;
   }
 
   /**
@@ -868,7 +920,7 @@ export class AcademiesService {
           await this.academyMembersRepository.findForUserInAcademy(
             tx,
             academyId,
-            targetUser.id,
+            targetUser.user.id,
           );
         if (existingAcademyMembership) {
           throw new ConflictException({
@@ -880,12 +932,12 @@ export class AcademiesService {
           await this.organizationMembershipsRepository.findForUserInOrganization(
             tx,
             organizationId,
-            targetUser.id,
+            targetUser.user.id,
           );
         if (!existingOrgMembership) {
           await this.organizationMembershipsRepository.create(tx, {
             organizationId,
-            userId: targetUser.id,
+            userId: targetUser.user.id,
             role: 'instructor',
             permissions: ORGANIZATION_INSTRUCTOR_PERMISSIONS,
             isPrimary: false,
@@ -902,7 +954,7 @@ export class AcademiesService {
         // forgotten — the ORDERING it depends on is unchanged.
         const created = await this.createAcademyMember(tx, organizationId, {
           academyId,
-          userId: targetUser.id,
+          userId: targetUser.user.id,
           role: 'instructor',
         });
 
@@ -912,19 +964,37 @@ export class AcademiesService {
           action: 'academy.instructor.added',
           targetType: 'academy_member',
           targetId: created.id,
-          targetLabel: targetUser.email,
+          targetLabel: targetUser.user.email,
         });
 
-        return toAcademyMemberResponse({
-          ...created,
-          user: { id: targetUser.id, name: targetUser.name, email: targetUser.email },
-        });
+        return {
+          member: toAcademyMemberResponse({
+            ...created,
+            user: {
+              id: targetUser.user.id,
+              name: targetUser.user.name,
+              email: targetUser.user.email,
+            },
+          }),
+          user: { email: targetUser.user.email },
+          invitedUserId: targetUser.created ? targetUser.user.id : null,
+        };
       })
       .then(async (response) => {
         // Phase 2 — real reactive usage-recompute trigger (an `instructors`
         // count change), run after the granting transaction has committed.
         await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
-        return response;
+        // Only a BRAND-NEW account needs onboarding; an existing Atlas
+        // user added to a second academy already has a password.
+        if (response.invitedUserId) {
+          await this.inviteNewMember(
+            response.invitedUserId,
+            academyId,
+            'instructor',
+            response.user.email,
+          );
+        }
+        return response.member;
       });
   }
 
@@ -949,7 +1019,7 @@ export class AcademiesService {
     actingUserId: string,
     payload: CreateAcademyStudentDto,
   ): Promise<AcademyStudentResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actingUserId,
       async (tx) => {
@@ -999,9 +1069,18 @@ export class AcademiesService {
           targetLabel: created.email,
         });
 
-        return toAcademyStudentResponse(created, academyId);
+        return {
+          response: toAcademyStudentResponse(created, academyId),
+          userId: created.id,
+        };
       },
     );
+
+    // AFTER the transaction: the account exists, so a mail failure is
+    // recoverable. A staff-created learner has no password of their own
+    // until they follow this link.
+    await this.inviteNewMember(result.userId, academyId, 'student', payload.email);
+    return result.response;
   }
 
   async getStats(
