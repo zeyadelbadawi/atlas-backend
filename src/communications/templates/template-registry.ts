@@ -17,6 +17,7 @@ import { template as supportCaseReply } from './keys/support.case.reply';
 import { template as supportCaseStatusChanged } from './keys/support.case.status_changed';
 import { template as authPasswordChanged } from './keys/auth.password.changed';
 import { template as authEmailVerification } from './keys/auth.email.verification';
+import { template as authEmailOtp } from './keys/auth.email.otp';
 import { template as authPasswordReset } from './keys/auth.password.reset';
 import { template as authPasswordResetConfirmed } from './keys/auth.password.reset_confirmed';
 import { template as liveSessionRecordingAvailable } from './keys/live_session.recording_available';
@@ -43,6 +44,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'support.case.status_changed': supportCaseStatusChanged,
   'auth.password.changed': authPasswordChanged,
   'auth.email.verification': authEmailVerification,
+  'auth.email.otp': authEmailOtp,
   'auth.password.reset': authPasswordReset,
   'auth.password.reset_confirmed': authPasswordResetConfirmed,
   'live_session.recording_available': liveSessionRecordingAvailable,

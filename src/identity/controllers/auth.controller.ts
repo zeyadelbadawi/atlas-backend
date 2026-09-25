@@ -43,6 +43,7 @@ import {
 import type { UserSessionResponse } from '../dto/user-session.contract';
 import { deviceCookieOptions, readCookie } from '../../common/http/cookies.util';
 import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
+import { TRUST_COOKIE_NAME } from '../services/trusted-device.service';
 
 /** Real, server-resolved request metadata for a session write. See `request-metadata.util.ts` for the trust model behind these headers. */
 function sessionContext(request: Request): SessionRequestContext {
@@ -55,6 +56,12 @@ function sessionContext(request: Request): SessionRequestContext {
     // P64 Phase 2 (AD-10) — read from the real `Cookie` header, never from
     // the body, so a client cannot name its own device row.
     deviceCookie: readCookie(request.headers.cookie, DEVICE_COOKIE_NAME),
+    // P64 Communications C4 (§12) — the `atlas_trust` cookie, read from
+    // the real `Cookie` header for the same reason: a client must not be
+    // able to nominate itself as a trusted device. It is consulted only
+    // AFTER the password has been verified, and at most removes the
+    // emailed code from a sign-in that has already succeeded.
+    trustCookie: readCookie(request.headers.cookie, TRUST_COOKIE_NAME),
   };
 }
 

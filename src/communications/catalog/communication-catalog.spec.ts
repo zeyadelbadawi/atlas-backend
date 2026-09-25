@@ -111,6 +111,9 @@ const EXPECTED_DEDUPE: Record<
 
   // --- Account security (P1/P17) — every one of these must fire every time.
   'auth.password.changed': { values: {}, expected: null },
+  // P64 C4 — a resend MUST produce a second email, so this one can never
+  // carry a dedupe key; the `values` are what the OTP template renders.
+  'auth.email.otp': { values: { code: '123456', expiresInMinutes: 10 }, expected: null },
   'auth.email.verification': { values: { token: 'tok' }, expected: null },
   'auth.password.reset': { values: { token: 'tok' }, expected: null },
   'auth.password.reset_confirmed': { values: {}, expected: null },
@@ -165,6 +168,7 @@ const EXPECTED_DEDUPE: Record<
 /** Keys whose contract is "fire every time" — a dedupe key here is a bug. */
 const NEVER_DEDUPED_KEYS: readonly CommunicationEventKey[] = [
   'auth.password.changed',
+  'auth.email.otp',
   'auth.email.verification',
   'auth.password.reset',
   'auth.password.reset_confirmed',

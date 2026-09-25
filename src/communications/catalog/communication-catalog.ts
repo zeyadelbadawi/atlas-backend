@@ -270,6 +270,41 @@ const CATALOG = {
     messageKey: 'notifications:events.emailVerification.message',
     actionUrl: ({ values }) => `/verify-email?token=${str(values, 'token')}`,
   },
+  /**
+   * P64 Communications C4 (§12) — the emailed sign-in code.
+   *
+   * `inApp: 'never'` is load-bearing, not a default: the recipient has no
+   * session at this point, so an in-app row could not be read anyway, and
+   * writing the code into the notifications feed would leave a live
+   * credential sitting in a surface that outlives it.
+   *
+   * `dedupe: NEVER_DEDUPED` and `cooldownSeconds: 0` are equally
+   * deliberate. A resend must produce a NEW email, and the catalogue
+   * cooldown DEFERS a send rather than refusing it — a deferred sign-in
+   * code would arrive after it had already expired. The real resend
+   * controls (60 seconds between codes, 3 codes per challenge, 5
+   * challenges per account per hour) live in `EmailOtpService`, where
+   * being over budget refuses the request instead of delaying the mail.
+   *
+   * `branding: 'academy'` resolves to the platform brand whenever no
+   * academy is attached (`CommunicationBrandingService.forOutbox`), which
+   * is exactly what a management-surface sign-in wants.
+   */
+  'auth.email.otp': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'academy',
+    template: 'auth.email.otp',
+    titleKey: 'notifications:events.emailOtp.title',
+    messageKey: 'notifications:events.emailOtp.message',
+  },
   'auth.password.reset': {
     category: 'security',
     audience: 'platform',

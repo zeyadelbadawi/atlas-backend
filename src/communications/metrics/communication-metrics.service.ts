@@ -71,6 +71,18 @@ export class CommunicationMetricsService {
     ['kind'],
   );
 
+  private readonly otp = counter(
+    'atlas_auth_otp_total',
+    'Email one-time-code challenges by outcome.',
+    ['result'],
+  );
+
+  private readonly trustedDevices = counter(
+    'atlas_auth_trusted_device_total',
+    'Trusted-device lifecycle events.',
+    ['event'],
+  );
+
   recordOutbox(category: string, state: string): void {
     this.safely(() => this.outbox.inc({ category, state }));
   }
@@ -89,6 +101,24 @@ export class CommunicationMetricsService {
 
   recordDigestItem(kind: string): void {
     this.safely(() => this.digestItems.inc({ kind }));
+  }
+
+  /**
+   * P64 Communications C4 — the email-OTP funnel.
+   *
+   * `result` is one of `requested` | `resent` | `verified` | `failed` |
+   * `expired` | `suppressed` | `rate_limited`. Deliberately a single
+   * low-cardinality label and no user/tenant dimension, matching every
+   * other series here: an alert wants "OTP failures are surging", never
+   * "which account".
+   */
+  recordOtp(result: string): void {
+    this.safely(() => this.otp.inc({ result }));
+  }
+
+  /** `event` is `trusted` | `revoked` | `revoked_all`. */
+  recordTrustedDevice(event: string): void {
+    this.safely(() => this.trustedDevices.inc({ event }));
   }
 
   private safely(work: () => void): void {

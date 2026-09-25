@@ -175,6 +175,57 @@ const EnvSchema = z.object({
     .positive()
     .default(3600),
 
+  // --- P64 Communications C4 (§12) — email OTP and trusted devices ---
+  // The two mode switches are the staged rollout of §50 (`off` ->
+  // management -> academies) and default to `off` on both surfaces: an
+  // unset variable must never be the reason production starts demanding
+  // an emailed code. They gate whether an ADDITIONAL factor is asked for;
+  // no value of them removes or weakens an existing control.
+  FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT: z
+    .enum(['off', 'new_device', 'always'])
+    .default('off'),
+  FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY: z
+    .enum(['off', 'new_device', 'always'])
+    .default('off'),
+  // §12's approved numbers. Configurable so a load-testing pass can tune
+  // them, bounded so a typo cannot turn the control off: the ceiling on
+  // attempts and codes is validated as a positive integer, and the code
+  // lifetime is capped at an hour.
+  AUTH_EMAIL_OTP_CODE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(3600)
+    .default(600),
+  AUTH_EMAIL_OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().max(10).default(5),
+  AUTH_EMAIL_OTP_MAX_CODES: z.coerce.number().int().positive().max(10).default(3),
+  AUTH_EMAIL_OTP_RESEND_COOLDOWN_SECONDS: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .max(3600)
+    .default(60),
+  AUTH_EMAIL_OTP_CHALLENGES_PER_HOUR: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(100)
+    .default(5),
+  // §12: 90 days for staff, 180 for learners. 1-365, matching the range
+  // the platform communication-settings contract exposes.
+  AUTH_TRUSTED_DEVICE_DAYS_MANAGEMENT: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(365)
+    .default(90),
+  AUTH_TRUSTED_DEVICE_DAYS_ACADEMY: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(365)
+    .default(180),
+
   // --- Phase P8 — Media Library & Object Storage (master plan §13, §21 P8, ADR-005) ---
   // Cloudflare R2, S3-compatible — same client/protocol against a local
   // MinIO endpoint in development/test (docker-compose.yml) and the real

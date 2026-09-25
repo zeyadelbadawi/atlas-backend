@@ -357,6 +357,47 @@ export interface IdentityConfig {
   };
   /** Phase P18 — see `env.validation.ts`'s own doc comment on `AUTH_REGISTER_RATE_LIMIT_MAX`. */
   readonly registerRateLimit: { readonly max: number; readonly windowSeconds: number };
+  /** P64 Communications C4 (§12) — email one-time codes and trusted devices. */
+  readonly emailOtp: EmailOtpConfig;
+}
+
+/**
+ * P64 Communications C4 (§12) — when sign-in demands an emailed code.
+ *
+ *  - `off`        — never; sign-in behaves exactly as it did before C4.
+ *  - `new_device` — only when this browser presents no live `atlas_trust`
+ *                   cookie for this user AND this surface (the §12 model).
+ *  - `always`     — every sign-in, trusted browser or not.
+ *
+ * This is a ROLLOUT switch, never a security boundary: it decides whether
+ * an ADDITIONAL factor is demanded on top of the password, and no value of
+ * it can weaken or bypass a control that already exists. Everything the
+ * challenge itself enforces — hashing, expiry, attempt ceiling, single
+ * use, device binding — is unconditional.
+ *
+ * Both surfaces default to `off`, matching the staged rollout §50 sets out
+ * (`off` -> management -> academies). An unset variable must never be the
+ * reason production starts mailing codes on every sign-in.
+ */
+export type EmailOtpPolicy = 'off' | 'new_device' | 'always';
+
+export interface EmailOtpConfig {
+  readonly management: EmailOtpPolicy;
+  readonly academy: EmailOtpPolicy;
+  /** §12: 10 minutes. */
+  readonly codeTtlSeconds: number;
+  /** §12: 5 verify attempts, then the challenge is destroyed. */
+  readonly maxAttempts: number;
+  /** §12: at most 3 codes per challenge — the first plus two resends. */
+  readonly maxCodesPerChallenge: number;
+  /** §12: 60 seconds between codes. */
+  readonly resendCooldownSeconds: number;
+  /** §12: 5 challenges per account per hour. */
+  readonly challengesPerHour: number;
+  /** §12: trust lasts 90 days for staff... */
+  readonly trustedDeviceDaysManagement: number;
+  /** ...and 180 days for learners, who sign in far less often. */
+  readonly trustedDeviceDaysAcademy: number;
 }
 
 /**
@@ -433,6 +474,18 @@ export default () => {
     registerRateLimit: {
       max: Number(env.AUTH_REGISTER_RATE_LIMIT_MAX ?? 5),
       windowSeconds: Number(env.AUTH_REGISTER_RATE_LIMIT_WINDOW_SECONDS ?? 3600),
+    },
+    emailOtp: {
+      // Defaults to `off` on BOTH surfaces — see `EmailOtpConfig`.
+      management: (env.FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT ?? 'off') as EmailOtpPolicy,
+      academy: (env.FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY ?? 'off') as EmailOtpPolicy,
+      codeTtlSeconds: Number(env.AUTH_EMAIL_OTP_CODE_TTL_SECONDS ?? 600),
+      maxAttempts: Number(env.AUTH_EMAIL_OTP_MAX_ATTEMPTS ?? 5),
+      maxCodesPerChallenge: Number(env.AUTH_EMAIL_OTP_MAX_CODES ?? 3),
+      resendCooldownSeconds: Number(env.AUTH_EMAIL_OTP_RESEND_COOLDOWN_SECONDS ?? 60),
+      challengesPerHour: Number(env.AUTH_EMAIL_OTP_CHALLENGES_PER_HOUR ?? 5),
+      trustedDeviceDaysManagement: Number(env.AUTH_TRUSTED_DEVICE_DAYS_MANAGEMENT ?? 90),
+      trustedDeviceDaysAcademy: Number(env.AUTH_TRUSTED_DEVICE_DAYS_ACADEMY ?? 180),
     },
   };
 

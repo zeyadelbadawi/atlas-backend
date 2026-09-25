@@ -57,6 +57,10 @@ import {
 import { AccessPolicyService } from '../../tenancy/services/access-policy.service';
 import type { Principal } from '../../tenancy/services/principal-resolver.service';
 import { AcademySurfaceService } from './academy-surface.service';
+import { EmailOtpService } from './email-otp.service';
+import { CommunicationMetricsService } from '../../communications/metrics/communication-metrics.service';
+import { TrustedDeviceService } from './trusted-device.service';
+import type { EmailOtpChallengeContract } from '../dto/contracts';
 import type { SignInSurface } from '../dto/sign-in.dto';
 
 /** A value nobody can ever sign in with — see `getDummyHash()`. */
@@ -98,6 +102,23 @@ export interface SessionRequestContext {
    * the wire contract every client already consumes.
    */
   readonly onDeviceCookie?: (value: string, maxAgeSeconds: number) => void;
+  /**
+   * P64 Communications C4 (§12) — the `atlas_trust` cookie the browser
+   * presented, if any. Like `deviceCookie` it is read from the real
+   * `Cookie` header by the controller and NEVER from the body: a client
+   * must not be able to nominate itself as a trusted device.
+   *
+   * A DIFFERENT cookie from `atlas_device` on purpose — see
+   * `TrustedDeviceService`'s own doc comment.
+   */
+  readonly trustCookie?: string;
+  /**
+   * Called when this browser has just been trusted and its cookie must be
+   * written to the response. Same callback shape, and the same reason, as
+   * `onDeviceCookie`: setting a cookie is an HTTP concern belonging to the
+   * controller, and a server-only secret must not enter the wire contract.
+   */
+  readonly onTrustCookie?: (value: string, maxAgeSeconds: number) => void;
 }
 
 /** P64 Phase 1 (AD-5) — what a session is minted for. */
@@ -150,6 +171,9 @@ export class AuthService {
     private readonly academySurfaceService: AcademySurfaceService,
     private readonly studentDeviceService: StudentDeviceService,
     private readonly accessPolicyService: AccessPolicyService,
+    private readonly emailOtpService: EmailOtpService,
+    private readonly trustedDeviceService: TrustedDeviceService,
+    private readonly communicationMetrics: CommunicationMetricsService,
   ) {}
 
   /**
@@ -458,6 +482,44 @@ export class AuthService {
         expiresIn: challenge.expiresIn,
       };
     }
+
+    // ---------------------------------------------------------------
+    // EMAILED ONE-TIME CODE (P64 Communications C4 — the §12 model)
+    // ---------------------------------------------------------------
+    // Reached only when the account has NO confirmed TOTP. §12 is
+    // explicit that the two are alternatives and never a stack: an
+    // authenticator app is the stronger factor, so an account that has
+    // one is never also asked to read an email. Placed after the surface
+    // resolution for the same reason the 2FA branch is — a learner
+    // refused on the management surface must not be mailed a code for a
+    // sign-in that was never going to be allowed.
+    //
+    // Exactly like the 2FA branch, returning here means the caller holds
+    // NOTHING: no access token, no refresh token, no session row — only
+    // an opaque challenge reference that authenticates nothing and is
+    // accepted by `/auth/otp/verify` and `/auth/otp/resend` alone.
+    if (
+      await this.emailOtpService.isRequired({
+        userId: user.id,
+        surface: selection.surface,
+        trustCookie: input.context?.trustCookie,
+      })
+    ) {
+      const challenge = await this.emailOtpService.issue({
+        user,
+        surface: selection.surface,
+        academyId: selection.academyId,
+        context: input.context,
+      });
+      return {
+        emailOtpRequired: true,
+        challengeId: challenge.challengeId,
+        expiresAt: challenge.expiresAt.toISOString(),
+        resendAvailableAt: challenge.resendAvailableAt.toISOString(),
+        resendsRemaining: challenge.resendsRemaining,
+        maskedEmail: challenge.maskedEmail,
+      } satisfies EmailOtpChallengeContract;
+    }
     // =====================================================================
 
     const session = await this.issueSession(user, input.context, selection);
@@ -586,6 +648,114 @@ export class AuthService {
     const session = await this.issueSession(user, context, selection);
     await this.usersRepository.touchLastSignInAt(user.id);
     return session;
+  }
+
+  /**
+   * P64 Communications C4 — completes a sign-in that stopped for an
+   * emailed code, and issues the real session.
+   *
+   * Mirrors `completeTwoFactorSignIn` deliberately, including the part
+   * that matters most: the user id comes from `EmailOtpService.verify`,
+   * which resolved it from the sealed challenge reference and the
+   * server-side row — never from anything the caller supplied. This is
+   * the third and last caller of `issueSession`, so session minting
+   * stays in one place.
+   *
+   * THE SURFACE COMES FROM THE CHALLENGE, NOT THE BODY. The frontend does
+   * send `surface`/`academyId` (its `EmailOtpVerifyInput` carries them),
+   * but the challenge row already records what the original sign-in was
+   * for, and that is what is used. A body value could otherwise ask for a
+   * session shaped for a surface the password step never approved. The
+   * surface is then re-resolved through `resolveSurface` exactly as the
+   * 2FA path does, so a learner can no more finish a management sign-in
+   * through a code than start one.
+   */
+  async completeEmailOtpSignIn(
+    challengeId: string,
+    code: string,
+    rememberDevice: boolean,
+    context?: SessionRequestContext,
+  ): Promise<AuthenticationSessionContract> {
+    const verified = await this.emailOtpService.verify(challengeId, code, {
+      ipAddress: context?.ipAddress,
+      userAgent: context?.userAgent,
+    });
+
+    const user = await this.usersRepository.findById(verified.userId);
+    if (!user) {
+      // The account vanished between the password and the code. Same
+      // "this challenge is dead" answer as any other failure — nothing
+      // about the account is disclosed.
+      throw new UnauthorizedException({
+        messageKey: 'errors.auth.otpAttemptsExceeded',
+      });
+    }
+
+    const selection = await this.resolveSurface(
+      user,
+      { surface: verified.surface, academyId: verified.academyId },
+      context,
+    );
+    const session = await this.issueSession(user, context, selection);
+    await this.usersRepository.touchLastSignInAt(user.id);
+
+    // §12: "Success also sets `users.emailVerifiedAt` if null." Reading a
+    // code out of the inbox IS proof of ownership of the address — the
+    // same proof the verification link asks for — so a separate
+    // verification chore afterwards would be asking twice for one fact.
+    if (!user.emailVerifiedAt) {
+      try {
+        await this.usersRepository.markEmailVerified(user.id, new Date());
+      } catch (error) {
+        this.logger.warn(
+          {
+            userId: user.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'Could not record email verification after an OTP sign-in (ignored).',
+        );
+      }
+    }
+
+    if (rememberDevice) {
+      await this.rememberDevice(user.id, selection.surface, context);
+    }
+
+    return session;
+  }
+
+  /**
+   * Writes the trusted-device row and hands its cookie to the controller.
+   *
+   * Never throws. "Remember this device" is a convenience on top of an
+   * already-successful sign-in; failing the whole request because the
+   * trust row could not be written would turn a nicety into an outage,
+   * and the only consequence of losing it is that the next sign-in asks
+   * for another code — the safe direction.
+   */
+  private async rememberDevice(
+    userId: string,
+    surface: SignInSurface,
+    context?: SessionRequestContext,
+  ): Promise<void> {
+    try {
+      const minted = await this.trustedDeviceService.trust({
+        userId,
+        surface,
+        userAgent: context?.userAgent,
+        previousCookieValue: context?.trustCookie,
+      });
+      // The audit entry is written inside `trust`'s own transaction, with
+      // the row it describes. Only the cookie and the metric are left,
+      // because only they are HTTP/observability concerns.
+      context?.onTrustCookie?.(minted.cookieValue, minted.maxAgeSeconds);
+      this.communicationMetrics.recordTrustedDevice('trusted');
+    } catch (error) {
+      this.logger.warn(
+        { userId, error: error instanceof Error ? error.message : String(error) },
+        'Could not remember this device; the session itself was issued normally.',
+      );
+    }
   }
 
   /** P64 Phase 1 — non-consuming check used by the reset page; the token stays usable. */
@@ -796,6 +966,16 @@ export class AuthService {
     await this.usersRepository.updatePasswordHash(resetToken.userId, passwordHash);
     await this.passwordResetTokensRepository.markUsed(resetToken.id);
     await this.refreshTokensRepository.revokeAllForUser(resetToken.userId);
+    // P64 Communications C4 (§12) — a reset is exactly the "this account
+    // may be compromised" moment, so every browser that could skip the
+    // emailed code loses that privilege too. Revoking sessions while
+    // leaving trusted devices standing would keep an attacker's browser
+    // one step ahead of the owner's.
+    const forgotten = await this.trustedDeviceService.revokeAllForUser(
+      resetToken.userId,
+      'password_reset',
+    );
+    if (forgotten > 0) this.communicationMetrics.recordTrustedDevice('revoked_all');
 
     // Phase P15 retroactive audit coverage (master plan §8: "security
     // events... fold into audit_log_entries"). This flow predates any

@@ -14,6 +14,19 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
     signInRateLimit: { max: 10, windowSeconds: 900 },
     passwordResetRateLimit: { max: 5, windowSeconds: 3600 },
     registerRateLimit: { max: 5, windowSeconds: 3600 },
+    // P64 Communications C4 — irrelevant to access tokens, present
+    // because `IdentityConfig` is one object; the §12 defaults.
+    emailOtp: {
+      management: 'off',
+      academy: 'off',
+      codeTtlSeconds: 600,
+      maxAttempts: 5,
+      maxCodesPerChallenge: 3,
+      resendCooldownSeconds: 60,
+      challengesPerHour: 5,
+      trustedDeviceDaysManagement: 90,
+      trustedDeviceDaysAcademy: 180,
+    },
     ...overrides,
   };
 }

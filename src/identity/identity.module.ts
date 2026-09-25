@@ -36,6 +36,11 @@ import { PASSWORD_RESET_EMAIL_QUEUE } from './queue/password-reset-email.types';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.types';
 import { AcademySurfaceService } from './services/academy-surface.service';
+import { EmailOtpService } from './services/email-otp.service';
+import { TrustedDeviceService } from './services/trusted-device.service';
+import { AuthChallengeCipher } from './services/auth-challenge-cipher.service';
+import { EmailOtpController } from './controllers/email-otp.controller';
+import { TrustedDevicesController } from './controllers/trusted-devices.controller';
 
 @Module({
   imports: [
@@ -53,8 +58,15 @@ import { AcademySurfaceService } from './services/academy-surface.service';
   ],
   // `TwoFactorController` is listed before `AuthController` so its
   // `/auth/2fa/*` routes are registered ahead of any broader `/auth/*`
-  // pattern — Nest matches in declaration order.
-  controllers: [TwoFactorController, AuthController, UsersController],
+  // pattern — Nest matches in declaration order. P64 C4's two controllers
+  // join it ahead of `AuthController` for the same reason.
+  controllers: [
+    TwoFactorController,
+    EmailOtpController,
+    TrustedDevicesController,
+    AuthController,
+    UsersController,
+  ],
   providers: [
     AuthService,
     UsersService,
@@ -73,6 +85,13 @@ import { AcademySurfaceService } from './services/academy-surface.service';
     AccountDeletionService,
     TwoFactorService,
     TotpSecretCipher,
+    // P64 Communications C4 — the emailed-code step and the trusted
+    // browsers that let it be skipped. `CommunicationService` and
+    // `AuditLogWriterService` come from their own `@Global()` modules, so
+    // no new import is needed here.
+    AuthChallengeCipher,
+    EmailOtpService,
+    TrustedDeviceService,
     SignInRateLimitGuard,
     PasswordResetRateLimitGuard,
     RegisterRateLimitGuard,
@@ -117,6 +136,11 @@ import { AcademySurfaceService } from './services/academy-surface.service';
     // so `AcademyStudentsService` shares this one instance rather than
     // standing up a second, weaker "email validator".
     EmailRiskService,
+    // P64 Communications C4 — `AccountDeletionService` and the session
+    // surfaces in other modules need to forget a person's trusted
+    // browsers; exported so there is one instance of this policy rather
+    // than a second, weaker "forget devices" somewhere else.
+    TrustedDeviceService,
   ],
 })
 export class IdentityModule {}

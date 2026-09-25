@@ -76,8 +76,10 @@ export interface AuthenticationSessionContract {
   readonly refreshToken?: string;
   readonly expiresIn: number;
   readonly user: CurrentUserResponse;
-  /** Absent on a real session. Present and `true` only on the challenge variant below. */
+  /** Absent on a real session. Present and `true` only on the challenge variants below. */
   readonly twoFactorRequired?: false;
+  /** P64 Communications C4 — same discriminator role for the emailed-code challenge. */
+  readonly emailOtpRequired?: false;
 }
 
 /**
@@ -97,12 +99,45 @@ export interface TwoFactorChallengeContract {
 }
 
 /**
- * A sign-in either establishes a session or demands a second factor.
+ * P64 Communications C4 (§12) — the response when a correct password is
+ * not enough and the account's own inbox is the second factor.
+ *
+ * Carries NO token, exactly like `TwoFactorChallengeContract`.
+ * `challengeId` is an opaque, tamper-evident reference (see
+ * `AuthChallengeCipher`) that `POST /auth/otp/verify` and
+ * `POST /auth/otp/resend` accept and nothing else does.
+ *
+ * Absolute ISO timestamps rather than "seconds remaining" because the
+ * client renders two live countdowns from them (code expiry and resend
+ * cooldown) and a relative number would drift against the round trip.
+ * Mirrors the frontend's `EmailOtpChallenge` field for field.
+ */
+export interface EmailOtpChallengeContract {
+  readonly emailOtpRequired: true;
+  readonly challengeId: string;
+  /** When the code stops being accepted. */
+  readonly expiresAt: string;
+  /** When a fresh code may be requested. */
+  readonly resendAvailableAt: string;
+  readonly resendsRemaining: number;
+  /** e.g. `s•••@example.com` — the only address detail a half-authenticated client sees. */
+  readonly maskedEmail: string;
+}
+
+/** `POST /auth/otp/resend` — the next cooldown and nothing else. */
+export interface EmailOtpResendContract {
+  readonly resendAvailableAt: string;
+  readonly resendsRemaining: number;
+}
+
+/**
+ * A sign-in either establishes a session or demands a second factor —
+ * an authenticator code, or one emailed to the account's own address.
  * Modelled as a union so a caller cannot read `accessToken` off a
  * challenge response without the compiler objecting.
  */
 export type AuthenticationResponseContract =
-  AuthenticationSessionContract | TwoFactorChallengeContract;
+  AuthenticationSessionContract | TwoFactorChallengeContract | EmailOtpChallengeContract;
 
 export interface TokenRefreshResponseContract {
   readonly accessToken: string;
