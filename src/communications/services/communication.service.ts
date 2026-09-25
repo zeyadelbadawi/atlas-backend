@@ -39,6 +39,7 @@ import { RedisService } from '../../redis/redis.service';
 import { withSavepoint } from '../../common/database/savepoint.util';
 import {
   COMMUNICATION_CATALOG,
+  catalogCopy,
   type CommunicationCatalogEntry,
   type CommunicationEntityRef,
   type CommunicationEventKey,
@@ -100,6 +101,11 @@ export class CommunicationService {
     const locale = await this.resolveLocale(tx, entry, input);
 
     if (entry.channels.inApp === 'always') {
+      // Which copy this one event writes into the feed. Almost always the
+      // entry's own pair; a handful of keys whose single fact reads two
+      // ways (see `CommunicationCopyVariant`) choose between pairs from
+      // the values the producer already decided.
+      const copy = catalogCopy(entry, ruleContext);
       // No savepoint here: `create` runs its own around the INSERT it is
       // allowed to lose, so a deduped call already returns with the
       // caller's transaction intact.
@@ -107,8 +113,8 @@ export class CommunicationService {
         userId: input.recipientUserId,
         type: entry.notificationType,
         priority: entry.priority,
-        titleKey: entry.titleKey,
-        messageKey: entry.messageKey,
+        titleKey: copy.titleKey,
+        messageKey: copy.messageKey,
         values,
         actionUrl,
         actionLabelKey: entry.actionLabelKey,

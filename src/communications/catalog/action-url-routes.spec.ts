@@ -39,7 +39,21 @@ import {
 } from './communication-catalog';
 import { LinkBuilderService } from '../services/link-builder.service';
 
-const FRONTEND_ROOT = resolve(__dirname, '../../../../atlas-front');
+/**
+ * The sibling frontend checkout.
+ *
+ * `ATLAS_FRONTEND_ROOT` overrides it, and exists for one situation this
+ * pair of repositories is always in during a cross-cutting change: the
+ * backend change sits on a worktree and the matching frontend change sits
+ * on a worktree of the OTHER repository, so `../atlas-front` resolves to
+ * the other repo's main branch — which of course does not carry the keys
+ * yet, and the spec would report a failure that is real for main and
+ * meaningless for the branch under test. The default is unchanged, so
+ * nothing about an ordinary run moves.
+ */
+const FRONTEND_ROOT = process.env.ATLAS_FRONTEND_ROOT
+  ? resolve(process.env.ATLAS_FRONTEND_ROOT)
+  : resolve(__dirname, '../../../../atlas-front');
 const ROUTE_PATHS_FILE = resolve(FRONTEND_ROOT, 'src/app/routes/route-paths.ts');
 const PUBLIC_ROUTER_FILE = resolve(
   FRONTEND_ROOT,

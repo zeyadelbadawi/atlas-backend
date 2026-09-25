@@ -28,6 +28,9 @@ import { template as liveSessionStartingSoon } from './keys/live_session.startin
 import { template as liveProviderDeauthorized } from './keys/live_provider.deauthorized';
 import { template as assignmentGraded } from './keys/assessment.assignment.graded';
 import { template as quizGraded } from './keys/assessment.quiz.graded';
+import { template as exceptionGranted } from './keys/assessment.exception.granted';
+import { template as exceptionActivated } from './keys/assessment.exception.activated';
+import { template as exceptionRevoked } from './keys/assessment.exception.revoked';
 import { template as certificateIssued } from './keys/certificate.issued';
 import { template as certificateRevoked } from './keys/certificate.revoked';
 import { template as enrollmentGranted } from './keys/enrollment.granted';
@@ -103,6 +106,9 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'live_provider.deauthorized': liveProviderDeauthorized,
   'assessment.assignment.graded': assignmentGraded,
   'assessment.quiz.graded': quizGraded,
+  'assessment.exception.granted': exceptionGranted,
+  'assessment.exception.activated': exceptionActivated,
+  'assessment.exception.revoked': exceptionRevoked,
   'certificate.issued': certificateIssued,
   'certificate.revoked': certificateRevoked,
   'enrollment.granted': enrollmentGranted,

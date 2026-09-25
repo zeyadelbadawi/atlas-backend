@@ -50,6 +50,37 @@ export interface CommunicationRuleContext {
   readonly values: Record<string, unknown>;
 }
 
+/**
+ * An alternative in-app (title, message) pair for ONE event whose single
+ * fact reads two genuinely different ways.
+ *
+ * The email side has always been able to do this — a template branches on
+ * `values` (`enrollment.expiry_changed` renders "now ends on <date>" or
+ * "no longer expires" from one key). The in-app feed could not, because
+ * `titleKey`/`messageKey` were one fixed pair per entry, and the feed
+ * renders `t(messageKey, values)` verbatim. Interpolation cannot rescue a
+ * sentence whose SHAPE changes: "you can use it now" and "it becomes
+ * active on <date>" are not one sentence with a hole in it.
+ *
+ * Splitting such an event into two catalogue keys is the wrong repair: it
+ * doubles the dedupe surface and the preference surface for something the
+ * recipient experiences as one event, and it puts the "which one?"
+ * decision at the call site, which is exactly what this catalogue exists
+ * to prevent.
+ *
+ * `when` is a pure function of the same context the dedupe rule sees, so
+ * the producer decides ONCE (it writes the deciding value into `values`)
+ * and the feed, the email and any later replay all reach the same copy.
+ * First match wins; no match falls back to the entry's own pair. Every
+ * pair here is covered by `frontend-translation-coverage.spec.ts` exactly
+ * as the default pair is.
+ */
+export interface CommunicationCopyVariant {
+  readonly when: (context: CommunicationRuleContext) => boolean;
+  readonly titleKey: string;
+  readonly messageKey: string;
+}
+
 export interface CommunicationCatalogEntry {
   readonly category: CommunicationCategory;
   readonly audience: CommunicationAudience;
@@ -72,9 +103,20 @@ export interface CommunicationCatalogEntry {
   readonly template: string;
   readonly titleKey: string;
   readonly messageKey: string;
+  /** Alternative in-app copy for an event that reads two ways; first match wins. */
+  readonly variants?: readonly CommunicationCopyVariant[];
   /** In-app action path and the email's call-to-action, relative to the branded host. */
   readonly actionUrl?: (context: CommunicationRuleContext) => string;
   readonly actionLabelKey?: string;
+}
+
+/** The (titleKey, messageKey) pair this entry writes for one concrete event. */
+export function catalogCopy(
+  entry: CommunicationCatalogEntry,
+  context: CommunicationRuleContext,
+): { readonly titleKey: string; readonly messageKey: string } {
+  const variant = entry.variants?.find((candidate) => candidate.when(context));
+  return variant ?? { titleKey: entry.titleKey, messageKey: entry.messageKey };
 }
 
 function str(values: Record<string, unknown>, key: string): string {
@@ -1430,6 +1472,105 @@ const CATALOG = {
     messageKey: 'notifications:events.attemptInvalidated.message',
     actionUrl: ({ values }) =>
       `/my/courses/${str(values, 'courseId')}/activities/${str(values, 'quizId')}`,
+  },
+
+  // --- Learner exceptions (P64 Communications, W-EXC) ----------------------
+  //
+  // A `QuizStudentOverride` is an accommodation a reviewer grants ONE
+  // student on ONE quiz: more time (`timeMultiplier`), more attempts
+  // (`extraAttempts`), or a private window (`availableFrom`/
+  // `availableUntil`). Until now it emitted nothing at all, so the person
+  // it exists for was never told it existed — an accommodation nobody
+  // knows about is an accommodation nobody uses.
+  //
+  // THE RECIPIENT IS THE OVERRIDE'S OWN `studentId`, read from the row
+  // server-side. Never the reviewer who clicked, and never a student id
+  // taken from the request body: the row is the only authority on whose
+  // accommodation this is.
+  //
+  // WHY `granted` IS ONE KEY WITH TWO COPIES rather than two keys. To the
+  // learner this is one event — "you have an exception" — whose only
+  // difference is whether it is usable yet. Two keys would give them two
+  // preference switches and two dedupe surfaces for one fact. The
+  // `scheduled` flag is decided ONCE by the producer (it is the producer
+  // that holds the grant instant, and a rule that read the clock here
+  // would answer differently on every replay), and both the feed variant
+  // below and the email template read that same flag.
+  'assessment.exception.granted': {
+    category: 'engagement',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'preference' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    // Editing an exception IS news — a multiplier that shrank, a window
+    // that moved — so the key carries the grant instant, exactly as
+    // `enrollment.granted` carries `grantedAtMs`. Re-saving the same
+    // form without changing anything does not move `updatedAt` past the
+    // instant the producer already emitted, so it stays one row.
+    dedupe: ({ entity, values }) =>
+      `quiz_override.granted:${entity.id}:${str(values, 'grantedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'assessment.exception.granted',
+    titleKey: 'notifications:events.exceptionGranted.title',
+    messageKey: 'notifications:events.exceptionGranted.message',
+    variants: [
+      {
+        when: ({ values }) => values.scheduled === true,
+        titleKey: 'notifications:events.exceptionScheduled.title',
+        messageKey: 'notifications:events.exceptionScheduled.message',
+      },
+    ],
+    actionUrl: ({ values }) =>
+      `${LEARNER_COURSE_PATH}/${str(values, 'courseId')}/activities/${str(values, 'quizId')}`,
+  },
+  // The moment a SCHEDULED exception actually opens. Emitted by a sweep,
+  // not by a request, so the key is the property that keeps the sweep
+  // silent: `availableFrom` is the transition instant itself, byte
+  // identical on every tick, so the `(recipient_user_id, dedupe_key)`
+  // unique index rejects every repeat — and a reviewer who MOVES the
+  // window gets a genuinely new key, because the instant moved with it.
+  'assessment.exception.activated': {
+    category: 'engagement',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'preference' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `quiz_override.activated:${entity.id}:${str(values, 'availableFromMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'assessment.exception.activated',
+    titleKey: 'notifications:events.exceptionActivated.title',
+    messageKey: 'notifications:events.exceptionActivated.message',
+    actionUrl: ({ values }) =>
+      `${LEARNER_COURSE_PATH}/${str(values, 'courseId')}/activities/${str(values, 'quizId')}`,
+  },
+  // Taken away. A learner who was told they had double time and then
+  // plans an exam around it must be told when it stops being true; the
+  // revocation instant is in the key because granting and revoking the
+  // same accommodation twice is an ordinary sequence.
+  'assessment.exception.revoked': {
+    category: 'engagement',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'preference' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `quiz_override.revoked:${entity.id}:${str(values, 'revokedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'assessment.exception.revoked',
+    titleKey: 'notifications:events.exceptionRevoked.title',
+    messageKey: 'notifications:events.exceptionRevoked.message',
+    actionUrl: ({ values }) =>
+      `${LEARNER_COURSE_PATH}/${str(values, 'courseId')}/activities/${str(values, 'quizId')}`,
   },
 
   // --- Course completed (plan §8 E6, §10 "yes | preference
