@@ -961,9 +961,138 @@ The design is right — these are transactional confirmations, not a marketing s
 This is the same failure mode as the raw-token bug, one layer up: a message nobody had checked actually reaches a person. The matrix in this document is what makes that class of gap visible — an event whose Email and In-App columns both read NO, with no reason given, is a bug rather than a decision.
 ---
 
+
+## MR-8. Closeout — onboarding, graded-work isolation, learner exceptions, and the last dead links (25 Sep 2026)
+
+**Status: the Communications initiative is CLOSED.** Backend `main`, frontend
+`main`, both deployed and production-verified. The catalogue holds **74** keys.
+
+### What shipped in this milestone
+
+**C8 — staff-created accounts are onboarded.** A Client Owner adding a Manager,
+Instructor or Student supplied a password in the create call and the new person
+was told *nothing*: no email, no link, no way to learn the account existed.
+Either the owner relayed a password out of band or the account sat unusable.
+Now `AccountSetupService` sends a one-time 72-hour **setup link** and the person
+chooses their own password. No generated password is ever emailed.
+
+Two keys, not one: `academy.learner.invited` is `branding: 'academy'` and points
+at the academy host's root `/reset-password`, while `academy.member.invited` is
+`branding: 'platform'` and points at `/auth/reset-password`. A learner who set a
+password on the management surface would be refused with a **403** — correct
+surface enforcement, not a bug, and the reason the split exists. The frontend
+page reads `?setup=1` and says *Set your password* rather than *Reset*.
+
+An existing Atlas user added to a second academy is **not** re-onboarded.
+
+A **Client Owner** needs none of this: enumerating every user-creation site
+(`auth.service.ts` self-registration plus the three academy paths) shows there
+is no code path where somebody else creates a Client Owner account.
+
+**C9 — graded work is proven isolated.** `assessment.quiz.graded` and
+`assessment.assignment.graded` were already emitted correctly; what was missing
+was the proof of the half that carries the risk. Neither grading request carries
+a learner id at all — the recipient is read back from the row being graded — so
+the isolation is structural. `p64-c9-graded-work-isolation.e2e-spec.ts` pins the
+empty set for a classmate in the same course, a learner in another academy, and
+the grading reviewer, across the outbox, the in-app feed, and the mail that
+actually leaves. Misdirecting either emit fails 3 of its 5 tests.
+
+`exam` is a **mode** of a quiz (`QuizMode`), not a separate entity, so one key
+covers both and there is no second key to forget. The wording stays "quiz"
+because the learner-facing product uses that one noun everywhere.
+
+**W-EXC — learner exceptions are announced.** A `QuizStudentOverride` grants one
+student extra time, extra attempts or a private window, and emitted nothing at
+all: an accommodation nobody knows about is an accommodation nobody uses. Three
+keys now cover grant, activation and revocation.
+
+`assessment.exception.granted` is **one key with two in-app copies** rather than
+two keys — to the learner this is one event whose only difference is whether it
+is usable yet, and two keys would hand them two preference switches and two
+dedupe surfaces for one fact. This required a new optional `variants` field on a
+catalogue entry (a `when` predicate plus its own title/message pair, first match
+wins, falling back to the entry's own pair). It is additive, the email path is
+untouched, and a spec asserts only this one entry declares variants so it cannot
+quietly spread.
+
+`assessment.exception.activated` is emitted by a **sweep** every five minutes on
+the existing `communications` queue, not a delayed job: a reviewer can move or
+delete an exception at any time, and a job lost to a Redis flush is a message
+nobody notices is missing. It cannot re-notify because the dedupe key is the
+*transition instant*, never the instant of the tick.
+
+The reviewer's `reason` never reaches the learner — it may record a disability
+or an illness — and an e2e case asserts it.
+
+**The last dead links are closed.** The `KNOWN_BROKEN` ledger in
+`action-url-routes.spec.ts` is now **empty**; it had carried seven keys. All
+seven had one cause: a **staff** destination under `/dashboard/*` carried on an
+`academy`-branded key, where `/dashboard/*` is not mounted at all, so the button
+rendered the academy's own CMS 404. `provisioning.completed`,
+`live_session.recording_available` and `live_provider.deauthorized` are now
+`branding: 'platform'`. The visible trade: those three render with Atlas
+branding rather than the academy's. A working button beats a logo, and all three
+are staff-operational mail.
+
+**The flags were unreachable.** All four communications flags were absent from
+the `feature_flags` block of **both** deploy jobs — set to anything, they could
+not reach the host. They are now plumbed through `.github/workflows/deploy.yml`.
+`FLAG_LIFECYCLE_SEQUENCES_MODE` is set to `dry_run` (the service logs and
+`continue`s before any emit). OTP and video retention stay off, with reasons
+recorded in the handover.
+
+### RLS and tenancy
+
+The exception sweep runs as the platform owner — the established precedent from
+`CommunicationDispatchService` and `TenantLifecycleService`. Independently
+verified rather than taken on trust: `quiz_student_overrides_platform_select`,
+`courses_platform_select` and `academies_platform_select` all exist and are
+gated on `is_platform_owner(current_setting('app.current_user_id'))`; `quizzes`
+has **no** platform policy, which is why quiz titles are read in a second pass
+under each academy's own tenant context. **Nothing widens any policy**, and no
+migration was needed.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| Backend unit | **3644 passed**, 0 failed |
+| Communications suites | **2152 passed**, 19 suites |
+| Catalogue suites (incl. route resolution) | **624 passed**, dead-link ledger empty |
+| `p64-c8-member-onboarding` e2e | 4 passed |
+| `p64-c9-graded-work-isolation` e2e | 5 passed |
+| `p64-comm-learner-exceptions` e2e | 15 passed |
+| `tsc --noEmit` | exit 0 |
+| Frontend typecheck | at the 34-error baseline, unchanged |
+| Deploys | backend + frontend green; deployed SHA matches local `main` |
+
+Every guard added here was proven by **reverting the fix and watching the test
+fail**: misdirecting the graded emit (3 of 5 fail), re-branding
+`provisioning.completed` back to `academy` (DEAD LINK), and the six W-EXC
+mutations recorded in that branch's commit.
+
+### Documents produced
+
+- `docs/COMMUNICATIONS_EMAIL_NOTIFICATION_CATALOG.md` — all 74 events,
+  regenerated from the catalogue rather than written by hand.
+- `docs/COMMUNICATIONS_HANDOVER.md` — how to operate, extend and debug it.
+- `docs/COMMUNICATIONS_FEATURE_VERIFICATION_GUIDE.md` — extended with D.15
+  (account setup), D.16 (learner exceptions) and the graded-work isolation
+  check.
+
+### Still open
+
+- **BL-3 — RESEND DOMAIN REQUIRED: `send.<your-domain>`.** The one genuine
+  human-only blocker. `EMAIL_FROM_EMAIL` is shared by both adapters, so a new
+  address must be re-verified at Brevo in the same change window.
+- **BL-2** real video infrastructure; **BL-4** historical course-order expiry
+  residue (a backfill must not emit "order expired" for old rows).
+- The **announcement email half** (NOTE-1) remains unshipped by decision.
+
 ## Email & Notification Testing / Verification Matrix
 
-One row per entry in `src/communications/catalog/communication-catalog.ts` — **69 rows, 69 catalogue keys**. Nothing here is inferred from the plan text: every cell was read out of the catalogue, the template in `src/communications/templates/keys/`, the producer that emits the key, the frontend copy in `atlas-front/src/localization/resources/{en,ar}/notifications.json`, and the route registry in `atlas-front/src/app/routes/route-paths.ts`.
+One row per entry in `src/communications/catalog/communication-catalog.ts` — **69 rows, 69 catalogue keys** when this matrix was written. The catalogue now holds **74**; the five added after this section are `academy.member.invited`, `academy.learner.invited`, `assessment.exception.granted`, `assessment.exception.activated` and `assessment.exception.revoked` (see MR-8). The definitive, regenerated matrix is `docs/COMMUNICATIONS_EMAIL_NOTIFICATION_CATALOG.md`. Nothing here is inferred from the plan text: every cell was read out of the catalogue, the template in `src/communications/templates/keys/`, the producer that emits the key, the frontend copy in `atlas-front/src/localization/resources/{en,ar}/notifications.json`, and the route registry in `atlas-front/src/app/routes/route-paths.ts`.
 
 **Read this first — five things decide what actually arrives.**
 
@@ -983,7 +1112,7 @@ The distinction that catches people out on the middle row: **four tenant-lifecyc
 
 **4. Email interaction is one of exactly three shapes.** **CODE** — a value the recipient types somewhere else (one entry: `auth.email.otp`, whose template carries no link at all, by design). **LINK** — a CTA button; rendered only when the template has a `ctaLabel` *and* the catalogue entry has an `actionUrl` (`renderLayout` requires both). **INFO** — no action available. Anything that is none of these three is a defect: a recent production bug emailed a person a raw token, which is not a code they can type, not a link they can click, and not information they can act on.
 
-**5. Destinations are built on one of two hosts, decided by `branding`, not by the path.** `CommunicationDispatchService.render` builds an `academy`-branded path on the academy's own host and a `platform`-branded path on the management web app. An academy host mounts `PublicWebsiteRouter` for the *whole* tree and no `/dashboard/*` route at all, so a `/dashboard/...` path on an academy-branded key silently renders the academy's CMS not-found page. `src/communications/catalog/action-url-routes.spec.ts` asserts every destination against the real route registry and carries the `KNOWN_BROKEN` ledger; **three keys are currently listed there** and are marked **BROKEN** below. `cooldownSeconds` is `0` on all 69 entries today, so no email is currently deferred by cooldown.
+**5. Destinations are built on one of two hosts, decided by `branding`, not by the path.** `CommunicationDispatchService.render` builds an `academy`-branded path on the academy's own host and a `platform`-branded path on the management web app. An academy host mounts `PublicWebsiteRouter` for the *whole* tree and no `/dashboard/*` route at all, so a `/dashboard/...` path on an academy-branded key silently renders the academy's CMS not-found page. `src/communications/catalog/action-url-routes.spec.ts` asserts every destination against the real route registry and carries the `KNOWN_BROKEN` ledger. As of MR-8 that ledger is **empty**: the three keys marked **BROKEN** below (`provisioning.completed`, `live_session.recording_available`, `live_provider.deauthorized`) have been re-branded to `platform` and now resolve. `cooldownSeconds` is `0` on all entries today, so no email is currently deferred by cooldown.
 
 ### Identity & security
 

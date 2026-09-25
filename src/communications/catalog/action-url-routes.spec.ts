@@ -89,20 +89,11 @@ const RULE_VALUES: Record<string, unknown> = {
  * value is the reason it was not fixed in the audit that found it.
  */
 const KNOWN_BROKEN: Partial<Record<CommunicationEventKey, string>> = {
-  // Staff destinations carried on an ACADEMY-branded key, so the
-  // dispatcher builds them on the academy host, where no `/dashboard/*`
-  // route is mounted at all. Repairing them is a product decision
-  // (re-brand the email to the platform, or decouple host from branding)
-  // rather than a path edit — the paths themselves are correct for the
-  // platform host.
-  'provisioning.completed': 'academy-branded, /dashboard is a platform route',
-  'live_session.recording_available':
-    'academy-branded, /dashboard/add-ons/... is a platform route',
-  'live_provider.deauthorized':
-    'academy-branded, /dashboard/add-ons/... is a platform route',
   // NOTE. `auth.password.reset`, `auth.email.verification`,
-  // `roster.student.awaiting_approval` and `review.submitted` were all
-  // listed here and have since been FIXED — the first two now point at
+  // `roster.student.awaiting_approval`, `review.submitted`,
+  // `provisioning.completed`, `live_session.recording_available` and
+  // `live_provider.deauthorized` were all listed here and have since been
+  // FIXED — the first two now point at
   // `/auth/...`, and the two staff work items at
   // `/dashboard/academy/:academyId/...` with the producers carrying
   // `academyId` in `values`. They are removed rather than left as stale

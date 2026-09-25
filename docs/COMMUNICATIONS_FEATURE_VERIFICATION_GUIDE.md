@@ -560,6 +560,31 @@ is where most "the email never came" reports actually resolve:
 
 So before calling this broken, open `GET /api/v1/users/me/communication-preferences` as that learner.
 
+**`exam` is a MODE of a quiz, not a separate thing.** There is no
+`assessment.exam.graded` to look for. An exam-mode quiz emits
+`assessment.quiz.graded` exactly as a practice quiz does, and the wording says "quiz"
+on purpose: the learner-facing product uses that one noun everywhere, and introducing
+"Exam" only in the notification would make it the single place a learner meets a word
+the rest of the product never shows them.
+
+**The isolation check — do this one, it is the one that matters.** A grade is the most
+private fact Atlas holds about a person, so "the right learner was told" is a weaker
+claim than "only the right learner was told". Enrol **two** learners in the same course,
+have both submit, then grade **one**:
+
+| Who | Should receive |
+|---|---|
+| The learner whose work was graded | Email **and** in-app notification |
+| The other learner in the same course | **Nothing** — no email, no feed entry |
+| A learner in a different academy | **Nothing** |
+| The instructor who did the grading | **Nothing** — they just typed it |
+
+If any of the bottom three receives anything, stop and escalate: that is a privacy
+incident, not a notification bug. Neither grading request carries a learner id at all —
+the recipient is read back from the row being graded — so a leak here would mean
+something structural is wrong. `test/p64-c9-graded-work-isolation.e2e-spec.ts` holds
+this contract; misdirecting either emit fails it.
+
 ---
 
 ### D.8 A certificate
@@ -814,6 +839,89 @@ listing the deferred items as `{ subject, url }` rows already rendered in the re
 
 ---
 
+
+### D.15 An account somebody else created for you
+
+**Actions.** As a Client Owner or Manager, add a member from the academy dashboard —
+a **Student** (`/academies/:id/students`), an **Instructor** (`/academies/:id/instructors`)
+or a **Manager** (`/academies/:id/members`). Use an address you can actually read.
+
+| Key | Subject (EN) | Email | Destination |
+|---|---|---|---|
+| `academy.learner.invited` | "You've been added to `<academy>` on Atlas" | `always` | ACADEMY `/reset-password?token=…&setup=1` |
+| `academy.member.invited` | "You've been added to `<academy>` on Atlas" | `always` | PLATFORM `/auth/reset-password?token=…&setup=1` |
+
+**Both are email-only and `always`.** There is no in-app notification, because the
+recipient cannot sign in yet — that is the entire problem the message solves.
+
+**What to check, in order:**
+
+1. The email arrives, and names the academy, the role, and **which address signs in**.
+2. It contains **no password and no visible token**. The only place the token appears is
+   inside the button's href. If you can read a long opaque string in the body, stop — that
+   is the defect this whole family was rebuilt to remove.
+3. The button says **"Set your password"**, not "Reset". The page it opens says the same.
+   Someone who never had a password should not be told to reset one.
+4. Following it, choosing a password, and signing in **works**. A link that arrives and
+   does not work is the same failure as no link at all.
+5. **The surface matters.** A Student must sign in on the **academy** host; a Manager or
+   Instructor on the **management** host. This is why there are two keys. If a student's
+   link sends them to the management host they will set a password successfully and then
+   be refused with a **403** — which looks like a broken account and is not.
+6. The link expires after **72 hours**. Afterwards "forgot password" issues a fresh one,
+   because by then the account genuinely exists.
+
+**The negative case.** Add someone who **already has an Atlas account** to a second
+academy. They must receive **nothing** — they already have a password, and a "set your
+password" email would be confusing at best.
+
+---
+
+### D.16 A learner exception (extra time, extra attempts, a private window)
+
+**Actions.** As a reviewer, open a quiz's overrides
+(`PUT /review/courses/:courseId/quizzes/:quizId/overrides`) and grant one student extra
+time, extra attempts, or a window. Then edit it, then delete it.
+
+| Key | Subject (EN) | Email | Destination (academy host) |
+|---|---|---|---|
+| `assessment.exception.granted` | "You have an exception for `<quiz>`" | `preference` | `/my/courses/:courseId/activities/:quizId` |
+| `assessment.exception.activated` | "Your exception for `<quiz>` is now active" | `preference` | `/my/courses/:courseId/activities/:quizId` |
+| `assessment.exception.revoked` | "Your exception for `<quiz>` was removed" | `preference` | `/my/courses/:courseId/activities/:quizId` |
+
+**Immediate vs scheduled is the thing to test.** Grant one with **no** start date and one
+starting **tomorrow**:
+
+- No start date, or a start date already passed → the message says the accommodation is
+  **usable now**.
+- A start date in the future → the message says **when it becomes active**, and does *not*
+  tell the learner to use it yet.
+
+Both are the same key. The in-app feed picks between two copies from a `scheduled` flag the
+producer decided once, so the email and the feed entry can never disagree with each other.
+
+**The activation message.** When a scheduled window actually opens, a **sweep** running
+every five minutes emits `assessment.exception.activated`. To see it without waiting, set
+the start date a couple of minutes ahead and leave it. It fires **once** — the sweep is
+keyed on the instant that transitioned, not on the instant of the tick — so a window that
+has been open for hours does not produce a fresh message on every tick. A reviewer who
+**moves** the window does produce a genuinely new one.
+
+**No expiry message exists, on purpose.** When `availableUntil` passes, nothing is sent.
+The closing date was already printed in every message above, the window shutting carries
+nothing the learner can act on, and it would be the one message in this family that fires
+for every learner every term. See the catalogue's *Deliberate silences*.
+
+**The privacy check.** Grant an exception with a `reason` such as *"student is undergoing
+chemotherapy this term"*. The learner must **never** see it — not in the email, not in the
+feed, not in the notification's stored values. The reason is a note between staff and may
+record a disability or an illness. If it appears anywhere learner-facing, escalate.
+
+**The isolation check.** As with grading: a classmate, a learner in another academy, and
+the reviewer who granted it must all receive **nothing**.
+
+---
+
 ## E. "What should I receive?"
 
 Subject lines are copied from `src/communications/templates/keys/*.ts`. Destinations are the
@@ -827,6 +935,8 @@ catalogue's `actionUrl` resolved through `LinkBuilderService`:
 | `auth.password.reset_confirmed` | Your password was reset | LINK | PLATFORM `/auth/forgot-password` |
 | `auth.password.changed` | Your password was changed | LINK | PLATFORM `/auth/forgot-password` |
 | `auth.email.otp` | `<code>` is your sign-in code | **CODE, no link** | — |
+| `academy.learner.invited` | You've been added to `<academy>` on Atlas | **LINK** | ACADEMY `/reset-password?token=…&setup=1` |
+| `academy.member.invited` | You've been added to `<academy>` on Atlas | **LINK** | PLATFORM `/auth/reset-password?token=…&setup=1` |
 | `certificate.issued` | Your certificate is ready | **CODE *and* LINK** | ACADEMY `/my/certificates` |
 | `certificate.revoked` | A certificate was revoked | LINK | ACADEMY `/my/certificates` |
 | `course.order.paid` | Purchase confirmed | LINK | ACADEMY `/my/purchases` |
@@ -844,6 +954,9 @@ catalogue's `actionUrl` resolved through `LinkBuilderService`:
 | `assessment.assignment.graded` | Your assignment has been graded | LINK | ACADEMY `/my/courses/:courseId/activities/:assignmentId` |
 | `assessment.quiz.auto_submitted` | `<quiz>` was submitted automatically | LINK | ACADEMY `/my/courses/:courseId/activities/:quizId` |
 | `assessment.attempt.invalidated` | Your attempt at `<quiz>` no longer counts | LINK | ACADEMY `/my/courses/:courseId/activities/:quizId` |
+| `assessment.exception.granted` | You have an exception for `<quiz>` | LINK | ACADEMY `/my/courses/:courseId/activities/:quizId` |
+| `assessment.exception.activated` | Your exception for `<quiz>` is now active | LINK | ACADEMY `/my/courses/:courseId/activities/:quizId` |
+| `assessment.exception.revoked` | Your exception for `<quiz>` was removed | LINK | ACADEMY `/my/courses/:courseId/activities/:quizId` |
 | `review.submitted` | A review is waiting for moderation at `<academy>` | LINK (digest) | PLATFORM `/dashboard/academy/:academyId/courses/:courseId/reviews` |
 | `review.moderated` | "Your review of `<course>` is now published" / "… was not published" (branches on `values.status === 'approved'`) | LINK (in-app only) | ACADEMY `/my/courses/:courseId` |
 | `roster.student.awaiting_approval` | Someone is waiting to join `<academy>` | LINK (digest) | PLATFORM `/dashboard/academy/:academyId/members` |

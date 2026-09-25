@@ -218,7 +218,12 @@ const CATALOG = {
     dedupe: ({ entity }) => `provisioning_completed:${entity.id}`,
     cooldownSeconds: 0,
     locale: 'user',
-    branding: 'academy',
+    // Staff work happens on the MANAGEMENT host: `/dashboard/*` is not
+    // mounted on an academy host at all, so an academy-branded CTA here
+    // rendered the academy's own 404. Branding picks the host, not just
+    // the logo — same repair already applied to `review.submitted` and
+    // `roster.student.awaiting_approval`.
+    branding: 'platform',
     template: 'provisioning.completed',
     titleKey: 'notifications:events.provisioningCompleted.title',
     messageKey: 'notifications:events.provisioningCompleted.message',
@@ -555,7 +560,12 @@ const CATALOG = {
     dedupe: ({ entity }) => `live-session:${entity.id}:recording-available`,
     cooldownSeconds: 0,
     locale: 'user',
-    branding: 'academy',
+    // Staff work happens on the MANAGEMENT host: `/dashboard/*` is not
+    // mounted on an academy host at all, so an academy-branded CTA here
+    // rendered the academy's own 404. Branding picks the host, not just
+    // the logo — same repair already applied to `review.submitted` and
+    // `roster.student.awaiting_approval`.
+    branding: 'platform',
     template: 'live_session.recording_available',
     titleKey: 'notifications:liveSession.recordingAvailable.title',
     messageKey: 'notifications:liveSession.recordingAvailable.message',
@@ -645,7 +655,12 @@ const CATALOG = {
       `live_provider.deauthorized:${entity.id}:${str(values, 'deauthorizedAt')}`,
     cooldownSeconds: 0,
     locale: 'user',
-    branding: 'academy',
+    // Staff work happens on the MANAGEMENT host: `/dashboard/*` is not
+    // mounted on an academy host at all, so an academy-branded CTA here
+    // rendered the academy's own 404. Branding picks the host, not just
+    // the logo — same repair already applied to `review.submitted` and
+    // `roster.student.awaiting_approval`.
+    branding: 'platform',
     template: 'live_provider.deauthorized',
     titleKey: 'notifications:liveProvider.deauthorized.title',
     messageKey: 'notifications:liveProvider.deauthorized.message',
