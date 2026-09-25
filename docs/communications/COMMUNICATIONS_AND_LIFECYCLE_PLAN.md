@@ -1101,6 +1101,56 @@ mutations recorded in that branch's commit.
   residue (a backfill must not emit "order expired" for old rows).
 - The **announcement email half** (NOTE-1) remains unshipped by decision.
 
+
+## MR-9. Flag flips — OTP and video retention enabled in production (25 Sep 2026)
+
+The plan requires that "each flag flip gets a production verification entry in
+the Master Plan's change log". This is that entry.
+
+**Approved by the owner and enabled the same day.** Both flags had been off, and
+until earlier on 25 Sep were absent from the `feature_flags` block of both
+deploy jobs and therefore unreachable at any value (MR-8).
+
+| Flag | From | To | Effect |
+|---|---|---|---|
+| `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT` | `off` | **`new_device`** | An emailed code is required when an account signs in from a device it has not been seen on. Trusted devices are not re-challenged. |
+| `FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY` | `off` | **`new_device`** | The same on the academy surface. |
+| `FLAG_VIDEO_RETENTION_MODE` | `off` | **`warn_only`** | Retention warnings W1–W4 are evaluated and really sent. No deletion job is enqueued. |
+
+**On the OTP rollout order.** §"Rollout" sequences this as management first, then
+academies. The owner directed both surfaces together, which is their call; it is
+recorded here because it departs from the written order. `new_device` is the
+narrower of the two live settings — `always` would challenge every sign-in.
+
+**On retention, and why `warn_only` is the approved configuration.** §"Rollout"
+names it directly: "`warn_only` sends warnings but never deletes, which is the
+mode for the first full cycle", with "retention `warn_only` for at least one
+full window before `on`", and C6's milestone row lists "`warn_only` mode for one
+full window" among its deliverables. So this flip *is* the approved policy, not
+an interpretation of it.
+
+Two independent guards keep the destructive path unreachable, which is why this
+flip does not put customer video at risk:
+
+1. `warn_only` runs the whole evaluator and refuses to enqueue a deletion job.
+2. The deletion step separately requires all four warnings to already exist
+   (guard (2) in `video-retention.util.ts`).
+
+Together those mean a platform that has only ever run `warn_only` **cannot
+delete anything on the day it switches to `on`** — the earliest possible
+deletion is thirty days after the first W1 actually goes out.
+
+**Still not approved: `FLAG_VIDEO_RETENTION_MODE=on`.** The retention windows at
+§378 remain *owner to confirm*, and BL-2 (real video infrastructure) means
+`VideoProvider.deleteAsset` has never been exercised against a real provider.
+
+**Deployment.** `deploy.yml` run 36128431960 on `1318acd` — **success**. Per the
+owner's instruction for this change, verification was limited to confirming the
+deployment completed; no behavioural or regression testing was run.
+
+**Unchanged:** `FLAG_LIFECYCLE_SEQUENCES_MODE=dry_run`, `EMAIL_PROVIDERS=brevo`,
+and BL-3 (Resend sending domain) still open.
+
 ## Email & Notification Testing / Verification Matrix
 
 One row per entry in `src/communications/catalog/communication-catalog.ts` — **69 rows, 69 catalogue keys** when this matrix was written. The catalogue now holds **74**; the five added after this section are `academy.member.invited`, `academy.learner.invited`, `assessment.exception.granted`, `assessment.exception.activated` and `assessment.exception.revoked` (see MR-8). The definitive, regenerated matrix is `docs/COMMUNICATIONS_EMAIL_NOTIFICATION_CATALOG.md`. Nothing here is inferred from the plan text: every cell was read out of the catalogue, the template in `src/communications/templates/keys/`, the producer that emits the key, the frontend copy in `atlas-front/src/localization/resources/{en,ar}/notifications.json`, and the route registry in `atlas-front/src/app/routes/route-paths.ts`.

@@ -329,8 +329,8 @@ instant*, never the instant of the tick.
 | Resend fallback | **not configured** | Blocked on BL-3 (see below). |
 | Stub in production | guarded | A production chain made only of stubs logs an error at boot and shows a warning on the platform communications console. It is deliberately **not** fatal: refusing to boot would take the platform down over an email misconfiguration. With `EMAIL_PROVIDERS=brevo` the chain is not stub. |
 | `FLAG_LIFECYCLE_SEQUENCES_MODE` | `dry_run` | The service logs and `continue`s before any emit. Nothing is sent. |
-| `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT` / `_ACADEMY` | unset → **off** | See *Flags left off*. |
-| `FLAG_VIDEO_RETENTION_MODE` | unset → **off** | See *Flags left off*. |
+| `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT` / `_ACADEMY` | **`new_device`** | **ON** since 25 Sep 2026, both surfaces, by owner approval. An emailed code is asked for on a device the account has not been seen on before; a trusted device is not re-challenged. |
+| `FLAG_VIDEO_RETENTION_MODE` | **`warn_only`** | **ON** since 25 Sep 2026, by owner approval. Warnings W1–W4 are real and go out; **no deletion job is ever enqueued** in this mode. |
 | `FLAG_CERTIFICATES_MODE` | `allowlist` (one academy) | Unchanged. |
 | `FLAG_QUIZ_ENGINE_V2_MODE`, `FLAG_QUIZ_INTEGRITY_MODE` | `on` | Unchanged. |
 
@@ -338,15 +338,32 @@ All four Communications flags were **absent from both deploy jobs** until
 25 September and were therefore unreachable no matter what they were set to.
 They are now plumbed through `.github/workflows/deploy.yml`.
 
-### Flags left off, with the reason
+### Flag history
 
-- **Email OTP.** There is no allowlist mode for it, so switching it on is
-  all-or-nothing for a whole surface, and the code-entry step cannot be
-  verified without a human reading a real inbox. A failure locks **every**
-  owner out of sign-in. Not a flag to flip without someone watching.
-- **Video retention.** The master plan records the retention windows as
-  *owner to confirm* (plan line 378). Deleting learners' video on an
-  unconfirmed schedule is not a default anyone should choose for them.
+Both flags below were off until 25 September 2026 and were enabled that day on
+the owner's explicit approval, after being made reachable at all (all four
+communications flags were absent from both deploy jobs until earlier the same
+day).
+
+- **Email OTP → `new_device`, both surfaces.** The prior reason for holding it
+  was that there is no allowlist mode, so it is all-or-nothing per surface, and
+  a failure locks owners out of sign-in. `new_device` is the narrowest of the
+  two live settings: it challenges only a device the account has not been seen
+  on, rather than every sign-in. The approved rollout order in the plan was
+  management first, then academies; the owner directed both together.
+- **Video retention → `warn_only`.** This is the mode the plan designates for
+  the first full cycle (plan §"Rollout", and C6's row in the milestone table):
+  warnings are real, and the destructive branch is unreachable. Two independent
+  guards keep it that way — `warn_only` refuses to enqueue a deletion job at
+  all, and the deletion step additionally requires all four warnings to already
+  exist, so a platform that has only ever run `warn_only` **cannot delete
+  anything on the day it switches to `on`**; the earliest possible deletion is
+  thirty days after the first W1 actually goes out.
+
+  Do not move this to `on` without a decision: `on` permanently deletes hosted
+  video bytes. The retention windows themselves are still recorded as *owner to
+  confirm*, and BL-2 (real video infrastructure) means deletion has never been
+  exercised against a real provider.
 
 ## Known blockers
 

@@ -123,8 +123,8 @@ plumbed through `.github/workflows/deploy.yml`.
 | Flag | State | Why |
 |---|---|---|
 | `FLAG_LIFECYCLE_SEQUENCES_MODE` | `dry_run` | The service logs and `continue`s before any emit. Safe to observe; emits nothing. |
-| `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT` / `_ACADEMY` | off | **Do not flip this unattended.** There is no allowlist mode, so it is all-or-nothing for a whole surface; the code-entry step cannot be verified without a human reading a real inbox; and a failure locks *every* owner out of sign-in. |
-| `FLAG_VIDEO_RETENTION_MODE` | off | The retention windows are recorded as *owner to confirm*. Deleting learners' video on an unconfirmed schedule is not a default to choose for someone. |
+| `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT` / `_ACADEMY` | **`new_device`** (ON, 25 Sep 2026) | Enabled on both surfaces by owner approval. A code is emailed only when the account signs in from a device it has not been seen on; trusted devices are not re-challenged. There is still no allowlist mode, so if this ever needs backing out it is `off` for the whole surface — watch `atlas_auth_otp_total{result}` and the OTP failure-surge alert. |
+| `FLAG_VIDEO_RETENTION_MODE` | **`warn_only`** (ON, 25 Sep 2026) | The mode the plan designates for the first full cycle. Warnings W1–W4 are real; **no deletion is enqueued**. Two guards keep deletion unreachable: `warn_only` never enqueues a job, and the destructive step requires all four warnings to already exist — so the earliest possible deletion is 30 days after the first W1. **Moving to `on` is a separate decision**: it permanently deletes hosted video, the windows are still *owner to confirm*, and BL-2 means deletion has never run against a real provider. |
 
 ### Where to look when mail does not arrive
 

@@ -12,7 +12,8 @@ Repository: `atlas-backend` (this file) and `atlas-front` (frontend work referen
 | Field | Value |
 |---|---|
 | Status | **Phase 1 COMPLETE in production** (19 Sep 2026). **Phase 2 COMPLETE in production** (21 Sep 2026, see the closeout section at the end of this file). **Phase 3 COMPLETE in production** (22 Sep 2026: migrations 109 → 114; backend `b13c790`, frontend `3c5ee3d`; flags on the canary academy; validated on production with seven defects found, fixed and re-verified — see the Phase 3 record; learner-session Chrome journeys NOT VERIFIED by the implementer, DL-37). Phase 4 next (DL-15). CodeRabbit unavailable from here (DL-39). |
-| Version | 1.3 — 22 Sep 2026 (night) |
+| Communications | **CLOSED in production** (25 Sep 2026). 74 catalogue keys; backend `1318acd`, frontend `6671557`. Production flags: `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT` and `_ACADEMY` = **`new_device`** (ON), `FLAG_VIDEO_RETENTION_MODE` = **`warn_only`** (ON, warnings only — no deletion is enqueued), `FLAG_LIFECYCLE_SEQUENCES_MODE` = `dry_run`, `EMAIL_PROVIDERS` = `brevo`. Both OTP and retention were enabled on owner approval on 25 Sep; see MR-9 in `docs/communications/COMMUNICATIONS_AND_LIFECYCLE_PLAN.md`. Open: BL-3 (Resend sending domain `send.<domain>`), BL-2, BL-4. Moving retention to `on` is a separate decision and is **not** approved. |
+| Version | 1.4 — 25 Sep 2026 |
 | Approved product decisions | 9 (see below) |
 | Implementation approval | **Phases 1–4 all approved.** Phase 1 delivered to production 19 Sep 2026; Phases 2, 3 and 4 approved together under DL-15 and run back to back with no per-phase approval. |
 | Current phase | **Phase 3 — Complete.** Phase 4 starts next under the DL-39 workflow (fix locally → test → commit → push to `main` → deploy → verify). |
