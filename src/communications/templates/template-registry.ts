@@ -30,6 +30,15 @@ import { template as assignmentGraded } from './keys/assessment.assignment.grade
 import { template as quizGraded } from './keys/assessment.quiz.graded';
 import { template as certificateIssued } from './keys/certificate.issued';
 import { template as certificateRevoked } from './keys/certificate.revoked';
+import { template as enrollmentGranted } from './keys/enrollment.granted';
+import { template as enrollmentRevoked } from './keys/enrollment.revoked';
+import { template as enrollmentExpiryChanged } from './keys/enrollment.expiry_changed';
+import { template as rosterStudentApproved } from './keys/roster.student.approved';
+import { template as rosterStudentRejected } from './keys/roster.student.rejected';
+import { template as rosterStudentBlocked } from './keys/roster.student.blocked';
+import { template as rosterStudentUnblocked } from './keys/roster.student.unblocked';
+import { template as courseOrderProofSubmitted } from './keys/course.order.proof_submitted';
+import { template as reviewModerated } from './keys/review.moderated';
 import { template as digestDaily } from './keys/digest.daily';
 
 export const TEMPLATES: Record<string, CommunicationTemplate> = {
@@ -57,6 +66,15 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'assessment.quiz.graded': quizGraded,
   'certificate.issued': certificateIssued,
   'certificate.revoked': certificateRevoked,
+  'enrollment.granted': enrollmentGranted,
+  'enrollment.revoked': enrollmentRevoked,
+  'enrollment.expiry_changed': enrollmentExpiryChanged,
+  'roster.student.approved': rosterStudentApproved,
+  'roster.student.rejected': rosterStudentRejected,
+  'roster.student.blocked': rosterStudentBlocked,
+  'roster.student.unblocked': rosterStudentUnblocked,
+  'course.order.proof_submitted': courseOrderProofSubmitted,
+  'review.moderated': reviewModerated,
   'digest.daily': digestDaily,
 };
 

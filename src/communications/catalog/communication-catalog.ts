@@ -518,6 +518,195 @@ const CATALOG = {
     messageKey: 'notifications:events.certificateRevoked.message',
     actionUrl: () => '/my/certificates',
   },
+
+  // --- Enrollment access (P64 Communications C3, plan §8 C1-C4 / §10).
+  //
+  // The three transitions that CHANGE a learner's access to a course and
+  // told them nothing before this phase. All `transactional`: §11 says a
+  // person cannot opt out of being told their access changed, and the
+  // catalogue's own invariant (`communication-catalog.spec.ts`) forbids a
+  // `preference` channel on that category. §10's "transactional-lite /
+  // preference" note for the GRANT is honoured by the preference model
+  // rather than the channel: `transactional` is locked `email: true`
+  // there, so `preference` would have resolved to `always` anyway —
+  // declaring `always` is the honest version of the same behaviour.
+  //
+  // Each dedupe key carries the INSTANT of the transition, following
+  // §19's rule for events that legitimately repeat (`certificate.revoked`
+  // is the precedent): a learner can be granted, revoked and re-granted
+  // access to the same course, and the second grant is exactly the one
+  // they must not miss. The instant is computed ONCE per request by the
+  // producer, so a retried transaction reproduces the same key.
+  'enrollment.granted': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `enrollment.granted:${entity.id}:${str(values, 'grantedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'enrollment.granted',
+    titleKey: 'notifications:events.enrollmentGranted.title',
+    messageKey: 'notifications:events.enrollmentGranted.message',
+    actionUrl: ({ values }) => `/my/courses/${str(values, 'courseId')}`,
+  },
+  'enrollment.revoked': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'activity',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      `enrollment.revoked:${entity.id}:${str(values, 'revokedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'enrollment.revoked',
+    titleKey: 'notifications:events.enrollmentRevoked.title',
+    messageKey: 'notifications:events.enrollmentRevoked.message',
+    actionUrl: () => '/my/courses',
+  },
+  // The expiry is the whole message, so it is also the whole dedupe key:
+  // setting the SAME date twice is not news, moving it is.
+  'enrollment.expiry_changed': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `enrollment.expiry_changed:${entity.id}:${str(values, 'expiresAtMs') || 'cleared'}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'enrollment.expiry_changed',
+    titleKey: 'notifications:events.enrollmentExpiryChanged.title',
+    messageKey: 'notifications:events.enrollmentExpiryChanged.message',
+    actionUrl: ({ values }) => `/my/courses/${str(values, 'courseId')}`,
+  },
+
+  // --- Academy roster decisions (plan §8 G2/G3, §10). The entity is the
+  // `academy_students` membership row; the instant distinguishes a second
+  // legitimate decision on the same membership (re-applied then approved,
+  // blocked then unblocked then blocked again).
+  'roster.student.approved': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'account',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `roster.student.approved:${entity.id}:${str(values, 'decidedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'roster.student.approved',
+    titleKey: 'notifications:events.rosterStudentApproved.title',
+    messageKey: 'notifications:events.rosterStudentApproved.message',
+    actionUrl: () => '/my/courses',
+  },
+  'roster.student.rejected': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'account',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `roster.student.rejected:${entity.id}:${str(values, 'decidedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'roster.student.rejected',
+    titleKey: 'notifications:events.rosterStudentRejected.title',
+    messageKey: 'notifications:events.rosterStudentRejected.message',
+  },
+  'roster.student.blocked': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'account',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      `roster.student.blocked:${entity.id}:${str(values, 'decidedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'roster.student.blocked',
+    titleKey: 'notifications:events.rosterStudentBlocked.title',
+    messageKey: 'notifications:events.rosterStudentBlocked.message',
+  },
+  'roster.student.unblocked': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'account',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `roster.student.unblocked:${entity.id}:${str(values, 'decidedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'roster.student.unblocked',
+    titleKey: 'notifications:events.rosterStudentUnblocked.title',
+    messageKey: 'notifications:events.rosterStudentUnblocked.message',
+    actionUrl: () => '/my/courses',
+  },
+
+  // --- Course commerce receipt (plan §8 D3, §10 "proof submitted →
+  // always (receipt) to learner"). The entity is the PROOF, which is
+  // minted once per submission — so a resubmission is a new receipt and a
+  // retried request that reuses the same proof id is not.
+  'course.order.proof_submitted': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `course_order_proof_submitted:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'course.order.proof_submitted',
+    titleKey: 'notifications:events.courseOrderProofSubmitted.title',
+    messageKey: 'notifications:events.courseOrderProofSubmitted.message',
+    actionUrl: () => '/my/purchases',
+  },
+
+  // --- Review moderation (plan §8 F2, §10 "learner: yes | never — low
+  // stakes; feed only"). The one new key that is deliberately in-app
+  // ONLY: telling someone by email that their review was approved is
+  // noise, and telling them it was rejected by email reads as a
+  // reprimand. The dedupe is per (review, outcome): clicking "approve"
+  // twice is not two pieces of news, approving a review that was
+  // rejected is.
+  'review.moderated': {
+    category: 'engagement',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'low',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `course_review.moderated:${entity.id}:${str(values, 'status')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'review.moderated',
+    titleKey: 'notifications:events.reviewModerated.title',
+    messageKey: 'notifications:events.reviewModerated.message',
+    actionUrl: ({ values }) => `/my/courses/${str(values, 'courseId')}`,
+  },
 } as const satisfies Record<string, CommunicationCatalogEntry>;
 
 export type CommunicationEventKey = keyof typeof CATALOG;

@@ -42,8 +42,10 @@ import {
   isCommunicationEventKey,
   type CommunicationAudience,
   type CommunicationCatalogEntry,
+  type CommunicationEventKey,
   type CommunicationLocale,
 } from '../catalog/communication-catalog';
+import { withSavepoint } from '../../common/database/savepoint.util';
 import { DIGEST_TEMPLATE, TemplateRegistry } from '../templates/template-registry';
 import type { RenderedEmail } from '../templates/template-registry';
 import { EmailTransport } from './email-transport';
@@ -55,6 +57,7 @@ import {
   type CommunicationSuppressionLookup,
 } from './communication-suppression.interface';
 import { resolveCommunicationPreferences } from './communication-preferences.util';
+import type { CommunicationPreferences } from './communication-preferences.util';
 import { cooldownKey, type OutboxChannels } from './communication.service';
 import { CommunicationsProducer } from '../queue/communications.producer';
 import { CommunicationMetricsService } from '../metrics/communication-metrics.service';
@@ -567,23 +570,43 @@ export class CommunicationDispatchService {
     const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000);
     const recipientUserId = row.recipientUserId!;
 
+    // Oldest open window first, deterministically: without an order the
+    // recipient's items could land in different windows on two runs and
+    // arrive as two emails for the same day.
     let digest = await tx.communicationDigest.findFirst({
       where: { recipientUserId, kind, state: 'open', windowEnd: { gte: now } },
+      orderBy: { windowEnd: 'asc' },
     });
     if (!digest) {
-      try {
-        digest = await tx.communicationDigest.create({
-          data: { recipientUserId, kind, windowStart, windowEnd },
-        });
-      } catch (error) {
-        // A concurrent worker opened the same window first — use it.
-        digest = await tx.communicationDigest.findUnique({
+      // The create can lose the `(recipient, kind, window_start)` race with
+      // a concurrent worker — and a failed statement ABORTS this
+      // transaction, which is the DISPATCH transaction. Without the
+      // savepoint the recovery read below runs on an aborted transaction
+      // and fails with 25P02, turning "another worker got there first"
+      // into a dead dispatch that the claim lease then has to time out.
+      // Same reasoning, same helper, as `CommunicationService.emit`.
+      digest = await withSavepoint(
+        tx,
+        async () =>
+          tx.communicationDigest.create({
+            data: { recipientUserId, kind, windowStart, windowEnd },
+          }),
+        {
+          onCleanupError: (error) =>
+            this.logger.warn(
+              { error: error instanceof Error ? error.message : String(error) },
+              'Could not roll back to the digest savepoint.',
+            ),
+        },
+      ).catch(async (error) => {
+        const raced = await tx.communicationDigest.findUnique({
           where: {
             recipientUserId_kind_windowStart: { recipientUserId, kind, windowStart },
           },
         });
-        if (!digest) throw error;
-      }
+        if (!raced) throw error;
+        return raced;
+      });
     }
     await tx.communicationOutbox.update({
       where: { id: row.id },
@@ -623,56 +646,99 @@ export class CommunicationDispatchService {
     return sent;
   }
 
+  /**
+   * Turns ONE due window into ONE email.
+   *
+   * CLAIM. `communication_digests` has no `sending` state (open | sent |
+   * empty), so the claim is `sent_at` itself: exactly one worker can move
+   * it from NULL while the row is still `open`, and Postgres serialises
+   * the UPDATE, so the loser sees `0 rows` and returns. A worker that
+   * crashes after claiming leaves `sent_at` set on an `open` row; the
+   * lease (`COMMUNICATION_CLAIM_LEASE_MS`) lets the next run reclaim it
+   * rather than stranding the window forever, and the provider's
+   * `idempotencyKey` (`digest-<id>`) is what stops that retry from being
+   * a second email. `sent_at` on an `open` row therefore means "being
+   * sent"; on a `sent` row it means what it says.
+   *
+   * PREFERENCES ARE RE-READ HERE, not trusted from attach time. An item
+   * joins a window and is emailed up to 24 hours later; a recipient who
+   * turns engagement email off in between has asked not to receive
+   * exactly this email. Items they have since silenced are dropped from
+   * the batch and settled as in-app-only, and a window with nothing left
+   * becomes `empty` and sends nothing.
+   */
   private async sendDigest(platformOwnerId: string, digestId: string): Promise<boolean> {
     const plan = await this.tenancyContextService.runInUserContext(
       platformOwnerId,
       async (tx) => {
+        const now = new Date();
+        if (!(await this.claimDigest(tx, digestId, now))) return null;
+
         const digest = await tx.communicationDigest.findUnique({
           where: { id: digestId },
         });
-        if (!digest || digest.state !== 'open') return null;
+        if (!digest) return null;
         const items = await tx.communicationOutbox.findMany({
           where: { digestId, state: 'deferred' },
           orderBy: { createdAt: 'asc' },
         });
-        if (items.length === 0) {
-          await tx.communicationDigest.update({
-            where: { id: digestId },
-            data: { state: 'empty' },
-          });
-          return null;
-        }
+        if (items.length === 0) return this.closeEmptyDigest(tx, digestId);
+
         const recipient = await this.loadRecipient(tx, digest.recipientUserId);
         if (!recipient || (await this.suppression.isSuppressed(recipient.email))) {
           await tx.communicationOutbox.updateMany({
             where: { digestId, state: 'deferred' },
             data: { state: 'suppressed', lastError: 'recipient_unavailable' },
           });
-          await tx.communicationDigest.update({
-            where: { id: digestId },
-            data: { state: 'empty' },
-          });
-          return null;
+          return this.closeEmptyDigest(tx, digestId);
         }
-        const first = items[0];
-        const firstEntry = isCommunicationEventKey(first.key)
-          ? COMMUNICATION_CATALOG[first.key]
-          : null;
+
+        // A key the catalogue no longer knows cannot be rendered, so it
+        // must not be reported as delivered either — it is settled as a
+        // real failure, the way `decide` settles the same case.
+        const unknown = items.filter((item) => !isCommunicationEventKey(item.key));
+        if (unknown.length > 0) {
+          await tx.communicationOutbox.updateMany({
+            where: { id: { in: unknown.map((item) => item.id) } },
+            data: { state: 'failed', lastError: 'unknown_key' },
+          });
+        }
+        const known = items.filter((item) => isCommunicationEventKey(item.key));
+
+        const preferences = resolveCommunicationPreferences(recipient.preferences, {
+          isStaff: recipient.isStaff,
+        });
+        const silenced = known.filter(
+          (item) => !this.allowedByPreference(item.category, preferences),
+        );
+        if (silenced.length > 0) {
+          await this.settleAsInAppOnly(
+            tx,
+            silenced.map((item) => item.id),
+            'preference_off',
+          );
+        }
+        const included = known.filter((item) =>
+          this.allowedByPreference(item.category, preferences),
+        );
+        if (included.length === 0) return this.closeEmptyDigest(tx, digestId);
+
+        const first = included[0];
+        const firstEntry = COMMUNICATION_CATALOG[first.key as CommunicationEventKey];
         const branding = await this.brandingService.resolve(
           tx,
-          firstEntry?.branding ?? 'platform',
+          firstEntry.branding,
           first.academyId,
         );
         const locale = this.resolveLocale(
           recipient.preferences,
-          firstEntry ?? COMMUNICATION_CATALOG['provisioning.completed'],
+          firstEntry,
           branding,
           first.locale,
         );
         const digestItems = [];
-        for (const item of items) {
-          if (!isCommunicationEventKey(item.key)) continue;
-          const entry = COMMUNICATION_CATALOG[item.key];
+        for (const item of included) {
+          const entry = COMMUNICATION_CATALOG[item.key as CommunicationEventKey];
           const itemBranding =
             item.academyId === first.academyId
               ? branding
@@ -698,26 +764,47 @@ export class CommunicationDispatchService {
           {
             branding: branding.branding,
             actionUrl: null,
-            settingsUrl: this.links.settings(locale, branding.host),
+            // Same rule as a single email's footer: a platform-branded
+            // digest must not point at an academy host.
+            settingsUrl: this.links.settings(
+              locale,
+              firstEntry.branding === 'academy' ? branding.host : null,
+            ),
           },
           { items: digestItems },
         );
-        return { to: recipient.email, rendered, itemIds: items.map((i) => i.id) };
+        return {
+          to: recipient.email,
+          recipientUserId: digest.recipientUserId,
+          rendered,
+          itemIds: included.map((i) => i.id),
+        };
       },
     );
     if (!plan) return false;
 
-    const result = await this.transport.send({
-      to: plan.to,
-      subject: plan.rendered.subject,
-      text: plan.rendered.text,
-      html: plan.rendered.html,
-      idempotencyKey: `digest-${digestId}`,
-      tags: { key: DIGEST_TEMPLATE },
-      // A digest exists to BATCH engagement mail; it is never security or
-      // transactional, whatever the individual events inside it were.
-      category: 'engagement',
-    });
+    let result;
+    try {
+      result = await this.transport.send({
+        to: plan.to,
+        subject: plan.rendered.subject,
+        text: plan.rendered.text,
+        html: plan.rendered.html,
+        idempotencyKey: `digest-${digestId}`,
+        tags: { key: DIGEST_TEMPLATE },
+        // A digest exists to BATCH engagement mail; it is never security or
+        // transactional, whatever the individual events inside it were.
+        category: 'engagement',
+      });
+    } catch (error) {
+      // Release the claim so the next hourly run retries this window
+      // instead of it sitting `open` with a claimed `sent_at` until the
+      // lease expires.
+      await this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
+        this.releaseDigestClaim(tx, digestId),
+      );
+      throw error;
+    }
     await this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
       const sentAt = new Date();
       await tx.communicationDelivery.createMany({
@@ -738,10 +825,95 @@ export class CommunicationDispatchService {
       });
       await tx.communicationDigest.update({
         where: { id: digestId },
-        data: { state: 'sent', sentAt },
+        // `itemCount` was incremented optimistically at attach time; what
+        // is recorded now is what the recipient actually received.
+        data: { state: 'sent', sentAt, itemCount: plan.itemIds.length },
       });
     });
+    // A digest IS an email, so it counts against the recipient's daily
+    // cap exactly like the messages it replaced would have.
+    await this.countTowardsDailyCap(plan.recipientUserId);
+    this.metrics.recordOutbox('engagement', 'dispatched');
     return true;
+  }
+
+  /**
+   * `sent_at` as the claim marker — see `sendDigest`'s header. Returns
+   * whether THIS worker owns the window.
+   */
+  private async claimDigest(
+    tx: Prisma.TransactionClient,
+    digestId: string,
+    now: Date,
+  ): Promise<boolean> {
+    const leaseCutoff = new Date(now.getTime() - COMMUNICATION_CLAIM_LEASE_MS);
+    const claimed = await tx.$executeRaw`
+      UPDATE "communication_digests"
+         SET "sent_at" = ${now}
+       WHERE "id" = ${digestId}
+         AND "state" = 'open'
+         AND ("sent_at" IS NULL OR "sent_at" <= ${leaseCutoff})
+    `;
+    return claimed === 1;
+  }
+
+  private async releaseDigestClaim(
+    tx: Prisma.TransactionClient,
+    digestId: string,
+  ): Promise<void> {
+    await tx.$executeRaw`
+      UPDATE "communication_digests"
+         SET "sent_at" = NULL
+       WHERE "id" = ${digestId} AND "state" = 'open'
+    `;
+  }
+
+  /** Closes a window that has nothing left to send, and drops its claim. */
+  private async closeEmptyDigest(
+    tx: Prisma.TransactionClient,
+    digestId: string,
+  ): Promise<null> {
+    await tx.communicationDigest.update({
+      where: { id: digestId },
+      data: { state: 'empty', sentAt: null, itemCount: 0 },
+    });
+    return null;
+  }
+
+  /**
+   * The preference question asked at SEND time, for one batched item.
+   * Security, transactional and lifecycle are locked on in the preference
+   * model and can never reach a digest anyway; engagement and operational
+   * are the two a person can silence.
+   */
+  private allowedByPreference(
+    category: string,
+    preferences: CommunicationPreferences,
+  ): boolean {
+    if (category === 'engagement') return preferences.categories.engagement.email;
+    if (category === 'operational')
+      return preferences.categories.operational?.email ?? true;
+    return true;
+  }
+
+  /** The in-app row was already delivered; only the email half is dropped. */
+  private async settleAsInAppOnly(
+    tx: Prisma.TransactionClient,
+    outboxIds: readonly string[],
+    reason: string,
+  ): Promise<void> {
+    await tx.communicationOutbox.updateMany({
+      where: { id: { in: [...outboxIds] } },
+      data: { state: 'dispatched', dispatchedAt: new Date(), lastError: reason },
+    });
+    await tx.communicationDelivery.createMany({
+      data: outboxIds.map((outboxId) => ({
+        outboxId,
+        channel: 'email' as const,
+        status: 'suppressed' as const,
+        errorCode: reason,
+      })),
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -820,9 +992,21 @@ export function digestKind(audience: CommunicationAudience): string {
 }
 
 /**
- * The next `hour:00` in `timeZone`, strictly after `now`. Falls back to
- * UTC for an unknown zone. DST transitions inside the next 24 h can shift
- * the result by an hour, which is acceptable for a digest boundary.
+ * The next `hour:00:00.000` in `timeZone`, strictly after `now`. Falls
+ * back to UTC for an unknown zone. DST transitions inside the next 24 h
+ * can shift the result by an hour, which is acceptable for a digest
+ * boundary.
+ *
+ * THE MILLISECONDS MATTER. `window_start` is two thirds of
+ * `communication_digests`'s `(recipient_user_id, kind, window_start)`
+ * unique index — the index that is supposed to make "one digest per
+ * recipient per window" a database fact rather than a hope. The zone
+ * offset is therefore computed against a millisecond-free `now`, so the
+ * boundary lands exactly on the hour: deriving it from `now.getTime()`
+ * carries that instant's milliseconds into the result, and two workers
+ * opening the same window a millisecond apart then compute two DIFFERENT
+ * `window_start` values, collide on nothing, and mail the recipient two
+ * digests for the same day.
  */
 export function nextLocalHour(now: Date, timeZone: string, hour: number): Date {
   const zone = isValidTimeZone(timeZone) ? timeZone : 'UTC';
@@ -835,7 +1019,9 @@ export function nextLocalHour(now: Date, timeZone: string, hour: number): Date {
     parts.minute,
     parts.second,
   );
-  const offsetMs = asUtc - now.getTime();
+  // `localParts` has no millisecond field, so the reference instant must
+  // not have one either — otherwise the offset absorbs it.
+  const offsetMs = asUtc - (now.getTime() - now.getMilliseconds());
   let candidate = Date.UTC(parts.year, parts.month - 1, parts.day, hour, 0, 0) - offsetMs;
   if (candidate <= now.getTime()) candidate += 24 * 60 * 60 * 1000;
   return new Date(candidate);

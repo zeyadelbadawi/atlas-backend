@@ -23,7 +23,10 @@ import {
   EmailWebhookController,
 } from './controllers/email-webhook.controller';
 import { BrevoEmailProvider } from './providers/brevo-email.provider';
-import { EmailProviderRegistry } from './providers/email-provider.registry';
+import {
+  EmailProviderRegistry,
+  buildProviderChain,
+} from './providers/email-provider.registry';
 import { ResendEmailProvider } from './providers/resend-email.provider';
 import { StubEmailProvider } from './providers/stub-email.provider';
 import { COMMUNICATIONS_QUEUE } from './queue/communications-queue.types';
@@ -64,10 +67,11 @@ import { CommunicationMetricsService } from './services/communication-metrics.se
           [brevo.name]: brevo,
           [resend.name]: resend,
         };
-        const chain = email.providers
-          .map((name) => byName[name])
-          .filter((adapter): adapter is EmailProviderAdapter => Boolean(adapter));
-        return new EmailProviderRegistry(chain, quota, metrics);
+        return new EmailProviderRegistry(
+          buildProviderChain(email.providers, byName),
+          quota,
+          metrics,
+        );
       },
       inject: [
         ConfigService,
