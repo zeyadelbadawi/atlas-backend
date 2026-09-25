@@ -128,6 +128,22 @@ describe('Phase 10.1 signup email security (e2e) — P101-MAIL-001..012', () => 
     expect([400]).toContain(forged.status);
   });
 
+  /**
+   * The verification email is now emitted to the OUTBOX and sent by the
+   * communications dispatcher, so it arrives a moment after registration
+   * returns rather than during it. That is the real contract — delivery
+   * was always best-effort-after-commit — so the test waits for it
+   * instead of assuming a synchronous send.
+   */
+  async function waitForVerificationToken(email: string): Promise<string> {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const token = stubEmail.peekLastEmailVerificationToken(email);
+      if (token) return token;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`No verification email reached the stub for ${email}`);
+  }
+
   it('P101-MAIL-009 — a new account starts UNVERIFIED and receives a verification token', async () => {
     const email = uniqueTestEmail('p101mail009');
     await register(email).expect(201);
@@ -136,7 +152,7 @@ describe('Phase 10.1 signup email security (e2e) — P101-MAIL-001..012', () => 
     expect(user.emailVerifiedAt).toBeNull();
 
     // A real token was issued and sent.
-    const token = stubEmail.peekLastEmailVerificationToken(email);
+    const token = await waitForVerificationToken(email);
     expect(token).toBeTruthy();
 
     const stored = await admin.emailVerificationToken.findFirst({
@@ -151,7 +167,7 @@ describe('Phase 10.1 signup email security (e2e) — P101-MAIL-001..012', () => 
   it('P101-MAIL-010 — a valid token verifies the address exactly once', async () => {
     const email = uniqueTestEmail('p101mail010');
     await register(email).expect(201);
-    const token = stubEmail.peekLastEmailVerificationToken(email)!;
+    const token = await waitForVerificationToken(email);
 
     await request(app.getHttpServer())
       .post('/auth/verify-email')
@@ -172,7 +188,7 @@ describe('Phase 10.1 signup email security (e2e) — P101-MAIL-001..012', () => 
   it('P101-MAIL-011 — an expired token is refused', async () => {
     const email = uniqueTestEmail('p101mail011');
     await register(email).expect(201);
-    const token = stubEmail.peekLastEmailVerificationToken(email)!;
+    const token = await waitForVerificationToken(email);
 
     const user = await admin.user.findUniqueOrThrow({ where: { email } });
     await admin.emailVerificationToken.updateMany({

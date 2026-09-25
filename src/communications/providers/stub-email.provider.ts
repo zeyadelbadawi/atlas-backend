@@ -27,7 +27,9 @@ import type {
 import { normalizeEmail } from '../../identity/utils/email.util';
 import { maskEmail } from './provider-http.util';
 import {
+  EMAIL_VERIFICATION_EVENT_TAG,
   EMAIL_VERIFICATION_TAG,
+  PASSWORD_RESET_EVENT_TAG,
   PASSWORD_RESET_TAG,
   extractEmailVerificationToken,
   extractPasswordResetToken,
@@ -54,15 +56,29 @@ export class StubEmailProvider implements EmailProviderAdapter {
     const normalized = normalizeEmail(input.to);
     this.sends.push(input);
     const tags = input.tags ?? [];
-    if (tags.includes(PASSWORD_RESET_TAG)) {
-      const token = extractPasswordResetToken(input.text);
+    // Both credential emails now arrive through the outbox, so the tag
+    // that identifies them is the CATALOGUE KEY the transport flattens
+    // (`key:auth.password.reset`), not the legacy `password_reset`
+    // marker. The old tags are still matched so an older deployment's
+    // in-flight job classifies the same way.
+    if (tags.includes(PASSWORD_RESET_EVENT_TAG) || tags.includes(PASSWORD_RESET_TAG)) {
+      // The link is in both parts; prefer the HTML, which is where the
+      // CTA href actually is.
+      const token =
+        extractPasswordResetToken(input.html ?? '') ??
+        extractPasswordResetToken(input.text);
       if (token) this.lastPasswordResetTokens.set(normalized, token);
       this.logger.log(
         { to: maskEmail(normalized) },
         'Stub email provider: password reset email would be sent (no real provider configured)',
       );
-    } else if (tags.includes(EMAIL_VERIFICATION_TAG)) {
-      const token = extractEmailVerificationToken(input.text);
+    } else if (
+      tags.includes(EMAIL_VERIFICATION_EVENT_TAG) ||
+      tags.includes(EMAIL_VERIFICATION_TAG)
+    ) {
+      const token =
+        extractEmailVerificationToken(input.html ?? '') ??
+        extractEmailVerificationToken(input.text);
       if (token) this.lastEmailVerificationTokens.set(normalized, token);
       this.logger.log(
         { to: maskEmail(normalized) },

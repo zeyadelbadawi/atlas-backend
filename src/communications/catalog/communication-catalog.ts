@@ -304,7 +304,11 @@ const CATALOG = {
     template: 'auth.email.verification',
     titleKey: 'notifications:events.emailVerification.title',
     messageKey: 'notifications:events.emailVerification.message',
-    actionUrl: ({ values }) => `/verify-email?token=${str(values, 'token')}`,
+    // `/auth/verify-email`, NOT `/verify-email`: the page is mounted
+    // inside the `/auth` subtree (`AUTH_ROUTES.verifyEmail`), and the
+    // shorter path 404s. The token lives ONLY in this href — the
+    // template renders a CTA and never prints the value.
+    actionUrl: ({ values }) => `/auth/verify-email?token=${str(values, 'token')}`,
   },
   /**
    * P64 Communications C4 (§12) — the emailed sign-in code.
@@ -355,7 +359,10 @@ const CATALOG = {
     template: 'auth.password.reset',
     titleKey: 'notifications:events.passwordReset.title',
     messageKey: 'notifications:events.passwordReset.message',
-    actionUrl: ({ values }) => `/reset-password?token=${str(values, 'token')}`,
+    // `/auth/reset-password`, NOT `/reset-password` — same mounting
+    // point, same 404 if it is wrong. `ResetPasswordPage` reads `token`
+    // from the query string and validates it before showing the form.
+    actionUrl: ({ values }) => `/auth/reset-password?token=${str(values, 'token')}`,
   },
   'auth.password.reset_confirmed': {
     category: 'security',

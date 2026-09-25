@@ -6,7 +6,6 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -45,8 +44,6 @@ import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-st
 import { EmailRiskService } from './email-risk.service';
 import { TwoFactorService } from './two-factor.service';
 import { EmailVerificationTokensRepository } from '../repositories/email-verification-tokens.repository';
-import { EMAIL_PROVIDER } from './email-provider.interface';
-import type { EmailProvider } from './email-provider.interface';
 import { emailDomain } from '../../plans/utils/trial-subject.util';
 import { PrincipalResolverService } from '../../tenancy/services/principal-resolver.service';
 import { SurfaceEnforcementService } from '../../tenancy/services/surface-enforcement.service';
@@ -167,7 +164,6 @@ export class AuthService {
     private readonly emailRiskService: EmailRiskService,
     private readonly emailVerificationTokensRepository: EmailVerificationTokensRepository,
     private readonly twoFactorService: TwoFactorService,
-    @Inject(EMAIL_PROVIDER) private readonly emailProvider: EmailProvider,
     private readonly principalResolver: PrincipalResolverService,
     private readonly surfaceEnforcement: SurfaceEnforcementService,
     private readonly academySurfaceService: AcademySurfaceService,
@@ -362,7 +358,7 @@ export class AuthService {
     // exist; a bad SMTP minute must not undo a registration, and the user
     // can re-request verification at any time.
     try {
-      await this.emailProvider.sendEmailVerification(email, rawVerificationToken);
+      await this.emitEmailVerification(userId, rawVerificationToken);
     } catch (error) {
       this.logger.warn(
         { userId, error: error instanceof Error ? error.message : error },
@@ -378,7 +374,37 @@ export class AuthService {
    * so only the most recent link ever works — a user who requests
    * verification twice cannot leave a second live token behind.
    */
-  private async sendEmailVerification(userId: string, email: string): Promise<void> {
+  /**
+   * Emits the verification event so the recipient gets a CTA button, not
+   * a token.
+   *
+   * The legacy `EmailProvider.sendEmailVerification` pasted the raw token
+   * into the body as `Verification token: <opaque>`, which is an internal
+   * credential presented as if it were an instruction — a dead end for
+   * the reader and English-only besides. `auth.email.verification` has
+   * always existed in the catalogue with a bilingual template and an
+   * `actionUrl`; it was simply never wired up. The token now travels
+   * inside the link and is never displayed.
+   */
+  private async emitEmailVerification(userId: string, rawToken: string): Promise<void> {
+    const outboxId = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const emitted = await this.communicationService.emit(tx, {
+          key: 'auth.email.verification',
+          recipientUserId: userId,
+          entity: { type: 'email_verification', id: userId },
+          // Consumed only by the catalogue's `actionUrl`, which puts it
+          // in the href. No template prints it.
+          values: { token: rawToken },
+        });
+        return emitted.outboxId;
+      },
+    );
+    await this.communicationService.enqueueAfterCommit(outboxId);
+  }
+
+  private async sendEmailVerification(userId: string): Promise<void> {
     try {
       const identity = this.configService.getOrThrow<IdentityConfig>('identity');
       const rawToken = generateOpaqueToken();
@@ -392,7 +418,7 @@ export class AuthService {
         ),
       });
 
-      await this.emailProvider.sendEmailVerification(email, rawToken);
+      await this.emitEmailVerification(userId, rawToken);
     } catch (error) {
       // Logged WITHOUT the token — the raw value must never reach a log
       // sink, since it is a live credential until used or expired.
@@ -441,7 +467,7 @@ export class AuthService {
   async resendEmailVerification(userId: string): Promise<void> {
     const user = await this.usersRepository.findById(userId);
     if (!user || user.emailVerifiedAt) return;
-    await this.sendEmailVerification(user.id, user.email);
+    await this.sendEmailVerification(user.id);
   }
 
   async signIn(input: {
