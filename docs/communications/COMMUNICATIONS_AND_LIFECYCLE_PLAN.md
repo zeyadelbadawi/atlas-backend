@@ -631,7 +631,7 @@ Serialized by the lead: every schema change, every merge, every push/deploy, eve
 | W-EVT / W-EVT2 events + digests | C3 | workers (`ws-evt`, `ws-evt2`) + lead, lead-verified | **MOSTLY DONE — deployed** | `255e551`, `6af22e3`, staff resolver `e2a73d6`, F1 `ec2e503` | runs `36082746461`, `36086837677` | ✅ pipeline delivers end to end after each merge | 20 events shipped + 6 digest defects fixed. Staff recipient resolution SOLVED (SECURITY DEFINER resolver) and F1 shipped. **G1 and F1 both shipped** through the definer-backed resolver. Still open: the announcement email half (needs a per-announcement flag on the model) and platform-wide fan-out (needs the same design decision as a platform digest) |
 | W-FE2 OTP/trusted devices/comms settings UI | C4/C2 | worker (`ws-otp-ui`), lead-verified | **DONE — deployed (UI only; backend is C4/W-OTP)** | atlas-front `e104992`, merge `ead967f` | atlas run `36071154378` success | ✅ `trusted-devices` present in the production bundle | the UI codes against the OTP / trusted-device / communication-settings contracts fixed by the lead; it stays inert until W-OTP ships the backend |
 | W-LIFE lifecycle (C5) | C5 | worker (`ws-life`), lead-verified | **DONE — deployed, FLAG OFF** | `0baaf95`, merge `475ac85` | run `36088598268` success | ✅ production healthy post-deploy; pipeline still delivers (`requests`→`delivered` 06:11). The sequences themselves emit NOTHING until `FLAG_LIFECYCLE_SEQUENCES_MODE` is set | all 17 steps (T1–T6, S1–S10) + a lateness horizon that is NOT in the plan and prevents a backfill blast — see MR-5 |
-| W-RET video retention | C6 | PENDING | PENDING | | | | depends on C5, now unblocked |
+| W-RET video retention | C6 | worker (`ws-ret`), lead-verified | **DONE — deployed, FLAG OFF** | `8d56893`, merge `ba3c5da` | run `36093607054` success | ✅ production healthy; pipeline still delivers (`requests`→`delivered` 07:22). Deletion itself is verified by test only — the flag is `off` and nothing in production can delete | six guards, each proved by reverting it; `warn_only` mode. **UI still missing** — see MR-6 |
 | W-FE3 retention/lifecycle/comms analytics UI | C6/C7 | lead (comms console) + PENDING (rest) | **PARTIAL — console deployed** | `c6fd4cc`, atlas-front `3808fb9` | atlas run `36081562716` success | ✅ `/api/v1/platform-communications/health` 401 vs 404 control; the lazy chunk `AnalyticsCommunicationsPage-*.js` is served from production and contains the API path | retention page + lifecycle states still pending (C6) |
 
 ## BL. Known blockers (living)
@@ -830,3 +830,49 @@ All guarded routes answer 401 against a 404 control, sign-in still returns `erro
 - **An index on `tenant_subscriptions`** — `findCandidates` filters by status plus each status's window and the table has only `@@index([planId])`. A seq scan on a small table today; worth an index in the next migration wave.
 - **C6 video retention** — the last major phase, now unblocked by C5.
 - **Enabling the lifecycle flag.** A decision, not an implementation step, and `dry_run` on a canary is the honest first move.
+
+## MR-6. Milestone record — hosted-video retention, and a guard that was the wrong shape (25 Sep 2026)
+
+**Phase:** C6 backend. **Deployed:** backend `ba3c5da` (run `36093607054`), frontend `bcbba20` (run `36093633715`). No migration — built to the tombstone columns the foundation already created.
+
+### C6, and the six guards
+
+This is the workstream that permanently deletes customers' video, so the deliverable was the safety properties rather than the feature. Each is proved by a test that fails when the guard is reverted:
+
+1. **A lateness horizon**, in two independent layers (the candidate query and the evaluator). With both removed, a tenant who lapsed two years ago receives **eight deletion jobs** on the first tick. This is the same class of catch as C5's, and the reason it matters twice is that a terminal state holds forever.
+2. **No deletion without a complete warning record.** All four of W1–W4 must have an outbox row *at this anchor*, or nothing is deleted. The dedupe key is the evidence — it embeds the anchor, so warnings from a previous lapse cannot authorise this deletion — and row STATE is deliberately ignored, because a warning that hard-bounced was still sent and §31 says W4 goes out even if W1–W3 bounced. What is asserted is that the sequence ran, not that the customer read it.
+3. **Legal hold, or any open support case, freezes everything.** `support_cases` has no tag column, so §31's "case tagged data" is implemented as the strictly broader "any open case" — broader can only ever prevent a deletion, never cause one.
+4. **A race with reactivation resolves in favour of the customer**: the job re-derives the whole decision at execution time, so a tenant who paid while the job sat in the queue keeps their video.
+5. **Verify before tombstone.** A provider that claims success while the asset is still present leaves the row `active` with `deletionFailedAt` and no tombstone. Nothing is ever marked deleted that was not observed deleted.
+6. **The flag is re-read inside the job.** Turning the mode down mid-flight stops deletion; without this, `warn_only` deletes.
+
+`FLAG_VIDEO_RETENTION_MODE` defaults to **off**. The recommended first move is `warn_only` on a canary, and guard (2) makes that safe in a way worth stating plainly: a platform that has only ever run `warn_only` **cannot delete anything on the day it switches to `on`** — the earliest possible deletion is thirty days after the first W1 actually goes out.
+
+### The guard that was the wrong shape
+
+The C5 lifecycle events shipped with **no frontend translations at all** — seventeen of them — and the parity spec added after the C3 miss stayed green through every one, because it only ever asked whether EN and AR agreed *with each other*. Both were missing the same keys, so they agreed perfectly. An owner's feed would have rendered `notifications:events.lifecycleTrialStarted.title`.
+
+That is a lesson about the guard, not about the workers: a test that compares two things to each other cannot notice that both are wrong. The replacement lives in the backend, where the catalogue is, and compares the catalogue against the frontend's locale files. Demonstrated by deleting one key from BOTH locales — the old spec passes 3/3, the new one fails. It also caught C6's own six keys immediately, before they could repeat the mistake.
+
+Its limitation is stated in the file rather than hidden: it reads the sibling `atlas-front` checkout and SKIPS when that is absent, so it guards development — where both repositories are checked out and where the mistake is made — and claims nothing about CI.
+
+### Tests
+
+**2855 unit tests / 126 suites**, tsc exit 0. E2E: 15 of 16 suites green in one batch; `media.e2e-spec.ts` failed there and passes 22/22 alone and 59/59 paired with the retention suite, so it is the established contention pattern, not an interaction. The retention e2e is 37 cases of its own.
+
+### Production verification
+
+All guarded routes 401 against a 404 control, sign-in unchanged, and the pipeline still delivers (`requests` → `delivered`, 07:22). **Deletion itself is verified by test only, and cannot be otherwise**: the flag is off, no real provider was contacted, and BL-2 (real video infrastructure) is untouched.
+
+### What C6 left undone — one of it actively broken
+
+- **The `/dashboard/tenant/retention` page does not exist, and the warning emails link to it.** The flag is off so nobody can hit it yet, but it is a landmine: the first `warn_only` run would send a customer to a 404 at the exact moment they are told their video will be deleted. This is the next thing to fix.
+- The `LifecyclePanel` `retention_warning` state, the Platform Owner retention view, and the "download your videos" action (§O-6, an explicit product decision).
+- **No backfill for tenants already past the horizon.** They are permanently skipped — the safe direction, and it means a deliberate operator decision is required later rather than a silent surprise.
+- `providerDeleteVerifiedAt` (named in §31) does not exist as a column; verification still happens and `deletedAt` is only ever written after it.
+- No Prometheus series for retention, and no true clock-freeze on hold (a hold suspends rather than rewinds; guard 1 is what makes that safe).
+- Both real adapters' absence probes swallow transport errors into "no asset", so a network blip could read as absence. Real-provider work, recorded in the code, not closed.
+
+### A finding worth keeping
+
+`media_assets` has a platform-owner SELECT policy and **no** platform-owner UPDATE policy, so a tombstone written under the platform context alone affects zero rows and raises nothing. The writes use `runInTenantAndUserContext` and check the returned row count, escalating a zero loudly — but the asymmetry is worth knowing about before someone writes the next platform-context update.
