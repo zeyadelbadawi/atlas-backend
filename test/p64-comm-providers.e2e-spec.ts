@@ -103,14 +103,22 @@ describe('P64 Communications — email provider layer (e2e)', () => {
     expect(provider.providerNames()).toEqual(['stub']);
   });
 
-  it('legacy sign-up verification path still records the token in the stub via the registry', async () => {
-    const email = uniqueTestEmail('comm-legacy');
+  it('sign-up verification reaches the provider through the outbox', async () => {
+    // Was "the legacy path": registration used to call
+    // `EmailProvider.sendEmailVerification`, which pasted the raw token
+    // into the body. That method is gone — the flow emits
+    // `auth.email.verification` and the dispatcher sends it, so the email
+    // arrives a moment after registration returns rather than during it,
+    // and the stub recovers the token from the LINK.
+    const email = uniqueTestEmail('comm-verify');
     await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ name: 'Legacy', email, password: 'correct-horse-battery' })
+      .send({ name: 'Verify', email, password: 'correct-horse-battery' })
       .expect(201);
-    expect(stub.peekLastEmailVerificationToken(email)).toBeDefined();
-    expect(stub.peekLastEmailVerificationToken(email)).not.toContain(' ');
+
+    const token = await waitFor(async () => stub.peekLastEmailVerificationToken(email));
+    expect(token).toBeDefined();
+    expect(token).not.toContain(' ');
   });
 
   describe('POST /webhooks/email/:provider', () => {

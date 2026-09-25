@@ -75,12 +75,6 @@ const RULE_VALUES: Record<string, unknown> = {
  * value is the reason it was not fixed in the audit that found it.
  */
 const KNOWN_BROKEN: Partial<Record<CommunicationEventKey, string>> = {
-  // Being fixed by the P64 communications lead alongside the raw-token
-  // defect: the real routes are `/auth/reset-password` and
-  // `/auth/verify-email` (`AUTH_ROUTES`), not `/reset-password` and
-  // `/verify-email`.
-  'auth.password.reset': 'lead, in flight — /auth/reset-password',
-  'auth.email.verification': 'lead, in flight — /auth/verify-email',
   // Staff destinations carried on an ACADEMY-branded key, so the
   // dispatcher builds them on the academy host, where no `/dashboard/*`
   // route is mounted at all. Repairing them is a product decision
@@ -92,14 +86,13 @@ const KNOWN_BROKEN: Partial<Record<CommunicationEventKey, string>> = {
     'academy-branded, /dashboard/add-ons/... is a platform route',
   'live_provider.deauthorized':
     'academy-branded, /dashboard/add-ons/... is a platform route',
-  // Worse than wrong-surface: these two paths are not routes on ANY host.
-  // The real destinations are academy-scoped
-  // (`/dashboard/academy/:academyId/members` and
-  // `.../courses/:courseId/reviews`), and `academyId` is not in the rule
-  // context or in the values either producer passes, so the fix reaches
-  // outside this file.
-  'roster.student.awaiting_approval': '/dashboard/students is not a route anywhere',
-  'review.submitted': '/dashboard/reviews is not a route anywhere',
+  // NOTE. `auth.password.reset`, `auth.email.verification`,
+  // `roster.student.awaiting_approval` and `review.submitted` were all
+  // listed here and have since been FIXED — the first two now point at
+  // `/auth/...`, and the two staff work items at
+  // `/dashboard/academy/:academyId/...` with the producers carrying
+  // `academyId` in `values`. They are removed rather than left as stale
+  // exemptions, which the case below enforces.
 };
 
 /**
@@ -289,37 +282,39 @@ describeIfAvailable('every email destination is a real route on its own surface'
     });
 
     /**
-     * REPORTED, NOT FIXED. `settings()` points at `/settings/notifications`,
-     * which is not a route on either surface — the pages that render
-     * `ProfilePreferencesSection` are `/dashboard/profile` (platform) and
-     * `/my/profile` (academy). Choosing between them depends on the
-     * recipient's audience, which `settings(locale, academyHost)` is not
-     * told, so the repair is the owner of `LinkBuilderService`'s to make
-     * rather than something to guess here. This assertion states the
-     * current, wrong behaviour explicitly so the fix cannot land silently:
-     * it fails the moment the path changes, and whoever changes it updates
-     * this test to the route they chose.
+     * FIXED. `settings()` used to return `/settings/notifications`, a
+     * route on neither surface, so the footer of every email led to a
+     * not-found page — and it prefixed `/ar` on the platform host, which
+     * mounts no `/ar` subtree, so the Arabic footer was dead twice over.
+     *
+     * The destination depends on the AUDIENCE, which is why that is a
+     * parameter now: a learner manages preferences on their academy host,
+     * staff and platform recipients on the management host. These cases
+     * assert against the SAME route registry every other destination in
+     * this file is checked against, so the footer can never drift back
+     * into pointing at nothing.
      */
-    it('currently points at `/settings/notifications`, which is not a route (reported, unfixed)', () => {
-      const platformPath = new URL(links.settings('en', null)).pathname;
-      const academyPath = new URL(links.settings('en', 'falcon.atlas.test')).pathname;
-      expect(platformPath).toBe('/settings/notifications');
-      expect(academyPath).toBe('/settings/notifications');
-      expect(PLATFORM_ROUTES.some((t) => matches(platformPath, t))).toBe(false);
-      expect(ACADEMY_ROUTES.some((t) => matches(academyPath, t))).toBe(false);
+    it('sends a learner to a real route on the academy surface', () => {
+      const path = new URL(links.settings('en', 'falcon.atlas.test', 'learner')).pathname;
+      expect(ACADEMY_ROUTES.some((t) => matches(path, t))).toBe(true);
     });
 
-    /**
-     * The same method also prefixes `/ar` on the PLATFORM host, which has
-     * no `/ar` subtree at all — `route-paths.ts` records that the prefix is
-     * applied in exactly one place, `withPublicWebsiteLocale`, i.e. on
-     * academy hosts only. Pinned here for the same reason as above.
-     */
-    it('prefixes `/ar` on the platform host, which mounts no `/ar` routes (reported, unfixed)', () => {
-      expect(new URL(links.settings('ar', null)).pathname).toBe(
-        '/ar/settings/notifications',
-      );
-      expect(PLATFORM_ROUTES.some((t) => matches('/ar', t))).toBe(false);
+    it('sends staff and platform recipients to a real route on the management surface', () => {
+      for (const audience of ['staff', 'platform'] as const) {
+        const path = new URL(links.settings('en', null, audience)).pathname;
+        expect(PLATFORM_ROUTES.some((t) => matches(path, t))).toBe(true);
+      }
+    });
+
+    it('never prefixes `/ar` on the platform host, which mounts no `/ar` routes', () => {
+      const path = new URL(links.settings('ar', null, 'staff')).pathname;
+      expect(path.startsWith('/ar')).toBe(false);
+      expect(PLATFORM_ROUTES.some((t) => matches(path, t))).toBe(true);
+    });
+
+    it('keeps the `/ar` prefix on the academy host, where it IS mounted', () => {
+      const path = new URL(links.settings('ar', 'falcon.atlas.test', 'learner')).pathname;
+      expect(path.startsWith('/ar/')).toBe(true);
     });
   });
 });

@@ -809,7 +809,12 @@ const CATALOG = {
     dedupe: ({ entity }) => `roster.student.awaiting_approval:${entity.id}`,
     cooldownSeconds: 0,
     locale: 'academy',
-    branding: 'academy',
+    // PLATFORM-branded, not academy: this is a work item, and staff act on
+    // it from the management surface — the only host where `/dashboard/*`
+    // is mounted. An academy-branded email is built on the academy host,
+    // where the link would fall into that site's CMS catch-all and render
+    // the academy's own not-found page.
+    branding: 'platform',
     template: 'roster.student.awaiting_approval',
     titleKey: 'notifications:events.rosterStudentAwaitingApproval.title',
     messageKey: 'notifications:events.rosterStudentAwaitingApproval.message',
@@ -831,7 +836,12 @@ const CATALOG = {
       `course_review.submitted:${entity.id}:${str(values, 'submittedAtMs')}`,
     cooldownSeconds: 0,
     locale: 'academy',
-    branding: 'academy',
+    // PLATFORM-branded, not academy: this is a work item, and staff act on
+    // it from the management surface — the only host where `/dashboard/*`
+    // is mounted. An academy-branded email is built on the academy host,
+    // where the link would fall into that site's CMS catch-all and render
+    // the academy's own not-found page.
+    branding: 'platform',
     template: 'review.submitted',
     titleKey: 'notifications:events.reviewSubmitted.title',
     messageKey: 'notifications:events.reviewSubmitted.message',
