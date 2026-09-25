@@ -707,6 +707,319 @@ const CATALOG = {
     messageKey: 'notifications:events.reviewModerated.message',
     actionUrl: ({ values }) => `/my/courses/${str(values, 'courseId')}`,
   },
+
+  // === P64 Communications C3, second pass — the remaining transactional
+  // === events (plan §8 B1-B4 / C1 / D1-D2 / E4-E6 / H1).
+  //
+  // Three rules decided every entry below, in this order:
+  //
+  //  1. §10's channel column, verbatim, WHERE THE CATALOGUE'S OWN
+  //     INVARIANT ALLOWS IT. `communication-catalog.spec.ts` forbids a
+  //     `preference` email channel on `security` and `transactional`,
+  //     because §23 locks those two categories' email preference to
+  //     `true` — a `preference` channel there is not a softer policy, it
+  //     is the same `always` written misleadingly. Where §10 says
+  //     "preference" for an event whose category can only be `security`
+  //     (B1/B2), the entry declares `always` or `never` and says which,
+  //     rather than pretending the recipient has a choice they do not.
+  //  2. §11's category definitions decide the category, not the channel:
+  //     a device change PROVES OR PROTECTS account ownership, so it is
+  //     `security` however quiet its channel; a congratulation is
+  //     `engagement` however consequential the course was.
+  //  3. §19's dedupe rule: the entity alone when the transition can
+  //     happen exactly once for that row, entity + the transition instant
+  //     when it can legitimately recur. The instant is always computed
+  //     ONCE by the producer and passed in, so a retried transaction
+  //     reproduces the key and a genuine second occurrence does not.
+
+  // --- Learner self/free enrollment (plan §8 C1, §10 "C1 free
+  // enrollment, C2 granted | yes | preference (transactional-lite)").
+  //
+  // Shaped exactly like its sibling `enrollment.granted` above, for the
+  // reason recorded there: `transactional` is locked `email: true` by the
+  // preference model, so `preference` would have resolved to `always`
+  // anyway. The learner clicked Enrol a moment ago, so the mail is a
+  // receipt with the course link rather than news.
+  //
+  // The enrollment row is minted ONCE per (student, course) — the
+  // producer returns the existing row on a re-click without reaching the
+  // emit — so the entity id alone is the whole key. A learner who is
+  // revoked and re-enrolls gets a NEW enrollment id, and therefore a new
+  // key, which is the behaviour that matters.
+  'enrollment.self_enrolled': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `enrollment.self_enrolled:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'enrollment.self_enrolled',
+    titleKey: 'notifications:events.enrollmentSelfEnrolled.title',
+    messageKey: 'notifications:events.enrollmentSelfEnrolled.message',
+    actionUrl: ({ values }) => `/my/courses/${str(values, 'courseId')}`,
+  },
+
+  // --- Course commerce, the two ends of an unpaid order (plan §8 D1/D2,
+  // §10 "D1 order created | yes | never — receipt comes with D3" and
+  // "D2 order expired | yes | never"). Both are `transactional` facts
+  // about the learner's own money and both are in-app ONLY: the receipt
+  // is `course.order.proof_submitted`, and emailing somebody that they
+  // did not finish paying is the shape of a dark pattern.
+  //
+  // A course order is minted once and expires once, so each key is the
+  // entity alone.
+  'course.order.created': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'low',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `course_order_created:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'course.order.created',
+    titleKey: 'notifications:events.courseOrderCreated.title',
+    messageKey: 'notifications:events.courseOrderCreated.message',
+    actionUrl: () => '/my/purchases',
+  },
+  'course.order.expired': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `course_order_expired:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'course.order.expired',
+    titleKey: 'notifications:events.courseOrderExpired.title',
+    messageKey: 'notifications:events.courseOrderExpired.message',
+    actionUrl: ({ values }) => `/courses/${str(values, 'courseId')}`,
+  },
+
+  // --- Assessments, the two transitions a learner did not ask for (plan
+  // §8 E4/E5, §10 "E4 auto-submitted, E5 invalidated | yes (high) |
+  // preference"). `engagement` is what makes §10's `preference` legal
+  // here, and it is also the category the two already-shipped assessment
+  // keys use, so the learning toggle governs the whole of assessment
+  // rather than half of it.
+  //
+  // An attempt is finalised exactly once — `updateIfInProgress` lets only
+  // one racing finaliser win — so the attempt id alone keys the
+  // auto-submit. Invalidation carries its instant: a reviewer can void a
+  // later attempt at the same quiz, and (unlike finalisation) nothing in
+  // the schema makes a second invalidation of the SAME attempt
+  // impossible.
+  'assessment.quiz.auto_submitted': {
+    category: 'engagement',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'preference' },
+    priority: 'high',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `quiz_attempt.auto_submitted:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'assessment.quiz.auto_submitted',
+    titleKey: 'notifications:events.quizAutoSubmitted.title',
+    messageKey: 'notifications:events.quizAutoSubmitted.message',
+    actionUrl: ({ values }) =>
+      `/my/courses/${str(values, 'courseId')}/activities/${str(values, 'quizId')}`,
+  },
+  'assessment.attempt.invalidated': {
+    category: 'engagement',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'preference' },
+    priority: 'high',
+    notificationType: 'activity',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      `quiz_attempt.invalidated:${entity.id}:${str(values, 'invalidatedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'assessment.attempt.invalidated',
+    titleKey: 'notifications:events.attemptInvalidated.title',
+    messageKey: 'notifications:events.attemptInvalidated.message',
+    actionUrl: ({ values }) =>
+      `/my/courses/${str(values, 'courseId')}/activities/${str(values, 'quizId')}`,
+  },
+
+  // --- Course completed (plan §8 E6, §10 "yes | preference
+  // (engagement-positive) — pairs with certificate"). Deliberately NOT
+  // `always`: the certificate that follows it IS the `always` email, and
+  // two mails a minute apart about the same achievement is how a product
+  // gets muted.
+  //
+  // Completion is reversible — voiding an attempt takes it away and
+  // re-earning it puts it back (`set_enrollment_completion` runs in both
+  // directions) — so the key carries the instant, exactly as
+  // `certificate.revoked` does.
+  'course.completed': {
+    category: 'engagement',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'preference' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `course.completed:${entity.id}:${str(values, 'completedAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'course.completed',
+    titleKey: 'notifications:events.courseCompleted.title',
+    messageKey: 'notifications:events.courseCompleted.message',
+    actionUrl: ({ values }) => `/my/courses/${str(values, 'courseId')}`,
+  },
+
+  // --- Learner devices and sessions (plan §8 B1-B4, §10).
+  //
+  // All four are `security` by §11 ("proves or protects account
+  // ownership"), which is what makes §10's "preference" column
+  // unavailable to B1/B2 — see the note at the top of this block. The
+  // split chosen instead:
+  //
+  //   B1 registered     -> in-app only. The learner is sitting at the
+  //                        browser that was just registered; §10's own
+  //                        note is "low volume", and one email per new
+  //                        browser is the opposite of that. (§12's A7
+  //                        new-device EMAIL is a separate event owned by
+  //                        the OTP workstream, and with OTP on, the OTP
+  //                        email IS that notice.)
+  //   B2 removed        -> emailed. §10 asks for mail at least on a
+  //                        staff-driven removal, removal ENDS access on
+  //                        that device, and it is the half a person who
+  //                        has lost control of a browser needs to see
+  //                        outside Atlas.
+  //   B3 limit reached  -> in-app only, urgent. §10: "the learner is in
+  //                        front of the screen; the player already
+  //                        explains".
+  //   B4 session taken  -> in-app only, urgent. Same reason.
+  //
+  // A device row is registered once and removed once, so those two key on
+  // the device alone. The cap is hit on EVERY refused grant, so its key
+  // carries the academy and a calendar DAY rather than an instant —
+  // otherwise a learner poking at a locked lesson would paper their feed
+  // with identical rows. A takeover carries its instant: moving the
+  // session back and forth is exactly what a shared account does, and
+  // each move is a thing its owner should see.
+  'device.registered': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'medium',
+    notificationType: 'security',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `device.registered:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'device.registered',
+    titleKey: 'notifications:events.deviceRegistered.title',
+    messageKey: 'notifications:events.deviceRegistered.message',
+    actionUrl: () => '/my/devices',
+  },
+  'device.removed': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `device.removed:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'device.removed',
+    titleKey: 'notifications:events.deviceRemoved.title',
+    messageKey: 'notifications:events.deviceRemoved.message',
+    actionUrl: () => '/my/devices',
+  },
+  'device.limit_reached': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'urgent',
+    notificationType: 'security',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `device.limit_reached:${entity.id}:${str(values, 'occurredOn')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'device.limit_reached',
+    titleKey: 'notifications:events.deviceLimitReached.title',
+    messageKey: 'notifications:events.deviceLimitReached.message',
+    actionUrl: () => '/my/devices',
+  },
+  'session.taken_over': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'urgent',
+    notificationType: 'security',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `session.taken_over:${entity.id}:${str(values, 'takenOverAtMs')}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'session.taken_over',
+    titleKey: 'notifications:events.sessionTakenOver.title',
+    messageKey: 'notifications:events.sessionTakenOver.message',
+    actionUrl: () => '/my/devices',
+  },
+
+  // --- Announcements (plan §8 H1, §10 "audience: yes (type
+  // `announcement`) | preference (engagement) with per-announcement 'also
+  // email' choice for owners, capped (§22)").
+  //
+  // `email: 'never'`, and that is a REPORTED GAP rather than a decision:
+  // the per-announcement "also email" flag §10 requires does not exist on
+  // `announcements` (no column, no DTO field, no UI), and this workstream
+  // may not add one. Declaring `preference` instead would email every
+  // learner of an academy about every announcement the moment anyone's
+  // engagement toggle is on — the exact blast §21 says must be SIZED
+  // before it is enqueued, and the opposite of what the owner-controlled
+  // flag is for. The template exists and carries the copy the email half
+  // would use the day the flag does.
+  //
+  // One announcement is published once, so the announcement id alone is
+  // the key — per recipient, which is what the outbox's unique index is
+  // scoped to, so a class of 200 gets 200 distinct rows and a retried
+  // publish gets none.
+  'announcement.published': {
+    category: 'engagement',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'low',
+    notificationType: 'announcement',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `announcement.published:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'announcement.published',
+    titleKey: 'notifications:events.announcementPublished.title',
+    messageKey: 'notifications:events.announcementPublished.message',
+    // There is no learner announcements PAGE — the feed is the surface —
+    // so a course announcement links to its course and an academy-wide
+    // one to the learner overview, rather than to a route that 404s.
+    actionUrl: ({ values }) => {
+      const courseId = str(values, 'courseId');
+      return courseId ? `/my/courses/${courseId}` : '/my';
+    },
+  },
 } as const satisfies Record<string, CommunicationCatalogEntry>;
 
 export type CommunicationEventKey = keyof typeof CATALOG;

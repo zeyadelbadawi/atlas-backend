@@ -466,7 +466,12 @@ describe('P64 Communications C3 — new transactional events and digests (e2e)',
         .set(w.owner.auth)
         .expect(200);
 
-      const rows = await outboxFor(student.userId);
+      // Scoped to the ROSTER keys: `learnerAccount` signs in on the
+      // academy surface, which registers a device — and, since W-EVT2,
+      // a `device.registered` row of its own (plan §8 B1).
+      const rows = (await outboxFor(student.userId)).filter((row) =>
+        row.key.startsWith('roster.'),
+      );
       expect(rows.map((r) => r.key)).toEqual([
         'roster.student.blocked',
         'roster.student.unblocked',
@@ -570,10 +575,16 @@ describe('P64 Communications C3 — new transactional events and digests (e2e)',
         .set(w.owner.auth)
         .expect(409);
 
-      expect(await outboxFor(student.userId)).toHaveLength(0);
-      expect(await admin.notification.count({ where: { userId: student.userId } })).toBe(
-        0,
-      );
+      // The ROSTER decision left nothing. The sign-in that created this
+      // learner registered a device, and since W-EVT2 that is a row of
+      // its own (plan §8 B1) — it is not what this test is about, and
+      // counting it would make the assertion mean nothing.
+      expect(await outboxFor(student.userId, 'roster.student.approved')).toHaveLength(0);
+      expect(
+        await admin.notification.count({
+          where: { userId: student.userId, type: { not: 'security' } },
+        }),
+      ).toBe(0);
     });
 
     it('uploading a payment proof sends the learner a receipt', async () => {

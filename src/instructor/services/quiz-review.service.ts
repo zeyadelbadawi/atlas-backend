@@ -301,7 +301,7 @@ export class QuizReviewService {
         const context = await this.review(tx, userId, courseId);
         const { quiz, attempt } = await this.loadAttempt(tx, courseId, quizId, attemptId);
         if (attempt.status === 'invalidated') {
-          return { quiz, attempt, enrollment: null, changed: false };
+          return { quiz, attempt, enrollment: null, changed: false, emitted: undefined };
         }
         await this.attempts.update(tx, attemptId, {
           status: 'invalidated',
@@ -333,7 +333,33 @@ export class QuizReviewService {
           where: { studentId: attempt.studentId, courseId },
           select: { id: true, academyId: true },
         });
-        return { quiz, attempt, enrollment, changed: true };
+
+        // P64 Communications C3 (plan §8 E5, §10 "E4 auto-submitted, E5
+        // invalidated | yes (high) | preference"). The LEARNER is told,
+        // not the reviewer who clicked — and inside the same transaction
+        // as the status change and the audit row, so a void that rolls
+        // back tells nobody. `invalidatedAtMs` is the `now` already
+        // written to the row, so a retried request reproduces the key.
+        const academy = await tx.academy.findUnique({
+          where: { id: context.academyId },
+          select: { name: true },
+        });
+        const emitted = await this.communications.emit(tx, {
+          key: 'assessment.attempt.invalidated',
+          recipientUserId: attempt.studentId,
+          organizationId: organizationId ?? undefined,
+          academyId: context.academyId,
+          entity: { type: 'quiz_attempt', id: attemptId },
+          values: {
+            invalidatedAtMs: now.getTime(),
+            quizTitle: quiz.title,
+            reason: dto.reason ?? '',
+            academyName: academy?.name ?? '',
+            courseId,
+            quizId,
+          },
+        });
+        return { quiz, attempt, enrollment, changed: true, emitted };
       },
     );
     if (result.changed) {
@@ -343,6 +369,7 @@ export class QuizReviewService {
         result.attempt.studentId,
         result.enrollment,
       );
+      await this.communications.enqueueAfterCommit(result.emitted?.outboxId ?? null);
     }
     return this.getAttempt(userId, courseId, quizId, attemptId);
   }

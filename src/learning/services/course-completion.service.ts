@@ -26,6 +26,7 @@ import { AcademyMembersRepository } from '../../academy/repositories/academy-mem
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { CommunicationService } from '../../communications/services/communication.service';
 import { assertActiveEnrollment } from './learning-access.util';
 import type { UpdateCompletionRuleDto } from '../dto/completion-rule.dto';
 import type {
@@ -86,6 +87,15 @@ export interface CompletionRecomputeResult {
   readonly certificatesEnabled: boolean;
   readonly certificateMinScore: number | null;
   readonly becameEligible: boolean;
+  /**
+   * P64 Communications C3 (plan §8 E6) — the "you finished this course"
+   * outbox row, set only on the recompute that made completion TRUE for
+   * an enrollment that was not complete before. `null` on every other
+   * recompute, which is nearly all of them. Callers hand it to
+   * `enqueueAfterCommit` once their transaction has committed; a caller
+   * that does not is not a bug — the one-minute sweep finds the row.
+   */
+  readonly outboxId: string | null;
 }
 
 interface EnrollmentRef {
@@ -108,6 +118,7 @@ export class CourseCompletionService {
     private readonly enrollmentsRepository: EnrollmentsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
     @InjectQueue(CERTIFICATE_JOBS_QUEUE) private readonly certificateQueue: Queue,
+    private readonly communications: CommunicationService,
   ) {}
 
   /** Evidence + evaluation only — no writes. Used by the learner completion screen. */
@@ -115,7 +126,10 @@ export class CourseCompletionService {
     tx: Prisma.TransactionClient,
     enrollment: EnrollmentRef,
   ): Promise<
-    Omit<CompletionRecomputeResult, 'becameEligible' | 'certificateStatus'> & {
+    Omit<
+      CompletionRecomputeResult,
+      'becameEligible' | 'certificateStatus' | 'outboxId'
+    > & {
       readonly currentCertificateStatus:
         'unavailable' | 'eligible' | 'issued' | 'revoked';
       readonly completionState: 'incomplete' | 'in_progress' | 'completed';
@@ -264,9 +278,7 @@ export class CourseCompletionService {
       currentCertificateStatus === 'eligible'
     ) {
       certificateStatus =
-        completed && certificatesEnabled && minScoreMet
-          ? 'eligible'
-          : 'unavailable';
+        completed && certificatesEnabled && minScoreMet ? 'eligible' : 'unavailable';
     }
     const becameEligible =
       certificateStatus === 'eligible' && currentCertificateStatus !== 'eligible';
@@ -314,11 +326,56 @@ export class CourseCompletionService {
     // through a SECURITY DEFINER that changes exactly those two columns —
     // the caller is either the learner (own progress) or the academy's
     // tenant context (after a reviewer's write); no wide UPDATE tier exists.
-    if (
-      (completed && enrollment.status === 'enrolled') ||
-      (!completed && enrollment.status === 'completed')
-    ) {
+    const becameComplete = completed && enrollment.status === 'enrolled';
+    if (becameComplete || (!completed && enrollment.status === 'completed')) {
       await tx.$executeRaw`SELECT set_enrollment_completion(${enrollment.id}, ${completed})`;
+    }
+
+    // P64 Communications C3 (plan §8 E6, §10 "E6 course completed | yes |
+    // preference (engagement-positive) — pairs with certificate").
+    //
+    // The GUARD is the transition, not `completed`: this method runs
+    // after every lesson tick, every finalised attempt and every grade,
+    // and `completed` stays true for the rest of the enrollment's life.
+    // Emitting on the state rather than the edge would congratulate a
+    // learner on every subsequent page view — the dedupe key would
+    // swallow the duplicates, but only after writing a row and burning a
+    // savepoint each time.
+    //
+    // Deliberately NOT `always`: `certificate.issued`, enqueued a few
+    // lines below for the same moment, is the email that must arrive.
+    let outboxId: string | null = null;
+    if (becameComplete) {
+      const completedAt = progressData.completedAt ?? now;
+      // The course TITLE only, and deliberately not the academy's name.
+      //
+      // This recompute runs in the LEARNER's own user context on the
+      // lesson-completion path, and there is no `academies_student_select`
+      // policy — an academy_students row is not an academy_members row —
+      // so the academy is invisible here. Asking for it through the
+      // REQUIRED `course.academy` relation does not return null, it
+      // THROWS ("Field academy is required to return data, got null"),
+      // which would turn finishing a course into a 500. The email's brand
+      // name comes from `CommunicationBrandingService`, which resolves it
+      // with full visibility after the commit.
+      const course = await tx.course.findUnique({
+        where: { id: enrollment.courseId },
+        select: { title: true },
+      });
+      const emitted = await this.communications.emit(tx, {
+        key: 'course.completed',
+        recipientUserId: enrollment.studentId,
+        academyId: enrollment.academyId,
+        entity: { type: 'enrollment', id: enrollment.id },
+        values: {
+          completedAtMs: completedAt.getTime(),
+          courseId: enrollment.courseId,
+          courseTitle: course?.title ?? '',
+          overallScore:
+            evaluation.overallScore === null ? '' : Math.round(evaluation.overallScore),
+        },
+      });
+      outboxId = emitted.outboxId;
     }
 
     if (becameEligible) {
@@ -332,6 +389,7 @@ export class CourseCompletionService {
       certificatesEnabled,
       certificateMinScore,
       becameEligible,
+      outboxId,
     };
   }
 
@@ -350,20 +408,26 @@ export class CourseCompletionService {
       ref.academyId,
     );
     if (!organizationId) return null;
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      const row = await tx.enrollment.findUnique({
-        where: { id: ref.enrollmentId },
-        select: {
-          id: true,
-          studentId: true,
-          courseId: true,
-          academyId: true,
-          status: true,
-        },
-      });
-      if (!row) return null;
-      return this.recompute(tx, row);
-    });
+    const result = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        const row = await tx.enrollment.findUnique({
+          where: { id: ref.enrollmentId },
+          select: {
+            id: true,
+            studentId: true,
+            courseId: true,
+            academyId: true,
+            status: true,
+          },
+        });
+        if (!row) return null;
+        return this.recompute(tx, row);
+      },
+    );
+    // Step 2, after the tenant-context transaction above has committed.
+    await this.communications.enqueueAfterCommit(result?.outboxId ?? null);
+    return result;
   }
 
   // ---------------------------------------------------------------------

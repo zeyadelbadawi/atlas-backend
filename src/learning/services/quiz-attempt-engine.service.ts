@@ -45,6 +45,7 @@ import { QuizAttemptsRepository } from '../repositories/quiz-attempts.repository
 import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { QuizDeadlineProducer } from '../queue/quiz-deadline.producer';
+import { CommunicationService } from '../../communications/services/communication.service';
 import { CourseCompletionService } from './course-completion.service';
 import { CourseSequenceService } from './course-sequence.service';
 import { assertActiveEnrollment } from './learning-access.util';
@@ -96,6 +97,16 @@ export type FinalizeReason = 'submit' | 'timeout' | 'integrity';
 export interface FinalizeOutcome {
   readonly attempt: QuizAttempt;
   readonly pendingGrading: boolean;
+  /**
+   * P64 Communications C3 (plan §8 E4) — the auto-submit notification's
+   * outbox row, when this finalisation was NOT the learner pressing
+   * submit. `null` on a normal submit, on a lost race (another finaliser
+   * already closed the attempt), and on a deduped repeat. Callers hand it
+   * to `enqueueAfterCommit` once their transaction has committed; a
+   * caller that does not is not a bug — the one-minute sweep finds the
+   * row.
+   */
+  readonly outboxId: string | null;
 }
 
 const ANSWER_VALIDATION_KEYS: Record<string, string> = {
@@ -143,6 +154,7 @@ export class QuizAttemptEngineService {
     private readonly deadlines: QuizDeadlineProducer,
     private readonly completion: CourseCompletionService,
     private readonly courseSequence: CourseSequenceService,
+    private readonly communications: CommunicationService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -811,28 +823,42 @@ export class QuizAttemptEngineService {
     studentId: string,
   ): Promise<'finalized' | 'skipped'> {
     const now = new Date();
-    return this.tenancyContextService.runInUserContext(studentId, async (tx) => {
-      const attempt = await this.attempts.findById(tx, attemptId);
-      if (!attempt || attempt.studentId !== studentId || attempt.status !== 'in_progress')
-        return 'skipped';
-      if (!isPastGrace(attempt.deadlineAt, now)) return 'skipped';
-      const quiz = await this.quizzesRepository.findByIdWithCorrectAnswers(
-        tx,
-        attempt.quizId,
-      );
-      if (!quiz) return 'skipped';
-      const enrollment = await this.enrollmentsRepository.findByStudentAndCourse(
-        tx,
-        studentId,
-        quiz.courseId,
-      );
-      await this.finalizeInTransaction(tx, attempt, quiz, {
-        reason: 'timeout',
-        now,
-        enrollment,
-      });
-      return 'finalized';
-    });
+    // P64 Communications C3 — the auto-submit hint, sent once this
+    // transaction has committed (the canonical E4 path: the delayed job
+    // and the sweep both land here).
+    let outboxId: string | null = null;
+    const outcome = await this.tenancyContextService.runInUserContext(
+      studentId,
+      async (tx) => {
+        const attempt = await this.attempts.findById(tx, attemptId);
+        if (
+          !attempt ||
+          attempt.studentId !== studentId ||
+          attempt.status !== 'in_progress'
+        )
+          return 'skipped';
+        if (!isPastGrace(attempt.deadlineAt, now)) return 'skipped';
+        const quiz = await this.quizzesRepository.findByIdWithCorrectAnswers(
+          tx,
+          attempt.quizId,
+        );
+        if (!quiz) return 'skipped';
+        const enrollment = await this.enrollmentsRepository.findByStudentAndCourse(
+          tx,
+          studentId,
+          quiz.courseId,
+        );
+        const finalized = await this.finalizeInTransaction(tx, attempt, quiz, {
+          reason: 'timeout',
+          now,
+          enrollment,
+        });
+        outboxId = finalized.outboxId;
+        return 'finalized' as const;
+      },
+    );
+    await this.communications.enqueueAfterCommit(outboxId);
+    return outcome;
   }
 
   /** The sweep: catches attempts whose delayed job never fired. */
@@ -920,9 +946,38 @@ export class QuizAttemptEngineService {
     });
     const fresh = (await this.attempts.findById(tx, attempt.id)) ?? attempt;
     if (changed === 0) {
-      return { attempt: fresh, pendingGrading: fresh.gradingStatus === 'pending' };
+      return {
+        attempt: fresh,
+        pendingGrading: fresh.gradingStatus === 'pending',
+        outboxId: null,
+      };
     }
     this.metrics.recordQuizAttemptSubmitted(input.reason);
+
+    // P64 Communications C3 (plan §8 E4, §10 "E4 auto-submitted ... yes
+    // (high) | preference"). ONE choke point for every auto-submit: the
+    // delayed deadline job, the ten-minute sweep, the lazy finalisation
+    // a later read performs, and the integrity rule all arrive here, and
+    // the conditional UPDATE above has already made exactly one of them
+    // the winner — which is why the catalogue can key on the attempt
+    // alone. A learner pressing Submit is not news and emits nothing.
+    let outboxId: string | null = null;
+    if (input.reason !== 'submit') {
+      const emitted = await this.communications.emit(tx, {
+        key: 'assessment.quiz.auto_submitted',
+        recipientUserId: fresh.studentId,
+        academyId: input.enrollment?.academyId ?? null,
+        entity: { type: 'quiz_attempt', id: fresh.id },
+        values: {
+          reason: input.reason,
+          quizTitle: quiz.title,
+          courseId: quiz.courseId,
+          quizId: quiz.id,
+        },
+      });
+      outboxId = emitted.outboxId;
+    }
+
     await this.recomputeResultAndCompletion(
       tx,
       quiz,
@@ -930,7 +985,7 @@ export class QuizAttemptEngineService {
       input.enrollment,
       input.now,
     );
-    return { attempt: fresh, pendingGrading: score.pendingManual };
+    return { attempt: fresh, pendingGrading: score.pendingManual, outboxId };
   }
 
   /** Re-aggregates the quiz result by policy and re-evaluates course completion. */

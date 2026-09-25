@@ -39,6 +39,17 @@ import { template as rosterStudentBlocked } from './keys/roster.student.blocked'
 import { template as rosterStudentUnblocked } from './keys/roster.student.unblocked';
 import { template as courseOrderProofSubmitted } from './keys/course.order.proof_submitted';
 import { template as reviewModerated } from './keys/review.moderated';
+import { template as enrollmentSelfEnrolled } from './keys/enrollment.self_enrolled';
+import { template as courseOrderCreated } from './keys/course.order.created';
+import { template as courseOrderExpired } from './keys/course.order.expired';
+import { template as quizAutoSubmitted } from './keys/assessment.quiz.auto_submitted';
+import { template as attemptInvalidated } from './keys/assessment.attempt.invalidated';
+import { template as courseCompleted } from './keys/course.completed';
+import { template as deviceRegistered } from './keys/device.registered';
+import { template as deviceRemoved } from './keys/device.removed';
+import { template as deviceLimitReached } from './keys/device.limit_reached';
+import { template as sessionTakenOver } from './keys/session.taken_over';
+import { template as announcementPublished } from './keys/announcement.published';
 import { template as digestDaily } from './keys/digest.daily';
 
 export const TEMPLATES: Record<string, CommunicationTemplate> = {
@@ -75,6 +86,17 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'roster.student.unblocked': rosterStudentUnblocked,
   'course.order.proof_submitted': courseOrderProofSubmitted,
   'review.moderated': reviewModerated,
+  'enrollment.self_enrolled': enrollmentSelfEnrolled,
+  'course.order.created': courseOrderCreated,
+  'course.order.expired': courseOrderExpired,
+  'assessment.quiz.auto_submitted': quizAutoSubmitted,
+  'assessment.attempt.invalidated': attemptInvalidated,
+  'course.completed': courseCompleted,
+  'device.registered': deviceRegistered,
+  'device.removed': deviceRemoved,
+  'device.limit_reached': deviceLimitReached,
+  'session.taken_over': sessionTakenOver,
+  'announcement.published': announcementPublished,
   'digest.daily': digestDaily,
 };
 

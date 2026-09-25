@@ -67,6 +67,35 @@ import { CommunicationService } from '../../communications/services/communicatio
 import type { EmitResult } from '../../communications/services/communication.service';
 import { randomUUID } from 'node:crypto';
 
+/**
+ * Thrown from inside the payment transaction INSTEAD of the 409, which
+ * the caller raises afterwards — P64 Communications C3 (plan §8 D2).
+ *
+ * The lazy expiry was written inside the same interactive transaction as
+ * the `ConflictException` that reports it, so PostgreSQL rolled the
+ * `status = 'expired'` UPDATE back with the exception and the order
+ * stayed `draft`/`pending_payment` forever, its `expired` metric
+ * re-counted on every later attempt. The learner-visible behaviour was
+ * right (`expiresAt` is re-read and the order refused again), which is
+ * why it went unnoticed — but the transition never became a FACT, so
+ * there was nothing for an event to hang on.
+ *
+ * `QuizAttemptEngineService`'s `ExpiredAttempt` is the established
+ * precedent for exactly this shape: leave the transaction cleanly,
+ * commit the transition in its own transaction, then throw.
+ */
+class CourseOrderExpired extends Error {
+  constructor(
+    readonly orderId: string,
+    readonly organizationId: string,
+    readonly academyId: string,
+    readonly courseId: string,
+    readonly alreadyExpired: boolean,
+  ) {
+    super('course_order_expired');
+  }
+}
+
 const NON_TERMINAL_PAYMENT_STATUSES = new Set([
   'created',
   'pending',
@@ -182,6 +211,69 @@ export class CourseOrderPaymentsService {
     orderId: string,
     payload: CreateCourseOrderPaymentDto,
   ): Promise<CourseOrderPaymentResponse> {
+    try {
+      return await this.createPaymentInTransaction(studentId, orderId, payload);
+    } catch (error) {
+      // The lazy expiry, finished OUTSIDE the transaction it was detected
+      // in — see `CourseOrderExpired`. The 409 the learner sees is
+      // unchanged; what changes is that the transition now commits and
+      // the learner is told about it once.
+      if (error instanceof CourseOrderExpired) {
+        await this.finishExpiry(studentId, error);
+        throw new ConflictException({ messageKey: 'errors.courseOrder.expired' });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Marks the order `expired`, counts it once, and tells the learner —
+   * in its OWN transaction, so none of it is rolled back by the 409 that
+   * follows. Idempotent: the conditional UPDATE and the catalogue dedupe
+   * key both mean a second refused attempt changes nothing and says
+   * nothing.
+   */
+  private async finishExpiry(
+    studentId: string,
+    signal: CourseOrderExpired,
+  ): Promise<void> {
+    if (signal.alreadyExpired) return;
+    const emitted = await this.tenancyContextService.runInUserContext(
+      studentId,
+      async (tx) => {
+        const flipped = await tx.courseOrder.updateMany({
+          where: {
+            id: signal.orderId,
+            status: { notIn: ['expired', 'paid', 'refunded'] },
+          },
+          data: { status: 'expired' },
+        });
+        // Zero rows means another request expired it first: no second
+        // metric, no second notification.
+        if (flipped.count === 0) return { created: false, outboxId: null } as EmitResult;
+        this.metrics.recordCheckoutOrderState('expired');
+        const course = await tx.course.findUnique({
+          where: { id: signal.courseId },
+          select: { title: true },
+        });
+        return this.communicationService.emit(tx, {
+          key: 'course.order.expired',
+          recipientUserId: studentId,
+          organizationId: signal.organizationId,
+          academyId: signal.academyId,
+          entity: { type: 'course_order', id: signal.orderId },
+          values: { courseId: signal.courseId, courseTitle: course?.title ?? '' },
+        });
+      },
+    );
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+  }
+
+  private async createPaymentInTransaction(
+    studentId: string,
+    orderId: string,
+    payload: CreateCourseOrderPaymentDto,
+  ): Promise<CourseOrderPaymentResponse> {
     return this.tenancyContextService.runInUserContext(studentId, async (tx) => {
       const order = await this.courseOrdersService.findOrderOrThrow(
         tx,
@@ -190,16 +282,13 @@ export class CourseOrderPaymentsService {
       );
 
       if (order.status === 'expired' || order.expiresAt.getTime() < Date.now()) {
-        if (order.status !== 'expired') {
-          await tx.courseOrder.update({
-            where: { id: order.id },
-            data: { status: 'expired' },
-          });
-          // P64 Phase 4 (§D.5) — the lazy expiry IS the transition; an
-          // already-expired order re-read here is not counted again.
-          this.metrics.recordCheckoutOrderState('expired');
-        }
-        throw new ConflictException({ messageKey: 'errors.courseOrder.expired' });
+        throw new CourseOrderExpired(
+          order.id,
+          order.organizationId,
+          order.academyId,
+          order.courseId,
+          order.status === 'expired',
+        );
       }
       if (
         order.status === 'paid' ||

@@ -40,6 +40,8 @@ import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 
 function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
@@ -55,6 +57,7 @@ export class CourseOrdersService {
     private readonly organizationPaymentSettingsService: OrganizationPaymentSettingsService,
     private readonly courseOrdersRepository: CourseOrdersRepository,
     private readonly metrics: LearningMetricsService,
+    private readonly communications: CommunicationService,
   ) {}
 
   async createOrder(
@@ -62,109 +65,147 @@ export class CourseOrdersService {
     courseId: string,
     payload: CreateCourseOrderDto,
   ): Promise<CourseOrderResponse> {
+    // P64 Communications C3 (plan §8 D1). Declared out here so the
+    // after-commit hint can be sent once the transaction has returned.
+    let emitted: EmitResult = { created: false, outboxId: null };
+
     // Course lookup, existing-order idempotency check, and the initial
     // enrollment/pricing validation all read under the buyer's own user
     // context — `courses_public_discovery_select` (P6) already makes a
     // published+public course visible with no organization membership at
     // all, exactly the access shape a prospective buyer has.
-    return this.tenancyContextService.runInUserContext(studentId, async (tx) => {
-      const existing = await this.courseOrdersRepository.findByIdempotencyKey(
-        tx,
-        studentId,
-        payload.idempotencyKey,
-      );
-      if (existing) return toCourseOrderResponse(existing);
-
-      const course = await this.coursesRepository.findPublishedById(tx, courseId);
-      if (!course) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      if (course.pricingType !== 'paid') {
-        throw new ConflictException({ messageKey: 'errors.courseOrder.courseNotPaid' });
-      }
-      if (
-        course.pricingAmountMinorUnits == null ||
-        course.pricingAmountMinorUnits <= 0n ||
-        !course.pricingCurrency
-      ) {
-        throw new ConflictException({
-          messageKey: 'errors.courseOrder.pricingUnavailable',
-        });
-      }
-
-      const existingEnrollment = await this.enrollmentsRepository.findByStudentAndCourse(
-        tx,
-        studentId,
-        course.id,
-      );
-      if (existingEnrollment && existingEnrollment.status !== 'unavailable') {
-        throw new ConflictException({ messageKey: 'errors.courseOrder.alreadyEnrolled' });
-      }
-
-      const activeOrder = await this.courseOrdersRepository.findActiveForStudentAndCourse(
-        tx,
-        studentId,
-        course.id,
-      );
-      if (activeOrder) return toCourseOrderResponse(activeOrder);
-
-      // A student is never an organization member of the Academy selling
-      // the course, so the ordinary `AcademiesRepository.findById` read
-      // (tenant/membership-RLS-gated) is structurally invisible here —
-      // `resolveOrganizationId` reuses the existing P11
-      // `resolve_academy_organization` `SECURITY DEFINER` function
-      // instead, exactly like `PaymentsRepository.resolvePaymentOrganization`
-      // does for the same "no legitimate session context yet" shape.
-      const organizationId = await this.academiesRepository.resolveOrganizationId(
-        course.academyId,
-      );
-      if (!organizationId) throw new NotFoundException({ messageKey: 'errors.notFound' });
-
-      // §4.1's explicit, non-negotiable rule: an `unconfigured`
-      // Organization must refuse paid-course checkout outright, never
-      // silently default to a mode. Checked again, freshly, at Payment
-      // creation (`CourseOrderPaymentsService`) — this is an early,
-      // buyer-friendly rejection, not the only enforcement point.
-      const configured =
-        await this.organizationPaymentSettingsService.isConfigured(organizationId);
-      if (!configured) {
-        throw new ConflictException({
-          messageKey: 'errors.courseOrder.paymentSetupIncomplete',
-        });
-      }
-
-      const snapshot = this.buildSnapshot(course);
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + COURSE_ORDER_EXPIRY_MINUTES * 60_000);
-
-      try {
-        const created = await this.courseOrdersRepository.create(tx, {
+    const response = await this.tenancyContextService.runInUserContext(
+      studentId,
+      async (tx) => {
+        const existing = await this.courseOrdersRepository.findByIdempotencyKey(
+          tx,
           studentId,
-          courseId: course.id,
-          academyId: course.academyId,
-          organizationId,
-          snapshot: snapshot as unknown as Prisma.InputJsonValue,
-          status: 'draft',
-          expiresAt,
-          idempotencyKey: payload.idempotencyKey,
-        });
-        // P64 Phase 4 (§D.5) — counted only for a genuinely new order; the
-        // idempotent replays above return without reaching here.
-        this.metrics.recordCheckoutOrderState('created');
-        return toCourseOrderResponse(created);
-      } catch (error) {
-        // Two concurrent requests replaying the same idempotency key raced
-        // the check above — same race-safe fallback `CheckoutService`
-        // already established.
-        if (isUniqueConstraintViolation(error)) {
-          const raced = await this.courseOrdersRepository.findByIdempotencyKey(
+          payload.idempotencyKey,
+        );
+        if (existing) return toCourseOrderResponse(existing);
+
+        const course = await this.coursesRepository.findPublishedById(tx, courseId);
+        if (!course) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        if (course.pricingType !== 'paid') {
+          throw new ConflictException({ messageKey: 'errors.courseOrder.courseNotPaid' });
+        }
+        if (
+          course.pricingAmountMinorUnits == null ||
+          course.pricingAmountMinorUnits <= 0n ||
+          !course.pricingCurrency
+        ) {
+          throw new ConflictException({
+            messageKey: 'errors.courseOrder.pricingUnavailable',
+          });
+        }
+
+        const existingEnrollment =
+          await this.enrollmentsRepository.findByStudentAndCourse(
             tx,
             studentId,
-            payload.idempotencyKey,
+            course.id,
           );
-          if (raced) return toCourseOrderResponse(raced);
+        if (existingEnrollment && existingEnrollment.status !== 'unavailable') {
+          throw new ConflictException({
+            messageKey: 'errors.courseOrder.alreadyEnrolled',
+          });
         }
-        throw error;
-      }
-    });
+
+        const activeOrder =
+          await this.courseOrdersRepository.findActiveForStudentAndCourse(
+            tx,
+            studentId,
+            course.id,
+          );
+        if (activeOrder) return toCourseOrderResponse(activeOrder);
+
+        // A student is never an organization member of the Academy selling
+        // the course, so the ordinary `AcademiesRepository.findById` read
+        // (tenant/membership-RLS-gated) is structurally invisible here —
+        // `resolveOrganizationId` reuses the existing P11
+        // `resolve_academy_organization` `SECURITY DEFINER` function
+        // instead, exactly like `PaymentsRepository.resolvePaymentOrganization`
+        // does for the same "no legitimate session context yet" shape.
+        const organizationId = await this.academiesRepository.resolveOrganizationId(
+          course.academyId,
+        );
+        if (!organizationId)
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+
+        // §4.1's explicit, non-negotiable rule: an `unconfigured`
+        // Organization must refuse paid-course checkout outright, never
+        // silently default to a mode. Checked again, freshly, at Payment
+        // creation (`CourseOrderPaymentsService`) — this is an early,
+        // buyer-friendly rejection, not the only enforcement point.
+        const configured =
+          await this.organizationPaymentSettingsService.isConfigured(organizationId);
+        if (!configured) {
+          throw new ConflictException({
+            messageKey: 'errors.courseOrder.paymentSetupIncomplete',
+          });
+        }
+
+        const snapshot = this.buildSnapshot(course);
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + COURSE_ORDER_EXPIRY_MINUTES * 60_000);
+
+        try {
+          const created = await this.courseOrdersRepository.create(tx, {
+            studentId,
+            courseId: course.id,
+            academyId: course.academyId,
+            organizationId,
+            snapshot: snapshot as unknown as Prisma.InputJsonValue,
+            status: 'draft',
+            expiresAt,
+            idempotencyKey: payload.idempotencyKey,
+          });
+          // P64 Phase 4 (§D.5) — counted only for a genuinely new order; the
+          // idempotent replays above return without reaching here.
+          this.metrics.recordCheckoutOrderState('created');
+
+          // P64 Communications C3 (plan §8 D1, §10 "D1 order created | yes
+          // | never — receipt comes with D3"). In-app only by the
+          // catalogue; this call site only has to be inside the same
+          // transaction as the order, so an order that rolls back (the
+          // idempotency-key race below) leaves no feed row behind.
+          emitted = await this.communications.emit(tx, {
+            key: 'course.order.created',
+            recipientUserId: studentId,
+            organizationId,
+            academyId: course.academyId,
+            entity: { type: 'course_order', id: created.id },
+            values: {
+              courseId: course.id,
+              courseTitle: course.title,
+              amount: (snapshot.price.amountMinorUnits / 100).toFixed(2),
+              currency: snapshot.price.currency,
+              expiresInMinutes: COURSE_ORDER_EXPIRY_MINUTES,
+            },
+          });
+
+          return toCourseOrderResponse(created);
+        } catch (error) {
+          // Two concurrent requests replaying the same idempotency key raced
+          // the check above — same race-safe fallback `CheckoutService`
+          // already established.
+          if (isUniqueConstraintViolation(error)) {
+            const raced = await this.courseOrdersRepository.findByIdempotencyKey(
+              tx,
+              studentId,
+              payload.idempotencyKey,
+            );
+            if (raced) return toCourseOrderResponse(raced);
+          }
+          throw error;
+        }
+      },
+    );
+
+    // Step 2, after the transaction has committed — a hint to the
+    // dispatcher, never a requirement (the sweep finds a lost one).
+    await this.communications.enqueueAfterCommit(emitted.outboxId);
+    return response;
   }
 
   async getOrder(studentId: string, orderId: string): Promise<CourseOrderResponse> {

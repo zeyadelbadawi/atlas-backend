@@ -41,6 +41,8 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-que
 import type { CreateEnrollmentDto } from '../dto/create-enrollment.dto';
 import type { ListEnrollmentsQueryDto } from '../dto/list-enrollments-query.dto';
 import { deriveCompletionState } from './progress-computation.util';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 
 @Injectable()
 export class EnrollmentsService {
@@ -53,6 +55,7 @@ export class EnrollmentsService {
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly entitlementEnforcementService: EntitlementEnforcementService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
+    private readonly communicationService: CommunicationService,
   ) {}
 
   async list(
@@ -119,6 +122,11 @@ export class EnrollmentsService {
     const organizationId =
       await this.academyStudentsRepository.resolveOrganizationId(academyId);
     if (!organizationId) throw new NotFoundException({ messageKey: 'errors.notFound' });
+
+    // P64 Communications C3 (plan §8 C1) — the receipt for a learner who
+    // enrolled THEMSELVES. Declared out here so the value survives the
+    // transaction callback and can be enqueued once it has committed.
+    let emitted: EmitResult = { created: false, outboxId: null };
 
     return this.tenancyContextService
       .runInTenantAndUserContext(organizationId, userId, async (tx) => {
@@ -199,9 +207,42 @@ export class EnrollmentsService {
         );
 
         const enrollment = await this.createEnrollmentInTransaction(tx, userId, course);
+
+        // P64 Communications C3 (plan §8 C1, §10 "C1 free enrollment ...
+        // transactional-lite"). Emitted HERE and not in
+        // `createEnrollmentInTransaction`, because that method is shared
+        // with the purchase path (which already says `course.order.paid`)
+        // and the staff-grant path (`enrollment.granted`) — moving it
+        // down would tell a buyer twice. The idempotent
+        // "already enrolled" branch above returns before reaching this,
+        // so re-clicking Enrol never emits a second time.
+        //
+        // Inside the same transaction as the enrollment, the progress
+        // rows and the entitlement check: an enrollment that rolls back
+        // tells nobody.
+        const academy = await tx.academy.findUnique({
+          where: { id: course.academyId },
+          select: { name: true },
+        });
+        emitted = await this.communicationService.emit(tx, {
+          key: 'enrollment.self_enrolled',
+          recipientUserId: userId,
+          organizationId,
+          academyId: course.academyId,
+          entity: { type: 'enrollment', id: enrollment.id },
+          values: {
+            courseId: course.id,
+            courseTitle: course.title,
+            academyName: academy?.name ?? '',
+          },
+        });
+
         return toEnrollmentResponse(enrollment);
       })
       .then(async (response) => {
+        // Step 2, after the transaction above has committed. A no-op on
+        // the idempotent branch (`outboxId` is null); never throws.
+        await this.communicationService.enqueueAfterCommit(emitted.outboxId);
         // Phase 2 — real reactive usage-recompute trigger (an enrollment
         // change) — enqueued unconditionally; the idempotent-return branch
         // above (already enrolled) causes no harm here either, a redundant
