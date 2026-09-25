@@ -870,6 +870,11 @@ recipient cannot sign in yet — that is the entire problem the message solves.
    be refused with a **403** — which looks like a broken account and is not.
 6. The link expires after **72 hours**. Afterwards "forgot password" issues a fresh one,
    because by then the account genuinely exists.
+7. **Open a stale or tampered setup link** — `?token=nonsense&setup=1`. It must say the
+   **setup** link expired and offer *Get a new link*. If it says your *reset link* expired,
+   that is the defect found in production on 25 September: the page had two voices on its
+   success branch and only one on its failure branch. Expiry is a normal way to arrive
+   here — the link lasts 72 hours and goes to somebody who did not ask for it.
 
 **The negative case.** Add someone who **already has an Atlas account** to a second
 academy. They must receive **nothing** — they already have a password, and a "set your

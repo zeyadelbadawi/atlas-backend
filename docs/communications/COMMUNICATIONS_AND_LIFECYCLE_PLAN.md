@@ -989,6 +989,17 @@ A **Client Owner** needs none of this: enumerating every user-creation site
 (`auth.service.ts` self-registration plus the three academy paths) shows there
 is no code path where somebody else creates a Client Owner account.
 
+**A defect the tests could not have found.** Browser-checking the deployed
+setup page showed that with `?setup=1` and a stale token it still said *"This
+reset link is invalid or has expired / Request a new reset link"* — to somebody
+who never had a reset link. The variant work had switched the heading only on
+the branch where the token is GOOD, and the test mock always reported a valid
+token, so the page's other exit was never rendered in a test at all. Expiry is
+a normal way to arrive there: a setup link lasts 72 hours and goes to someone
+who did not ask for it. Fixed in both locales, and the spec now drives both
+exits. The destination was already correct — "forgot password" genuinely is the
+recovery once the account exists — so only the words changed.
+
 **C9 — graded work is proven isolated.** `assessment.quiz.graded` and
 `assessment.assignment.graded` were already emitted correctly; what was missing
 was the proof of the half that carries the risk. Neither grading request carries
