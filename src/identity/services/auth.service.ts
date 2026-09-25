@@ -57,6 +57,7 @@ import { AcademySurfaceService } from './academy-surface.service';
 import { EmailOtpService } from './email-otp.service';
 import { CommunicationMetricsService } from '../../communications/metrics/communication-metrics.service';
 import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import { AcademyStaffRecipientsService } from '../../communications/services/academy-staff-recipients.service';
 import { TrustedDeviceService } from './trusted-device.service';
 import type { EmailOtpChallengeContract } from '../dto/contracts';
@@ -1057,6 +1058,33 @@ export class AuthService {
         targetId: resetToken.userId,
       }),
     );
+
+    /*
+      Tell the account owner their password was just reset.
+
+      `auth.password.reset_confirmed` had a catalogue entry, a bilingual
+      template and frontend copy, and NO producer — so completing a reset
+      notified nobody. That is the gap that matters most in this flow:
+      someone who obtains a reset link changes the password and the real
+      owner hears nothing, while every session and trusted device has
+      just been revoked out from under them. The sibling
+      `auth.password.changed` (a signed-in user changing their own
+      password) has always been emitted; this path was simply missed.
+
+      Its own small transaction, for the reason the audit write above
+      records: this flow predates any shared transaction across its
+      writes, and restructuring that is not this change's job.
+    */
+    const emitted: EmitResult = await this.tenancyContextService.runInUserContext(
+      resetToken.userId,
+      (tx) =>
+        this.communicationService.emit(tx, {
+          key: 'auth.password.reset_confirmed',
+          recipientUserId: resetToken.userId,
+          entity: { type: 'user', id: resetToken.userId },
+        }),
+    );
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
   }
 
   /**

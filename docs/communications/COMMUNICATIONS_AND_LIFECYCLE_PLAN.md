@@ -939,3 +939,23 @@ Every occurrence of `token`, `tokenHash`, `challengeId`, `codeHash`, `resetToken
 - `action-url-routes.spec.ts` (134) matches every destination against the frontend's real routes on the correct surface, with a two-sided ledger — a new dead link fails immediately, and a fixed one fails until it is retired from the list.
 
 Each was verified to FAIL when the corresponding defect is reintroduced.
+
+
+## CORR-1. Two corrections to earlier records (25 Sep 2026)
+
+Both found by auditing the catalogue against its producers, and both are corrections to things this document previously stated.
+
+**1. `FLAG_LIFECYCLE_SEQUENCES_MODE` does not gate every lifecycle event.** MR-5 said the sequences "emit NOTHING until the flag is set". That is true of the thirteen SWEEP-driven steps and false of four that are emitted from request paths and send in production today:
+
+| Key | Emitted from | Why it is not gated |
+|---|---|---|
+| `lifecycle.trial.started` | `TrialRedemptionService.startTrial` | An immediate confirmation of something the customer just did. Gating it would mean starting a trial and hearing nothing. |
+| `lifecycle.subscription.activated` | `PlatformPaymentService.approvePayment` | The receipt for an approved payment. |
+| `lifecycle.subscription.payment_submitted` | `PaymentService.submitProof` | Confirms the proof arrived. |
+| `lifecycle.subscription.cancel_scheduled` | `TrialRedemptionService` cancellation | Confirms the customer's own decision and its effective date. |
+
+The design is right — these are transactional confirmations, not a marketing sequence — but the earlier wording was not, and anyone planning a rollout needs the distinction.
+
+**2. `auth.password.reset_confirmed` had no producer.** It had a catalogue entry, a bilingual template and frontend copy, and nothing emitted it: completing a password reset notified nobody. The gap that matters is the adversarial one — someone who obtains a reset link changes the password, and the real owner hears nothing while every session and trusted device is revoked out from under them. Its sibling `auth.password.changed` (a signed-in user changing their own password) had always been emitted; this path was simply missed. Now emitted from `AuthService.confirmPasswordReset`.
+
+This is the same failure mode as the raw-token bug, one layer up: a message nobody had checked actually reaches a person. The matrix in this document is what makes that class of gap visible — an event whose Email and In-App columns both read NO, with no reason given, is a bug rather than a decision.
