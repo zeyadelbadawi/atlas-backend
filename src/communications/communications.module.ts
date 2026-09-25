@@ -41,6 +41,8 @@ import { COMMUNICATION_SUPPRESSION } from './services/communication-suppression.
 import { SuppressionService } from './services/suppression.service';
 import { CommunicationMetricsService } from './metrics/communication-metrics.service';
 import { CommunicationPreferencesController } from './controllers/communication-preferences.controller';
+import { PlatformCommunicationsController } from './controllers/platform-communications.controller';
+import { PlatformCommunicationsHealthService } from './services/platform-communications-health.service';
 
 @Global()
 @Module({
@@ -50,9 +52,10 @@ import { CommunicationPreferencesController } from './controllers/communication-
     TenancyModule,
     BullModule.registerQueue({ name: COMMUNICATIONS_QUEUE }),
   ],
-  controllers: [CommunicationPreferencesController],
+  controllers: [CommunicationPreferencesController, PlatformCommunicationsController],
   providers: [
     CommunicationMetricsService,
+    PlatformCommunicationsHealthService,
     EmailTransport,
     LinkBuilderService,
     CommunicationBrandingService,
