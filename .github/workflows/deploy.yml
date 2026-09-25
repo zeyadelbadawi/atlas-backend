@@ -118,6 +118,22 @@ jobs:
           zoom_client_secret: ${{ secrets.ZOOM_OAUTH_CLIENT_SECRET }}
           zoom_redirect_uri: ${{ secrets.ZOOM_OAUTH_REDIRECT_URI }}
           zoom_webhook_secret_token: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}
+          # P64 Communications. The provider CHAIN is a repository
+          # VARIABLE (it is configuration, not a secret, and the ability
+          # to read it is how an operator sees which providers are live);
+          # every credential and the sender identity are SECRETS. A
+          # provider named in the chain without its key refuses to boot
+          # by design — so add `resend` to EMAIL_PROVIDERS only once
+          # RESEND_API_KEY exists.
+          email_providers: ${{ vars.EMAIL_PROVIDERS }}
+          brevo_api_key: ${{ secrets.BREVO_API_KEY }}
+          resend_api_key: ${{ secrets.RESEND_API_KEY }}
+          email_from_email: ${{ secrets.EMAIL_FROM_EMAIL }}
+          email_from_name: ${{ vars.EMAIL_FROM_NAME }}
+          email_reply_to: ${{ secrets.EMAIL_REPLY_TO }}
+          brevo_webhook_secret: ${{ secrets.BREVO_WEBHOOK_SECRET }}
+          resend_webhook_secret: ${{ secrets.RESEND_WEBHOOK_SECRET }}
+          platform_web_url: ${{ vars.PLATFORM_WEB_URL }}
           # P64 rollout flags come from repository VARIABLES (Settings →
           # Variables), one per line; unset ones are dropped by the action.
           feature_flags: |
@@ -171,6 +187,22 @@ jobs:
           zoom_client_secret: ${{ secrets.ZOOM_OAUTH_CLIENT_SECRET }}
           zoom_redirect_uri: ${{ secrets.ZOOM_OAUTH_REDIRECT_URI }}
           zoom_webhook_secret_token: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}
+          # P64 Communications. The provider CHAIN is a repository
+          # VARIABLE (it is configuration, not a secret, and the ability
+          # to read it is how an operator sees which providers are live);
+          # every credential and the sender identity are SECRETS. A
+          # provider named in the chain without its key refuses to boot
+          # by design — so add `resend` to EMAIL_PROVIDERS only once
+          # RESEND_API_KEY exists.
+          email_providers: ${{ vars.EMAIL_PROVIDERS }}
+          brevo_api_key: ${{ secrets.BREVO_API_KEY }}
+          resend_api_key: ${{ secrets.RESEND_API_KEY }}
+          email_from_email: ${{ secrets.EMAIL_FROM_EMAIL }}
+          email_from_name: ${{ vars.EMAIL_FROM_NAME }}
+          email_reply_to: ${{ secrets.EMAIL_REPLY_TO }}
+          brevo_webhook_secret: ${{ secrets.BREVO_WEBHOOK_SECRET }}
+          resend_webhook_secret: ${{ secrets.RESEND_WEBHOOK_SECRET }}
+          platform_web_url: ${{ vars.PLATFORM_WEB_URL }}
           # P64 rollout flags come from repository VARIABLES (Settings →
           # Variables), one per line; unset ones are dropped by the action.
           feature_flags: |

@@ -50,6 +50,54 @@ inputs:
       hand-edited on the VPS.
     required: false
     default: ''
+  email_providers:
+    required: false
+    default: ''
+    description: >-
+      Comma-separated provider chain in FALLBACK ORDER (`brevo,resend`).
+      A provider listed here without its key and `email_from_email`
+      REFUSES TO BOOT by design — production must fail honestly rather
+      than fall back to the stub and silently send nothing. Leave a
+      provider out until its credentials exist.
+  brevo_api_key:
+    required: false
+    default: ''
+    description: Brevo API key (primary provider), synced into the VPS .env.
+  resend_api_key:
+    required: false
+    default: ''
+    description: Resend API key (fallback provider), synced into the VPS .env.
+  email_from_email:
+    required: false
+    default: ''
+    description: >-
+      Verified sender identity, the same address on every provider.
+      Treated as a secret so it never reaches a build log.
+  email_from_name:
+    required: false
+    default: ''
+    description: Sender display name, also the platform name in email branding.
+  email_reply_to:
+    required: false
+    default: ''
+    description: Optional Reply-To address.
+  brevo_webhook_secret:
+    required: false
+    default: ''
+    description: >-
+      Shared secret in the Brevo delivery-webhook URL (Brevo has no HMAC).
+      Unset means that endpoint refuses everything — fail closed.
+  resend_webhook_secret:
+    required: false
+    default: ''
+    description: Resend (Svix) webhook signing secret. Unset = fail closed.
+  platform_web_url:
+    required: false
+    default: ''
+    description: >-
+      Public origin used to build links inside emails. Required in
+      production once a real provider is configured, otherwise a link in
+      a real inbox would point at a localhost default.
   zoom_webhook_secret_token:
     required: false
     default: ''
@@ -69,6 +117,15 @@ runs:
         ZOOM_OAUTH_CLIENT_SECRET: ${{ inputs.zoom_client_secret }}
         ZOOM_OAUTH_REDIRECT_URI: ${{ inputs.zoom_redirect_uri }}
         ZOOM_WEBHOOK_SECRET_TOKEN: ${{ inputs.zoom_webhook_secret_token }}
+        EMAIL_PROVIDERS: ${{ inputs.email_providers }}
+        BREVO_API_KEY: ${{ inputs.brevo_api_key }}
+        RESEND_API_KEY: ${{ inputs.resend_api_key }}
+        EMAIL_FROM_EMAIL: ${{ inputs.email_from_email }}
+        EMAIL_FROM_NAME: ${{ inputs.email_from_name }}
+        EMAIL_REPLY_TO: ${{ inputs.email_reply_to }}
+        BREVO_WEBHOOK_SECRET: ${{ inputs.brevo_webhook_secret }}
+        RESEND_WEBHOOK_SECRET: ${{ inputs.resend_webhook_secret }}
+        PLATFORM_WEB_URL: ${{ inputs.platform_web_url }}
         FEATURE_FLAGS: ${{ inputs.feature_flags }}
       run: |
         set -euo pipefail
@@ -93,6 +150,14 @@ runs:
         keys = [
           'ZOOM_OAUTH_CLIENT_ID', 'ZOOM_OAUTH_CLIENT_SECRET',
           'ZOOM_OAUTH_REDIRECT_URI', 'ZOOM_WEBHOOK_SECRET_TOKEN',
+          # P64 Communications. An EMPTY value is DROPPED, not written as
+          # an empty string: the upsert only touches keys present in the
+          # fragment, so a provider whose credentials do not exist yet
+          # simply leaves .env alone instead of blanking a live value.
+          'EMAIL_PROVIDERS', 'BREVO_API_KEY', 'RESEND_API_KEY',
+          'EMAIL_FROM_EMAIL', 'EMAIL_FROM_NAME', 'EMAIL_REPLY_TO',
+          'BREVO_WEBHOOK_SECRET', 'RESEND_WEBHOOK_SECRET',
+          'PLATFORM_WEB_URL',
         ]
         lines = [f"{k}={os.environ[k]}" for k in keys if os.environ.get(k)]
         # P64 feature flags: FLAG_* keys only; values limited to what a mode

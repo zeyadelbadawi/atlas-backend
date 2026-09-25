@@ -80,6 +80,55 @@ describe('P64 Communications — email configuration boot contract', () => {
     expect(config.EMAIL_PROVIDERS).toEqual(['brevo', 'resend']);
   });
 
+  /**
+   * THE SHAPE PRODUCTION ACTUALLY RUNS (25 Sep 2026). Brevo went live
+   * before Resend, because Resend's sending domain is still an external
+   * dependency; the chain is therefore `brevo` ALONE. That is deliberate
+   * and must stay bootable: listing `resend` without its key would refuse
+   * to start, which is the correct safety behaviour but would take
+   * production down if someone added the fallback to the chain before the
+   * credential existed.
+   */
+  it('accepts the live production shape: Brevo alone, no Resend credentials present', () => {
+    const config = validateEnv({
+      ...PRODUCTION_BASE,
+      EMAIL_PROVIDERS: 'brevo',
+      BREVO_API_KEY: 'brevo-key',
+      EMAIL_FROM_EMAIL: 'owner@example.com',
+      EMAIL_FROM_NAME: 'Atlas',
+      BREVO_WEBHOOK_SECRET: 'w'.repeat(48),
+      PLATFORM_WEB_URL: 'https://atlass.dpdns.org',
+    }) as Record<string, unknown>;
+    expect(config.EMAIL_PROVIDERS).toEqual(['brevo']);
+    expect(config.PLATFORM_WEB_URL).toBe('https://atlass.dpdns.org');
+    // No stub anywhere in the chain: a real deployment that cannot reach
+    // Brevo must fail loudly, never quietly "send" into the stub.
+    expect(config.EMAIL_PROVIDERS).not.toContain('stub');
+  });
+
+  it('an explicit PLATFORM_WEB_URL wins over the domain-derived default', () => {
+    const config = validateEnv({
+      ...PRODUCTION_BASE,
+      EMAIL_PROVIDERS: 'brevo',
+      BREVO_API_KEY: 'brevo-key',
+      EMAIL_FROM_EMAIL: 'owner@example.com',
+      PLATFORM_WEB_URL: 'https://marketing.example',
+    }) as Record<string, unknown>;
+    expect(config.PLATFORM_WEB_URL).toBe('https://marketing.example');
+  });
+
+  it('refuses a live provider with no way to build a link (no web URL, no base domain)', () => {
+    const { PLATFORM_BASE_DOMAIN: _omitted, ...withoutDomain } = PRODUCTION_BASE;
+    expect(() =>
+      validateEnv({
+        ...withoutDomain,
+        EMAIL_PROVIDERS: 'brevo',
+        BREVO_API_KEY: 'brevo-key',
+        EMAIL_FROM_EMAIL: 'owner@example.com',
+      }),
+    ).toThrow(/PLATFORM_WEB_URL or PLATFORM_BASE_DOMAIN is required/);
+  });
+
   it('still accepts the legacy single-provider alias, so existing envs keep working', () => {
     const config = validateEnv({
       ...PRODUCTION_BASE,
