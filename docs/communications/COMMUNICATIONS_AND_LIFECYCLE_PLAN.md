@@ -574,7 +574,8 @@ The outbox + quota + provider-order design scales by configuration: at ~5k/month
 
 | # | Decision | Consequence for this plan |
 |---|---|---|
-| AD-1 | **No production email has ever been sent from Atlas.** The owner's **Gmail address is the approved sender identity** (From). Sender identity ≠ delivery provider ≠ SMTP infrastructure. | C0 verifies the Gmail address as a *sender* at Brevo and Resend (single-sender verification, no domain DNS required); DMARC alignment for gmail.com is not achievable, so deliverability rides on the providers' shared reputation — recorded as a known limitation until a custom domain is approved. |
+| AD-1 | **No production email has ever been sent from Atlas.** The owner's **Gmail address is the approved sender identity** (From). Sender identity ≠ delivery provider ≠ SMTP infrastructure. | ~~C0 verifies the Gmail address as a *sender* at Brevo and Resend (single-sender verification, no domain DNS required)~~ **CORRECTED 25 Sep 2026 — see AD-1a.** Brevo's half is done and live. DMARC alignment for gmail.com is not achievable, so deliverability rides on the providers' shared reputation — a known limitation until a custom domain is approved. |
+| AD-1a | **Correction to AD-1, found while hardening the fallback provider.** Resend has **no single-sender-verification flow**: it sends only from a domain verified by DNS. Its one non-domain path, `onboarding@resend.dev`, can send only to the Resend account owner's own address, so it cannot serve real users. AD-1's premise therefore held for Brevo and does not hold for Resend. | Two consequences. (1) Resend cannot go live on the Gmail identity at all — it needs a sending domain (BL-3). (2) Enabling Resend is **not** a one-line change: `EMAIL_FROM_EMAIL` is a single value shared by both adapters (`brevo-email.provider.ts`, `resend-email.provider.ts`), so switching the From address to the verified domain also changes what Brevo sends as — and **that new address must be verified at Brevo in the same change window**, or the live provider breaks. Sequence recorded in BL-3. |
 | AD-2 | **Brevo = primary provider, Resend = fallback.** Clean provider abstraction; no provider logic leaking into the product. | §15 provider order `brevo,resend`; fallback rule: Resend is used when Brevo rejects (5xx / 429 / quota exhausted for the message's class) or is unconfigured; recorded per delivery. |
 | AD-3 | **Brevo Free plan and its "Sent with Brevo" footer are accepted for the initial phase.** No engineering effort on footer removal; no plan upgrade for it. | Explicit business decision; templates must look correct with the injected LTR footer under RTL content (§13 note). |
 | AD-4 | **OTP policy approved as proposed** (§12), production-grade, never weakening existing controls. | Phase C4 as specified. |
@@ -637,7 +638,25 @@ Serialized by the lead: every schema change, every merge, every push/deploy, eve
 | # | Blocker | Type | Autonomous? | Status |
 |---|---|---|---|---|
 | BL-1 | Brevo go-live: account, single-sender verification of the Gmail identity, API key, webhook secret, and the host env | credential / human | No | **RESOLVED 25 Sep 2026** — owner supplied the key; sender verified (`active=true`); configured through the authorised env-sync path; real delivery verified end to end (see MR-3) |
-| BL-3 | **RESEND SENDING DOMAIN** — the Resend account exists and its dashboard is reachable, but no sending domain is configured, so no sender identity can be verified and no real Resend delivery can occur. This is the ONLY external input still missing for the fallback provider. Everything that does not require the domain is being completed regardless. | external / human | No | OPEN — narrow. Blocks ONLY: Resend DNS/sender verification, real Resend delivery, and adding `resend` to `EMAIL_PROVIDERS`. Blocks nothing else in this plan. |
+| BL-3 | **RESEND SENDING DOMAIN** — the Resend account exists and its dashboard is reachable, but no sending domain is configured. Resend has no single-sender path (AD-1a), so a DNS-verified domain is the only way it can ever send. This is the ONLY external input still missing. Everything not requiring it is complete. | external / human | No | OPEN — narrow. Blocks ONLY: Resend DNS/sender verification, real Resend delivery, and adding `resend` to `EMAIL_PROVIDERS`. Blocks nothing else; the code is finished and proved against Resend's documented contract. |
+
+### BL-3 — exact steps once a sending domain exists
+
+Ordered, because step 6 will break the live provider if it is done alone.
+
+1. **Resend → Domains → Add Domain.** Use a sending SUBdomain (`send.<domain>`), not the root, so sending reputation stays off the corporate domain. The region is chosen at creation and is immutable afterwards.
+2. **Add the DNS records Resend then displays** — copy the values from the dashboard, never guess them; the DKIM key and the region inside the MX target are issued per domain:
+   - `MX` on the sending subdomain → `feedback-smtp.<region>.amazonses.com`, priority 10 (bounce/complaint feedback).
+   - `TXT` (SPF) on the sending subdomain → `v=spf1 include:amazonses.com ~all`.
+   - `TXT` (DKIM) at `resend._domainkey.<sending subdomain>` → the `p=MIGfMA0…` value shown.
+   - `TXT` (DMARC) at `_dmarc.<domain>` → start `v=DMARC1; p=none; rua=mailto:…`, tighten later. Not required to verify, but required in practice by Gmail/Yahoo bulk-sender rules.
+3. **Wait for verified** in the dashboard (usually minutes; up to 72 h for propagation). Do not continue until it reads verified.
+4. **API key**: Resend → API Keys → Create, *Sending access*, scoped to the verified domain → set `RESEND_API_KEY`.
+5. **Webhook**: endpoint `https://atlass.dpdns.org/api/v1/webhooks/email/resend`, subscribed to exactly the seven events the adapter maps (`email.delivered`, `email.bounced`, `email.complained`, `email.opened`, `email.clicked`, `email.delivery_delayed`, `email.failed`); copy the `whsec_…` secret → `RESEND_WEBHOOK_SECRET`. Until it is set that route accepts nothing (fails closed, asserted by test).
+6. **Move the sender identity**: set `EMAIL_FROM_EMAIL` to an address at the verified domain **and verify that same address at Brevo in the same change window** (AD-1a). Doing this without the Brevo half breaks the provider that is currently live.
+7. **Only then** set `EMAIL_PROVIDERS=brevo,resend`. Listing `resend` without its key refuses to boot by design — that guard is correct; do not work around it.
+
+A bounded smoke test is possible before any of this, but **only in a throwaway environment**: `EMAIL_PROVIDERS=resend` with `EMAIL_FROM_EMAIL=onboarding@resend.dev`, sending to the Resend account owner's own address. Never in production — `EMAIL_FROM_EMAIL` is shared and it would break Brevo.
 | BL-2 | Real-provider video deletion verification depends on Phase 4 blocker (2) (video infrastructure unset) | infrastructure | No | OPEN — C6 verified against `FakeVideoProvider` |
 
 
