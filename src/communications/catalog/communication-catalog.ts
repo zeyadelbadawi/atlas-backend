@@ -729,6 +729,35 @@ const CATALOG = {
    * do, so it is not silenced by the engagement toggle — but it is still
    * digestible, which is the distinction `operational` exists to carry.
    */
+  /**
+   * A learner signed up to an `approval`-policy academy and is blocked
+   * until staff act (plan §8 G1) — a STAFF work item.
+   *
+   * Emitted from inside the REGISTRATION transaction, under the new
+   * user's own RLS context, which is why it needs the definer-backed
+   * staff lookup: the person who just registered can see neither the
+   * academy's members nor the academy row.
+   *
+   * Dedupe is per student per academy, with no instant: a given person
+   * enters the queue once. If they are declined and sign up again they
+   * are a new `academy_students` row, and therefore a new work item.
+   */
+  'roster.student.awaiting_approval': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'digest' },
+    priority: 'medium',
+    notificationType: 'account',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `roster.student.awaiting_approval:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'roster.student.awaiting_approval',
+    titleKey: 'notifications:events.rosterStudentAwaitingApproval.title',
+    messageKey: 'notifications:events.rosterStudentAwaitingApproval.message',
+    actionUrl: () => `/dashboard/students`,
+  },
   'review.submitted': {
     category: 'operational',
     audience: 'staff',

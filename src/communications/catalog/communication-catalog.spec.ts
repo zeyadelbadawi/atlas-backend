@@ -297,6 +297,12 @@ const EXPECTED_DEDUPE: Record<
   // A STAFF work item. The submission instant is in the key because a
   // re-submitted review is a new thing to moderate — without it an edited
   // review would dedupe against the original and never be re-queued.
+  // One work item per person per academy: a given learner enters the
+  // approval queue once, so no instant in the key.
+  'roster.student.awaiting_approval': {
+    values: { academyName: 'Falcon' },
+    expected: `roster.student.awaiting_approval:${ENTITY_ID}`,
+  },
   'review.submitted': {
     values: { submittedAtMs: 1790000000000, courseTitle: 'Algebra' },
     expected: `course_review.submitted:${ENTITY_ID}:1790000000000`,
