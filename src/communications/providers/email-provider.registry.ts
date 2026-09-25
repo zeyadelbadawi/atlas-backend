@@ -31,6 +31,7 @@ import {
 import { EmailQuotaService } from '../services/email-quota.service';
 import { CommunicationMetricsService } from '../services/communication-metrics.service';
 import { buildEmailVerificationEmail, buildPasswordResetEmail } from './legacy-messages';
+import { STUB_PROVIDER_NAME } from './stub-email.provider';
 
 /**
  * `EMAIL_PROVIDERS` (already lower-cased and validated by the env schema)
@@ -76,6 +77,26 @@ export class EmailProviderRegistry implements EmailProvider {
     if (providers.length === 0) {
       throw new Error(
         'EmailProviderRegistry needs at least one provider (EMAIL_PROVIDERS).',
+      );
+    }
+
+    // A production chain made only of stubs accepts every message and
+    // delivers none: password resets and OTP codes are "sent" and never
+    // arrive. It is NOT fatal on purpose — refusing to boot would take
+    // the whole platform down over an email misconfiguration, and a
+    // learner who cannot reach their course is a worse outcome than one
+    // who cannot reset a password. So it is made impossible to miss
+    // instead: an error-level line at boot, and the same state rendered
+    // as a warning on the platform communications console.
+    if (
+      process.env.NODE_ENV === 'production' &&
+      providers.every((provider) => provider.name === STUB_PROVIDER_NAME)
+    ) {
+      this.logger.error(
+        { chain: providers.map((provider) => provider.name) },
+        'EMAIL IS NOT BEING DELIVERED: the production provider chain contains only the stub. ' +
+          'Every email will be accepted and silently discarded. Set EMAIL_PROVIDERS to a real ' +
+          'provider with its credentials.',
       );
     }
   }
