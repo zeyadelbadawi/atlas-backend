@@ -915,3 +915,27 @@ The `LifecyclePanel` gains `retention_warning` as an **overlay** rather than a n
 **Honest limitation, recorded rather than fixed.** `support_cases` has no tenant-scoped SELECT policy — only platform and requester — so under the caller's own context a hold caused by a case someone *else* opened is invisible to the tenant. The residue is safe in the direction that matters: the page then **over**-warns, and can never claim a frozen clock for an organisation that is actually counting down. Closing it needs a migration and a decision about what a tenant may see of its own support cases.
 
 Also not done: §O-6 "download your videos" (an explicit product decision, not stubbed), the Platform Owner retention view, no sidebar entry (the page is reached from the panel and the email link, as specified), and no browser/RTL pass by a person.
+
+## SEC-1. Token exposure audit (25 Sep 2026)
+
+Every occurrence of `token`, `tokenHash`, `challengeId`, `codeHash`, `resetToken`, `verificationToken`, `inviteToken`, `providerMessageId` and UUID across the communications surface, classified. The rule being applied throughout: **an internal token is not a user-facing token.** Some values must stay opaque and internal; the bug is only ever showing one to a human as if it were an instruction.
+
+| Where | What it is | Class | Verdict |
+|---|---|---|---|
+| `catalog/communication-catalog.ts` — `auth.password.reset`, `auth.email.verification` `actionUrl` | the credential, interpolated into the href | **B — inside a clickable link** | Correct. This is the only place a credential belongs. |
+| `templates/keys/*.ts` (70 files) | the word "token" appears exactly once, in a COMMENT about locale handling | — | No template interpolates a credential into copy. |
+| `providers/{brevo,resend}-email.provider.ts` | `providerMessageId` from the vendor response | **A — internal** | Correct. Correlates a delivery row; never rendered. |
+| `providers/email-provider.registry.ts`, `services/email-transport.ts` | idempotency key, message id | **A — internal** | Correct. |
+| `services/delivery-event.service.ts`, `queue/communications-webhook.producer.ts` | `providerMessageId` in the dedupe hash and job id | **A — internal** | Correct. |
+| `providers/stub-email.provider.ts`, `providers/legacy-messages.ts` | recovery of a credential from a sent email | **A — internal, test-only** | Correct, and now parses the token out of the URL rather than a marker line, so the harness follows the real contract. |
+| `auth.email.otp` | six digits the user types | **C — human-entered code, by design** | Correct. Never logged, never in metrics, never returned by an API. |
+| `certificate.issued` | `ABCD-EFGH-JKLM` printed as text | **C — human-entered code, by design** | Correct. A third party types it into the public verification sheet. |
+| `retention.video.deletion_failed` | asset and organisation UUIDs printed to a human | **C — operator payload, by design** | Correct and deliberately exempted by key AND by asserted `audience: 'platform'`, so the exemption cannot widen to a customer-facing event. Nothing else identifies the file at the provider. |
+| ~~`providers/legacy-messages.ts` — `buildPasswordResetEmail`, `buildEmailVerificationEmail`~~ | the raw credential pasted into the body as visible text | **D — ACCIDENTALLY EXPOSED** | **THE BUG. Fixed and deleted.** |
+
+**How it is kept fixed.** Three specs, 641 assertions, all shape-based so a rewording survives and a regression does not:
+- `email-content-contract.spec.ts` (493) renders every template in both locales on both hosts with machine-shaped sentinels planted under each of those key names, subtracts the message's own URLs, and fails if any sentinel — or any 32+-hex run or UUID — survives in what the reader sees.
+- `credential-email-contract.spec.ts` (8) pins the three security emails specifically: token only inside an href, OTP exactly six digits with no action link, expiry stated.
+- `action-url-routes.spec.ts` (134) matches every destination against the frontend's real routes on the correct surface, with a two-sided ledger — a new dead link fails immediately, and a fixed one fails until it is retired from the list.
+
+Each was verified to FAIL when the corresponding defect is reintroduced.
