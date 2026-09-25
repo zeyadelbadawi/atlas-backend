@@ -101,11 +101,17 @@ export interface EmailProviderAdapter {
   parseWebhookEvents(body: unknown): EmailWebhookEvent[];
 }
 
-/** The full contract behind `EMAIL_PROVIDER` — adapter surface plus the legacy P1/10.1/P17 methods. */
+/**
+ * The full contract behind `EMAIL_PROVIDER` — the adapter surface plus
+ * the one remaining legacy convenience.
+ *
+ * `sendPasswordResetEmail` and `sendEmailVerification` were removed: they
+ * composed their own message and pasted the raw token into the body, so
+ * the recipient was handed an internal credential with no action. Both
+ * flows emit `auth.password.reset` / `auth.email.verification` now, which
+ * render the bilingual template with a CTA and keep the token in the href.
+ */
 export interface EmailProvider extends EmailProviderAdapter {
-  sendPasswordResetEmail(to: string, rawToken: string): Promise<void>;
-  /** Phase 10.1 — proves the address can receive mail. `rawToken` is a live credential: never log it. */
-  sendEmailVerification(to: string, rawToken: string): Promise<void>;
   sendTransactionalEmail(input: TransactionalEmailInput): Promise<void>;
 }
 

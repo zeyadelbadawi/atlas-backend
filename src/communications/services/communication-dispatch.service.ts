@@ -364,9 +364,13 @@ export class CommunicationDispatchService {
       {
         branding: branding.branding,
         actionUrl,
+        // The audience decides the surface: a learner manages preferences
+        // on their academy host, staff and platform recipients on the
+        // management host. Without it the footer link 404s for everyone.
         settingsUrl: this.links.settings(
           locale,
           entry.branding === 'academy' ? branding.host : null,
+          entry.audience,
         ),
       },
       values,
@@ -789,6 +793,7 @@ export class CommunicationDispatchService {
             settingsUrl: this.links.settings(
               locale,
               firstEntry.branding === 'academy' ? branding.host : null,
+              firstEntry.audience,
             ),
           },
           { items: digestItems },

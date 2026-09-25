@@ -174,6 +174,11 @@ export class CourseReviewsService {
               submittedAtMs: submittedAt.getTime(),
               courseId,
               courseTitle: course?.title ?? '',
+              // The moderation queue is per-course on the management
+              // surface, so the link needs the academy too. The rule
+              // context only sees `{ entity, values }`, which is why this
+              // is carried here rather than read from `academyId` above.
+              academyId: enrollment.academyId,
             },
           });
           outboxIds.push(emitted.outboxId);

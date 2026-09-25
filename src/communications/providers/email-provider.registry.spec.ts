@@ -163,7 +163,12 @@ describe('EmailProviderRegistry', () => {
     await expect(registry2.send(input)).rejects.toMatchObject({ kind: 'transient' });
   });
 
-  it('legacy methods delegate to send() with the security category and the token in the body only', async () => {
+  it('still delegates the one remaining legacy convenience to send()', async () => {
+    // `sendPasswordResetEmail`/`sendEmailVerification` were REMOVED: they
+    // composed their own body and pasted the raw token into it, which is
+    // how a recipient ended up holding an internal credential with no
+    // action. Both flows emit their catalogue event now. Only the generic
+    // transactional convenience remains.
     const h = harness();
     const send = jest.fn().mockResolvedValue({ providerMessageId: 'p1' });
     const registry = new EmailProviderRegistry(
@@ -172,26 +177,14 @@ describe('EmailProviderRegistry', () => {
       h.metrics,
     );
 
-    await registry.sendPasswordResetEmail('a@example.com', 'tok-reset');
-    await registry.sendEmailVerification('a@example.com', 'tok-verify');
     await registry.sendTransactionalEmail({
       to: 'a@example.com',
       subject: 'S',
       text: 'T',
     });
 
-    expect(send).toHaveBeenCalledTimes(3);
+    expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0]).toMatchObject({
-      category: 'security',
-      tags: ['password_reset'],
-    });
-    expect(send.mock.calls[0][0].text).toContain('tok-reset');
-    expect(JSON.stringify(send.mock.calls[0][0].tags)).not.toContain('tok-reset');
-    expect(send.mock.calls[1][0]).toMatchObject({
-      category: 'security',
-      tags: ['email_verification'],
-    });
-    expect(send.mock.calls[2][0]).toMatchObject({
       category: 'transactional',
       subject: 'S',
     });

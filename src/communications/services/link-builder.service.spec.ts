@@ -114,25 +114,59 @@ describe('LinkBuilderService', () => {
   });
 
   describe('settings link', () => {
-    it('uses the platform host with no prefix for English when no academy host is known', () => {
-      const { service } = build();
-      expect(service.settings('en', null)).toBe(`${PLATFORM_URL}/settings/notifications`);
-    });
+    /*
+      These cases previously asserted `/settings/notifications`, which is
+      a route on NEITHER surface — so the "Manage email settings" line in
+      the footer of every email led to a not-found page, and the spec
+      pinned it there. A test can only protect a contract someone checked
+      against the product; this one had been checked against itself.
 
-    it('prefixes `/ar` for Arabic', () => {
+      The destination depends on the AUDIENCE, because the two surfaces
+      render the same preferences section at different paths and
+      `/dashboard/*` does not exist on an academy host at all.
+    */
+    it('sends a learner to their profile on the academy host', () => {
       const { service } = build();
-      expect(service.settings('ar', null)).toBe(
-        `${PLATFORM_URL}/ar/settings/notifications`,
+      expect(service.settings('en', 'falcon.atlas.test', 'learner')).toBe(
+        'https://falcon.atlas.test/my/profile',
       );
     });
 
-    it('uses the academy host, over https, when one is known', () => {
+    it('prefixes `/ar` only on the academy host, which is the only place it is mounted', () => {
       const { service } = build();
-      expect(service.settings('en', 'falcon.atlas.test')).toBe(
-        'https://falcon.atlas.test/settings/notifications',
+      expect(service.settings('ar', 'falcon.atlas.test', 'learner')).toBe(
+        'https://falcon.atlas.test/ar/my/profile',
       );
-      expect(service.settings('ar', 'falcon.atlas.test')).toBe(
-        'https://falcon.atlas.test/ar/settings/notifications',
+      // The platform host mounts no `/ar` subtree, so an Arabic staff
+      // recipient must NOT get one — that was dead twice over before.
+      expect(service.settings('ar', null, 'staff')).toBe(
+        `${PLATFORM_URL}/dashboard/profile`,
+      );
+    });
+
+    it('sends staff and platform recipients to the management profile', () => {
+      const { service } = build();
+      expect(service.settings('en', null, 'staff')).toBe(
+        `${PLATFORM_URL}/dashboard/profile`,
+      );
+      expect(service.settings('en', null, 'platform')).toBe(
+        `${PLATFORM_URL}/dashboard/profile`,
+      );
+    });
+
+    it('keeps staff on the management host even when an academy host is known', () => {
+      // A manager reading an academy-branded email still manages their
+      // own preferences on the surface they actually sign in to.
+      const { service } = build();
+      expect(service.settings('en', 'falcon.atlas.test', 'staff')).toBe(
+        `${PLATFORM_URL}/dashboard/profile`,
+      );
+    });
+
+    it('falls back to the management surface for a learner with no academy host yet', () => {
+      const { service } = build();
+      expect(service.settings('en', null, 'learner')).toBe(
+        `${PLATFORM_URL}/dashboard/profile`,
       );
     });
   });

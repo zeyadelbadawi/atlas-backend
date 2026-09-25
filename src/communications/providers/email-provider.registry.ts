@@ -30,7 +30,6 @@ import {
 } from '../../identity/services/email-provider.interface';
 import { EmailQuotaService } from '../services/email-quota.service';
 import { CommunicationMetricsService } from '../services/communication-metrics.service';
-import { buildEmailVerificationEmail, buildPasswordResetEmail } from './legacy-messages';
 import { STUB_PROVIDER_NAME } from './stub-email.provider';
 
 /**
@@ -205,15 +204,18 @@ export class EmailProviderRegistry implements EmailProvider {
     return [];
   }
 
-  // --- Legacy surface (P1 / 10.1 / P17) — delegations to `send()` -----------
+  /*
+    The two credential-email methods that used to live here are gone.
+    They composed the message themselves — pasting the raw reset or
+    verification token into the body as a line of text — which is how a
+    user ended up holding an internal credential with no action attached.
+    Both flows now emit their catalogue event, so the one bilingual
+    template renders a CTA and the token stays inside the href.
 
-  async sendPasswordResetEmail(to: string, rawToken: string): Promise<void> {
-    await this.send(buildPasswordResetEmail(to, rawToken));
-  }
-
-  async sendEmailVerification(to: string, rawToken: string): Promise<void> {
-    await this.send(buildEmailVerificationEmail(to, rawToken));
-  }
+    Deleting them rather than leaving them unused is the point: a second
+    way to compose an email is a second way to get it wrong, and the next
+    person would have reached for the shorter one.
+  */
 
   async sendTransactionalEmail(input: TransactionalEmailInput): Promise<void> {
     await this.send({

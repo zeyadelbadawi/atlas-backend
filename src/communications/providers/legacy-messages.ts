@@ -1,62 +1,62 @@
 /**
- * The two P1/10.1 credential emails, composed in exactly one place.
+ * Recovering a live credential from a sent email — TEST SUPPORT ONLY.
  *
- * `EmailProviderRegistry.sendPasswordResetEmail`/`sendEmailVerification`
- * build their `send()` input here; `StubEmailProvider` recovers the token
- * from that same text for its test-only `peek*` helpers, so the wording is
- * a contract between these two files only. The tokens are live
- * credentials — they go into the message body and nowhere else (never a
- * tag, header or log).
+ * The password-reset and email-verification emails no longer paste their
+ * token into the body. They used to:
+ *
+ *     Reset token: 9f2c1e...
+ *
+ * which handed the recipient an internal credential with no action
+ * attached — a dead end, and the exact shape a phishing lookalike
+ * imitates. Both now go through `CommunicationService.emit` and render
+ * the catalogue's bilingual template with a CTA button, so the token
+ * travels INSIDE the href and is never displayed.
+ *
+ * `StubEmailProvider` still needs to recover it so the e2e suites can
+ * follow the link the way a person would, so the extractors below parse
+ * the `token` query parameter out of the rendered URL instead of a
+ * marker line. That keeps the test harness following the real contract
+ * rather than a private one it shares with a builder that no longer
+ * exists.
+ *
+ * The two `*_TAG` constants remain because the stub still uses them to
+ * classify a send, and `EmailSendInput.tags` still carries them for the
+ * legacy interface methods.
  */
-import type { EmailSendInput } from '../../identity/services/email-provider.interface';
-
 export const PASSWORD_RESET_TAG = 'password_reset';
 export const EMAIL_VERIFICATION_TAG = 'email_verification';
 
-const RESET_MARKER = 'Reset token: ';
-const VERIFY_MARKER = 'Verification token: ';
+/** Catalogue keys, as `EmailTransport` flattens them into a tag. */
+export const PASSWORD_RESET_EVENT_TAG = 'key:auth.password.reset';
+export const EMAIL_VERIFICATION_EVENT_TAG = 'key:auth.email.verification';
 
-export function buildPasswordResetEmail(to: string, rawToken: string): EmailSendInput {
-  // P1's own reset-link convention — the frontend route, never a raw
-  // token dump; matches the URL shape `AuthService`'s callers already
-  // build elsewhere for user-facing links.
-  return {
-    to,
-    subject: 'Reset your Atlas password',
-    text:
-      `We received a request to reset your Atlas password.\n\n` +
-      `${RESET_MARKER}${rawToken}\n\n` +
-      `If you did not request this, you can safely ignore this email.`,
-    category: 'security',
-    tags: [PASSWORD_RESET_TAG],
-  };
-}
-
-export function buildEmailVerificationEmail(
-  to: string,
-  rawToken: string,
-): EmailSendInput {
-  return {
-    to,
-    subject: 'Verify your Atlas email address',
-    text:
-      `Welcome to Atlas.\n\n` +
-      `${VERIFY_MARKER}${rawToken}\n\n` +
-      `If you did not create an Atlas account, you can safely ignore this email.`,
-    category: 'security',
-    tags: [EMAIL_VERIFICATION_TAG],
-  };
-}
-
-function extractAfter(text: string, marker: string): string | undefined {
-  const line = text.split('\n').find((candidate) => candidate.startsWith(marker));
-  return line ? line.slice(marker.length).trim() || undefined : undefined;
+/**
+ * Pulls `?token=...` out of the first URL in the message that points at
+ * `path`. Deliberately scoped to the expected destination: a body that
+ * happens to contain some other link cannot be mistaken for the one the
+ * flow depends on, and a token that appears anywhere OUTSIDE a URL is
+ * not found — which is what makes this an honest check that the value is
+ * only ever in the href.
+ */
+function extractTokenFromLink(text: string, path: string): string | undefined {
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
+    let url: URL;
+    try {
+      url = new URL(match[0]);
+    } catch {
+      continue;
+    }
+    if (!url.pathname.endsWith(path)) continue;
+    const token = url.searchParams.get('token');
+    if (token) return token;
+  }
+  return undefined;
 }
 
 export function extractPasswordResetToken(text: string): string | undefined {
-  return extractAfter(text, RESET_MARKER);
+  return extractTokenFromLink(text, '/auth/reset-password');
 }
 
 export function extractEmailVerificationToken(text: string): string | undefined {
-  return extractAfter(text, VERIFY_MARKER);
+  return extractTokenFromLink(text, '/auth/verify-email');
 }

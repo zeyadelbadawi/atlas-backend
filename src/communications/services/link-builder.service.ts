@@ -22,7 +22,10 @@ import type {
   CommunicationsConfig,
   PlatformDomainRuntimeConfig,
 } from '../../config/configuration';
-import type { CommunicationLocale } from '../catalog/communication-catalog';
+import type {
+  CommunicationAudience,
+  CommunicationLocale,
+} from '../catalog/communication-catalog';
 import { resolveCanonicalHost } from '../../domain/utils/canonical-host.util';
 import { PrismaService } from '../../database/prisma.service';
 
@@ -47,12 +50,37 @@ export class LinkBuilderService {
     return `${this.platformWebUrl}${normalizePath(path)}`;
   }
 
-  /** The recipient's communication-settings page, on the branded host when one is known. */
-  settings(locale: CommunicationLocale, academyHost: string | null): string {
-    const path = '/settings/notifications';
-    return academyHost
-      ? `https://${academyHost}${localePrefix(locale)}${path}`
-      : this.platform(`${localePrefix(locale)}${path}`);
+  /**
+   * Where the recipient actually manages their email preferences.
+   *
+   * This used to return `/settings/notifications`, which is a route on
+   * NEITHER surface — so the "Manage email settings" line in the footer
+   * of every single email led to a not-found page. It also prefixed
+   * `/ar` on the platform host, which mounts no `/ar` subtree at all, so
+   * the Arabic footer was dead twice over.
+   *
+   * The destination depends on WHO is reading, which is why the audience
+   * is a parameter now rather than something this could infer: a learner
+   * manages preferences at `/my/profile` on their academy's host, and
+   * staff or platform recipients at `/dashboard/profile` on the platform
+   * host. `/dashboard/*` is not mounted on an academy host — that tree
+   * falls into the CMS catch-all and renders the academy's own 404 —
+   * which is exactly how the old value stayed invisible.
+   *
+   * The locale prefix applies ONLY to the academy host, because that is
+   * the one place `withPublicWebsiteLocale` mounts it.
+   */
+  settings(
+    locale: CommunicationLocale,
+    academyHost: string | null,
+    audience: CommunicationAudience = 'platform',
+  ): string {
+    if (audience === 'learner' && academyHost) {
+      return `https://${academyHost}${localePrefix(locale)}${LEARNER_PROFILE_PATH}`;
+    }
+    // Staff and platform recipients read the management surface, which
+    // only exists on the platform host and carries no locale prefix.
+    return this.platform(MANAGEMENT_PROFILE_PATH);
   }
 
   /** The academy's canonical host, or `null` when it has none yet. */
@@ -105,6 +133,11 @@ function normalizePath(path: string): string {
   if (!path) return '/';
   return path.startsWith('/') ? path : `/${path}`;
 }
+
+/** `LEARNER_ROUTES.profile` — renders `ProfilePreferencesSection` on the academy surface. */
+const LEARNER_PROFILE_PATH = '/my/profile';
+/** `DASHBOARD_ROUTES.profile` — the same section on the management surface. */
+const MANAGEMENT_PROFILE_PATH = '/dashboard/profile';
 
 function localePrefix(locale: CommunicationLocale): string {
   return locale === 'ar' ? '/ar' : '';
