@@ -210,6 +210,21 @@ describe('DeletionPlanService', () => {
       expect(treatmentOf(plan.lines, 'identity')).toBe('deidentify');
     });
 
+    it('never claims a consequence the account does not have', async () => {
+      // Found in production, 26 Sep 2026: an account with no certificates
+      // was shown "0 certificates keep their records without the holder's
+      // name". The filter kept every `deidentify` line regardless of count,
+      // to protect the always-true identity line — and caught `certificates`
+      // with it. A dialog whose whole job is accuracy must not list a
+      // consequence that will not happen.
+      const plan = await build({ certificates: 0, enrollments: 0 }).buildForUser('u1');
+      expect(treatmentOf(plan.lines, 'certificates')).toBeUndefined();
+      expect(treatmentOf(plan.lines, 'enrollments')).toBeUndefined();
+      // …while the always-true lines, which carry a real count of 1, stay.
+      expect(treatmentOf(plan.lines, 'identity')).toBe('deidentify');
+      expect(treatmentOf(plan.lines, 'financialRecords')).toBe('retain');
+    });
+
     it('names only a handful of academies however many there are', async () => {
       const many = Array.from({ length: 9 }, (_, i) => ({
         id: `a${i}`,

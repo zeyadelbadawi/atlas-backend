@@ -160,7 +160,16 @@ export class DeletionPlanService {
       ...tenantLines,
       ...personalLines,
       ...this.buildRetainedLines(),
-    ].filter((line) => line.count > 0 || line.treatment === 'deidentify');
+      // Drop empty groups. The four always-true lines (identity,
+      // credentials, financial, audit) carry a count of 1 so they survive
+      // this on their own merit.
+      //
+      // This used to also keep every `deidentify` line regardless of count,
+      // to protect those always-true ones. It protected `certificates` too,
+      // so an account with no certificates was told "0 certificates keep
+      // their records" — a consequence it does not have, in a dialog whose
+      // entire job is to be accurate.
+    ].filter((line) => line.count > 0);
 
     return {
       userId,
