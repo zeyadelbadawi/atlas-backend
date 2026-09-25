@@ -60,6 +60,7 @@ import { AcademySurfaceService } from './academy-surface.service';
 import { EmailOtpService } from './email-otp.service';
 import { CommunicationMetricsService } from '../../communications/metrics/communication-metrics.service';
 import { CommunicationService } from '../../communications/services/communication.service';
+import { AcademyStaffRecipientsService } from '../../communications/services/academy-staff-recipients.service';
 import { TrustedDeviceService } from './trusted-device.service';
 import type { EmailOtpChallengeContract } from '../dto/contracts';
 import type { SignInSurface } from '../dto/sign-in.dto';
@@ -180,6 +181,7 @@ export class AuthService {
     // `IdentityModule` needs no new import (`EmailOtpService` and
     // `UsersService` already inject this service the same way).
     private readonly communicationService: CommunicationService,
+    private readonly staffRecipients: AcademyStaffRecipientsService,
   ) {}
 
   /**
@@ -297,6 +299,8 @@ export class AuthService {
     const rawVerificationToken = generateOpaqueToken();
     const userId = randomUUID();
 
+    const pendingApprovalOutboxIds: (string | null)[] = [];
+
     // P64 Phase 1 (Finding F4) — ONE transaction: the user row, the
     // academy membership and the verification-token outbox entry either
     // all exist or none do. The membership insert runs under the new
@@ -308,13 +312,36 @@ export class AuthService {
         data: { id: userId, email, passwordHash, name: input.name },
       });
       if (academyId && admission) {
-        await this.academyStudentsRepository.create(tx, {
+        const student = await this.academyStudentsRepository.create(tx, {
           academyId,
           userId,
           status: admission.status,
           source: admission.source,
           registeredViaHost: input.hostname ?? null,
         });
+
+        // P64 C3 (plan §8 G1). A `pending` learner is BLOCKED until staff
+        // act, so nobody being told is a person stuck indefinitely whose
+        // only recourse is to complain. Emitted inside this transaction,
+        // so a registration that rolls back leaves no phantom work item.
+        //
+        // The acting context is the brand-new user's own, which can see
+        // neither the academy's members nor the academy row — hence the
+        // definer-backed staff lookup, and hence no `academyName` here
+        // (the dispatcher resolves branding itself).
+        if (admission.status === 'pending') {
+          const approvers = await this.staffRecipients.moderators(tx, academyId);
+          for (const approverUserId of approvers) {
+            const emitted = await this.communicationService.emit(tx, {
+              key: 'roster.student.awaiting_approval',
+              recipientUserId: approverUserId,
+              academyId,
+              entity: { type: 'academy_student', id: student.id },
+              values: {},
+            });
+            pendingApprovalOutboxIds.push(emitted.outboxId);
+          }
+        }
       }
       await tx.emailVerificationToken.create({
         data: {
@@ -326,6 +353,10 @@ export class AuthService {
         },
       });
     });
+
+    for (const outboxId of pendingApprovalOutboxIds) {
+      await this.communicationService.enqueueAfterCommit(outboxId);
+    }
 
     // Delivery is best-effort AFTER commit: the account and its token
     // exist; a bad SMTP minute must not undo a registration, and the user

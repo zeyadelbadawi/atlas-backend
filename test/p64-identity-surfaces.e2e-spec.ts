@@ -364,11 +364,7 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
     return { id: res.body.id as string, token: res.body.token as string };
   }
 
-  function registerWithInvite(
-    academyId: string,
-    email: string,
-    inviteToken: string,
-  ) {
+  function registerWithInvite(academyId: string, email: string, inviteToken: string) {
     return request(app.getHttpServer()).post('/auth/register').send({
       name: 'Invitee',
       email,
@@ -439,11 +435,9 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
     expect(stored.email).toBe(`${localPart}@example.com`);
 
     // The invitee registers with the canonical (lowercased) address — matches.
-    await registerWithInvite(
-      academy.id,
-      `${localPart}@example.com`,
-      invite.token,
-    ).expect(201);
+    await registerWithInvite(academy.id, `${localPart}@example.com`, invite.token).expect(
+      201,
+    );
   });
 
   it('an expired email-bound invite is refused', async () => {
@@ -512,7 +506,7 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
     expect(refused.body.error.messageKey).toBe('errors.auth.inviteInvalid');
   });
 
-  it("an invite for Academy A cannot be redeemed into Academy B", async () => {
+  it('an invite for Academy A cannot be redeemed into Academy B', async () => {
     const a = await inviteAcademy('invite-bound-cross-a');
     const b = await inviteAcademy('invite-bound-cross-b');
     const invitedEmail = uniqueTestEmail('invite-bound-cross-invitee');
@@ -727,11 +721,9 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
 
     // A different (also legitimate) address cannot claim it...
     const attacker = uniqueTestEmail('invite-trust-redeem-attacker');
-    const refused = await registerWithInvite(
-      academy.id,
-      attacker,
-      invite.token,
-    ).expect(400);
+    const refused = await registerWithInvite(academy.id, attacker, invite.token).expect(
+      400,
+    );
     expect(refused.body.error.messageKey).toBe('errors.auth.inviteInvalid');
 
     // ...and the invited address still can (ownership proven here, at
@@ -741,6 +733,58 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
       where: { academyId: academy.id, user: { email: invitedEmail } },
     });
     expect(membership.source).toBe('invite');
+  });
+
+  /**
+   * P64 C3 (plan §8 G1) — the STAFF half of the approval policy.
+   *
+   * A `pending` learner is blocked until someone acts, so a queue nobody
+   * is told about is a person stuck indefinitely whose only recourse is
+   * to complain. The emit happens inside the REGISTRATION transaction
+   * under the brand-new user's own RLS context, which can see neither the
+   * academy's members nor the academy row — so this also exercises the
+   * definer-backed staff lookup from the hardest possible context.
+   */
+  it('G1: an approval-policy signup tells the academy’s approvers', async () => {
+    const { academy, owner } = await seedAcademyWithOwner('g1-approval');
+    await admin.academy.update({
+      where: { id: academy.id },
+      data: { registrationPolicy: 'approval' },
+    });
+
+    const learner = await registerLearner('g1-approval-learner', academy.id);
+    const student = await admin.academyStudent.findFirstOrThrow({
+      where: { academyId: academy.id, user: { email: learner.email } },
+    });
+
+    const rows = await admin.communicationOutbox.findMany({
+      where: { key: 'roster.student.awaiting_approval', entityId: student.id },
+      select: { recipientUserId: true },
+    });
+    expect(rows.map((r) => r.recipientUserId)).toContain(owner.userId);
+    // Never the person who just signed up.
+    expect(rows.map((r) => r.recipientUserId)).not.toContain(student.userId);
+  });
+
+  it('G1: an OPEN academy admits immediately and creates no approval work item', async () => {
+    const { academy } = await seedAcademyWithOwner('g1-open');
+    // `open` is the default; asserted explicitly so a policy change to
+    // the seed cannot make this pass vacuously.
+    await admin.academy.update({
+      where: { id: academy.id },
+      data: { registrationPolicy: 'open' },
+    });
+
+    const learner = await registerLearner('g1-open-learner', academy.id);
+    const student = await admin.academyStudent.findFirstOrThrow({
+      where: { academyId: academy.id, user: { email: learner.email } },
+    });
+    expect(student.status).toBe('active');
+    expect(
+      await admin.communicationOutbox.count({
+        where: { key: 'roster.student.awaiting_approval', entityId: student.id },
+      }),
+    ).toBe(0);
   });
 
   it('an APPROVAL academy registers the learner as pending and refuses access until approved', async () => {

@@ -40,6 +40,7 @@ import { template as rosterStudentUnblocked } from './keys/roster.student.unbloc
 import { template as courseOrderProofSubmitted } from './keys/course.order.proof_submitted';
 import { template as reviewModerated } from './keys/review.moderated';
 import { template as reviewSubmitted } from './keys/review.submitted';
+import { template as rosterStudentAwaitingApproval } from './keys/roster.student.awaiting_approval';
 import { template as enrollmentSelfEnrolled } from './keys/enrollment.self_enrolled';
 import { template as courseOrderCreated } from './keys/course.order.created';
 import { template as courseOrderExpired } from './keys/course.order.expired';
@@ -136,6 +137,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'retention.video.deleted': retentionVideoDeleted,
   'retention.video.deletion_failed': retentionVideoDeletionFailed,
   'review.submitted': reviewSubmitted,
+  'roster.student.awaiting_approval': rosterStudentAwaitingApproval,
   'enrollment.self_enrolled': enrollmentSelfEnrolled,
   'course.order.created': courseOrderCreated,
   'course.order.expired': courseOrderExpired,
