@@ -106,7 +106,41 @@ DELETE; `courses` has no DELETE policy.
 
 ### `IMPLEMENTED` — Self-delete freeze fix (25 Sep 2026)
 
-See §8.
+See §8. Frontend `2380e51`, production-verified.
+
+### `IMPLEMENTED` — Deletion plan (25 Sep 2026)
+
+`GET /api/v1/users/me/deletion-plan` and
+`GET /api/v1/platform-user-management/:userId/deletion-plan` →
+`DeletionPlanService`. Read-only. Returns per-group lines carrying one of
+the five treatments plus real counts read from the rows the deletion will
+act on, so a confirmation dialog can never drift from the code. Keeps the
+no-`:id` shape on the self route so it cannot enumerate what others own.
+Backend `5b79d9f`; the self route is production-verified (401 registered,
+404 on a nonexistent sibling).
+
+Every count states the context it needs, because a count outside the
+right context does not error — RLS filters every row and returns a
+confident zero. Notably `enrollments` is user-scoped, so the affected-
+learner figure comes from `academy_students` instead.
+
+### `PARTIAL` — Platform Owner administrative deletion (25 Sep 2026)
+
+`POST /api/v1/platform-user-management/:userId/delete` →
+`AccountDeletionService.deleteUserAsPlatformOwner`. One implementation,
+two doors: both entry points call one private `performDeletion`, so the
+resulting data state cannot depend on who pressed the button. Runs in the
+TARGET's own context, which is what lets the existing self-scoped DELETE
+policies apply without widening anything for operators.
+
+Two server-side refusals: an operator may not delete themselves through
+it, and may not delete another Platform Owner — nothing in the product
+can grant `is_platform_owner` back, so that would be an unrecoverable
+lockout. Audited as `account.deleted_by_platform_owner` with the operator
+as actor.
+
+Backend `2965719`. **`PARTIAL` because the frontend management surface
+does not exist yet** and production verification is pending.
 
 ---
 
@@ -117,7 +151,7 @@ See §8.
 | **Public R2 objects are never deleted** | **High** | `MediaStorageProvider` exposes only `putObject`/`getObject`. There is no delete capability on the public bucket *at all*. Every logo, thumbnail and marketing image stays fetchable at its public URL forever, after archive and after account deletion. |
 | **Cloudflare Stream videos are never deleted** | **High** | `deleteAsset` exists and works, but its only caller is the video-retention sweep. Deleting a course or lesson leaves the video playable and still billing storage minutes. |
 | **Certificate PDFs are orphaned** | Medium | Anonymisation nulls `storageKey` and re-renders, but never deletes the previous PDF — which carries the real learner's name — from the protected bucket. A live PII retention leak. |
-| **No Platform Owner deletion** | High | `platform-users.controller.ts` is `@Get()` only. There is no administrative deletion path of any kind. |
+| **No Platform Owner management UI** | High | The API exists as of `2965719`; the page a Platform Owner would use does not. Backend capability without its surface is not product-complete (Quality Master Plan §9). |
 | **No organization teardown** | Medium | Academies are archived; the `Organization` row and its subscription state are left active. |
 | **No deleted-course learner tombstone** | Medium | An archived course simply vanishes from the learner's view. |
 | **Learning leases not revoked** | Medium | `LearningLeaseService.revokeAll` exists and is exactly the right primitive, but no deletion path calls it. A learner mid-playback continues until the lease TTL. |
