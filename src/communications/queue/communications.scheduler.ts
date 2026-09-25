@@ -1,5 +1,5 @@
 /**
- * Registers the three repeatable communication jobs, following
+ * Registers the four repeatable communication jobs, following
  * `Phase2MaintenanceScheduler` exactly: BullMQ's own `repeat` with a fixed
  * `jobId`, idempotent across boots and instances, no `@nestjs/schedule`.
  */
@@ -9,6 +9,9 @@ import { Queue } from 'bullmq';
 import {
   COMMUNICATIONS_QUEUE,
   COMMUNICATION_DIGEST_INTERVAL_MS,
+  COMMUNICATION_EXCEPTION_ACTIVATION_INTERVAL_MS,
+  COMMUNICATION_EXCEPTION_ACTIVATION_REPEAT_JOB_ID,
+  COMMUNICATION_JOB_EXCEPTION_ACTIVATION,
   COMMUNICATION_DIGEST_REPEAT_JOB_ID,
   COMMUNICATION_JOB_DIGEST,
   COMMUNICATION_JOB_PRUNE,
@@ -46,6 +49,11 @@ export class CommunicationsScheduler implements OnApplicationBootstrap {
         COMMUNICATION_PRUNE_REPEAT_JOB_ID,
         COMMUNICATION_PRUNE_INTERVAL_MS,
       ],
+      [
+        COMMUNICATION_JOB_EXCEPTION_ACTIVATION,
+        COMMUNICATION_EXCEPTION_ACTIVATION_REPEAT_JOB_ID,
+        COMMUNICATION_EXCEPTION_ACTIVATION_INTERVAL_MS,
+      ],
     ] as const;
     for (const [name, jobId, every] of jobs) {
       await this.queue.add(
@@ -60,7 +68,7 @@ export class CommunicationsScheduler implements OnApplicationBootstrap {
       );
     }
     this.logger.log(
-      'Registered recurring communication jobs (sweep 60s, digest hourly, prune daily).',
+      'Registered recurring communication jobs (sweep 60s, digest hourly, prune daily, exception activation 5m).',
     );
   }
 }

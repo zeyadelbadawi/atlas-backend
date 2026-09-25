@@ -13,6 +13,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import type { Job } from 'bullmq';
 import { CommunicationDispatchService } from '../services/communication-dispatch.service';
+import { QuizExceptionActivationService } from '../services/quiz-exception-activation.service';
 import { DeliveryEventService } from '../services/delivery-event.service';
 import type { CommunicationsWebhookJobPayload } from './communications-queue.types';
 import {
@@ -20,6 +21,7 @@ import {
   COMMUNICATION_DISPATCH_ATTEMPTS,
   COMMUNICATION_JOB_DIGEST,
   COMMUNICATION_JOB_DISPATCH,
+  COMMUNICATION_JOB_EXCEPTION_ACTIVATION,
   COMMUNICATION_JOB_PRUNE,
   COMMUNICATION_JOB_SWEEP,
   COMMUNICATION_JOB_WEBHOOK,
@@ -33,6 +35,7 @@ export class CommunicationsProcessor extends WorkerHost {
   constructor(
     private readonly dispatch: CommunicationDispatchService,
     private readonly deliveryEvents: DeliveryEventService,
+    private readonly exceptionActivation: QuizExceptionActivationService,
   ) {
     super();
   }
@@ -71,6 +74,15 @@ export class CommunicationsProcessor extends WorkerHost {
           { jobId: job.id, ...result },
           'Communication retention prune complete',
         );
+        return;
+      }
+      case COMMUNICATION_JOB_EXCEPTION_ACTIVATION: {
+        const result = await this.exceptionActivation.run();
+        if (result.emitted > 0)
+          this.logger.log(
+            { jobId: job.id, ...result },
+            'Learner exception activations announced',
+          );
         return;
       }
       case COMMUNICATION_JOB_WEBHOOK: {

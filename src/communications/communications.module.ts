@@ -33,6 +33,7 @@ import { CommunicationsProcessor } from './queue/communications.processor';
 import { CommunicationsScheduler } from './queue/communications.scheduler';
 import { CommunicationService } from './services/communication.service';
 import { CommunicationDispatchService } from './services/communication-dispatch.service';
+import { QuizExceptionActivationService } from './services/quiz-exception-activation.service';
 import { CommunicationBrandingService } from './services/communication-branding.service';
 import { CommunicationPreferencesService } from './services/communication-preferences.service';
 import { EmailTransport } from './services/email-transport';
@@ -41,6 +42,7 @@ import { AcademyStaffRecipientsService } from './services/academy-staff-recipien
 import { COMMUNICATION_SUPPRESSION } from './services/communication-suppression.interface';
 import { SuppressionService } from './services/suppression.service';
 import { CommunicationMetricsService } from './metrics/communication-metrics.service';
+import { PLANS_CLOCK, SystemClock } from '../plans/utils/clock';
 import { CommunicationPreferencesController } from './controllers/communication-preferences.controller';
 import { PlatformCommunicationsController } from './controllers/platform-communications.controller';
 import { PlatformCommunicationsHealthService } from './services/platform-communications-health.service';
@@ -66,12 +68,31 @@ import { PlatformCommunicationsHealthService } from './services/platform-communi
     CommunicationService,
     CommunicationDispatchService,
     CommunicationPreferencesService,
+    /*
+      W-EXC — the scheduled-exception sweep needs a pinnable instant.
+
+      `PLANS_CLOCK` is BOUND here rather than imported from `PlansModule`,
+      and that is deliberate: `PlansModule`'s own header records that it
+      reaches `CommunicationService` through this `@Global()` module
+      precisely so that no import edge exists between the two. Adding
+      `PlansModule` to `imports` above would close that loop and Nest
+      would refuse to build the graph. The token is shared so that one
+      `overrideProvider(PLANS_CLOCK)` in a regression suite pins every
+      clock in the process, exactly as the lifecycle suites already
+      assume; `SystemClock` is stateless, so a second instance of it
+      changes nothing in production.
+    */
+    { provide: PLANS_CLOCK, useClass: SystemClock },
+    QuizExceptionActivationService,
     CommunicationsProcessor,
     CommunicationsScheduler,
   ],
   exports: [
     CommunicationService,
     CommunicationDispatchService,
+    // Exported so the activation sweep can be driven directly by a
+    // fake-clock regression suite, exactly as `TenantLifecycleService` is.
+    QuizExceptionActivationService,
     CommunicationPreferencesService,
     CommunicationMetricsService,
     LinkBuilderService,

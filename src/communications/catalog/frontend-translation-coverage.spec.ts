@@ -28,7 +28,21 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { COMMUNICATION_CATALOG } from './communication-catalog';
 
-const FRONTEND_ROOT = resolve(__dirname, '../../../../atlas-front');
+/**
+ * The sibling frontend checkout.
+ *
+ * `ATLAS_FRONTEND_ROOT` overrides it, and exists for one situation this
+ * pair of repositories is always in during a cross-cutting change: the
+ * backend change sits on a worktree and the matching frontend change sits
+ * on a worktree of the OTHER repository, so `../atlas-front` resolves to
+ * the other repo's main branch — which of course does not carry the keys
+ * yet, and the spec would report a failure that is real for main and
+ * meaningless for the branch under test. The default is unchanged, so
+ * nothing about an ordinary run moves.
+ */
+const FRONTEND_ROOT = process.env.ATLAS_FRONTEND_ROOT
+  ? resolve(process.env.ATLAS_FRONTEND_ROOT)
+  : resolve(__dirname, '../../../../atlas-front');
 const LOCALES = ['en', 'ar'] as const;
 
 function localePath(lang: string): string {
@@ -49,7 +63,19 @@ describeIfAvailable('catalogue keys have frontend translations', () => {
   const events = Object.values(COMMUNICATION_CATALOG);
   const required = new Set<string>();
   for (const entry of events) {
-    for (const key of [entry.titleKey, entry.messageKey]) {
+    // The entry's own pair AND every alternative pair a copy variant can
+    // write. A variant is exactly as capable of shipping untranslated as
+    // the default is — more so, because it only renders in the case
+    // nobody remembers to look at.
+    const keys = [
+      entry.titleKey,
+      entry.messageKey,
+      ...(entry.variants ?? []).flatMap((variant) => [
+        variant.titleKey,
+        variant.messageKey,
+      ]),
+    ];
+    for (const key of keys) {
       const name = eventName(key);
       if (name) required.add(name);
     }

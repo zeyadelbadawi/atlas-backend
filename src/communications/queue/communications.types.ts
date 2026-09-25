@@ -1,7 +1,7 @@
 /**
  * The `communications` BullMQ queue — P64 Communications C1.
  *
- * FIVE job names on ONE queue, and exactly ONE processor (the established
+ * SIX job names on ONE queue, and exactly ONE processor (the established
  * "one queue, one repeatable job, one processor" rule of
  * `SubscriptionSweepScheduler`, extended to a small family of related
  * jobs rather than five queues).
@@ -27,6 +27,11 @@
  *     `notifications` past their retention class.
  *   - `webhook`  — one job per inbound provider delivery event, enqueued
  *     by the webhook route so the HTTP handler answers 202 immediately.
+ *   - `exception-activation` — every 5 min, tells a learner that a quiz
+ *     exception scheduled for later has just opened. The only job here
+ *     that EMITS rather than delivers; it is on this queue, under this
+ *     processor, precisely because a second `@Processor` would eat the
+ *     other five.
  *
  * Job ids never contain `:` (P64 Phase 3 finding — BullMQ treats a colon
  * in a custom id as a key separator).
@@ -39,14 +44,41 @@ export const COMMUNICATION_JOB_DIGEST = 'digest';
 export const COMMUNICATION_JOB_PRUNE = 'prune';
 /** Inbound provider delivery events (bounce/complaint/delivered). */
 export const COMMUNICATION_JOB_WEBHOOK = 'webhook';
+/** Scheduled learner exceptions whose `availableFrom` has now passed (W-EXC). */
+export const COMMUNICATION_JOB_EXCEPTION_ACTIVATION = 'exception-activation';
 
 export const COMMUNICATION_SWEEP_REPEAT_JOB_ID = 'communications-sweep-repeat';
 export const COMMUNICATION_DIGEST_REPEAT_JOB_ID = 'communications-digest-repeat';
 export const COMMUNICATION_PRUNE_REPEAT_JOB_ID = 'communications-prune-repeat';
+export const COMMUNICATION_EXCEPTION_ACTIVATION_REPEAT_JOB_ID =
+  'communications-exception-activation-repeat';
 
 export const COMMUNICATION_SWEEP_INTERVAL_MS = 60 * 1000;
 export const COMMUNICATION_DIGEST_INTERVAL_MS = 60 * 60 * 1000;
 export const COMMUNICATION_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/**
+ * How often the exception-activation sweep asks "has a scheduled
+ * exception opened?". Five minutes is the latency a learner sees between
+ * their window opening and being told; it is not a correctness knob,
+ * because the dedupe key is the transition instant and not the tick.
+ */
+export const COMMUNICATION_EXCEPTION_ACTIVATION_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * How far back the activation sweep looks.
+ *
+ * The sweep is stateless: it re-asks the question from the rows every
+ * tick, so the window is what stops it re-reading years of history — NOT
+ * what stops it re-notifying (the dedupe key does that, and would do it
+ * with no window at all). Twenty-four hours means an outage of up to a
+ * day still delivers every activation it missed; past that the news is
+ * stale enough that telling someone their window opened yesterday is
+ * worse than silence.
+ */
+export const COMMUNICATION_EXCEPTION_ACTIVATION_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+/** Rows one activation tick will consider. */
+export const COMMUNICATION_EXCEPTION_ACTIVATION_BATCH = 500;
 
 /** Delivery retry policy: 6 attempts, exponential from 30 s (30 s, 1 m, 2 m, 4 m, 8 m). */
 export const COMMUNICATION_DISPATCH_ATTEMPTS = 6;

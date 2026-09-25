@@ -35,6 +35,7 @@ import {
 import {
   COMMUNICATION_CATALOG,
   COMMUNICATION_EVENT_KEYS,
+  catalogCopy,
   catalogEntry,
   isCommunicationEventKey,
   type CommunicationEventKey,
@@ -68,6 +69,10 @@ const GRACE_ENDS_AT = '2026-11-08T09:00:00.000Z';
 const PROOF_ID = 'p3333333-3333-4333-8333-333333333333';
 /** The calendar day a repeating, self-damping event was first seen — see `device.limit_reached`. */
 const OCCURRED_ON = '2026-09-25';
+/** W-EXC — a learner exception's grant instant and the instant its window opens. */
+const GRANTED_AT_MS = 1790000001111;
+const AVAILABLE_FROM_MS = 1790000600000;
+const EXCEPTION_REVOKED_AT_MS = 1790000777777;
 
 /**
  * The pre-outbox dedupe string for every migrated key, and the values the
@@ -366,6 +371,39 @@ const EXPECTED_DEDUPE: Record<
     },
     expected: `quiz_attempt.invalidated:${ENTITY_ID}:${DECIDED_AT_MS}`,
   },
+  'assessment.exception.granted': {
+    values: {
+      quizTitle: 'Unit 1',
+      courseId: 'c1',
+      quizId: 'q1',
+      timeMultiplier: '1.5',
+      extraAttempts: 1,
+      grantedAtMs: GRANTED_AT_MS,
+      scheduled: false,
+    },
+    expected: `quiz_override.granted:${ENTITY_ID}:${GRANTED_AT_MS}`,
+  },
+  'assessment.exception.activated': {
+    values: {
+      quizTitle: 'Unit 1',
+      courseId: 'c1',
+      quizId: 'q1',
+      timeMultiplier: '1.5',
+      extraAttempts: 1,
+      availableFromMs: AVAILABLE_FROM_MS,
+      availableFromLabel: '2026-09-25 10:23 UTC',
+    },
+    expected: `quiz_override.activated:${ENTITY_ID}:${AVAILABLE_FROM_MS}`,
+  },
+  'assessment.exception.revoked': {
+    values: {
+      quizTitle: 'Unit 1',
+      courseId: 'c1',
+      quizId: 'q1',
+      revokedAtMs: EXCEPTION_REVOKED_AT_MS,
+    },
+    expected: `quiz_override.revoked:${ENTITY_ID}:${EXCEPTION_REVOKED_AT_MS}`,
+  },
   'course.completed': {
     values: { completedAtMs: DECIDED_AT_MS, courseId: 'c1', courseTitle: 'Algebra' },
     expected: `course.completed:${ENTITY_ID}:${DECIDED_AT_MS}`,
@@ -409,6 +447,51 @@ const NEVER_DEDUPED_KEYS: readonly CommunicationEventKey[] = [
 function context(values: Record<string, unknown> = {}): CommunicationRuleContext {
   return { entity: { type: 'fixture', id: ENTITY_ID }, values };
 }
+
+describe('the learner-exception copy variant', () => {
+  const entry = COMMUNICATION_CATALOG['assessment.exception.granted'];
+
+  it('is the only entry that declares one, and declares exactly one', () => {
+    const withVariants = COMMUNICATION_EVENT_KEYS.filter(
+      (key) => (COMMUNICATION_CATALOG[key].variants ?? []).length > 0,
+    );
+    expect(withVariants).toEqual(['assessment.exception.granted']);
+    expect(entry.variants).toHaveLength(1);
+  });
+
+  it('writes the SCHEDULED copy when the producer said the window is not open', () => {
+    const copy = catalogCopy(entry, context({ scheduled: true }));
+    expect(copy.titleKey).toBe('notifications:events.exceptionScheduled.title');
+    expect(copy.messageKey).toBe('notifications:events.exceptionScheduled.message');
+  });
+
+  it('writes the default ACTIVE copy otherwise — including when nothing was said', () => {
+    for (const values of [{ scheduled: false }, {}, { scheduled: 'true' }]) {
+      const copy = catalogCopy(entry, context(values));
+      expect(copy.titleKey).toBe('notifications:events.exceptionGranted.title');
+      expect(copy.messageKey).toBe('notifications:events.exceptionGranted.message');
+    }
+  });
+
+  it('gives every other key its own declared pair unchanged', () => {
+    for (const key of COMMUNICATION_EVENT_KEYS) {
+      if (key === 'assessment.exception.granted') continue;
+      const candidate = COMMUNICATION_CATALOG[key];
+      expect(catalogCopy(candidate, context({ scheduled: true }))).toEqual({
+        titleKey: candidate.titleKey,
+        messageKey: candidate.messageKey,
+      });
+    }
+  });
+
+  it('never reuses a title key as a message key, in any variant', () => {
+    for (const variant of entry.variants ?? []) {
+      expect(variant.titleKey).not.toBe(variant.messageKey);
+      expect(variant.titleKey.startsWith('notifications:')).toBe(true);
+      expect(variant.messageKey.startsWith('notifications:')).toBe(true);
+    }
+  });
+});
 
 describe('COMMUNICATION_CATALOG', () => {
   it('exposes every key exactly once, and `isCommunicationEventKey` agrees', () => {
@@ -611,6 +694,51 @@ describe('COMMUNICATION_CATALOG', () => {
       expect(entry.dedupe(context({ reason: 'timeout' }))).toBe(
         entry.dedupe(context({ reason: 'integrity' })),
       );
+    });
+
+    it('keys a learner exception ACTIVATION on the transition, not on the tick', () => {
+      // The property the five-minute sweep rests on: the same window,
+      // asked about again, is the same key — so the unique index refuses
+      // the second row. A MOVED window is a different key, because the
+      // learner genuinely needs to hear about the new date.
+      const entry = COMMUNICATION_CATALOG['assessment.exception.activated'];
+      expect(entry.dedupe(context({ availableFromMs: AVAILABLE_FROM_MS }))).toBe(
+        entry.dedupe(context({ availableFromMs: AVAILABLE_FROM_MS })),
+      );
+      expect(entry.dedupe(context({ availableFromMs: AVAILABLE_FROM_MS }))).not.toBe(
+        entry.dedupe(context({ availableFromMs: AVAILABLE_FROM_MS + 1000 })),
+      );
+    });
+
+    it('distinguishes an EDITED exception from the original grant', () => {
+      const entry = COMMUNICATION_CATALOG['assessment.exception.granted'];
+      expect(entry.dedupe(context({ grantedAtMs: GRANTED_AT_MS }))).not.toBe(
+        entry.dedupe(context({ grantedAtMs: GRANTED_AT_MS + 1 })),
+      );
+    });
+
+    it('distinguishes a second revocation of the same exception', () => {
+      // Granted → revoked → granted → revoked is an ordinary sequence.
+      const entry = COMMUNICATION_CATALOG['assessment.exception.revoked'];
+      expect(entry.dedupe(context({ revokedAtMs: EXCEPTION_REVOKED_AT_MS }))).not.toBe(
+        entry.dedupe(context({ revokedAtMs: EXCEPTION_REVOKED_AT_MS + 1 })),
+      );
+    });
+
+    it('never lets the three exception events collide with each other', () => {
+      const keys = [
+        COMMUNICATION_CATALOG['assessment.exception.granted'].dedupe(
+          context({ grantedAtMs: GRANTED_AT_MS }),
+        ),
+        COMMUNICATION_CATALOG['assessment.exception.activated'].dedupe(
+          context({ availableFromMs: GRANTED_AT_MS }),
+        ),
+        COMMUNICATION_CATALOG['assessment.exception.revoked'].dedupe(
+          context({ revokedAtMs: GRANTED_AT_MS }),
+        ),
+      ];
+      // Same entity, same instant, three different facts.
+      expect(new Set(keys).size).toBe(3);
     });
 
     it('distinguishes two versions of the same certificate', () => {

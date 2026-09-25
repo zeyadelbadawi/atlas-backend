@@ -14,7 +14,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { Prisma, QuizAttempt, QuizGradingPolicy } from '@prisma/client';
+import type {
+  Prisma,
+  QuizAttempt,
+  QuizGradingPolicy,
+  QuizStudentOverride,
+} from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { CoursesRepository } from '../../course/repositories/courses.repository';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
@@ -23,6 +28,11 @@ import { CourseInstructorsRepository } from '../../course/repositories/course-in
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { CommunicationService } from '../../communications/services/communication.service';
 import type { EmitResult } from '../../communications/services/communication.service';
+import {
+  grantedValues,
+  revokedValues,
+  type QuizExceptionFacts,
+} from '../../communications/services/quiz-exception-values.util';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import {
   assertCanReviewCourse,
@@ -56,6 +66,31 @@ import {
 } from '../dto/quiz-review.contract';
 
 const MAX_TIME_MULTIPLIER = 4;
+
+/**
+ * The override row, in the shape every learner-exception message reads it
+ * (`quiz-exception-values.util.ts`).
+ *
+ * The reviewer's `reason` is deliberately not carried across — see that
+ * file's header for why the learner is not mailed the note written about
+ * them.
+ */
+function overrideFacts(
+  row: QuizStudentOverride,
+  quizTitle: string,
+  courseId: string,
+): QuizExceptionFacts {
+  return {
+    overrideId: row.id,
+    quizId: row.quizId,
+    quizTitle,
+    courseId,
+    timeMultiplier: row.timeMultiplier,
+    extraAttempts: row.extraAttempts,
+    availableFrom: row.availableFrom,
+    availableUntil: row.availableUntil,
+  };
+}
 
 @Injectable()
 export class QuizReviewService {
@@ -462,50 +497,90 @@ export class QuizReviewService {
     ) {
       throw new BadRequestException({ messageKey: 'errors.quiz.invalidTimeMultiplier' });
     }
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      const context = await this.review(tx, userId, courseId);
-      const quiz = await this.quizzesRepository.findAnyByIdWithQuestions(
-        tx,
-        courseId,
-        quizId,
-      );
-      if (!quiz) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      // The student must be enrolled in this course; the review tier makes
-      // the enrollment visible only for courses the reviewer may review.
-      const enrollment = await tx.enrollment.findFirst({
-        where: { studentId: dto.studentId, courseId },
-        select: { id: true, student: { select: { name: true } } },
-      });
-      if (!enrollment) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      const row = await this.attempts.upsertOverride(tx, quizId, dto.studentId, userId, {
-        timeMultiplier: multiplier,
-        extraAttempts: dto.extraAttempts ?? 0,
-        availableFrom: dto.availableFrom ? new Date(dto.availableFrom) : null,
-        availableUntil: dto.availableUntil ? new Date(dto.availableUntil) : null,
-        reason: dto.reason ?? null,
-      });
-      const organizationId = await this.academiesRepository.resolveOrganizationId(
-        context.academyId,
-      );
-      await this.auditLogWriterService.write(tx, {
-        actorUserId: userId,
-        organizationId: organizationId ?? undefined,
-        academyId: context.academyId,
-        role: context.reviewerRole,
-        action: 'quiz.override.updated',
-        targetType: 'quiz_student_override',
-        targetId: row.id,
-        targetLabel: enrollment.student.name,
-        context: {
+    /*
+      THE GRANT INSTANT, COMPUTED ONCE (§19 "events that legitimately
+      repeat carry a version in the key").
+
+      It is read twice — as the dedupe key's version, and as the "is this
+      window open yet?" comparison — and the two MUST agree. A second
+      `new Date()` inside the transaction could fall the other side of an
+      `availableFrom` that is milliseconds away, producing a message that
+      says "you can use it now" under a key that says it was scheduled.
+    */
+    const grantedAt = new Date();
+    const result = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const context = await this.review(tx, userId, courseId);
+        const quiz = await this.quizzesRepository.findAnyByIdWithQuestions(
+          tx,
           courseId,
           quizId,
-          studentId: dto.studentId,
-          timeMultiplier: multiplier,
-          extraAttempts: dto.extraAttempts ?? 0,
-        },
-      });
-      return toOverrideResponse(row, enrollment.student.name);
-    });
+        );
+        if (!quiz) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        // The student must be enrolled in this course; the review tier makes
+        // the enrollment visible only for courses the reviewer may review.
+        const enrollment = await tx.enrollment.findFirst({
+          where: { studentId: dto.studentId, courseId },
+          select: { id: true, student: { select: { name: true } } },
+        });
+        if (!enrollment) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        const row = await this.attempts.upsertOverride(
+          tx,
+          quizId,
+          dto.studentId,
+          userId,
+          {
+            timeMultiplier: multiplier,
+            extraAttempts: dto.extraAttempts ?? 0,
+            availableFrom: dto.availableFrom ? new Date(dto.availableFrom) : null,
+            availableUntil: dto.availableUntil ? new Date(dto.availableUntil) : null,
+            reason: dto.reason ?? null,
+          },
+        );
+        const organizationId = await this.academiesRepository.resolveOrganizationId(
+          context.academyId,
+        );
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId: organizationId ?? undefined,
+          academyId: context.academyId,
+          role: context.reviewerRole,
+          action: 'quiz.override.updated',
+          targetType: 'quiz_student_override',
+          targetId: row.id,
+          targetLabel: enrollment.student.name,
+          context: {
+            courseId,
+            quizId,
+            studentId: dto.studentId,
+            timeMultiplier: multiplier,
+            extraAttempts: dto.extraAttempts ?? 0,
+          },
+        });
+        /*
+          Tell the student — the person the accommodation exists for.
+
+          The recipient is `row.studentId`, read back from the row that
+          was just written, never `dto.studentId`: the row is the only
+          authority on whose exception this is, and a recipient taken
+          from a request body is one validation gap away from mailing
+          another academy's learner. Inside this transaction, so a later
+          failure takes the message with it.
+        */
+        const emitted = await this.communications.emit(tx, {
+          key: 'assessment.exception.granted',
+          recipientUserId: row.studentId,
+          organizationId,
+          academyId: context.academyId,
+          entity: { type: 'quiz_student_override', id: row.id },
+          values: grantedValues(overrideFacts(row, quiz.title, courseId), grantedAt),
+        });
+        return { row, studentName: enrollment.student.name, emitted };
+      },
+    );
+    await this.communications.enqueueAfterCommit(result.emitted.outboxId);
+    return toOverrideResponse(result.row, result.studentName);
   }
 
   async deleteOverride(
@@ -514,16 +589,29 @@ export class QuizReviewService {
     quizId: string,
     studentId: string,
   ): Promise<void> {
-    await this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      const context = await this.review(tx, userId, courseId);
-      const quiz = await this.quizzesRepository.findAnyByIdWithQuestions(
-        tx,
-        courseId,
-        quizId,
-      );
-      if (!quiz) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      const deleted = await this.attempts.deleteOverride(tx, quizId, studentId);
-      if (deleted > 0) {
+    /* The revocation instant, computed once — see `upsertOverride`. */
+    const revokedAt = new Date();
+    const emitted = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const context = await this.review(tx, userId, courseId);
+        const quiz = await this.quizzesRepository.findAnyByIdWithQuestions(
+          tx,
+          courseId,
+          quizId,
+        );
+        if (!quiz) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        /*
+          Read the row BEFORE deleting it. Its id is the entity the
+          communication is keyed to and its `studentId` is the recipient;
+          after the DELETE neither exists to be read, and reconstructing
+          the recipient from the URL would be taking it from the request.
+          It is also what makes a delete of something that was never there
+          silent: no row, no message.
+        */
+        const existing = await this.attempts.findOverride(tx, quizId, studentId);
+        const deleted = await this.attempts.deleteOverride(tx, quizId, studentId);
+        if (deleted === 0 || !existing) return { created: false, outboxId: null };
         const organizationId = await this.academiesRepository.resolveOrganizationId(
           context.academyId,
         );
@@ -537,8 +625,17 @@ export class QuizReviewService {
           targetId: `${quizId}:${studentId}`,
           context: { courseId, quizId, studentId },
         });
-      }
-    });
+        return this.communications.emit(tx, {
+          key: 'assessment.exception.revoked',
+          recipientUserId: existing.studentId,
+          organizationId,
+          academyId: context.academyId,
+          entity: { type: 'quiz_student_override', id: existing.id },
+          values: revokedValues(overrideFacts(existing, quiz.title, courseId), revokedAt),
+        });
+      },
+    );
+    await this.communications.enqueueAfterCommit(emitted.outboxId);
   }
 
   // --- integrity export ---------------------------------------------------------
