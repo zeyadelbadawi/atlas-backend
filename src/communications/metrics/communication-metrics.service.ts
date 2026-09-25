@@ -5,8 +5,14 @@
  * re-register, no per-tenant labels, and nothing here may throw.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { Counter, Histogram } from 'prom-client';
+import { Counter, Gauge, Histogram } from 'prom-client';
 import { METRICS_REGISTRY } from '../../observability/metrics/learning-metrics.service';
+
+function gauge(name: string, help: string): Gauge {
+  const existing = METRICS_REGISTRY.getSingleMetric(name);
+  if (existing) return existing as Gauge;
+  return new Gauge({ name, help, registers: [METRICS_REGISTRY] });
+}
 
 function counter(name: string, help: string, labelNames: readonly string[]): Counter {
   const existing = METRICS_REGISTRY.getSingleMetric(name);
@@ -71,6 +77,21 @@ export class CommunicationMetricsService {
     ['kind'],
   );
 
+  /**
+   * Age of the oldest message that is already DUE and still unclaimed.
+   *
+   * This is the only signal that separates "the dispatcher has stopped"
+   * from "nobody sent anything today" — both produce zero throughput, and
+   * a counter cannot tell them apart. Without a gauge there is nothing
+   * for an alert to fire on, so a silently dead mail pipeline would look
+   * healthy on every dashboard. Published by the sweep each tick; 0 when
+   * nothing is waiting.
+   */
+  private readonly oldestPending = gauge(
+    'atlas_comm_outbox_oldest_pending_seconds',
+    'Age in seconds of the oldest due, unclaimed communication_outbox row (0 = queue drained).',
+  );
+
   private readonly otp = counter(
     'atlas_auth_otp_total',
     'Email one-time-code challenges by outcome.',
@@ -82,6 +103,11 @@ export class CommunicationMetricsService {
     'Trusted-device lifecycle events.',
     ['event'],
   );
+
+  /** Called by the sweep every tick, so a stalled queue becomes alertable. */
+  recordOldestPendingSeconds(seconds: number): void {
+    this.oldestPending.set(Math.max(0, seconds));
+  }
 
   recordOutbox(category: string, state: string): void {
     this.safely(() => this.outbox.inc({ category, state }));
