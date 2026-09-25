@@ -83,6 +83,33 @@ function str(values: Record<string, unknown>, key: string): string {
 
 const NEVER_DEDUPED = (): null => null;
 
+/**
+ * P64 C5 — the deep link every tenant-lifecycle email and in-app row
+ * points at (plan §38: "trial/renewal emails deep-link to
+ * `/dashboard/tenant/subscription`"). One constant, so sixteen entries
+ * cannot drift apart.
+ */
+const TENANT_SUBSCRIPTION_PATH = '/dashboard/tenant/subscription';
+
+/**
+ * P64 C5 — the dedupe key of one lifecycle step:
+ * `lifecycle_<step>:<entity id>:<version>`.
+ *
+ * `version` is the step's ANCHOR — the immutable instant its timing
+ * derives from (`trialEndsAt`, `currentPeriodEnd`, `graceEndsAt`, a
+ * cancellation's `effectiveAt`), or, for the payment receipt, the proof
+ * that was uploaded. This is the mechanism that makes a sweep re-running
+ * every 15 minutes silent: the anchor has not moved, so the key is
+ * byte-identical and the unique index rejects the second INSERT. It is
+ * also what lets a legitimate recurrence through, because a renewed
+ * period has a different anchor. §19's "events that legitimately repeat
+ * carry a version in the key", applied to a sequence rather than a
+ * webhook.
+ */
+function lifecycleKey(step: string, entityId: string, version: string): string {
+  return `lifecycle_${step}:${entityId}:${version}`;
+}
+
 const CATALOG = {
   // --- Provisioning (P14) — the organisation owner who asked for the academy.
   'provisioning.completed': {
@@ -706,6 +733,340 @@ const CATALOG = {
     titleKey: 'notifications:events.reviewModerated.title',
     messageKey: 'notifications:events.reviewModerated.message',
     actionUrl: ({ values }) => `/my/courses/${str(values, 'courseId')}`,
+  },
+
+  // --- Tenant lifecycle sequences (P64 C5, plan §26 trial T1–T6 and §27
+  // subscription S1–S10). The recipient is always the organisation's
+  // owner; branding and locale are the PLATFORM's, because this is Atlas
+  // talking to its customer about their account, not an academy talking
+  // to a learner.
+  //
+  // EVERY dedupe key here is `lifecycle_<step>:<organizationId>:<anchor>`,
+  // where the anchor is the immutable instant the step's timing derives
+  // from. That shape is the whole reason a sweep that re-evaluates every
+  // 15 minutes does not re-send: an unchanged anchor re-derives the exact
+  // same string and the INSERT is rejected by the unique index, while a
+  // genuine second occurrence (a renewed period, a second grace window)
+  // carries a different anchor and is allowed through. Nothing is ever
+  // scheduled ahead, so nothing ever has to be cancelled.
+  //
+  // `always` vs `preference` is not a style choice either: §26/§27 make
+  // T3, S3, S5, S7 (and the factual S9) NON-suppressible — a site going
+  // offline is consequential, not marketing — while the nudges T4–T6 and
+  // S10 respect the recipient's `lifecycle.reminders` toggle.
+
+  // T1 — the one email an owner expects, at `startTrial`.
+  'lifecycle.trial.started': {
+    category: 'transactional',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('trial_started', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.trial.started',
+    titleKey: 'notifications:events.lifecycleTrialStarted.title',
+    messageKey: 'notifications:events.lifecycleTrialStarted.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  // T2 — `trialEndsAt − 24 h`.
+  'lifecycle.trial.ending_soon': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('trial_ending_soon', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.trial.ending_soon',
+    titleKey: 'notifications:events.lifecycleTrialEndingSoon.title',
+    messageKey: 'notifications:events.lifecycleTrialEndingSoon.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  // T3 — at expiry. NOT suppressible: their site is now offline.
+  'lifecycle.trial.expired': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'urgent',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('trial_expired', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.trial.expired',
+    titleKey: 'notifications:events.lifecycleTrialExpired.title',
+    messageKey: 'notifications:events.lifecycleTrialExpired.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  // T4/T5/T6 — the conditional tail. Email only, and only with
+  // `lifecycle.reminders` on: a nudge is not news, so it neither takes a
+  // slot in the in-app feed nor overrides the recipient's preference.
+  'lifecycle.trial.followup_3d': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'never', email: 'preference' },
+    priority: 'low',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('trial_followup_3d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.trial.followup_3d',
+    titleKey: 'notifications:events.lifecycleTrialFollowup3d.title',
+    messageKey: 'notifications:events.lifecycleTrialFollowup3d.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  'lifecycle.trial.followup_14d': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'never', email: 'preference' },
+    priority: 'low',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('trial_followup_14d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.trial.followup_14d',
+    titleKey: 'notifications:events.lifecycleTrialFollowup14d.title',
+    messageKey: 'notifications:events.lifecycleTrialFollowup14d.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  'lifecycle.trial.reactivation_45d': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'never', email: 'preference' },
+    priority: 'low',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('trial_reactivation_45d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.trial.reactivation_45d',
+    titleKey: 'notifications:events.lifecycleTrialReactivation45d.title',
+    messageKey: 'notifications:events.lifecycleTrialReactivation45d.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+
+  // S1 — the receipt §27 asks for beside the existing approval notice:
+  // period dates and the limits this purchase actually froze. Anchored on
+  // the new `currentPeriodEnd`, so each renewal is its own receipt.
+  'lifecycle.subscription.activated': {
+    category: 'transactional',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_activated', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.activated',
+    titleKey: 'notifications:events.lifecycleSubscriptionActivated.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionActivated.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  // S2 — "they are waiting on a human" (§28). The version is the PROOF
+  // id, not the payment: re-uploading a corrected receipt is a genuinely
+  // new submission and deserves its own confirmation, while a retried
+  // request for the same upload does not.
+  'lifecycle.subscription.payment_submitted': {
+    category: 'transactional',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_payment_submitted', entity.id, str(values, 'proofId')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.payment_submitted',
+    titleKey: 'notifications:events.lifecycleSubscriptionPaymentSubmitted.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionPaymentSubmitted.message',
+    actionUrl: () => '/dashboard/billing',
+  },
+  // S3/S4 — renewal lead time. NOT suppressible: a manual bank transfer
+  // plus a human review cannot be started after the fact.
+  'lifecycle.subscription.renewal_due': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_renewal_due', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.renewal_due',
+    titleKey: 'notifications:events.lifecycleSubscriptionRenewalDue.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionRenewalDue.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  'lifecycle.subscription.renewal_tomorrow': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_renewal_tomorrow', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.renewal_tomorrow',
+    titleKey: 'notifications:events.lifecycleSubscriptionRenewalTomorrow.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionRenewalTomorrow.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  // S5 — the period ended and the 7-day grace opened. NOT suppressible.
+  'lifecycle.subscription.grace_started': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'urgent',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_grace_started', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.grace_started',
+    titleKey: 'notifications:events.lifecycleSubscriptionGraceStarted.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionGraceStarted.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  'lifecycle.subscription.grace_ending': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_grace_ending', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.grace_ending',
+    titleKey: 'notifications:events.lifecycleSubscriptionGraceEnding.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionGraceEnding.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  // S7 — access has actually ended. NOT suppressible.
+  'lifecycle.subscription.expired': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'urgent',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_expired', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.expired',
+    titleKey: 'notifications:events.lifecycleSubscriptionExpired.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionExpired.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  // S8 — the confirmation a cancelling customer is owed, with the date
+  // their access actually ends (never "immediately": they keep the period
+  // they paid for).
+  'lifecycle.subscription.cancel_scheduled': {
+    category: 'transactional',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_cancel_scheduled', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.cancel_scheduled',
+    titleKey: 'notifications:events.lifecycleSubscriptionCancelScheduled.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionCancelScheduled.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  // S9 — the cancellation actually took effect.
+  'lifecycle.subscription.cancelled': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_cancelled', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.cancelled',
+    titleKey: 'notifications:events.lifecycleSubscriptionCancelled.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionCancelled.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  // S10 — two post-expiry touches and no more, both respecting
+  // `lifecycle.reminders`.
+  'lifecycle.subscription.followup_7d': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'never', email: 'preference' },
+    priority: 'low',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_followup_7d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.followup_7d',
+    titleKey: 'notifications:events.lifecycleSubscriptionFollowup7d.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionFollowup7d.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
+  'lifecycle.subscription.followup_30d': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'never', email: 'preference' },
+    priority: 'low',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_followup_30d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.followup_30d',
+    titleKey: 'notifications:events.lifecycleSubscriptionFollowup30d.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionFollowup30d.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
   },
 } as const satisfies Record<string, CommunicationCatalogEntry>;
 

@@ -40,6 +40,24 @@ import { template as rosterStudentUnblocked } from './keys/roster.student.unbloc
 import { template as courseOrderProofSubmitted } from './keys/course.order.proof_submitted';
 import { template as reviewModerated } from './keys/review.moderated';
 import { template as digestDaily } from './keys/digest.daily';
+// P64 C5 — tenant lifecycle sequences (plan §26 T1–T6, §27 S1–S10).
+import { template as lifecycleTrialStarted } from './keys/lifecycle.trial.started';
+import { template as lifecycleTrialEndingSoon } from './keys/lifecycle.trial.ending_soon';
+import { template as lifecycleTrialExpired } from './keys/lifecycle.trial.expired';
+import { template as lifecycleTrialFollowup3d } from './keys/lifecycle.trial.followup_3d';
+import { template as lifecycleTrialFollowup14d } from './keys/lifecycle.trial.followup_14d';
+import { template as lifecycleTrialReactivation45d } from './keys/lifecycle.trial.reactivation_45d';
+import { template as lifecycleSubscriptionActivated } from './keys/lifecycle.subscription.activated';
+import { template as lifecycleSubscriptionPaymentSubmitted } from './keys/lifecycle.subscription.payment_submitted';
+import { template as lifecycleSubscriptionRenewalDue } from './keys/lifecycle.subscription.renewal_due';
+import { template as lifecycleSubscriptionRenewalTomorrow } from './keys/lifecycle.subscription.renewal_tomorrow';
+import { template as lifecycleSubscriptionGraceStarted } from './keys/lifecycle.subscription.grace_started';
+import { template as lifecycleSubscriptionGraceEnding } from './keys/lifecycle.subscription.grace_ending';
+import { template as lifecycleSubscriptionExpired } from './keys/lifecycle.subscription.expired';
+import { template as lifecycleSubscriptionCancelScheduled } from './keys/lifecycle.subscription.cancel_scheduled';
+import { template as lifecycleSubscriptionCancelled } from './keys/lifecycle.subscription.cancelled';
+import { template as lifecycleSubscriptionFollowup7d } from './keys/lifecycle.subscription.followup_7d';
+import { template as lifecycleSubscriptionFollowup30d } from './keys/lifecycle.subscription.followup_30d';
 
 export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'provisioning.completed': provisioningCompleted,
@@ -75,6 +93,23 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'roster.student.unblocked': rosterStudentUnblocked,
   'course.order.proof_submitted': courseOrderProofSubmitted,
   'review.moderated': reviewModerated,
+  'lifecycle.trial.started': lifecycleTrialStarted,
+  'lifecycle.trial.ending_soon': lifecycleTrialEndingSoon,
+  'lifecycle.trial.expired': lifecycleTrialExpired,
+  'lifecycle.trial.followup_3d': lifecycleTrialFollowup3d,
+  'lifecycle.trial.followup_14d': lifecycleTrialFollowup14d,
+  'lifecycle.trial.reactivation_45d': lifecycleTrialReactivation45d,
+  'lifecycle.subscription.activated': lifecycleSubscriptionActivated,
+  'lifecycle.subscription.payment_submitted': lifecycleSubscriptionPaymentSubmitted,
+  'lifecycle.subscription.renewal_due': lifecycleSubscriptionRenewalDue,
+  'lifecycle.subscription.renewal_tomorrow': lifecycleSubscriptionRenewalTomorrow,
+  'lifecycle.subscription.grace_started': lifecycleSubscriptionGraceStarted,
+  'lifecycle.subscription.grace_ending': lifecycleSubscriptionGraceEnding,
+  'lifecycle.subscription.expired': lifecycleSubscriptionExpired,
+  'lifecycle.subscription.cancel_scheduled': lifecycleSubscriptionCancelScheduled,
+  'lifecycle.subscription.cancelled': lifecycleSubscriptionCancelled,
+  'lifecycle.subscription.followup_7d': lifecycleSubscriptionFollowup7d,
+  'lifecycle.subscription.followup_30d': lifecycleSubscriptionFollowup30d,
   'digest.daily': digestDaily,
 };
 

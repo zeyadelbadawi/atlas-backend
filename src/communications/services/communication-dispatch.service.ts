@@ -248,6 +248,26 @@ export class CommunicationDispatchService {
           });
         }
         wantsDigest = preferences.categories.engagement.digest === 'daily';
+      } else if (entry.category === 'lifecycle') {
+        /*
+          P64 C5 (§26/§27) — the `reminders` toggle, and ONLY it.
+          `lifecycle.email` is locked on in `resolveCommunicationPreferences`
+          because a person may not opt out of being told their site went
+          offline; the steps that carry that kind of news (T3, S3, S5, S7,
+          S9) declare `email: 'always'` and never reach this branch at all.
+          What does reach it is the nudge half of the sequences — T4, T5,
+          T6, S10 — which are marketing-adjacent and must respect the
+          toggle. Nothing here is digestible: a follow-up folded into a
+          daily digest days later would arrive after the moment it was
+          timed for.
+        */
+        if (!preferences.categories.lifecycle.reminders) {
+          return this.settle(tx, outboxId, 'dispatched', 'preference_off', {
+            inApp: channels.inApp,
+            outcome: 'in_app_only',
+            emailStatus: 'suppressed',
+          });
+        }
       } else if (entry.category === 'operational' && preferences.categories.operational) {
         if (!preferences.categories.operational.email) {
           return this.settle(tx, outboxId, 'dispatched', 'preference_off', {

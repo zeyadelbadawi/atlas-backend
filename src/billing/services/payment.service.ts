@@ -50,6 +50,9 @@ import { toPaymentIntentResponse } from '../dto/payment-intent.contract';
 import type { PaymentIntentResponse } from '../dto/payment-intent.contract';
 import type { CreatePaymentDto } from '../dto/create-payment.dto';
 import type { SubmitPaymentProofDto } from '../dto/submit-payment-proof.dto';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
+import { formatLifecycleInstant } from '../../plans/services/tenant-lifecycle.service';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { PaymentListQueryDto } from '../dto/payment-list-query.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
@@ -78,6 +81,11 @@ export class PaymentService {
     private readonly paymentProofStorageService: PaymentProofStorageService,
     private readonly paymentProviderRegistry: PaymentProviderRegistry,
     private readonly atlasSubscriptionPaymentProviderService: AtlasSubscriptionPaymentProviderService,
+    // P64 C5 — §27 S2: the customer has just handed over a transfer
+    // receipt and is now waiting on a human. Emitted here, inside the
+    // same transaction that records the proof, so a failed upload leaves
+    // no confirmation of an upload that did not happen.
+    private readonly communicationService: CommunicationService,
   ) {}
 
   /**
@@ -218,54 +226,97 @@ export class PaymentService {
       });
     }
 
-    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      const payment = await this.paymentsRepository.findById(
-        tx,
-        organizationId,
-        paymentId,
-      );
-      if (!payment) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      if (!NON_TERMINAL_PAYMENT_STATUSES.has(payment.status)) {
-        throw new ConflictException({ messageKey: 'errors.payment.notEditable' });
-      }
+    let emitted: EmitResult = { created: false, outboxId: null };
+    const result = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        const payment = await this.paymentsRepository.findById(
+          tx,
+          organizationId,
+          paymentId,
+        );
+        if (!payment) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        if (!NON_TERMINAL_PAYMENT_STATUSES.has(payment.status)) {
+          throw new ConflictException({ messageKey: 'errors.payment.notEditable' });
+        }
 
-      const method = await this.paymentMethodsRepository.findByKey(payment.methodKey);
-      const capabilities = method?.capabilities as unknown as
-        { supportsProof: boolean } | undefined;
-      if (!capabilities?.supportsProof) {
-        throw new ConflictException({ messageKey: 'errors.payment.proofNotSupported' });
-      }
+        const method = await this.paymentMethodsRepository.findByKey(payment.methodKey);
+        const capabilities = method?.capabilities as unknown as
+          { supportsProof: boolean } | undefined;
+        if (!capabilities?.supportsProof) {
+          throw new ConflictException({ messageKey: 'errors.payment.proofNotSupported' });
+        }
 
-      const id = randomUUID();
-      const storageKey = buildPaymentProofStorageKey(
-        organizationId,
-        paymentId,
-        kind.extension,
-        id,
-      );
-      await this.paymentProofStorageService.putObject(storageKey, buffer, kind.mimeType);
+        const id = randomUUID();
+        const storageKey = buildPaymentProofStorageKey(
+          organizationId,
+          paymentId,
+          kind.extension,
+          id,
+        );
+        await this.paymentProofStorageService.putObject(
+          storageKey,
+          buffer,
+          kind.mimeType,
+        );
 
-      await this.paymentProofsRepository.create(tx, {
-        id,
-        payment: { connect: { id: paymentId } },
-        fileName: sanitizeFileName(payload.fileName),
-        storageKey,
-        mimeType: kind.mimeType,
-        note: payload.note,
-      });
+        await this.paymentProofsRepository.create(tx, {
+          id,
+          payment: { connect: { id: paymentId } },
+          fileName: sanitizeFileName(payload.fileName),
+          storageKey,
+          mimeType: kind.mimeType,
+          note: payload.note,
+        });
 
-      await this.paymentsRepository.update(tx, paymentId, {
-        reviewStatus: 'pending',
-        nextAction: { type: 'awaiting_manual_review' },
-      });
+        await this.paymentsRepository.update(tx, paymentId, {
+          reviewStatus: 'pending',
+          nextAction: { type: 'awaiting_manual_review' },
+        });
 
-      const withRelations = await this.paymentsRepository.findById(
-        tx,
-        organizationId,
-        paymentId,
-      );
-      return toPaymentResponse(withRelations!);
-    });
+        /*
+        §27 S2 / §28 — the receipt for a submitted transfer.
+
+        Keyed on the PROOF id, not the payment: re-uploading a corrected
+        receipt is a genuinely new submission and deserves its own
+        confirmation, while a retried request for the same upload does
+        not. `id` here is the proof this call just created, so the key is
+        new exactly when the submission is.
+
+        The recipient is the organisation's OWNER, resolved server-side —
+        the acting session may be a manager, and §34 does not let a call
+        site choose who gets mail.
+      */
+        const organization = await tx.organization.findUnique({
+          where: { id: organizationId },
+          select: { ownerUserId: true },
+        });
+        if (organization) {
+          emitted = await this.communicationService.emit(tx, {
+            key: 'lifecycle.subscription.payment_submitted',
+            recipientUserId: organization.ownerUserId,
+            organizationId,
+            entity: { type: 'payment', id: paymentId },
+            values: {
+              proofId: id,
+              amount: Number(payment.amountMinorUnits) / 100,
+              currency: payment.currency,
+              submittedAtDate: formatLifecycleInstant(new Date()),
+            },
+          });
+        }
+
+        const withRelations = await this.paymentsRepository.findById(
+          tx,
+          organizationId,
+          paymentId,
+        );
+        return toPaymentResponse(withRelations!);
+      },
+    );
+
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    return result;
   }
 
   async cancelPayment(

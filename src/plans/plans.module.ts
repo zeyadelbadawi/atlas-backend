@@ -47,6 +47,7 @@ import { PLANS_CLOCK, SystemClock } from './utils/clock';
 import { TenantUsageRecomputeService } from './services/tenant-usage-recompute.service';
 import { SubscriptionExpiryService } from './services/subscription-expiry.service';
 import { SubscriptionSweepService } from './services/subscription-sweep.service';
+import { TenantLifecycleService } from './services/tenant-lifecycle.service';
 import { OrganizationSubscriptionBootstrapService } from './services/organization-subscription-bootstrap.service';
 import { TrialEligibilityService } from './services/trial-eligibility.service';
 import { TrialRedemptionService } from './services/trial-redemption.service';
@@ -57,6 +58,7 @@ import { TenantSubscriptionsRepository } from './repositories/tenant-subscriptio
 import { TenantAddOnsRepository } from './repositories/tenant-add-ons.repository';
 import { TenantUsageRepository } from './repositories/tenant-usage.repository';
 import { TenantUsageSweepCursorRepository } from './repositories/tenant-usage-sweep-cursor.repository';
+import { TenantLifecycleStateRepository } from './repositories/tenant-lifecycle-state.repository';
 import { TenantUsageRecomputeProducer } from './queue/tenant-usage-recompute.producer';
 import { TenantUsageRecomputeProcessor } from './queue/tenant-usage-recompute.processor';
 import { TENANT_USAGE_RECOMPUTE_QUEUE } from './queue/tenant-usage-recompute.types';
@@ -122,6 +124,13 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     TenantUsageRecomputeService,
     SubscriptionExpiryService,
     SubscriptionSweepService,
+    // P64 C5 — the §26/§27 sequence evaluator, driven by the sweep above.
+    // `CommunicationService` reaches it through the @Global
+    // `CommunicationsModule`, so no import is added here and no cycle is
+    // created (that module already imports `IdentityModule`/`TenancyModule`,
+    // which this one also imports).
+    TenantLifecycleService,
+    TenantLifecycleStateRepository,
     OrganizationSubscriptionBootstrapService,
     TrialEligibilityService,
     TrialRedemptionService,
@@ -174,6 +183,10 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     // verbatim (it already re-establishes its own `runInTenantContext`)
     // rather than re-deriving entitlements a second time.
     TenantSubscriptionService,
+    // P64 C5 — exported so the sequence evaluator can be driven directly
+    // by a fake-clock regression suite, exactly as `SubscriptionExpiryService`
+    // already is.
+    TenantLifecycleService,
     // Exported so `BillingModule` (renewal arithmetic) and
     // `ProvisioningModule` (the effective-status gate) share the SAME
     // clock as every access decision — one instant per module graph.

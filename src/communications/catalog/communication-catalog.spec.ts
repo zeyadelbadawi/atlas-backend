@@ -61,6 +61,11 @@ const DEAUTHORIZED_AT = '2026-09-25T10:00:00.000Z';
 /** The instant a C3 roster/enrollment transition happened — see §19 on repeating events. */
 const DECIDED_AT_MS = 1790000005555;
 const EXPIRES_AT_MS = 1793000000000;
+/** P64 C5 — lifecycle anchors: the immutable instants a sequence step is keyed to. */
+const TRIAL_ENDS_AT = '2026-10-01T09:00:00.000Z';
+const PERIOD_END_AT = '2026-11-01T09:00:00.000Z';
+const GRACE_ENDS_AT = '2026-11-08T09:00:00.000Z';
+const PROOF_ID = 'p3333333-3333-4333-8333-333333333333';
 
 /**
  * The pre-outbox dedupe string for every migrated key, and the values the
@@ -207,6 +212,84 @@ const EXPECTED_DEDUPE: Record<
   'review.moderated': {
     values: { status: 'approved', courseId: 'c1' },
     expected: `course_review.moderated:${ENTITY_ID}:approved`,
+  },
+
+  // --- P64 C5 tenant lifecycle sequences (plan §26 T1–T6, §27 S1–S10).
+  //
+  // These are NEW keys, so there is no pre-outbox string to preserve —
+  // what is pinned here instead is the property the whole workstream
+  // rests on: the key is a function of the organisation and the step's
+  // ANCHOR INSTANT ONLY. Nothing about "now" is in it, which is exactly
+  // why the 15-minute sweep can re-evaluate the same due step forever
+  // and never send it twice, and why a renewed period (a different
+  // anchor) is allowed through as the genuinely new occurrence it is.
+  'lifecycle.trial.started': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_trial_started:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
+  'lifecycle.trial.ending_soon': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_trial_ending_soon:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
+  'lifecycle.trial.expired': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_trial_expired:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
+  'lifecycle.trial.followup_3d': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_trial_followup_3d:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
+  'lifecycle.trial.followup_14d': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_trial_followup_14d:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
+  'lifecycle.trial.reactivation_45d': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_trial_reactivation_45d:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
+  'lifecycle.subscription.activated': {
+    values: { anchorAt: PERIOD_END_AT },
+    expected: `lifecycle_subscription_activated:${ENTITY_ID}:${PERIOD_END_AT}`,
+  },
+  'lifecycle.subscription.payment_submitted': {
+    values: { proofId: PROOF_ID },
+    expected: `lifecycle_subscription_payment_submitted:${ENTITY_ID}:${PROOF_ID}`,
+  },
+  'lifecycle.subscription.renewal_due': {
+    values: { anchorAt: PERIOD_END_AT },
+    expected: `lifecycle_subscription_renewal_due:${ENTITY_ID}:${PERIOD_END_AT}`,
+  },
+  'lifecycle.subscription.renewal_tomorrow': {
+    values: { anchorAt: PERIOD_END_AT },
+    expected: `lifecycle_subscription_renewal_tomorrow:${ENTITY_ID}:${PERIOD_END_AT}`,
+  },
+  'lifecycle.subscription.grace_started': {
+    values: { anchorAt: PERIOD_END_AT },
+    expected: `lifecycle_subscription_grace_started:${ENTITY_ID}:${PERIOD_END_AT}`,
+  },
+  'lifecycle.subscription.grace_ending': {
+    values: { anchorAt: GRACE_ENDS_AT },
+    expected: `lifecycle_subscription_grace_ending:${ENTITY_ID}:${GRACE_ENDS_AT}`,
+  },
+  'lifecycle.subscription.expired': {
+    values: { anchorAt: GRACE_ENDS_AT },
+    expected: `lifecycle_subscription_expired:${ENTITY_ID}:${GRACE_ENDS_AT}`,
+  },
+  'lifecycle.subscription.cancel_scheduled': {
+    values: { anchorAt: PERIOD_END_AT },
+    expected: `lifecycle_subscription_cancel_scheduled:${ENTITY_ID}:${PERIOD_END_AT}`,
+  },
+  'lifecycle.subscription.cancelled': {
+    values: { anchorAt: PERIOD_END_AT },
+    expected: `lifecycle_subscription_cancelled:${ENTITY_ID}:${PERIOD_END_AT}`,
+  },
+  'lifecycle.subscription.followup_7d': {
+    values: { anchorAt: GRACE_ENDS_AT },
+    expected: `lifecycle_subscription_followup_7d:${ENTITY_ID}:${GRACE_ENDS_AT}`,
+  },
+  'lifecycle.subscription.followup_30d': {
+    values: { anchorAt: GRACE_ENDS_AT },
+    expected: `lifecycle_subscription_followup_30d:${ENTITY_ID}:${GRACE_ENDS_AT}`,
   },
 };
 

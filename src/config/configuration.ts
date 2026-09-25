@@ -330,7 +330,16 @@ export interface CommunicationsConfig {
   readonly platformWebUrl: string;
   /** The platform's display name in email branding; reuses `EMAIL_FROM_NAME`. */
   readonly platformName: string;
+  /**
+   * P64 C5 — whether the tenant lifecycle sequences (§26 T1–T6, §27
+   * S1–S10) evaluate and send. `off` by default; `dry_run` records what
+   * it would have sent. See `FLAG_LIFECYCLE_SEQUENCES_MODE`.
+   */
+  readonly lifecycleSequencesMode: LifecycleSequencesMode;
 }
+
+/** P64 C5 — the staged rollout of the lifecycle sequences (§43). */
+export type LifecycleSequencesMode = 'off' | 'dry_run' | 'on';
 
 /** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
 export interface IdentityConfig {
@@ -657,6 +666,9 @@ export default () => {
   const communications: CommunicationsConfig = {
     platformWebUrl: (env.PLATFORM_WEB_URL || 'http://localhost:3001').replace(/\/+$/, ''),
     platformName: env.EMAIL_FROM_NAME ?? 'Atlas',
+    // Defaults to `off` — see `FLAG_LIFECYCLE_SEQUENCES_MODE`.
+    lifecycleSequencesMode: (env.FLAG_LIFECYCLE_SEQUENCES_MODE ??
+      'off') as LifecycleSequencesMode,
   };
 
   return {

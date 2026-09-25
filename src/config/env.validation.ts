@@ -187,6 +187,15 @@ const EnvSchema = z.object({
   FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY: z
     .enum(['off', 'new_device', 'always'])
     .default('off'),
+
+  // --- P64 Communications C5 (§26/§27, §43) — tenant lifecycle sequences ---
+  // `off` (the default) evaluates nothing; `dry_run` evaluates every
+  // condition and logs the steps it WOULD emit, which is how the first
+  // production cycle is meant to be watched; `on` sends. Defaulting to
+  // `off` follows the same rule as the OTP switches above: an unset
+  // variable must never be the reason production starts emailing
+  // customers about their subscription.
+  FLAG_LIFECYCLE_SEQUENCES_MODE: z.enum(['off', 'dry_run', 'on']).default('off'),
   // §12's approved numbers. Configurable so a load-testing pass can tune
   // them, bounded so a typo cannot turn the control off: the ceiling on
   // attempts and codes is validated as a positive integer, and the code

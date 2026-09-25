@@ -33,6 +33,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
 import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
@@ -43,6 +44,8 @@ import { PaymentProofStorageService } from '../storage/payment-proof-storage.ser
 import { PaymentApplicationService } from './payment-application.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { CommunicationService } from '../../communications/services/communication.service';
+import { formatLifecycleInstant } from '../../plans/services/tenant-lifecycle.service';
+import { resolveSubscriptionLimits } from '../../plans/utils/granted-limits.util';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { toPaymentResponse } from '../dto/payment.contract';
 import type { PaymentResponse } from '../dto/payment.contract';
@@ -114,6 +117,7 @@ export class PlatformPaymentService {
     const payment = await this.loadReviewablePayment(reviewerId, paymentId);
 
     let emitted: EmitResult = { created: false, outboxId: null };
+    let activated: EmitResult = { created: false, outboxId: null };
     const result = await this.tenancyContextService.runInTenantAndUserContext(
       payment.organizationId,
       reviewerId,
@@ -171,6 +175,31 @@ export class PlatformPaymentService {
               currency: fresh.currency,
             },
           });
+
+          /*
+            P64 C5, §27 S1 — "Subscription started / plan changed | on
+            approval (exists) — ADD a receipt with period dates and frozen
+            limits". Beside the approval notice above, not instead of it:
+            one says the money was accepted, this one says what the
+            customer now has and until when, which is the fact they come
+            back to look up.
+
+            Only for a plan purchase — an add-on approval changes no
+            subscription period and must not claim to. `applyCommercialEffect`
+            has already run, so the row read here is the post-purchase one.
+
+            The dedupe anchor is the NEW `currentPeriodEnd`: each renewal
+            legitimately deserves its own receipt (§19's "events that
+            legitimately repeat carry a version"), and a retried approval
+            of the same payment re-derives the identical anchor and is
+            rejected.
+          */
+          activated = await this.emitSubscriptionActivated(
+            tx,
+            payment.organizationId,
+            organization.ownerUserId,
+            fresh.checkoutId,
+          );
         }
 
         const final = await this.paymentsRepository.findByIdAnyOrganization(
@@ -195,6 +224,7 @@ export class PlatformPaymentService {
     );
 
     await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    await this.communicationService.enqueueAfterCommit(activated.outboxId);
 
     return result;
   }
@@ -276,6 +306,64 @@ export class PlatformPaymentService {
     await this.communicationService.enqueueAfterCommit(emitted.outboxId);
 
     return result;
+  }
+
+  /**
+   * §27 S1 — the subscription receipt, emitted inside the approval's own
+   * transaction.
+   *
+   * Returns a no-op result (and writes nothing) unless this payment was
+   * for a PLAN and the subscription now has a real period: an add-on
+   * approval, or a subscription row the purchase somehow left undated,
+   * must not produce a receipt claiming dates it does not have.
+   *
+   * The limits are read from `granted_limits` through
+   * `resolveSubscriptionLimits` — the one function that answers "what is
+   * this customer entitled to" — so the receipt can never quote a number
+   * the write gate would not honour.
+   */
+  private async emitSubscriptionActivated(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    ownerUserId: string,
+    checkoutId: string | null,
+  ): Promise<EmitResult> {
+    const none: EmitResult = { created: false, outboxId: null };
+    if (!checkoutId) return none;
+
+    const checkout = await tx.checkout.findUnique({
+      where: { id: checkoutId },
+      select: { targetType: true },
+    });
+    if (checkout?.targetType !== 'plan_subscription') return none;
+
+    const subscription = await tx.tenantSubscription.findUnique({
+      where: { organizationId },
+      select: {
+        currentPeriodStart: true,
+        currentPeriodEnd: true,
+        grantedLimits: true,
+        plan: { select: { name: true, limits: true } },
+      },
+    });
+    if (!subscription?.currentPeriodEnd || !subscription.currentPeriodStart) return none;
+
+    const limits = resolveSubscriptionLimits(subscription);
+    return this.communicationService.emit(tx, {
+      key: 'lifecycle.subscription.activated',
+      recipientUserId: ownerUserId,
+      organizationId,
+      entity: { type: 'tenant_subscription', id: organizationId },
+      values: {
+        anchorAt: subscription.currentPeriodEnd.toISOString(),
+        planName: subscription.plan.name,
+        periodStartDate: formatLifecycleInstant(subscription.currentPeriodStart),
+        periodEndDate: formatLifecycleInstant(subscription.currentPeriodEnd),
+        academiesLimit: String(limits.academies ?? ''),
+        studentsLimit: String(limits.students ?? ''),
+        coursesLimit: String(limits.courses ?? ''),
+      },
+    });
   }
 
   /** Minor units → display decimal, the same 2-decimal-exponent convention `toMinorUnits` (`money.util.ts`) already established for the reverse direction — used only for notification/email display text here, never a business calculation. */

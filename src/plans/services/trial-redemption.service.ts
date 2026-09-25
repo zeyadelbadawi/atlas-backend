@@ -31,6 +31,9 @@ import { TenantSubscriptionsRepository } from '../repositories/tenant-subscripti
 import { TrialEligibilityService } from './trial-eligibility.service';
 import type { TrialClaimContext } from './trial-eligibility.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
+import { formatLifecycleInstant } from './tenant-lifecycle.service';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -80,6 +83,13 @@ export class TrialRedemptionService {
     private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
     private readonly trialEligibilityService: TrialEligibilityService,
     private readonly auditLogWriterService: AuditLogWriterService,
+    // P64 C5 — §26 T1 and §27 S8 are emitted by the ACTIONS that cause
+    // them, inside those actions' own transactions, not by the sweep: a
+    // trial that rolls back must leave no "your trial has started", and a
+    // cancellation the customer just confirmed must not wait 15 minutes
+    // for its receipt. Everything a CLOCK decides lives in
+    // `TenantLifecycleService` instead.
+    private readonly communicationService: CommunicationService,
   ) {}
 
   /**
@@ -151,7 +161,8 @@ export class TrialRedemptionService {
     const durationDays = plan.trialDurationDays ?? trialPolicy.durationDays;
     const trialEndsAt = new Date(Date.now() + durationDays * MS_PER_DAY);
 
-    return this.tenancyContextService
+    let emitted: EmitResult = { created: false, outboxId: null };
+    const result = await this.tenancyContextService
       .runInTenantAndUserContext(organizationId, actorUserId, async (tx) => {
         const owner = await tx.user.findUniqueOrThrow({
           where: { id: actorUserId },
@@ -210,6 +221,31 @@ export class TrialRedemptionService {
           },
         });
 
+        /*
+          §26 T1 — "immediately on `startTrial` … states the exact end
+          date/time and that the site goes offline at expiry unless a plan
+          is chosen". Inside this transaction on purpose: the trial and
+          the email announcing it either both happen or neither does, and
+          the `TrialAlreadyRedeemedError` rollback below must take the
+          email with it.
+
+          The dedupe anchor is `trialEndsAt`, which no later transition
+          ever rewrites (`markTrialExpired` and `markTrialCancelled` both
+          preserve it, deliberately), so a retried request can never
+          produce a second "your trial has started".
+        */
+        emitted = await this.communicationService.emit(tx, {
+          key: 'lifecycle.trial.started',
+          recipientUserId: owner.id,
+          organizationId,
+          entity: { type: 'tenant_subscription', id: organizationId },
+          values: {
+            anchorAt: trialEndsAt.toISOString(),
+            trialEndsAtDate: formatLifecycleInstant(trialEndsAt),
+            planName: plan.name,
+          },
+        });
+
         return { started: true, trialEndsAt };
       })
       .catch((error: unknown) => {
@@ -222,6 +258,13 @@ export class TrialRedemptionService {
         }
         throw error;
       });
+
+    // After commit, and only when a trial was really granted — a rolled
+    // back transaction left no outbox row to dispatch.
+    if (result.started) {
+      await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    }
+    return result;
   }
 
   /**
@@ -298,7 +341,8 @@ export class TrialRedemptionService {
     actorUserId: string,
     input: CancelInput,
   ): Promise<CancelResult> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let emitted: EmitResult = { created: false, outboxId: null };
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actorUserId,
       async (tx) => {
@@ -342,9 +386,44 @@ export class TrialRedemptionService {
           },
         });
 
+        /*
+          §27 S8 — "Cancellation scheduled … confirmation with effective
+          date". Emitted only on the call that actually RECORDED the
+          cancellation (a repeat returns above, at `alreadyCancelled`), so
+          an idempotent re-request never sends a second confirmation. The
+          anchor is the cancellation's own `effectiveAt` — the customer's
+          paid-through date, which never moves.
+
+          The recipient is the ORGANISATION OWNER, not the actor: a
+          manager may hold the permission to cancel, but the person who
+          must be told is the account's owner (§34, "recipient is
+          server-authoritative").
+        */
+        const organization = await tx.organization.findUnique({
+          where: { id: organizationId },
+          select: { ownerUserId: true },
+        });
+        if (organization) {
+          emitted = await this.communicationService.emit(tx, {
+            key: 'lifecycle.subscription.cancel_scheduled',
+            recipientUserId: organization.ownerUserId,
+            organizationId,
+            entity: { type: 'tenant_subscription', id: organizationId },
+            values: {
+              anchorAt: effectiveAt.toISOString(),
+              effectiveAtDate: formatLifecycleInstant(effectiveAt),
+            },
+          });
+        }
+
         return { cancelled: true, alreadyCancelled: false, effectiveAt };
       },
     );
+
+    if (result.cancelled) {
+      await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    }
+    return result;
   }
 
   /**

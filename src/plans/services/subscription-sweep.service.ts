@@ -85,6 +85,7 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
 import { SubscriptionExpiryService } from './subscription-expiry.service';
+import { TenantLifecycleService } from './tenant-lifecycle.service';
 import { TenantUsageRecomputeProducer } from '../queue/tenant-usage-recompute.producer';
 import { TenantUsageSweepCursorRepository } from '../repositories/tenant-usage-sweep-cursor.repository';
 import { AnnouncementsRepository } from '../../community/repositories/announcements.repository';
@@ -157,6 +158,10 @@ export class SubscriptionSweepService {
     private readonly usersRepository: UsersRepository,
     private readonly organizationsRepository: OrganizationsRepository,
     private readonly subscriptionExpiryService: SubscriptionExpiryService,
+    // P64 C5 — the lifecycle sequences ride this SAME tick (plan §41:
+    // "`subscription-sweep` (existing, 15 min) extended ... lifecycle
+    // sequence evaluation"), never a scheduler of their own.
+    private readonly tenantLifecycleService: TenantLifecycleService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
     private readonly sweepCursorRepository: TenantUsageSweepCursorRepository,
     // Phase 6 — see this class's own doc comment, responsibility 3.
@@ -169,6 +174,27 @@ export class SubscriptionSweepService {
     // Expiry enforcement — the paid half of the lifecycle, beside the
     // trial half. Same platform-owner context, same tick.
     const paidPeriods = await this.subscriptionExpiryService.expireDuePaidPeriods();
+
+    /*
+      P64 C5 — lifecycle communications, AFTER both transitions above and
+      on the same tick. The order matters in one direction only: the
+      evaluator derives state from `resolveEffectiveSubscriptionStatus`,
+      so it would reach the same answer either way, but running it after
+      the sweep means the row it reads already SAYS what the customer is
+      about to be told. Its own flag decides whether it does anything
+      (`off` by default); a failure inside it must never cost the platform
+      its expiry enforcement or its usage recomputation, so it is
+      contained here rather than allowed to abort the tick.
+    */
+    let lifecycle;
+    try {
+      lifecycle = await this.tenantLifecycleService.run();
+    } catch (error) {
+      this.logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Lifecycle sequence evaluation failed; the rest of the sweep continues.',
+      );
+    }
 
     const platformOwner = await this.usersRepository.findFirstPlatformOwnerId();
     if (!platformOwner) {
@@ -270,6 +296,7 @@ export class SubscriptionSweepService {
       {
         expiredCount,
         paidPeriods,
+        lifecycle,
         recomputeEnqueuedCount,
         publishedAnnouncementCount,
         publishedBlogPostCount,

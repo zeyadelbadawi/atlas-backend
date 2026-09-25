@@ -22,6 +22,7 @@ import { PlansRepository } from '../repositories/plans.repository';
 import { TenantSubscriptionsRepository } from '../repositories/tenant-subscriptions.repository';
 import { TrialEligibilityService } from './trial-eligibility.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { CommunicationService } from '../../communications/services/communication.service';
 
 const ORG = 'org-1';
 const USER = 'user-1';
@@ -100,6 +101,17 @@ describe('TrialRedemptionService.startTrial', () => {
         },
         { provide: TrialEligibilityService, useValue: { claimTrial } },
         { provide: AuditLogWriterService, useValue: { write: jest.fn() } },
+        // P64 C5 — §26 T1 / §27 S8 are emitted inside these transactions.
+        // Stubbed here (this file is about the two trial GUARDS); the
+        // real emit path and its dedupe key are covered end to end by
+        // `test/p64-comm-lifecycle-sequences.e2e-spec.ts`.
+        {
+          provide: CommunicationService,
+          useValue: {
+            emit: jest.fn().mockResolvedValue({ created: true, outboxId: 'outbox-1' }),
+            enqueueAfterCommit: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
