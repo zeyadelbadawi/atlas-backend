@@ -1,5 +1,5 @@
 /** EmailProviderRegistry — fallback order, quota skipping and permanent-stop. */
-import { EmailProviderRegistry } from './email-provider.registry';
+import { EmailProviderRegistry, buildProviderChain } from './email-provider.registry';
 import {
   EmailProviderError,
   type EmailProviderAdapter,
@@ -215,5 +215,275 @@ describe('EmailProviderRegistry', () => {
     expect(() => new EmailProviderRegistry([], h.quota, h.metrics)).toThrow(
       /at least one provider/,
     );
+  });
+});
+
+/**
+ * W-RESEND fallback matrix — the behaviour the approved production chain
+ * (`EMAIL_PROVIDERS=brevo,resend`: Brevo PRIMARY, Resend FALLBACK) depends
+ * on, asserted directly rather than inferred. Production currently runs
+ * `EMAIL_PROVIDERS=brevo`; these tests are what makes adding `resend` a
+ * configuration change rather than a leap of faith.
+ */
+describe('EmailProviderRegistry — brevo → resend fallback matrix', () => {
+  /** Realistic free-tier capabilities for the two real adapters. */
+  function realAdapter(name: 'brevo' | 'resend', send: jest.Mock): EmailProviderAdapter {
+    const caps =
+      name === 'brevo'
+        ? { dailyLimit: 300, monthlyLimit: 9000, perSecond: 5 }
+        : { dailyLimit: 100, monthlyLimit: 3000, perSecond: 2 };
+    return {
+      name,
+      capabilities: () => ({
+        ...caps,
+        supportsWebhooks: true,
+        supportsHtml: true,
+        supportsIdempotencyKey: name === 'resend',
+      }),
+      send,
+      verifyWebhook: () => false,
+      parseWebhookEvents: () => [],
+    };
+  }
+
+  function chain(
+    brevoSend: jest.Mock,
+    resendSend: jest.Mock,
+    decisions: Record<string, { ok: boolean; reason?: string }> = {},
+  ) {
+    const h = harness(decisions);
+    return {
+      h,
+      registry: new EmailProviderRegistry(
+        [realAdapter('brevo', brevoSend), realAdapter('resend', resendSend)],
+        h.quota,
+        h.metrics,
+      ),
+    };
+  }
+
+  it('A Brevo TRANSIENT failure falls through to Resend and the send succeeds', async () => {
+    const brevo = jest
+      .fn()
+      .mockRejectedValue(new EmailProviderError('brevo', 'transient', 'HTTP 503', 503));
+    const resend = jest.fn().mockResolvedValue({ providerMessageId: 'em_1' });
+    const { h, registry } = chain(brevo, resend);
+
+    await expect(registry.send(input)).resolves.toEqual({
+      providerMessageId: 'em_1',
+      provider: 'resend',
+    });
+    expect(brevo).toHaveBeenCalledTimes(1);
+    expect(resend).toHaveBeenCalledTimes(1);
+    expect(h.recordSend).toHaveBeenCalledWith('resend', 'transactional', 'sent');
+    expect(h.recordAccepted).toHaveBeenCalledTimes(1);
+    expect(h.recordAccepted).toHaveBeenCalledWith('resend', expect.any(Object));
+  });
+
+  it('A Brevo network failure (no status) also falls through to Resend', async () => {
+    const brevo = jest
+      .fn()
+      .mockRejectedValue(
+        new EmailProviderError('brevo', 'transient', 'brevo: request failed (TypeError)'),
+      );
+    const resend = jest.fn().mockResolvedValue({ providerMessageId: 'em_1' });
+    const { registry } = chain(brevo, resend);
+    await expect(registry.send(input)).resolves.toMatchObject({ provider: 'resend' });
+  });
+
+  it('A Brevo PERMANENT rejection stops the chain — Resend is never asked', async () => {
+    const brevo = jest
+      .fn()
+      .mockRejectedValue(
+        new EmailProviderError('brevo', 'permanent', 'HTTP 400 (invalid_parameter)', 400),
+      );
+    const resend = jest.fn();
+    const { h, registry } = chain(brevo, resend);
+
+    await expect(registry.send(input)).rejects.toMatchObject({
+      provider: 'brevo',
+      kind: 'permanent',
+      status: 400,
+    });
+    expect(resend).not.toHaveBeenCalled();
+    expect(h.recordAccepted).not.toHaveBeenCalled();
+    expect(h.recordSend).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'sent',
+    );
+  });
+
+  it('Brevo quota exhaustion falls through to Resend without calling Brevo at all', async () => {
+    const brevo = jest.fn();
+    const resend = jest.fn().mockResolvedValue({ providerMessageId: 'em_1' });
+    const { h, registry } = chain(brevo, resend, {
+      brevo: { ok: false, reason: 'daily' },
+    });
+
+    await expect(
+      registry.send({ ...input, category: 'security' }),
+    ).resolves.toMatchObject({ provider: 'resend' });
+    expect(brevo).not.toHaveBeenCalled();
+    expect(h.recordSend).toHaveBeenCalledWith('brevo', 'security', 'quota_skipped');
+    // Quota is only burned at the provider that actually accepted.
+    expect(h.recordAccepted).toHaveBeenCalledTimes(1);
+    expect(h.recordAccepted).toHaveBeenCalledWith('resend', expect.any(Object));
+  });
+
+  it('Brevo quota exhausted AND Resend transient surfaces the real Resend error, not a generic one', async () => {
+    const resend = jest
+      .fn()
+      .mockRejectedValue(
+        new EmailProviderError(
+          'resend',
+          'transient',
+          'resend: HTTP 429 (rate_limit_exceeded)',
+          429,
+          2000,
+        ),
+      );
+    const { h, registry } = chain(jest.fn(), resend, {
+      brevo: { ok: false, reason: 'monthly' },
+    });
+
+    const error = (await registry.send(input).catch((e: unknown) => e)) as Error & {
+      provider?: string;
+      retryAfterMs?: number;
+    };
+    expect(error).toBeInstanceOf(EmailProviderError);
+    expect(error.provider).toBe('resend');
+    expect(error.retryAfterMs).toBe(2000);
+    expect(h.recordAccepted).not.toHaveBeenCalled();
+  });
+
+  it('BOTH providers failing transiently throws the last real error — nothing silently succeeds', async () => {
+    const brevo = jest
+      .fn()
+      .mockRejectedValue(new EmailProviderError('brevo', 'transient', 'HTTP 503', 503));
+    const resend = jest
+      .fn()
+      .mockRejectedValue(
+        new EmailProviderError(
+          'resend',
+          'transient',
+          'resend: HTTP 500 (application_error)',
+          500,
+        ),
+      );
+    const { h, registry } = chain(brevo, resend);
+
+    const error = (await registry.send(input).catch((e: unknown) => e)) as Error & {
+      provider?: string;
+      kind?: string;
+      status?: number;
+    };
+    expect(error).toBeInstanceOf(EmailProviderError);
+    expect(error.kind).toBe('transient');
+    expect(error.provider).toBe('resend');
+    expect(error.status).toBe(500);
+    expect(brevo).toHaveBeenCalledTimes(1);
+    expect(resend).toHaveBeenCalledTimes(1);
+    // No accepted send, no `sent` metric, no message id handed back.
+    expect(h.recordAccepted).not.toHaveBeenCalled();
+    expect(h.recordSend).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'sent',
+    );
+  });
+
+  it('A Brevo transient followed by a Resend PERMANENT throws the permanent error honestly', async () => {
+    const brevo = jest
+      .fn()
+      .mockRejectedValue(new EmailProviderError('brevo', 'transient', 'HTTP 503', 503));
+    const resend = jest
+      .fn()
+      .mockRejectedValue(
+        new EmailProviderError(
+          'resend',
+          'permanent',
+          'resend: HTTP 422 (validation_error)',
+          422,
+        ),
+      );
+    const { h, registry } = chain(brevo, resend);
+
+    await expect(registry.send(input)).rejects.toMatchObject({
+      provider: 'resend',
+      kind: 'permanent',
+      status: 422,
+    });
+    expect(h.recordAccepted).not.toHaveBeenCalled();
+  });
+
+  it('BOTH providers out of quota throws a transient "exhausted" error, never a success', async () => {
+    const { h, registry } = chain(jest.fn(), jest.fn(), {
+      brevo: { ok: false, reason: 'daily' },
+      resend: { ok: false, reason: 'daily' },
+    });
+    await expect(registry.send(input)).rejects.toMatchObject({
+      kind: 'transient',
+      provider: 'registry',
+    });
+    expect(h.recordAccepted).not.toHaveBeenCalled();
+  });
+
+  it('sums the two free tiers and reports idempotency only when every member supports it', () => {
+    const { registry } = chain(jest.fn(), jest.fn());
+    expect(registry.capabilities()).toEqual({
+      dailyLimit: 400,
+      monthlyLimit: 12_000,
+      perSecond: 7,
+      supportsWebhooks: true,
+      supportsHtml: true,
+      // Brevo has no idempotency key, so the chain cannot promise one.
+      supportsIdempotencyKey: false,
+    });
+    expect(registry.providerNames()).toEqual(['brevo', 'resend']);
+  });
+});
+
+describe('buildProviderChain', () => {
+  const stub = adapter('stub', jest.fn());
+  const brevo = adapter('brevo', jest.fn());
+  const resend = adapter('resend', jest.fn());
+  const byName = { stub, brevo, resend };
+
+  it('builds exactly the chain EMAIL_PROVIDERS names, in order', () => {
+    expect(buildProviderChain(['brevo', 'resend'], byName).map((a) => a.name)).toEqual([
+      'brevo',
+      'resend',
+    ]);
+    expect(buildProviderChain(['resend', 'brevo'], byName).map((a) => a.name)).toEqual([
+      'resend',
+      'brevo',
+    ]);
+  });
+
+  it('never appends the stub to a production chain — a silent local "success" is worse than a failure', () => {
+    for (const order of [['brevo'], ['brevo', 'resend'], ['resend']]) {
+      const names = buildProviderChain(order, byName).map((a) => a.name);
+      expect(names).not.toContain('stub');
+    }
+    // It is reachable only when an operator asks for it by name.
+    expect(buildProviderChain(['stub'], byName).map((a) => a.name)).toEqual(['stub']);
+  });
+
+  it('takes a repeated provider once, so the chain cannot advertise twice the budget it has', () => {
+    expect(
+      buildProviderChain(['brevo', 'brevo', 'resend', 'BREVO'], byName).map(
+        (a) => a.name,
+      ),
+    ).toEqual(['brevo', 'resend']);
+  });
+
+  it('drops names with no adapter behind them rather than crashing the boot', () => {
+    expect(
+      buildProviderChain(['brevo', 'mailgun', '', '  ', 'resend'], byName).map(
+        (a) => a.name,
+      ),
+    ).toEqual(['brevo', 'resend']);
+    expect(buildProviderChain([], byName)).toEqual([]);
   });
 });

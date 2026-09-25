@@ -32,6 +32,37 @@ import { EmailQuotaService } from '../services/email-quota.service';
 import { CommunicationMetricsService } from '../services/communication-metrics.service';
 import { buildEmailVerificationEmail, buildPasswordResetEmail } from './legacy-messages';
 
+/**
+ * `EMAIL_PROVIDERS` (already lower-cased and validated by the env schema)
+ * → the adapters, in order. Names with no adapter are dropped and a
+ * repeated name is taken once: the chain is also what `capabilities()`
+ * sums, so a duplicate would advertise twice the daily budget that
+ * actually exists and would try the same failing vendor twice.
+ *
+ * The chain is EXACTLY what the configuration names — nothing is appended
+ * as a safety net. That is deliberate: silently falling back to the stub
+ * would turn "no provider could send this" into a silent success, with a
+ * password-reset email that nobody ever receives and a `sent` row that
+ * says otherwise. `stub` reaches the chain only when an operator puts it
+ * in `EMAIL_PROVIDERS`.
+ */
+export function buildProviderChain(
+  order: readonly string[],
+  byName: Readonly<Record<string, EmailProviderAdapter>>,
+): readonly EmailProviderAdapter[] {
+  const seen = new Set<string>();
+  const chain: EmailProviderAdapter[] = [];
+  for (const name of order) {
+    const key = name.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    const adapter = byName[key];
+    if (!adapter) continue;
+    seen.add(key);
+    chain.push(adapter);
+  }
+  return chain;
+}
+
 @Injectable()
 export class EmailProviderRegistry implements EmailProvider {
   readonly name = 'registry';
