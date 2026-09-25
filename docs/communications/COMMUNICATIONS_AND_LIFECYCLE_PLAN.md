@@ -636,7 +636,8 @@ Serialized by the lead: every schema change, every merge, every push/deploy, eve
 
 | # | Blocker | Type | Autonomous? | Status |
 |---|---|---|---|---|
-| BL-1 | Provider go-live needs owner actions on the host: Brevo account + single-sender verification of the Gmail address (confirmation email to that inbox) + API key; Resend account + sender verification + API key; webhook secrets; values `EMAIL_PROVIDERS=brevo,resend`, `BREVO_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM_EMAIL=<gmail>`, `EMAIL_FROM_NAME`, `PLATFORM_WEB_URL`, `BREVO_WEBHOOK_SECRET`, `RESEND_WEBHOOK_SECRET` in `/opt/atlas` env | credential / human | No | OPEN — code ships stub-safe; production email delivery is PRODUCTION VERIFICATION PENDING until set |
+| BL-1 | Brevo go-live: account, single-sender verification of the Gmail identity, API key, webhook secret, and the host env | credential / human | No | **RESOLVED 25 Sep 2026** — owner supplied the key; sender verified (`active=true`); configured through the authorised env-sync path; real delivery verified end to end (see MR-3) |
+| BL-3 | **RESEND SENDING DOMAIN** — the Resend account exists and its dashboard is reachable, but no sending domain is configured, so no sender identity can be verified and no real Resend delivery can occur. This is the ONLY external input still missing for the fallback provider. Everything that does not require the domain is being completed regardless. | external / human | No | OPEN — narrow. Blocks ONLY: Resend DNS/sender verification, real Resend delivery, and adding `resend` to `EMAIL_PROVIDERS`. Blocks nothing else in this plan. |
 | BL-2 | Real-provider video deletion verification depends on Phase 4 blocker (2) (video infrastructure unset) | infrastructure | No | OPEN — C6 verified against `FakeVideoProvider` |
 
 
@@ -685,3 +686,29 @@ Serialized by the lead: every schema change, every merge, every push/deploy, eve
 **Limitations / blockers.** BL-1 unchanged and still the gate on anything actually reaching an inbox. BL-2 unchanged. The OTP frontend is deployed but inert until W-OTP ships `auth_email_challenges`/`trusted_devices` endpoints. `/health` and `/metrics` sit outside the `api` prefix and Caddy proxies only `/api/*`, so neither is reachable from outside the host — worker liveness and the communications metrics cannot be checked remotely, only from `/opt/atlas`.
 
 **Next.** C3 (missing transactional events + digests), C4 backend (OTP challenges, trusted devices, auth audit events), C5 lifecycle sequences T1–T6 / S1–S10, C6 video retention W1–W4, C7 platform communications console.
+
+## MR-3. Milestone record — Brevo live in production, real delivery verified (25 Sep 2026)
+
+**Phase:** C0/B go-live. **Deployed:** backend `3784897` via run `36076556458` (success, no migration).
+
+**What changed.** Production stopped being dormant. Until now every `EMAIL_*` variable was unset, so the provider registry resolved to the stub and Atlas sent nothing — deliberately, because a half-configured provider is worse than none. The owner supplied the Brevo credential, and the configuration now reaches the host through the SAME authorised path the Zoom credentials already used: repository secrets/variables → the `vps-deploy` action → a base64 fragment piped over SSH **stdin** (never a command line, never a log) → `deploy.sh --sync-env`, which upserts `/opt/atlas/.env` atomically and refuses to replace it if the rewritten file is suspiciously small. No credential is in the repository, in this document, or in any build log.
+
+**Configured (names only).** Secrets: `BREVO_API_KEY`, `EMAIL_FROM_EMAIL`, `BREVO_WEBHOOK_SECRET`. Variables: `EMAIL_PROVIDERS=brevo`, `EMAIL_FROM_NAME=Atlas`, `PLATFORM_WEB_URL=https://atlass.dpdns.org`.
+
+**Why the chain is `brevo` alone and not `brevo,resend`.** Naming a provider in the chain without its credentials REFUSES TO BOOT — by design, since a provider that cannot send must fail loudly rather than let the app accept password resets and OTP codes it will never deliver. Resend's credentials cannot exist until its sending domain does (BL-3). Adding `resend` to the chain before then would take production down. There is deliberately **no stub in the production chain**: an unreachable provider now fails observably instead of quietly "sending" into something that delivers nothing.
+
+**Verification — evidence, in order.**
+1. *Credential and sender, before touching production.* Brevo `/v3/account` → valid, free plan, 300/day. `/v3/senders` → the Gmail identity `active=true` (single-sender verified). `/v3/senders/domains` → none, which is expected: single-sender is the approved AD-1 path.
+2. *The adapter, before deploying.* One real send executed locally through the actual `BrevoEmailProvider.send()` — not a mock — which returned a genuine provider message id (`...@smtp-relay.mailin.fr`). This proved the request shape, auth header and response parsing against the live API while a failure would still have been harmless.
+3. *Brevo confirmed the transaction.* Its event log recorded `requests` then `delivered` to the real mailbox.
+4. *The boot shape.* Three cases added to `p64-comm-email-env-boot.e2e-spec.ts`, including the shape production actually runs (Brevo alone, no Resend credentials present), an explicit `PLATFORM_WEB_URL` winning over the derived default, and the refusal when neither a web URL nor a base domain can build a link. 9/9 pass.
+5. *The env genuinely reached the host.* `POST /api/v1/webhooks/email/brevo` with a wrong secret → **401**; with the correct secret → **202 `{"received":true,"events":1}`**. The 202 is only possible if `BREVO_WEBHOOK_SECRET` synced, the route authenticated, the payload parsed, and the single `communications` worker accepted the job — which also exercises the merged one-processor path in production.
+6. *Production itself sent a real email.* A password-reset request against the production API for the owner's own address produced, in Brevo's event log, `requests` at 03:24:49 then `delivered` at 03:24:51 — subject "Reset your Atlas password". That is the full production pipeline: API → registry → Brevo adapter → Brevo → a real inbox.
+
+**Inbound delivery events.** A transactional webhook is registered at Brevo (id 2203146) for the deliverability signals the adapter maps: `delivered`, `hardBounce`, `softBounce`, `spam`, `blocked`, `invalid`, `error`. Open and click tracking were deliberately NOT subscribed — they are engagement telemetry on transactional mail, and Atlas has no product reason to track whether someone opened a password reset.
+
+**Honest limitation.** That inbound events *authenticate and enqueue* is verified (step 5). That they then land as `communication_deliveries` rows and suppression entries is NOT externally verifiable: `/health` and `/metrics` sit outside the `api` prefix and Caddy proxies only `/api/*`, so neither the metrics endpoint nor the database is reachable from outside the host. This is an observability gap in the product, not merely in the test — an operator has the same problem. It is the concrete argument for C7 (platform communications console), which is where it will be closed.
+
+**Quota reality.** Brevo free is 300 emails/day, 9000/month, 5/second. The registry reserves per category against that budget and skips to the next provider when a line is exhausted; with a single-provider chain, exhaustion surfaces as an honest failure with a metric rather than a silent drop. Once Resend is added, exhaustion falls through to it instead.
+
+**Next.** BL-3 (Resend domain) is the only external input still missing, and it blocks only Resend. Wave-2 work (C3 events + digests, C4 OTP backend) and Resend hardening short of the domain are proceeding in parallel.
