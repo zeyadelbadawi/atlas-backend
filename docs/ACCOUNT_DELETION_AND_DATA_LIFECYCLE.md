@@ -368,6 +368,57 @@ with no exceptions:
 
 ---
 
+## 12b. Production identity migration — `IMPLEMENTED` (25-26 Sep 2026)
+
+No secrets are recorded here: no password was ever revealed to anyone, and
+the provisioning password was generated inside the remote command, hashed by
+`PasswordHasherService` and discarded.
+
+**Outcome.** `zeyadelbadawi.ze@gmail.com` is the Platform Owner, id
+`c9a8267c-d352-4280-bb67-d446a6b5f2e5`, `status: active`, `is_platform_owner:
+true`, owning no organization, holding no membership, academy role or
+studentship.
+
+**Sequence, in the safe order.** The previous Client Owner row for that
+address (`ab5660db-…`) was deleted first — by the owner, through the product
+— which anonymised its email to `deleted-<uuid>@account.invalid` and freed
+the UNIQUE constraint. Its organization row is retained by design, pointing
+at the anonymised subject. Only then was the address provisioned through
+`src/scripts/provision-platform-owner.ts`, which refuses to touch an email
+that exists and is not already a platform owner, so it could not have
+hijacked a live account.
+
+**Verified, with evidence rather than assertion:**
+
+| Check | Evidence |
+|---|---|
+| Exists exactly once | `SELECT count(*) … WHERE email = '…'` → 1 |
+| Email stored exactly | `zeyadelbadawi.ze@gmail.com`, no case or dot drift |
+| Platform Owner | `is_platform_owner = t` |
+| No Client Owner left on that address | non-platform-owner rows with that email → 0 |
+| No tenant attachment | owns_orgs 0, memberships 0, academy roles 0, studentships 0 |
+| Canonical email actually sent | `communication_deliveries` → `email / delivered / brevo` |
+| **Authenticated through the real OTP/new-device flow** | `auth_email_challenges` row **consumed**; live `refresh_tokens` row on the **`management`** surface; **1 `trusted_devices`** row; `last_sign_in_at` set |
+| OTP policy in force | `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT=new_device` read from the running container |
+| Platform routes registered and guarded | `platform-users`, `platform-user-management/:id/deletion-plan`, `platform-metrics` → 401; a nonexistent sibling → 404 |
+
+**Deliberately NOT done.** `ziadelbadawi@gmail.com` (`511d05bf-…`) is
+untouched: it is a Platform Owner that has actually signed in and owns an
+organization, and the request never unambiguously identified it (the
+addresses originally named, `ziad.elbadawi@gmail.com` and
+`ziad.elbadawi.ZD@gmail.com`, matched no row — Gmail ignores dots, so the
+stored row is the undotted one). Deleting the wrong privileged account is
+irreversible and nothing in the product can grant `is_platform_owner` back.
+
+**Open item.** `ziad.elbadawi.zd@gmail.com` (`51808bca-…`) was provisioned
+under the earlier, since-superseded instruction and has never been used. It
+is a surplus privileged account and should be removed — but
+`AccountDeletionService` deliberately refuses to delete a Platform Owner, so
+removing it requires an explicit, separately authorised step rather than the
+ordinary path. Recorded rather than quietly left behind.
+
+---
+
 ## 13. The outage this work caused, and the guard that now prevents it
 
 `IMPLEMENTED`
