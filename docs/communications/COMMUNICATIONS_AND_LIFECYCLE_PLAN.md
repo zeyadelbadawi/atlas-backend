@@ -658,6 +658,7 @@ Ordered, because step 6 will break the live provider if it is done alone.
 
 A bounded smoke test is possible before any of this, but **only in a throwaway environment**: `EMAIL_PROVIDERS=resend` with `EMAIL_FROM_EMAIL=onboarding@resend.dev`, sending to the Resend account owner's own address. Never in production — `EMAIL_FROM_EMAIL` is shared and it would break Brevo.
 | BL-2 | Real-provider video deletion verification depends on Phase 4 blocker (2) (video infrastructure unset) | infrastructure | No | OPEN — C6 verified against `FakeVideoProvider` |
+| BL-4 | **Historical course orders never expired.** The lazy expiry wrote `status='expired'` and then threw the 409 from the SAME interactive transaction, so Prisma rolled the write back every time — the transition has never committed since P64 Phase 4. Fixed going forward (the transition now commits in its own transaction before the 409), but rows that expired before the fix stay `draft`/`pending_payment` with a past `expiresAt` until someone retries payment on them. | data residue | Partly | OPEN — NOT user-blocking: `createOrder` conflicts only on an existing enrollment and on the idempotency key, so a stale row does not stop a learner re-purchasing. A backfill sweep must NOT emit `course.order.expired` for historical rows — telling people their months-old order just expired would be worse than the residue. Decide before writing one. |
 
 
 ## MR-1. Milestone record — foundation, expiry enforcement and the email provider layer (24 Sep 2026)
