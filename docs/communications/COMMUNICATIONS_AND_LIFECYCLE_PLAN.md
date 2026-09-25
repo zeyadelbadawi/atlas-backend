@@ -627,11 +627,11 @@ Serialized by the lead: every schema change, every merge, every push/deploy, eve
 | W-PROV Brevo/registry/webhooks/suppression/quota | C0/C1 | worker (`ws-provider`), lead-verified | **DONE — deployed, dormant on the stub** | `c19943d`, merge `d166c96`, boot contract `edef8a0` | run `36058096657` | ✅ `/webhooks/email/{brevo,resend}` answer 404 while no real provider is registered (by design); API booted with the new env validation — proving the deploy is safe with production's unchanged env | goes live when BL-1 is satisfied |
 | W-FE1 notification centre + preferences UI | C2 | worker (`ws-notif-ui`), lead-verified | **DONE — deployed** | atlas-front `1f04390`, merge `f5e12f3` | atlas run `36071154378` success | ✅ `my/notifications` and `communication-preferences` present in the production bundle | 4 harness failures found and fixed by the lead (missing localization provider; Radix popover/select never settling under jsdom; an unscoped `listitem` query) |
 | W-OUT outbox/catalogue/dispatcher/templates | C1 | worker (`ws-outbox`), lead-verified | **DONE — deployed** | `c6e671a`, fix `3c573f9`, merge `94eb72d` | run `36069472799` success (no migration; none added) | ✅ `GET /api/v1/users/me/communication-preferences` answers 401 (route live and guarded) vs 404 on an unknown route; `POST /api/v1/webhooks/email/brevo` fails closed with 401 | migrates the 17 producers, preserving all 14 pre-existing dedupe keys exactly; adds `PLATFORM_WEB_URL` + link builder. Four integration defects found and fixed at merge — see MR-2 |
-| W-OTP | C4 | worker | PENDING | | | | |
-| W-EVT missing events + digests | C3 | worker | PENDING | | | | |
+| W-OTP | C4 | worker (`ws-otp`), lead-verified | **DONE — deployed** | `3dbbb2f`, RLS fix `fd08e81`, merge `0722be5` | gated run `36082746461` success | ✅ `/api/v1/auth/otp/{verify,resend}` answer 400 on an empty body and `/auth/trusted-devices` 401 — live and guarded — vs 404 on an unknown sibling; sign-in unchanged (401 `errors.auth.invalidCredentials`, not 5xx) | flag-gated OFF by default. The lead found and fixed a REAL RLS hole on the two factor tables — see MR-4 |
+| W-EVT missing events + digests | C3 | worker (`ws-evt`), lead-verified | **PARTIAL — deployed** | `255e551` | gated run `36082746461` | ✅ the pipeline still delivers end to end after the merge (password reset `requests`→`delivered`, 04:38) | 9 missing events shipped + 6 digest defects fixed, 3 of them serious. Staff/platform digests deliberately NOT shipped — recipient resolution needs a design decision (MR-4) |
 | W-FE2 OTP/trusted devices/comms settings UI | C4/C2 | worker (`ws-otp-ui`), lead-verified | **DONE — deployed (UI only; backend is C4/W-OTP)** | atlas-front `e104992`, merge `ead967f` | atlas run `36071154378` success | ✅ `trusted-devices` present in the production bundle | the UI codes against the OTP / trusted-device / communication-settings contracts fixed by the lead; it stays inert until W-OTP ships the backend |
 | W-LIFE lifecycle + retention | C5/C6 | worker | PENDING | | | | |
-| W-FE3 retention/lifecycle/comms analytics UI | C6/C7 | worker | PENDING | | | | |
+| W-FE3 retention/lifecycle/comms analytics UI | C6/C7 | lead (comms console) + PENDING (rest) | **PARTIAL — console deployed** | `c6fd4cc`, atlas-front `3808fb9` | atlas run `36081562716` success | ✅ `/api/v1/platform-communications/health` 401 vs 404 control; the lazy chunk `AnalyticsCommunicationsPage-*.js` is served from production and contains the API path | retention page + lifecycle states still pending (C6) |
 
 ## BL. Known blockers (living)
 
@@ -731,3 +731,52 @@ A bounded smoke test is possible before any of this, but **only in a throwaway e
 **Quota reality.** Brevo free is 300 emails/day, 9000/month, 5/second. The registry reserves per category against that budget and skips to the next provider when a line is exhausted; with a single-provider chain, exhaustion surfaces as an honest failure with a metric rather than a silent drop. Once Resend is added, exhaustion falls through to it instead.
 
 **Next.** BL-3 (Resend domain) is the only external input still missing, and it blocks only Resend. Wave-2 work (C3 events + digests, C4 OTP backend) and Resend hardening short of the domain are proceeding in parallel.
+
+## MR-4. Milestone record — C3 events, C4 OTP, C7 console, Resend hardening, and an RLS hole closed (25 Sep 2026)
+
+**Phase:** C3 (partial) + C4 + C7 (console) + the fallback provider.
+**Deployed:** backend `0722be5`; the push-deploy `36081560893` correctly REFUSED (one migration pending, nothing migrated, nothing rolled — the gate doing its job), then gated run `36082746461` applied `20261014000000_p64_c4_otp_rls_tighten` and deployed. Frontend `9d22d35` via run `36081562716`.
+
+### The security defect — an RLS hole on the authentication-factor tables
+
+Worth stating first because it is the most serious thing in this milestone, and it was **mine**: the foundation migration (`112c481`) gave `auth_email_challenges` and `trusted_devices` permissive `USING (true)` SELECT and UPDATE policies *alongside* their self-scoped ones. PostgreSQL OR-combines permissive policies, so `USING (true)` did not sit beside `user_id = current_user` — it **replaced** it. On the two tables holding login codes and device trust, RLS imposed no cross-user constraint whatsoever, leaving the service layer's `user_id` predicate as the only thing between two accounts.
+
+That is exactly the arrangement the two-gate rule exists to forbid. The fix narrows every policy to the acting user and adds `WITH CHECK` on the updates so a row cannot be reassigned on its way out. **No platform-owner SELECT on `auth_email_challenges`** — a live login code is not support data; trusted devices keep theirs, because "which devices does this account trust?" is a real support question about metadata.
+
+It was safe to apply: no deployed code touched either table (C4 shipped in the same release) and both were empty in production.
+
+`test/p64-c4-otp-rls.e2e-spec.ts` proves it **directly against Postgres** — setting the session GUC and issuing raw SQL — because going through the service would have passed either way; the service adds its own predicate and masks the missing one. **Control run: with the permissive policies restored, 5 of the 8 cases fail**, including "a user CANNOT read another user's login challenge" and "even the Platform Owner cannot read a live login code". With the migration, 8/8 pass. (A first attempt at that control silently proved nothing — `psql` is not installed, so the policies were never actually restored and the suite ran green against the already-fixed database. Re-run through Prisma, where it genuinely failed.)
+
+### What else shipped
+
+**C4 — email OTP and trusted devices.** Issue/verify/resend with codes HMAC-hashed at rest, constant-time compared, single-use under concurrency (`UPDATE … WHERE consumed_at IS NULL`), attempts incremented by the same statement that reads the row so concurrent guesses cannot share a count, and destroyed rather than refused past the limit. Trusted devices bound to the user via an HttpOnly cookie, revoked on password change and reset. The challenge reference is AES-256-GCM sealed over `<rowId>.<userId>` so a session-less verify still resolves its owner in memory and runs under `runInUserContext` — which is what made the RLS tightening possible at all. Rolled out behind `FLAG_AUTH_EMAIL_OTP_MODE_*`, **both default OFF**; TOTP supersedes it and the two never stack. The deployed-but-inert OTP frontend from MR-2 now has its backend.
+
+**C3 — nine of the missing events**, each with EN/AR templates and its producer wired to `emit` inside the existing transaction: enrollment granted/revoked/expiry-changed, roster approved/rejected/blocked/unblocked, payment-proof submitted, review moderated. Plus **six digest defects**, three serious: `window_start` carried the asking instant's milliseconds, so the `(recipient, kind, window_start)` unique index — the thing that makes "one digest per window" a database fact — could never fire and two workers could mail the same person twice; the losing INSERT aborted the dispatch transaction (MR-2's defect 4 in a second place, now inside `withSavepoint`); and `sendDigest` had no claim at all, so two sweeps both sent.
+
+**C7 — the platform communications console**, closing the observability gap MR-3 recorded honestly. `GET /platform-communications/health` reports outbox states, delivery outcomes by status and provider, suppression counts, digest states, and the live provider chain with real quota usage. The number that matters is `outbox.oldestPendingSeconds`: a dispatcher that has stopped claiming rows looks **exactly** like a quiet week — both are silence — and the age of the oldest due row is the only thing that separates them. Its UI lives under Analysis › Communications, platform-owner-only, with the verdict announced in words through a live region rather than signalled by colour, and suppressed addresses shown as truncated hashes because the server never stores the address.
+
+**Resend — ready except for the domain.** Error classification corrected in both directions (a 409 `concurrent_idempotent_requests` was permanent and abandoned the message *and* stopped the chain; 408/425 added as transient); `Undetermined` bounces no longer become permanent suppressions of possibly-good addresses; Svix verification hardened (unbranded header aliases, strict integer timestamps, all `v1,` entries compared for key rotation, empty secret rejected). And a defect that would have broken every Resend send: Atlas tags are `key:value` strings, Resend's tag charset is `[A-Za-z0-9_-]`, so every outbox email would have been a 422 — permanent, i.e. dropped, and in a Resend-first chain every message lost. Tags are now split and sanitised into real `{name, value}` pairs.
+
+**A stub-only production chain now shouts.** Error-level at boot plus the console warning — deliberately not fatal, because refusing to boot would take the whole platform down over email config, and a learner who cannot reach their course is worse than one who cannot reset a password.
+
+**Translation parity.** The C3 and C4 events shipped their backend half with no frontend translations, so the feed would have rendered raw keys like `notifications:events.enrollmentGranted.title` to a learner — silent, unlogged, visible only to whoever looked. All 13 added in EN and AR; `notification-events-parity.test.ts` now asserts identical key sets, non-empty title and message, and **the same `{{variables}}` on both sides**, since Arabic copy that quietly drops `{{courseTitle}}` still renders and still loses the only useful detail.
+
+### Tests (lead-run, on the merged tree)
+
+Backend **2200 unit tests / 120+ suites**, tsc exit 0, eslint clean on touched files. E2E serially: `p64-comm-events`, `p64-comm-outbox`, `p64-comm-providers`, `p64-comm-platform-console`, `p64-comm-expiry-enforcement`, `p64-comm-email-env-boot`, `p64-c4-email-otp`, `p64-c4-otp-rls`, `notifications`, `auth-signin`, `auth-security` — **11 suites, 175 tests, all passing**. Frontend: the console page 8/8, parity guard 3/3, typecheck holds at the 34-error pre-existing baseline, production build succeeds.
+
+### Production verification
+
+Migration applied (run log quoted). OTP routes answer 400 on an empty body and trusted-devices 401, against 404 for an unknown sibling — live and guarded. Sign-in still returns 401 `errors.auth.invalidCredentials` rather than a 5xx, which is the regression that mattered since the OTP work touched that path. The C7 console answers 401 and its lazy chunk is served from production containing the API path. And the pipeline still **delivers**: a password-reset request against production produced `requests` → `delivered` in Brevo's log at 04:38.
+
+### Deliberately not done, and why
+
+- **Staff and platform digests (G1, F1, E1, K2).** Every one is produced in a *learner's* RLS context while the recipients are staff, and a learner's transaction cannot resolve an academy's moderators — `academy_members_tenant_select` needs a tenant context and `academy_members_self_select` sees only your own row. Emitting to them needs either a SECURITY DEFINER recipient lookup or a post-commit staff-context fan-out. That is an architecture decision, correctly escalated rather than improvised. **Consequence: no catalogue entry yet uses `channels.email: 'digest'`**; that branch is currently reached only via the engagement-digest preference and daily-cap overflow.
+- **Invite recipients (G4/G5).** `communication_outbox.recipient_invite_id` exists, but `emit` resolves recipients by user id only; supporting an invited address touches the "no caller can supply a recipient address" invariant.
+- **Remaining C3 events** — self-enrollment receipt, order created/expired, quiz auto-submit, attempt invalidated, course completed, device events, announcements. None is an access or money change. Announcements additionally need the per-announcement "also email" product choice and the §22 cap.
+- **No OTP browser verification.** Backend only; the flag is off, and a person should drive the deployed screen on a canary before it is enabled.
+- **No alert rule** for the new `atlas_auth_otp_total` series.
+
+### Blockers
+
+BL-3 (Resend sending domain) unchanged and still the only external input missing. BL-2 unchanged. BL-1 remains resolved.
