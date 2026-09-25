@@ -44,6 +44,7 @@ import { CertificatesModule } from './certificates/certificates.module';
 import { InstructorModule } from './instructor/instructor.module';
 import { CommunityModule } from './community/community.module';
 import { MediaModule } from './media/media.module';
+import { RetentionModule } from './retention/retention.module';
 import { WebsiteModule } from './website/website.module';
 import { DomainModule } from './domain/domain.module';
 import { PublicWebsiteModule } from './public-website/public-website.module';
@@ -178,6 +179,10 @@ import { DashboardModule } from './dashboard/dashboard.module';
     InstructorModule,
     CommunityModule,
     MediaModule,
+    // P64 Communications C6 — hosted-video retention (plan §31/§32).
+    // A leaf module: it imports `PlansModule` and `MediaModule` and
+    // nothing imports it.
+    RetentionModule,
     WebsiteModule,
     DomainModule,
     PublicWebsiteModule,

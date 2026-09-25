@@ -70,6 +70,13 @@ import { template as lifecycleSubscriptionCancelScheduled } from './keys/lifecyc
 import { template as lifecycleSubscriptionCancelled } from './keys/lifecycle.subscription.cancelled';
 import { template as lifecycleSubscriptionFollowup7d } from './keys/lifecycle.subscription.followup_7d';
 import { template as lifecycleSubscriptionFollowup30d } from './keys/lifecycle.subscription.followup_30d';
+// P64 C6 — hosted-video retention (plan §31/§32).
+import { template as retentionVideoWarning30d } from './keys/retention.video.warning_30d';
+import { template as retentionVideoWarning14d } from './keys/retention.video.warning_14d';
+import { template as retentionVideoWarning7d } from './keys/retention.video.warning_7d';
+import { template as retentionVideoWarning24h } from './keys/retention.video.warning_24h';
+import { template as retentionVideoDeleted } from './keys/retention.video.deleted';
+import { template as retentionVideoDeletionFailed } from './keys/retention.video.deletion_failed';
 
 export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'provisioning.completed': provisioningCompleted,
@@ -122,6 +129,12 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'lifecycle.subscription.cancelled': lifecycleSubscriptionCancelled,
   'lifecycle.subscription.followup_7d': lifecycleSubscriptionFollowup7d,
   'lifecycle.subscription.followup_30d': lifecycleSubscriptionFollowup30d,
+  'retention.video.warning_30d': retentionVideoWarning30d,
+  'retention.video.warning_14d': retentionVideoWarning14d,
+  'retention.video.warning_7d': retentionVideoWarning7d,
+  'retention.video.warning_24h': retentionVideoWarning24h,
+  'retention.video.deleted': retentionVideoDeleted,
+  'retention.video.deletion_failed': retentionVideoDeletionFailed,
   'review.submitted': reviewSubmitted,
   'enrollment.self_enrolled': enrollmentSelfEnrolled,
   'course.order.created': courseOrderCreated,

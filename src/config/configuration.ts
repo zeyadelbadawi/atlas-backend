@@ -336,10 +336,27 @@ export interface CommunicationsConfig {
    * it would have sent. See `FLAG_LIFECYCLE_SEQUENCES_MODE`.
    */
   readonly lifecycleSequencesMode: LifecycleSequencesMode;
+  /**
+   * P64 C6 — whether the hosted-video retention sequence (§31/§32)
+   * evaluates, warns and deletes. `off` by default; `warn_only` sends the
+   * full W1-W4 warning sequence and deletes nothing. See
+   * `FLAG_VIDEO_RETENTION_MODE`.
+   */
+  readonly videoRetentionMode: VideoRetentionMode;
 }
 
 /** P64 C5 — the staged rollout of the lifecycle sequences (§43). */
 export type LifecycleSequencesMode = 'off' | 'dry_run' | 'on';
+
+/**
+ * P64 C6 — the staged rollout of hosted-video retention (§43).
+ *
+ * `warn_only` is the middle setting rather than a `dry_run`, and the
+ * difference is deliberate: the observable half of this feature IS the
+ * warning sequence, and the half that must be held back is the
+ * irreversible one. There is no mode that deletes without warning.
+ */
+export type VideoRetentionMode = 'off' | 'warn_only' | 'on';
 
 /** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
 export interface IdentityConfig {
@@ -669,6 +686,9 @@ export default () => {
     // Defaults to `off` — see `FLAG_LIFECYCLE_SEQUENCES_MODE`.
     lifecycleSequencesMode: (env.FLAG_LIFECYCLE_SEQUENCES_MODE ??
       'off') as LifecycleSequencesMode,
+    // Defaults to `off` — see `FLAG_VIDEO_RETENTION_MODE`. This one
+    // deletes customer data when it is `on`.
+    videoRetentionMode: (env.FLAG_VIDEO_RETENTION_MODE ?? 'off') as VideoRetentionMode,
   };
 
   return {

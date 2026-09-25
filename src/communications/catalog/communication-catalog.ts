@@ -92,6 +92,15 @@ const NEVER_DEDUPED = (): null => null;
 const TENANT_SUBSCRIPTION_PATH = '/dashboard/tenant/subscription';
 
 /**
+ * P64 C6 — the deep link every retention warning points at (plan §31:
+ * "a Data & retention page under `/dashboard/tenant/retention`"). A
+ * retention warning must NOT land on the billing page: §31 gives the
+ * owner two ways to stop a deletion, subscribing and downloading, and
+ * only the first of them lives under billing.
+ */
+const TENANT_RETENTION_PATH = '/dashboard/tenant/retention';
+
+/**
  * P64 C5 — the dedupe key of one lifecycle step:
  * `lifecycle_<step>:<entity id>:<version>`.
  *
@@ -1412,6 +1421,155 @@ const CATALOG = {
       const courseId = str(values, 'courseId');
       return courseId ? `/my/courses/${courseId}` : '/my';
     },
+  },
+
+  // === P64 Communications C6 — hosted-video retention (plan §31/§32).
+  //
+  // THE SIX ENTRIES BELOW ARE THE ONLY WARNING A CUSTOMER GETS BEFORE
+  // THEIR VIDEO IS DESTROYED, so three things about them are deliberate
+  // and none of them are style:
+  //
+  //  1. `email: 'always'` on all five customer-facing entries. §31 calls
+  //     these "lifecycle-critical and only suppressible by hard bounce".
+  //     `always` bypasses the preference branch in
+  //     `CommunicationDispatchService` and still respects the suppression
+  //     list, which is exactly that sentence expressed as policy. A
+  //     `preference` channel here would mean a customer who once turned
+  //     off reminders loses their course library without being told.
+  //  2. `notificationType: 'account'` with `retentionClass: 'extended'`.
+  //     This is not billing and not a nudge: it is a statement about the
+  //     customer's own data. §33 keeps account-class rows for 365 days,
+  //     which is what makes "we told you, on this date" still answerable a
+  //     year later — and the deletion is permanent, so the record of the
+  //     notice has to outlive the 180-day standard class.
+  //  3. The dedupe anchor is the retention anchor, so the whole sequence
+  //     shares one version string. That is what lets
+  //     `VideoRetentionRepository.findWarningsSent` ask "was this customer
+  //     warned about THIS deletion date" by key alone — the precondition
+  //     that makes the destructive step reachable.
+  //
+  // `actionUrl` points at the retention page §31 specifies rather than at
+  // the subscription page: the two ways to stop a deletion are subscribing
+  // AND downloading, and only one of them lives under billing.
+
+  // W1 Notice — 30 days out. Counts, minutes, the date, and the two ways
+  // to stop it.
+  'retention.video.warning_30d': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'account',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('retention_warning_30d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'retention.video.warning_30d',
+    titleKey: 'notifications:events.retentionVideoWarning30d.title',
+    messageKey: 'notifications:events.retentionVideoWarning30d.message',
+    actionUrl: () => TENANT_RETENTION_PATH,
+  },
+  // W2 Reminder — 14 days out, with the affected courses named.
+  'retention.video.warning_14d': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'account',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('retention_warning_14d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'retention.video.warning_14d',
+    titleKey: 'notifications:events.retentionVideoWarning14d.title',
+    messageKey: 'notifications:events.retentionVideoWarning14d.message',
+    actionUrl: () => TENANT_RETENTION_PATH,
+  },
+  // W3 Final warning — 7 days out. `urgent`: from here the feed should
+  // outrank everything else in it.
+  'retention.video.warning_7d': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'urgent',
+    notificationType: 'account',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('retention_warning_7d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'retention.video.warning_7d',
+    titleKey: 'notifications:events.retentionVideoWarning7d.title',
+    messageKey: 'notifications:events.retentionVideoWarning7d.message',
+    actionUrl: () => TENANT_RETENTION_PATH,
+  },
+  // W4 Last call — 24 hours out, short, and sent even if W1-W3 bounced
+  // (§31). `always` is what makes that last clause true.
+  'retention.video.warning_24h': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'urgent',
+    notificationType: 'account',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('retention_warning_24h', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'retention.video.warning_24h',
+    titleKey: 'notifications:events.retentionVideoWarning24h.title',
+    messageKey: 'notifications:events.retentionVideoWarning24h.message',
+    actionUrl: () => TENANT_RETENTION_PATH,
+  },
+  // D — one per tenant, after every asset of the run has settled. Reports
+  // what went, what stayed, and — when the provider refused some of them —
+  // says so rather than claiming a clean sweep.
+  'retention.video.deleted': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'urgent',
+    notificationType: 'account',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('retention_deleted', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'retention.video.deleted',
+    titleKey: 'notifications:events.retentionVideoDeleted.title',
+    messageKey: 'notifications:events.retentionVideoDeleted.message',
+    actionUrl: () => TENANT_RETENTION_PATH,
+  },
+  // K3 — the Platform Owner, when an asset exhausted its five attempts.
+  // Addressed to staff of the PLATFORM, never to the customer: the
+  // customer's D email already tells them honestly what remains, and this
+  // one carries the asset id an operator needs.
+  //
+  // Deduped on the asset and the anchor, so one broken asset produces one
+  // alert per deletion run rather than one per retry.
+  'retention.video.deletion_failed': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'urgent',
+    notificationType: 'system',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('retention_deletion_failed', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'retention.video.deletion_failed',
+    titleKey: 'notifications:events.retentionVideoDeletionFailed.title',
+    messageKey: 'notifications:events.retentionVideoDeletionFailed.message',
+    actionUrl: () => '/platform/analytics',
   },
 } as const satisfies Record<string, CommunicationCatalogEntry>;
 

@@ -294,6 +294,34 @@ const EXPECTED_DEDUPE: Record<
     expected: `lifecycle_subscription_followup_30d:${ENTITY_ID}:${GRACE_ENDS_AT}`,
   },
 
+  // --- P64 C6 — hosted-video retention (§31). The whole sequence shares
+  // ONE anchor, which is what lets "was this customer warned about THIS
+  // deletion date?" be answered by key alone.
+  'retention.video.warning_30d': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_retention_warning_30d:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
+  'retention.video.warning_14d': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_retention_warning_14d:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
+  'retention.video.warning_7d': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_retention_warning_7d:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
+  'retention.video.warning_24h': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_retention_warning_24h:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
+  'retention.video.deleted': {
+    values: { anchorAt: GRACE_ENDS_AT },
+    expected: `lifecycle_retention_deleted:${ENTITY_ID}:${GRACE_ENDS_AT}`,
+  },
+  'retention.video.deletion_failed': {
+    values: { anchorAt: GRACE_ENDS_AT },
+    expected: `lifecycle_retention_deletion_failed:${ENTITY_ID}:${GRACE_ENDS_AT}`,
+  },
+
   // A STAFF work item. The submission instant is in the key because a
   // re-submitted review is a new thing to moderate — without it an edited
   // review would dedupe against the original and never be re-queued.

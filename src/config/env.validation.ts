@@ -196,6 +196,26 @@ const EnvSchema = z.object({
   // variable must never be the reason production starts emailing
   // customers about their subscription.
   FLAG_LIFECYCLE_SEQUENCES_MODE: z.enum(['off', 'dry_run', 'on']).default('off'),
+
+  // --- P64 Communications C6 (§31/§32, §43) — hosted-video retention ---
+  // The only flag in this codebase whose `on` value DESTROYS CUSTOMER
+  // DATA, so it has one more setting than C5's and a stricter default.
+  //
+  //   `off`       (the default) — evaluates nothing, sends nothing,
+  //               deletes nothing. An unset variable must never be the
+  //               reason a customer's video is deleted.
+  //   `warn_only` — evaluates everything and sends the full W1-W4 warning
+  //               sequence, and DELETES NOTHING. This is not a dry run:
+  //               the warnings are real mail to real customers. It is the
+  //               intended production state for at least one full
+  //               retention window, so that the deletion step, when it is
+  //               finally enabled, can only reach tenants who have
+  //               already received all four notices (see the warning
+  //               precondition in `video-retention.util.ts`).
+  //   `on`        — the warnings, and the deletion.
+  //
+  // There is deliberately no mode that deletes without warning.
+  FLAG_VIDEO_RETENTION_MODE: z.enum(['off', 'warn_only', 'on']).default('off'),
   // §12's approved numbers. Configurable so a load-testing pass can tune
   // them, bounded so a typo cannot turn the control off: the ceiling on
   // attempts and codes is validated as a positive integer, and the code
