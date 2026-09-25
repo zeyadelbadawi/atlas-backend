@@ -628,9 +628,10 @@ Serialized by the lead: every schema change, every merge, every push/deploy, eve
 | W-FE1 notification centre + preferences UI | C2 | worker (`ws-notif-ui`), lead-verified | **DONE — deployed** | atlas-front `1f04390`, merge `f5e12f3` | atlas run `36071154378` success | ✅ `my/notifications` and `communication-preferences` present in the production bundle | 4 harness failures found and fixed by the lead (missing localization provider; Radix popover/select never settling under jsdom; an unscoped `listitem` query) |
 | W-OUT outbox/catalogue/dispatcher/templates | C1 | worker (`ws-outbox`), lead-verified | **DONE — deployed** | `c6e671a`, fix `3c573f9`, merge `94eb72d` | run `36069472799` success (no migration; none added) | ✅ `GET /api/v1/users/me/communication-preferences` answers 401 (route live and guarded) vs 404 on an unknown route; `POST /api/v1/webhooks/email/brevo` fails closed with 401 | migrates the 17 producers, preserving all 14 pre-existing dedupe keys exactly; adds `PLATFORM_WEB_URL` + link builder. Four integration defects found and fixed at merge — see MR-2 |
 | W-OTP | C4 | worker (`ws-otp`), lead-verified | **DONE — deployed** | `3dbbb2f`, RLS fix `fd08e81`, merge `0722be5` | gated run `36082746461` success | ✅ `/api/v1/auth/otp/{verify,resend}` answer 400 on an empty body and `/auth/trusted-devices` 401 — live and guarded — vs 404 on an unknown sibling; sign-in unchanged (401 `errors.auth.invalidCredentials`, not 5xx) | flag-gated OFF by default. The lead found and fixed a REAL RLS hole on the two factor tables — see MR-4 |
-| W-EVT missing events + digests | C3 | worker (`ws-evt`), lead-verified | **PARTIAL — deployed** | `255e551` | gated run `36082746461` | ✅ the pipeline still delivers end to end after the merge (password reset `requests`→`delivered`, 04:38) | 9 missing events shipped + 6 digest defects fixed, 3 of them serious. Staff/platform digests deliberately NOT shipped — recipient resolution needs a design decision (MR-4) |
+| W-EVT / W-EVT2 events + digests | C3 | workers (`ws-evt`, `ws-evt2`) + lead, lead-verified | **MOSTLY DONE — deployed** | `255e551`, `6af22e3`, staff resolver `e2a73d6`, F1 `ec2e503` | runs `36082746461`, `36086837677` | ✅ pipeline delivers end to end after each merge | 20 events shipped + 6 digest defects fixed. Staff recipient resolution SOLVED (SECURITY DEFINER resolver) and F1 shipped. Still open: G1, the announcement email half, platform-wide fan-out |
 | W-FE2 OTP/trusted devices/comms settings UI | C4/C2 | worker (`ws-otp-ui`), lead-verified | **DONE — deployed (UI only; backend is C4/W-OTP)** | atlas-front `e104992`, merge `ead967f` | atlas run `36071154378` success | ✅ `trusted-devices` present in the production bundle | the UI codes against the OTP / trusted-device / communication-settings contracts fixed by the lead; it stays inert until W-OTP ships the backend |
-| W-LIFE lifecycle + retention | C5/C6 | worker | PENDING | | | | |
+| W-LIFE lifecycle (C5) | C5 | worker (`ws-life`), lead-verified | **DONE — deployed, FLAG OFF** | `0baaf95`, merge `475ac85` | run `36088598268` success | ✅ production healthy post-deploy; pipeline still delivers (`requests`→`delivered` 06:11). The sequences themselves emit NOTHING until `FLAG_LIFECYCLE_SEQUENCES_MODE` is set | all 17 steps (T1–T6, S1–S10) + a lateness horizon that is NOT in the plan and prevents a backfill blast — see MR-5 |
+| W-RET video retention | C6 | PENDING | PENDING | | | | depends on C5, now unblocked |
 | W-FE3 retention/lifecycle/comms analytics UI | C6/C7 | lead (comms console) + PENDING (rest) | **PARTIAL — console deployed** | `c6fd4cc`, atlas-front `3808fb9` | atlas run `36081562716` success | ✅ `/api/v1/platform-communications/health` 401 vs 404 control; the lazy chunk `AnalyticsCommunicationsPage-*.js` is served from production and contains the API path | retention page + lifecycle states still pending (C6) |
 
 ## BL. Known blockers (living)
@@ -781,3 +782,51 @@ Migration applied (run log quoted). OTP routes answer 400 on an empty body and t
 ### Blockers
 
 BL-3 (Resend sending domain) unchanged and still the only external input missing. BL-2 unchanged. BL-1 remains resolved.
+
+## MR-5. Milestone record — the tenant lifecycle sequences, the rest of C3, and the staff path opened (25 Sep 2026)
+
+**Phase:** C5 + the remainder of C3. **Deployed:** backend `475ac85` (run `36088598268`), frontend `f1f5d75` (run `36088628129`). No migration in this wave.
+
+### The catch that matters most: a lateness horizon nobody specified
+
+The worker added something the plan does not describe, and it is the single most important decision in this milestone. A lifecycle step is now due within a **window** — `[dueAt, dueAt + horizon]`, two days, and six hours for the three "tomorrow" reminders — never "any time after `dueAt`".
+
+Without it, turning the flag on would have emitted T3 and S7 for **every organisation that ever lapsed**: a backfill blast of "your site is now offline" to people who discovered that months ago. Production is roughly sixteen of seventeen organisations in `trial_expired`, so this was not hypothetical — it is the difference between a rollout and an incident. The second reason is smaller and also right: a reminder that arrives days late is wrong, not merely late. The cost is bounded and stated — a sweep outage longer than the horizon skips a step rather than sending it stale.
+
+`FLAG_LIFECYCLE_SEQUENCES_MODE` defaults to **off**, with a `dry_run` mode that logs every step it would emit. Nothing in production sends until someone decides to enable it, and the honest recommendation is `dry_run` on a canary first.
+
+### What shipped
+
+**C5** — all seventeen steps, T1–T6 and S1–S10. The design property worth recording: every dedupe key is `lifecycle_<step>:<organizationId>:<anchor>` where the anchor is the *immutable instant the step's timing derives from* (`trialEndsAt`, `currentPeriodEnd`, `graceEndsAt`, a cancellation's `effectiveAt`). A sweep tick fifteen minutes later re-derives a byte-identical string and the unique index rejects it; a renewal moves the anchor and is therefore correctly allowed through as the new occurrence it is. Nothing is scheduled ahead, so nothing ever needs cancelling — activation simply stops satisfying the condition. The existing expiry machinery is emitted *from*, never forked.
+
+It also found that the dispatcher had **no `lifecycle.reminders` branch at all** — the preference was exposed to users and read by nothing. T3/S5/S7/S9 are unaffected because they declare `email: 'always'` and never reach that branch, which is the correct behaviour for "your site is now offline".
+
+**C3 second pass** — eleven more events (self-enrollment, order created/expired, quiz auto-submit, attempt invalidated, course completed, the four device events, announcement published), and two real defects found in the process:
+
+1. **Course orders have never actually expired.** The lazy expiry wrote `status='expired'` and then threw the 409 from the *same* interactive transaction, so Prisma rolled the write back every time — since P64 Phase 4. Fixed by committing the transition in its own transaction before the 409; the learner-visible 409 is unchanged. Historical residue is recorded as BL-4, including the trap that a backfill must **not** emit "your order expired" for months-old rows.
+2. **A learner cannot read `academies`** — there is no student policy, so reading it through a required relation *throws* rather than returning null. Learner-context producers no longer pass `academyName`; the dispatcher resolves branding itself.
+
+**The staff path, opened.** Both event workers correctly escalated the same blocker rather than improvising: events produced by a learner but addressed to staff cannot resolve their recipients, because a learner's transaction sees neither the tenant nor the other members. Two alternatives were rejected — loosening `academy_members` RLS would let any learner enumerate staff from any query, and emitting after the commit would break the atomicity the outbox exists for. The answer is `academy_notification_recipients`, a narrow SECURITY DEFINER function returning **user ids only**, active memberships only, executable solely by `atlas_app`. Because a definer function is a deliberate hole in RLS, the tests size the hole: it works from a learner's context, returns a single column, never crosses academies, is still `STABLE`, is still unexecutable by PUBLIC — and, the containment case, the same learner still reads nothing from `academy_members` directly. 9/9.
+
+F1 (a review is waiting for moderation) is the first event through it: owner/administrator/manager only — instructors teach, they do not moderate — batched as a digest, and deliberately **not** quoting the learner's review text, since user-written content in outbound mail is an injection and abuse surface.
+
+**Alerting.** The C7 console could see a stalled dispatcher; Prometheus could not, because every communications metric was a counter and counters cannot separate "the dispatcher died" from "nobody sent anything today". Added `atlas_comm_outbox_oldest_pending_seconds` (published by the sweep) and three rules: dispatcher stalled, dead letters, OTP failure surge. Also fixed the drift guard, which scanned only one of the two files registering `atlas_*` series — so it would have flagged valid rules and, worse, never noticed a rule pointing at a series that does not exist.
+
+### Tests (lead-run, on each merged tree)
+
+Backend **2703 unit tests / 126 suites**, tsc exit 0. E2E serially across the affected set — communications, lifecycle sequences, OTP, OTP RLS, staff recipients, course reviews, trial flow and abuse, notifications — **15 suites, 296 tests, all passing**. The lifecycle worker proved five of its own guards by reverting them (horizon, recipient safety, the reminders gate, the content gate, and the dedupe anchor — replacing the anchor with `Date.now()` turns 8 ticks into 8 emails, which is precisely the failure the workstream exists to prevent).
+
+Two merge conflicts in the catalogue resolved by keeping both sides; two entries lost a closing brace where the conflict boundary fell mid-entry, caught by tsc rather than by review.
+
+### Production verification
+
+All guarded routes answer 401 against a 404 control, sign-in still returns `errors.auth.invalidCredentials` rather than a 5xx, and the pipeline **still delivers** — a password-reset request produced `requests` → `delivered` at 06:11. The lifecycle sequences themselves are verified only by test, because the flag is off; that is stated rather than implied.
+
+### Deliberately not done
+
+- **G1** (someone is waiting for approval → the academy owner) — the resolver now exists, so this is ordinary work rather than blocked.
+- **The announcement email half** — no per-announcement "also email" flag exists on the model, and §21's "size the audience before enqueue" has no mechanism. In-app only; the template already carries the copy the email half will use.
+- **Platform-wide announcements** are not fanned out — the audience is every account, which needs the same design decision as a platform-wide digest.
+- **An index on `tenant_subscriptions`** — `findCandidates` filters by status plus each status's window and the table has only `@@index([planId])`. A seq scan on a small table today; worth an index in the next migration wave.
+- **C6 video retention** — the last major phase, now unblocked by C5.
+- **Enabling the lifecycle flag.** A decision, not an implementation step, and `dry_run` on a canary is the honest first move.
