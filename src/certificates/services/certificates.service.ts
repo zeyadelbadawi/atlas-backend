@@ -78,6 +78,8 @@ import type {
 import {
   CERTIFICATE_JOBS_QUEUE,
   CERTIFICATE_RENDER_JOB,
+  CERTIFICATE_PURGE_SUPERSEDED_JOB,
+  type CertificatePurgeSupersededJobPayload,
   type CertificateRenderJobPayload,
 } from '../queue/certificate-jobs.types';
 
@@ -458,6 +460,10 @@ export class CertificatesService {
     organizationId: string,
   ): Promise<void> {
     await this.enqueueRender(certificate.id, certificate.academyId);
+    // A re-issue bumped the version; the previous PDFs are superseded.
+    if (certificate.version > 1) {
+      await this.enqueuePurgeSuperseded(certificate.id, certificate.academyId);
+    }
     const snapshot = certificate.snapshot as unknown as CertificateSnapshot;
     const emitted: EmitResult = await this.tenancyContextService.runInTenantContext(
       organizationId,
@@ -635,6 +641,8 @@ export class CertificatesService {
       },
     );
     await this.enqueueRender(updated.id, academyId);
+    // Regeneration bumped the version; the previous PDFs are superseded.
+    if (updated.version > 1) await this.enqueuePurgeSuperseded(updated.id, academyId);
     this.metrics.recordCertificateIssued('regenerated');
     return this.getForAcademy(academyId, organizationId, actorUserId, certificateId);
   }
@@ -1060,7 +1068,11 @@ export class CertificatesService {
         version: certificate.version,
         locale,
       });
-      const storageKey = `academies/${academyId}/certificates/${certificate.id}/v${certificate.version}.pdf`;
+      const storageKey = certificatePdfKey(
+        academyId,
+        certificate.id,
+        certificate.version,
+      );
       await this.storage.putObject(storageKey, pdf, 'application/pdf');
       await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
         this.repository.update(tx, certificate.id, {
@@ -1083,6 +1095,29 @@ export class CertificatesService {
       );
       this.metrics.recordCertificateRender(false);
       throw error;
+    }
+  }
+
+  private async enqueuePurgeSuperseded(
+    certificateId: string,
+    academyId: string,
+  ): Promise<void> {
+    const payload: CertificatePurgeSupersededJobPayload = { certificateId, academyId };
+    try {
+      await this.queue.add(CERTIFICATE_PURGE_SUPERSEDED_JOB, payload, {
+        // Colon-free and time-stamped: every trigger gets its own run, and
+        // each run re-reads the version, so overlap is harmless.
+        jobId: `certificate-purge-${certificateId}-${Date.now()}`,
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      });
+    } catch (error) {
+      this.logger.warn(
+        { certificateId, error: error instanceof Error ? error.message : String(error) },
+        'Could not enqueue the superseded-PDF purge; the PDFs remain until the next trigger.',
+      );
     }
   }
 
@@ -1146,8 +1181,45 @@ export class CertificatesService {
         changed += 1;
       });
       await this.enqueueRender(row.id, row.academyId);
+      // The re-render overwrites the CURRENT version's PDF in place (same
+      // versioned key). Earlier versions still carry the real name.
+      await this.enqueuePurgeSuperseded(row.id, row.academyId);
     }
     return changed;
+  }
+
+  /**
+   * Deletes the PDFs of every version BEFORE the certificate's current one.
+   *
+   * House deletion properties (docs/ACCOUNT_DELETION_AND_DATA_LIFECYCLE.md
+   * §5): re-validated at execution time (the version is read now, never
+   * trusted from the enqueue); the current version is never touched;
+   * delete → verify absent, and absence is the only success (S3/R2
+   * DeleteObject is idempotent, so an already-missing object counts);
+   * an object still present after delete throws so BullMQ retries and a
+   * terminal failure is kept for a human. Returns how many were confirmed
+   * absent.
+   */
+  async purgeSupersededPdfs(certificateId: string, academyId: string): Promise<number> {
+    const organizationId =
+      await this.academiesRepository.resolveOrganizationId(academyId);
+    if (!organizationId) return 0;
+    const certificate = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.repository.findById(tx, certificateId),
+    );
+    if (!certificate || certificate.academyId !== academyId) return 0;
+
+    let purged = 0;
+    for (let version = 1; version < certificate.version; version += 1) {
+      const key = certificatePdfKey(academyId, certificateId, version);
+      await this.storage.deleteObject(key);
+      if ((await this.storage.headObject(key)) !== null) {
+        throw new Error(`Superseded certificate PDF still present after delete: ${key}`);
+      }
+      purged += 1;
+    }
+    return purged;
   }
 
   // ---------------------------------------------------------------------
@@ -1245,3 +1317,12 @@ function maskEmail(email: string): string {
 }
 
 export type { CertificateWithNames };
+
+/** The protected-bucket key of one certificate version's PDF — the ONE definition render and purge share. */
+export function certificatePdfKey(
+  academyId: string,
+  certificateId: string,
+  version: number,
+): string {
+  return `academies/${academyId}/certificates/${certificateId}/v${version}.pdf`;
+}

@@ -20,10 +20,7 @@ import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import sharp from 'sharp';
 import type { CertificateSnapshot } from '../dto/certificate.contract';
-import {
-  deriveRenderPalette,
-  type RenderPalette,
-} from '../certificate-palette.util';
+import { deriveRenderPalette, type RenderPalette } from '../certificate-palette.util';
 
 export interface RenderInput {
   readonly snapshot: CertificateSnapshot;

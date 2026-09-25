@@ -1,4 +1,7 @@
-import { CertificateRendererService, reorderMixedRtl } from './certificate-renderer.service';
+import {
+  CertificateRendererService,
+  reorderMixedRtl,
+} from './certificate-renderer.service';
 import type { CertificateSnapshot } from '../dto/certificate.contract';
 import { DEFAULT_WORDING } from '../dto/certificate.contract';
 

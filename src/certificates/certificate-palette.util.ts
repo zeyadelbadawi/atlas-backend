@@ -69,9 +69,10 @@ function hexToRgb(hex: string): Rgb {
 }
 
 function rgbToHex({ r, g, b }: Rgb): string {
-  const c = (n: number) => Math.max(0, Math.min(255, Math.round(n)))
-    .toString(16)
-    .padStart(2, '0');
+  const c = (n: number) =>
+    Math.max(0, Math.min(255, Math.round(n)))
+      .toString(16)
+      .padStart(2, '0');
   return `#${c(r)}${c(g)}${c(b)}`;
 }
 
@@ -112,10 +113,16 @@ export function contrastRatio(a: string, b: string): number {
  * (large display type / rules), and the paper itself must stay light so the
  * certificate is printer-friendly. Returns the normalised, complete palette.
  */
-export function assertReadablePalette(input: Partial<CertificatePalette>): CertificatePalette {
+export function assertReadablePalette(
+  input: Partial<CertificatePalette>,
+): CertificatePalette {
   const palette: CertificatePalette = {
-    primary: isHexColor(input.primary) ? normalizeHex(input.primary) : DEFAULT_PALETTE.primary,
-    accent: isHexColor(input.accent) ? normalizeHex(input.accent) : DEFAULT_PALETTE.accent,
+    primary: isHexColor(input.primary)
+      ? normalizeHex(input.primary)
+      : DEFAULT_PALETTE.primary,
+    accent: isHexColor(input.accent)
+      ? normalizeHex(input.accent)
+      : DEFAULT_PALETTE.accent,
     text: isHexColor(input.text) ? normalizeHex(input.text) : DEFAULT_PALETTE.text,
     background: isHexColor(input.background)
       ? normalizeHex(input.background)
@@ -137,10 +144,14 @@ export function assertReadablePalette(input: Partial<CertificatePalette>): Certi
     throw new BadRequestException({ messageKey: 'errors.certificate.backgroundTooDark' });
   }
   if (contrastRatio(palette.text, palette.background) < 4.5) {
-    throw new BadRequestException({ messageKey: 'errors.certificate.textContrastTooLow' });
+    throw new BadRequestException({
+      messageKey: 'errors.certificate.textContrastTooLow',
+    });
   }
   if (contrastRatio(palette.primary, palette.background) < 3) {
-    throw new BadRequestException({ messageKey: 'errors.certificate.primaryContrastTooLow' });
+    throw new BadRequestException({
+      messageKey: 'errors.certificate.primaryContrastTooLow',
+    });
   }
   return palette;
 }
@@ -153,8 +164,12 @@ export function paletteFromTemplate(row: {
   readonly backgroundColor?: string | null;
 }): CertificatePalette {
   return {
-    primary: isHexColor(row.primaryColor) ? normalizeHex(row.primaryColor) : DEFAULT_PALETTE.primary,
-    accent: isHexColor(row.accentColor) ? normalizeHex(row.accentColor) : DEFAULT_PALETTE.accent,
+    primary: isHexColor(row.primaryColor)
+      ? normalizeHex(row.primaryColor)
+      : DEFAULT_PALETTE.primary,
+    accent: isHexColor(row.accentColor)
+      ? normalizeHex(row.accentColor)
+      : DEFAULT_PALETTE.accent,
     text: isHexColor(row.textColor) ? normalizeHex(row.textColor) : DEFAULT_PALETTE.text,
     background: isHexColor(row.backgroundColor)
       ? normalizeHex(row.backgroundColor)
@@ -171,8 +186,12 @@ export function deriveRenderPalette(
   input: Partial<CertificatePalette> | null | undefined,
 ): RenderPalette {
   const p: CertificatePalette = {
-    primary: isHexColor(input?.primary) ? normalizeHex(input!.primary!) : DEFAULT_PALETTE.primary,
-    accent: isHexColor(input?.accent) ? normalizeHex(input!.accent!) : DEFAULT_PALETTE.accent,
+    primary: isHexColor(input?.primary)
+      ? normalizeHex(input!.primary!)
+      : DEFAULT_PALETTE.primary,
+    accent: isHexColor(input?.accent)
+      ? normalizeHex(input!.accent!)
+      : DEFAULT_PALETTE.accent,
     text: isHexColor(input?.text) ? normalizeHex(input!.text!) : DEFAULT_PALETTE.text,
     background: isHexColor(input?.background)
       ? normalizeHex(input!.background!)

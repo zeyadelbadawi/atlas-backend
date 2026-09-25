@@ -7,7 +7,9 @@ import {
   CERTIFICATE_RENDER_CONCURRENCY,
   CERTIFICATE_RENDER_JOB,
   CERTIFICATE_ANONYMIZE_JOB,
+  CERTIFICATE_PURGE_SUPERSEDED_JOB,
   type CertificateAnonymizeJobPayload,
+  type CertificatePurgeSupersededJobPayload,
   type CertificateIssueJobPayload,
   type CertificateRenderJobPayload,
 } from './certificate-jobs.types';
@@ -31,12 +33,23 @@ export class CertificateJobsProcessor extends WorkerHost {
       | CertificateIssueJobPayload
       | CertificateRenderJobPayload
       | CertificateAnonymizeJobPayload
+      | CertificatePurgeSupersededJobPayload
     >,
   ): Promise<void> {
     if (job.name === CERTIFICATE_ANONYMIZE_JOB) {
       const { userId } = job.data as CertificateAnonymizeJobPayload;
       const changed = await this.certificates.anonymizeForUser(userId);
       this.logger.log({ userId, changed }, 'Certificate anonymisation processed.');
+      return;
+    }
+    if (job.name === CERTIFICATE_PURGE_SUPERSEDED_JOB) {
+      const { certificateId, academyId } =
+        job.data as CertificatePurgeSupersededJobPayload;
+      const purged = await this.certificates.purgeSupersededPdfs(
+        certificateId,
+        academyId,
+      );
+      this.logger.log({ certificateId, purged }, 'Superseded certificate PDFs purged.');
       return;
     }
     if (job.name === CERTIFICATE_ISSUE_JOB) {

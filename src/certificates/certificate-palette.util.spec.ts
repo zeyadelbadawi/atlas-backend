@@ -26,7 +26,9 @@ describe('certificate palette (P4 Issue G)', () => {
 
     it('fills missing roles from the defaults (original Atlas design)', () => {
       expect(assertReadablePalette({})).toEqual(DEFAULT_PALETTE);
-      expect(assertReadablePalette({ primary: '#123456' }).accent).toBe(DEFAULT_PALETTE.accent);
+      expect(assertReadablePalette({ primary: '#123456' }).accent).toBe(
+        DEFAULT_PALETTE.accent,
+      );
     });
 
     it('rejects a text/background pair that fails 4.5:1', () => {
@@ -48,8 +50,12 @@ describe('certificate palette (P4 Issue G)', () => {
     });
 
     it('rejects a malformed hex rather than silently defaulting', () => {
-      expect(() => assertReadablePalette({ primary: 'teal' })).toThrow(BadRequestException);
-      expect(() => assertReadablePalette({ accent: '#12345' })).toThrow(BadRequestException);
+      expect(() => assertReadablePalette({ primary: 'teal' })).toThrow(
+        BadRequestException,
+      );
+      expect(() => assertReadablePalette({ accent: '#12345' })).toThrow(
+        BadRequestException,
+      );
     });
   });
 
