@@ -333,7 +333,10 @@ export class AuthService {
               recipientUserId: approverUserId,
               academyId,
               entity: { type: 'academy_student', id: student.id },
-              values: {},
+              // The roster link is `/dashboard/academy/:academyId/members`,
+              // so the academy travels in `values` — the rule context
+              // only sees `{ entity, values }`.
+              values: { academyId },
             });
             pendingApprovalOutboxIds.push(emitted.outboxId);
           }

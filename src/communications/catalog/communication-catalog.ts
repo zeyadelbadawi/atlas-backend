@@ -772,7 +772,9 @@ const CATALOG = {
     template: 'roster.student.awaiting_approval',
     titleKey: 'notifications:events.rosterStudentAwaitingApproval.title',
     messageKey: 'notifications:events.rosterStudentAwaitingApproval.message',
-    actionUrl: () => `/dashboard/students`,
+    // Same correction: `/dashboard/students` is not a route anywhere.
+    // The roster is the academy's member list on the management surface.
+    actionUrl: ({ values }) => `/dashboard/academy/${str(values, 'academyId')}/members`,
   },
   'review.submitted': {
     category: 'operational',
@@ -792,7 +794,13 @@ const CATALOG = {
     template: 'review.submitted',
     titleKey: 'notifications:events.reviewSubmitted.title',
     messageKey: 'notifications:events.reviewSubmitted.message',
-    actionUrl: () => `/dashboard/reviews`,
+    // The moderation queue is per-COURSE and lives on the management
+    // surface: `/dashboard/reviews` is not a route on any host, so this
+    // used to send a moderator to a not-found page. `academyId` is
+    // carried in `values` by the producer for exactly this reason — the
+    // rule context is only `{ entity, values }`.
+    actionUrl: ({ values }) =>
+      `/dashboard/academy/${str(values, 'academyId')}/courses/${str(values, 'courseId')}/reviews`,
   },
   'review.moderated': {
     category: 'engagement',
