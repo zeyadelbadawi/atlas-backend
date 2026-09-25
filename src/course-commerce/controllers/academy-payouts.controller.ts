@@ -24,7 +24,7 @@ export class AcademyPayoutsController {
     @Query() query: CollectionQueryDto,
   ): Promise<PaginatedResult<AcademyPayoutResponse>> {
     return this.academyPayoutsService.listForAcademy(
-      request.academyContext!.organizationId,
+      request.academyContext!,
       academyId,
       query,
     );
@@ -36,7 +36,7 @@ export class AcademyPayoutsController {
     @Param('id') academyId: string,
   ): Promise<AcademyRevenueSummaryResponse> {
     return this.academyPayoutsService.getRevenueSummary(
-      request.academyContext!.organizationId,
+      request.academyContext!,
       academyId,
     );
   }

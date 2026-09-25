@@ -56,7 +56,16 @@ services:
   caddy:
     image: ghcr.io/zeyadelbadawi/atlas-frontend:latest
     restart: unless-stopped
-    env_file: .env
+    # Least privilege: the edge needs exactly ONE secret — the Cloudflare
+    # token the Caddyfile's DNS-01 challenge reads as
+    # `{env.CLOUDFLARE_API_TOKEN}` (the only `{env.*}` it references). It
+    # used to take `env_file: .env`, which handed the edge container the
+    # superuser DATABASE_URL, JWT signing secret, payment keys and every
+    # other backend secret. Interpolated from `.env` by compose itself (the
+    # same mechanism the postgres/redis blocks use), so nothing else in
+    # that file reaches this container's environment.
+    environment:
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
     ports:
       - '80:80'
       - '443:443'

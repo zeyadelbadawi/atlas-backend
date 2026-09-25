@@ -26,7 +26,7 @@ import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { Prisma } from '@prisma/client';
-import { CommunicationService } from '../../communications/services/communication.service';
+import { AnnouncementFanOutProducer } from '../queue/announcement-fanout.producer';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
@@ -58,94 +58,49 @@ export class AnnouncementsService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly announcementsRepository: AnnouncementsRepository,
-    private readonly communications: CommunicationService,
+    private readonly fanOutProducer: AnnouncementFanOutProducer,
   ) {}
 
   /**
-   * P64 Communications C3 (plan §8 H1, §10 "H1 announcement published |
-   * audience: yes (type `announcement`) | preference (engagement) with
-   * per-announcement 'also email' choice for owners, capped (§22)").
+   * P64 Communications C3 (plan §8 H1) — tells the audience a publish
+   * happened. In-app only: the catalogue keeps `announcement.published`
+   * at `email: 'never'` (no "also email" column, DTO field or UI exists).
    *
-   * THE IN-APP HALF ONLY, and that is a reported gap rather than a
-   * decision: `announcements` has no "also email" column, no DTO field
-   * and no UI, and this workstream may not add one. The catalogue entry
-   * is therefore `email: 'never'` — see its own note for why declaring
-   * `preference` instead would have been worse than honest silence.
+   * OFF THE REQUEST PATH (cloud remediation, finding F). This used to emit
+   * one notification per learner inside this transaction — one per
+   * enrolment, or one per active learner for an academy-wide announcement
+   * — against the interactive transaction's 5 s budget, so a large
+   * academy's publish timed out and rolled back. It now enqueues ONE job
+   * (`AnnouncementFanOutService` expands the audience in bounded batches).
    *
-   * Inside the caller's transaction, exactly like
-   * `LiveSessionNotificationsService.notifyEnrolledStudents`: a publish
-   * that rolls back must not leave a class told about an announcement
-   * they cannot open. No after-commit hint is available from in here;
-   * the one-minute sweep is what picks these rows up, and since the
-   * catalogue keeps this key in-app only there is nothing to deliver
-   * anyway.
-   *
-   * SIZE. This is a per-recipient loop, so a course announcement costs
-   * one emit per enrolment and an ACADEMY-wide one costs one per active
-   * learner. That is the same exposure the live-session fan-out already
-   * carries, and it is bounded by the in-app channel — but §21's
-   * "announcement emails are SIZED before enqueue" has no counterpart
-   * here, and would need one before the email half ships.
+   * Enqueued INSIDE this transaction on purpose: if Redis is down the
+   * publish fails loudly rather than committing an announcement nobody is
+   * told about. The job re-validates at execution time, so a publish that
+   * rolls back fans out to no one.
    */
   private async fanOutPublished(
     tx: Prisma.TransactionClient,
     announcement: {
       readonly id: string;
-      readonly title: string;
       readonly academyId: string;
       readonly courseId: string | null;
+      readonly publishedAt: Date | null;
     },
+    actorUserId: string,
   ): Promise<void> {
     const academy = await tx.academy.findUnique({
       where: { id: announcement.academyId },
-      select: { name: true },
+      select: { organizationId: true },
     });
-
-    let recipientIds: string[];
-    let courseTitle = '';
-    if (announcement.courseId) {
-      const course = await tx.course.findUnique({
-        where: { id: announcement.courseId },
-        select: { title: true },
-      });
-      courseTitle = course?.title ?? '';
-      const enrollments = await tx.enrollment.findMany({
-        where: {
-          courseId: announcement.courseId,
-          academyId: announcement.academyId,
-          // The same predicate the live-session fan-out uses: only real
-          // relationships, and a learner who finished the course is still
-          // party to an announcement about it.
-          status: { in: ['enrolled', 'completed'] },
-        },
-        select: { studentId: true },
-      });
-      recipientIds = enrollments.map((row) => row.studentId);
-    } else {
-      // Academy-wide: the learners who can actually reach the academy —
-      // a pending applicant or a blocked learner is not an audience.
-      const students = await tx.academyStudent.findMany({
-        where: { academyId: announcement.academyId, status: 'active', blockedAt: null },
-        select: { userId: true },
-      });
-      recipientIds = students.map((row) => row.userId);
-    }
-
-    for (const recipientUserId of new Set(recipientIds)) {
-      await this.communications.emit(tx, {
-        key: 'announcement.published',
-        recipientUserId,
-        academyId: announcement.academyId,
-        entity: { type: 'announcement', id: announcement.id },
-        values: {
-          title: announcement.title,
-          academyName: academy?.name ?? '',
-          ...(announcement.courseId
-            ? { courseId: announcement.courseId, courseTitle }
-            : {}),
-        },
-      });
-    }
+    if (!academy || !announcement.publishedAt) return;
+    await this.fanOutProducer.enqueue({
+      announcementId: announcement.id,
+      academyId: announcement.academyId,
+      organizationId: academy.organizationId,
+      courseId: announcement.courseId,
+      actorUserId,
+      publishedAt: announcement.publishedAt.toISOString(),
+    });
   }
 
   private async assertCanManage(
@@ -279,12 +234,11 @@ export class AnnouncementsService {
       // dedupe key would swallow it, but only after a row and a savepoint
       // per learner.
       if (!alreadyPublished) {
-        await this.fanOutPublished(tx, {
-          id: updated.id,
-          title: updated.title,
-          academyId,
-          courseId,
-        });
+        await this.fanOutPublished(
+          tx,
+          { id: updated.id, academyId, courseId, publishedAt: updated.publishedAt },
+          userId,
+        );
       }
       return toAnnouncementResponse(updated, updated.author.name);
     });
@@ -393,12 +347,11 @@ export class AnnouncementsService {
         publishedAt: new Date(),
       });
       if (!alreadyPublished) {
-        await this.fanOutPublished(tx, {
-          id: updated.id,
-          title: updated.title,
-          academyId,
-          courseId: null,
-        });
+        await this.fanOutPublished(
+          tx,
+          { id: updated.id, academyId, courseId: null, publishedAt: updated.publishedAt },
+          userId,
+        );
       }
       return toAnnouncementResponse(updated, updated.author.name);
     });

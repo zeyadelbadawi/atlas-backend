@@ -125,7 +125,17 @@ export class CourseContentService {
           .filter((item) => item.type === 'lesson')
           .map((item) => [
             item.id,
-            { includeContentUrl, lockState: item.state, lockReason: item.lockReason },
+            {
+              // A LOCKED lesson never carries its URL, whatever the flag
+              // says. `contentProtected` decides only HOW an unlocked
+              // lesson is delivered (legacy URL vs the grant path); it is
+              // not the thing that keeps a drip/prerequisite-locked lesson
+              // locked. (Remediation: with the flag off this used to leak
+              // the URL of every locked lesson to any enrolled learner.)
+              includeContentUrl: includeContentUrl && item.state !== 'locked',
+              lockState: item.state,
+              lockReason: item.lockReason,
+            },
           ]),
       );
 

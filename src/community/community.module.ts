@@ -25,15 +25,31 @@ import { AnnouncementsRepository } from './repositories/announcements.repository
 import { BlogPostsRepository } from './repositories/blog-posts.repository';
 import { ForumsRepository } from './repositories/forums.repository';
 
+import { BullModule } from '@nestjs/bullmq';
+import { ANNOUNCEMENT_FANOUT_QUEUE } from './queue/announcement-fanout.types';
+import { AnnouncementFanOutProducer } from './queue/announcement-fanout.producer';
+import { AnnouncementFanOutProcessor } from './queue/announcement-fanout.processor';
+import { AnnouncementFanOutService } from './services/announcement-fanout.service';
+
 @Module({
   // Phase 6 — `IdentityModule` added for `PlatformOwnerGuard` (used by
   // `AnnouncementsController`'s new `platform/announcements/*` routes).
   // No cycle: `IdentityModule` only imports `AuthCoreModule`/`TenancyModule`
   // itself, never anything that depends back on `CommunityModule`.
-  imports: [AuthCoreModule, IdentityModule, TenancyModule],
+  imports: [
+    AuthCoreModule,
+    IdentityModule,
+    TenancyModule,
+    // Cloud remediation (finding F) — announcement fan-out runs off the
+    // request path. One queue, one processor.
+    BullModule.registerQueue({ name: ANNOUNCEMENT_FANOUT_QUEUE }),
+  ],
   controllers: [AnnouncementsController, BlogPostsController, ForumsController],
   providers: [
     AnnouncementsService,
+    AnnouncementFanOutService,
+    AnnouncementFanOutProducer,
+    AnnouncementFanOutProcessor,
     BlogPostsService,
     ForumsService,
     AnnouncementsRepository,

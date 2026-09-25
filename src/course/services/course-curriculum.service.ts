@@ -16,6 +16,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { assertNoLearnerActivity } from './learner-activity.guard';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
@@ -184,7 +185,10 @@ export class CourseCurriculumService {
       const section = await this.assertSectionInCourse(tx, sectionId, courseId);
       // Cascades to `course_lessons` via the FK's `onDelete: Cascade` —
       // matches `CourseService.deleteCourseSection`'s own doc comment:
-      // "Deletes a course section and its lessons."
+      // "Deletes a course section and its lessons." — and from there to
+      // `lesson_progress`, so it is refused once any learner has progress
+      // in it (see `learner-activity.guard.ts`). Tenant context: complete.
+      await assertNoLearnerActivity(tx, { kind: 'section', id: sectionId });
       await this.sectionsRepository.delete(tx, sectionId);
 
       await this.auditLogWriterService.write(tx, {
@@ -537,6 +541,9 @@ export class CourseCurriculumService {
       await this.assertCourseInAcademy(tx, courseId, academyId);
       await this.assertSectionInCourse(tx, sectionId, courseId);
       const lesson = await this.assertLessonInSection(tx, lessonId, sectionId);
+      // Refused once any learner has progress in it — the FK cascade would
+      // erase that record (see `learner-activity.guard.ts`).
+      await assertNoLearnerActivity(tx, { kind: 'lesson', id: lessonId });
       await this.lessonsRepository.delete(tx, lessonId);
 
       await this.auditLogWriterService.write(tx, {

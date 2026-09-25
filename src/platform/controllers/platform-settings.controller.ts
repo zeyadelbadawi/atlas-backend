@@ -10,13 +10,29 @@ import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { PlatformSettingsService } from '../services/platform-settings.service';
+import { CommunicationSettingsViewService } from '../../communications/services/communication-settings-view.service';
+import type { PlatformCommunicationSettingsView } from '../../communications/services/communication-settings-view.service';
 import { UpdatePlatformSettingsDto } from '../dto/update-platform-settings.dto';
 import type { PlatformConfigurationResponse } from '../dto/platform-settings.contract';
 
 @Controller('platform-settings')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class PlatformSettingsController {
-  constructor(private readonly platformSettingsService: PlatformSettingsService) {}
+  constructor(
+    private readonly platformSettingsService: PlatformSettingsService,
+    private readonly communicationSettings: CommunicationSettingsViewService,
+  ) {}
+
+  /**
+   * The communication settings in force — read-only, reported from the
+   * deployment configuration (see `CommunicationSettingsViewService`).
+   * Declared before the bare routes only for readability; the paths do not
+   * overlap.
+   */
+  @Get('communications')
+  getCommunications(): PlatformCommunicationSettingsView {
+    return this.communicationSettings.platform();
+  }
 
   @Get()
   async getConfiguration(): Promise<PlatformConfigurationResponse> {

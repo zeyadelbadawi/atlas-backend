@@ -113,13 +113,15 @@ export interface LearningFeatureFlags {
    */
   readonly videoNormal: FeatureFlagConfig;
   readonly videoPremium: FeatureFlagConfig;
-  readonly devicesPolicy: FeatureFlagConfig;
-  readonly learnerDashboardV2: FeatureFlagConfig;
-  readonly playerV2: FeatureFlagConfig;
-  /** P64 Phase 3 (§S) — engine v2, integrity layer, certificates. */
+  /** P64 Phase 3 (§S) — engine v2 and the integrity layer. */
   readonly quizEngineV2: FeatureFlagConfig;
   readonly quizIntegrity: FeatureFlagConfig;
-  readonly certificates: FeatureFlagConfig;
+  // `devicesPolicy`, `learnerDashboardV2`, `playerV2` and `certificates`
+  // were removed (cloud remediation): nothing ever read them — the device
+  // policy became a per-academy setting, the v2 learner surfaces shipped
+  // ungated, and certificate eligibility is hardcoded on — so they only
+  // documented controls that did not exist. Stale `FLAG_*` values for them
+  // in an environment are ignored (the env schema is not strict).
 }
 
 /** P64 Phase 3 (§D.6) — certificate delivery settings. */
@@ -579,15 +581,6 @@ export default () => {
       env.FLAG_VIDEO_PREMIUM_MODE,
       env.FLAG_VIDEO_PREMIUM_ACADEMY_IDS,
     ),
-    devicesPolicy: readFlag(
-      env.FLAG_DEVICES_POLICY_MODE,
-      env.FLAG_DEVICES_POLICY_ACADEMY_IDS,
-    ),
-    learnerDashboardV2: readFlag(
-      env.FLAG_LEARNER_DASHBOARD_V2_MODE,
-      env.FLAG_LEARNER_DASHBOARD_V2_ACADEMY_IDS,
-    ),
-    playerV2: readFlag(env.FLAG_PLAYER_V2_MODE, env.FLAG_PLAYER_V2_ACADEMY_IDS),
     quizEngineV2: readFlag(
       env.FLAG_QUIZ_ENGINE_V2_MODE,
       env.FLAG_QUIZ_ENGINE_V2_ACADEMY_IDS,
@@ -596,7 +589,6 @@ export default () => {
       env.FLAG_QUIZ_INTEGRITY_MODE,
       env.FLAG_QUIZ_INTEGRITY_ACADEMY_IDS,
     ),
-    certificates: readFlag(env.FLAG_CERTIFICATES_MODE, env.FLAG_CERTIFICATES_ACADEMY_IDS),
   };
 
   const certificates: CertificatesConfig = {

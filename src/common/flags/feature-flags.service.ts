@@ -68,12 +68,8 @@ export class FeatureFlagsService {
       contentProtected: this.flag('contentProtected'),
       videoNormal: this.flag('videoNormal'),
       videoPremium: this.flag('videoPremium'),
-      devicesPolicy: this.flag('devicesPolicy'),
-      learnerDashboardV2: this.flag('learnerDashboardV2'),
-      playerV2: this.flag('playerV2'),
       quizEngineV2: this.flag('quizEngineV2'),
       quizIntegrity: this.flag('quizIntegrity'),
-      certificates: this.flag('certificates'),
     };
   }
 }

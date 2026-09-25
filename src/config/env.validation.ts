@@ -332,12 +332,6 @@ const EnvSchema = z.object({
   FLAG_VIDEO_NORMAL_ACADEMY_IDS: z.string().optional(),
   FLAG_VIDEO_PREMIUM_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
   FLAG_VIDEO_PREMIUM_ACADEMY_IDS: z.string().optional(),
-  FLAG_DEVICES_POLICY_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
-  FLAG_DEVICES_POLICY_ACADEMY_IDS: z.string().optional(),
-  FLAG_LEARNER_DASHBOARD_V2_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
-  FLAG_LEARNER_DASHBOARD_V2_ACADEMY_IDS: z.string().optional(),
-  FLAG_PLAYER_V2_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
-  FLAG_PLAYER_V2_ACADEMY_IDS: z.string().optional(),
   // P64 Phase 3 (§S): quiz engine v2 (timer, windows, shuffle, autosave
   // deadlines), the integrity layer (defaults to recording nothing until an
   // author turns a quiz's mode on) and certificates.
@@ -345,8 +339,6 @@ const EnvSchema = z.object({
   FLAG_QUIZ_ENGINE_V2_ACADEMY_IDS: z.string().optional(),
   FLAG_QUIZ_INTEGRITY_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
   FLAG_QUIZ_INTEGRITY_ACADEMY_IDS: z.string().optional(),
-  FLAG_CERTIFICATES_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
-  FLAG_CERTIFICATES_ACADEMY_IDS: z.string().optional(),
   // P64 Phase 3 (§D.6): certificate download links are a distinct purpose
   // from lesson-content presigns (10 min) — one hour, capped at one hour.
   CERTIFICATE_LINK_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(3600),

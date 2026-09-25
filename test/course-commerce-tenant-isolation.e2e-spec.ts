@@ -12,7 +12,9 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
   seedAcademy,
+  seedAcademyMember,
   seedCourse,
+  seedMembership,
   seedOrganizationWithOwner,
   seedPaymentMethod,
 } from './utils/db-admin';
@@ -136,6 +138,75 @@ describe('Course Commerce — tenant isolation (e2e)', () => {
       .get(`/academies/${academy.id}/payouts`)
       .set('Authorization', `Bearer ${outsiderOwner.accessToken}`)
       .expect(403);
+  });
+
+  /*
+   * Remediation (finding B): academy revenue and payouts are Organization
+   * Owner data. `AcademyScopeGuard` admits any organization member and any
+   * active academy member, so before the service-level gate an instructor
+   * of the academy — or the manager of a SIBLING academy in the same
+   * organization — could read them.
+   */
+  describe('payouts and revenue summary — access matrix', () => {
+    const paths = (academyId: string) => [
+      `/academies/${academyId}/payouts`,
+      `/academies/${academyId}/payouts/revenue-summary`,
+    ];
+
+    it('the Organization Owner can read both', async () => {
+      const { owner, academy } = await arrangePaidCourseAndOrder('payout-matrix-owner');
+      for (const path of paths(academy.id)) {
+        await request(app.getHttpServer())
+          .get(path)
+          .set('Authorization', `Bearer ${owner.accessToken}`)
+          .expect(200);
+      }
+    });
+
+    it('an instructor and a manager of the same academy are refused', async () => {
+      const { org, academy } = await arrangePaidCourseAndOrder('payout-matrix-staff');
+      const instructor = await signUpAndSignIn(app, 'payout-matrix-instructor');
+      await seedMembership(admin, org.id, instructor.userId, 'instructor');
+      await seedAcademyMember(admin, academy.id, instructor.userId, 'instructor');
+      const manager = await signUpAndSignIn(app, 'payout-matrix-manager');
+      await seedMembership(admin, org.id, manager.userId, 'manager');
+      await seedAcademyMember(admin, academy.id, manager.userId, 'manager');
+
+      for (const caller of [instructor, manager]) {
+        for (const path of paths(academy.id)) {
+          await request(app.getHttpServer())
+            .get(path)
+            .set('Authorization', `Bearer ${caller.accessToken}`)
+            .expect(403);
+        }
+      }
+    });
+
+    it('an academy-level member with no organization membership is refused', async () => {
+      const { academy } = await arrangePaidCourseAndOrder('payout-matrix-academy-only');
+      const staff = await signUpAndSignIn(app, 'payout-matrix-academy-owner');
+      await seedAcademyMember(admin, academy.id, staff.userId, 'owner');
+      for (const path of paths(academy.id)) {
+        await request(app.getHttpServer())
+          .get(path)
+          .set('Authorization', `Bearer ${staff.accessToken}`)
+          .expect(403);
+      }
+    });
+
+    it('the manager of a sibling academy in the same organization is refused', async () => {
+      const { org, academy } = await arrangePaidCourseAndOrder('payout-matrix-sibling');
+      const sibling = await seedAcademy(admin, org.id, 'payout-matrix-sibling-b');
+      const siblingManager = await signUpAndSignIn(app, 'payout-matrix-sibling-manager');
+      await seedMembership(admin, org.id, siblingManager.userId, 'manager');
+      await seedAcademyMember(admin, sibling.id, siblingManager.userId, 'manager');
+      for (const path of paths(academy.id)) {
+        await request(app.getHttpServer())
+          .get(path)
+          .set('Authorization', `Bearer ${siblingManager.accessToken}`)
+          .expect(403);
+      }
+    });
   });
 
   it('the flat Platform review surface only ever returns Course Commerce rows, never Atlas-subscription-billing rows, and vice versa', async () => {

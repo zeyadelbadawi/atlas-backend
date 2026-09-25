@@ -46,6 +46,7 @@ import { PLANS_CLOCK, SystemClock } from '../plans/utils/clock';
 import { CommunicationPreferencesController } from './controllers/communication-preferences.controller';
 import { PlatformCommunicationsController } from './controllers/platform-communications.controller';
 import { PlatformCommunicationsHealthService } from './services/platform-communications-health.service';
+import { CommunicationSettingsViewService } from './services/communication-settings-view.service';
 
 @Global()
 @Module({
@@ -57,6 +58,7 @@ import { PlatformCommunicationsHealthService } from './services/platform-communi
   ],
   controllers: [CommunicationPreferencesController, PlatformCommunicationsController],
   providers: [
+    CommunicationSettingsViewService,
     CommunicationMetricsService,
     PlatformCommunicationsHealthService,
     EmailTransport,
@@ -89,6 +91,8 @@ import { PlatformCommunicationsHealthService } from './services/platform-communi
   ],
   exports: [
     CommunicationService,
+    // Cloud remediation (finding G) — read by PlatformModule and AcademyModule.
+    CommunicationSettingsViewService,
     CommunicationDispatchService,
     // Exported so the activation sweep can be driven directly by a
     // fake-clock regression suite, exactly as `TenantLifecycleService` is.

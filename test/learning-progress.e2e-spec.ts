@@ -329,4 +329,56 @@ describe('Course/Lesson Progress (e2e)', () => {
       .send({ lessonId: lesson1.id })
       .expect(201);
   });
+
+  /*
+   * Remediation: `contentProtected` (off by default) used to be the only
+   * thing standing between a LOCKED lesson and its `contentUrl` in the
+   * curriculum projection — so with the flag off, any enrolled learner read
+   * the URL of every drip/prerequisite-locked lesson. The lock must hold
+   * regardless of the flag.
+   */
+  it('never returns the contentUrl of a locked lesson in the curriculum, with contentProtected off', async () => {
+    const { course, section, lesson1 } =
+      await seedEnrollableCourseWithLessons('locked-url');
+    const lockedLesson = await seedCourseLesson(
+      admin,
+      section.id,
+      course.id,
+      'Locked',
+      5,
+      {
+        status: 'published',
+        contentUrl: 'https://videos.example.test/locked-secret',
+      },
+    );
+    await admin.courseLesson.update({
+      where: { id: lesson1.id },
+      data: { contentUrl: 'https://videos.example.test/first-open' },
+    });
+    const student = await signUpAndSignIn(app, 'locked-url-student');
+    await seedAcademyStudent(admin, course.academyId, student.userId);
+    await request(app.getHttpServer())
+      .post('/enrollments')
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ courseId: course.id })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .get(`/courses/${course.id}/sections`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .expect(200);
+
+    const serialized = JSON.stringify(res.body);
+    expect(serialized).not.toContain('locked-secret');
+    const lessons = (res.body.items ?? res.body).flatMap(
+      (s: { lessons: { id: string; lockState?: string; contentUrl?: string }[] }) =>
+        s.lessons,
+    );
+    const locked = lessons.find((l: { id: string }) => l.id === lockedLesson.id);
+    expect(locked.lockState).toBe('locked');
+    expect(locked.contentUrl).toBeUndefined();
+    // An unlocked lesson keeps its URL while the flag is off (legacy path).
+    const open = lessons.find((l: { id: string }) => l.id === lesson1.id);
+    expect(open.contentUrl).toBe('https://videos.example.test/first-open');
+  });
 });

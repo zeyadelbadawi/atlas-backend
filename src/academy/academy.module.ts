@@ -62,9 +62,11 @@ import { CloudflareApiProvider } from '../domain/providers/cloudflare-api.provid
 import { PlatformDomainConfigurationRepository } from '../domain/repositories/platform-domain-configuration.repository';
 import { PublicWebsiteCacheService } from '../public-website/services/public-website-cache.service';
 
+import { AcademyCommunicationSettingsController } from './controllers/academy-communication-settings.controller';
+
 @Module({
   imports: [AuthCoreModule, TenancyModule, IdentityModule, PlansModule],
-  controllers: [AcademiesController],
+  controllers: [AcademiesController, AcademyCommunicationSettingsController],
   providers: [
     AcademiesRepository,
     AcademyMembersRepository,

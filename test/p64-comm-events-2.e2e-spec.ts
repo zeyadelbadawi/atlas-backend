@@ -304,6 +304,20 @@ describe('P64 Communications C3 (second pass) — devices, commerce, learning, a
     });
   }
 
+  /**
+   * Announcement fan-out runs on its own queue since the cloud remediation
+   * (finding F), so its rows appear shortly AFTER the publish returns.
+   * Polls until `count` rows exist, then returns them.
+   */
+  async function eventuallyOutboxFor(userId: string, key: string, count: number) {
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      const rows = await outboxFor(userId, key);
+      if (rows.length >= count || Date.now() > deadline) return rows;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
   // =====================================================================
   // 1. the catalogue keys themselves
   // =====================================================================
@@ -922,7 +936,7 @@ describe('P64 Communications C3 (second pass) — devices, commerce, learning, a
         .set(w.owner.auth)
         .expect(201);
 
-      const rows = await outboxFor(learner.userId, 'announcement.published');
+      const rows = await eventuallyOutboxFor(learner.userId, 'announcement.published', 1);
       expect(rows).toHaveLength(1);
       expect(rows[0].entityType).toBe('announcement');
       expect(rows[0].entityId).toBe(created.body.id);
@@ -962,7 +976,11 @@ describe('P64 Communications C3 (second pass) — devices, commerce, learning, a
         .set(w.owner.auth)
         .expect(201);
 
-      const rows = await outboxFor(enrolledLearner.userId, 'announcement.published');
+      const rows = await eventuallyOutboxFor(
+        enrolledLearner.userId,
+        'announcement.published',
+        1,
+      );
       expect(rows).toHaveLength(1);
       const values = rows[0].values as { courseId: string; courseTitle: string };
       expect(values.courseId).toBe(w.course.id);

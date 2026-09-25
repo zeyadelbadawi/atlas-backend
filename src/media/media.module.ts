@@ -50,6 +50,7 @@ import { MediaController } from './controllers/media.controller';
 import { ProtectedMediaController } from './controllers/protected-media.controller';
 import { VideoWebhookController } from './controllers/video-webhook.controller';
 import { ProtectedMediaService } from './services/protected-media.service';
+import { UsersRepository } from '../identity/repositories/users.repository';
 import { VideoReconciliationService } from './services/video-reconciliation.service';
 import { ProtectedMediaStorage } from './storage/protected-media-storage.provider';
 import { AcademyOriginsService } from './video/academy-origins.service';
@@ -96,6 +97,10 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
     ProtectedMediaStorage,
     ProtectedMediaService,
     VideoReconciliationService,
+    // Stateless platform-scoped reads (`users` carries no RLS); resolves the
+    // platform-owner id reconciliation reads as. Provided here rather than
+    // importing `IdentityModule`, which would widen this module's graph.
+    UsersRepository,
     AcademyOriginsService,
     CloudflareStreamProvider,
     FakeVideoProvider,

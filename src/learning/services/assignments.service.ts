@@ -21,6 +21,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { assertNoLearnerActivity } from '../../course/services/learner-activity.guard';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
@@ -662,6 +663,20 @@ export class AssignmentsService {
         assignmentId,
       );
       if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+
+      // Refused once any learner has a record against it — the FK cascade
+      // would erase it (see `learner-activity.guard.ts`). Counted in the
+      // owning organization's TENANT context, where every learner row is
+      // visible; this transaction's user context could see only some.
+      const owningOrganizationId =
+        await this.academiesRepository.resolveOrganizationId(academyId);
+      if (!owningOrganizationId)
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      await this.tenancyContextService.runInTenantContext(
+        owningOrganizationId,
+        (tenantTx) =>
+          assertNoLearnerActivity(tenantTx, { kind: 'assignment', id: assignmentId }),
+      );
 
       await this.assignmentsRepository.delete(tx, assignmentId);
 

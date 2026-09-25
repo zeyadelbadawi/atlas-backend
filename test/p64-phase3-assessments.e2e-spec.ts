@@ -52,12 +52,8 @@ function allFlags(mode: 'on' | 'off'): LearningFeatureFlags {
     contentProtected: flag,
     videoNormal: flag,
     videoPremium: flag,
-    devicesPolicy: flag,
-    learnerDashboardV2: flag,
-    playerV2: flag,
     quizEngineV2: flag,
     quizIntegrity: flag,
-    certificates: flag,
   };
 }
 const flags: { value: LearningFeatureFlags } = { value: allFlags('on') };
@@ -1665,9 +1661,10 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
 
   it('P4 Issue F: a configured course issues a certificate even when the certificates feature flag does NOT enable the academy', async () => {
     const w = await world('p4f-readiness');
-    // Certificates flag OFF for this academy; the quiz engine stays on so the
+    // The certificates flag was removed (it never gated anything — this test
+    // is the proof it was never needed); the quiz engine stays on so the
     // learner can still complete the course.
-    flags.value = { ...allFlags('on'), certificates: { mode: 'off', academyIds: [] } };
+    flags.value = allFlags('on');
 
     await http()
       .put(`/academies/${w.academy.id}/courses/${w.course.id}/completion-rule`)

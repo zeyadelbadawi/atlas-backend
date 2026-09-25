@@ -23,7 +23,8 @@
  * video finishes processing.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../database/prisma.service';
+import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { UsersRepository } from '../../identity/repositories/users.repository';
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { HOSTED_VIDEO_PROVIDERS } from '../video/hosted-video-providers';
 import { VideoProviderRegistry } from '../video/video-provider.registry';
@@ -34,7 +35,8 @@ export class VideoReconciliationService {
   private readonly logger = new Logger(VideoReconciliationService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly tenancyContextService: TenancyContextService,
+    private readonly usersRepository: UsersRepository,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
     private readonly videoProviders: VideoProviderRegistry,
   ) {}
@@ -42,29 +44,44 @@ export class VideoReconciliationService {
   /**
    * Applies one already-VERIFIED provider event.
    *
-   * Runs without a tenant context on purpose: the caller is the provider,
-   * which is not an Atlas user and has no organization. The row is
+   * The caller is the provider, which is not an Atlas user and names no
+   * tenant, so there is no tenant claim here to trust. The row is
    * addressed by an identifier only the provider and Atlas know
-   * (`provider_id`), the signature has already been checked, and nothing
-   * about the event names a tenant — so there is no tenant claim here to
-   * trust or to verify. The academy is READ from the row, never taken
-   * from the payload.
+   * (`provider_id`), and the tenant is READ from the row, never taken from
+   * the payload.
+   *
+   * RLS CONTEXT, EXPLICITLY. `media_assets` is FORCE-RLS and every SELECT
+   * policy needs an organization, a user or a platform owner — so a read
+   * with no context does not error, it returns zero rows. (It used to run
+   * with no context, and every event was dropped as "unknown asset".) So:
+   *
+   *   1. LOCATE in the platform-owner read context the retention sweep
+   *      already uses for the same table (`media_assets_platform_select`),
+   *      selecting only the id, status and owning organization.
+   *   2. WRITE in that organization's tenant context, so the update is
+   *      bounded by `media_assets_tenant_update` and the lesson backfill by
+   *      the course policies — exactly one tenant, the one the row names.
    */
   async applyEvent(event: VideoWebhookEvent): Promise<void> {
-    const asset = await this.prisma.mediaAsset.findFirst({
-      // Any provider that reports readiness asynchronously. Keyed on the
-      // provider id, which is unique per provider by partial index.
-      where: {
-        provider: { in: [...HOSTED_VIDEO_PROVIDERS] },
-        providerId: event.providerId,
-      },
-      select: {
-        id: true,
-        durationSeconds: true,
-        processingStatus: true,
-        academy: { select: { organizationId: true } },
-      },
-    });
+    const actorUserId = await this.resolveReadActor();
+    if (!actorUserId) return;
+
+    const asset = await this.tenancyContextService.runInUserContext(actorUserId, (tx) =>
+      tx.mediaAsset.findFirst({
+        // Any provider that reports readiness asynchronously. Keyed on the
+        // provider id, which is unique per provider by partial index.
+        where: {
+          provider: { in: [...HOSTED_VIDEO_PROVIDERS] },
+          providerId: event.providerId,
+        },
+        select: {
+          id: true,
+          durationSeconds: true,
+          processingStatus: true,
+          academy: { select: { organizationId: true } },
+        },
+      }),
+    );
     if (!asset) {
       // An event for an asset Atlas does not know. Not an error — a
       // deleted asset, or an upload from another environment sharing the
@@ -85,28 +102,38 @@ export class VideoReconciliationService {
       return;
     }
 
-    await this.prisma.mediaAsset.update({
-      where: { id: asset.id },
-      data: {
-        processingStatus: event.status,
-        ...(hasRealDuration ? { durationSeconds: event.durationSeconds! } : {}),
-        // A failed asset stops consuming quota. Archiving rather than
-        // deleting keeps the row (and the reason) visible to staff.
-        ...(event.status === 'failed' ? { status: 'archived' as const } : {}),
-      },
+    const organizationId = asset.academy.organizationId;
+    await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      const updated = await tx.mediaAsset.updateMany({
+        where: { id: asset.id },
+        data: {
+          processingStatus: event.status,
+          ...(hasRealDuration ? { durationSeconds: event.durationSeconds! } : {}),
+          // A failed asset stops consuming quota. Archiving rather than
+          // deleting keeps the row (and the reason) visible to staff.
+          ...(event.status === 'failed' ? { status: 'archived' as const } : {}),
+        },
+      });
+      // Zero rows here means the tenant context did not admit the row it
+      // was derived from — a context bug, never a benign no-op.
+      if (updated.count !== 1) {
+        throw new Error(
+          `Video reconciliation updated ${updated.count} rows for asset ${asset.id}; expected 1.`,
+        );
+      }
+
+      // P64 Phase 2 — a lesson shows the authoritative duration the
+      // provider measured, so the watched-ratio denominator matches the
+      // real video. Only filled in when the author has not set one.
+      if (hasRealDuration) {
+        await tx.courseLesson.updateMany({
+          where: { videoAssetId: asset.id, durationSeconds: null },
+          data: { durationSeconds: event.durationSeconds! },
+        });
+      }
     });
 
-    // P64 Phase 2 — a lesson shows the authoritative duration the provider
-    // measured, so the watched-ratio denominator matches the real video.
-    // Only filled in when the author has not set one explicitly.
-    if (hasRealDuration) {
-      await this.prisma.courseLesson.updateMany({
-        where: { videoAssetId: asset.id, durationSeconds: null },
-        data: { durationSeconds: event.durationSeconds! },
-      });
-    }
-
-    await this.tenantUsageRecomputeProducer.enqueueOne(asset.academy.organizationId);
+    await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
   }
 
   /**
@@ -119,21 +146,28 @@ export class VideoReconciliationService {
    * keeps consuming quota.
    */
   async pollStalled(olderThanMinutes = 30, limit = 25): Promise<number> {
+    const actorUserId = await this.resolveReadActor();
+    if (!actorUserId) return 0;
+
     const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000);
-    const stalled = await this.prisma.mediaAsset.findMany({
-      where: {
-        provider: { in: [...HOSTED_VIDEO_PROVIDERS] },
-        processingStatus: { in: ['pending', 'processing'] },
-        updatedAt: { lt: cutoff },
-        providerId: { not: null },
-      },
-      // `provider` as well as `providerId`: the adapter is resolved PER
-      // ROW (AD-7's playback axis). Polling an `r2_worker` asset with
-      // whatever adapter the process-wide setting happened to pick would
-      // ask the wrong provider about an id it has never seen.
-      select: { providerId: true, provider: true },
-      take: limit,
-    });
+    // Cross-tenant by nature, so it reads in the platform-owner context
+    // (see `applyEvent`); each write then happens in its own tenant.
+    const stalled = await this.tenancyContextService.runInUserContext(actorUserId, (tx) =>
+      tx.mediaAsset.findMany({
+        where: {
+          provider: { in: [...HOSTED_VIDEO_PROVIDERS] },
+          processingStatus: { in: ['pending', 'processing'] },
+          updatedAt: { lt: cutoff },
+          providerId: { not: null },
+        },
+        // `provider` as well as `providerId`: the adapter is resolved PER
+        // ROW (AD-7's playback axis). Polling an `r2_worker` asset with
+        // whatever adapter the process-wide setting happened to pick would
+        // ask the wrong provider about an id it has never seen.
+        select: { providerId: true, provider: true },
+        take: limit,
+      }),
+    );
 
     let reconciled = 0;
     for (const row of stalled) {
@@ -161,5 +195,22 @@ export class VideoReconciliationService {
       }
     }
     return reconciled;
+  }
+
+  /**
+   * The platform-owner identity cross-tenant reads run as — the same
+   * resolution the retention sweep and the subscription sweep use. With no
+   * platform owner there is no legitimate cross-tenant reader; that is
+   * logged as an error rather than degraded into a silent zero-row read.
+   */
+  private async resolveReadActor(): Promise<string | null> {
+    const owner = await this.usersRepository.findFirstPlatformOwnerId();
+    if (!owner) {
+      this.logger.error(
+        'No platform owner exists; video reconciliation cannot read media assets and was skipped.',
+      );
+      return null;
+    }
+    return owner.id;
   }
 }
