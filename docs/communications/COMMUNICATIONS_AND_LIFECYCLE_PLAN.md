@@ -876,3 +876,16 @@ All guarded routes 401 against a 404 control, sign-in unchanged, and the pipelin
 ### A finding worth keeping
 
 `media_assets` has a platform-owner SELECT policy and **no** platform-owner UPDATE policy, so a tombstone written under the platform context alone affects zero rows and raises nothing. The writes use `runInTenantAndUserContext` and check the returned row count, escalating a zero loudly — but the asymmetry is worth knowing about before someone writes the next platform-context update.
+
+## NOTE-1. Why the announcement email half is still not shipped (25 Sep 2026)
+
+Recorded precisely, because an earlier summary of mine put it too simply.
+
+What DOES exist: §22's per-user daily cap (5 learners / 10 staff) with overflow deferred into that user's digest, and the provider quota classes, which stop engagement and operational mail at 70% of the budget so security and transactional mail keep flowing. So an announcement blast could not take password resets down with it — that much is genuinely protected.
+
+What does NOT exist, and why it still blocks the feature:
+1. **§21's "size the audience before enqueue"** has no mechanism. Nothing counts the recipients before creating the outbox rows.
+2. The per-user cap does not help here at all, and it is worth being clear about why: it limits how many emails ONE person gets in a day. An announcement to ten thousand students is each of them receiving their first email of the day. The cap is the wrong shape for a fan-out.
+3. On Brevo free — **300 emails a day** — an academy of any real size cannot have this feature work. The blast would exhaust the engagement line within the first few hundred recipients and the rest would be skipped. That is honest failure with a metric rather than silent loss, but it is not a product: the owner would be told their announcement was sent when most of their students never received it.
+
+So the in-app half ships (every student sees it in their feed, immediately, with no volume problem) and the email half waits for two things that are decisions rather than code: a paid provider tier that makes the volume possible at all, and a product answer to what happens when an academy's audience exceeds the day's budget — queue it across days, refuse it, or send to a subset. The template already carries the copy the email half will use.
