@@ -1,14 +1,22 @@
 /**
- * AccountDeletionService — self-service "Delete my account".
+ * AccountDeletionService — the one implementation of "delete this
+ * account", reached either by the account holder or by a Platform Owner.
  *
  * WHAT DELETION MEANS HERE, AND WHY. The user-deletion relationship graph
  * was mapped from `information_schema` before this was written: `users`
- * is referenced by 47 foreign keys, and several are ON DELETE RESTRICT —
+ * is referenced by 53 foreign keys, and TEN are ON DELETE RESTRICT —
  * `audit_log_entries.actor_user_id`, `organizations.owner_user_id`,
  * `blog_posts.author_id`, `forum_threads.author_id`,
  * `forum_replies.author_id`, `announcements.author_id`,
  * `payment_reviews.reviewed_by`, `provisioning_requests.requested_by_user_id`,
- * `course_order_refunds.requested_by`.
+ * `course_order_refunds.requested_by`, `live_sessions.host_user_id`.
+ *
+ * (This list said nine until 25 Sep 2026. `live_sessions.host_user_id`
+ * arrived with P44, after the count was written, and the omission was
+ * found while mapping the graph again for the deletion programme. The
+ * conclusion below was never affected — one RESTRICT edge is already
+ * enough to make a hard delete impossible — but a stale number in the
+ * explanation of a security-relevant design is worth correcting.)
  *
  * Any account that has ever done anything has audit entries, so a hard
  * row delete would be refused by the database for essentially every real
@@ -25,9 +33,11 @@
  *   - rows that must persist keep a valid foreign key to an anonymised
  *     subject rather than becoming orphans
  *
- * WHO MAY NOT USE THIS. A platform owner is refused. Self-deleting the
- * account that administers the platform is not a user-facing operation,
- * and the refusal is enforced here rather than by hiding the button.
+ * WHO MAY NOT BE DELETED. A platform owner, through either door. Nothing
+ * in the product can grant `is_platform_owner` back — only a provisioning
+ * script with database access can — so deleting one is a step that cannot
+ * be undone from inside Atlas. The refusal is enforced here, on the
+ * server, rather than by hiding a button.
  *
  * OWNED RESOURCES. An organization owner's academies are archived, which
  * takes their public websites offline and releases the plan's academy
@@ -79,6 +89,19 @@ export interface DeleteAccountResult {
   readonly academiesArchived: number;
 }
 
+/**
+ * Who asked, which the audit row must record faithfully.
+ *
+ * "This person left" and "an operator removed this person" are different
+ * events with different accountability, and an audit trail that collapsed
+ * them would lose the only fact that distinguishes them.
+ */
+export interface DeletionActor {
+  /** The account that authorised it — the subject themselves, or an operator. */
+  readonly actorUserId: string;
+  readonly initiatedBy: 'self' | 'platform_owner';
+}
+
 @Injectable()
 export class AccountDeletionService {
   private readonly logger = new Logger(AccountDeletionService.name);
@@ -103,6 +126,76 @@ export class AccountDeletionService {
   async deleteOwnAccount(
     userId: string,
     input: DeleteAccountInput,
+  ): Promise<DeleteAccountResult> {
+    return this.performDeletion(userId, input, {
+      actorUserId: userId,
+      initiatedBy: 'self',
+    });
+  }
+
+  /**
+   * Deletes SOMEBODY ELSE'S account, on a Platform Owner's authority.
+   *
+   * ONE IMPLEMENTATION, TWO DOORS. This runs the identical sequence as
+   * self-deletion — same archival, same membership removal, same
+   * anonymisation, same revocation — because a person's data must not end
+   * up in a different state depending on who pressed the button. A second
+   * deletion path would be a second thing to keep correct, and the one
+   * that fell behind would be the one used least and reviewed least.
+   *
+   * WHY THE TARGET'S OWN CONTEXT. Every write below runs under the
+   * TARGET's `runInUserContext`, never the operator's. The self-membership
+   * DELETE policies are scoped to `user_id = app.current_user_id`, so
+   * acting as the target is what lets RLS agree with the guard rather
+   * than needing a new, broader policy written specially for operators.
+   * This is the same "resolve the target, delegate into existing scoped
+   * logic" shape `PlatformUsersService` already uses for reads.
+   *
+   * TWO REFUSALS, BOTH ON THE SERVER. A Platform Owner may not delete
+   * themselves through this door, and may not delete another Platform
+   * Owner. Nothing in the product can grant `is_platform_owner` back — only
+   * a provisioning script with database access can — so an operator
+   * deleting the last administrator would lock the platform out of its own
+   * administration with no way back through the UI. The authorization to
+   * be here at all is `PlatformOwnerGuard`'s job; it is re-checked here
+   * anyway, because this is the most destructive call in the product and a
+   * controller decorator is one edit away from being removed.
+   */
+  async deleteUserAsPlatformOwner(
+    actorUserId: string,
+    targetUserId: string,
+    input: DeleteAccountInput,
+  ): Promise<DeleteAccountResult> {
+    const actor = await this.prisma.user.findUnique({
+      where: { id: actorUserId },
+      select: { isPlatformOwner: true },
+    });
+
+    if (!actor?.isPlatformOwner) {
+      throw new ForbiddenException({ messageKey: 'errors.forbidden' });
+    }
+
+    if (actorUserId === targetUserId) {
+      throw new ForbiddenException({
+        messageKey: 'errors.auth.platformOwnerCannotSelfDelete',
+      });
+    }
+
+    return this.performDeletion(targetUserId, input, {
+      actorUserId,
+      initiatedBy: 'platform_owner',
+    });
+  }
+
+  /**
+   * The deletion itself. Reached only through the two entry points above,
+   * which decide WHO may ask; this decides WHAT happens, identically for
+   * both.
+   */
+  private async performDeletion(
+    userId: string,
+    input: DeleteAccountInput,
+    actor: DeletionActor,
   ): Promise<DeleteAccountResult> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -139,7 +232,7 @@ export class AccountDeletionService {
     // imports the certificates module (which imports identity).
     await this.enqueueCertificateAnonymisation(userId);
 
-    const sessionIds = await this.anonymiseAndRevoke(userId, input);
+    const sessionIds = await this.anonymiseAndRevoke(userId, input, actor);
 
     // Revocation is written to the denylist AFTER the transaction commits:
     // the database state is already authoritative, and a Redis failure
@@ -150,8 +243,13 @@ export class AccountDeletionService {
     }
 
     this.logger.log(
-      { userId, academiesArchived, sessionsRevoked: sessionIds.length },
-      'Account deleted at user request.',
+      {
+        userId,
+        initiatedBy: actor.initiatedBy,
+        academiesArchived,
+        sessionsRevoked: sessionIds.length,
+      },
+      'Account deleted.',
     );
 
     return { deleted: true, academiesArchived };
@@ -267,6 +365,7 @@ export class AccountDeletionService {
   private async anonymiseAndRevoke(
     userId: string,
     input: DeleteAccountInput,
+    actor: DeletionActor,
   ): Promise<string[]> {
     return this.prisma.$transaction(async (tx) => {
       const liveSessions = await tx.refreshToken.findMany({
@@ -324,11 +423,18 @@ export class AccountDeletionService {
       });
 
       await this.auditLogWriterService.writeBestEffort(tx, {
-        actorUserId: userId,
-        action: 'account.deleted',
+        // The operator when an operator did it, the subject when they did
+        // it themselves — never flattened to the subject, or the trail
+        // would lose who actually authorised it.
+        actorUserId: actor.actorUserId,
+        action:
+          actor.initiatedBy === 'platform_owner'
+            ? 'account.deleted_by_platform_owner'
+            : 'account.deleted',
         targetType: 'user',
         targetId: userId,
         context: {
+          initiatedBy: actor.initiatedBy,
           reason: input.reason ?? 'not_given',
           hasFeedback: Boolean(input.feedback),
           sessionsRevoked: liveSessions.length,

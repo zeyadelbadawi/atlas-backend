@@ -32,6 +32,7 @@ import { PlatformZoomController } from './controllers/platform-zoom.controller';
 import { PlatformZoomService } from './services/platform-zoom.service';
 import { PlatformAcademiesController } from './controllers/platform-academies.controller';
 import { PlatformUsersController } from './controllers/platform-users.controller';
+import { PlatformUserManagementController } from './controllers/platform-user-management.controller';
 import { AuditLogController } from './controllers/audit-log.controller';
 import { AdminSubscriptionsController } from './controllers/admin-subscriptions.controller';
 import { AdminSubscriptionsService } from './services/admin-subscriptions.service';
@@ -80,6 +81,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     PlatformAcademiesController,
     PlatformZoomController,
     PlatformUsersController,
+    PlatformUserManagementController,
     AuditLogController,
     SupportCasesController,
     TenantSupportCasesController,
