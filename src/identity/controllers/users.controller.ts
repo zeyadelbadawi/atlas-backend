@@ -19,6 +19,8 @@ import { UpdatePreferencesDto } from '../dto/update-preferences.dto';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { DeleteAccountDto } from '../dto/delete-account.dto';
 import { AccountDeletionService } from '../services/account-deletion.service';
+import { DeletionPlanService } from '../services/deletion-plan.service';
+import type { DeletionPlan } from '../services/deletion-plan.service';
 import type { AccountDeletionReason } from '../services/account-deletion.service';
 import type { CurrentUserResponse } from '../dto/contracts';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
@@ -31,6 +33,7 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly accountDeletionService: AccountDeletionService,
+    private readonly deletionPlanService: DeletionPlanService,
   ) {}
 
   @Get('me')
@@ -67,6 +70,24 @@ export class UsersController {
       dto.currentPassword,
       dto.newPassword,
     );
+  }
+
+  /**
+   * What deleting this account would actually do, for the CALLER'S OWN
+   * account.
+   *
+   * Same no-`:id` shape as the deletion itself: the subject is the
+   * account proved by the access token, so this cannot be turned into a
+   * way to enumerate what somebody else owns. Read-only, and deliberately
+   * not a gate — `AccountDeletionService` re-derives its own scope when
+   * the button is actually pressed, because anything decided here is
+   * already stale by then.
+   */
+  @Get('me/deletion-plan')
+  async getOwnDeletionPlan(
+    @CurrentAuthContext() auth: AuthContext,
+  ): Promise<DeletionPlan> {
+    return this.deletionPlanService.buildForUser(auth.userId);
   }
 
   /**

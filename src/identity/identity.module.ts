@@ -24,6 +24,7 @@ import { PasswordResetTokensRepository } from './repositories/password-reset-tok
 import { EmailVerificationTokensRepository } from './repositories/email-verification-tokens.repository';
 import { EmailRiskService } from './services/email-risk.service';
 import { AccountDeletionService } from './services/account-deletion.service';
+import { DeletionPlanService } from './services/deletion-plan.service';
 import { TwoFactorService } from './services/two-factor.service';
 import { TotpSecretCipher } from './services/totp-secret-cipher.service';
 import { TwoFactorController } from './controllers/two-factor.controller';
@@ -85,6 +86,7 @@ import { TrustedDevicesController } from './controllers/trusted-devices.controll
     EmailVerificationTokensRepository,
     EmailRiskService,
     AccountDeletionService,
+    DeletionPlanService,
     TwoFactorService,
     TotpSecretCipher,
     // P64 Communications C4 — the emailed-code step and the trusted
@@ -120,6 +122,11 @@ import { TrustedDevicesController } from './controllers/trusted-devices.controll
   // an invitation/email system).
   exports: [
     AccountSetupService,
+    // Exported because the Platform Owner's administrative deletion
+    // surface must preview the SAME plan the account holder sees. Two
+    // implementations of "what will this destroy" would drift, and the
+    // one that drifted would be the one shown before a destructive act.
+    DeletionPlanService,
     // P64 Communications — `EMAIL_PROVIDER` and `StubEmailProvider` now come
     // from `CommunicationsProvidersModule`; Nest re-exports at module
     // granularity, so the whole module is exported (its own export list is
