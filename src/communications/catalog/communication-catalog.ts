@@ -101,6 +101,47 @@ const TENANT_SUBSCRIPTION_PATH = '/dashboard/tenant/subscription';
 const TENANT_RETENTION_PATH = '/dashboard/tenant/retention';
 
 /**
+ * The tenant's billing page.
+ *
+ * `/dashboard/billing` — what three entries carried until this audit — is
+ * not a route on any host: the frontend registry declares
+ * `DASHBOARD_ROUTES.tenantBilling = '/dashboard/tenant/billing'`, and
+ * `/dashboard/billing` falls through to the platform router's `*` and
+ * renders the not-found page. An owner told "your payment was approved"
+ * and sent to a 404 has no way to see the payment.
+ */
+const TENANT_BILLING_PATH = '/dashboard/tenant/billing';
+
+/**
+ * Where a LEARNER's course deep link points.
+ *
+ * Not `/dashboard/learning/courses/...`: P64 Phase 2 (D2) retired the
+ * learner surface out of the management dashboard, and those paths now
+ * exist only as the frontend's `RETIRED_DASHBOARD_LEARNER_ROUTES`
+ * forwarding table — on the PLATFORM host. Every learner-audience entry
+ * is `branding: 'academy'`, so its link is built on the ACADEMY host
+ * (`CommunicationDispatchService.render`), where `PublicWebsiteRouter`
+ * replaces the whole dashboard router and no `/dashboard/*` route is
+ * mounted at all: the URL falls into the CMS catch-all and renders the
+ * academy's not-found page. `/my/courses/:courseId` is the same
+ * destination the retired table itself maps to
+ * (`LEARNER_ROUTES.courseProgress`), and it IS mounted on the academy
+ * host.
+ */
+const LEARNER_COURSE_PATH = '/my/courses';
+
+/**
+ * Where the Platform Owner's hosted-video alert lands.
+ *
+ * `/platform/analytics` is not a route (the platform console lives under
+ * `/dashboard/...`). `DASHBOARD_ROUTES.analyticsDelivery` is the page
+ * that actually carries the video inventory, its processing health and
+ * the retention lag — the three facts an operator reading a failed
+ * deletion needs.
+ */
+const PLATFORM_DELIVERY_ANALYTICS_PATH = '/dashboard/analytics/delivery';
+
+/**
  * P64 C5 — the dedupe key of one lifecycle step:
  * `lifecycle_<step>:<entity id>:<version>`.
  *
@@ -220,7 +261,7 @@ const CATALOG = {
     template: 'platform.payment.approved',
     titleKey: 'notifications:events.platformPaymentApproved.title',
     messageKey: 'notifications:events.platformPaymentApproved.message',
-    actionUrl: () => '/dashboard/billing',
+    actionUrl: () => TENANT_BILLING_PATH,
   },
   'platform.payment.rejected': {
     category: 'transactional',
@@ -236,7 +277,7 @@ const CATALOG = {
     template: 'platform.payment.rejected',
     titleKey: 'notifications:events.platformPaymentRejected.title',
     messageKey: 'notifications:events.platformPaymentRejected.message',
-    actionUrl: () => '/dashboard/billing',
+    actionUrl: () => TENANT_BILLING_PATH,
   },
 
   // --- Support (P15) — the case requester.
@@ -406,7 +447,7 @@ const CATALOG = {
     template: 'live_session.scheduled',
     titleKey: 'notifications:liveSession.scheduled.title',
     messageKey: 'notifications:liveSession.scheduled.message',
-    actionUrl: ({ values }) => `/dashboard/learning/courses/${str(values, 'courseId')}`,
+    actionUrl: ({ values }) => `${LEARNER_COURSE_PATH}/${str(values, 'courseId')}`,
     actionLabelKey: 'notifications:liveSession.action.openCourse',
   },
   'live_session.rescheduled': {
@@ -424,7 +465,7 @@ const CATALOG = {
     template: 'live_session.rescheduled',
     titleKey: 'notifications:liveSession.rescheduled.title',
     messageKey: 'notifications:liveSession.rescheduled.message',
-    actionUrl: ({ values }) => `/dashboard/learning/courses/${str(values, 'courseId')}`,
+    actionUrl: ({ values }) => `${LEARNER_COURSE_PATH}/${str(values, 'courseId')}`,
     actionLabelKey: 'notifications:liveSession.action.openCourse',
   },
   'live_session.cancelled': {
@@ -442,7 +483,7 @@ const CATALOG = {
     template: 'live_session.cancelled',
     titleKey: 'notifications:liveSession.cancelled.title',
     messageKey: 'notifications:liveSession.cancelled.message',
-    actionUrl: ({ values }) => `/dashboard/learning/courses/${str(values, 'courseId')}`,
+    actionUrl: ({ values }) => `${LEARNER_COURSE_PATH}/${str(values, 'courseId')}`,
     actionLabelKey: 'notifications:liveSession.action.openCourse',
   },
   'live_session.starting_soon': {
@@ -460,7 +501,7 @@ const CATALOG = {
     template: 'live_session.starting_soon',
     titleKey: 'notifications:liveSession.starting_soon.title',
     messageKey: 'notifications:liveSession.starting_soon.message',
-    actionUrl: ({ values }) => `/dashboard/learning/courses/${str(values, 'courseId')}`,
+    actionUrl: ({ values }) => `${LEARNER_COURSE_PATH}/${str(values, 'courseId')}`,
     actionLabelKey: 'notifications:liveSession.action.openCourse',
   },
   'live_provider.deauthorized': {
@@ -973,7 +1014,7 @@ const CATALOG = {
     template: 'lifecycle.subscription.payment_submitted',
     titleKey: 'notifications:events.lifecycleSubscriptionPaymentSubmitted.title',
     messageKey: 'notifications:events.lifecycleSubscriptionPaymentSubmitted.message',
-    actionUrl: () => '/dashboard/billing',
+    actionUrl: () => TENANT_BILLING_PATH,
   },
   // S3/S4 — renewal lead time. NOT suppressible: a manual bank transfer
   // plus a human review cannot be started after the fact.
@@ -1598,7 +1639,7 @@ const CATALOG = {
     template: 'retention.video.deletion_failed',
     titleKey: 'notifications:events.retentionVideoDeletionFailed.title',
     messageKey: 'notifications:events.retentionVideoDeletionFailed.message',
-    actionUrl: () => '/platform/analytics',
+    actionUrl: () => PLATFORM_DELIVERY_ANALYTICS_PATH,
   },
 } as const satisfies Record<string, CommunicationCatalogEntry>;
 
