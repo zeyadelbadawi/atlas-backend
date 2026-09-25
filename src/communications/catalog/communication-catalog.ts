@@ -13,9 +13,12 @@
  * before the outbox, migrated 1:1: same `notificationType`, `priority`,
  * `titleKey`, `messageKey` and dedupe string as the fan-out call they
  * replace, so the in-app feed the frontend already renders is unchanged.
- * The three `auth.*` keys are catalogue-and-template only for now — the
- * password-reset queue and the verification email still go through the
- * provider's own narrow methods until that flow is migrated.
+ * The `auth.*` keys were catalogue-and-template only at first, while the
+ * password-reset queue and the verification email still went through the
+ * provider's own narrow methods. Those methods pasted the raw credential
+ * into the message body, so a recipient was handed an internal token with
+ * no action attached; both flows now emit their catalogue event and the
+ * narrow methods are deleted. There is one way to send an email.
  *
  * `channels.email`:
  *   - `always`     — sent regardless of preference (security/transactional
