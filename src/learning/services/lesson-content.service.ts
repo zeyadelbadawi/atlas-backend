@@ -78,6 +78,7 @@ import { resolveContentProtection } from '../dto/content-protection.contract';
 import { MINIMUM_WATCHED_RATIO } from '../dto/learning.constants';
 import { classifyExternalEmbed } from './external-embed.util';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
+import { CommunicationService } from '../../communications/services/communication.service';
 import type {
   ContentAccessReason,
   ContentProtectionReport,
@@ -172,6 +173,17 @@ class ContentRefusal extends Error {
       readonly securityTier: VideoSecurityTier | null;
       readonly provider: MediaAssetProvider | null;
     } = { securityTier: null, provider: null },
+    /**
+     * P64 Communications C3 (plan §8 B3) — the academy and its device cap,
+     * carried OUT of the transaction on the refusal for the same reason
+     * `atlasRefusal` carries the session-conflict detail: the transaction
+     * this was thrown in is about to roll back, so anything the caller
+     * needs afterwards has to travel on the exception.
+     */
+    readonly deviceLimit: {
+      readonly academyId: string;
+      readonly maxDevices: number;
+    } | null = null,
   ) {
     super(reason);
   }
@@ -194,6 +206,7 @@ export class LessonContentService {
     private readonly rateLimiter: ContentGrantRateLimiter,
     private readonly metrics: LearningMetricsService,
     private readonly courseSequence: CourseSequenceService,
+    private readonly communications: CommunicationService,
   ) {}
 
   async getContent(
@@ -214,8 +227,12 @@ export class LessonContentService {
         ? this.tenancyContextService.runInUserContext(userId, fn)
         : this.tenancyContextService.runWithoutContext(fn);
 
+    // P64 Communications C3 (plan §8 B1) — set inside the transaction
+    // below, enqueued once it has committed.
+    let deviceRegisteredOutboxId: string | null = null;
+
     try {
-      return await run(async (tx) => {
+      const grant = await run(async (tx) => {
         const lesson = await tx.courseLesson.findFirst({
           where: { id: lessonId, courseId },
           include: {
@@ -374,9 +391,31 @@ export class LessonContentService {
             maxDevices: policy.maxDevices,
           });
           if (resolution.atCapacity || !resolution.device) {
-            throw new ContentRefusal('deviceLimit');
+            throw new ContentRefusal('deviceLimit', undefined, {
+              academyId: course.academyId,
+              maxDevices: policy.maxDevices,
+            });
           }
           deviceId = resolution.device.id;
+
+          // P64 Communications C3 (plan §8 B1) — the OTHER place a device
+          // is registered. `issueCookieValue` is set on the INSERT alone,
+          // so a recognised device being touched emits nothing, and the
+          // catalogue's dedupe (the device id) means the sign-in path and
+          // this one can never both announce the same row.
+          if (resolution.issueCookieValue) {
+            // No academy NAME: a learner's own context cannot SELECT
+            // `academies` (there is no `academies_student_select`), and
+            // the brand name is resolved by the dispatcher anyway.
+            const registered = await this.communications.emit(tx, {
+              key: 'device.registered',
+              recipientUserId: userId,
+              academyId: course.academyId,
+              entity: { type: 'student_device', id: resolution.device.id },
+              values: { deviceLabel: resolution.device.label },
+            });
+            deviceRegisteredOutboxId = registered.outboxId;
+          }
 
           // Taken last, and only when everything else already passed.
           const outcome = await this.leaseService.acquire({
@@ -463,6 +502,10 @@ export class LessonContentService {
         this.metrics.recordGrant(grant.kind, grant.protection.tier);
         return grant;
       });
+
+      // Step 2, after the transaction above has committed.
+      await this.communications.enqueueAfterCommit(deviceRegisteredOutboxId);
+      return grant;
     } catch (error) {
       // A conflict is a refusal too, and its record has to outlive the
       // transaction that produced it (SEC-2).
@@ -500,6 +543,9 @@ export class LessonContentService {
           error.reason,
           error.assetContext,
         );
+        if (error.deviceLimit && userId) {
+          await this.notifyDeviceLimit(userId, error.deviceLimit);
+        }
         throw refusalToHttp(error.reason);
       }
       throw error;
@@ -679,6 +725,51 @@ export class LessonContentService {
     entry: Parameters<ContentAccessLogRepository['record']>[1],
   ): Promise<void> {
     await this.accessLog.record(tx, entry);
+  }
+
+  /**
+   * P64 Communications C3 (plan §8 B3, §10 "B3 device limit ... yes
+   * (urgent) | never") — the learner was refused a lesson because they
+   * are over their academy's device cap.
+   *
+   * OUTSIDE the refused transaction, in its own, for the reason SEC-2
+   * records a few lines up: the transaction this refusal came from is
+   * rolled back, so anything written inside it was never there. It is
+   * also best-effort — a notification must never turn a clean 403 into a
+   * 500 — and it damps itself, because the catalogue keys this event on
+   * (academy, calendar day): a learner clicking a locked lesson twenty
+   * times gets one feed row, and gets a fresh one tomorrow.
+   */
+  private async notifyDeviceLimit(
+    userId: string,
+    deviceLimit: { readonly academyId: string; readonly maxDevices: number },
+  ): Promise<void> {
+    try {
+      const emitted = await this.tenancyContextService.runInUserContext(userId, (tx) =>
+        this.communications.emit(tx, {
+          key: 'device.limit_reached',
+          recipientUserId: userId,
+          academyId: deviceLimit.academyId,
+          entity: { type: 'academy', id: deviceLimit.academyId },
+          values: {
+            // The UTC calendar day, so the key is stable for everyone
+            // reading the same row and cannot drift with a timezone.
+            occurredOn: new Date().toISOString().slice(0, 10),
+            maxDevices: deviceLimit.maxDevices,
+          },
+        }),
+      );
+      await this.communications.enqueueAfterCommit(emitted.outboxId);
+    } catch (error) {
+      this.logger.warn(
+        {
+          userId,
+          academyId: deviceLimit.academyId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Could not record a device-limit notification for a refused grant.',
+      );
+    }
   }
 
   private async logRefusal(

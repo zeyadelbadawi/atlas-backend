@@ -26,6 +26,7 @@ import { AcademyMembersRepository } from '../../academy/repositories/academy-mem
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { CommunicationService } from '../../communications/services/communication.service';
+import { AcademyStaffRecipientsService } from '../../communications/services/academy-staff-recipients.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { assertActiveEnrollment, assertCanReviewCourse } from './learning-access.util';
 import type {
@@ -77,6 +78,7 @@ export class CourseReviewsService {
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly communicationService: CommunicationService,
+    private readonly staffRecipients: AcademyStaffRecipientsService,
   ) {}
 
   // ------------------------------------------------------------------
@@ -93,51 +95,98 @@ export class CourseReviewsService {
     courseId: string,
     dto: CreateCourseReviewDto,
   ): Promise<CourseReviewResponse> {
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      const enrollment = await assertActiveEnrollment(
-        tx,
-        this.enrollmentsRepository,
-        userId,
-        courseId,
-        this.academyStudentsRepository,
-      );
+    // Computed ONCE, before the transaction, so a retry re-derives the
+    // same dedupe key instead of minting a new work item each attempt.
+    const submittedAt = new Date();
+    const outboxIds: (string | null)[] = [];
 
-      const existing = await this.courseReviewsRepository.findByStudentAndCourse(
-        tx,
-        userId,
-        courseId,
-      );
-      const body = sanitizeBody(dto.body);
+    const response = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const enrollment = await assertActiveEnrollment(
+          tx,
+          this.enrollmentsRepository,
+          userId,
+          courseId,
+          this.academyStudentsRepository,
+        );
 
-      const review = existing
-        ? await this.courseReviewsRepository.update(tx, existing.id, {
-            rating: dto.rating,
-            body: body ?? null,
-            // A re-submission must be re-moderated: never let an edit keep a
-            // stale `approved`.
-            status: 'pending',
-          })
-        : await this.courseReviewsRepository.create(tx, {
-            courseId,
+        const existing = await this.courseReviewsRepository.findByStudentAndCourse(
+          tx,
+          userId,
+          courseId,
+        );
+        const body = sanitizeBody(dto.body);
+
+        const review = existing
+          ? await this.courseReviewsRepository.update(tx, existing.id, {
+              rating: dto.rating,
+              body: body ?? null,
+              // A re-submission must be re-moderated: never let an edit keep a
+              // stale `approved`.
+              status: 'pending',
+            })
+          : await this.courseReviewsRepository.create(tx, {
+              courseId,
+              academyId: enrollment.academyId,
+              studentId: userId,
+              rating: dto.rating,
+              body: body ?? null,
+              status: 'pending',
+            });
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          academyId: enrollment.academyId,
+          role: 'student',
+          action: existing ? 'course_review.updated' : 'course_review.created',
+          targetType: 'course_review',
+          targetId: review.id,
+          targetLabel: courseId,
+        });
+
+        // The review is `pending` and invisible until a moderator acts, so
+        // somebody has to be told. This runs inside the LEARNER's
+        // transaction — which is the point: the work item is atomic with
+        // the review, so a crash between them cannot leave a review that
+        // nobody knows to moderate. A learner cannot read
+        // `academy_members`, hence the definer-backed lookup.
+        //
+        // `academyName` is deliberately NOT passed: a learner context
+        // cannot read `academies` either (there is no student policy, so
+        // the relation throws rather than returning null), and the
+        // dispatcher resolves the academy's branding itself.
+        const course = await this.coursesRepository.findById(tx, courseId);
+        const moderators = await this.staffRecipients.moderators(
+          tx,
+          enrollment.academyId,
+        );
+        for (const moderatorUserId of moderators) {
+          // A moderator reviewing their own academy's course should not be
+          // told about their own submission.
+          if (moderatorUserId === userId) continue;
+          const emitted = await this.communicationService.emit(tx, {
+            key: 'review.submitted',
+            recipientUserId: moderatorUserId,
             academyId: enrollment.academyId,
-            studentId: userId,
-            rating: dto.rating,
-            body: body ?? null,
-            status: 'pending',
+            entity: { type: 'course_review', id: review.id },
+            values: {
+              submittedAtMs: submittedAt.getTime(),
+              courseId,
+              courseTitle: course?.title ?? '',
+            },
           });
+          outboxIds.push(emitted.outboxId);
+        }
 
-      await this.auditLogWriterService.write(tx, {
-        actorUserId: userId,
-        academyId: enrollment.academyId,
-        role: 'student',
-        action: existing ? 'course_review.updated' : 'course_review.created',
-        targetType: 'course_review',
-        targetId: review.id,
-        targetLabel: courseId,
-      });
+        return toCourseReviewResponse(review);
+      },
+    );
 
-      return toCourseReviewResponse(review);
-    });
+    for (const outboxId of outboxIds) {
+      await this.communicationService.enqueueAfterCommit(outboxId);
+    }
+    return response;
   }
 
   /** Partial edit of the caller's own review; resets it to `pending`. */

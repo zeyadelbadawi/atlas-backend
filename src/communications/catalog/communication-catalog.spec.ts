@@ -66,6 +66,8 @@ const TRIAL_ENDS_AT = '2026-10-01T09:00:00.000Z';
 const PERIOD_END_AT = '2026-11-01T09:00:00.000Z';
 const GRACE_ENDS_AT = '2026-11-08T09:00:00.000Z';
 const PROOF_ID = 'p3333333-3333-4333-8333-333333333333';
+/** The calendar day a repeating, self-damping event was first seen — see `device.limit_reached`. */
+const OCCURRED_ON = '2026-09-25';
 
 /**
  * The pre-outbox dedupe string for every migrated key, and the values the
@@ -291,6 +293,73 @@ const EXPECTED_DEDUPE: Record<
     values: { anchorAt: GRACE_ENDS_AT },
     expected: `lifecycle_subscription_followup_30d:${ENTITY_ID}:${GRACE_ENDS_AT}`,
   },
+
+  // A STAFF work item. The submission instant is in the key because a
+  // re-submitted review is a new thing to moderate — without it an edited
+  // review would dedupe against the original and never be re-queued.
+  'review.submitted': {
+    values: { submittedAtMs: 1790000000000, courseTitle: 'Algebra' },
+    expected: `course_review.submitted:${ENTITY_ID}:1790000000000`,
+  },
+
+  // --- P64 Communications C3, second pass (plan §8 B1-B4/C1/D1-D2/E4-E6/H1).
+  // New keys again: what is pinned is the shape chosen, which becomes the
+  // persisted `notifications.dedupe_key` from the first deploy on.
+  'enrollment.self_enrolled': {
+    values: { courseId: 'c1', courseTitle: 'Algebra' },
+    expected: `enrollment.self_enrolled:${ENTITY_ID}`,
+  },
+  'course.order.created': {
+    values: { courseTitle: 'Algebra', amount: '49.00', currency: 'AED' },
+    expected: `course_order_created:${ENTITY_ID}`,
+  },
+  'course.order.expired': {
+    values: { courseTitle: 'Algebra', courseId: 'c1' },
+    expected: `course_order_expired:${ENTITY_ID}`,
+  },
+  'assessment.quiz.auto_submitted': {
+    values: { quizTitle: 'Unit 1', reason: 'timeout', courseId: 'c1', quizId: 'q1' },
+    expected: `quiz_attempt.auto_submitted:${ENTITY_ID}`,
+  },
+  'assessment.attempt.invalidated': {
+    values: {
+      quizTitle: 'Unit 1',
+      invalidatedAtMs: DECIDED_AT_MS,
+      reason: 'Duplicate submission',
+      academyName: 'Falcon',
+      courseId: 'c1',
+      quizId: 'q1',
+    },
+    expected: `quiz_attempt.invalidated:${ENTITY_ID}:${DECIDED_AT_MS}`,
+  },
+  'course.completed': {
+    values: { completedAtMs: DECIDED_AT_MS, courseId: 'c1', courseTitle: 'Algebra' },
+    expected: `course.completed:${ENTITY_ID}:${DECIDED_AT_MS}`,
+  },
+  'device.registered': {
+    values: { deviceLabel: 'Chrome on macOS' },
+    expected: `device.registered:${ENTITY_ID}`,
+  },
+  'device.removed': {
+    values: { deviceLabel: 'Chrome on macOS' },
+    expected: `device.removed:${ENTITY_ID}`,
+  },
+  'device.limit_reached': {
+    values: { occurredOn: OCCURRED_ON, maxDevices: 2 },
+    expected: `device.limit_reached:${ENTITY_ID}:${OCCURRED_ON}`,
+  },
+  'session.taken_over': {
+    values: {
+      takenOverAtMs: DECIDED_AT_MS,
+      deviceLabel: 'Chrome on macOS',
+      previousDeviceLabel: 'Safari on iOS',
+    },
+    expected: `session.taken_over:${ENTITY_ID}:${DECIDED_AT_MS}`,
+  },
+  'announcement.published': {
+    values: { title: 'Exam week', academyName: 'Falcon', courseId: 'c1' },
+    expected: `announcement.published:${ENTITY_ID}`,
+  },
 };
 
 /** Keys whose contract is "fire every time" — a dedupe key here is a bug. */
@@ -467,6 +536,46 @@ describe('COMMUNICATION_CATALOG', () => {
       const entry = COMMUNICATION_CATALOG['review.moderated'];
       expect(entry.dedupe(context({ status: 'approved' }))).not.toBe(
         entry.dedupe(context({ status: 'rejected' })),
+      );
+    });
+
+    it('damps the device cap to one row per academy per DAY', () => {
+      // The cap is hit on EVERY refused grant — a learner poking at a
+      // locked lesson would otherwise paper their own feed. Same day is
+      // one row; the next day is news again.
+      const entry = COMMUNICATION_CATALOG['device.limit_reached'];
+      expect(entry.dedupe(context({ occurredOn: OCCURRED_ON }))).toBe(
+        entry.dedupe(context({ occurredOn: OCCURRED_ON })),
+      );
+      expect(entry.dedupe(context({ occurredOn: '2026-09-26' }))).not.toBe(
+        entry.dedupe(context({ occurredOn: OCCURRED_ON })),
+      );
+    });
+
+    it('distinguishes a second takeover of the same device', () => {
+      const entry = COMMUNICATION_CATALOG['session.taken_over'];
+      expect(entry.dedupe(context({ takenOverAtMs: DECIDED_AT_MS }))).not.toBe(
+        entry.dedupe(context({ takenOverAtMs: DECIDED_AT_MS + 1000 })),
+      );
+    });
+
+    it('distinguishes a re-completion of the same enrollment', () => {
+      // Voiding an attempt takes completion away; earning it back is the
+      // second piece of news, and a key on the enrollment alone would eat it.
+      const entry = COMMUNICATION_CATALOG['course.completed'];
+      expect(entry.dedupe(context({ completedAtMs: DECIDED_AT_MS }))).not.toBe(
+        entry.dedupe(context({ completedAtMs: DECIDED_AT_MS + 86_400_000 })),
+      );
+    });
+
+    it('keys an auto-submitted attempt on the attempt alone', () => {
+      // `updateIfInProgress` lets exactly one finaliser win, so the
+      // reason must NOT enter the key: a timeout and an integrity
+      // auto-submit of the same attempt cannot both happen, and letting
+      // the reason vary the key would only let a retry notify twice.
+      const entry = COMMUNICATION_CATALOG['assessment.quiz.auto_submitted'];
+      expect(entry.dedupe(context({ reason: 'timeout' }))).toBe(
+        entry.dedupe(context({ reason: 'integrity' })),
       );
     });
 

@@ -26,6 +26,8 @@ import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer
 import { LearningLeaseService } from './learning-lease.service';
 import { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import type { EmitResult } from '../../communications/services/communication.service';
 import type {
   LearnerDevicesResponse,
   LearnerDeviceResponse,
@@ -49,6 +51,7 @@ export class LearnerSessionService {
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly gateRevocation: VideoGateRevocationService,
     private readonly metrics: LearningMetricsService,
+    private readonly communications: CommunicationService,
   ) {}
 
   async listDevices(
@@ -124,6 +127,9 @@ export class LearnerSessionService {
    * so it has to actually end access there.
    */
   async removeDevice(userId: string, academyId: string, deviceId: string): Promise<void> {
+    // P64 Communications C3 (plan §8 B2). Declared out here so the hint
+    // can be sent once the transaction has committed.
+    let emitted: EmitResult = { created: false, outboxId: null };
     const revokedSessionIds = await this.tenancyContextService.runInUserContext(
       userId,
       async (tx) => {
@@ -131,6 +137,28 @@ export class LearnerSessionService {
         if (!removed || removed.academyId !== academyId) {
           throw new NotFoundException({ messageKey: 'errors.notFound' });
         }
+
+        // P64 Communications C3 (plan §8 B2, §10 "B1/B2 device
+        // registered/removed"). `security` by §11, and emailed rather
+        // than §10's "preference" because §23 locks a security
+        // preference to on — see the catalogue's own note. Inside the
+        // transaction that revokes the device and its sessions, so a
+        // removal that rolls back (the `NotFoundException` above, a
+        // failing session revoke) tells nobody.
+        //
+        // No academy NAME is read here: this runs in the learner's own
+        // user context and there is no `academies_student_select` policy,
+        // so the row is invisible. The email's brand name comes from
+        // `CommunicationBrandingService` after the commit, which has full
+        // visibility — see `CourseCompletionService.recompute` for the
+        // same note and the crash that made it explicit.
+        emitted = await this.communications.emit(tx, {
+          key: 'device.removed',
+          recipientUserId: userId,
+          academyId,
+          entity: { type: 'student_device', id: removed.id },
+          values: { deviceLabel: removed.label },
+        });
         // Collected BEFORE revoking, because afterwards the rows no
         // longer match the filter and the gate would never be told.
         const sessions = await tx.refreshToken.findMany({
@@ -157,6 +185,7 @@ export class LearnerSessionService {
     // rollback must not leave it holding a lease for a device that still
     // exists.
     await this.leaseService.revokeAll(userId, academyId);
+    await this.communications.enqueueAfterCommit(emitted.outboxId);
   }
 
   /**
@@ -239,6 +268,35 @@ export class LearnerSessionService {
     }
 
     this.metrics.recordTakeover();
+
+    // P64 Communications C3 (plan §8 B4, §10 "B3 device limit, B4 session
+    // takeover | yes (urgent) | never"). Only when a session was actually
+    // DISPLACED: taking over from nobody is not an event, and the learner
+    // who clicked is the same person either way — what makes this worth
+    // telling is that some other browser just stopped playing.
+    //
+    // In its own transaction, after the lease has actually moved: the
+    // takeover is the durable outcome and a notification failure must not
+    // undo it. The instant is in the dedupe key, so trading the session
+    // back and forth is reported every time rather than once.
+    if (previousSessionId && previousSessionId !== context.sessionId) {
+      const takenOverAt = new Date();
+      const emitted = await this.tenancyContextService.runInUserContext(userId, (tx) =>
+        this.communications.emit(tx, {
+          key: 'session.taken_over',
+          recipientUserId: userId,
+          academyId,
+          entity: { type: 'student_device', id: device.id },
+          values: {
+            takenOverAtMs: takenOverAt.getTime(),
+            deviceLabel: device.label,
+            previousDeviceLabel: previousDeviceLabel ?? '',
+          },
+        }),
+      );
+      await this.communications.enqueueAfterCommit(emitted.outboxId);
+    }
+
     await this.writeTakeoverAudit(userId, academyId, {
       newDeviceId: device.id,
       newDeviceLabel: device.label,

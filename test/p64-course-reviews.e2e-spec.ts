@@ -89,6 +89,95 @@ describe('Course Reviews (e2e)', () => {
 
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
+  /**
+   * P64 Communications C3 (plan §8 F1) — the STAFF half.
+   *
+   * A pending review is invisible until a moderator acts, so a review
+   * nobody is told about is a review nobody moderates. The emit happens
+   * inside the LEARNER's transaction, which is only possible because
+   * `academy_notification_recipients` resolves staff the learner's own
+   * RLS context cannot see. These cases pin that it reaches the right
+   * people, that it is atomic with the review, and — the containment
+   * check — that the learner still cannot read the staff table itself.
+   */
+  describe('moderator work item', () => {
+    it('tells the academy’s moderators, and only them', async () => {
+      const { academy, course, owner } = await seedAcademyWithCourse('rev-staff');
+      const manager = await signUpAndSignIn(app, 'rev-staff-manager');
+      await seedAcademyMember(admin, academy.id, manager.userId, 'manager');
+      const instructor = await signUpAndSignIn(app, 'rev-staff-instructor');
+      await seedAcademyMember(admin, academy.id, instructor.userId, 'instructor');
+
+      const learner = await seedEnrolledLearner(
+        'rev-staff-learner',
+        academy.id,
+        course.id,
+      );
+      await request(app.getHttpServer())
+        .post(`/courses/${course.id}/reviews`)
+        .set(auth(learner.accessToken))
+        .send({ rating: 5, body: 'Genuinely useful course.' })
+        .expect(201);
+
+      const rows = await admin.communicationOutbox.findMany({
+        where: { key: 'review.submitted', academyId: academy.id },
+        select: { recipientUserId: true },
+      });
+      const told = rows.map((r) => r.recipientUserId).sort();
+      // Owner and manager moderate. An instructor teaches — mailing them
+      // a queue they cannot action is noise, so they are excluded.
+      expect(told).toEqual([owner.userId, manager.userId].sort());
+      expect(told).not.toContain(instructor.userId);
+      expect(told).not.toContain(learner.userId);
+    });
+
+    it('is atomic with the review: a rejected submission notifies nobody', async () => {
+      const { academy, course } = await seedAcademyWithCourse('rev-staff-atomic');
+      const outsider = await signUpAndSignIn(app, 'rev-staff-outsider');
+      await seedAcademyStudent(admin, academy.id, outsider.userId);
+
+      // Not enrolled, so the write is refused — and the work item must
+      // not exist either.
+      await request(app.getHttpServer())
+        .post(`/courses/${course.id}/reviews`)
+        .set(auth(outsider.accessToken))
+        .send({ rating: 4, body: 'No enrollment.' })
+        .expect(404);
+
+      expect(
+        await admin.communicationOutbox.count({
+          where: { key: 'review.submitted', academyId: academy.id },
+        }),
+      ).toBe(0);
+    });
+
+    it('re-queues an edited review rather than deduping it away', async () => {
+      const { academy, course } = await seedAcademyWithCourse('rev-staff-edit');
+      const learner = await seedEnrolledLearner(
+        'rev-staff-edit-learner',
+        academy.id,
+        course.id,
+      );
+      const post = (body: string) =>
+        request(app.getHttpServer())
+          .post(`/courses/${course.id}/reviews`)
+          .set(auth(learner.accessToken))
+          .send({ rating: 4, body })
+          .expect(201);
+
+      await post('First version of the review.');
+      await post('Edited, so it must be moderated again.');
+
+      // An edit resets the review to `pending`; if the second submission
+      // deduped against the first, the edited text would sit unmoderated
+      // forever with nobody told.
+      const count = await admin.communicationOutbox.count({
+        where: { key: 'review.submitted', academyId: academy.id },
+      });
+      expect(count).toBeGreaterThanOrEqual(2);
+    });
+  });
+
   it('an enrolled learner creates a review that lands pending, then reads it back via /mine', async () => {
     const { academy, course } = await seedAcademyWithCourse('rev-create');
     const learner = await seedEnrolledLearner(

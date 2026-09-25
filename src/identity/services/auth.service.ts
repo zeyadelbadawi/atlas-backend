@@ -59,6 +59,7 @@ import type { Principal } from '../../tenancy/services/principal-resolver.servic
 import { AcademySurfaceService } from './academy-surface.service';
 import { EmailOtpService } from './email-otp.service';
 import { CommunicationMetricsService } from '../../communications/metrics/communication-metrics.service';
+import { CommunicationService } from '../../communications/services/communication.service';
 import { TrustedDeviceService } from './trusted-device.service';
 import type { EmailOtpChallengeContract } from '../dto/contracts';
 import type { SignInSurface } from '../dto/sign-in.dto';
@@ -174,6 +175,11 @@ export class AuthService {
     private readonly emailOtpService: EmailOtpService,
     private readonly trustedDeviceService: TrustedDeviceService,
     private readonly communicationMetrics: CommunicationMetricsService,
+    // P64 Communications C3 (plan §8 B1) — the new-device feed row. From
+    // the `@Global()` `CommunicationsModule`, like the metrics above, so
+    // `IdentityModule` needs no new import (`EmailOtpService` and
+    // `UsersService` already inject this service the same way).
+    private readonly communicationService: CommunicationService,
   ) {}
 
   /**
@@ -1016,24 +1022,57 @@ export class AuthService {
     academyId: string,
     context?: SessionRequestContext,
   ): Promise<string | null> {
+    // P64 Communications C3 (plan §8 B1). Declared out here so the hint
+    // can be sent once the transaction has committed.
+    let outboxId: string | null = null;
     try {
-      return await this.tenancyContextService.runInUserContext(userId, async (tx) => {
-        const policy = await this.accessPolicyService.resolveForAcademy(tx, academyId);
-        const resolution = await this.studentDeviceService.resolveForSession(tx, {
-          userId,
-          academyId,
-          cookieValue: context?.deviceCookie,
-          userAgent: context?.userAgent,
-          maxDevices: policy.maxDevices,
-        });
-        if (resolution.issueCookieValue && context?.onDeviceCookie) {
-          context.onDeviceCookie(
-            resolution.issueCookieValue,
-            DEVICE_COOKIE_MAX_AGE_SECONDS,
-          );
-        }
-        return resolution.device?.id ?? null;
-      });
+      const deviceId = await this.tenancyContextService.runInUserContext(
+        userId,
+        async (tx) => {
+          const policy = await this.accessPolicyService.resolveForAcademy(tx, academyId);
+          const resolution = await this.studentDeviceService.resolveForSession(tx, {
+            userId,
+            academyId,
+            cookieValue: context?.deviceCookie,
+            userAgent: context?.userAgent,
+            maxDevices: policy.maxDevices,
+          });
+          if (resolution.issueCookieValue && context?.onDeviceCookie) {
+            context.onDeviceCookie(
+              resolution.issueCookieValue,
+              DEVICE_COOKIE_MAX_AGE_SECONDS,
+            );
+          }
+
+          // P64 Communications C3 (plan §8 B1, §10 "B1/B2 device
+          // registered/removed"). `issueCookieValue` is set on exactly
+          // one path — the INSERT — so this fires for a genuinely new
+          // browser and not for the cap refusal or a recognised device
+          // being touched. In-app only by the catalogue: the learner is
+          // sitting at the browser that was just registered, and §10's
+          // own note for this row is "low volume".
+          if (resolution.issueCookieValue && resolution.device) {
+            // No academy NAME is read: this runs in the learner's own
+            // user context, where `academies` is invisible (there is no
+            // `academies_student_select` policy — an `academy_students`
+            // row is not an `academy_members` row). The brand name the
+            // person sees comes from `CommunicationBrandingService`,
+            // which resolves it with full visibility at dispatch.
+            const emitted = await this.communicationService.emit(tx, {
+              key: 'device.registered',
+              recipientUserId: userId,
+              academyId,
+              entity: { type: 'student_device', id: resolution.device.id },
+              values: { deviceLabel: resolution.device.label },
+            });
+            outboxId = emitted.outboxId;
+          }
+
+          return resolution.device?.id ?? null;
+        },
+      );
+      await this.communicationService.enqueueAfterCommit(outboxId);
+      return deviceId;
     } catch (error) {
       this.logger.warn(
         {

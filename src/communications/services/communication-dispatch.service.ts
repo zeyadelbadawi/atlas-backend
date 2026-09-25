@@ -953,9 +953,22 @@ export class CommunicationDispatchService {
         },
         orderBy: { availableAt: 'asc' },
         take: 500,
-        select: { id: true, attempts: true },
+        select: { id: true, attempts: true, availableAt: true },
       }),
     );
+    // Ordered by `availableAt` ascending, so the first row of the page is
+    // the globally oldest due row even when the backlog exceeds the page
+    // size — the gauge does not need a second query.
+    const oldestDue = due[0];
+    // Publish the liveness gauge BEFORE enqueuing, so it reports the age
+    // the queue actually had when the sweep found it. `due` is ordered by
+    // `availableAt`, so the first row is the oldest; an empty queue is 0,
+    // which is the healthy reading and the value an alert compares against.
+    const now = Date.now();
+    this.metrics.recordOldestPendingSeconds(
+      oldestDue ? Math.round((now - oldestDue.availableAt.getTime()) / 1000) : 0,
+    );
+
     let enqueued = 0;
     for (const row of due) {
       if (await this.producer.enqueueDispatch(row.id, row.attempts)) enqueued += 1;

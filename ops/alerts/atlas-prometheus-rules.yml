@@ -133,6 +133,42 @@ groups:
         annotations:
           summary: "Email bounce rate above 2% over 24h"
           description: "{{ $value | humanizePercentage }} of accepted sends bounced in the last 24h. Free-tier providers suspend senders around this level — check the suppression list and the recipient sources."
+      # The one that separates a dead pipeline from a quiet week. Zero
+      # throughput looks identical in both cases; the age of the oldest
+      # DUE message is the only thing that tells them apart, which is why
+      # the sweep publishes it as a gauge rather than relying on counters.
+      - alert: AtlasEmailDispatcherStalled
+        expr: |
+          atlas_comm_outbox_oldest_pending_seconds > 900
+        for: 5m
+        labels: { severity: critical, team: atlas }
+        annotations:
+          summary: "Email is queued but nothing is sending it"
+          description: "The oldest due message has been waiting {{ $value | humanizeDuration }} and no worker has claimed it. The dispatch sweep runs every 60s, so anything past 15m means the communications worker is not draining the queue — password resets and OTP codes are being accepted and not delivered. Check the worker, then Redis."
+      # A dead letter is an email that exhausted every retry: somebody was
+      # told something and never received it. Rare enough that any of them
+      # is worth a look, so this fires on one.
+      - alert: AtlasEmailDeadLetters
+        expr: |
+          sum(increase(atlas_comm_dead_letter_total[1h])) by (category) > 0
+        for: 5m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "{{ $labels.category }} email gave up after all retries"
+          description: "{{ $value }} {{ $labels.category }} message(s) exhausted their retries in the last hour and will never be delivered. Check the provider's status and the delivery failures on Analysis › Communications."
+      # A surge of failed codes is either an attack on one account or a
+      # delivery fault making every legitimate code useless. Both need a
+      # person, and the two are distinguished by the bounce/quota alerts.
+      - alert: AtlasAuthOtpFailureSurge
+        expr: |
+          sum(increase(atlas_auth_otp_total{result="failed"}[15m]))
+            / clamp_min(sum(increase(atlas_auth_otp_total[15m])), 1) > 0.5
+            and sum(increase(atlas_auth_otp_total{result="failed"}[15m])) > 20
+        for: 10m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          summary: "Most sign-in codes are failing verification"
+          description: "{{ $value | humanizePercentage }} of OTP verifications failed in 15m, on more than 20 attempts. Either codes are not reaching inboxes (check delivery and the suppression list) or accounts are being guessed at (check the per-account and per-IP budgets)."
       - alert: AtlasEmailWebhookSignatureFailures
         expr: |
           sum(increase(atlas_comm_webhook_signature_failures_total[15m])) by (provider) > 0

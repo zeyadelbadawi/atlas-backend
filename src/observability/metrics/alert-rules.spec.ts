@@ -10,10 +10,23 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const RULES_PATH = resolve(__dirname, '../../../ops/alerts/atlas-prometheus-rules.yml');
+/**
+ * Every file that registers an `atlas_*` series into the shared registry.
+ * Missing one is worse than it looks: this spec would then flag a VALID
+ * rule as referencing an unknown series, and — the dangerous direction —
+ * would never notice a rule pointing at a series that does not exist,
+ * which is an alert that can never fire.
+ *
+ * There are two communications metrics files because the outbox and the
+ * provider layer were built in parallel and each added one. They own
+ * different series (dispatch/outbox/OTP vs provider/quota/webhook) and
+ * both are live, but they share the class name `CommunicationMetricsService`,
+ * which is a footgun worth consolidating when nothing else is in flight.
+ */
 const SERVICE_PATHS = [
   resolve(__dirname, 'learning-metrics.service.ts'),
-  // P64 Communications — same registry, second service file.
   resolve(__dirname, '../../communications/services/communication-metrics.service.ts'),
+  resolve(__dirname, '../../communications/metrics/communication-metrics.service.ts'),
 ];
 
 const rules = readFileSync(RULES_PATH, 'utf8');
