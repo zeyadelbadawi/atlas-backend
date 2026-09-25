@@ -122,6 +122,15 @@ import { TrustedDevicesController } from './controllers/trusted-devices.controll
   // an invitation/email system).
   exports: [
     AccountSetupService,
+    // Exported for `PlatformUserManagementController`, which runs the
+    // administrative deletion. Nest resolves DI at BOOTSTRAP, not at
+    // compile time: a provider used across a module boundary without
+    // being exported typechecks perfectly and then refuses to start the
+    // application. That is exactly what happened on 25 Sep 2026 — the
+    // container came up unhealthy and every API route answered 502 until
+    // this line existed. `deletion-module-graph.spec.ts` now fails if it
+    // is removed again.
+    AccountDeletionService,
     // Exported because the Platform Owner's administrative deletion
     // surface must preview the SAME plan the account holder sees. Two
     // implementations of "what will this destroy" would drift, and the
