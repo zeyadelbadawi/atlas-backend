@@ -89,6 +89,7 @@ const NEVER_DEDUPED = (): null => null;
  * `/dashboard/tenant/subscription`"). One constant, so sixteen entries
  * cannot drift apart.
  */
+const FORGOT_PASSWORD_PATH = '/auth/forgot-password';
 const TENANT_SUBSCRIPTION_PATH = '/dashboard/tenant/subscription';
 
 /**
@@ -330,6 +331,9 @@ const CATALOG = {
     template: 'auth.password.changed',
     titleKey: 'notifications:events.passwordChanged.title',
     messageKey: 'notifications:events.passwordChanged.message',
+    // §13's recovery path: reachable while signed out, which is the
+    // state someone is in when this email is the one that matters.
+    actionUrl: () => FORGOT_PASSWORD_PATH,
   },
   'auth.email.verification': {
     category: 'security',
@@ -419,6 +423,9 @@ const CATALOG = {
     template: 'auth.password.reset_confirmed',
     titleKey: 'notifications:events.passwordResetConfirmed.title',
     messageKey: 'notifications:events.passwordResetConfirmed.message',
+    // §13's recovery path: reachable while signed out, which is the
+    // state someone is in when this email is the one that matters.
+    actionUrl: () => FORGOT_PASSWORD_PATH,
   },
 
   // --- Live Sessions (Phase 12).
