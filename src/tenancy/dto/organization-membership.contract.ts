@@ -6,4 +6,11 @@ export interface OrganizationMembershipResponse {
   readonly permissions: readonly string[];
   readonly isPrimary: boolean;
   readonly joinedAt: string;
+  /**
+   * New Customer Onboarding — COMPUTED on every read, never stored:
+   * `role === 'owner' && organization.onboarding_completed_at IS NULL`
+   * (docs/NEW_CUSTOMER_ONBOARDING.md §3.3). The frontend uses it only to
+   * decide where `/dashboard` lands; it authorizes nothing.
+   */
+  readonly onboardingPending: boolean;
 }

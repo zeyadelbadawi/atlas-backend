@@ -92,66 +92,105 @@ export class OrganizationsService {
       organization: Organization,
     ) => Promise<void>,
   ): Promise<OrganizationResponse> {
-    const baseSlug = slugify(payload.name);
     const organizationId = randomUUID();
+    const organization = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      (tx) =>
+        this.createInTransaction(
+          tx,
+          { organizationId, userId, name: payload.name },
+          onCreated,
+        ),
+    );
+    return toOrganizationResponse(organization);
+  }
 
+  /**
+   * The body of `create`, runnable inside a transaction the CALLER owns —
+   * New Customer Onboarding's signup creates the account, the Organization,
+   * its subscription and its trial in ONE transaction
+   * (docs/NEW_CUSTOMER_ONBOARDING.md §3.2), so it cannot open its own.
+   *
+   * The caller must already have set `app.current_organization_id` to
+   * `organizationId` and `app.current_user_id` to `userId` on `tx` — exactly
+   * what `runInTenantAndUserContext` does for `create` above.
+   *
+   * SLUG RETRY WITHOUT LOSING THE TRANSACTION. A unique-slug violation
+   * aborts a Postgres transaction, so each attempt runs inside a SAVEPOINT
+   * and a collision rolls back only that attempt. `create` used to open a
+   * fresh transaction per attempt instead; the outcome is identical.
+   *
+   * `onboardingCompletedAt: null` is passed ONLY by the signup path — every
+   * other caller omits it and the column's default marks the organization as
+   * already onboarded.
+   */
+  async createInTransaction(
+    tx: Prisma.TransactionClient,
+    input: {
+      readonly organizationId: string;
+      readonly userId: string;
+      readonly name: string;
+      readonly onboardingCompletedAt?: null;
+    },
+    onCreated?: (
+      tx: Prisma.TransactionClient,
+      organization: Organization,
+    ) => Promise<void>,
+  ): Promise<Organization> {
+    const { organizationId, userId } = input;
+    const baseSlug = slugify(input.name);
+
+    let created: Organization | undefined;
     let lastError: unknown;
-    for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS; attempt += 1) {
+    for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS && !created; attempt += 1) {
       const slug = attempt === 0 ? baseSlug : `${baseSlug}-${randomUUID().slice(0, 6)}`;
+      await tx.$executeRawUnsafe('SAVEPOINT organization_slug_attempt');
       try {
-        const organization = await this.tenancyContextService.runInTenantAndUserContext(
-          organizationId,
-          userId,
-          async (tx) => {
-            const created = await this.organizationsRepository.create(tx, {
-              id: organizationId,
-              name: payload.name,
-              slug,
-              ownerUserId: userId,
-            });
-
-            // Clear any existing primary flag(s) for this user first — see
-            // `clearPrimaryForUser`'s own doc comment for the real bug this
-            // prevents (multiple `isPrimary: true` memberships accumulating
-            // across successive org-creation events).
-            await this.organizationMembershipsRepository.clearPrimaryForUser(tx, userId);
-
-            await this.organizationMembershipsRepository.create(tx, {
-              organizationId: created.id,
-              userId,
-              role: 'owner',
-              permissions: ORGANIZATION_OWNER_PERMISSIONS,
-              isPrimary: true,
-            });
-
-            await this.auditLogWriterService.write(tx, {
-              actorUserId: userId,
-              organizationId: created.id,
-              action: 'organization.created',
-              targetType: 'organization',
-              targetId: created.id,
-              targetLabel: created.name,
-            });
-
-            if (onCreated) {
-              await onCreated(tx, created);
-            }
-
-            return created;
-          },
-        );
-
-        return toOrganizationResponse(organization);
+        created = await this.organizationsRepository.create(tx, {
+          id: organizationId,
+          name: input.name,
+          slug,
+          ownerUserId: userId,
+          onboardingCompletedAt: input.onboardingCompletedAt,
+        });
+        await tx.$executeRawUnsafe('RELEASE SAVEPOINT organization_slug_attempt');
       } catch (error) {
-        if (isUniqueSlugViolation(error)) {
-          lastError = error;
-          continue;
-        }
-        throw error;
+        await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT organization_slug_attempt');
+        if (!isUniqueSlugViolation(error)) throw error;
+        lastError = error;
       }
     }
+    if (!created) throw lastError;
 
-    throw lastError;
+    // Clear any existing primary flag(s) for this user first — see
+    // `clearPrimaryForUser`'s own doc comment for the real bug this
+    // prevents (multiple `isPrimary: true` memberships accumulating
+    // across successive org-creation events).
+    await this.organizationMembershipsRepository.clearPrimaryForUser(tx, userId);
+
+    await this.organizationMembershipsRepository.create(tx, {
+      organizationId: created.id,
+      userId,
+      role: 'owner',
+      permissions: ORGANIZATION_OWNER_PERMISSIONS,
+      isPrimary: true,
+    });
+
+    await this.auditLogWriterService.write(tx, {
+      actorUserId: userId,
+      organizationId: created.id,
+      action: 'organization.created',
+      targetType: 'organization',
+      targetId: created.id,
+      targetLabel: created.name,
+    });
+
+    if (onCreated) {
+      await onCreated(tx, created);
+    }
+
+    return created;
   }
 
   /**

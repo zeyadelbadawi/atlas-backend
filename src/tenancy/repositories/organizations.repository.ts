@@ -48,6 +48,12 @@ export class OrganizationsRepository {
       readonly name: string;
       readonly slug: string;
       readonly ownerUserId: string;
+      /**
+       * New Customer Onboarding — omitted by every legacy caller, so the
+       * column's `now()` default marks the organization as already onboarded;
+       * the signup path passes `null` explicitly to start it as pending.
+       */
+      readonly onboardingCompletedAt?: null;
     },
   ): Promise<Organization> {
     return tx.organization.create({
@@ -56,6 +62,7 @@ export class OrganizationsRepository {
         name: data.name,
         slug: data.slug,
         ownerUserId: data.ownerUserId,
+        ...(data.onboardingCompletedAt === null ? { onboardingCompletedAt: null } : {}),
       },
     });
   }

@@ -21,9 +21,15 @@
  * impossible to add a cancellation path that quietly deletes a redemption
  * without seeing this comment.
  */
-import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { limitsToGrant } from '../utils/granted-limits.util';
 import { Prisma } from '@prisma/client';
+import type { Plan } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { TrialPolicyRepository } from '../repositories/trial-policy.repository';
 import { PlansRepository } from '../repositories/plans.repository';
@@ -52,6 +58,12 @@ export const CANCELLATION_REASONS = [
 ] as const;
 
 export type CancellationReason = (typeof CANCELLATION_REASONS)[number];
+
+/** A plan a signup may trial, with the duration it would run for. */
+export interface SignupTrialPlan {
+  readonly plan: Plan;
+  readonly durationDays: number;
+}
 
 export interface StartTrialResult {
   readonly started: boolean;
@@ -206,44 +218,13 @@ export class TrialRedemptionService {
           throw new TrialAlreadyRedeemedError();
         }
 
-        await this.auditLogWriterService.write(tx, {
+        emitted = await this.recordTrialStarted(tx, {
+          organizationId,
           actorUserId,
-          organizationId,
-          action: 'subscription.trial.redeemed',
-          targetType: 'tenant_subscription',
-          targetId: organizationId,
-          context: {
-            planKey: plan.key,
-            trialEndsAt: trialEndsAt.toISOString(),
-            // The duration actually applied, which may be the plan's own
-            // override rather than the platform default.
-            durationDays,
-          },
-        });
-
-        /*
-          §26 T1 — "immediately on `startTrial` … states the exact end
-          date/time and that the site goes offline at expiry unless a plan
-          is chosen". Inside this transaction on purpose: the trial and
-          the email announcing it either both happen or neither does, and
-          the `TrialAlreadyRedeemedError` rollback below must take the
-          email with it.
-
-          The dedupe anchor is `trialEndsAt`, which no later transition
-          ever rewrites (`markTrialExpired` and `markTrialCancelled` both
-          preserve it, deliberately), so a retried request can never
-          produce a second "your trial has started".
-        */
-        emitted = await this.communicationService.emit(tx, {
-          key: 'lifecycle.trial.started',
-          recipientUserId: owner.id,
-          organizationId,
-          entity: { type: 'tenant_subscription', id: organizationId },
-          values: {
-            anchorAt: trialEndsAt.toISOString(),
-            trialEndsAtDate: formatLifecycleInstant(trialEndsAt),
-            planName: plan.name,
-          },
+          ownerUserId: owner.id,
+          plan,
+          trialEndsAt,
+          durationDays,
         });
 
         return { started: true, trialEndsAt };
@@ -265,6 +246,147 @@ export class TrialRedemptionService {
       await this.communicationService.enqueueAfterCommit(emitted.outboxId);
     }
     return result;
+  }
+
+  /**
+   * The audit entry and the §26 T1 "your trial has started" outbox entry,
+   * written inside the caller's transaction so a trial that rolls back
+   * leaves neither behind. Shared by `startTrial` and the signup path.
+   *
+   * The dedupe anchor is `trialEndsAt`, which no later transition ever
+   * rewrites (`markTrialExpired` and `markTrialCancelled` both preserve it,
+   * deliberately), so a retried request can never produce a second "your
+   * trial has started".
+   */
+  private async recordTrialStarted(
+    tx: Prisma.TransactionClient,
+    input: {
+      readonly organizationId: string;
+      readonly actorUserId: string;
+      readonly ownerUserId: string;
+      readonly plan: { readonly key: string; readonly name: string };
+      readonly trialEndsAt: Date;
+      readonly durationDays: number;
+    },
+  ): Promise<EmitResult> {
+    await this.auditLogWriterService.write(tx, {
+      actorUserId: input.actorUserId,
+      organizationId: input.organizationId,
+      action: 'subscription.trial.redeemed',
+      targetType: 'tenant_subscription',
+      targetId: input.organizationId,
+      context: {
+        planKey: input.plan.key,
+        trialEndsAt: input.trialEndsAt.toISOString(),
+        // The duration actually applied, which may be the plan's own
+        // override rather than the platform default.
+        durationDays: input.durationDays,
+      },
+    });
+
+    return this.communicationService.emit(tx, {
+      key: 'lifecycle.trial.started',
+      recipientUserId: input.ownerUserId,
+      organizationId: input.organizationId,
+      entity: { type: 'tenant_subscription', id: input.organizationId },
+      values: {
+        anchorAt: input.trialEndsAt.toISOString(),
+        trialEndsAtDate: formatLifecycleInstant(input.trialEndsAt),
+        planName: input.plan.name,
+      },
+    });
+  }
+
+  /**
+   * New Customer Onboarding — validates the plan a signup asked to trial,
+   * BEFORE anything is written (docs/NEW_CUSTOMER_ONBOARDING.md §3.2).
+   *
+   * The same rules `startTrial` applies, plus the catalog's customer-facing
+   * floor (`displayOrder > 0`, the public plans endpoint's own filter): a
+   * signup may only name a plan the signup page could have shown. Errors are
+   * 400s with signup-specific keys because the form, not the Plans page,
+   * has to explain them.
+   */
+  async resolveSignupTrialPlan(planId: string): Promise<SignupTrialPlan> {
+    const trialPolicy = await this.trialPolicyRepository.findSingleton();
+    if (!trialPolicy.enabled) {
+      throw new BadRequestException({
+        messageKey: 'errors.auth.signupTrialsUnavailable',
+      });
+    }
+    const plan = await this.plansRepository.findById(planId);
+    if (
+      !plan ||
+      plan.status !== 'active' ||
+      plan.displayOrder <= 0 ||
+      !plan.trialEligible
+    ) {
+      throw new BadRequestException({ messageKey: 'errors.auth.signupPlanUnavailable' });
+    }
+    return { plan, durationDays: plan.trialDurationDays ?? trialPolicy.durationDays };
+  }
+
+  /**
+   * New Customer Onboarding — the signup's Free Trial, inside the SIGNUP's
+   * transaction (the caller has set both RLS contexts on `tx`).
+   *
+   * BOTH trial-abuse guards are kept, in the opposite order to `startTrial`:
+   *
+   *   1. `claimTrial` FIRST — the once-per-mailbox claim. It is an
+   *      `INSERT ... ON CONFLICT DO NOTHING`, which never raises, so a
+   *      mailbox that already had a trial (a plus-address of it, or a
+   *      deleted-and-re-registered account) leaves this transaction healthy
+   *      and the signup simply proceeds WITHOUT a trial (`no_plan`), which
+   *      is the state the paid checkout path starts from.
+   *   2. `startTrial` — the conditional per-organization update. The
+   *      organization was created in this same transaction as `no_plan`, so
+   *      it cannot lose; if it ever did, throwing rolls the whole signup
+   *      back rather than leaving a consumed claim without a trial.
+   *
+   * `startTrial` above cannot use this order: it has no transaction to keep
+   * alive and rolls back by throwing, which here would undo the account.
+   */
+  async grantSignupTrialInTransaction(
+    tx: Prisma.TransactionClient,
+    input: {
+      readonly organizationId: string;
+      readonly owner: { readonly id: string; readonly email: string };
+      readonly resolved: SignupTrialPlan;
+      readonly context?: TrialClaimContext;
+    },
+  ): Promise<{ readonly started: boolean; readonly outboxId: string | null }> {
+    const { plan, durationDays } = input.resolved;
+    const trialEndsAt = new Date(Date.now() + durationDays * MS_PER_DAY);
+
+    const claim = await this.trialEligibilityService.claimTrial(tx, {
+      email: input.owner.email,
+      organizationId: input.organizationId,
+      userId: input.owner.id,
+      trialEndsAt,
+      context: input.context,
+    });
+    if (!claim.granted) return { started: false, outboxId: null };
+
+    const started = await this.tenantSubscriptionsRepository.startTrial(
+      tx,
+      input.organizationId,
+      plan.id,
+      trialEndsAt,
+      limitsToGrant(plan) as unknown as Prisma.InputJsonValue,
+    );
+    if (!started) {
+      throw new Error('Signup trial could not start on a brand-new organization.');
+    }
+
+    const emitted = await this.recordTrialStarted(tx, {
+      organizationId: input.organizationId,
+      actorUserId: input.owner.id,
+      ownerUserId: input.owner.id,
+      plan,
+      trialEndsAt,
+      durationDays,
+    });
+    return { started: true, outboxId: emitted.outboxId };
   }
 
   /**

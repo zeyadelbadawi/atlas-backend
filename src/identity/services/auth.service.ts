@@ -6,13 +6,16 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import type { User } from '@prisma/client';
 import type { IdentityConfig } from '../../config/configuration';
 import { UsersRepository } from '../repositories/users.repository';
@@ -27,6 +30,14 @@ import {
 import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
 import { PasswordHasherService } from './password-hasher.service';
 import { AccessTokenService } from './access-token.service';
+import { SIGNUP_ORGANIZATION_PORT } from './signup-organization.port';
+import type {
+  PreparedSignupOrganization,
+  SignupOrganizationPort,
+  SignupOrganizationResult,
+} from './signup-organization.port';
+import { recordSignup } from '../../observability/metrics/onboarding-metrics';
+import type { SignupMetricMode } from '../../observability/metrics/onboarding-metrics';
 import { generateOpaqueToken, hashOpaqueToken } from '../utils/opaque-token.util';
 import { normalizeEmail } from '../utils/email.util';
 import { toCurrentUser } from '../dto/contracts';
@@ -179,7 +190,59 @@ export class AuthService {
     // `UsersService` already inject this service the same way).
     private readonly communicationService: CommunicationService,
     private readonly staffRecipients: AcademyStaffRecipientsService,
+    // New Customer Onboarding — provided by the global `OnboardingModule`;
+    // absent in a module graph without it, which leaves the organization
+    // signup unavailable (the safe direction). See the port's doc comment.
+    @Optional()
+    @Inject(SIGNUP_ORGANIZATION_PORT)
+    private readonly signupOrganizationPort?: SignupOrganizationPort,
   ) {}
+
+  /**
+   * New Customer Onboarding — the organization signup's preconditions,
+   * all checked before any write (docs/NEW_CUSTOMER_ONBOARDING.md §3.2).
+   * The browser's plan choice is only a lookup key; the port re-reads the
+   * live catalog and trial policy.
+   */
+  private async prepareSignupOrganization(
+    input: { organizationName?: string; planId?: string; academyId?: string },
+    hostAcademyId: string | null | undefined,
+  ): Promise<PreparedSignupOrganization> {
+    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
+    if (identity.signupOrganizationMode !== 'on' || !this.signupOrganizationPort) {
+      throw new BadRequestException({
+        messageKey: 'errors.auth.organizationSignupDisabled',
+      });
+    }
+    // Learner registration on an academy host never creates an organization
+    // (the Master Plan's registration-integrity rule).
+    if (input.academyId || hostAcademyId) {
+      throw new BadRequestException({ messageKey: 'errors.auth.signupFieldsNotAllowed' });
+    }
+    const organizationName = input.organizationName?.trim();
+    if (!organizationName) {
+      throw new BadRequestException({
+        messageKey: 'errors.auth.organizationNameRequired',
+      });
+    }
+    try {
+      return await this.signupOrganizationPort.prepare({
+        organizationName,
+        planId: input.planId,
+      });
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        const key = (error.getResponse() as { messageKey?: string }).messageKey;
+        recordSignup(
+          'organization',
+          key === 'errors.auth.signupTrialsUnavailable'
+            ? 'rejected_policy'
+            : 'rejected_plan',
+        );
+      }
+      throw error;
+    }
+  }
 
   /**
    * Resolves and validates a caller-supplied Academy context for
@@ -232,7 +295,28 @@ export class AuthService {
     academyId?: string;
     inviteToken?: string;
     hostname?: string;
+    /** New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md §3.2. */
+    organizationName?: string;
+    planId?: string;
+    /** Forensic only (recorded on a trial redemption), never a decision input. */
+    context?: { readonly ipAddress?: string; readonly userAgent?: string };
   }): Promise<void> {
+    const wantsOrganization =
+      input.organizationName !== undefined || input.planId !== undefined;
+    const metricMode: SignupMetricMode = wantsOrganization ? 'organization' : 'account';
+    try {
+      await this.registerInternal(input, wantsOrganization, metricMode);
+    } catch (error) {
+      if (error instanceof ConflictException) recordSignup(metricMode, 'conflict');
+      throw error;
+    }
+  }
+
+  private async registerInternal(
+    input: Parameters<AuthService['register']>[0],
+    wantsOrganization: boolean,
+    metricMode: SignupMetricMode,
+  ): Promise<void> {
     const email = normalizeEmail(input.email);
     const existing = await this.usersRepository.findByEmail(email);
     if (existing) {
@@ -277,6 +361,12 @@ export class AuthService {
       );
     }
 
+    // New Customer Onboarding — every organization/plan rule is checked
+    // BEFORE anything is written, so a refused signup creates nothing.
+    const preparedOrganization = wantsOrganization
+      ? await this.prepareSignupOrganization(input, hostAcademyId)
+      : undefined;
+
     // Validated BEFORE the account is created — a bad/unknown academyId
     // must never leave an orphaned user record behind.
     const academyId = await this.resolveRegistrationAcademyId(input.academyId);
@@ -297,62 +387,110 @@ export class AuthService {
     const userId = randomUUID();
 
     const pendingApprovalOutboxIds: (string | null)[] = [];
+    let organizationResult: SignupOrganizationResult | undefined;
+    const organizationId = preparedOrganization ? randomUUID() : undefined;
 
     // P64 Phase 1 (Finding F4) — ONE transaction: the user row, the
     // academy membership and the verification-token outbox entry either
     // all exist or none do. The membership insert runs under the new
     // user's own identity (`academy_students_self_insert`), so the user
     // id is minted here and the RLS context set on the same connection.
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
-      await tx.user.create({
-        data: { id: userId, email, passwordHash, name: input.name },
-      });
-      if (academyId && admission) {
-        const student = await this.academyStudentsRepository.create(tx, {
-          academyId,
-          userId,
-          status: admission.status,
-          source: admission.source,
-          registeredViaHost: input.hostname ?? null,
+    await this.prisma
+      .$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+        await tx.user.create({
+          data: { id: userId, email, passwordHash, name: input.name },
         });
+        if (academyId && admission) {
+          const student = await this.academyStudentsRepository.create(tx, {
+            academyId,
+            userId,
+            status: admission.status,
+            source: admission.source,
+            registeredViaHost: input.hostname ?? null,
+          });
 
-        // P64 C3 (plan §8 G1). A `pending` learner is BLOCKED until staff
-        // act, so nobody being told is a person stuck indefinitely whose
-        // only recourse is to complain. Emitted inside this transaction,
-        // so a registration that rolls back leaves no phantom work item.
-        //
-        // The acting context is the brand-new user's own, which can see
-        // neither the academy's members nor the academy row — hence the
-        // definer-backed staff lookup, and hence no `academyName` here
-        // (the dispatcher resolves branding itself).
-        if (admission.status === 'pending') {
-          const approvers = await this.staffRecipients.moderators(tx, academyId);
-          for (const approverUserId of approvers) {
-            const emitted = await this.communicationService.emit(tx, {
-              key: 'roster.student.awaiting_approval',
-              recipientUserId: approverUserId,
-              academyId,
-              entity: { type: 'academy_student', id: student.id },
-              // The roster link is `/dashboard/academy/:academyId/members`,
-              // so the academy travels in `values` — the rule context
-              // only sees `{ entity, values }`.
-              values: { academyId },
-            });
-            pendingApprovalOutboxIds.push(emitted.outboxId);
+          // P64 C3 (plan §8 G1). A `pending` learner is BLOCKED until staff
+          // act, so nobody being told is a person stuck indefinitely whose
+          // only recourse is to complain. Emitted inside this transaction,
+          // so a registration that rolls back leaves no phantom work item.
+          //
+          // The acting context is the brand-new user's own, which can see
+          // neither the academy's members nor the academy row — hence the
+          // definer-backed staff lookup, and hence no `academyName` here
+          // (the dispatcher resolves branding itself).
+          if (admission.status === 'pending') {
+            const approvers = await this.staffRecipients.moderators(tx, academyId);
+            for (const approverUserId of approvers) {
+              const emitted = await this.communicationService.emit(tx, {
+                key: 'roster.student.awaiting_approval',
+                recipientUserId: approverUserId,
+                academyId,
+                entity: { type: 'academy_student', id: student.id },
+                // The roster link is `/dashboard/academy/:academyId/members`,
+                // so the academy travels in `values` — the rule context
+                // only sees `{ entity, values }`.
+                values: { academyId },
+              });
+              pendingApprovalOutboxIds.push(emitted.outboxId);
+            }
           }
         }
-      }
-      await tx.emailVerificationToken.create({
-        data: {
-          userId,
-          tokenHash: hashOpaqueToken(rawVerificationToken),
-          expiresAt: new Date(
-            Date.now() + identity.emailVerificationTokenTtlMinutes * 60 * 1000,
-          ),
-        },
+        await tx.emailVerificationToken.create({
+          data: {
+            userId,
+            tokenHash: hashOpaqueToken(rawVerificationToken),
+            expiresAt: new Date(
+              Date.now() + identity.emailVerificationTokenTtlMinutes * 60 * 1000,
+            ),
+          },
+        });
+
+        // New Customer Onboarding — the Organization, owner membership,
+        // subscription and (when the mailbox is eligible) Free Trial, in THIS
+        // transaction: the account and its organization exist together or not
+        // at all. The tenant context is the organization id minted here — the
+        // exact pair of contexts `POST /organizations` sets.
+        if (preparedOrganization && organizationId && this.signupOrganizationPort) {
+          await tx.$executeRaw`SELECT set_config('app.current_organization_id', ${organizationId}, true)`;
+          organizationResult = await this.signupOrganizationPort.createInTransaction(tx, {
+            organizationId,
+            owner: { id: userId, email },
+            prepared: preparedOrganization,
+            context: input.context,
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        // Two concurrent registrations of one address both pass the
+        // `findByEmail` check above; the unique index decides, and the loser
+        // gets the same 409 as the sequential case instead of a 500.
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002' &&
+          isUserEmailTarget(error)
+        ) {
+          throw new ConflictException({
+            messageKey: 'errors.auth.emailAlreadyRegistered',
+          });
+        }
+        throw error;
       });
-    });
+
+    for (const outboxId of organizationResult?.outboxIds ?? []) {
+      await this.communicationService.enqueueAfterCommit(outboxId);
+    }
+    if (organizationResult && this.signupOrganizationPort) {
+      await this.signupOrganizationPort.afterCommit(organizationResult);
+    }
+    recordSignup(
+      metricMode,
+      organizationResult
+        ? organizationResult.trialStarted
+          ? 'trial_started'
+          : 'no_trial'
+        : 'created',
+    );
 
     for (const outboxId of pendingApprovalOutboxIds) {
       await this.communicationService.enqueueAfterCommit(outboxId);
@@ -1244,4 +1382,19 @@ export class AuthService {
       }),
     };
   }
+}
+
+/**
+ * Whether a P2002 came from `users.email` — the only unique index a
+ * duplicate registration can hit. Anything else is a real defect and must
+ * not be disguised as "email already registered".
+ */
+function isUserEmailTarget(error: Prisma.PrismaClientKnownRequestError): boolean {
+  const target = error.meta?.target;
+  const fields = Array.isArray(target)
+    ? target
+    : typeof target === 'string'
+      ? [target]
+      : [];
+  return fields.some((field) => String(field).includes('email'));
 }

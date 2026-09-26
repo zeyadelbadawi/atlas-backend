@@ -16,6 +16,7 @@
  */
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ObservabilityModule } from './observability/platform/observability.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -169,6 +170,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
     // P64 Phase 2 §U — the first metrics registry in the codebase.
     MetricsModule,
     ObservabilityModule,
+    // New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md.
+    OnboardingModule,
     TenancyModule,
     IdentityModule,
     AcademyModule,

@@ -183,6 +183,14 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     // verbatim (it already re-establishes its own `runInTenantContext`)
     // rather than re-deriving entitlements a second time.
     TenantSubscriptionService,
+    // New Customer Onboarding — `OnboardingModule` runs the signup's
+    // organization + subscription + trial through these, verbatim, inside
+    // the registration transaction, and derives the onboarding status's
+    // trial availability from the same eligibility check.
+    TrialRedemptionService,
+    TrialEligibilityService,
+    TrialPolicyRepository,
+    OrganizationSubscriptionBootstrapService,
     // P64 C5 — exported so the sequence evaluator can be driven directly
     // by a fake-clock regression suite, exactly as `SubscriptionExpiryService`
     // already is.

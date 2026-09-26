@@ -365,6 +365,9 @@ export type VideoRetentionMode = 'off' | 'warn_only' | 'on';
 export type MediaArchivePurgeMode = 'off' | 'dry_run' | 'on';
 
 /** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
+/** New Customer Onboarding rollout (`FLAG_SIGNUP_ORGANIZATION_MODE`). */
+export type SignupOrganizationMode = 'off' | 'on';
+
 export interface IdentityConfig {
   readonly jwtAccessSecret: string;
   readonly jwtAccessTtlSeconds: number;
@@ -372,6 +375,15 @@ export interface IdentityConfig {
   readonly passwordResetTokenTtlMinutes: number;
   /** Phase 10.1 — verification-link lifetime. Longer than a password reset: a signup email is often opened hours later, and the token is single-use and low-value on its own. */
   readonly emailVerificationTokenTtlMinutes: number;
+  /**
+   * New Customer Onboarding — `FLAG_SIGNUP_ORGANIZATION_MODE`. `on` lets the
+   * management-surface signup also create the Organization, its owner
+   * membership, its subscription and (when the mailbox is eligible) its Free
+   * Trial in the same transaction as the account. `off` (default) refuses
+   * those fields and the signup behaves exactly as before. See
+   * docs/NEW_CUSTOMER_ONBOARDING.md §2.
+   */
+  readonly signupOrganizationMode: SignupOrganizationMode;
   /**
    * Phase 10.1 — whether registration performs the DNS deliverability
    * lookup. The disposable-domain list is unaffected and always applies.
@@ -493,6 +505,8 @@ export default () => {
     emailVerificationTokenTtlMinutes: Number(
       env.EMAIL_VERIFICATION_TOKEN_TTL_MINUTES ?? 1440,
     ),
+    signupOrganizationMode: (env.FLAG_SIGNUP_ORGANIZATION_MODE ??
+      'off') as SignupOrganizationMode,
     emailDeliverabilityCheckEnabled:
       env.EMAIL_DELIVERABILITY_CHECK_ENABLED ?? nodeEnv !== 'test',
     signInRateLimit: {

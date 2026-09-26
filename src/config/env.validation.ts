@@ -203,6 +203,8 @@ const EnvSchema = z.object({
   FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY: z
     .enum(['off', 'new_device', 'always'])
     .default('off'),
+  // New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md §2.
+  FLAG_SIGNUP_ORGANIZATION_MODE: z.enum(['off', 'on']).default('off'),
 
   // --- P64 Communications C5 (§26/§27, §43) — tenant lifecycle sequences ---
   // `off` (the default) evaluates nothing; `dry_run` evaluates every

@@ -15,7 +15,15 @@
  * real Academy or the whole registration is rejected; see
  * `AuthService.resolveRegistrationAcademyId`.
  */
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 // `@IsNotEmpty()` matters beyond its literal name here: class-validator's
 // other decorators (`@IsString`, `@IsEmail`, `@MinLength`, ...) silently
@@ -47,4 +55,25 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   readonly inviteToken?: string;
+
+  /**
+   * New Customer Onboarding (docs/NEW_CUSTOMER_ONBOARDING.md §3.2) — the
+   * Organization the new owner creates in the same request. Refused unless
+   * `FLAG_SIGNUP_ORGANIZATION_MODE=on` and the request is on the management
+   * surface. A label only; it authorizes nothing.
+   */
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  readonly organizationName?: string;
+
+  /**
+   * The Free Trial plan chosen on the signup page. Only a lookup key: the
+   * server re-reads the live catalog (active, customer-facing,
+   * trial-eligible) and the trial policy, and refuses anything else.
+   */
+  @IsOptional()
+  @IsUUID()
+  readonly planId?: string;
 }

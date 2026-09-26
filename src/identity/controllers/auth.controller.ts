@@ -100,7 +100,16 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(RegisterRateLimitGuard)
   async register(@Body() dto: RegisterDto, @Req() request: Request): Promise<void> {
-    await this.authService.register({ ...dto, hostname: request.hostname });
+    await this.authService.register({
+      ...dto,
+      hostname: request.hostname,
+      // Forensic only — recorded on a signup trial's redemption, exactly as
+      // `POST /organizations/:id/subscription/trial` records it.
+      context: {
+        ipAddress: resolveClientIp(request),
+        userAgent: resolveUserAgent(request),
+      },
+    });
   }
 
   @Post('sign-in')

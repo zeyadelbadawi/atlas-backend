@@ -32,7 +32,7 @@ export class UserOrganizationsService {
   async getMembershipsForUser(
     userId: string,
   ): Promise<readonly OrganizationMembershipResponse[]> {
-    const { memberships, organizationNamesById } =
+    const { memberships, organizationNamesById, onboardingPendingIds } =
       await this.tenancyContextService.runInUserContext(userId, async (tx) => {
         const memberships = await this.membershipsRepository.findAllForUser(tx, userId);
         const organizations = await this.organizationsRepository.findManyVisibleByIds(
@@ -42,7 +42,12 @@ export class UserOrganizationsService {
         const organizationNamesById = new Map(
           organizations.map((org) => [org.id, org.name]),
         );
-        return { memberships, organizationNamesById };
+        const onboardingPendingIds = new Set(
+          organizations
+            .filter((org) => org.onboardingCompletedAt === null)
+            .map((org) => org.id),
+        );
+        return { memberships, organizationNamesById, onboardingPendingIds };
       });
 
     return memberships.map((membership) => ({
@@ -52,6 +57,9 @@ export class UserOrganizationsService {
       permissions: membership.permissions,
       isPrimary: membership.isPrimary,
       joinedAt: membership.joinedAt.toISOString(),
+      onboardingPending:
+        membership.role === 'owner' &&
+        onboardingPendingIds.has(membership.organizationId),
     }));
   }
 }

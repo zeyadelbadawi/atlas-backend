@@ -380,21 +380,27 @@ enum OrganizationStatus {
 /// §7). Soft-delete only: no delete endpoint exists or is planned for this
 /// table; `status` is the only lifecycle mechanism.
 model Organization {
-  id           String                   @id @default(uuid())
-  name         String
-  slug         String                   @unique
-  status       OrganizationStatus       @default(active)
-  ownerUserId  String                   @map("owner_user_id")
-  owner        User                     @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
-  createdAt    DateTime                 @default(now()) @map("created_at")
-  updatedAt    DateTime                 @updatedAt @map("updated_at")
+  id                    String                   @id @default(uuid())
+  name                  String
+  slug                  String                   @unique
+  status                OrganizationStatus       @default(active)
+  /// New Customer Onboarding — the ONLY persisted onboarding state (see
+  /// docs/NEW_CUSTOMER_ONBOARDING.md §5). NULL = the owner has not yet
+  /// finished or deferred the onboarding wizard. Defaults to now() so every
+  /// pre-existing organization and every legacy creation path counts as
+  /// onboarded; only the new signup path writes NULL explicitly.
+  onboardingCompletedAt DateTime?                @default(now()) @map("onboarding_completed_at")
+  ownerUserId           String                   @map("owner_user_id")
+  owner                 User                     @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
   /// Full-text search vector — a STORED GENERATED column maintained by
   /// PostgreSQL (name weight A, slug weight B). Modelled here as `Unsupported` so that
   /// `prisma migrate diff` knows the column and its GIN index exist and
   /// never proposes dropping them again (migration p44 did exactly that,
   /// which broke `GET /search` in production). Never read through the
   /// Prisma Client; `SearchRepository` queries it by raw SQL.
-  searchVector Unsupported("tsvector")? @default(dbgenerated("(setweight(to_tsvector('english'::regconfig, COALESCE(name, ''::text)), 'A'::\"char\") || setweight(to_tsvector('english'::regconfig, COALESCE(slug, ''::text)), 'B'::\"char\"))")) @map("search_vector")
+  searchVector          Unsupported("tsvector")? @default(dbgenerated("(setweight(to_tsvector('english'::regconfig, COALESCE(name, ''::text)), 'A'::\"char\") || setweight(to_tsvector('english'::regconfig, COALESCE(slug, ''::text)), 'B'::\"char\"))")) @map("search_vector")
 
   memberships          OrganizationMembership[]
   academies            Academy[]
