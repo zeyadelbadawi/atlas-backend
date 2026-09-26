@@ -372,6 +372,14 @@ Do not casually reverse these.
 
 ## 16. Known Issues / Blockers
 
+- **KI-EMAIL-1 — DEFERRED / KNOWN INFRASTRUCTURE ISSUE: Brevo → Hostinger (rawc.ae) delivery delay of 8–25 minutes.** Recorded 26 Sep 2026; investigation paused by owner decision, not a blocker for product work.
+  - **Atlas side is correct.** The challenge, the outbox row, the Brevo `to` and the provider event log all name the intended recipient; Brevo accepts every message immediately (`requests`). Sender `no-reply@atlass.dpdns.org`: DKIM, SPF and DMARC all **pass** (confirmed in the received headers). The Brevo sending IP seen (`77.32.148.26`, PTR `gz.d.sender-sib.com`, inside Brevo's SPF range) is not listed on SpamCop, Barracuda, PSBL, Mailspike or UCEPROTECT-1 (Spamhaus could not be queried from the investigation resolver — unknown, not clean).
+  - **Observed.** Brevo → `rawc.ae` (Hostinger MX): `delivered` 8 min 28 s, 12 min 19 s and 25 min 37 s after `requests`, and filed as `X-Spam: Yes`. Gmail → the same mailbox: accepted in ~13 s. Brevo → Gmail from the same sender: ~3 s. Hostinger's first `Received:` hop (e.g. 16:46:05 for a message dated 16:33:47) is ~12 min after Brevo accepted it, so the wait happens **before Hostinger's SMTP acceptance**. Brevo's API shows no `deferred`/`blocked`/`error` events for these messages. Earlier (pre-domain-authentication) messages were rejected with `554 5.7.1 Spam message rejected`, also 6–9 min after the request.
+  - **Unresolved.** The connection-level cause needs SMTP logs from both providers. Candidates, none proven: Hostinger greylisting / rate limiting / tarpitting / slow content scanning of Brevo's shared IPs, or Brevo-side destination queueing/throttling.
+  - **Not an Atlas OTP defect.** With the current 10-minute code lifetime, codes to this domain can arrive expired and in Spam.
+  - **Do NOT:** increase the OTP lifetime as a workaround; add application-level retry hacks; switch providers on speculation.
+  - **Revisit with:** Hostinger inbound SMTP logs for `77.32.148.26` (connection times and responses) and Brevo MTA-level attempt logs for Message-IDs `202609261606.37571284424@smtp-relay.mailin.fr`, `202609261620.35204501284@smtp-relay.mailin.fr`, `202609261633.38082747111@smtp-relay.mailin.fr`. Evidence tooling: the `OTP forensics` workflow (read-only).
+
 **Human decision**
 - Which surplus Platform Owner accounts to remove (§17). Four exist; one
   (`ziad.elbadawi.zd@gmail.com`) is unused and was created under a since-superseded
