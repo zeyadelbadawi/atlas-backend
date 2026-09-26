@@ -1,0 +1,52 @@
+name: Email domain setup
+
+# Authenticates the platform's sending domain in Brevo using the platform's
+# own Cloudflare zone (deploy/email-domain-setup.sh). `plan` is read-only;
+# `apply` registers the domain in Brevo, ADDS any missing DNS record (never
+# edits or deletes one) and asks Brevo to authenticate. Secrets stay in the
+# backend container's environment and are never printed.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: plan (read-only) or apply
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      domain:
+        description: Sending domain inside the platform zone
+        required: true
+        default: atlass.dpdns.org
+        type: string
+
+concurrency:
+  group: email-domain-setup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run on the VPS
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          MODE: ${{ inputs.mode }}
+          DOMAIN: ${{ inputs.domain }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$DOMAIN" | grep -Eq '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' || { echo "bad domain"; exit 2; }
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" '${MODE}' '${DOMAIN}' </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+            < deploy/email-domain-setup.sh
