@@ -1497,7 +1497,7 @@ backup first.
 
 # PLATFORM OWNER OBSERVABILITY CENTER — 26 September 2026
 
-## Status: DEPLOYED; ALERT PATH PRODUCTION-VERIFIED; TWO HUMAN CHECKS OPEN
+## Status: DEPLOYED; ALERT PATH AND SLACK DELIVERY PRODUCTION-VERIFIED; PRODUCTION CHROME CHECK OPEN
 
 Detail: `PLATFORM_OWNER_OBSERVABILITY_GUIDE.md` (operations) and
 `PLATFORM_OWNER_OBSERVABILITY_HANDOVER.md` (implementation). No secret
@@ -1613,11 +1613,11 @@ it is pre-existing.
 
 ### Remaining — human only
 
-1. **Confirm in Slack.** Confirm that `#atlas-alerts` shows
-   `[Atlas] [FIRING] AtlasSyntheticAlert (warning)` at about 08:28 UTC and
-   `[RESOLVED]` at about 08:33 UTC on 26 Sep 2026, and that "View alert"
-   opens the Atlas rule page. Slack's API acceptance was verified; seeing
-   the message in the channel needs a person.
+1. **Slack delivery — DONE.** On 26 Sep 2026 the owner confirmed that
+   `#atlas-alerts` shows both
+   `[Atlas] [FIRING] AtlasSyntheticAlert (warning)` and
+   `[Atlas] [RESOLVED] AtlasSyntheticAlert (warning)`, each with the
+   **View alert** action.
 2. **Allow production access for Chrome checks.** Allow `atlass.dpdns.org`
    in the cloud environment's network access, so the four pages can be
    checked against production in Chrome. Until then, production UI

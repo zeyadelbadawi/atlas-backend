@@ -207,8 +207,8 @@ Two production runs of the `Observability verify` workflow, both with
   reads.
 
 **Not verified from here:**
-- **The message in `#atlas-alerts`.** There is no Slack read access;
-  Slack's acceptance of each request was verified.
+- **The message in `#atlas-alerts`** was confirmed by the owner (FIRING and
+  RESOLVED, each with **View alert**). This session has no Slack read access.
 - **The production UI in Chrome.** The environment network policy denies
   `atlass.dpdns.org`.
 
@@ -244,10 +244,9 @@ Two production runs of the `Observability verify` workflow, both with
 
 ## 16. Remaining human-only actions
 
-1. **Confirm the Slack messages.** Check that `#atlas-alerts` shows
-   `[Atlas] [FIRING] AtlasSyntheticAlert (warning)` at about 08:28 UTC and
-   `[Atlas] [RESOLVED] …` at about 08:33 UTC on 26 Sep 2026. Click
-   **View alert**; it must open the Atlas rule page after sign-in.
+1. **Slack messages — DONE.** On 26 Sep 2026 the owner confirmed both
+   production messages (FIRING and RESOLVED, each with **View alert**) in
+   `#atlas-alerts`.
 2. **Allow production access for Chrome checks.** Allow `atlass.dpdns.org`
    in the cloud environment's network access, so the four pages can be
    checked against production in Chrome.
