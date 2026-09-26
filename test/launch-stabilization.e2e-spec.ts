@@ -35,6 +35,7 @@ import {
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
 import { TRUST_COOKIE_NAME } from '../src/identity/services/trusted-device.service';
+import { METRICS_REGISTRY } from '../src/observability/metrics/learning-metrics.service';
 import {
   generateOpaqueToken,
   hashOpaqueToken,
@@ -360,6 +361,49 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
       });
       expect(after.passwordHash).toBe(before.passwordHash);
       expect(after.status).toBe('active');
+    });
+
+    it('LS-A2-04 — a LEGACY staff-created account (active, password chosen by staff before A2) keeps working unchanged', async () => {
+      // Before A2, staff creation produced exactly this row: `active`, with a
+      // password the creator typed. Nothing in this release migrates it.
+      const { academy: a } = await freshAcademy('a2-legacy');
+      const legacy = await staffAccount('a2-legacy-staff');
+      await seedMembership(admin, a.orgId, legacy.userId, 'manager');
+      await seedAcademyMember(admin, a.id, legacy.userId, 'manager');
+      const before = await admin.user.findUniqueOrThrow({ where: { id: legacy.userId } });
+
+      // Still signs in with that password and still reaches management.
+      const mgmt = await http()
+        .post('/auth/sign-in')
+        .send({ email: legacy.email, password: PASSWORD })
+        .expect(200);
+      await http()
+        .get(`/academies/${a.id}`)
+        .set(bearer(mgmt.body.accessToken))
+        .expect(200);
+
+      // A reset keeps it `active` (activation only ever moves `invited` → `active`).
+      const raw = generateOpaqueToken();
+      await admin.passwordResetToken.create({
+        data: {
+          userId: legacy.userId,
+          tokenHash: hashOpaqueToken(raw),
+          expiresAt: new Date(Date.now() + 3600_000),
+        },
+      });
+      await http()
+        .post('/auth/password-reset/confirm')
+        .send({ token: raw, newPassword: 'legacy-own-password-1' })
+        .expect(200);
+      const after = await admin.user.findUniqueOrThrow({ where: { id: legacy.userId } });
+      expect(before.status).toBe('active');
+      expect(after.status).toBe('active');
+      // Only an `invited` account is activated/verified by the setup link.
+      expect(after.emailVerifiedAt).toEqual(before.emailVerifiedAt);
+      await http()
+        .post('/auth/sign-in')
+        .send({ email: legacy.email, password: 'legacy-own-password-1' })
+        .expect(200);
     });
   });
 
@@ -858,6 +902,134 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
       await admin.user.update({
         where: { id: staff.userId },
         data: { isPlatformOwner: false },
+      });
+    });
+  });
+
+  // ==================================================================
+  // Observability — A1 refusals and A3 revocations are observable
+  // ==================================================================
+
+  describe('Plan A observability', () => {
+    /** The current value of one labelled sample of a counter in this process. */
+    async function sample(
+      metric: string,
+      labels: Record<string, string>,
+    ): Promise<number> {
+      const found = METRICS_REGISTRY.getSingleMetric(metric);
+      if (!found) return 0;
+      const { values } = await found.get();
+      const hit = values.find((v) =>
+        Object.entries(labels).every(([k, val]) => v.labels[k] === val),
+      );
+      return hit?.value ?? 0;
+    }
+
+    function revocationAudits(userId: string) {
+      return admin.auditLogEntry.findMany({
+        where: { actorUserId: userId, action: 'auth.sessions.revoked' },
+        orderBy: { occurredAt: 'desc' },
+      });
+    }
+
+    it('LS-OBS-01 — an academy session refused on management, Platform Owner, account and cross-academy routes is counted per reason', async () => {
+      const { owner, academy: a } = await freshAcademy('obs-a');
+      const { academy: b } = await freshAcademy('obs-b');
+      await registerAt(b, owner.email).expect(201);
+      const session = await academySession(b, owner.email);
+      const auth = bearer(session.body.accessToken);
+
+      const before = {
+        management_route: await sample('atlas_auth_surface_denied_total', {
+          reason: 'management_route',
+        }),
+        platform_owner_route: await sample('atlas_auth_surface_denied_total', {
+          reason: 'platform_owner_route',
+        }),
+        account_action: await sample('atlas_auth_surface_denied_total', {
+          reason: 'account_action',
+        }),
+        academy_host_mismatch: await sample('atlas_auth_surface_denied_total', {
+          reason: 'academy_host_mismatch',
+        }),
+      };
+
+      await http().get(`/academies/${a.id}`).set(auth).expect(403);
+      // `PlatformOwnerGuard` alone guards this route (platform-users also
+      // carries `ManagementSurfaceGuard`, which refuses first).
+      await http().get('/platform/announcements').set(auth).expect(403);
+      await http().get('/users/me/deletion-plan').set(auth).expect(403);
+      await http().get('/learning/overview').set('Host', a.host).set(auth).expect(403);
+
+      for (const reason of Object.keys(before) as (keyof typeof before)[]) {
+        const after = await sample('atlas_auth_surface_denied_total', { reason });
+        expect({ reason, delta: after - before[reason] }).toEqual({ reason, delta: 1 });
+      }
+
+      // An allowed request is not counted.
+      const steady = await sample('atlas_auth_surface_denied_total', {
+        reason: 'management_route',
+      });
+      await http().get('/learning/overview').set('Host', b.host).set(auth).expect(200);
+      expect(
+        await sample('atlas_auth_surface_denied_total', { reason: 'management_route' }),
+      ).toBe(steady);
+    });
+
+    it('LS-OBS-02 — a password reset records the sessions it ended (metric + audit row)', async () => {
+      const person = await staffAccount('obs-reset');
+      await http()
+        .post('/auth/sign-in')
+        .send({ email: person.email, password: PASSWORD })
+        .expect(200);
+      const before = await sample('atlas_auth_sessions_revoked_total', {
+        trigger: 'password_reset',
+      });
+
+      const raw = generateOpaqueToken();
+      await admin.passwordResetToken.create({
+        data: {
+          userId: person.userId,
+          tokenHash: hashOpaqueToken(raw),
+          expiresAt: new Date(Date.now() + 3600_000),
+        },
+      });
+      await http()
+        .post('/auth/password-reset/confirm')
+        .send({ token: raw, newPassword: 'observed-reset-password-1' })
+        .expect(200);
+
+      expect(
+        await sample('atlas_auth_sessions_revoked_total', { trigger: 'password_reset' }),
+      ).toBe(before + 2);
+      const audits = await revocationAudits(person.userId);
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({ targetType: 'user', targetId: person.userId });
+      expect(audits[0].context).toMatchObject({
+        trigger: 'password_reset',
+        sessionsRevoked: 2,
+      });
+    });
+
+    it('LS-OBS-03 — a password change records the sessions it ended (metric + audit row)', async () => {
+      const person = await staffAccount('obs-change');
+      const before = await sample('atlas_auth_sessions_revoked_total', {
+        trigger: 'password_change',
+      });
+      await http()
+        .post('/users/me/password')
+        .set(bearer(person.token))
+        .send({ currentPassword: PASSWORD, newPassword: 'observed-change-password-1' })
+        .expect(200);
+
+      expect(
+        await sample('atlas_auth_sessions_revoked_total', { trigger: 'password_change' }),
+      ).toBe(before + 1);
+      const audits = await revocationAudits(person.userId);
+      expect(audits).toHaveLength(1);
+      expect(audits[0].context).toMatchObject({
+        trigger: 'password_change',
+        sessionsRevoked: 1,
       });
     });
   });

@@ -1429,7 +1429,10 @@ export class AuthService {
     // proves the address.
     await this.usersRepository.completeInvitation(resetToken.userId, new Date());
     // Launch Stabilization A3 (D3) — refresh rows AND live access tokens.
-    await this.sessionRevocationService.revokeAllSessionsForUser(resetToken.userId);
+    const sessionsRevoked = await this.sessionRevocationService.revokeAllSessionsForUser(
+      resetToken.userId,
+      'password_reset',
+    );
     // P64 Communications C4 (§12) — a reset is exactly the "this account
     // may be compromised" moment, so every browser that could skip the
     // emailed code loses that privilege too. Revoking sessions while
@@ -1440,6 +1443,23 @@ export class AuthService {
       'password_reset',
     );
     if (forgotten > 0) this.communicationMetrics.recordTrustedDevice('revoked_all');
+    // Launch Stabilization A3 — the durable security record of what the
+    // reset ended. Best-effort in its own small user-context transaction:
+    // the revocations above have already happened and an audit failure
+    // must never undo or block them.
+    await this.tenancyContextService.runInUserContext(resetToken.userId, (tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: resetToken.userId,
+        action: 'auth.sessions.revoked',
+        targetType: 'user',
+        targetId: resetToken.userId,
+        context: {
+          trigger: 'password_reset',
+          sessionsRevoked,
+          trustedDevicesRevoked: forgotten,
+        },
+      }),
+    );
 
     // Phase P15 retroactive audit coverage (master plan §8: "security
     // events... fold into audit_log_entries"). This flow predates any

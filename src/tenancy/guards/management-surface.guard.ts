@@ -30,6 +30,7 @@ import {
 import type { Request } from 'express';
 import { PrincipalResolverService } from '../services/principal-resolver.service';
 import { SurfaceEnforcementService } from '../services/surface-enforcement.service';
+import { surfaceDenied } from '../../identity/guards/surface-denial.util';
 
 @Injectable()
 export class ManagementSurfaceGuard implements CanActivate {
@@ -52,7 +53,11 @@ export class ManagementSurfaceGuard implements CanActivate {
     // as management credentials. Fail-closed: an unknown surface (no
     // session record) is refused too.
     if (request.authContext?.surface !== 'management') {
-      throw new ForbiddenException({ messageKey: 'errors.auth.managementSurfaceOnly' });
+      throw surfaceDenied(
+        request,
+        'management_route',
+        'errors.auth.managementSurfaceOnly',
+      );
     }
 
     const principal = await this.principalResolver.forRequest(request, userId);

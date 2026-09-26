@@ -31,6 +31,8 @@ const SERVICE_PATHS = [
   resolve(__dirname, '../platform/http-metrics.middleware.ts'),
   resolve(__dirname, '../platform/system-probes.service.ts'),
   resolve(__dirname, '../platform/observability.service.ts'),
+  // Launch Stabilization A1/A3 authentication security series.
+  resolve(__dirname, 'auth-security-metrics.ts'),
 ];
 
 const rules = readFileSync(RULES_PATH, 'utf8');
@@ -88,6 +90,11 @@ describe('alert rules stay in sync with the metrics services', () => {
     expect(rules).toContain('AtlasRetentionSweepFailing');
     expect(rules).toContain('AtlasRetentionSweepSilent');
     expect(rules).toMatch(/atlas_retention_sweep_runs_total\{result="error"\}/);
+  });
+
+  it('alerts on any session used outside the website it was issued to (Launch Stabilization A1)', () => {
+    expect(rules).toContain('AtlasSessionSurfaceDenied');
+    expect(rules).toMatch(/increase\(atlas_auth_surface_denied_total\[15m\]\)\) > 0/);
   });
 
   it('covers the P64 Communications quota, bounce-rate and webhook-verification alerts', () => {

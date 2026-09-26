@@ -80,13 +80,12 @@ export class UsersRepository {
    * delivered to it). A no-op for any other status.
    */
   async completeInvitation(id: string, verifiedAt: Date): Promise<void> {
+    // Only an `invited` account changes, in one statement: every other
+    // account (including legacy staff-created `active` ones) keeps its
+    // status and verification state exactly as a reset always left them.
     await this.prisma.user.updateMany({
       where: { id, status: 'invited' },
-      data: { status: 'active' },
-    });
-    await this.prisma.user.updateMany({
-      where: { id, emailVerifiedAt: null },
-      data: { emailVerifiedAt: verifiedAt },
+      data: { status: 'active', emailVerifiedAt: verifiedAt },
     });
   }
 

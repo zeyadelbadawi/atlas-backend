@@ -29,6 +29,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { UsersRepository } from '../repositories/users.repository';
+import { surfaceDenied } from './surface-denial.util';
 
 @Injectable()
 export class PlatformOwnerGuard implements CanActivate {
@@ -48,7 +49,7 @@ export class PlatformOwnerGuard implements CanActivate {
     // not only in `ManagementSurfaceGuard`, because not every Platform
     // Owner route carries that guard.
     if (request.authContext?.surface !== 'management') {
-      throw new ForbiddenException({ messageKey: 'errors.forbidden' });
+      throw surfaceDenied(request, 'platform_owner_route', 'errors.forbidden');
     }
 
     const user = await this.usersRepository.findById(userId);

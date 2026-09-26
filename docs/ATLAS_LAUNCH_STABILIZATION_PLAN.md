@@ -786,10 +786,12 @@ Branch `claude/nifty-ride-h9nxql` in both repositories.
 1. **No `SURFACE_SESSION_ENFORCE` log→on rollout.** Enforcement is immediate.
    - The route inventory classifies every route, the academy website calls no management route (browser-verified), and every affected e2e suite passes.
    - Rollback is the previous image (§16.6).
-2. **Not implemented:** the metric `atlas_auth_surface_denied_total` and the audit/counter `auth.sessions.revoked_on_password_change`.
-   - Refusals are visible as 403 request logs with their `messageKey`.
-   - Revocation failures are warn-logged.
-   - This is a follow-up if the alerts in §2.7 are wanted.
+2. **Observability: implemented in the pre-release round** (§16.8), with existing infrastructure only.
+   - It uses the prom-client registry, `AuditLogWriterService` and the existing Prometheus rules file.
+   - The plan's single counter `auth.sessions.revoked_on_password_change` became:
+     - one audit action `auth.sessions.revoked` with `context.trigger` (`password_reset | password_change`);
+     - one counter `atlas_auth_sessions_revoked_total{trigger}`.
+   - This matches how every other `atlas_*` series is labelled.
 3. **More D1 surface than the plan listed.** Found by the route inventory, all fixed in this milestone:
    - `POST users/me/delete` and `GET users/me/deletion-plan` were reachable from an academy session. Deleting the account also archives the academies the person owns, so they now carry `ManagementSessionGuard`.
    - Forum moderation (pin, unpin, lock, unlock), quiz and assignment authoring (list, create, read, update, delete), course-review moderation (list, approve, reject, delete) and the live-provider OAuth callback now carry `ManagementSurfaceGuard`.
@@ -856,6 +858,80 @@ Nothing here changes deployment defaults, DNS, Caddy, Cloudflare, secrets or fla
 
 - **Pre-existing UI bug (not changed, outside Plan A):** after a *successful* "Add Manager" / "Add Instructor", the dialog closes through its unsaved-changes guard while the form is still dirty, so a "Leave without saving?" prompt appears. The fix is to `form.reset()` before closing in `onSuccess`.
 - After a password change there is no in-page "you'll need to sign in again" notice; the next request goes to sign-in (§16.3).
-- The A1 metrics and alert (§16.2 item 2) are not present.
 - Staff-created accounts from before A2 keep staff-chosen passwords until the controlled reset (§16.2 item 4).
 - A6 limitations: §15.12.
+
+### 16.8 Observability (pre-release round)
+
+No new observability architecture. Everything reuses the process-wide prom-client `METRICS_REGISTRY` (the same pattern as `onboarding-metrics.ts`), `AuditLogWriterService.writeBestEffort`, and `ops/alerts/atlas-prometheus-rules.yml`.
+
+**Academy session → protected endpoint → denied → observable.**
+- Every surface refusal goes through one helper, `src/identity/guards/surface-denial.util.ts`. The status and `messageKey` are unchanged.
+- The helper does two things:
+  - increments `atlas_auth_surface_denied_total{reason}`;
+  - writes one structured warn log with `event: auth.surface.denied`, user id, session id, the session's surface and academy, the method and the **route pattern** (never the raw URL, headers or body).
+- `reason` is a closed vocabulary:
+  - `management_route`: `ManagementSurfaceGuard`;
+  - `platform_owner_route`: `PlatformOwnerGuard`;
+  - `account_action`: `ManagementSessionGuard`;
+  - `academy_host_mismatch`: an academy session on another academy's learner routes.
+- A request counts once, under the first guard that refuses it.
+- **Alert:** `AtlasSessionSurfaceDenied` fires on `sum by (reason) (increase(atlas_auth_surface_denied_total[15m])) > 0` (warning, `service: auth`).
+  - Alerting on *any* refusal is justified by evidence: the backend log of the full browser run (299 real academy-host requests across every A6 journey) contains **zero** 403s.
+  - The existing `alert-rules.spec.ts` now also reads the new metrics file, so the rule can never reference a series that does not exist.
+
+**Password reset/change → sessions revoked → observable.**
+- `SessionRevocationService.revokeAllSessionsForUser(userId, trigger)` increments `atlas_auth_sessions_revoked_total{trigger}` by the number of sessions ended, and logs `event: auth.sessions.revoked`.
+- Both callers then write the durable audit row `auth.sessions.revoked` (target: the user) with `context {trigger, sessionsRevoked, trustedDevicesRevoked}`.
+  - It uses the existing best-effort pattern, in its own small user-context transaction.
+  - It is placed *after* the revocations so an audit failure can never undo or block them.
+- Evidence:
+  - LS-OBS-01 checks each reason increments by exactly 1, and that an allowed request is not counted.
+  - LS-OBS-02 and LS-OBS-03 check the metric delta equals the sessions ended, and that exactly one audit row lands in Postgres with the right trigger and count.
+
+### 16.9 A2 legacy-account behaviour (confirmed; no data touched)
+
+No legacy account is modified or migrated by this release. The controlled test-data reset stays a separate launch task.
+
+| Guarantee | Evidence |
+|---|---|
+| Legacy staff-created accounts (`active`, with a password staff typed before A2) keep working unchanged until the reset: they sign in, reach management, and a password reset leaves them `active` with their verification state unchanged | LS-A2-04 |
+| New staff-created accounts are `invited` | LS-A2-01, LS-A2-02; browser (EN desktop, AR mobile) |
+| New staff-created accounts cannot use a creator-selected password: the field is gone from the UI, ignored by the API, and the account refuses sign-in until the person sets their own password through the setup link | LS-A2-01; browser |
+| Attaching an existing account never changes its password | LS-A2-03, LS-A4-04 |
+
+**Fixed in this round, found by LS-A2-04.** The implementation marked **any** account's email verified when it completed a password reset. The base code never did this, so it was an unrequested change for legacy accounts. `UsersRepository.completeInvitation` now changes only an `invited` account, in one statement (`invited → active` plus verified), and is a no-op for every other status.
+
+### 16.10 Final A6 security guarantees
+
+| Guarantee | How it is enforced | Evidence |
+|---|---|---|
+| A trusted device is Academy-scoped | The trust row stores `academy_id`; the match requires (user, surface, host academy, token hash, not revoked, not expired) | LS-A6-01/02, LS-A6-03; browser (trust rows per academy) |
+| An Academy A trusted device does not bypass OTP on Academy B | B's host academy never equals A's row; the host-only cookie is not even sent to B | LS-A6-03; browser ×4 variants |
+| An Academy A OTP cannot authenticate Academy B | `verify` requires the challenge's (surface, academy) to equal the host's; a mismatch is a wrong code (generic, costs an attempt, no session, audit `context_mismatch`) | LS-A6-04; browser |
+| An Academy OTP cannot authenticate management | The same host binding. The minted session is always the challenge's own (academy); a body `surface` is ignored; `ManagementSurfaceGuard` refuses it | LS-A6-05/06, LS-OBS-01 |
+| An Academy OTP cannot authenticate the Platform Owner | As above, plus `PlatformOwnerGuard` itself refuses any non-management session | LS-A6-05/06, LS-OBS-01 |
+| A revoked or expired trusted device requires OTP | `revoked_at IS NULL AND expires_at > now` is part of the match | LS-A6-07/08 |
+| A legacy trust row (no academy) requires OTP | An academy lookup requires `academy_id` equality | LS-A6-10 |
+| Password reset/change invalidates trust and session state | All trusted devices revoked, all refresh rows revoked, every session id denylisted (live access tokens fail on the next request), audited | LS-A6-09, LS-A3-01/02, LS-OBS-02/03; browser (A3) |
+| Management OTP and Platform Owner authentication are unchanged | Management trust rows keep `academy_id NULL` and match as before; the policy flags are untouched | LS-A6-19/20; the existing `p64-c4-email-otp` suite unchanged |
+
+### 16.11 Migration safety: `20261018000000_trusted_device_academy_scope`
+
+```sql
+ALTER TABLE "trusted_devices" ADD COLUMN "academy_id" TEXT;
+CREATE INDEX "trusted_devices_user_id_surface_academy_id_revoked_at_idx"
+  ON "trusted_devices"("user_id", "surface", "academy_id", "revoked_at");
+```
+
+- **Additive only:** a nullable column with no default, no backfill, no rewrite, no constraint and no foreign key, plus one index. The previous image ignores the column.
+- **Existing rows:**
+  - Every existing trust row keeps `academy_id = NULL`. No data is changed.
+  - Management rows (`surface='management'`) match exactly as before.
+  - Academy rows with `NULL` **fail closed**: they no longer skip the code. So after release, a learner or staff member whose browser was remembered on an academy website is asked for **one** code on their next academy sign-in. Their browser is then trusted for that academy again, with the "remember" box checked by default.
+- **No academy access is lost.** Trust only decides whether an emailed code is asked for. Access is decided by `academy_students` / `academy_members`, RBAC and RLS, none of which the migration touches.
+- **Consistency:** verified three ways locally.
+  - `prisma migrate status` shows the DB up to date (125 migrations).
+  - The live DB matches the schema, with an empty diff.
+  - A fresh shadow database with **all** migrations replayed matches `schema.prisma`, with an empty diff.
+- **Rollback:** redeploy the previous image; the column stays and is ignored. Dropping it is optional and not recommended in a hurry. Applying it is only through the gated `apply_migrations` run (§16.6).

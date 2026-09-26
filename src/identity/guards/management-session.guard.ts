@@ -11,20 +11,16 @@
  *
  * Runs after `JwtAuthGuard`, which resolves the session surface.
  */
-import {
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-  Injectable,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import type { Request } from 'express';
+import { surfaceDenied } from './surface-denial.util';
 
 @Injectable()
 export class ManagementSessionGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
     if (request.authContext?.surface !== 'management') {
-      throw new ForbiddenException({ messageKey: 'errors.auth.managementSurfaceOnly' });
+      throw surfaceDenied(request, 'account_action', 'errors.auth.managementSurfaceOnly');
     }
     return true;
   }

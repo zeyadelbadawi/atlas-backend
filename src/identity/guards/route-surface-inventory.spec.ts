@@ -18,7 +18,11 @@
  * only if it genuinely is a self/learner route — to list it here.
  */
 import 'reflect-metadata';
-import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import {
+  GUARDS_METADATA,
+  METHOD_METADATA,
+  PATH_METADATA,
+} from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common';
 import { readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -176,8 +180,7 @@ function collectRoutes(): RouteInfo[] {
         const handler = (proto as Record<string, unknown>)[name];
         if (typeof handler !== 'function') continue;
         const method = Reflect.getMetadata(METHOD_METADATA, handler) as
-          | RequestMethod
-          | undefined;
+          RequestMethod | undefined;
         if (method === undefined) continue;
         const guards = [...classGuards, ...guardsOf(handler)];
         const authenticated = guards.some(

@@ -49,7 +49,9 @@ const activityService = () =>
 
 const surfaceService = () =>
   ({
-    contextOf: jest.fn().mockResolvedValue({ surface: 'academy', academyId: 'academy-1' }),
+    contextOf: jest
+      .fn()
+      .mockResolvedValue({ surface: 'academy', academyId: 'academy-1' }),
   }) as unknown as SessionSurfaceService;
 
 describe('JwtAuthGuard', () => {

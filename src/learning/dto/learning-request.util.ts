@@ -13,10 +13,10 @@
  * what they cannot do is change which host the edge routed to, which is
  * why the host is the tenancy claim the content path trusts.
  */
-import { ForbiddenException } from '@nestjs/common';
 import type { Request } from 'express';
 import { readCookie } from '../../common/http/cookies.util';
 import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
+import { surfaceDenied } from '../../identity/guards/surface-denial.util';
 
 export interface LearningRequestContext {
   readonly userId: string | null;
@@ -50,6 +50,10 @@ export function assertSessionServesHostAcademy(
   const auth = request.authContext;
   if (!auth || auth.surface !== 'academy' || !hostAcademyId) return;
   if (auth.academyId !== hostAcademyId) {
-    throw new ForbiddenException({ messageKey: 'errors.auth.academyHostMismatch' });
+    throw surfaceDenied(
+      request,
+      'academy_host_mismatch',
+      'errors.auth.academyHostMismatch',
+    );
   }
 }

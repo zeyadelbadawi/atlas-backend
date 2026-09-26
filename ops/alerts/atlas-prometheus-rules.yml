@@ -290,3 +290,22 @@ groups:
           description: "End-to-end test of Atlas -> Prometheus -> Alertmanager -> Slack. It resolves when the test expires or is resolved from the Observability Center."
           threshold: "armed from Monitoring & alerts"
           current_value: '{{ $value | humanize }}'
+
+  # Launch Stabilization A1 — the real academy website never calls a
+  # management/Platform Owner route or another academy's learner route, so
+  # any refusal means a token is being used outside the website it was
+  # issued to (e.g. a token lifted from a tenant-operated origin). The
+  # structured `auth.surface.denied` log line carries user, session and
+  # route pattern for triage.
+  - name: atlas-security
+    rules:
+      - alert: AtlasSessionSurfaceDenied
+        expr: |
+          sum by (reason) (increase(atlas_auth_surface_denied_total[15m])) > 0
+        for: 0m
+        labels: { severity: warning, team: atlas, service: auth }
+        annotations:
+          summary: "A session was used outside the website it was issued to ({{ $labels.reason }})"
+          description: "{{ $value }} request(s) in 15m were refused because the session was minted for another surface or academy. Search the logs for event=auth.surface.denied to see the user, session and route."
+          threshold: "any refusal in 15m"
+          current_value: '{{ $value | humanize }}'
