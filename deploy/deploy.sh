@@ -410,6 +410,10 @@ prepare_monitoring() {
     return 0
   fi
   install -d -m 700 "$sec"
+  # The files are left 0444, so restore the owner's write bit before
+  # rewriting them. Rewrite IN PLACE (same inode): the running containers
+  # bind-mount these files, and a replaced inode would stay invisible to them.
+  chmod u+w "$sec/metrics_scrape_token" "$sec/slack_webhook_url" 2>/dev/null || true
   ( umask 022
     printf '%s' "$METRICS_SCRAPE_TOKEN" > "$sec/metrics_scrape_token"
     printf '%s' "${ALERT_SLACK_WEBHOOK_URL:-}" > "$sec/slack_webhook_url" )
