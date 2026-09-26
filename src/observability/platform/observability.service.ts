@@ -765,11 +765,13 @@ export class ObservabilityService {
     const [rules, status, sent, failed, synthetic] = await Promise.all([
       this.sources.rules(),
       this.sources.status(),
+      // notifications_total counts attempts (failures included); increase()
+      // extrapolates, so both are rounded to whole notifications.
       this.scalarSourced(
-        'sum(increase(alertmanager_notifications_total{integration="slack"}[24h]))',
+        'round(clamp_min(sum(increase(alertmanager_notifications_total{integration="slack"}[24h])) - sum(increase(alertmanager_notifications_failed_total{integration="slack"}[24h])), 0))',
       ),
       this.scalarSourced(
-        'sum(increase(alertmanager_notifications_failed_total{integration="slack"}[24h]))',
+        'round(sum(increase(alertmanager_notifications_failed_total{integration="slack"}[24h])))',
       ),
       this.syntheticState(),
     ]);

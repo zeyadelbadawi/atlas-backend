@@ -288,6 +288,18 @@ Configuration page shows the scrape mode as `token` or `platform_owner_only`.
 Arming and resolving are both audited (`observability.synthetic_alert.armed`
 / `.resolved`). The synthetic alert touches no tenant data.
 
+**From GitHub, without signing in.** Run the Actions workflow
+**Observability verify** with `synthetic_minutes` = 5.
+- It runs `deploy/observability-verify.sh` on the VPS over the deploy SSH
+  identity.
+- It checks secret presence/shape (never values), `/metrics` protection,
+  Prometheus targets and rules, the Alertmanager receiver, and log leakage.
+- It arms the same Redis key (TTL-bounded), follows the alert to FIRING in
+  Slack, disarms it, and follows it to RESOLVED.
+- It writes no audit row, because there is no Platform Owner session.
+
+Use `0` for checks only.
+
 ## 18. Verifying resolution
 
 Click **Resolve** (or let the TTL expire). Then check:

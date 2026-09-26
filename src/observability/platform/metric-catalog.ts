@@ -275,7 +275,7 @@ export const METRIC_CATALOG: readonly MetricEntry[] = [
     domain: 'alerting',
     unit: 'perSecond',
     requires: 'alertmanager_notifications_total',
-    expr: `sum by (integration) (rate(alertmanager_notifications_total[${R}]))`,
+    expr: `sum by (integration) (rate(alertmanager_notifications_total[${R}])) - sum by (integration) (rate(alertmanager_notifications_failed_total[${R}]))`,
   },
   {
     id: 'alerting.notificationsFailed',

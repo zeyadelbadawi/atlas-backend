@@ -1,0 +1,51 @@
+name: Observability verify
+
+# Read-mostly production check of the Observability Center plumbing, run on
+# the VPS over the same restricted `deploy` SSH identity as Deploy. It
+# prints PASS/FAIL lines and non-secret facts only (see
+# deploy/observability-verify.sh). With `synthetic_minutes` > 0 it also arms
+# the TTL-bounded, tenant-free synthetic alert and follows it through
+# Prometheus → Alertmanager → Slack and back to RESOLVED.
+on:
+  workflow_dispatch:
+    inputs:
+      synthetic_minutes:
+        description: Arm the synthetic alert for this many minutes (0 = checks only)
+        required: false
+        default: '0'
+        type: choice
+        options: ['0', '5', '10']
+
+concurrency:
+  group: observability-verify
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run checks on the VPS
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SYNTHETIC_MINUTES: ${{ inputs.synthetic_minutes }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          args=""
+          if [ "${SYNTHETIC_MINUTES}" != "0" ]; then args="--synthetic ${SYNTHETIC_MINUTES}"; fi
+          # The script travels over stdin into a temp file (not `bash -s`:
+          # `docker compose exec -T` inside it would read the rest of the
+          # script as its own stdin). Nothing secret is on any command line.
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" ${args} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+            < deploy/observability-verify.sh
