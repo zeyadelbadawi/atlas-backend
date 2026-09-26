@@ -1,0 +1,94 @@
+name: Onboarding browser verify
+
+# Production browser journey for New Customer Onboarding
+# (docs/NEW_CUSTOMER_ONBOARDING.md §7). Runs deploy/onboarding-browser/
+# journey.mjs in Chromium on the runner against production:
+#   A — EN desktop, trial path end to end (signup → OTP → onboarding → Finish);
+#   B — AR mobile, same mailbox again (trial already used) → paid path →
+#       Finish for now; its test payment is cancelled at the end.
+# Sign-in codes are read on the VPS for the journey's own test account only
+# (deploy/onboarding-browser/remote.sh, same restricted deploy identity as
+# Deploy) and never logged. It creates one or two clearly named verification
+# organizations in production ("Atlas Onboarding Verify A/B").
+on:
+  workflow_dispatch:
+    inputs:
+      mailbox:
+        description: >-
+          Gmail local part of a mailbox the owner controls. Journey addresses
+          are its plus-addresses (<local>+atlas-onb-<run>-a@gmail.com).
+        required: true
+        type: string
+      journeys:
+        description: Which journeys to run
+        required: true
+        default: 'A,B'
+        type: choice
+        options: ['A,B', 'A', 'B']
+
+concurrency:
+  group: onboarding-browser-verify
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  journey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_URL: https://atlass.dpdns.org
+      OUT: ${{ github.workspace }}/journey-out
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright (Chromium)
+        working-directory: deploy/onboarding-browser
+        run: |
+          npm init -y >/dev/null
+          npm install --no-save --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Run the journeys
+        working-directory: deploy/onboarding-browser
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_KEY_FILE: /home/runner/.ssh/deploy_key
+          MAILBOX: ${{ inputs.mailbox }}
+          JOURNEYS: ${{ inputs.journeys }}
+          RUN_TAG: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          if ! printf '%s' "$MAILBOX" | grep -Eq '^[a-z0-9._-]+$'; then
+            echo "mailbox must be a Gmail local part (letters, digits, . _ -)"; exit 2
+          fi
+          remote() {
+            ssh -o StrictHostKeyChecking=accept-new -i "$SSH_KEY_FILE" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" $1 '$2' </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh
+          }
+          rc=0
+          for j in ${JOURNEYS//,/ }; do
+            tag=$(printf '%s' "$j" | tr 'A-Z' 'a-z')
+            email="${MAILBOX}+atlas-onb-${RUN_TAG}-${tag}@gmail.com"
+            echo "== Journey $j"
+            echo "INFO  [$j] trial subject before signup: $(remote eligible "$email")"
+            JOURNEY="$j" JOURNEY_EMAIL="$email" node journey.mjs || rc=1
+          done
+          exit $rc
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboarding-journey-screenshots
+          path: journey-out
+          retention-days: 14
