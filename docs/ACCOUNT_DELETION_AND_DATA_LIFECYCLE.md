@@ -177,7 +177,7 @@ See §13.
 |---|---|---|
 | **Public R2 objects are never deleted** | **High** | `MediaStorageProvider` exposes only `putObject`/`getObject`. There is no delete capability on the public bucket *at all*. Every logo, thumbnail and marketing image stays fetchable at its public URL forever, after archive and after account deletion. |
 | **Cloudflare Stream videos are never deleted** | **High** | `deleteAsset` exists and works, but its only caller is the video-retention sweep. Deleting a course or lesson leaves the video playable and still billing storage minutes. |
-| **Certificate PDFs are orphaned** | Medium | Anonymisation nulls `storageKey` and re-renders, but never deletes the previous PDF — which carries the real learner's name — from the protected bucket. A live PII retention leak. |
+| ~~**Certificate PDFs are orphaned**~~ **FIXED 26 Sep 2026** (be `cce0de7`, `purge-superseded` job; see `ATLAS_CLOUD_SESSION_BASELINE.md` §8 K). Correction: anonymisation overwrites the CURRENT version in place (keys are versioned and the version is unchanged); the leak was the EARLIER versions left by re-issue/regeneration | Medium | Anonymisation nulls `storageKey` and re-renders, but never deletes the previous PDF — which carries the real learner's name — from the protected bucket. A live PII retention leak. |
 | ~~No Platform Owner management UI~~ | — | **Closed** by frontend `933a7d4`. |
 | **No organization teardown** | Medium | Academies are archived; the `Organization` row and its subscription state are left active. |
 | **No deleted-course learner tombstone** | Medium | An archived course simply vanishes from the learner's view. |
