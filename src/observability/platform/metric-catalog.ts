@@ -30,14 +30,14 @@ export const METRIC_CATALOG: readonly MetricEntry[] = [
     domain: 'api',
     unit: 'percent',
     requires: 'atlas_http_requests_total',
-    expr: `sum(rate(atlas_http_requests_total{status_class="5xx"}[${R}])) / clamp_min(sum(rate(atlas_http_requests_total[${R}])), 1e-9)`,
+    expr: `(sum(rate(atlas_http_requests_total{status_class="5xx"}[${R}])) or vector(0)) / clamp_min(sum(rate(atlas_http_requests_total[${R}])), 1e-9)`,
   },
   {
     id: 'api.errorRate4xx',
     domain: 'api',
     unit: 'percent',
     requires: 'atlas_http_requests_total',
-    expr: `sum(rate(atlas_http_requests_total{status_class="4xx"}[${R}])) / clamp_min(sum(rate(atlas_http_requests_total[${R}])), 1e-9)`,
+    expr: `(sum(rate(atlas_http_requests_total{status_class="4xx"}[${R}])) or vector(0)) / clamp_min(sum(rate(atlas_http_requests_total[${R}])), 1e-9)`,
   },
   {
     id: 'api.latencyP50',

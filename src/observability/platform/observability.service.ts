@@ -87,6 +87,16 @@ const STEP_SECONDS: Readonly<Record<MetricRange, number>> = {
 /** Prometheus retention (`--storage.tsdb.retention.time=15d` in compose). */
 const HISTORY_RETENTION_SECONDS = 15 * 86_400;
 
+/**
+ * Alert history is rebuilt from `ALERTS` samples, so it needs a much finer
+ * step than a chart: at the chart step a short episode vanishes and two
+ * nearby ones merge. 30 s is the rule evaluation interval; the 10 000-point
+ * cap stays under Prometheus's 11 000-points-per-series limit (15 d → 130 s).
+ */
+function historyStep(windowSeconds: number): number {
+  return Math.max(30, Math.ceil(windowSeconds / 10_000));
+}
+
 const SYNTHETIC_KEY = 'atlas:observability:synthetic-alert';
 
 const syntheticArmed = gauge(
@@ -264,7 +274,7 @@ export class ObservabilityService {
     const [rate, errors, p95] = await Promise.all([
       this.scalar('sum(rate(atlas_http_requests_total[5m]))'),
       this.scalar(
-        'sum(rate(atlas_http_requests_total{status_class="5xx"}[5m])) / clamp_min(sum(rate(atlas_http_requests_total[5m])), 1e-9)',
+        '(sum(rate(atlas_http_requests_total{status_class="5xx"}[5m])) or vector(0)) / clamp_min(sum(rate(atlas_http_requests_total[5m])), 1e-9)',
       ),
       this.scalar(
         'histogram_quantile(0.95, sum by (le) (rate(atlas_http_request_duration_seconds_bucket[5m])))',
@@ -413,13 +423,14 @@ export class ObservabilityService {
   ): Promise<AlertsResponse> {
     const now = new Date();
     const { from, historyFrom } = this.historyWindow(filter.range, now);
+    const hStep = historyStep((now.getTime() - from.getTime()) / 1000);
     const [am, rules, history] = await Promise.all([
       this.sources.alerts(),
       this.sources.rules(),
-      this.sources.range('ALERTS', from, now, STEP_SECONDS[filter.range]),
+      this.sources.range('ALERTS', from, now, hStep),
     ]);
 
-    let items = this.buildAlertItems(am, rules, history, STEP_SECONDS[filter.range], now);
+    let items = this.buildAlertItems(am, rules, history, hStep, now);
     if (filter.status === 'active') items = items.filter((i) => i.status !== 'resolved');
     if (filter.status === 'resolved')
       items = items.filter((i) => i.status === 'resolved');
@@ -455,15 +466,16 @@ export class ObservabilityService {
 
     const { from } = this.historyWindow(range, now);
     const step = STEP_SECONDS[range];
+    const hStep = historyStep((now.getTime() - from.getTime()) / 1000);
     const [am, history, current, series, lastWindow] = await Promise.all([
       this.sources.alerts(),
-      this.sources.range(`ALERTS{alertname="${ruleName}"}`, from, now, step),
+      this.sources.range(`ALERTS{alertname="${ruleName}"}`, from, now, hStep),
       this.sources.instant(found.rule.query),
       this.sources.range(found.rule.query, from, now, step),
       this.lastTriggerWindow(ruleName, now),
     ]);
 
-    let instances = this.buildAlertItems(am, rules, history, step, now).filter(
+    let instances = this.buildAlertItems(am, rules, history, hStep, now).filter(
       (i) => i.rule === ruleName,
     );
     instances = await this.withTenants(actorUserId, instances);
@@ -480,10 +492,25 @@ export class ObservabilityService {
     }
     timeline.sort((a, b) => a.at.localeCompare(b.at));
 
+    // The 15-day window is coarse (130 s); instances inside the requested
+    // range carry precise times, so they win when present.
+    const firingStarts = instances
+      .filter((i) => i.status !== 'pending')
+      .map((i) => i.startsAt)
+      .sort();
+    const resolvedEnds = instances
+      .filter((i) => i.status === 'resolved' && i.endsAt)
+      .map((i) => i.endsAt as string)
+      .sort();
+    const precise = {
+      lastTriggeredAt: firingStarts.at(-1) ?? lastWindow.lastTriggeredAt,
+      lastResolvedAt: resolvedEnds.at(-1) ?? lastWindow.lastResolvedAt,
+    };
+
     return {
       generatedAt: now.toISOString(),
       sources: { alertmanager: am.state, prometheus: worst(history.state, series.state) },
-      rule: toRuleInfo(found.group, found.rule, lastWindow),
+      rule: toRuleInfo(found.group, found.rule, precise),
       currentValues:
         current.state === 'ok'
           ? current.data.map((r) => ({
@@ -671,21 +698,22 @@ export class ObservabilityService {
     now: Date,
   ): Promise<{ lastTriggeredAt: string | null; lastResolvedAt: string | null }> {
     const from = new Date(now.getTime() - HISTORY_RETENTION_SECONDS * 1000);
+    const step = historyStep(HISTORY_RETENTION_SECONDS);
     const history = await this.sources.range(
       `ALERTS{alertname="${ruleName}",alertstate="firing"}`,
       from,
       now,
-      300,
+      step,
     );
     if (history.state !== 'ok') return { lastTriggeredAt: null, lastResolvedAt: null };
     let lastStart: number | null = null;
     let lastEnd: number | null = null;
     for (const series of history.data) {
-      for (const interval of toIntervals(series.values, 300)) {
+      for (const interval of toIntervals(series.values, step)) {
         if (lastStart === null || interval.start > lastStart) lastStart = interval.start;
-        const open = now.getTime() - interval.end * 1000 <= 600_000;
+        const open = now.getTime() - interval.end * 1000 <= 2 * step * 1000;
         if (!open && (lastEnd === null || interval.end > lastEnd))
-          lastEnd = interval.end + 300;
+          lastEnd = interval.end + step;
       }
     }
     return {
