@@ -266,3 +266,57 @@ pending*, not verified.
 - `LearningLeaseService.revokeAll` is not called on deletion (sessions are already
   revoked).
 - Legacy dead pages; empty `/blog` scaffold.
+
+---
+
+## 9. Closeout — owner decisions of 26 Sep 2026
+
+| # | Decision | Applied | Evidence |
+|---|---|---|---|
+| 1 | Communications / OTP settings stay **read-only** | No change to the §8 G architecture; no migration | UI read-only states pinned by tests |
+| 2 | Media lifecycle: 30-day grace, then destruction; delete UI | `ArchivedMediaPurgeService` on the `video-retention` queue (`FLAG_MEDIA_ARCHIVE_PURGE_MODE`, default **dry_run**). Delete in the Media Library (single, select, delete-selected) and the Media Picker (single), gated by the backend usage guard. Full detail in `ACCOUNT_DELETION_AND_DATA_LIFECYCLE.md` §14 | `archived-media-purge.e2e-spec.ts` (7), `media-delete.e2e-spec.ts` (5), `media-delete.test.tsx` (15) |
+| 3 | Alert routing: scrape token + Slack | `/metrics` also accepts `METRICS_SCRAPE_TOKEN`; the JWT door is unchanged. Prometheus + Alertmanager run under the `monitoring` compose profile | `metrics-scrape-auth.e2e-spec.ts`. Local end-to-end: scrape up, 17 rules OK, synthetic alert delivered to a Slack-format receiver, no secret in logs |
+| 4 | Refunds are recorded; money moves manually | All learner copy, the email (template v2) and the notification now say "recorded", never "refunded". Every refund is audited as `course_order.refund_recorded` | Refund dialog test, course-commerce e2e |
+| 5 | No fake gateway UI | The payouts empty state no longer mentions an "own gateway". The Platform payment-provider page already lists only real providers (Manual Transfer) | Revenue page test |
+| 6 | Keep every Platform Owner; rotate the `atlas_app` password if possible | No account touched. **Rotation BLOCKED**: it needs SSH/DB access to the VPS, which this session does not have | — |
+
+**To turn on alerting**, add both variables to `/opt/atlas/.env` on the VPS, then redeploy
+the backend. Never put the values in the repository.
+
+- `METRICS_SCRAPE_TOKEN`: 32 or more random characters.
+- `ALERT_SLACK_WEBHOOK_URL`: the Slack incoming-webhook URL.
+
+`deploy.sh` then enables the monitoring profile. Until then it prints "Monitoring NOT
+enabled".
+
+**To turn on media destruction**, set the repo variable `FLAG_MEDIA_ARCHIVE_PURGE_MODE=on`
+after reviewing the `dry_run` log lines ("would be destroyed").
+
+**Production verification: BLOCKED.** The cloud environment's network policy denies
+`atlass.dpdns.org` (proxy `CONNECT` → 403). Deploy runs succeeded, and `deploy.sh` checks
+backend health and Caddy HTTPS on each. But no production URL, role session, UI surface
+or OTP flow was exercised from this session. To enable it:
+
+1. Allow `atlass.dpdns.org`, `*.atlass.dpdns.org` and the academy custom domains in the
+   environment's Network access settings.
+2. Provide real test accounts (Platform Owner, Client Owner, Manager, Instructor, Learner)
+   by a human-safe route, or have a person run the sessions. OTP flows need the owner's
+   inbox.
+
+**Regression at closeout (local, real Postgres/Redis/S3):**
+
+- **Backend:** 48 e2e suites covering every `rls-*` and tenant-isolation suite plus every
+  touched area. All passed except:
+  - `plans-catalog` and `checkout-plan-catalog-fix`: they need the seeded production plan
+    catalog, and `plans-catalog` fails identically on pre-session commit `6a70173`.
+  - `P53-ATT-013`: a known load-sensitive flake (DL-30); it passes in isolation.
+- **Frontend:** full vitest suite, 104 files / 963 tests passing; typecheck at the
+  34-error baseline; `vite build` OK.
+
+**Deferred decisions from the media UI:**
+
+- The picker picks a file and closes in one click, so it has no bulk selection. A
+  pick-then-confirm flow would change the picker for every caller.
+- Deleted items remain browsable under a "Deleted" filter, with no controls, during the
+  grace period.
+- There is no restore UI; restoring is an operator action during the 30 days.
