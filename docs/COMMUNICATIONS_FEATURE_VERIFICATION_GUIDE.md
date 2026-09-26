@@ -356,6 +356,13 @@ at the console's `outbox.byState`.
 with `{ name, email, password, academyId }`.) To re-send:
 `POST /api/v1/auth/verify-email/resend` while signed in.
 
+**When it is sent (26 Sep 2026).** Only when the OTP policy of the surface the account registers on
+is `off` (the academy surface for learners, the management surface otherwise). Under `new_device` /
+`always` a new account's first sign-in must pass an emailed code, whose success sets
+`emailVerifiedAt`, so registration sends **no** link (and writes no link token). Production runs
+`new_device` on both surfaces, so production sign-ups receive the code only. The resend endpoint
+and the link page are unchanged.
+
 **Email.** Key `auth.email.verification`, category `security`, email policy `always` (preferences
 cannot suppress it).
 Subject **"Verify your email address"** / **"تأكيد عنوان بريدك الإلكتروني"**.

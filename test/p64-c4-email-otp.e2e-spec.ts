@@ -42,6 +42,7 @@ import type { PrismaClient } from '@prisma/client';
 
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma } from './utils/db-admin';
+import { hashOpaqueToken } from '../src/identity/utils/opaque-token.util';
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
 import { CommunicationDispatchService } from '../src/communications/services/communication-dispatch.service';
@@ -561,6 +562,117 @@ describe('P64 C4 — email OTP and trusted devices (e2e)', () => {
     const sessionB = await verify(openB.challengeId, codeB).expect(200);
     expect(sessionA.body.user.id).toBe(a.userId);
     expect(sessionB.body.user.id).toBe(b.userId);
+  });
+
+  // ------- one proof of mailbox control, not two (first-login contract) -------
+
+  /** Every catalogue key queued for this account, oldest first. */
+  async function outboxKeys(userId: string): Promise<string[]> {
+    const rows = await admin.communicationOutbox.findMany({
+      where: { recipientUserId: userId },
+      orderBy: { createdAt: 'asc' },
+      select: { key: true },
+    });
+    return rows.map((row) => row.key);
+  }
+
+  it('P64-C4-080 — with the code required, sign-up sends NO verification link; the first OTP sign-in verifies the address', async () => {
+    const { email, userId } = await register('c4-080');
+
+    // Registration under `new_device`: no link token, no verification
+    // email queued, the address not yet verified.
+    expect(await admin.emailVerificationToken.count({ where: { userId } })).toBe(0);
+    expect(await outboxKeys(userId)).not.toContain('auth.email.verification');
+    expect(
+      (await admin.user.findUniqueOrThrow({ where: { id: userId } })).emailVerifiedAt,
+    ).toBeNull();
+
+    const session = await signInWithCode(email, userId);
+    expect(session.body.user.id).toBe(userId);
+
+    // The code proved the mailbox: verified, and still no link anywhere.
+    expect(
+      (await admin.user.findUniqueOrThrow({ where: { id: userId } })).emailVerifiedAt,
+    ).toBeInstanceOf(Date);
+    const keys = await outboxKeys(userId);
+    expect(keys).toContain('auth.email.otp');
+    expect(keys).not.toContain('auth.email.verification');
+    expect(await admin.emailVerificationToken.count({ where: { userId } })).toBe(0);
+  });
+
+  it('P64-C4-081 — a wrong or an expired code verifies nothing and opens no session', async () => {
+    const { email, userId } = await register('c4-081');
+    const open = await challenge(email);
+    const code = await latestCode(userId);
+    const wrong = code === '000000' ? '111111' : '000000';
+
+    await verify(open.challengeId, wrong).expect(401);
+    expect(
+      (await admin.user.findUniqueOrThrow({ where: { id: userId } })).emailVerifiedAt,
+    ).toBeNull();
+
+    const row = await latestChallengeRow(userId);
+    await admin.authEmailChallenge.update({
+      where: { id: row.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    const expired = await verify(open.challengeId, code).expect(401);
+    expect(err(expired).messageKey).toBe('errors.auth.otpExpired');
+    expect(expired.body.accessToken).toBeUndefined();
+    expect(
+      (await admin.user.findUniqueOrThrow({ where: { id: userId } })).emailVerifiedAt,
+    ).toBeNull();
+  });
+
+  it('P64-C4-082 — an existing unverified account holding an old link is verified by its OTP sign-in; the old link stays harmless', async () => {
+    const { email, userId } = await register('c4-082');
+    // An account created before this change: it still holds a live link.
+    const legacyToken = `legacy-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await admin.emailVerificationToken.create({
+      data: {
+        userId,
+        tokenHash: hashOpaqueToken(legacyToken),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+
+    await signInWithCode(email, userId);
+    const verifiedAt = (await admin.user.findUniqueOrThrow({ where: { id: userId } }))
+      .emailVerifiedAt;
+    expect(verifiedAt).toBeInstanceOf(Date);
+
+    // The legacy link is still single-use and only ever re-confirms the
+    // same address; it cannot verify anything else.
+    await http().post('/auth/verify-email').send({ token: legacyToken }).expect(200);
+    const replay = await http().post('/auth/verify-email').send({ token: legacyToken });
+    expect(replay.status).toBe(400);
+  });
+
+  it('P64-C4-083 — the independent verification path still works: resend issues a link, the link verifies once', async () => {
+    const { email, userId } = await register('c4-083');
+    const session = await signInWithCode(email, userId);
+    // Force the account back to unverified to exercise the link path.
+    await admin.user.update({ where: { id: userId }, data: { emailVerifiedAt: null } });
+
+    await http()
+      .post('/auth/verify-email/resend')
+      .set('Authorization', `Bearer ${session.body.accessToken}`)
+      .expect(202);
+
+    const row = await admin.communicationOutbox.findFirstOrThrow({
+      where: { recipientUserId: userId, key: 'auth.email.verification' },
+      orderBy: { createdAt: 'desc' },
+      select: { values: true },
+    });
+    const token = (row.values as { token?: string } | null)?.token;
+    expect(token).toEqual(expect.any(String));
+
+    await http().post('/auth/verify-email').send({ token }).expect(200);
+    expect(
+      (await admin.user.findUniqueOrThrow({ where: { id: userId } })).emailVerifiedAt,
+    ).toBeInstanceOf(Date);
+    const replay = await http().post('/auth/verify-email').send({ token });
+    expect(replay.status).toBe(400);
   });
 
   it('P64-C4-031 — a reference forged to pair one account’s challenge with another’s id opens nothing', async () => {

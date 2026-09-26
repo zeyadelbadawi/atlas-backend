@@ -151,7 +151,7 @@ where to look to find out how to trigger the event by hand.
 | # | Key | In-app | Email | Email subject (EN) | Link goes to | Emitted by |
 |---|---|---|---|---|---|---|
 | 1 | `auth.password.changed` | always | always | Your password was changed | `/auth/forgot-password` | `identity/services/users.service` |
-| 2 | `auth.email.verification` | — | always | Verify your email address | `/auth/verify-email?token=TOKEN` | `identity/services/auth.service` |
+| 2 | `auth.email.verification` | — | always (sent at registration only when the surface's OTP policy is `off`; otherwise the first OTP sign-in verifies) | Verify your email address | `/auth/verify-email?token=TOKEN` | `identity/services/auth.service` |
 | 3 | `auth.email.otp` | — | always | 048915 is your sign-in code | `none` | `identity/services/email-otp.service` |
 | 4 | `auth.password.reset` | — | always | Reset your password | `/auth/reset-password?token=TOKEN` | `identity/queue/password-reset-email.processor` |
 | 5 | `auth.password.reset_confirmed` | always | always | Your password was reset | `/auth/forgot-password` | `identity/services/auth.service` |

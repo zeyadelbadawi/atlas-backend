@@ -383,7 +383,18 @@ export class AuthService {
 
     const passwordHash = await this.passwordHasher.hash(input.password);
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
-    const rawVerificationToken = generateOpaqueToken();
+    // The verification link is sent only where it is the ONLY proof of
+    // mailbox control this account will give. When the sign-in surface it
+    // was created for demands an emailed code (`new_device` / `always`), a
+    // brand-new account has no trusted browser, so its first sign-in MUST
+    // pass an OTP sent to this same address — and success sets
+    // `emailVerifiedAt` (§12, `verifyEmailOtp`). A link as well would ask
+    // twice for one fact. Under `off` nothing else proves the address, so
+    // the link is still sent. `POST /auth/verify-email/resend` and the
+    // link itself are unchanged.
+    const signInSurface: SignInSurface = academyId ? 'academy' : 'management';
+    const sendVerificationLink = this.emailOtpService.policyFor(signInSurface) === 'off';
+    const rawVerificationToken = sendVerificationLink ? generateOpaqueToken() : null;
     const userId = randomUUID();
 
     const pendingApprovalOutboxIds: (string | null)[] = [];
@@ -436,15 +447,17 @@ export class AuthService {
             }
           }
         }
-        await tx.emailVerificationToken.create({
-          data: {
-            userId,
-            tokenHash: hashOpaqueToken(rawVerificationToken),
-            expiresAt: new Date(
-              Date.now() + identity.emailVerificationTokenTtlMinutes * 60 * 1000,
-            ),
-          },
-        });
+        if (rawVerificationToken) {
+          await tx.emailVerificationToken.create({
+            data: {
+              userId,
+              tokenHash: hashOpaqueToken(rawVerificationToken),
+              expiresAt: new Date(
+                Date.now() + identity.emailVerificationTokenTtlMinutes * 60 * 1000,
+              ),
+            },
+          });
+        }
 
         // New Customer Onboarding — the Organization, owner membership,
         // subscription and (when the mailbox is eligible) Free Trial, in THIS
@@ -499,6 +512,7 @@ export class AuthService {
     // Delivery is best-effort AFTER commit: the account and its token
     // exist; a bad SMTP minute must not undo a registration, and the user
     // can re-request verification at any time.
+    if (!rawVerificationToken) return;
     try {
       await this.emitEmailVerification(userId, rawVerificationToken);
     } catch (error) {
