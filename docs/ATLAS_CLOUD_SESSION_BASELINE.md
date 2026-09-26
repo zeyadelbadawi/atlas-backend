@@ -280,6 +280,13 @@ pending*, not verified.
 | 5 | No fake gateway UI | The payouts empty state no longer mentions an "own gateway". The Platform payment-provider page already lists only real providers (Manual Transfer) | Revenue page test |
 | 6 | Keep every Platform Owner; rotate the `atlas_app` password if possible | No account touched. **Rotation BLOCKED**: it needs SSH/DB access to the VPS, which this session does not have | — |
 
+**Superseded 26 Sep 2026 (Observability Center):** alerting is ON in production.
+`ALERT_SLACK_WEBHOOK_URL` is an Actions secret synced by the deploy;
+`METRICS_SCRAPE_TOKEN` was generated on the host by `deploy.sh`. The synthetic
+alert was verified in production (FIRING and RESOLVED accepted by Slack, 0
+failures). See `PLATFORM_OWNER_OBSERVABILITY_HANDOVER.md`. The historical note
+below is kept for context.
+
 **To turn on alerting**, add both variables to `/opt/atlas/.env` on the VPS, then redeploy
 the backend. Never put the values in the repository.
 

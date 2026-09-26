@@ -181,9 +181,36 @@ Base path: `/api/v1/platform-observability`.
 - `dir=rtl` was applied in Arabic.
 - There was no horizontal overflow, no raw i18n keys and no unnamed buttons.
 
-## 13. Production verification
+## 13. Production verification (26 Sep 2026)
 
-See section 16 for the live status of each item.
+Two production runs of the `Observability verify` workflow, both with
+**0 failures**: 36227614339 (checks only) and 36229796544 (synthetic).
+
+**Checks:**
+- Both secrets are present and correctly shaped, stored as 0444 files in
+  a 0700 directory, and match `.env`.
+- `/metrics` returns 401 without a token and 401 with a wrong token.
+- The `atlas-backend` target is up, so the scrape token is wired end to
+  end.
+- 24 rules are loaded and healthy, and the Slack receiver is loaded.
+- The webhook value does not appear in Alertmanager's status.
+- The observability API returns 401 to anonymous callers.
+- Neither secret appears in the backend, Prometheus or Alertmanager logs.
+
+**Synthetic alert:**
+- 08:26:59 armed.
+- Prometheus fired at +61 s, and Alertmanager was active 1 s later.
+- 08:28:31 Slack accepted FIRING, with 0 failures.
+- 08:28:31 disarmed, and Prometheus cleared the alert at +62 s.
+- 08:33:26 Slack accepted RESOLVED, with 0 failures.
+- `ALERTS` history recorded the episode, which is what the Alerts Center
+  reads.
+
+**Not verified from here:**
+- **The message in `#atlas-alerts`.** There is no Slack read access;
+  Slack's acceptance of each request was verified.
+- **The production UI in Chrome.** The environment network policy denies
+  `atlass.dpdns.org`.
 
 ## 14. Deployment SHAs
 
@@ -192,7 +219,8 @@ See section 16 for the live status of each item.
 | atlas-backend | `1607e41` | Observability Center backend, monitoring stack, Slack wiring (deploy run 186 ✅) |
 | atlas-backend | `a9a22e9` | Verify workflow; Slack counts (deploy run 187 ❌: secret-file permission, fixed below) |
 | atlas-backend | `709bf34` | Exact alert history; 0 % error rate (run 188 cancelled, superseded) |
-| atlas-backend | `d7e458b` | Deploy fix: rewrite the 0444 secret files in place |
+| atlas-backend | `d7e458b` | Deploy fix: rewrite the 0444 secret files in place (deploy run 189 ✅) |
+| atlas-backend | `09c694f` | Verify workflow: quote the synthetic JSON for redis-cli (production run 36229796544 ✅) |
 | atlas | `174cfd9` / merge `6c72bb0` | Four pages, EN/AR (frontend deploy run 119 ✅) |
 
 ## 15. Known limitations
@@ -216,8 +244,13 @@ See section 16 for the live status of each item.
 
 ## 16. Remaining human-only actions
 
-See the final report for the current state; any item still open is listed
-there.
+1. **Confirm the Slack messages.** Check that `#atlas-alerts` shows
+   `[Atlas] [FIRING] AtlasSyntheticAlert (warning)` at about 08:28 UTC and
+   `[Atlas] [RESOLVED] …` at about 08:33 UTC on 26 Sep 2026. Click
+   **View alert**; it must open the Atlas rule page after sign-in.
+2. **Allow production access for Chrome checks.** Allow `atlass.dpdns.org`
+   in the cloud environment's network access, so the four pages can be
+   checked against production in Chrome.
 
 ## 17. Rollback
 

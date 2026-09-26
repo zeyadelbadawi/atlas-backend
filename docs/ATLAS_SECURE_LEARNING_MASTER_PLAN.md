@@ -1492,3 +1492,133 @@ Added: `R2_PROTECTED_BUCKET`, `R2_PROTECTED_ACCESS_KEY_ID`,
 disposable academy and it was reverted immediately afterwards. Public R2
 credentials were never touched. Every edit took a timestamped `600 root:root`
 backup first.
+
+---
+
+# PLATFORM OWNER OBSERVABILITY CENTER — 26 September 2026
+
+## Status: DEPLOYED; ALERT PATH PRODUCTION-VERIFIED; TWO HUMAN CHECKS OPEN
+
+Detail: `PLATFORM_OWNER_OBSERVABILITY_GUIDE.md` (operations) and
+`PLATFORM_OWNER_OBSERVABILITY_HANDOVER.md` (implementation). No secret
+value is recorded anywhere.
+
+### What was delivered
+
+- **Four Platform Owner pages**, EN/AR, behind Platform-Owner-only route
+  guards (frontend `174cfd9`, merged `6c72bb0`):
+  - System Health;
+  - Alerts Center, including the rule detail and timeline that Slack links
+    open;
+  - System Metrics;
+  - Monitoring & Alert Configuration.
+- **Backend API** at `/api/v1/platform-observability/*`, guarded by
+  JWT + ManagementSurface + PlatformOwner:
+  - health probes;
+  - alerts: Alertmanager current state, rule pending state, and 15-day
+    history from `ALERTS`;
+  - rule detail;
+  - allowlisted metric catalog (38 ids, no PromQL from the browser);
+  - configuration, reporting secrets as present/absent only;
+  - audited synthetic alert.
+- **New metrics:** HTTP metrics plus dependency, queue and Redis metrics
+  collected at scrape time.
+- **Alert rules:** 24 in total. The new `atlas-platform` group has seven,
+  and every rule now carries `threshold` and `current_value` annotations.
+- **Monitoring stack:** production Prometheus and Alertmanager, internal
+  only, under compose profile `monitoring`. Slack delivery goes through
+  `api_url_file`.
+- **Migrations:** none.
+
+### Production environment configuration
+
+- **Slack webhook.** `ALERT_SLACK_WEBHOOK_URL` is an owner-created Actions
+  secret, synced by name through the existing deploy fragment into
+  `/opt/atlas/.env`.
+- **Scrape token.** `METRICS_SCRAPE_TOKEN` was absent from production.
+  `deploy.sh` generated it on the host without printing it (deploy run
+  186).
+- **Verification workflow.** `Observability verify` (workflow_dispatch)
+  runs checks on the VPS and prints PASS/FAIL only.
+
+### Verification evidence
+
+**Production checks-only** (runs 36227614339 and 36229796544): 0 failures.
+- Both secrets are present, stored as 0444 files in a 0700 directory, and
+  match `.env`.
+- `/metrics` returns 401 without a token and 401 with a wrong token.
+- Prometheus scrapes Atlas with the token, and all 24 rules are healthy.
+- The Slack receiver is loaded, and the webhook value does not appear in
+  Alertmanager's status.
+- The observability API returns 401 to anonymous callers.
+- Neither secret appears in the backend, Prometheus or Alertmanager logs.
+
+**Production synthetic alert** (run 36229796544, 26 Sep 2026):
+
+| UTC | Event |
+|---|---|
+| 08:26:59 | armed |
+| +61 s | Prometheus firing |
+| +1 s | Alertmanager active |
+| 08:28:31 | Slack accepted FIRING, 0 delivery failures |
+| 08:28:31 | disarmed |
+| +62 s | cleared |
+| 08:33:26 | Slack accepted RESOLVED, 0 failures |
+
+`ALERTS` history recorded the episode, which is what the Alerts Center reads.
+
+**Local end-to-end** (real Prometheus and Alertmanager):
+- The same chain ran with a Slack-format receiver, and the payload
+  carried the Atlas rule-page link.
+- The Alerts Center API showed the resolved episode.
+- A Slack failure mode gave bounded retries, a redacted URL,
+  AtlasAlertDeliveryFailing, and Atlas stayed healthy.
+
+**Browser checks** (Chromium, local stack): all five routes in EN and AR
+at 1440 and 390 px, with RTL applied, no horizontal overflow, no raw i18n
+keys and no unnamed buttons.
+
+**Tests:**
+
+| Suite | Result |
+|---|---|
+| Backend observability unit | 53/53 |
+| Observability e2e | 6/6 |
+| Related e2e | 5/5 |
+| Frontend | 1018/1018 |
+| Frontend typecheck | 34-error baseline, unchanged |
+
+The one vitest worker-RPC timeout reproduces on the pre-change commit, so
+it is pre-existing.
+
+**Security review:**
+- Server-side Platform Owner authorization is covered by the e2e matrix.
+- There is no SSRF surface: source URLs come from server env only.
+- There is no PromQL injection: ids and rule names are validated.
+- There is no secret in any API response, log, bundle, document or Git.
+- Tenant names are resolved only for IDs on alert labels, in the
+  Platform Owner's RLS context.
+
+### Defects found and fixed during verification
+
+- **Alert history lost episodes.** History was rebuilt at the chart step,
+  which dropped short episodes and merged nearby ones. Fixed in `709bf34`.
+- **Empty error rate.** An API with no errors showed "not reported"; it
+  now shows 0 %. Fixed in `709bf34`.
+- **Wrong Slack counts.** Counts were fractional and included failed
+  attempts. Fixed in `a9a22e9`.
+- **Redeploy failed** on the 0444 secret files. Fixed in `d7e458b`.
+- **Synthetic arm rejected.** The verify workflow's arm step was rejected
+  by `redis-cli` quoting. Fixed in `09c694f`.
+
+### Remaining — human only
+
+1. **Confirm in Slack.** Confirm that `#atlas-alerts` shows
+   `[Atlas] [FIRING] AtlasSyntheticAlert (warning)` at about 08:28 UTC and
+   `[RESOLVED]` at about 08:33 UTC on 26 Sep 2026, and that "View alert"
+   opens the Atlas rule page. Slack's API acceptance was verified; seeing
+   the message in the channel needs a person.
+2. **Allow production access for Chrome checks.** Allow `atlass.dpdns.org`
+   in the cloud environment's network access, so the four pages can be
+   checked against production in Chrome. Until then, production UI
+   verification is recorded as blocked, not done.
