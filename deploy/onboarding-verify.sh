@@ -139,6 +139,17 @@ if [ "$orgs" = "0" ]; then pass "no organization was created by any probe"; else
 redemptions=$(sql "select count(*) from trial_redemptions where redeemed_at > now() - interval '5 minutes'" 2>/dev/null || echo "?")
 info "trial redemptions in the last 5 minutes: $redemptions"
 
+echo "== Organization signups since the migration (counts only)"
+# An organization created by the one-page signup starts with
+# onboarding_completed_at = NULL; later it is stamped by finish/defer (and
+# audited). Everything else predates the feature.
+signup_orgs="(select id from organizations where onboarding_completed_at is null union select organization_id from audit_log_entries where action='organization.onboarding.completed')"
+info "organizations: $(sql "select count(*) from $signup_orgs s") created by one-page signup; $(sql "select count(*) from organizations where onboarding_completed_at is null") still pending setup"
+info "their subscriptions: $(sql "select coalesce(string_agg(status || '=' || n, ' '), '-') from (select t.status::text as status, count(*) n from tenant_subscriptions t where t.organization_id in $signup_orgs group by 1) x")"
+info "with a trial redemption: $(sql "select count(*) from trial_redemptions where organization_id in $signup_orgs")"
+bad=$(sql "select count(*) from tenant_subscriptions t where t.organization_id in $signup_orgs and t.status='trialing' and not exists (select 1 from trial_redemptions r where r.organization_id=t.organization_id)")
+if [ "$bad" = "0" ]; then pass "every trialing signup organization has its trial redemption (atomic claim + start)"; else fail "$bad trialing signup organization(s) without a redemption"; fi
+
 echo "== Paid recovery path (trial already used)"
 # Checkout for a no_plan organization offers the ENABLED rows of Atlas's own
 # payment-method catalog. Keys/types/providers only — never instructions.
