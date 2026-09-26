@@ -12,7 +12,7 @@
  * student, who then self-discovers and self-enrolls in courses exactly
  * like any other Atlas user would.
  */
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateAcademyStudentDto {
   @IsNotEmpty()
@@ -24,8 +24,13 @@ export class CreateAcademyStudentDto {
   @IsEmail()
   readonly email!: string;
 
-  @IsNotEmpty()
+  /**
+   * Launch Stabilization A2 (D2) — DEPRECATED and ignored. The new account
+   * is `invited` and its owner sets their own password through the emailed
+   * setup link; a password chosen by staff is never stored. Still accepted
+   * so older clients do not fail validation.
+   */
+  @IsOptional()
   @IsString()
-  @MinLength(8)
-  readonly password!: string;
+  readonly password?: string;
 }

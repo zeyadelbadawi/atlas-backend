@@ -30,6 +30,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AssignmentsService } from '../services/assignments.service';
 import { SaveAssignmentDraftDto } from '../dto/save-assignment-draft.dto';
 import type { SubmissionAttachmentUploadResponse } from '../services/assignments.service';
@@ -56,6 +57,9 @@ export class AssignmentsController {
 
   /** Phase 4 — every status (draft + published), author-only. Declared before `:assignmentId` — see this class's own doc comment. */
   @Get(':id/assignments/authoring')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async getAssignmentsForAuthoring(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -68,6 +72,9 @@ export class AssignmentsController {
 
   /** Phase 4 — create an assignment. */
   @Post(':id/assignments')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async createAssignment(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -95,6 +102,9 @@ export class AssignmentsController {
 
   /** Phase 4 — the authoring counterpart of `getAssignment` (any status). Author-only. */
   @Get(':id/assignments/:assignmentId/authoring')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async getAssignmentForAuthoring(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -109,6 +119,9 @@ export class AssignmentsController {
 
   /** Phase 4 — update an assignment. */
   @Patch(':id/assignments/:assignmentId')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async updateAssignment(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -125,6 +138,9 @@ export class AssignmentsController {
 
   /** Phase 4 — real SQL DELETE, cascades to submissions. */
   @Delete(':id/assignments/:assignmentId')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   @HttpCode(204)
   async deleteAssignment(
     @Req() request: Request,

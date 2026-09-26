@@ -247,7 +247,13 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
     const learner = await registerLearner('join-learner', first.academy.id);
 
     const session = await signInLearner(learner.email, second.academy.id);
-    expect(session.body.user.academies).toHaveLength(2);
+    // Launch Stabilization A5 — an academy session is told only about the
+    // academy it was minted for; the account now belongs to both.
+    expect(session.body.user.academies).toHaveLength(1);
+    expect(session.body.user.academies[0].academyId).toBe(second.academy.id);
+    expect(await admin.academyStudent.count({ where: { userId: session.userId } })).toBe(
+      2,
+    );
 
     const membership = await admin.academyStudent.findFirstOrThrow({
       where: { academyId: second.academy.id, userId: session.userId },

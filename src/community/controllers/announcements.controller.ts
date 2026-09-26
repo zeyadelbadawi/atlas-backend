@@ -21,6 +21,7 @@ import {
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AnnouncementsService } from '../services/announcements.service';
 import { CreateAnnouncementDto } from '../dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from '../dto/update-announcement.dto';
@@ -63,6 +64,9 @@ export class AnnouncementsController {
   }
 
   @Post('courses/:courseId/announcements')
+  // Launch Stabilization A1 (D1) — authoring is management work: an
+  // academy-website session must not reach it, whoever holds it.
+  @UseGuards(ManagementSurfaceGuard)
   async createAnnouncement(
     @Req() request: Request,
     @Param('courseId') courseId: string,
@@ -76,6 +80,9 @@ export class AnnouncementsController {
   }
 
   @Patch('courses/:courseId/announcements/:id')
+  // Launch Stabilization A1 (D1) — authoring is management work: an
+  // academy-website session must not reach it, whoever holds it.
+  @UseGuards(ManagementSurfaceGuard)
   async updateAnnouncement(
     @Req() request: Request,
     @Param('courseId') courseId: string,
@@ -91,6 +98,9 @@ export class AnnouncementsController {
   }
 
   @Post('courses/:courseId/announcements/:id/publish')
+  // Launch Stabilization A1 (D1) — authoring is management work: an
+  // academy-website session must not reach it, whoever holds it.
+  @UseGuards(ManagementSurfaceGuard)
   async publishAnnouncement(
     @Req() request: Request,
     @Param('courseId') courseId: string,
@@ -104,6 +114,9 @@ export class AnnouncementsController {
   }
 
   @Post('courses/:courseId/announcements/:id/archive')
+  // Launch Stabilization A1 (D1) — authoring is management work: an
+  // academy-website session must not reach it, whoever holds it.
+  @UseGuards(ManagementSurfaceGuard)
   async archiveAnnouncement(
     @Req() request: Request,
     @Param('courseId') courseId: string,
@@ -138,6 +151,9 @@ export class AnnouncementsController {
   }
 
   @Post('academies/:academyId/announcements')
+  // Launch Stabilization A1 (D1) — authoring is management work: an
+  // academy-website session must not reach it, whoever holds it.
+  @UseGuards(ManagementSurfaceGuard)
   async createAcademyAnnouncement(
     @Req() request: Request,
     @Param('academyId') academyId: string,
@@ -151,6 +167,9 @@ export class AnnouncementsController {
   }
 
   @Patch('academies/:academyId/announcements/:id')
+  // Launch Stabilization A1 (D1) — authoring is management work: an
+  // academy-website session must not reach it, whoever holds it.
+  @UseGuards(ManagementSurfaceGuard)
   async updateAcademyAnnouncement(
     @Req() request: Request,
     @Param('academyId') academyId: string,
@@ -166,6 +185,9 @@ export class AnnouncementsController {
   }
 
   @Post('academies/:academyId/announcements/:id/publish')
+  // Launch Stabilization A1 (D1) — authoring is management work: an
+  // academy-website session must not reach it, whoever holds it.
+  @UseGuards(ManagementSurfaceGuard)
   async publishAcademyAnnouncement(
     @Req() request: Request,
     @Param('academyId') academyId: string,
@@ -179,6 +201,9 @@ export class AnnouncementsController {
   }
 
   @Post('academies/:academyId/announcements/:id/archive')
+  // Launch Stabilization A1 (D1) — authoring is management work: an
+  // academy-website session must not reach it, whoever holds it.
+  @UseGuards(ManagementSurfaceGuard)
   async archiveAcademyAnnouncement(
     @Req() request: Request,
     @Param('academyId') academyId: string,

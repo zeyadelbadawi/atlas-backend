@@ -26,9 +26,12 @@ export class AddAcademyManagerDto {
   @MinLength(2)
   readonly name?: string;
 
-  /** Required only when creating a brand-new account (no existing user for `email`). */
+  /**
+   * Launch Stabilization A2 (D2) — DEPRECATED and ignored. A brand-new
+   * account is created `invited` (from `email` + `name`) and its owner sets
+   * their own password through the emailed setup link.
+   */
   @IsOptional()
   @IsString()
-  @MinLength(8)
   readonly password?: string;
 }

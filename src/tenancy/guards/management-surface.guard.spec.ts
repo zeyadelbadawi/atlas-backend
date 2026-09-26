@@ -15,9 +15,12 @@ import type { PrincipalResolverService } from '../services/principal-resolver.se
 import type { PrincipalKind } from '../services/principal-resolver.service';
 import type { SurfaceEnforcementConfig } from '../../config/configuration';
 
-function contextFor(userId?: string) {
+function contextFor(
+  userId?: string,
+  surface: 'management' | 'academy' | null = 'management',
+) {
   const request: Record<string, unknown> = userId
-    ? { authContext: { userId }, method: 'GET', path: '/academies' }
+    ? { authContext: { userId, surface }, method: 'GET', path: '/academies' }
     : {};
   return {
     context: {
@@ -82,6 +85,39 @@ describe('ManagementSurfaceGuard', () => {
     const { context } = contextFor('user-1');
     await expect(guard.canActivate(context)).rejects.toMatchObject({
       response: { messageKey: 'errors.auth.managementSurfaceOnly' },
+    });
+  });
+
+  describe('Launch Stabilization A1 — the session surface (D1)', () => {
+    it('refuses a session minted on an academy website, whoever the person is', async () => {
+      for (const kind of ['staff', 'platform_owner', 'unaffiliated', 'learner'] as const) {
+        const resolver = resolverFor(kind);
+        const guard = new ManagementSurfaceGuard(resolver, FULLY_ON);
+        await expect(
+          guard.canActivate(contextFor('user-1', 'academy').context),
+        ).rejects.toMatchObject({
+          response: { messageKey: 'errors.auth.managementSurfaceOnly' },
+        });
+        // Decided before the principal is even resolved.
+        expect(resolver.forRequest).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses a session with no surface record (fail-closed)', async () => {
+      const guard = new ManagementSurfaceGuard(resolverFor('staff'), FULLY_ON);
+      await expect(guard.canActivate(contextFor('user-1', null).context)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('is not relaxed by the surface.enforce rollout flag', async () => {
+      const guard = new ManagementSurfaceGuard(
+        resolverFor('staff'),
+        enforcement({ mode: 'off', academyIds: [] }),
+      );
+      await expect(
+        guard.canActivate(contextFor('user-1', 'academy').context),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 

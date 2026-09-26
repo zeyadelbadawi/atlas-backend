@@ -82,6 +82,20 @@ export class SessionRevocationService {
   }
 
   /**
+   * Launch Stabilization A3 (D3) — ends EVERY session a user holds, on the
+   * very next request: revokes the refresh rows (durable record) and then
+   * denylists each session id so access tokens already issued stop working
+   * immediately instead of living out their 15 minutes. For credential
+   * changes (password reset / change), where any existing session may
+   * belong to whoever knew the old password.
+   */
+  async revokeAllSessionsForUser(userId: string): Promise<number> {
+    const sessionIds = await this.refreshTokensRepository.revokeAllForUser(userId);
+    await Promise.all(sessionIds.map((sessionId) => this.markRevoked(sessionId)));
+    return sessionIds.length;
+  }
+
+  /**
    * Whether this session must be refused. Redis first (one O(1) lookup on
    * the hot path); on any Redis error, the database — see this class's
    * own FAILURE BEHAVIOUR note for why neither fail-open nor global

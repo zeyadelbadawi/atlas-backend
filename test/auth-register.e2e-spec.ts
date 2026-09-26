@@ -48,8 +48,10 @@ describe('POST /auth/register (e2e)', () => {
       .send({ name: 'Ada Lovelace', email, password: 'correct-horse-battery' })
       .expect(201);
 
-    // No tokens, no user object — matches `authenticationService.register(): Promise<void>`.
-    expect(response.body).toEqual({});
+    // No tokens, no user object — only which kind of account the email now
+    // names (Launch Stabilization A4: `new` here; `existing` when an
+    // existing account joined an academy through its sign-up).
+    expect(response.body).toEqual({ account: 'new' });
 
     const user = await prisma.user.findUnique({ where: { email } });
     expect(user).not.toBeNull();

@@ -106,6 +106,13 @@ export interface EmailOtpResendResult {
 }
 
 /** What a verified challenge authorises the caller to mint a session for. */
+/** Launch Stabilization A6 — where an emailed code is being completed. */
+export interface ChallengeContextExpectation {
+  readonly surface: SignInSurface;
+  /** Required when `surface` is `academy`. */
+  readonly academyId?: string;
+}
+
 export interface EmailOtpVerified {
   readonly userId: string;
   /** Read from the challenge row, never from the request body. */
@@ -169,6 +176,8 @@ export class EmailOtpService {
   async isRequired(input: {
     readonly userId: string;
     readonly surface: SignInSurface;
+    /** Launch Stabilization A6 — the academy an academy-surface sign-in is for; trust is per academy. */
+    readonly academyId?: string;
     readonly trustCookie?: string;
   }): Promise<boolean> {
     const policy = this.policyFor(input.surface);
@@ -182,6 +191,7 @@ export class EmailOtpService {
     return !(await this.trustedDeviceService.isTrusted({
       userId: input.userId,
       surface: input.surface,
+      academyId: input.academyId,
       cookieValue: input.trustCookie,
     }));
   }
@@ -420,6 +430,16 @@ export class EmailOtpService {
     challengeId: string,
     code: string,
     context?: OtpRequestContext,
+    /**
+     * Launch Stabilization A6 — the authentication context the request is
+     * being completed in, derived by the caller from the request HOST (never
+     * the body). A challenge issued for another context (Academy A's code on
+     * Academy B's website, an academy code on the management host) is
+     * answered exactly like a wrong code — an attempt is spent and nothing
+     * about the other context is disclosed. `null` = no constraint (local
+     * development hosts carry no context).
+     */
+    expected: ChallengeContextExpectation | null = null,
   ): Promise<EmailOtpVerified> {
     const settings = this.settings;
     const reference = this.cipher.openChallengeRef(challengeId);
@@ -487,12 +507,16 @@ export class EmailOtpService {
           return { kind: 'expired' };
         }
 
+        const contextMatches =
+          !expected ||
+          (row.surface === expected.surface &&
+            (expected.surface !== 'academy' || row.academy_id === expected.academyId));
         const candidate = this.cipher.hashCode({
           challengeRowId: row.id,
           salt: row.salt,
           code,
         });
-        if (!this.cipher.digestsEqual(candidate, row.code_hash)) {
+        if (!contextMatches || !this.cipher.digestsEqual(candidate, row.code_hash)) {
           const attemptsRemaining = Math.max(0, settings.maxAttempts - row.attempts);
           // The last wrong guess destroys the challenge in the same
           // transaction, so "0 attempts left" is a fact about the server's
@@ -509,7 +533,7 @@ export class EmailOtpService {
             context: {
               surface: row.surface,
               challengeId: row.id,
-              reason: 'invalid_code',
+              reason: contextMatches ? 'invalid_code' : 'context_mismatch',
               attemptsRemaining,
               ipAddress: context?.ipAddress ?? null,
             },

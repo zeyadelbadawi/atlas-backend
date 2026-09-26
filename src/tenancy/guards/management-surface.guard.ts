@@ -45,6 +45,16 @@ export class ManagementSurfaceGuard implements CanActivate {
       throw new ForbiddenException({ messageKey: 'errors.auth.managementSurfaceOnly' });
     }
 
+    // Launch Stabilization A1 (D1) — the SESSION must have been minted on
+    // the management surface. A token issued by an academy website is
+    // refused here whatever the person behind it may manage elsewhere:
+    // academy origins are tenant-operated, and their tokens must never act
+    // as management credentials. Fail-closed: an unknown surface (no
+    // session record) is refused too.
+    if (request.authContext?.surface !== 'management') {
+      throw new ForbiddenException({ messageKey: 'errors.auth.managementSurfaceOnly' });
+    }
+
     const principal = await this.principalResolver.forRequest(request, userId);
     if (principal.kind === 'learner') {
       if (this.surfaceEnforcement.isEnforcedFor(principal)) {

@@ -5,7 +5,7 @@
  */
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { UsersRepository } from '../repositories/users.repository';
-import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
+import { SessionRevocationService } from './session-revocation.service';
 import { PasswordHasherService } from './password-hasher.service';
 import { toCurrentUser } from '../dto/contracts';
 import type { CurrentUserResponse, UserPreferences } from '../dto/contracts';
@@ -22,7 +22,7 @@ import type { Principal } from '../../tenancy/services/principal-resolver.servic
 export class UsersService {
   constructor(
     private readonly usersRepository: UsersRepository,
-    private readonly refreshTokensRepository: RefreshTokensRepository,
+    private readonly sessionRevocationService: SessionRevocationService,
     private readonly passwordHasher: PasswordHasherService,
     private readonly userOrganizationsService: UserOrganizationsService,
     private readonly tenancyContextService: TenancyContextService,
@@ -118,7 +118,9 @@ export class UsersService {
 
     const newHash = await this.passwordHasher.hash(newPassword);
     await this.usersRepository.updatePasswordHash(userId, newHash);
-    await this.refreshTokensRepository.revokeAllForUser(userId);
+    // Launch Stabilization A3 (D3) — refresh rows AND live access tokens,
+    // including this one: the old password may be in someone else's hands.
+    await this.sessionRevocationService.revokeAllSessionsForUser(userId);
     // P64 Communications C4 (§12) — trust is revoked by a password change
     // for the same reason every session is: a browser that could still
     // skip the emailed code would keep whoever knew the OLD password a

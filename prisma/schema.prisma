@@ -5148,6 +5148,11 @@ model TrustedDevice {
   userId     String    @map("user_id")
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   surface    String
+  /// Launch Stabilization A6 — the academy an `academy`-surface trust was
+  /// earned on. A trust never skips the emailed code for another academy
+  /// or for management. Null for management trust, and for academy rows
+  /// recorded before this column (which therefore no longer match).
+  academyId  String?   @map("academy_id")
   tokenHash  String    @unique @map("token_hash")
   label      String
   userAgent  String?   @map("user_agent")
@@ -5157,6 +5162,7 @@ model TrustedDevice {
   createdAt  DateTime  @default(now()) @map("created_at")
 
   @@index([userId, revokedAt])
+  @@index([userId, surface, academyId, revokedAt])
   @@index([expiresAt])
   @@map("trusted_devices")
 }

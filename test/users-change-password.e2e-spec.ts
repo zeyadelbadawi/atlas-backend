@@ -17,7 +17,7 @@ describe('POST /users/me/password (e2e)', () => {
     await app.close();
   });
 
-  it('changes the password and revokes existing sessions, keeping the current access token usable', async () => {
+  it('changes the password and ends every session, including the one that made the change', async () => {
     const email = uniqueTestEmail('changepw');
     const oldPassword = 'correct-horse-battery';
     const newPassword = 'staple-battery-donkey-2';
@@ -55,13 +55,14 @@ describe('POST /users/me/password (e2e)', () => {
       .send({ refreshToken: signIn.body.refreshToken })
       .expect(401);
 
-    // ...but the still-short-lived access token used to *make* the change
-    // keeps working until its own natural expiry — matches "issue no
-    // automatic new session," not "invalidate the current request."
+    // ...and so is its access token, immediately (Launch Stabilization A3):
+    // every session ends, including the one that made the change — the same
+    // rule a password reset follows. The user signs in again with the new
+    // password; no replacement session is issued automatically.
     await request(app.getHttpServer())
       .get('/users/me')
       .set('Authorization', `Bearer ${signIn.body.accessToken}`)
-      .expect(200);
+      .expect(401);
   });
 
   it('rejects an incorrect current password and leaves the password unchanged', async () => {

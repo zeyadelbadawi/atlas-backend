@@ -13,6 +13,7 @@
  * what they cannot do is change which host the edge routed to, which is
  * why the host is the tenancy claim the content path trusts.
  */
+import { ForbiddenException } from '@nestjs/common';
 import type { Request } from 'express';
 import { readCookie } from '../../common/http/cookies.util';
 import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
@@ -31,4 +32,24 @@ export function learningRequestContext(request: Request): LearningRequestContext
     deviceCookie: readCookie(request.headers.cookie, DEVICE_COOKIE_NAME),
     userAgent: request.headers['user-agent'] ?? null,
   };
+}
+
+/**
+ * Launch Stabilization A1 — an academy-website session acts only for the
+ * academy it was minted for. The host decides which academy a learner
+ * endpoint serves; a token minted on Academy A presented to Academy B's
+ * host is refused rather than quietly serving B. Sessions minted on the
+ * management surface are left to the endpoint's own enrollment, staff and
+ * RLS checks (staff preview relies on them), and an unresolvable host
+ * (local development) has nothing to compare against.
+ */
+export function assertSessionServesHostAcademy(
+  request: Request,
+  hostAcademyId: string | null | undefined,
+): void {
+  const auth = request.authContext;
+  if (!auth || auth.surface !== 'academy' || !hostAcademyId) return;
+  if (auth.academyId !== hostAcademyId) {
+    throw new ForbiddenException({ messageKey: 'errors.auth.academyHostMismatch' });
+  }
 }

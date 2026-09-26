@@ -42,6 +42,15 @@ export class PlatformOwnerGuard implements CanActivate {
       throw new ForbiddenException({ messageKey: 'errors.forbidden' });
     }
 
+    // Launch Stabilization A1 (D1) — platform administration is reachable
+    // only from a session minted on the management surface, never from one
+    // minted on an academy website (a tenant-operated origin). Checked here,
+    // not only in `ManagementSurfaceGuard`, because not every Platform
+    // Owner route carries that guard.
+    if (request.authContext?.surface !== 'management') {
+      throw new ForbiddenException({ messageKey: 'errors.forbidden' });
+    }
+
     const user = await this.usersRepository.findById(userId);
     if (!user?.isPlatformOwner) {
       throw new ForbiddenException({ messageKey: 'errors.forbidden' });

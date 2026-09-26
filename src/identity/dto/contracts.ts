@@ -195,3 +195,41 @@ export function toCurrentUser(
     lastSignInAt: user.lastSignInAt?.toISOString(),
   };
 }
+
+/**
+ * Launch Stabilization A5 — `CurrentUser` as an ACADEMY-WEBSITE session may
+ * see it.
+ *
+ * One Atlas identity can learn at several academies and also manage or own
+ * organizations elsewhere. An academy website is a tenant-operated origin,
+ * so what it receives about the signed-in person is limited to that
+ * academy: its own learner-membership entry, and nothing about other
+ * academies, organizations, roles or platform permissions. Authorization is
+ * unaffected — every capability is still re-derived server-side per
+ * request; this only narrows what the response discloses.
+ */
+export function scopeCurrentUserToAcademySession(
+  user: CurrentUserResponse,
+  academyId: string | null,
+): CurrentUserResponse {
+  return {
+    ...user,
+    principalKind: 'learner',
+    academies: user.academies.filter((academy) => academy.academyId === academyId),
+    managementSurfaceEnforced: true,
+    roles: [],
+    permissions: BASE_USER_PERMISSIONS,
+    organizations: [],
+    organizationMemberships: [],
+  };
+}
+
+/** Applies {@link scopeCurrentUserToAcademySession} when the session was minted on an academy website; returns `user` unchanged otherwise. */
+export function scopeCurrentUserToSession(
+  user: CurrentUserResponse,
+  session: { readonly surface: string | null; readonly academyId: string | null },
+): CurrentUserResponse {
+  return session.surface === 'academy'
+    ? scopeCurrentUserToAcademySession(user, session.academyId)
+    : user;
+}

@@ -126,6 +126,7 @@ const EXPECTED_DEDUPE: Record<
 
   // --- Account security (P1/P17) — every one of these must fire every time.
   'auth.password.changed': { values: {}, expected: null },
+  'account.academy.joined': { values: { academyName: 'A' }, expected: null },
   // P64 C4 — a resend MUST produce a second email, so this one can never
   // carry a dedupe key; the `values` are what the OTP template renders.
   'auth.email.otp': { values: { code: '123456', expiresInMinutes: 10 }, expected: null },
@@ -442,6 +443,7 @@ const NEVER_DEDUPED_KEYS: readonly CommunicationEventKey[] = [
   'academy.member.invited',
   'academy.learner.invited',
   'auth.password.changed',
+  'account.academy.joined',
   'auth.email.otp',
   'auth.email.verification',
   'auth.password.reset',

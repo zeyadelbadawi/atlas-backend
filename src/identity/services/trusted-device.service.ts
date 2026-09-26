@@ -115,6 +115,8 @@ export class TrustedDeviceService {
   async isTrusted(input: {
     readonly userId: string;
     readonly surface: SignInSurface;
+    /** Launch Stabilization A6 — required on the academy surface: trust is per academy. */
+    readonly academyId?: string;
     readonly cookieValue?: string;
   }): Promise<boolean> {
     const row = await this.findLiveDevice(input);
@@ -135,6 +137,8 @@ export class TrustedDeviceService {
   async trust(input: {
     readonly userId: string;
     readonly surface: SignInSurface;
+    /** Launch Stabilization A6 — the academy this browser is trusted for (academy surface only). */
+    readonly academyId?: string;
     readonly userAgent?: string;
     readonly previousCookieValue?: string;
   }): Promise<MintedTrust> {
@@ -158,6 +162,9 @@ export class TrustedDeviceService {
           data: {
             userId: input.userId,
             surface: input.surface,
+            // Launch Stabilization A6 — a trust earned on Academy A's website
+            // never skips the code on Academy B's (or on management).
+            academyId: input.surface === 'academy' ? (input.academyId ?? null) : null,
             tokenHash,
             // NOT NULL in the schema; the frontend renders its own
             // "Unknown device" when this is empty, so an unparseable
@@ -177,6 +184,9 @@ export class TrustedDeviceService {
           action: 'auth.device.trusted',
           targetType: 'trusted_device',
           targetId: created.id,
+          ...(input.surface === 'academy' && input.academyId
+            ? { academyId: input.academyId }
+            : {}),
           context: {
             surface: input.surface,
             trustDays: days,
@@ -309,10 +319,17 @@ export class TrustedDeviceService {
   private async findLiveDevice(input: {
     readonly userId: string;
     readonly surface: SignInSurface;
+    readonly academyId?: string;
     readonly cookieValue?: string;
   }): Promise<TrustedDevice | null> {
     const tokenHash = this.safeHash(input.cookieValue);
     if (!tokenHash) return null;
+    // Launch Stabilization A6 — academy trust is per academy, and fails
+    // closed: an academy sign-in with no academy, or a row recorded before
+    // trust carried its academy, never matches (that browser is simply
+    // asked for a code once more).
+    if (input.surface === 'academy' && !input.academyId) return null;
+    const academyId = input.surface === 'academy' ? input.academyId! : null;
 
     try {
       return await this.tenancyContextService.runInUserContext(input.userId, (tx) =>
@@ -321,6 +338,7 @@ export class TrustedDeviceService {
             tokenHash,
             userId: input.userId,
             surface: input.surface,
+            academyId,
             revokedAt: null,
             expiresAt: { gt: new Date() },
           },

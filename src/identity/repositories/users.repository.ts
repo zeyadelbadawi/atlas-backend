@@ -5,7 +5,7 @@
  * decide business rules, repositories only talk to Postgres.
  */
 import { Injectable } from '@nestjs/common';
-import type { User } from '@prisma/client';
+import type { User, UserAccountStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { normalizeEmail } from '../utils/email.util';
 
@@ -13,6 +13,12 @@ export interface CreateUserInput {
   readonly email: string;
   readonly passwordHash: string;
   readonly name: string;
+  /**
+   * Launch Stabilization A2 (D2) — `invited` for an account somebody else
+   * created: it cannot sign in until its owner sets a password through the
+   * emailed setup link. Omitted = the schema default, `active`.
+   */
+  readonly status?: UserAccountStatus;
 }
 
 export interface UpdateProfileInput {
@@ -38,10 +44,9 @@ export class UsersRepository {
         email: normalizeEmail(input.email),
         passwordHash: input.passwordHash,
         name: input.name,
-        // `status` defaults to 'active' per the schema — matches the P1
-        // spec's "default status = active unless the existing frontend
-        // contract proves another value" (it doesn't; `invited` is a
-        // future admin-invitation flow with no P1 endpoint that creates it).
+        // `status` defaults to 'active' per the schema. Launch Stabilization
+        // A2 writes `invited` for staff-created accounts.
+        ...(input.status ? { status: input.status } : {}),
       },
     });
   }
@@ -64,6 +69,23 @@ export class UsersRepository {
   markEmailVerified(id: string, verifiedAt: Date): Promise<User> {
     return this.prisma.user.update({
       where: { id },
+      data: { emailVerifiedAt: verifiedAt },
+    });
+  }
+
+  /**
+   * Launch Stabilization A2 (D2) — the owner of an `invited` account has
+   * just set their own password through the emailed setup/reset link: the
+   * account becomes usable, and the address is proven (the link was
+   * delivered to it). A no-op for any other status.
+   */
+  async completeInvitation(id: string, verifiedAt: Date): Promise<void> {
+    await this.prisma.user.updateMany({
+      where: { id, status: 'invited' },
+      data: { status: 'active' },
+    });
+    await this.prisma.user.updateMany({
+      where: { id, emailVerifiedAt: null },
       data: { emailVerifiedAt: verifiedAt },
     });
   }

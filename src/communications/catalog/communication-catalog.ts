@@ -385,6 +385,29 @@ const CATALOG = {
     // state someone is in when this email is the one that matters.
     actionUrl: () => FORGOT_PASSWORD_PATH,
   },
+  /**
+   * Launch Stabilization A4 — an existing Atlas account used its own
+   * password to join another academy through that academy's signup page.
+   * A security notice, like `auth.password.changed`: if a leaked password
+   * was used to attach the account somewhere, the owner hears about it and
+   * has a way out (the CTA is the signed-out recovery page).
+   */
+  'account.academy.joined': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'account.academy.joined',
+    titleKey: 'notifications:events.academyJoined.title',
+    messageKey: 'notifications:events.academyJoined.message',
+    actionUrl: () => FORGOT_PASSWORD_PATH,
+  },
   'auth.email.verification': {
     category: 'security',
     audience: 'platform',

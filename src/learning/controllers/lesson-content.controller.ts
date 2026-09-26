@@ -41,7 +41,10 @@ import { LessonContentService } from '../services/lesson-content.service';
 import { CourseSequenceService } from '../services/course-sequence.service';
 import { PlaybackService } from '../services/playback.service';
 import { CourseProgressService } from '../services/course-progress.service';
-import { learningRequestContext } from '../dto/learning-request.util';
+import {
+  assertSessionServesHostAcademy,
+  learningRequestContext,
+} from '../dto/learning-request.util';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { PlaybackHeartbeatDto, ReleaseLeaseDto } from '../dto/playback.dto';
 import type { LessonContentGrantResponse } from '../dto/lesson-content.contract';
@@ -72,6 +75,7 @@ export class LessonContentController {
     const hostAcademyId = await this.academySurfaceService.resolveHostAcademyId(
       request.hostname,
     );
+    assertSessionServesHostAcademy(request, hostAcademyId);
     return this.lessonContentService.getContent(courseId, lessonId, {
       ...learningRequestContext(request),
       hostAcademyId,
@@ -106,6 +110,7 @@ export class LessonContentController {
     const hostAcademyId = await this.academySurfaceService.resolveHostAcademyId(
       request.hostname,
     );
+    assertSessionServesHostAcademy(request, hostAcademyId);
     const grant = await this.lessonContentService.getContent(courseId, lessonId, {
       ...learningRequestContext(request),
       hostAcademyId,
