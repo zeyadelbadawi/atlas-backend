@@ -108,8 +108,13 @@ if [ "$SYNTHETIC_MINUTES" -gt 0 ]; then
   exp=$(date -u -d "+${SYNTHETIC_MINUTES} min" +%Y-%m-%dT%H:%M:%S.000Z)
   record="{\"armedAt\":\"$now\",\"expiresAt\":\"$exp\",\"armedBy\":\"ops-verify-workflow\"}"
   # AUTH goes over stdin, never argv.
-  out=$(printf 'AUTH %s\nSET atlas:observability:synthetic-alert %s PX %d\n' "$REDIS_PASSWORD" "$record" $((SYNTHETIC_MINUTES * 60000)) | dc exec -T redis redis-cli 2>/dev/null | tail -1)
-  if [ "$out" = "OK" ]; then pass "synthetic alert armed at $now"; else fail "could not arm synthetic alert"; fi
+  # The JSON is single-quoted: redis-cli treats a bare `"` inside an
+  # argument as the start of a quoted string and rejects the command.
+  out=$(printf "AUTH %s\nSET atlas:observability:synthetic-alert '%s' PX %d\n" "$REDIS_PASSWORD" "$record" $((SYNTHETIC_MINUTES * 60000)) | dc exec -T redis redis-cli 2>/dev/null | tail -1)
+  if [ "$out" = "OK" ]; then pass "synthetic alert armed at $now"; else
+    fail "could not arm synthetic alert (redis-cli: ${out:-no reply}) — skipping the delivery checks"
+    echo "== Result: $FAILS failure(s)"; exit 1
+  fi
   wait_for 240 "Prometheus: AtlasSyntheticAlert firing" prom_firing
   wait_for 120 "Alertmanager: AtlasSyntheticAlert active" am_active
   wait_for 180 "Slack: FIRING notification accepted by Slack (successful request count increased)" sent_more_than "$SENT0"
