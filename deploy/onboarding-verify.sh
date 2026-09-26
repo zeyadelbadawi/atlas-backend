@@ -139,6 +139,13 @@ if [ "$orgs" = "0" ]; then pass "no organization was created by any probe"; else
 redemptions=$(sql "select count(*) from trial_redemptions where redeemed_at > now() - interval '5 minutes'" 2>/dev/null || echo "?")
 info "trial redemptions in the last 5 minutes: $redemptions"
 
+echo "== Paid recovery path (trial already used)"
+# Checkout for a no_plan organization offers the ENABLED rows of Atlas's own
+# payment-method catalog. Keys/types/providers only — never instructions.
+methods=$(sql "select coalesce(string_agg(key || ':' || type || ':' || provider, ',' order by display_order), '-') from payment_methods where enabled")
+info "enabled payment methods: $methods (disabled: $(sql "select count(*) from payment_methods where not enabled"))"
+if [ "$methods" != "-" ]; then pass "checkout has at least one enabled payment method"; else fail "no enabled payment method — a trial-already-used customer cannot pay (paid recovery dead end)"; fi
+
 echo "== Metrics"
 series=$(docker compose exec -T prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=atlas_signup_total' 2>/dev/null | json "d.data.result.map(r=>r.metric.mode+'/'+r.metric.outcome+'='+r.value[1]).join(' ')||'no series yet (scraped every 30s)'" 2>/dev/null)
 info "atlas_signup_total: ${series:-prometheus unavailable}"
