@@ -1,0 +1,40 @@
+name: Onboarding verify
+
+# Read-only production check of New Customer Onboarding
+# (docs/NEW_CUSTOMER_ONBOARDING.md): the migration, the owner-only definer
+# function and its grants, the signup flag as the backend sees it,
+# GET /public/signup-options, and a register probe the server refuses
+# before any write. Runs on the VPS over the same restricted `deploy` SSH
+# identity as Deploy and prints PASS/FAIL lines and non-secret facts only
+# (see deploy/onboarding-verify.sh).
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: onboarding-verify
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run checks on the VPS
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Same stdin-to-temp-file pattern as observability-verify.yml.
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+            < deploy/onboarding-verify.sh
