@@ -855,6 +855,7 @@ Nine steps, in this order. Nothing below has been run; each needs explicit autho
 | DL-40 | 2026-09-23 | **Phase 4 explicitly authorized to START despite two open pre-Phase-4 stabilization / Phase 3 blockers** (owner instruction, 23 Sep). Phase 3 is **NOT** closed and these two blockers are **not** deleted, hidden, downgraded or reinterpreted (see the "Pre-Phase-4 Stabilization — SECOND PASS" record): **(1) Quiz B/C/D** — the `quizEngineV2`/`quizIntegrity` flags are now `on` and synced to production and the engine is e2e-verified (32 assessment tests) + Phase-3 canary real-attempt evidence + owner-config real-browser-verified, but the **non-canary real learner-session Chrome check** (a learner watching the countdown / triggering integrity) is blocked because the learner portal is a separate origin needing a password sign-in, which the safety rules forbid me to perform (a person must). Confirmed 23 Sep: owner self-enrol returns 403, so owner-as-learner is not a substitute. **(2) Issue E hosted-video E2E** — root cause understood (a frontend gap: the dashboard uses the base64 media path which rejects video, while the backend R2/Stream direct-upload flow exists but is never called; a Growth trial IS entitled to the normal tier; backend 500→`videoNotEnabled` mapping bug fixed and deployed), but genuine production end-to-end verification needs the video infrastructure that is not set: `FLAG_VIDEO_NORMAL_MODE` (+ `FLAG_VIDEO_NORMAL_ACADEMY_IDS` or `on`) and the provider delivery config `BASIC_VIDEO_DELIVERY_HOST` + `BASIC_VIDEO_SIGNING_SECRET`. **Relationship to Phase 4:** the Phase 4 CORE (catalog, course details, preview, checkout, reviews/recommendations, hardening, observability) does **not** hard-depend on either blocker and proceeds now; the parts that DO depend on them stay gated — §T's `video.normal`/`video.premium` global rollout waits on blocker (2)'s infra, and the full-journey Playwright J1 / production learner-journey Chrome step (which includes a learner taking a timed quiz and playing protected video) inherits blocker (1)'s learner-session constraint and blocker (2)'s video infra. Phase 4 is therefore run to completion on the independent scope; the two dependent rollout/verification steps remain explicitly open until the owner clears the blockers. All Phase 4 quality gates (production engineering standard, RLS/tenancy, tests, migrations via the approved workflow, real-Chrome verification of what is reachable) stay in force. | Approved (owner) — Phase 4 authorized; Phase 3 remains open |
 | DL-41 | 2026-09-23 | **Multi-agent orchestration for the remaining Phase 4 work** (owner instruction). The lead session is the SINGLE orchestration, integration and deployment authority; sub-agents are isolated implementation workers only. Mechanics: each worker runs in its own git worktree on its own branch (backend `p4-obs-retention`, frontend `p4-catalog`) with the toolchain symlinked, a lead-defined file-ownership scope, and hard prohibitions — no push, no `gh`, no deploy, no migrations/schema, no auth/RLS/guard/tenancy/security changes, no Master Plan edits, no dependency changes, no unrelated refactors; anything outside scope is reported, not done. Decomposition chosen for zero cross-stream file overlap: Wave 1 = (a) backend observability metrics + `quiz_attempt_events` retention (extends the EXISTING metrics service and maintenance sweep — `content_access_log` retention and the `/metrics` infra already existed), (b) frontend public catalog section; the lead keeps the security-critical **owner reports** backend (RLS-sensitive) and all integration. Every worker result is audited by the lead (diff, ownership, tests, typecheck, security/RLS/tenancy impact) before anything reaches `main`; worker summaries are not evidence. Two-agent Wave 1 (not more) was a deliberate safety choice after the earlier rogue-fork incident; wider parallelism is reassessed after each integrated increment. | Approved (owner) — orchestration mode; lead is sole integrator/deployer |
 | DL-42 | 2026-09-24 | **Production product audit (owner-directed) — "backend capability is not product completion".** The owner opened the live academy site and found `/courses` basic. Audited in real Chrome against production with the available Client Owner session (org "German Lectrue", academy `ssfsdf3232`, site `https://ssfsdf3232.atlass.dpdns.org/`) and anonymous visits. **Root cause of `/courses`:** every academy's `courses` core page is seeded with one `featuredCourses{mode:'latest'}` section (`shared-support-pages.template.ts`); the Phase 4 `courseCatalog` section shipped as an opt-in builder block that no site ever received, and minimal-mode sites had an EMPTY Courses page. The page did call the new catalog API (`/courses?page=1&pageSize=9`) but through the featured block, which renders none of the new metadata. Classification: implemented in the Website Builder but not on `/courses` — a real Phase 4 gap against §E.1. **Fix:** template seeds `courseCatalog`; data migration `20261012000003` upgrades untouched seeded/empty Courses pages, leaves customised pages alone; list contract gains duration/preview/rating aggregates; cards upgraded. **Flags:** the plan's `catalog.v2`/`checkout.student` flags were never created, and the frontend has no dynamic flag contract at all (`PlatformProvider` documents this) — Phase 4 UI is ungated by construction. Decision: not retro-fitting flags for surfaces that are now production-verified; §S/§T's flag steps for these two are recorded as a deviation, not pending work. **Platform Owner IA:** checkout/approval/refusal/retention metrics existed only as Prometheus series; a video card on the dashboard was the sole UI. Decision: dedicated Analytics tabs (Commerce, Content delivery) with counts-only endpoints; the dashboard keeps a summary. **Limits recorded honestly:** no Platform Owner or learner session exists in the browser and passwords may not be typed, so Platform Owner pages and `/my/*` were audited from code + local real-Chrome journeys, not production. | Approved (owner instruction) — audit findings and fixes recorded here; evidence in the Phase 4 record |
+| DL-43 | 2026-09-26 | **New Customer Onboarding** (owner-approved revised plan, "GO" of 26 Sep). One-page signup (name, email, password, confirm, terms, organization name, server-provided trial plan) with ONE "Create account" that atomically creates user + organization + owner membership + subscription + trial when the mailbox is eligible; OTP unchanged; a server-derived, resumable onboarding shell (Plan → Academy → Branding → Website → First course → Summary). Decisions: (1) the ONLY persisted state is `organizations.onboarding_completed_at` (default `now()` so every existing and legacy-path organization counts as onboarded; signup inserts NULL); `onboardingPending` is computed (`owner AND completed_at IS NULL`), never stored; (2) `organizations` keeps NO UPDATE policy — the one write goes through the `SECURITY DEFINER` `complete_organization_onboarding`, which re-checks the owner membership and can only move NULL → now(); (3) Academy and Website are REQUIRED, Branding and First course RECOMMENDED; "Finish for now" is always allowed, "ready" wording only when required steps are complete, and the dashboard card keeps listing open items after either; (4) a trial-already-used mailbox gets no trial and goes through the EXISTING checkout → payment → proof → approval path, with "Back to setup" links and an "awaiting confirmation" state; both trial-abuse guards unchanged; (5) signup fields are never an authorization input — the plan is re-resolved server-side inside the transaction; (6) rollout behind `FLAG_SIGNUP_ORGANIZATION_MODE` (`off` default), rollback = flag off + backend redeploy; (7) the legacy localStorage wizard is deleted. Contract: `NEW_CUSTOMER_ONBOARDING.md`. | Approved (owner) — implemented and deployed; flag enable pending the owner |
 
 ## Implementation Change Log
 
@@ -892,6 +893,7 @@ Nine steps, in this order. Nothing below has been run; each needs explicit autho
 | 2026-09-23 | 4 | **Course reviews — public surface delivered.** Approved-reviews list + rating summary (mean + histogram) on `public/websites/:academyId/courses/:courseId/reviews` and `.../rating`, through `PublicWebsiteService` (serving-eligibility gated; course must be published+public; slug canonicalised). Visible-but-no-reviews → zeroed rating; draft/private → 404. Reviews module (authoring + moderation + public) now complete except in-academy recommendations. | Claude (Phase 4) | Backend `65421c3`; push-deploy success. e2e `p64-course-reviews.e2e-spec.ts` 13/13. Prod-verified on canary `60037b11…`: list 200 empty, rating 200 zeroed, unknown id 404. |
 | 2026-09-23 | 4 | **Course reviews — authenticated surface delivered.** Learner authoring (enrollment-gated, one per course+student, always `pending`, sanitized) and staff moderation (instructor/owner/administrator/manager list/approve/reject/remove) on `courses/:id/reviews*`, all under `runInUserContext` so the service guard and `course_reviews_*` RLS agree independently; scalar-FK inserts; cross-academy isolation. Public approved-list/rating/recommendations deferred to the next increment. | Claude (Phase 4) | Backend `ba099dd`; push-deploy `35838833679` success. e2e `test/p64-course-reviews.e2e-spec.ts` 10/10 (real Postgres+RLS). Prod: all review routes 401 (deployed+guarded). |
 | 2026-09-23 | 4 | **Phase 4 catalog foundation delivered (3 increments).** (1) Schema + migration `20261012000001_p64_phase4_catalog_reviews` — Course catalog columns, `CourseReview` model, level/review-status enums, `course_is_published_public` helper + 9 review RLS policies; also repaired a CI-breaking migration-ordering bug in the palette migration (verified by full `migrate reset` replay). (2) Public catalog v2 read path — level/language/price-range/ids filters, `price` sort, description-spanning search on `GET /public/websites/:academyId/courses`; new fields on `CourseResponse`. (3) Catalog authoring write path — create/update accept and persist level/language/outcomes/requirements/introVideoAssetId with bounds. All tenancy/RLS/server-side rules preserved; catalog stays published+public-scoped. | Claude (Phase 4) | Backend `de3e04f`→`1f5032c`. Migration applied via owner-approved run `35832583076`; push-deploys `35834744872`, `35836345426` success. e2e: catalog v2 8/8, course suite 46/46 (real Postgres + RLS). Prod-verified live on canary `60037b11…`: read contract + all filters (level/language/search/price-range/ids/price-sort) behave correctly on the real course; non-null-metadata-on-prod-course left honestly unverified (email-acceptability control blocks throwaway provisioning; write path e2e-proven instead). |
+| 2026-09-26 | Onboarding | **New Customer Onboarding deployed (flag off).** Backend `6f5de80` (atomic signup, signup options, onboarding status/complete APIs, computed `onboardingPending`, metrics), `7c38a6a` (e2e fixture cleanup), `9826b57` (`Onboarding verify` workflow); migration `20261017000000_onboarding_completed_at` applied through the owner-approved gated run 36239402027 (pre-migration backup taken). Frontend `0cb5d6d`/`0c0b553` (one-page signup, onboarding shell, dashboard setup card, legacy wizard removed) and `8a8dd56` (fixes from local browser journeys). Production `Onboarding verify` run 36242994451: all checks passed with the flag off (also the rollback verification). | Claude (lead) | DL-43; details and evidence in the "NEW CUSTOMER ONBOARDING" section and `NEW_CUSTOMER_ONBOARDING.md` §6–9 |
 
 ## Phase Completion Record requirements
 
@@ -1634,3 +1636,80 @@ it is pre-existing.
 ### Remaining
 
 None for Observability/Alerting.
+
+---
+
+# NEW CUSTOMER ONBOARDING — 26 September 2026
+
+## Status: DEPLOYED, FLAG OFF — awaiting the owner's flag enable and production browser journey
+
+Contract, rollout, evidence and limitations: `NEW_CUSTOMER_ONBOARDING.md`.
+Decision: DL-43. No secret value is recorded anywhere.
+
+### What was delivered
+
+- **One-page signup.** Name, email, password, confirm, terms, organization
+  name and the live, server-provided trial plan; ONE "Create account" that
+  creates user + organization + owner membership + subscription + trial in
+  one transaction. No organization-creation or plan-selection page after
+  signup. Sign-in and OTP are unchanged.
+- **Onboarding shell** (`/onboarding/:step`): Plan (only if not
+  trialing/active) → Academy → Branding → Website → First course →
+  Summary. Every step is derived on the server from the records that define
+  it, so it resumes across refresh, logout, browsers, devices and session
+  expiry. The only stored fact is `organizations.onboarding_completed_at`.
+- **Semantics.** Academy and Website are required; Branding and First
+  course are recommended. "Finish for now" works from every step; "Finish"
+  and the "ready" wording only when the required steps are complete. The
+  dashboard setup card keeps listing open items afterwards.
+- **Trial already used.** No second trial; the Plan step hands the owner to
+  the existing checkout → payment → proof → Platform Owner approval, with
+  "Back to setup", "awaiting confirmation", and the rejection reason plus a
+  resubmit action.
+- **APIs:** `GET /public/signup-options`; `POST /auth/register` extended
+  with `organizationName` / `planId`; `GET` and
+  `POST /organizations/:id/onboarding[/complete]` (owner only); computed
+  `onboardingPending` on every session payload.
+- **Observability:** `atlas_signup_total{mode,outcome}`,
+  `atlas_onboarding_completed_total{result}`; audit entries
+  `organization.created`, `subscription.trial.redeemed`,
+  `organization.onboarding.completed`; emails through the existing outbox.
+- **Migration:** `20261017000000_onboarding_completed_at` (column with
+  default `now()` + the owner-only `SECURITY DEFINER` completion function).
+- **Removed:** the legacy localStorage wizard;
+  `/dashboard/academy/:id/onboarding` redirects.
+
+### Production SHAs
+
+| Repo | SHA | Deploy |
+|---|---|---|
+| Backend | `9826b57` (feature `6f5de80`, `7c38a6a`) | Gated migration run 36239402027 (owner-approved), then push run 36242294781 — success |
+| Frontend | `8a8dd56` (feature `0cb5d6d` via `0c0b553`) | Run 36242299025 — success |
+
+### Verification evidence
+
+- **Production** (`Onboarding verify` run 36242994451, flag off): all
+  checks passed — migration applied, column default, 46 organizations with
+  0 pending, definer function granted to `atlas_app` only, no UPDATE policy
+  on `organizations`, signup options `organizationSignup=false` with the four
+  trial plans, and a register probe with organization fields refused with
+  `errors.auth.organizationSignupDisabled` and no row created. This is also
+  the flag-off rollback verification.
+- **Tests:** onboarding e2e (24 cases, now including instructor and
+  learner refusals), targeted backend regression 140/140 e2e + 451 unit,
+  frontend 1110/1110, frontend typecheck at the 34-error baseline; the only
+  full-e2e failures are the 4 pre-existing `p63-domain-operations` cases
+  (identical on `768d122`).
+- **Browser journeys** (local real stack, real OTP): the full lifecycle in
+  EN and AR, desktop and mobile; Finish for now + resume in a new browser;
+  trial already used through payment rejection and approval; existing owner
+  and manager not routed into onboarding. Seven UX defects found and fixed
+  before deploy (listed in `NEW_CUSTOMER_ONBOARDING.md` §7).
+
+### Remaining
+
+1. **Owner:** set the atlas-backend repository variable
+   `FLAG_SIGNUP_ORGANIZATION_MODE=on`, then redeploy the backend.
+2. Dispatch `Onboarding verify` with the flag on.
+3. **Owner:** the production browser journey with a real mailbox (this
+   environment cannot reach production).

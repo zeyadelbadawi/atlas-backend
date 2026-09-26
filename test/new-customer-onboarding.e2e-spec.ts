@@ -23,10 +23,12 @@ import {
   createAdminPrisma,
   seedAcademy,
   seedAcademyMember,
+  seedAcademyStudent,
   seedMembership,
   seedOrganizationWithOwner,
   seedPaymentMethod,
 } from './utils/db-admin';
+import { TrialPolicyRepository } from '../src/plans/repositories/trial-policy.repository';
 import { OrganizationSubscriptionBootstrapService } from '../src/plans/services/organization-subscription-bootstrap.service';
 import type { IdentityConfig } from '../src/config/configuration';
 import { Prisma } from '@prisma/client';
@@ -62,7 +64,9 @@ describe('New Customer Onboarding (e2e)', () => {
     identityConfig = app
       .get(ConfigService)
       .getOrThrow<IdentityConfig>('identity') as never;
-    const policy = await admin.trialPolicy.findFirstOrThrow();
+    // The singleton is created lazily (as the app does), so a fresh
+    // database works too.
+    const policy = await app.get(TrialPolicyRepository).findSingleton();
     originalPolicy = { enabled: policy.enabled, durationDays: policy.durationDays };
     trialPlan = await seedCatalogPlan('onb-trial', { trialEligible: true });
   });
@@ -766,7 +770,7 @@ describe('New Customer Onboarding (e2e)', () => {
 
   // -------------------------------------------------------------------------
   describe('authorization and tenant isolation (state G)', () => {
-    it("anonymous 401; manager 403; another organization's owner 403; forged completion only reaches your own organization", async () => {
+    it("anonymous 401; manager, instructor and learner 403; another organization's owner 403; forged completion only reaches your own organization", async () => {
       const { session: owner, organizationId } = await signupWithOrganization(
         uniqueTestEmail('onb-authz'),
       );
@@ -787,6 +791,35 @@ describe('New Customer Onboarding (e2e)', () => {
         role: 'manager',
         onboardingPending: false,
       });
+
+      // An instructor (organization member + academy instructor) and a
+      // learner (academy student, no organization membership) of the SAME
+      // organization are refused too: onboarding is the owner's alone.
+      const academy = await seedAcademy(admin, organizationId, 'onb-authz-academy');
+      const instructorEmail = uniqueTestEmail('onb-instructor');
+      await register({
+        name: 'Instructor',
+        email: instructorEmail,
+        password: PASSWORD,
+      }).expect(201);
+      const instructor = await signIn(instructorEmail);
+      await seedMembership(admin, organizationId, instructor.user.id, 'instructor');
+      await seedAcademyMember(admin, academy.id, instructor.user.id, 'instructor');
+      await getStatus(organizationId, instructor.accessToken).expect(403);
+      await complete(organizationId, instructor.accessToken, 'defer').expect(403);
+      expect((await signIn(instructorEmail)).user.organizations[0]).toMatchObject({
+        role: 'instructor',
+        onboardingPending: false,
+      });
+
+      const learnerEmail = uniqueTestEmail('onb-learner');
+      await register({ name: 'Learner', email: learnerEmail, password: PASSWORD }).expect(
+        201,
+      );
+      const learner = await signIn(learnerEmail);
+      await seedAcademyStudent(admin, academy.id, learner.user.id);
+      await getStatus(organizationId, learner.accessToken).expect(403);
+      await complete(organizationId, learner.accessToken, 'defer').expect(403);
 
       const { session: stranger } = await signupWithOrganization(
         uniqueTestEmail('onb-stranger'),

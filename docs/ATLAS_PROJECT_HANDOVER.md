@@ -241,6 +241,7 @@ Backend flags are env-driven, Zod-validated (**an invalid value fails startup**)
 | `FLAG_QUIZ_ENGINE_V2_MODE`, `FLAG_QUIZ_INTEGRITY_MODE` | promoted to `on` by the owner |
 | `contentProtected`, `videoNormal`, `videoPremium`, `devicesPolicy`, `learnerDashboardV2`, `playerV2`, `certificates` | `off` / allowlist |
 | `EMAIL_PROVIDERS` | `brevo` |
+| `FLAG_SIGNUP_ORGANIZATION_MODE` (`off` \| `on`) | **Unset → `off`** (26 Sep). New Customer Onboarding: `on` enables the one-page organization signup. Set by the owner as a repository variable; rollback = unset/`off` + backend redeploy. See `NEW_CUSTOMER_ONBOARDING.md` §6 |
 
 ⚠️ **The frontend flag system is inert and not wired to the backend's.**
 `PlatformProvider` resolves dynamic flags to `{}`; the only real client flags are the
@@ -259,6 +260,10 @@ static `src/config/feature-flags.config.ts`. Phase 4 UI is ungated by constructi
 - **Communications** (`docs/communications/COMMUNICATIONS_AND_LIFECYCLE_PLAN.md`):
   CLOSED.
 - **Active:** Account Deletion & Data Lifecycle (§8).
+- **Platform Owner Observability Center:** COMPLETE in production (26 Sep).
+- **New Customer Onboarding** (`docs/NEW_CUSTOMER_ONBOARDING.md`, DL-43): deployed
+  with migration `20261017000000`; flag off. Remaining: the owner enables the flag and
+  runs the production browser journey; then dispatch `Onboarding verify`.
 
 `MASTER_HANDOVER.md` (16 Sep) is the best narrative doc but its **numbers are stale**
 (it says 86 models / 90 migrations / 41 type errors; reality is 107 / 123 / 34). It
@@ -412,9 +417,9 @@ by that spec.
 
 | | Value |
 |---|---|
-| Frontend `main` | `4d512f0` — clean, deployed (run success) |
-| Backend `main` | `d868382` — clean, deployed (run success) |
-| Migrations | 123 |
+| Frontend `main` | `8a8dd56` — clean, deployed (run 36242299025 success) |
+| Backend `main` | `9826b57` + docs/test closeout — clean, deployed (run 36242294781 success) |
+| Migrations | 124 |
 | Production | `https://atlass.dpdns.org` — API healthy (`/api/v1/public/plans` → 200) |
 
 **Platform Owner identity — no credentials recorded.**

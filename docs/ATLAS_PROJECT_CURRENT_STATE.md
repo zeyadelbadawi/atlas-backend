@@ -9,11 +9,11 @@
 
 | | Value |
 |---|---|
-| Frontend `main` | **`4d512f031c4d67570187cbb8616e4a666dfaec98`** — working tree clean |
-| Backend `main` | **`d86838250a5ddc3cc2fd4d6e02d675b03a9744b0`** — working tree clean |
-| Frontend deployed | `4d512f0` — run success |
-| Backend deployed | `d868382` — run success |
-| Migrations | 123 |
+| Frontend `main` | **`8a8dd56`** — working tree clean |
+| Backend `main` | **`9826b57`** + the onboarding docs closeout (docs/test only) — working tree clean |
+| Frontend deployed | `8a8dd56` — run 36242299025 success |
+| Backend deployed | `9826b57` — run 36242294781 success |
+| Migrations | 124 (latest `20261017000000_onboarding_completed_at`, applied via the owner-approved gated run 36239402027) |
 | Production | `https://atlass.dpdns.org` |
 | Production health | `GET /api/v1/public/plans` → **200** |
 
@@ -31,6 +31,8 @@ Both repos are at their deployed SHA; nothing is pending deploy.
 | P64 phase 4 | Executed; two blockers open (DL-40) |
 | P64 Communications | **CLOSED in production** |
 | **Account Deletion & Data Lifecycle** | **ACTIVE — `PARTIAL`** |
+| Platform Owner Observability Center | **COMPLETE in production** (26 Sep) |
+| **New Customer Onboarding** | **DEPLOYED, flag `FLAG_SIGNUP_ORGANIZATION_MODE` unset (off)** — enable + production browser journey pending the owner (`NEW_CUSTOMER_ONBOARDING.md` §9) |
 
 ---
 

@@ -204,3 +204,139 @@ column.
 
 The legacy `localStorage` wizard (`useOnboardingProgress`) is deleted, and
 `/dashboard/academy/:id/onboarding` redirects.
+
+## 6. Rollout and rollback
+
+| Step | State (26 Sep 2026) |
+|---|---|
+| Backend code (`6f5de80`, `7c38a6a`, `9826b57`) on `main` | Deployed |
+| Migration `20261017000000_onboarding_completed_at` | Applied in production through the gated `apply_migrations` run, owner-approved (Deploy run 36239402027; pre-migration backup taken) |
+| Frontend (`0cb5d6d` merged as `0c0b553`, fixes `8a8dd56`) on `main` | Deployed (Deploy run 36242299025) |
+| `FLAG_SIGNUP_ORGANIZATION_MODE` | **Unset → `off`**. Customers see today's signup; no organization is pending onboarding |
+| Enable | The owner sets the atlas-backend repository variable `FLAG_SIGNUP_ORGANIZATION_MODE=on`, then redeploys the backend (any push to `main`, or a Deploy dispatch without migrations) |
+| Rollback | Set the variable to `off` (or delete it) and redeploy the backend. The frontend needs no change: it follows `GET /public/signup-options`. Organizations already created stay valid; their owners keep the onboarding shell until they finish or defer |
+
+The deploy action writes a `FLAG_*` line into `/opt/atlas/.env` only when
+the repository variable is non-empty, so an unset variable means the backend
+default (`off`).
+
+## 7. Verification
+
+### Production — `Onboarding verify`
+
+`Onboarding verify` (`.github/workflows/onboarding-verify.yml`,
+workflow_dispatch) runs `deploy/onboarding-verify.sh` on the VPS over the
+restricted deploy identity. It prints PASS/FAIL and non-secret facts only,
+and writes nothing: its one register request is a shape the server refuses
+before any write, and it then asserts that no user row exists for the probe
+address.
+
+Run 36242994451 (26 Sep 2026, flag unset → `off`): **all checks passed.**
+
+- Migration applied; `onboarding_completed_at` default `CURRENT_TIMESTAMP`.
+- 46 organizations, **0** pending onboarding (existing organizations count
+  as onboarded).
+- `complete_organization_onboarding` is `SECURITY DEFINER`; `EXECUTE` is
+  granted to `atlas_app`, not to PUBLIC; `organizations` still has no
+  UPDATE policy.
+- `GET /public/signup-options` → 200, `organizationSignup=false`,
+  `trialsEnabled=true`, trial plans `starter, growth, premium-starter,
+  premium-growth`.
+- `POST /auth/register` with `organizationName` → 400
+  `errors.auth.organizationSignupDisabled`, and no user row was created.
+
+This run is also the **flag-off rollback verification**: with the flag off,
+the organization fields are refused server-side and the signup options tell
+the frontend to render the legacy form.
+
+With the flag `on`, the same workflow checks `organizationSignup=true` and
+sends a register request with a random, non-existent plan id, which must be
+refused with `errors.auth.signupPlanUnavailable` and create no row.
+
+### Automated tests
+
+| Suite | Result |
+|---|---|
+| `test/new-customer-onboarding.e2e-spec.ts` | 24/24 |
+| Targeted backend regression (suites touching signup, organizations, plans, trials and billing) | 140/140 e2e, 451 unit |
+| Full backend e2e | All pass except `p63-domain-operations` (4 failures, identical on the pre-feature baseline `768d122`; pre-existing and unrelated) |
+| Frontend vitest | 1110/1110 |
+| Frontend typecheck | 34-error baseline, unchanged; none in touched files |
+| All 124 migrations on a fresh database | Apply cleanly, including the definer function and its grants |
+
+The onboarding e2e covers: signup options; the atomic happy path (user,
+organization with `onboarding_completed_at = NULL`, owner membership,
+trialing subscription, redemption, audit, outbox, `onboardingPending` on the
+session); legacy signup; every refusal with no rows written; trials
+disabled; flag off; the academy surface; five concurrent signups for one
+email (one 201, four 409); an injected failure rolling everything back; a
+plus-addressed trial-used mailbox getting `no_plan` and going through
+checkout → payment → proof → reject → approve; legacy organizations not
+pending; multiple organizations; completion semantics (finish refused while
+required steps are open, defer, idempotent single audit, finish once the
+academy and published website exist); trial expiry; authorization (manager, instructor, learner,
+other organization's owner → 403, anonymous → 401); and a direct RLS test of the
+definer function (non-owner, wrong organization context → refused).
+
+### Browser journeys (local real stack, real OTP)
+
+Chromium against a local backend with the flag `on` and OTP `new_device`;
+the OTP code was read from the local communications outbox.
+
+| Journey | Result |
+|---|---|
+| A. Start for Free → one-page signup → sign in → OTP → Academy → Branding → Website → First course → Summary "Your academy is ready" → Finish → Dashboard (EN, desktop) | Pass; database confirmed logo, published site, course, completion, trialing `premium-growth`, audit `mode: finish` |
+| Same journey, Arabic desktop | Pass: RTL, no overflow, no raw keys |
+| Same journey, EN mobile (390 px) and AR mobile | Pass after the mobile overflow fix |
+| Finish for now → "Setup incomplete — 1 required step left" → new browser → dashboard card → Continue setup resumes at Website → skip course → Finish | Pass |
+| Trial already used (plus-address) → Plan step → existing checkout → proof → Back to setup → awaiting confirmation → Platform Owner rejects (reason shown, "Submit a new payment") → resubmit → approve → wizard advances to Academy | 11/11; subscription `active: growth`, 0 redemptions |
+| Existing owner and manager are not routed into onboarding; manager is redirected away from `/onboarding` | Pass |
+
+Defects found by these journeys and fixed before deploy: provisioning wording
+on the Academy submit button; missing Required tag in the step rail; missing
+`no_plan` / `trial_expired` translations (raw key shown on checkout);
+`returnTo` not carried to the payment page; stale onboarding status after
+returning from checkout; horizontal page overflow of the shell on mobile;
+the mobile step rail not keeping the current step in view.
+
+### Security review
+
+- The signup fields are never an authorization input: the organization is
+  created for the user being registered, and the plan is re-resolved inside
+  the transaction (active, customer-facing, trial-eligible) — a forged or
+  ineligible id is refused before any write.
+- Both trial-abuse guards are unchanged and still decisive: the
+  once-per-mailbox claim (plus-address canonicalization) and the
+  per-organization conditional start.
+- Onboarding reads run in the owner's tenant + user RLS context; the only
+  write goes through the definer function, which re-checks the owner
+  membership and can only move NULL → now().
+- The onboarding API is owner-only (403 for other roles and other
+  organizations); no new UPDATE policy on `organizations`.
+- Emails go through the existing communications outbox; no new mail path,
+  no token in any response, log or document.
+
+## 8. Known limitations
+
+- **The flag is off in production.** Organization signup reaches customers
+  only after the owner sets the repository variable (§6).
+- **No production browser journey yet.** This environment cannot reach
+  production (network policy), and the journey needs a real mailbox for the
+  OTP. It must be run by the owner after enabling the flag.
+- On the payment details page, "Back to setup" is shown with the payment;
+  if the payment fails to load, the page shows the standard error state
+  without it (the owner can still use the dashboard setup card).
+- Hiding the dashboard card for recommended-only items is a per-device
+  preference, by design (§4).
+- `p63-domain-operations` e2e has 4 pre-existing failures unrelated to this
+  feature.
+
+## 9. Remaining work
+
+1. Owner: set `FLAG_SIGNUP_ORGANIZATION_MODE=on` (atlas-backend repository
+   variable) and redeploy the backend.
+2. Dispatch `Onboarding verify` and confirm `organizationSignup=true` and the
+   forged-plan refusal.
+3. Owner: run the production browser journey (Start for Free → signup →
+   OTP → onboarding → Finish → dashboard) with a real mailbox, including
+   one Arabic or mobile pass.

@@ -57,9 +57,11 @@ update_policies=$(sql "select count(*) from pg_policies where tablename='organiz
 info "UPDATE/ALL policies on organizations: $update_policies (the feature adds none)"
 
 echo "== Flag"
+# The deploy action writes a FLAG_* line only when the repository variable
+# is set, so an unset variable is ABSENT from .env (the backend default,
+# `off`, then applies) — reported as such, never as a value it does not have.
 FLAG=$(env_value FLAG_SIGNUP_ORGANIZATION_MODE)
-FLAG=${FLAG:-off}
-info "FLAG_SIGNUP_ORGANIZATION_MODE=$FLAG (.env)"
+info "FLAG_SIGNUP_ORGANIZATION_MODE in .env: ${FLAG:-<absent — repository variable unset, default off>}"
 runtime_flag=$(docker compose exec -T backend printenv FLAG_SIGNUP_ORGANIZATION_MODE 2>/dev/null || true)
 info "backend container sees FLAG_SIGNUP_ORGANIZATION_MODE=${runtime_flag:-<unset, default off>}"
 EFFECTIVE=${runtime_flag:-off}
