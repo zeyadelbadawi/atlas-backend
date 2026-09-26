@@ -65,3 +65,54 @@ section "Email provider configuration (names only, never values)"
 echo "EMAIL_PROVIDERS=$(env_value EMAIL_PROVIDERS)"
 from=$(env_value EMAIL_FROM_EMAIL); echo "sender configured: $([ -n "$from" ] && printf '%s' "$from" | sed -E 's/^(.{0,3})[^@]*@/\1***@/' || echo '-')"
 echo "sender equals target: $([ "$(printf '%s' "$from" | tr 'A-Z' 'a-z')" = "$email" ] && echo yes || echo no)"
+
+section "G/H. Brevo's own event log for this user's messages (provider-side evidence)"
+ids=$(sql "select string_agg(d.provider_message_id, ' ') from communication_deliveries d join communication_outbox o on o.id=d.outbox_id where o.recipient_user_id=$UID_SQL and d.provider='brevo' and d.provider_message_id is not null")
+docker compose exec -T backend node -e "
+const red = (e) => String(e || '-').replace(/^(.{0,3})[^@]*@/, '\$1***@');
+const key = process.env.BREVO_API_KEY;
+if (!key) { console.log('BREVO_API_KEY not configured'); process.exit(0); }
+(async () => {
+  for (const id of process.argv.slice(1)) {
+    const r = await fetch('https://api.brevo.com/v3/smtp/statistics/events?limit=20&messageId=' + encodeURIComponent(id), { headers: { 'api-key': key, accept: 'application/json' } });
+    if (!r.ok) { console.log(id, '-> Brevo API', r.status); continue; }
+    const body = await r.json();
+    for (const e of (body.events || [])) console.log([id, e.event, 'to=' + red(e.email), 'from=' + red(e.from), e.reason || '-', e.date].join(' | '));
+    if (!(body.events || []).length) console.log(id, '-> no events returned');
+  }
+})().catch((e) => console.log('Brevo events lookup failed:', e.message));
+" $ids
+
+section "Brevo account: senders and sending-domain authentication"
+docker compose exec -T backend node -e "
+const red = (e) => String(e || '-').replace(/^(.{0,3})[^@]*@/, '\$1***@');
+const key = process.env.BREVO_API_KEY;
+if (!key) { console.log('BREVO_API_KEY not configured'); process.exit(0); }
+const get = (p) => fetch('https://api.brevo.com/v3' + p, { headers: { 'api-key': key, accept: 'application/json' } }).then(async (r) => (r.ok ? r.json() : { error: r.status }));
+(async () => {
+  const s = await get('/senders');
+  for (const x of (s.senders || [])) console.log('sender', red(x.email), 'active=' + x.active);
+  if (s.error) console.log('senders -> Brevo API', s.error);
+  const d = await get('/senders/domains');
+  for (const x of (d.domains || [])) console.log('domain', x.domain_name, 'authenticated=' + x.authenticated, 'verified=' + x.verified);
+  if (!(d.domains || []).length) console.log('no sending domain registered in Brevo');
+})().catch((e) => console.log('Brevo account lookup failed:', e.message));
+"
+
+section "Platform DNS zone (Cloudflare) — current SPF/DMARC/DKIM-looking TXT records"
+docker compose exec -T backend node -e "
+const t = process.env.CLOUDFLARE_API_TOKEN, z = process.env.CLOUDFLARE_ZONE_ID;
+if (!t || !z) { console.log('Cloudflare token/zone not configured'); process.exit(0); }
+const get = (p) => fetch('https://api.cloudflare.com/client/v4' + p, { headers: { authorization: 'Bearer ' + t } }).then((r) => r.json());
+(async () => {
+  const v = await get('/user/tokens/verify');
+  console.log('token status:', v.result ? v.result.status : 'unknown');
+  const zone = await get('/zones/' + z);
+  console.log('zone:', zone.result ? zone.result.name : 'unreadable');
+  const recs = await get('/zones/' + z + '/dns_records?type=TXT&per_page=100');
+  if (!recs.success) { console.log('TXT records unreadable with this token'); return; }
+  const rel = recs.result.filter((r) => /spf1|DMARC1|DKIM|brevo|sendinblue/i.test(r.content) || /_dmarc|_domainkey/.test(r.name));
+  for (const r of rel) console.log('TXT', r.name, '=>', r.content.slice(0, 60));
+  if (!rel.length) console.log('no SPF/DMARC/DKIM TXT records in the zone');
+})().catch((e) => console.log('Cloudflare lookup failed:', e.message));
+"
