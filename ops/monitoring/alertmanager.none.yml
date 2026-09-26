@@ -1,0 +1,12 @@
+# Atlas — Alertmanager WITHOUT an external receiver (Observability Center).
+#
+# Used by deploy.sh while no Slack webhook is configured. Alerts are still
+# evaluated, grouped and visible in the Platform Owner Alerts Center (which
+# reads Alertmanager's API and Prometheus' ALERTS history); they are simply
+# not delivered anywhere else. No secret is needed.
+route:
+  receiver: atlas-none
+  group_by: ['alertname', 'severity']
+
+receivers:
+  - name: atlas-none

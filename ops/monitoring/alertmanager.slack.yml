@@ -1,0 +1,33 @@
+# Atlas — Alertmanager with the Slack receiver (Observability Center).
+#
+# Rendered by deploy.sh into /opt/atlas/monitoring/alertmanager.yml ONLY when
+# ALERT_SLACK_WEBHOOK_URL is present in the host .env. `__ATLAS_WEB_URL__` is
+# replaced with PLATFORM_WEB_URL (a public, non-secret origin) so "View
+# alert" opens the Platform Owner rule page. The webhook URL itself is read
+# from a host file (`api_url_file`) — it is never written here.
+route:
+  receiver: atlas-slack
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: atlas-slack
+    slack_configs:
+      - api_url_file: /etc/alertmanager/secrets/slack_webhook_url
+        send_resolved: true
+        username: 'Atlas Alerts'
+        title: '[Atlas] [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+        title_link: '__ATLAS_WEB_URL__/dashboard/platform/observability/alerts/{{ .CommonLabels.alertname }}'
+        text: >-
+          {{ range .Alerts }}*{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          Current value: {{ .Annotations.current_value }} · Threshold: {{ .Annotations.threshold }}
+          Started: {{ .StartsAt.UTC.Format "2006-01-02 15:04 UTC" }}{{ if eq .Status "resolved" }} · Resolved: {{ .EndsAt.UTC.Format "2006-01-02 15:04 UTC" }} · Duration: {{ .EndsAt.Sub .StartsAt }}{{ end }}
+          {{ if .Labels.service }}Service: {{ .Labels.service }}{{ end }}{{ if .Labels.organization_id }} · Organization: {{ .Labels.organization_id }}{{ end }}{{ if .Labels.academy_id }} · Academy: {{ .Labels.academy_id }}{{ end }}
+          {{ end }}
+        actions:
+          - type: button
+            text: 'View alert'
+            url: '__ATLAS_WEB_URL__/dashboard/platform/observability/alerts/{{ .CommonLabels.alertname }}'

@@ -27,6 +27,10 @@ const SERVICE_PATHS = [
   resolve(__dirname, 'learning-metrics.service.ts'),
   resolve(__dirname, '../../communications/services/communication-metrics.service.ts'),
   resolve(__dirname, '../../communications/metrics/communication-metrics.service.ts'),
+  // Observability Center series (HTTP, probes, synthetic alert).
+  resolve(__dirname, '../platform/http-metrics.middleware.ts'),
+  resolve(__dirname, '../platform/system-probes.service.ts'),
+  resolve(__dirname, '../platform/observability.service.ts'),
 ];
 
 const rules = readFileSync(RULES_PATH, 'utf8');

@@ -93,6 +93,8 @@ import { CommunicationSettingsViewService } from './services/communication-setti
     CommunicationService,
     // Cloud remediation (finding G) — read by PlatformModule and AcademyModule.
     CommunicationSettingsViewService,
+    // Observability Center — the email component of System Health.
+    PlatformCommunicationsHealthService,
     CommunicationDispatchService,
     // Exported so the activation sweep can be driven directly by a
     // fake-clock regression suite, exactly as `TenantLifecycleService` is.

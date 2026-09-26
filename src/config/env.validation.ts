@@ -82,6 +82,17 @@ const EnvSchema = z.object({
   // to scrape `/metrics` (see `MetricsAccessGuard`). Host secret only;
   // unset disables the scrape door. At least 32 characters when set.
   METRICS_SCRAPE_TOKEN: z.string().min(32).optional(),
+  // Observability Center — the INTERNAL Prometheus / Alertmanager the
+  // Platform Owner pages read from. Deployment-provided only; never taken
+  // from a request. Unset = the pages say "not configured".
+  PROMETHEUS_URL: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().url().optional(),
+  ),
+  ALERTMANAGER_URL: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().url().optional(),
+  ),
 
   SENTRY_DSN: z
     .string()

@@ -133,6 +133,7 @@ jobs:
           email_reply_to: ${{ secrets.EMAIL_REPLY_TO }}
           brevo_webhook_secret: ${{ secrets.BREVO_WEBHOOK_SECRET }}
           resend_webhook_secret: ${{ secrets.RESEND_WEBHOOK_SECRET }}
+          alert_slack_webhook_url: ${{ secrets.ALERT_SLACK_WEBHOOK_URL }}
           platform_web_url: ${{ vars.PLATFORM_WEB_URL }}
           # P64 rollout flags come from repository VARIABLES (Settings →
           # Variables), one per line; unset ones are dropped by the action.
@@ -203,6 +204,7 @@ jobs:
           email_reply_to: ${{ secrets.EMAIL_REPLY_TO }}
           brevo_webhook_secret: ${{ secrets.BREVO_WEBHOOK_SECRET }}
           resend_webhook_secret: ${{ secrets.RESEND_WEBHOOK_SECRET }}
+          alert_slack_webhook_url: ${{ secrets.ALERT_SLACK_WEBHOOK_URL }}
           platform_web_url: ${{ vars.PLATFORM_WEB_URL }}
           # P64 rollout flags come from repository VARIABLES (Settings →
           # Variables), one per line; unset ones are dropped by the action.

@@ -41,6 +41,11 @@ services:
     image: ghcr.io/zeyadelbadawi/atlas-backend:latest
     restart: unless-stopped
     env_file: .env
+    # Observability Center: set by deploy.sh only when the monitoring profile
+    # is enabled; empty otherwise (the backend then reports "not configured").
+    environment:
+      PROMETHEUS_URL: ${OBS_PROMETHEUS_URL:-}
+      ALERTMANAGER_URL: ${OBS_ALERTMANAGER_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,10 +89,11 @@ services:
       retries: 6
       start_period: 30s
 
-  # --- Alert routing (26 Sep 2026) ---------------------------------------
-  # Profile-gated: `deploy.sh` enables `monitoring` ONLY when the host .env
-  # carries both METRICS_SCRAPE_TOKEN and ALERT_SLACK_WEBHOOK_URL, and
-  # writes each to a file under /opt/atlas/monitoring/secrets (dir 0700).
+  # --- Observability Center ----------------------------------------------
+  # Profile-gated: `deploy.sh` enables `monitoring` whenever METRICS_SCRAPE_TOKEN
+  # exists (it generates one on the host if missing) and adds the Slack
+  # receiver only when ALERT_SLACK_WEBHOOK_URL is set. Secret values are
+  # written to files under /opt/atlas/monitoring/secrets (dir 0700).
   # Secrets are bind-mounted as files and read via `credentials_file` /
   # `api_url_file`; neither appears in any config, image or environment.
   # No published ports: both are reachable on the compose network only.

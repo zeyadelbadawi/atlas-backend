@@ -124,6 +124,25 @@ fi
 
 set -a; source .env; set +a
 
+# --- Observability Center: the internal scrape credential -----------------
+# Generated ON THE HOST the first time it is missing, appended to .env and
+# never printed; it never leaves the VPS. The backend (env_file) and the
+# internal Prometheus (a 0444 file in a 0700 dir, see prepare_monitoring)
+# are its only consumers.
+if [ -z "${METRICS_SCRAPE_TOKEN:-}" ]; then
+  echo "==> METRICS_SCRAPE_TOKEN missing — generating it on the host (value never printed)"
+  if command -v openssl >/dev/null 2>&1; then
+    generated_token=$(openssl rand -hex 32)
+  else
+    generated_token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  fi
+  printf '\nMETRICS_SCRAPE_TOKEN=%s\n' "$generated_token" >> .env
+  METRICS_SCRAPE_TOKEN=$generated_token
+  export METRICS_SCRAPE_TOKEN
+  unset generated_token
+  ENV_SYNCED=1
+fi
+
 # Persist the currently running application image digests for rollback.
 record_last_good() {
   {
@@ -376,30 +395,49 @@ if [ "$PENDING" -gt 0 ]; then
     backend npx prisma migrate deploy
 fi
 
-# --- Alert routing (26 Sep 2026) ------------------------------------------
-# Enables the `monitoring` compose profile only when BOTH host secrets are
-# present, materialising each as a file the containers read. Values are
-# never echoed; only variable NAMES appear in this output.
+# --- Observability Center: Prometheus + Alertmanager ----------------------
+# Enabled whenever the scrape credential exists (it is generated above). The
+# Slack receiver is added ONLY when ALERT_SLACK_WEBHOOK_URL is in .env;
+# without it Alertmanager still evaluates and exposes alerts to the Platform
+# Owner Alerts Center, it just delivers them nowhere else. Secret values are
+# written to files (0444 inside a 0700 dir) and never echoed; only variable
+# NAMES appear in this output.
 prepare_monitoring() {
-  local dir=/opt/atlas/monitoring/secrets
-  if [ -z "${METRICS_SCRAPE_TOKEN:-}" ] || [ -z "${ALERT_SLACK_WEBHOOK_URL:-}" ]; then
-    echo "==> Monitoring NOT enabled: METRICS_SCRAPE_TOKEN and ALERT_SLACK_WEBHOOK_URL must both be set in /opt/atlas/.env"
+  local mon=/opt/atlas/monitoring
+  local sec="$mon/secrets"
+  if [ -z "${METRICS_SCRAPE_TOKEN:-}" ]; then
+    echo "==> Monitoring NOT enabled: METRICS_SCRAPE_TOKEN is not set"
     return 0
   fi
-  install -d -m 700 "$dir"
+  install -d -m 700 "$sec"
   ( umask 022
-    printf '%s' "$METRICS_SCRAPE_TOKEN" > "$dir/metrics_scrape_token"
-    printf '%s' "$ALERT_SLACK_WEBHOOK_URL" > "$dir/slack_webhook_url" )
-  # 0444 on the files so the unprivileged container users can read the
-  # bind-mounted file; the 0700 directory keeps other host users out.
-  chmod 444 "$dir/metrics_scrape_token" "$dir/slack_webhook_url"
+    printf '%s' "$METRICS_SCRAPE_TOKEN" > "$sec/metrics_scrape_token"
+    printf '%s' "${ALERT_SLACK_WEBHOOK_URL:-}" > "$sec/slack_webhook_url" )
+  chmod 444 "$sec/metrics_scrape_token" "$sec/slack_webhook_url"
+  if [ -n "${ALERT_SLACK_WEBHOOK_URL:-}" ]; then
+    # PLATFORM_WEB_URL is a public origin, not a secret.
+    sed "s#__ATLAS_WEB_URL__#${PLATFORM_WEB_URL:-https://atlass.dpdns.org}#g" \
+      "$mon/alertmanager.slack.yml" > "$mon/alertmanager.yml"
+    echo "==> Monitoring enabled with the Slack receiver"
+  else
+    cp "$mon/alertmanager.none.yml" "$mon/alertmanager.yml"
+    echo "==> Monitoring enabled WITHOUT Slack: ALERT_SLACK_WEBHOOK_URL is not set"
+  fi
   export COMPOSE_PROFILES=monitoring
-  echo "==> Monitoring enabled (prometheus + alertmanager)"
+  export OBS_PROMETHEUS_URL=http://prometheus:9090
+  export OBS_ALERTMANAGER_URL=http://alertmanager:9093
 }
 prepare_monitoring
 
 echo "==> Starting/updating the stack"
 docker compose up -d --remove-orphans
+
+# Prometheus/Alertmanager bind-mount their config files, so a changed rule
+# file, Slack template or webhook (none → Slack) does not recreate them.
+# SIGHUP makes both re-read their configuration in place.
+if [ "${COMPOSE_PROFILES:-}" = "monitoring" ]; then
+  docker compose kill -s SIGHUP prometheus alertmanager >/dev/null 2>&1 || true
+fi
 
 # Docker Compose does not reliably recreate a container when only the
 # CONTENTS of its env_file change (the service config and image are

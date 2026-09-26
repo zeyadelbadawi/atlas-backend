@@ -19,6 +19,8 @@ groups:
         for: 1h
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "> 20 more orders entered pending_payment than were paid in 24h, for 1h"
+          current_value: '{{ $value | humanize }}'
           summary: "Course orders are entering payment review faster than they are approved"
           description: "Over the last 24h, {{ $value }} more orders reached pending_payment than were approved. Check the platform payment review queue."
       - alert: AtlasCheckoutApprovalSlow
@@ -27,6 +29,8 @@ groups:
         for: 30m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "p95 proof-to-approval > 48h (172800 s), for 30m"
+          current_value: '{{ $value | humanize }}'
           summary: "p95 proof-to-approval latency above 48h"
           description: "Learners are waiting more than two days for manual payment review (p95 = {{ $value | humanizeDuration }})."
       - alert: AtlasCheckoutRefundSpike
@@ -37,6 +41,8 @@ groups:
         for: 15m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "> 5 refunds and refunds/paid > 25% over 24h, for 15m"
+          current_value: '{{ $value | humanize }}'
           summary: "Refunds exceed 25% of paid orders over 24h"
 
   - name: atlas-catalog
@@ -47,6 +53,8 @@ groups:
         for: 10m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "p95 catalog query > 1000 ms, for 10m"
+          current_value: '{{ $value | humanize }}'
           summary: "Public catalog p95 query time above 1s"
           description: "The public course list is slow (p95 = {{ $value }} ms). Check the courses indexes and the FTS filters."
 
@@ -58,6 +66,8 @@ groups:
         for: 5m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "any retention sweep error in 24h, for 5m"
+          current_value: '{{ $value | humanize }}'
           summary: "Retention sweep reported errors for {{ $labels.table }}"
           description: "The maintenance sweep failed to prune {{ $labels.table }} in the last 24h. Check the worker logs (a missing platform owner or a DB error)."
       - alert: AtlasRetentionSweepSilent
@@ -66,6 +76,8 @@ groups:
         for: 1h
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "no successful sweep run in the window, for 1h"
+          current_value: '{{ $value | humanize }}'
           summary: "No retention sweep run recorded for {{ $labels.table }} in 48h"
           description: "The Phase 2 maintenance job may not be scheduled or the worker is down."
 
@@ -78,6 +90,8 @@ groups:
         for: 15m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "refusals > 30% of content-grant requests (15m), for 15m"
+          current_value: '{{ $value | humanize }}'
           summary: "More than 30% of protected-content grant requests are being refused"
           description: "Could be a sharing wave (device limits / session conflicts) or a token-signing problem. Break down by kind and tier."
       - alert: AtlasVideoWebhookSignatureFailures
@@ -86,6 +100,8 @@ groups:
         for: 0m
         labels: { severity: critical, team: atlas }
         annotations:
+          threshold: "any signature failure in 10m"
+          current_value: '{{ $value | humanize }}'
           summary: "Video provider webhook signature failures"
           description: "Requests to the video webhook failed HMAC verification — possible misconfiguration or a forged caller."
       - alert: AtlasQuizIntegrityEventSurge
@@ -95,6 +111,8 @@ groups:
         for: 30m
         labels: { severity: info, team: atlas }
         annotations:
+          threshold: "30m rate > 5x the same window yesterday and > 0.5/s, for 30m"
+          current_value: '{{ $value | humanize }}'
           summary: "Quiz integrity events are 5x above the daily baseline"
       - alert: AtlasCertificateRenderFailures
         expr: |
@@ -102,6 +120,8 @@ groups:
         for: 10m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "> 3 render errors in 1h, for 10m"
+          current_value: '{{ $value | humanize }}'
           summary: "Certificate PDF renders are failing"
 
   # P64 Communications — series emitted by
@@ -114,6 +134,8 @@ groups:
         for: 10m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "provider quota used > 80%, for 10m"
+          current_value: '{{ $value | humanize }}'
           summary: "Email provider {{ $labels.provider }} has used over 80% of its {{ $labels.window }} quota"
           description: "{{ $labels.provider }} is at {{ $value | humanizePercentage }} of its {{ $labels.window }} send budget. Engagement/operational mail stops at 70%, lifecycle at 85%; only security/transactional mail continues past that."
       - alert: AtlasEmailQuotaCritical
@@ -122,6 +144,8 @@ groups:
         for: 5m
         labels: { severity: critical, team: atlas }
         annotations:
+          threshold: "provider quota used > 95%, for 5m"
+          current_value: '{{ $value | humanize }}'
           summary: "Email provider {{ $labels.provider }} is about to exhaust its {{ $labels.window }} quota"
           description: "{{ $labels.provider }} is at {{ $value | humanizePercentage }} of its {{ $labels.window }} budget; the registry will fall through to the next provider, and security email fails once every provider is exhausted."
       - alert: AtlasEmailBounceRate
@@ -131,6 +155,8 @@ groups:
         for: 30m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "bounces > 2% of sent (24h), for 30m"
+          current_value: '{{ $value | humanize }}'
           summary: "Email bounce rate above 2% over 24h"
           description: "{{ $value | humanizePercentage }} of accepted sends bounced in the last 24h. Free-tier providers suspend senders around this level — check the suppression list and the recipient sources."
       # The one that separates a dead pipeline from a quiet week. Zero
@@ -143,6 +169,8 @@ groups:
         for: 5m
         labels: { severity: critical, team: atlas }
         annotations:
+          threshold: "oldest due outbox row > 900 s, for 5m"
+          current_value: '{{ $value | humanize }}'
           summary: "Email is queued but nothing is sending it"
           description: "The oldest due message has been waiting {{ $value | humanizeDuration }} and no worker has claimed it. The dispatch sweep runs every 60s, so anything past 15m means the communications worker is not draining the queue — password resets and OTP codes are being accepted and not delivered. Check the worker, then Redis."
       # A dead letter is an email that exhausted every retry: somebody was
@@ -154,6 +182,8 @@ groups:
         for: 5m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "any dead letter in 1h, for 5m"
+          current_value: '{{ $value | humanize }}'
           summary: "{{ $labels.category }} email gave up after all retries"
           description: "{{ $value }} {{ $labels.category }} message(s) exhausted their retries in the last hour and will never be delivered. Check the provider's status and the delivery failures on Analysis › Communications."
       # A surge of failed codes is either an attack on one account or a
@@ -167,6 +197,8 @@ groups:
         for: 10m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "failed OTP > 50% of attempts and > 20 failures in 15m"
+          current_value: '{{ $value | humanize }}'
           summary: "Most sign-in codes are failing verification"
           description: "{{ $value | humanizePercentage }} of OTP verifications failed in 15m, on more than 20 attempts. Either codes are not reaching inboxes (check delivery and the suppression list) or accounts are being guessed at (check the per-account and per-IP budgets)."
       - alert: AtlasEmailWebhookSignatureFailures
@@ -175,5 +207,86 @@ groups:
         for: 1m
         labels: { severity: warning, team: atlas }
         annotations:
+          threshold: "any webhook signature failure in 15m, for 1m"
+          current_value: '{{ $value | humanize }}'
           summary: "Email delivery webhooks for {{ $labels.provider }} are failing verification"
           description: "{{ $value }} inbound webhook(s) for {{ $labels.provider }} failed signature/secret verification in 15m. Either the shared secret rotated or something other than the provider is posting to the endpoint."
+
+  # --- Platform health (Observability Center, 26 Sep 2026) -----------------
+  # Series from `http-metrics.middleware.ts`, `system-probes.service.ts` and
+  # `observability.service.ts`; `up` and `alertmanager_*` are Prometheus'
+  # and Alertmanager's own.
+  - name: atlas-platform
+    rules:
+      - alert: AtlasBackendDown
+        expr: |
+          up{job="atlas-backend"} == 0
+        for: 2m
+        labels: { severity: critical, team: atlas, service: api }
+        annotations:
+          summary: "Prometheus cannot scrape the Atlas API"
+          description: "The backend has not answered an authenticated /metrics scrape for 2 minutes. The API may be down, or the scrape credential may be wrong."
+          threshold: "scrape failing for 2m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasApiHighErrorRate
+        expr: |
+          sum(rate(atlas_http_requests_total{status_class="5xx"}[5m]))
+            / clamp_min(sum(rate(atlas_http_requests_total[5m])), 1e-9) > 0.05
+          and sum(rate(atlas_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: { severity: critical, team: atlas, service: api }
+        annotations:
+          summary: "API 5xx error rate above 5%"
+          description: "{{ $value | humanizePercentage }} of API requests answered 5xx over the last 5 minutes."
+          threshold: "5xx > 5% of requests (5m), for 5m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasApiHighLatency
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(atlas_http_request_duration_seconds_bucket[5m]))) > 2
+        for: 10m
+        labels: { severity: warning, team: atlas, service: api }
+        annotations:
+          summary: "API p95 latency above 2 s"
+          description: "p95 request latency is {{ $value | humanizeDuration }} over the last 5 minutes."
+          threshold: "p95 > 2 s, for 10m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasDependencyDown
+        expr: |
+          atlas_dependency_up == 0
+        for: 2m
+        labels: { severity: critical, team: atlas, service: infrastructure }
+        annotations:
+          summary: "{{ $labels.dependency }} is not answering its probe"
+          description: "The {{ $labels.dependency }} probe has failed for 2 minutes."
+          threshold: "probe failing for 2m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasQueueBacklog
+        expr: |
+          max by (queue) (atlas_queue_oldest_waiting_seconds) > 900
+        for: 10m
+        labels: { severity: warning, team: atlas, service: jobs }
+        annotations:
+          summary: "Queue {{ $labels.queue }} is not draining"
+          description: "The oldest waiting job on {{ $labels.queue }} has waited {{ $value | humanizeDuration }}."
+          threshold: "oldest waiting job > 15 min, for 10m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasAlertDeliveryFailing
+        expr: |
+          sum by (integration) (increase(alertmanager_notifications_failed_total[30m])) > 0
+        for: 5m
+        labels: { severity: warning, team: atlas, service: alerting }
+        annotations:
+          summary: "Alert notifications to {{ $labels.integration }} are failing"
+          description: "Alertmanager failed to deliver {{ $value }} notification(s) in 30m. Check the receiver configuration."
+          threshold: "any failed notification in 30m, for 5m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasSyntheticAlert
+        expr: |
+          max(atlas_synthetic_alert_armed) == 1
+        for: 0m
+        labels: { severity: warning, team: atlas, service: alerting, synthetic: "true" }
+        annotations:
+          summary: "Synthetic test alert (armed by a Platform Owner)"
+          description: "End-to-end test of Atlas -> Prometheus -> Alertmanager -> Slack. It resolves when the test expires or is resolved from the Observability Center."
+          threshold: "armed from Monitoring & alerts"
+          current_value: '{{ $value | humanize }}'

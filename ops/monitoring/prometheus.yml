@@ -24,3 +24,10 @@ scrape_configs:
       credentials_file: /etc/prometheus/secrets/metrics_scrape_token
     static_configs:
       - targets: ['backend:3000']
+
+  # Alertmanager's own counters (notifications sent / failed per
+  # integration) — what the Observability Center reports as channel
+  # delivery status. Internal, unauthenticated, compose network only.
+  - job_name: alertmanager
+    static_configs:
+      - targets: ['alertmanager:9093']

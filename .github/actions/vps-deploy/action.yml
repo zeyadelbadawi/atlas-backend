@@ -91,6 +91,13 @@ inputs:
     required: false
     default: ''
     description: Resend (Svix) webhook signing secret. Unset = fail closed.
+  alert_slack_webhook_url:
+    required: false
+    default: ''
+    description: >-
+      Slack Incoming Webhook for #atlas-alerts (Alertmanager delivery only).
+      Unset leaves the host .env value alone; deploy.sh writes it to a
+      0444 file read via api_url_file — it is never logged or rendered.
   platform_web_url:
     required: false
     default: ''
@@ -125,6 +132,7 @@ runs:
         EMAIL_REPLY_TO: ${{ inputs.email_reply_to }}
         BREVO_WEBHOOK_SECRET: ${{ inputs.brevo_webhook_secret }}
         RESEND_WEBHOOK_SECRET: ${{ inputs.resend_webhook_secret }}
+        ALERT_SLACK_WEBHOOK_URL: ${{ inputs.alert_slack_webhook_url }}
         PLATFORM_WEB_URL: ${{ inputs.platform_web_url }}
         FEATURE_FLAGS: ${{ inputs.feature_flags }}
       run: |
@@ -157,7 +165,7 @@ runs:
           'EMAIL_PROVIDERS', 'BREVO_API_KEY', 'RESEND_API_KEY',
           'EMAIL_FROM_EMAIL', 'EMAIL_FROM_NAME', 'EMAIL_REPLY_TO',
           'BREVO_WEBHOOK_SECRET', 'RESEND_WEBHOOK_SECRET',
-          'PLATFORM_WEB_URL',
+          'PLATFORM_WEB_URL', 'ALERT_SLACK_WEBHOOK_URL',
         ]
         lines = [f"{k}={os.environ[k]}" for k in keys if os.environ.get(k)]
         # P64 feature flags: FLAG_* keys only; values limited to what a mode
@@ -193,7 +201,8 @@ runs:
         ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
           "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p /opt/atlas/monitoring"
         scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
-          ops/monitoring/prometheus.yml ops/monitoring/alertmanager.yml \
+          ops/monitoring/prometheus.yml ops/monitoring/alertmanager.slack.yml \
+          ops/monitoring/alertmanager.none.yml \
           ops/alerts/atlas-prometheus-rules.yml \
           "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/monitoring/"
 
