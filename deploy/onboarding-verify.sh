@@ -67,32 +67,77 @@ info "backend container sees FLAG_SIGNUP_ORGANIZATION_MODE=${runtime_flag:-<unse
 EFFECTIVE=${runtime_flag:-off}
 
 echo "== GET /public/signup-options"
+# The EXPECTED trial plans come from the server-side eligibility rule
+# itself (PlansRepository CUSTOMER_FACING_WHERE + trialEligible, and the
+# trial policy), never from a hardcoded list.
+trials_enabled=$(sql "select coalesce((select enabled::text from trial_policy limit 1), 'true')")
+expected_plans=$(sql "select coalesce(string_agg(key, ',' order by display_order), '-') from plans where status='active' and display_order>0 and trial_eligible")
+[ "$trials_enabled" = "true" ] || expected_plans="-"
+info "server-side rule: trials enabled=$trials_enabled; eligible plans (active, customer-facing, trial-eligible)=$expected_plans"
+info "excluded by the rule: $(sql "select count(*) from plans where status='active' and display_order>0 and not trial_eligible") non-trial, $(sql "select count(*) from plans where status<>'active'") inactive, $(sql "select count(*) from plans where status='active' and display_order<=0") hidden"
 read -r code body < <(api GET /public/signup-options)
 if [ "$code" = "200" ]; then
   pass "signup-options -> 200"
-  facts=$(printf '%s' "$body" | json "'organizationSignup='+d.organizationSignup+' trialsEnabled='+d.trialsEnabled+' trialPlans='+(d.trialPlans.map(p=>p.key).join(',')||'-')")
-  info "$facts"
-  expected="organizationSignup=$([ "$EFFECTIVE" = "on" ] && echo true || echo false)"
-  case "$facts" in "$expected "*) pass "organizationSignup matches the flag ($EFFECTIVE)" ;; *) fail "organizationSignup does not match the flag ($EFFECTIVE)" ;; esac
+  org_signup=$(printf '%s' "$body" | json "d.organizationSignup")
+  exposed=$(printf '%s' "$body" | json "d.trialPlans.map(p=>p.key).join(',')||'-'")
+  info "organizationSignup=$org_signup trialsEnabled=$(printf '%s' "$body" | json "d.trialsEnabled") trialPlans=$exposed"
+  want_signup=$([ "$EFFECTIVE" = "on" ] && echo true || echo false)
+  if [ "$org_signup" = "$want_signup" ]; then pass "organizationSignup=$org_signup matches the flag ($EFFECTIVE)"; else fail "organizationSignup=$org_signup does not match the flag ($EFFECTIVE)"; fi
+  if [ "$exposed" = "$expected_plans" ]; then pass "exposed trial plans are exactly the server-side eligible set ($exposed)"; else fail "exposed trial plans ($exposed) differ from the eligible set ($expected_plans)"; fi
 else
   fail "signup-options -> $code"
 fi
 
-echo "== POST /auth/register refusal (no write)"
-PROBE="atlas.onboarding.verify.$(date +%s)@gmail.com"
+echo "== POST /auth/register refusals (no write)"
+RUN="$(date +%s)$$"
+ORG_NAME="Onboarding Verify $RUN"
+n=0
+# probe <label> <wanted status> <wanted messageKey or -> <json fields after name/email/password>
+probe() {
+  local label="$1" want_code="$2" want_key="$3" fields="$4"
+  n=$((n + 1))
+  local email="atlas.onboarding.verify.${RUN}.${n}@gmail.com"
+  local payload="{\"name\":\"Onboarding Verify\",\"email\":\"$email\",\"password\":\"verify-only-$(date +%s%N)\"$fields}"
+  local code body key rows
+  read -r code body < <(api POST /auth/register "$payload")
+  key=$(printf '%s' "$body" | json "(d.error&&d.error.messageKey)||d.messageKey||'-'" 2>/dev/null)
+  if [ "$code" = "$want_code" ] && { [ "$want_key" = "-" ] || [ "$key" = "$want_key" ]; }; then
+    pass "$label -> $code $key"
+  else
+    fail "$label -> $code ${key:-?} (wanted $want_code $want_key)"
+  fi
+  rows=$(sql "select count(*) from users where email='$email'")
+  if [ "$rows" != "0" ]; then fail "$label created $rows user row(s)"; fi
+}
 if [ "$EFFECTIVE" = "on" ]; then
-  # A well-formed but non-existent plan id: refused as unavailable.
-  payload="{\"name\":\"Onboarding Verify\",\"email\":\"$PROBE\",\"password\":\"verify-only-$(date +%s%N)\",\"organizationName\":\"Onboarding Verify\",\"planId\":\"00000000-0000-4000-8000-000000000000\"}"
-  want="errors.auth.signupPlanUnavailable"
+  ORGF=",\"organizationName\":\"$ORG_NAME\""
+  probe "fake plan id" 400 errors.auth.signupPlanUnavailable "$ORGF,\"planId\":\"00000000-0000-4000-8000-000000000000\""
+  non_trial=$(sql "select id from plans where status='active' and display_order>0 and not trial_eligible order by display_order limit 1")
+  if [ -n "$non_trial" ]; then probe "non-trial plan" 400 errors.auth.signupPlanUnavailable "$ORGF,\"planId\":\"$non_trial\""; else info "no non-trial plan exists to probe"; fi
+  inactive=$(sql "select id from plans where status<>'active' order by created_at desc limit 1")
+  if [ -n "$inactive" ]; then probe "inactive (archived) plan" 400 errors.auth.signupPlanUnavailable "$ORGF,\"planId\":\"$inactive\""; else info "no inactive plan exists to probe"; fi
+  hidden=$(sql "select id from plans where status='active' and display_order<=0 order by created_at desc limit 1")
+  if [ -n "$hidden" ]; then probe "hidden (not customer-facing) plan" 400 errors.auth.signupPlanUnavailable "$ORGF,\"planId\":\"$hidden\""; else info "no hidden plan exists to probe"; fi
+  eligible=$(sql "select id from plans where status='active' and display_order>0 and trial_eligible order by display_order limit 1")
+  probe "plan without organization name" 400 errors.auth.organizationNameRequired ",\"planId\":\"$eligible\""
+  probe "organization name too short" 400 - ",\"organizationName\":\"x\""
+  probe "malformed plan id" 400 - "$ORGF,\"planId\":\"not-a-uuid\""
+  probe "organization fields with an academy id" 400 - "$ORGF,\"academyId\":\"00000000-0000-4000-8000-000000000000\""
+  # Duplicate email: an EXISTING account's address (read here, never
+  # printed) with a valid organization + eligible plan must be a 409 that
+  # writes nothing.
+  existing=$(sql "select email from users where email like '%@%' and deleted_at is null order by created_at limit 1" 2>/dev/null || sql "select email from users where email like '%@%' order by created_at limit 1")
+  before_orgs=$(sql "select count(*) from organizations where name='$ORG_NAME'")
+  read -r code body < <(api POST /auth/register "{\"name\":\"Onboarding Verify\",\"email\":\"$existing\",\"password\":\"verify-only-$(date +%s%N)\"$ORGF,\"planId\":\"$eligible\"}")
+  key=$(printf '%s' "$body" | json "(d.error&&d.error.messageKey)||d.messageKey||'-'" 2>/dev/null)
+  if [ "$code" = "409" ] && [ "$key" = "errors.auth.emailAlreadyRegistered" ]; then pass "existing email -> 409 $key"; else fail "existing email -> $code ${key:-?} (wanted 409 errors.auth.emailAlreadyRegistered)"; fi
 else
-  payload="{\"name\":\"Onboarding Verify\",\"email\":\"$PROBE\",\"password\":\"verify-only-$(date +%s%N)\",\"organizationName\":\"Onboarding Verify\"}"
-  want="errors.auth.organizationSignupDisabled"
+  probe "organization fields while the flag is off" 400 errors.auth.organizationSignupDisabled ",\"organizationName\":\"$ORG_NAME\""
 fi
-read -r code body < <(api POST /auth/register "$payload")
-key=$(printf '%s' "$body" | json "d.messageKey||(d.error&&d.error.messageKey)||JSON.stringify(d).slice(0,120)" 2>/dev/null)
-if [ "$code" = "400" ] && [ "$key" = "$want" ]; then pass "register with organization fields -> 400 $want"; else fail "register probe -> $code ${key:-?} (wanted 400 $want)"; fi
-rows=$(sql "select count(*) from users where email='$PROBE'")
-if [ "$rows" = "0" ]; then pass "the refused probe created no user row"; else fail "probe created $rows user row(s)"; fi
+orgs=$(sql "select count(*) from organizations where name='$ORG_NAME'")
+if [ "$orgs" = "0" ]; then pass "no organization was created by any probe"; else fail "$orgs organization(s) created by the probes"; fi
+redemptions=$(sql "select count(*) from trial_redemptions where redeemed_at > now() - interval '5 minutes'" 2>/dev/null || echo "?")
+info "trial redemptions in the last 5 minutes: $redemptions"
 
 echo "== Metrics"
 series=$(docker compose exec -T prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=atlas_signup_total' 2>/dev/null | json "d.data.result.map(r=>r.metric.mode+'/'+r.metric.outcome+'='+r.value[1]).join(' ')||'no series yet (scraped every 30s)'" 2>/dev/null)
