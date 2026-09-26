@@ -1,0 +1,39 @@
+name: Brevo sender
+
+# Ensures the platform sender exists (and is active) in Brevo on the
+# authenticated sending domain (deploy/brevo-sender.sh). Brevo API only;
+# refuses unless the domain is authenticated. Never prints secrets.
+on:
+  workflow_dispatch:
+    inputs:
+      sender:
+        description: Sender address on the authenticated domain
+        required: true
+        default: no-reply@atlass.dpdns.org
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sender:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run on the VPS
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SENDER: ${{ inputs.sender }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$SENDER" | grep -Eq '^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' || { echo "bad sender"; exit 2; }
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" '${SENDER}' </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+            < deploy/brevo-sender.sh
