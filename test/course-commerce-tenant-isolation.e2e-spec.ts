@@ -62,6 +62,14 @@ describe('Course Commerce — tenant isolation (e2e)', () => {
     await flushRateLimitKeys();
   });
 
+  async function setGlobalCommission(platformOwnerToken: string): Promise<void> {
+    await request(app.getHttpServer())
+      .patch('/platform-commission/global')
+      .set('Authorization', `Bearer ${platformOwnerToken}`)
+      .send({ defaultCommissionBasisPoints: 1000 })
+      .expect(200);
+  }
+
   async function arrangePaidCourseAndOrder(label: string) {
     const owner = await signUpAndSignIn(app, `${label}-owner`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
@@ -140,6 +148,43 @@ describe('Course Commerce — tenant isolation (e2e)', () => {
       .expect(403);
   });
 
+  it('the course-payment review list honours the reviewStatus filter', async () => {
+    const reviewer = await signUpAndSignIn(app, 'review-filter-reviewer');
+    await makePlatformOwner(admin, reviewer.userId);
+    await setGlobalCommission(reviewer.accessToken);
+    const { order, student } = await arrangePaidCourseAndOrder('review-filter');
+    const method = await seedPaymentMethod(admin, 'review-filter-method');
+    const payment = await request(app.getHttpServer())
+      .post(`/course-orders/${order.id}/payments`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ methodKey: method.key })
+      .expect(201);
+    await admin.payment.update({
+      where: { id: payment.body.id },
+      data: { reviewStatus: 'rejected' },
+    });
+
+    const ids = async (reviewStatus: string) => {
+      const res = await request(app.getHttpServer())
+        .get('/platform-course-order-payments')
+        .query({ reviewStatus, pageSize: 100 })
+        .set('Authorization', `Bearer ${reviewer.accessToken}`)
+        .expect(200);
+      return {
+        ids: (res.body.items as { id: string; reviewStatus: string }[]).map((p) => p.id),
+        statuses: new Set(
+          (res.body.items as { reviewStatus: string }[]).map((p) => p.reviewStatus),
+        ),
+      };
+    };
+    const pending = await ids('pending');
+    expect(pending.ids).not.toContain(payment.body.id);
+    expect([...pending.statuses].every((s) => s === 'pending')).toBe(true);
+    const rejected = await ids('rejected');
+    expect(rejected.ids).toContain(payment.body.id);
+    expect([...rejected.statuses].every((s) => s === 'rejected')).toBe(true);
+  });
+
   /*
    * Remediation (finding B): academy revenue and payouts are Organization
    * Owner data. `AcademyScopeGuard` admits any organization member and any
@@ -213,15 +258,18 @@ describe('Course Commerce — tenant isolation (e2e)', () => {
     const { order, course, student } = await arrangePaidCourseAndOrder(
       'isolation-review-split',
     );
+    // `atlas_payments` needs a global commission rate before a payment can
+    // be taken; this test used to pass only when an earlier suite had
+    // already set one.
+    const reviewer = await signUpAndSignIn(app, 'isolation-review-split-reviewer');
+    await makePlatformOwner(admin, reviewer.userId);
+    await setGlobalCommission(reviewer.accessToken);
     const method = await seedPaymentMethod(admin, 'isolation-review-split-method');
     const paymentRes = await request(app.getHttpServer())
       .post(`/course-orders/${order.id}/payments`)
       .set('Authorization', `Bearer ${student.accessToken}`)
       .send({ methodKey: method.key })
       .expect(201);
-
-    const reviewer = await signUpAndSignIn(app, 'isolation-review-split-reviewer');
-    await makePlatformOwner(admin, reviewer.userId);
 
     // The Atlas-subscription-billing review surface (`/payments`) must
     // never surface a course-order Payment.

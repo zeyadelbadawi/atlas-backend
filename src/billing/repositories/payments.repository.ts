@@ -132,10 +132,18 @@ export class PaymentsRepository {
    */
   async findManyAnyOrganizationCourseOrders(
     tx: Prisma.TransactionClient,
-    filter: { readonly search?: string; readonly skip: number; readonly take: number },
+    filter: {
+      readonly search?: string;
+      readonly reviewStatus?: ManualReviewStatus;
+      readonly skip: number;
+      readonly take: number;
+    },
   ): Promise<{ items: PaymentWithRelations[]; totalItems: number }> {
     const where: Prisma.PaymentWhereInput = {
       courseOrderId: { not: null },
+      // Same filter the subscription review listing applies; it was
+      // accepted by the DTO here but never reached the query.
+      ...(filter.reviewStatus ? { reviewStatus: filter.reviewStatus } : {}),
       ...(filter.search
         ? {
             OR: [

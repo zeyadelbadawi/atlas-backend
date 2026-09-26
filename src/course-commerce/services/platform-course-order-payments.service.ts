@@ -96,6 +96,7 @@ export class PlatformCourseOrderPaymentsService {
       (tx) =>
         this.paymentsRepository.findManyAnyOrganizationCourseOrders(tx, {
           search: query.search,
+          reviewStatus: query.reviewStatus,
           skip: (page - 1) * pageSize,
           take: pageSize,
         }),
