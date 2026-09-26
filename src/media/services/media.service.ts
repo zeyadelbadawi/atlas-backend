@@ -30,11 +30,13 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { findMediaUsages, type MediaUsage } from './media-usage.util';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
@@ -345,6 +347,14 @@ export class MediaService {
     });
   }
 
+  /**
+   * "Delete" in the product = archive now, destroy after the 30-day grace
+   * (`ArchivedMediaPurgeService`). Owner/manager of THIS academy only
+   * (`assertCanManage`); tenant RLS bounds every read and write. Refused
+   * with 409 `errors.media.inUse` while anything still points at the asset
+   * (see `media-usage.util.ts`), so no lesson, page or learner record is
+   * silently broken. Archiving an already-archived asset is a no-op.
+   */
   async archive(
     academyId: string,
     organizationId: string,
@@ -355,17 +365,7 @@ export class MediaService {
       organizationId,
       async (tx) => {
         await this.assertCanManage(tx, academyId, userId);
-        const existing = await this.mediaAssetsRepository.findById(
-          tx,
-          academyId,
-          assetId,
-        );
-        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
-
-        const updated = await this.mediaAssetsRepository.update(tx, assetId, {
-          status: 'archived',
-        });
-        return toMediaAssetResponse(updated);
+        return this.archiveOne(tx, academyId, assetId);
       },
     );
 
@@ -375,4 +375,80 @@ export class MediaService {
 
     return response;
   }
+
+  /**
+   * Bulk delete (archive). Every item is decided independently and
+   * reported: archived, refused because it is in use (with its usages), or
+   * not found in this academy. One authorization check for the batch; each
+   * item in its own transaction so one refusal never rolls back the rest.
+   */
+  async archiveMany(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    assetIds: readonly string[],
+  ): Promise<MediaBulkArchiveResponse> {
+    await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+      this.assertCanManage(tx, academyId, userId),
+    );
+    const archived: string[] = [];
+    const refused: MediaBulkArchiveResponse['refused'][number][] = [];
+    for (const assetId of new Set(assetIds)) {
+      try {
+        await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+          this.archiveOne(tx, academyId, assetId),
+        );
+        archived.push(assetId);
+      } catch (error) {
+        if (error instanceof ConflictException) {
+          const body = error.getResponse() as { details?: { usages?: MediaUsage[] } };
+          refused.push({
+            id: assetId,
+            reason: 'inUse',
+            usages: body.details?.usages ?? [],
+          });
+        } else if (error instanceof NotFoundException) {
+          refused.push({ id: assetId, reason: 'notFound', usages: [] });
+        } else {
+          throw error;
+        }
+      }
+    }
+    if (archived.length > 0) {
+      await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
+    }
+    return { archived, refused };
+  }
+
+  private async archiveOne(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    assetId: string,
+  ): Promise<MediaAssetResponse> {
+    const existing = await this.mediaAssetsRepository.findById(tx, academyId, assetId);
+    if (!existing || existing.status === 'deleted') {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    if (existing.status === 'archived') return toMediaAssetResponse(existing);
+    const usages = await findMediaUsages(tx, existing);
+    if (usages.length > 0) {
+      throw new ConflictException({
+        messageKey: 'errors.media.inUse',
+        details: { usages },
+      });
+    }
+    const updated = await this.mediaAssetsRepository.update(tx, assetId, {
+      status: 'archived',
+    });
+    return toMediaAssetResponse(updated);
+  }
+}
+
+export interface MediaBulkArchiveResponse {
+  readonly archived: readonly string[];
+  readonly refused: readonly {
+    readonly id: string;
+    readonly reason: 'inUse' | 'notFound';
+    readonly usages: readonly MediaUsage[];
+  }[];
 }

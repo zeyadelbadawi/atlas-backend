@@ -291,7 +291,9 @@ export class VideoRetentionDeletionService {
    * Delete at the provider and prove it. Throws unless absence was
    * positively established.
    */
-  private async destroyAndVerify(asset: RetentionAsset): Promise<void> {
+  async destroyAndVerify(
+    asset: Pick<RetentionAsset, 'id' | 'provider' | 'providerId' | 'storageKey'>,
+  ): Promise<void> {
     const adapter = this.videoProviders.forProvider(asset.provider);
     const ref = providerRef(asset);
 
@@ -341,7 +343,7 @@ export class VideoRetentionDeletionService {
    */
   private async verifyAbsent(
     adapter: VideoProvider,
-    asset: RetentionAsset,
+    asset: Pick<RetentionAsset, 'id' | 'provider' | 'providerId' | 'storageKey'>,
     ref: string,
   ): Promise<boolean> {
     if (adapter.key === 'r2_worker') {
@@ -552,6 +554,6 @@ export class VideoRetentionDeletionService {
  * ask the object store to delete a key that does not exist, get a cheerful
  * 404, and then fail verification — safe, but permanently stuck.
  */
-function providerRef(asset: RetentionAsset): string {
+function providerRef(asset: Pick<RetentionAsset, 'providerId' | 'storageKey'>): string {
   return asset.providerId ?? asset.storageKey;
 }

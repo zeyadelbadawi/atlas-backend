@@ -18,6 +18,9 @@ import {
   VIDEO_RETENTION_JOB_SWEEP,
   VIDEO_RETENTION_QUEUE,
   VIDEO_RETENTION_SWEEP_INTERVAL_MS,
+  MEDIA_PURGE_JOB_SWEEP,
+  MEDIA_PURGE_SWEEP_INTERVAL_MS,
+  MEDIA_PURGE_SWEEP_REPEAT_JOB_ID,
   VIDEO_RETENTION_SWEEP_REPEAT_JOB_ID,
   type VideoRetentionJobPayload,
 } from './video-retention.types';
@@ -45,6 +48,18 @@ export class VideoRetentionScheduler implements OnApplicationBootstrap {
     this.logger.log(
       { intervalMs: VIDEO_RETENTION_SWEEP_INTERVAL_MS },
       'Registered recurring video-retention sweep job.',
+    );
+    // Archived-media purge — same queue, same processor (see
+    // `ArchivedMediaPurgeService`). What it does is decided by its mode.
+    await this.queue.add(
+      MEDIA_PURGE_JOB_SWEEP,
+      { kind: 'sweep' },
+      {
+        repeat: { every: MEDIA_PURGE_SWEEP_INTERVAL_MS },
+        jobId: MEDIA_PURGE_SWEEP_REPEAT_JOB_ID,
+        removeOnComplete: true,
+        removeOnFail: { count: 1000 },
+      },
     );
   }
 }

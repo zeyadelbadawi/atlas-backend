@@ -34,6 +34,8 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   CreateBucketCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -149,5 +151,29 @@ export class R2StorageProvider implements MediaStorageProvider, OnModuleInit {
       throw new Error(`Object body empty for key "${key}".`);
     }
     return Buffer.from(bytes);
+  }
+
+  async deleteObject(key: string): Promise<void> {
+    await this.client.send(
+      new DeleteObjectCommand({ Bucket: this.config.bucket, Key: key }),
+    );
+  }
+
+  async objectExists(key: string): Promise<boolean> {
+    try {
+      await this.client.send(
+        new HeadObjectCommand({ Bucket: this.config.bucket, Key: key }),
+      );
+      return true;
+    } catch (error) {
+      // Only a definite "not found" counts as absence. Any other failure
+      // (network, auth) propagates, so a transport error can never be
+      // mistaken for proof that the bytes are gone.
+      const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata
+        ?.httpStatusCode;
+      const name = (error as { name?: string }).name;
+      if (status === 404 || name === 'NotFound' || name === 'NoSuchKey') return false;
+      throw error;
+    }
   }
 }

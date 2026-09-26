@@ -345,6 +345,8 @@ export interface CommunicationsConfig {
    * `FLAG_VIDEO_RETENTION_MODE`.
    */
   readonly videoRetentionMode: VideoRetentionMode;
+  /** `FLAG_MEDIA_ARCHIVE_PURGE_MODE` — see `ArchivedMediaPurgeService`. */
+  readonly mediaArchivePurgeMode: MediaArchivePurgeMode;
 }
 
 /** P64 C5 — the staged rollout of the lifecycle sequences (§43). */
@@ -359,6 +361,8 @@ export type LifecycleSequencesMode = 'off' | 'dry_run' | 'on';
  * irreversible one. There is no mode that deletes without warning.
  */
 export type VideoRetentionMode = 'off' | 'warn_only' | 'on';
+
+export type MediaArchivePurgeMode = 'off' | 'dry_run' | 'on';
 
 /** Phase P1 — Identity, Auth & Sessions configuration (master plan §8). */
 export interface IdentityConfig {
@@ -681,6 +685,8 @@ export default () => {
     // Defaults to `off` — see `FLAG_VIDEO_RETENTION_MODE`. This one
     // deletes customer data when it is `on`.
     videoRetentionMode: (env.FLAG_VIDEO_RETENTION_MODE ?? 'off') as VideoRetentionMode,
+    mediaArchivePurgeMode: (env.FLAG_MEDIA_ARCHIVE_PURGE_MODE ??
+      'dry_run') as MediaArchivePurgeMode,
   };
 
   return {

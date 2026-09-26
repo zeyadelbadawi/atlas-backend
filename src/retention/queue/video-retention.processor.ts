@@ -12,6 +12,12 @@
  * clock, because "does this delete a paying customer's video" is not a
  * question anyone should have to answer through a queue.
  */
+import { ArchivedMediaPurgeService } from '../services/archived-media-purge.service';
+import {
+  MEDIA_PURGE_JOB_ASSET,
+  MEDIA_PURGE_JOB_SWEEP,
+  type MediaPurgeAssetJobPayload,
+} from './video-retention.types';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import type { Job } from 'bullmq';
@@ -34,6 +40,7 @@ export class VideoRetentionProcessor extends WorkerHost {
   constructor(
     private readonly sweep: VideoRetentionService,
     private readonly deletion: VideoRetentionDeletionService,
+    private readonly mediaPurge: ArchivedMediaPurgeService,
   ) {
     super();
   }
@@ -52,6 +59,19 @@ export class VideoRetentionProcessor extends WorkerHost {
       case VIDEO_RETENTION_JOB_TENANT:
         await this.deletion.settleTenant(job.data as VideoRetentionTenantJobPayload);
         return;
+      case MEDIA_PURGE_JOB_SWEEP:
+        await this.mediaPurge.sweep();
+        return;
+      case MEDIA_PURGE_JOB_ASSET: {
+        const outcome = await this.mediaPurge.purgeAsset(
+          job.data as MediaPurgeAssetJobPayload,
+        );
+        this.logger.log(
+          { jobId: job.id, outcome },
+          'Archived-media purge job processed.',
+        );
+        return;
+      }
       default:
         // Unreachable while this stays the only processor on the queue —
         // which is precisely the invariant the spec enforces. Logged

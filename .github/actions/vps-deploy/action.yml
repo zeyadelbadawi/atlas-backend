@@ -188,6 +188,14 @@ runs:
           deploy/docker-compose.prod.yml "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/docker-compose.yml"
         scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
           deploy/backup.sh "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/backup.sh"
+        # Alert routing — monitoring configs (no secrets in them; the secret
+        # files are written on the host by deploy.sh from /opt/atlas/.env).
+        ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+          "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p /opt/atlas/monitoring"
+        scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+          ops/monitoring/prometheus.yml ops/monitoring/alertmanager.yml \
+          ops/alerts/atlas-prometheus-rules.yml \
+          "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/monitoring/"
 
         MIGRATE_FLAG=""
         if [ "${WITH_MIGRATIONS}" = "true" ]; then

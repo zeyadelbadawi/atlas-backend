@@ -28,13 +28,12 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiExcludeController } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
-import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
+import { MetricsAccessGuard } from './metrics-access.guard';
 import { LearningMetricsService } from './learning-metrics.service';
 
 @ApiExcludeController()
 @Controller('metrics')
-@UseGuards(JwtAuthGuard, PlatformOwnerGuard)
+@UseGuards(MetricsAccessGuard)
 export class MetricsController {
   constructor(private readonly metrics: LearningMetricsService) {}
 

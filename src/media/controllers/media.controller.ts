@@ -9,6 +9,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -16,6 +18,8 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { ArchiveMediaBatchDto } from '../dto/archive-media-batch.dto';
+import type { MediaBulkArchiveResponse } from '../services/media.service';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
@@ -77,6 +81,25 @@ export class MediaController {
       request.authContext!.userId,
       assetId,
       body,
+    );
+  }
+
+  /**
+   * Bulk delete (archive). Same authorization and usage guard as the single
+   * route; each asset is reported as archived or refused with its reason.
+   */
+  @Post(':id/media/archive-batch')
+  @HttpCode(HttpStatus.OK)
+  async archiveBatch(
+    @Req() request: Request,
+    @Body() body: ArchiveMediaBatchDto,
+  ): Promise<MediaBulkArchiveResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.mediaService.archiveMany(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body.assetIds,
     );
   }
 

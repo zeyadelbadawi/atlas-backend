@@ -78,6 +78,11 @@ const EnvSchema = z.object({
   // A malformed DSN, on the other hand, IS rejected at boot. A
   // silently-broken monitoring pipeline is worse than none, because it
   // looks configured while reporting nothing.
+  // Alert routing — the dedicated credential the internal Prometheus uses
+  // to scrape `/metrics` (see `MetricsAccessGuard`). Host secret only;
+  // unset disables the scrape door. At least 32 characters when set.
+  METRICS_SCRAPE_TOKEN: z.string().min(32).optional(),
+
   SENTRY_DSN: z
     .string()
     .refine((value) => value === '' || /^https:\/\/[^@]+@[^/]+\/\d+$/.test(value), {
@@ -216,6 +221,11 @@ const EnvSchema = z.object({
   //
   // There is deliberately no mode that deletes without warning.
   FLAG_VIDEO_RETENTION_MODE: z.enum(['off', 'warn_only', 'on']).default('off'),
+  // Archived-media purge (owner decision, 26 Sep 2026: 30-day grace, then
+  // permanent deletion). `dry_run` finds and logs what WOULD be destroyed
+  // and destroys nothing; `on` destroys. Defaults to `dry_run` so a
+  // deploy never starts deleting customer bytes on its own.
+  FLAG_MEDIA_ARCHIVE_PURGE_MODE: z.enum(['off', 'dry_run', 'on']).default('dry_run'),
   // §12's approved numbers. Configurable so a load-testing pass can tune
   // them, bounded so a typo cannot turn the control off: the ceiling on
   // attempts and codes is validated as a positive integer, and the code

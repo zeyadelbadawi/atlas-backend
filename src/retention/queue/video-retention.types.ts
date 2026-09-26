@@ -42,6 +42,28 @@ export const VIDEO_RETENTION_QUEUE = 'video-retention';
 export const VIDEO_RETENTION_JOB_SWEEP = 'sweep';
 export const VIDEO_RETENTION_JOB_ASSET = 'asset';
 export const VIDEO_RETENTION_JOB_TENANT = 'tenant';
+/**
+ * Archived-media purge (owner decision, 26 Sep 2026): archived media and the
+ * media of archived academies are destroyed only after a 30-day grace. It
+ * rides this queue and its ONE processor rather than growing a second
+ * deletion pipeline — see `ArchivedMediaPurgeService`.
+ */
+export const MEDIA_PURGE_JOB_SWEEP = 'archive-purge-sweep';
+export const MEDIA_PURGE_JOB_ASSET = 'archive-purge-asset';
+export const MEDIA_PURGE_SWEEP_REPEAT_JOB_ID = 'archive-purge-sweep-repeat';
+export const MEDIA_PURGE_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+export const MEDIA_PURGE_GRACE_DAYS = 30;
+export const MEDIA_PURGE_MAX_ASSETS_PER_TICK = 500;
+
+export interface MediaPurgeAssetJobPayload {
+  readonly assetId: string;
+  readonly organizationId: string;
+}
+
+/** Deterministic and colon-free: one purge per asset, deduped at the queue. */
+export function mediaPurgeAssetJobId(assetId: string): string {
+  return `media-purge-${assetId}`;
+}
 
 export const VIDEO_RETENTION_SWEEP_REPEAT_JOB_ID = 'video-retention-sweep-repeat';
 
@@ -102,6 +124,7 @@ export interface VideoRetentionTenantJobPayload {
 }
 
 export type VideoRetentionJobPayload =
+  | MediaPurgeAssetJobPayload
   | VideoRetentionSweepJobPayload
   | VideoRetentionAssetJobPayload
   | VideoRetentionTenantJobPayload;

@@ -376,6 +376,28 @@ if [ "$PENDING" -gt 0 ]; then
     backend npx prisma migrate deploy
 fi
 
+# --- Alert routing (26 Sep 2026) ------------------------------------------
+# Enables the `monitoring` compose profile only when BOTH host secrets are
+# present, materialising each as a file the containers read. Values are
+# never echoed; only variable NAMES appear in this output.
+prepare_monitoring() {
+  local dir=/opt/atlas/monitoring/secrets
+  if [ -z "${METRICS_SCRAPE_TOKEN:-}" ] || [ -z "${ALERT_SLACK_WEBHOOK_URL:-}" ]; then
+    echo "==> Monitoring NOT enabled: METRICS_SCRAPE_TOKEN and ALERT_SLACK_WEBHOOK_URL must both be set in /opt/atlas/.env"
+    return 0
+  fi
+  install -d -m 700 "$dir"
+  ( umask 022
+    printf '%s' "$METRICS_SCRAPE_TOKEN" > "$dir/metrics_scrape_token"
+    printf '%s' "$ALERT_SLACK_WEBHOOK_URL" > "$dir/slack_webhook_url" )
+  # 0444 on the files so the unprivileged container users can read the
+  # bind-mounted file; the 0700 directory keeps other host users out.
+  chmod 444 "$dir/metrics_scrape_token" "$dir/slack_webhook_url"
+  export COMPOSE_PROFILES=monitoring
+  echo "==> Monitoring enabled (prometheus + alertmanager)"
+}
+prepare_monitoring
+
 echo "==> Starting/updating the stack"
 docker compose up -d --remove-orphans
 

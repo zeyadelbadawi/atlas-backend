@@ -24,6 +24,16 @@ export interface MediaStorageProvider {
 
   /** Reads an object back — used only by `media-worker` (master plan §12) to inspect bytes for dimension extraction. Never called from the synchronous upload/list/archive request path. */
   getObject(key: string): Promise<Buffer>;
+
+  /**
+   * Permanently removes the object. Idempotent (S3/R2 DeleteObject answers
+   * success for a missing key). Only the archived-media purge calls this,
+   * after the 30-day grace — see `ArchivedMediaPurgeService`.
+   */
+  deleteObject(key: string): Promise<void>;
+
+  /** Whether the object exists — the absence probe that proves a delete. */
+  objectExists(key: string): Promise<boolean>;
 }
 
 export const MEDIA_STORAGE_PROVIDER = Symbol('MEDIA_STORAGE_PROVIDER');

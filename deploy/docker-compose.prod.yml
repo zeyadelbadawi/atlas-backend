@@ -84,8 +84,43 @@ services:
       retries: 6
       start_period: 30s
 
+  # --- Alert routing (26 Sep 2026) ---------------------------------------
+  # Profile-gated: `deploy.sh` enables `monitoring` ONLY when the host .env
+  # carries both METRICS_SCRAPE_TOKEN and ALERT_SLACK_WEBHOOK_URL, and
+  # writes each to a file under /opt/atlas/monitoring/secrets (dir 0700).
+  # Secrets are bind-mounted as files and read via `credentials_file` /
+  # `api_url_file`; neither appears in any config, image or environment.
+  # No published ports: both are reachable on the compose network only.
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: ['monitoring']
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+    depends_on:
+      - backend
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/atlas-prometheus-rules.yml:/etc/prometheus/rules/atlas-prometheus-rules.yml:ro
+      - ./monitoring/secrets/metrics_scrape_token:/etc/prometheus/secrets/metrics_scrape_token:ro
+      - prometheus_data:/prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    profiles: ['monitoring']
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/secrets/slack_webhook_url:/etc/alertmanager/secrets/slack_webhook_url:ro
+      - alertmanager_data:/alertmanager
+
 volumes:
   atlas_postgres_data:
   atlas_redis_data:
   caddy_data:
   caddy_config:
+  prometheus_data:
+  alertmanager_data:

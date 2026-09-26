@@ -366,12 +366,14 @@ export class VideoRetentionRepository {
       readonly deletedAt: Date;
       readonly reason: string;
       readonly bytesFreed: bigint;
+      /** Which states may become a tombstone; the retention sweep only ever deletes `active`. */
+      readonly fromStatuses?: readonly ('active' | 'archived')[];
     },
   ): Promise<number> {
     const result = await tx.mediaAsset.updateMany({
       where: {
         id: input.assetId,
-        status: 'active',
+        status: { in: [...(input.fromStatuses ?? ['active'])] },
         academy: { organizationId: input.organizationId },
       },
       data: {

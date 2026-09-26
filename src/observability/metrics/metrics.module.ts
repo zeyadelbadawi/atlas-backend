@@ -14,13 +14,14 @@ import { IdentityModule } from '../../identity/identity.module';
 import { LearningMetricsService } from './learning-metrics.service';
 import { CommunicationMetricsService } from '../../communications/services/communication-metrics.service';
 import { MetricsController } from './metrics.controller';
+import { MetricsAccessGuard } from './metrics-access.guard';
 
 @Global()
 @Module({
   imports: [AuthCoreModule, IdentityModule],
   controllers: [MetricsController],
   // P64 Communications — same registry, same global reach.
-  providers: [LearningMetricsService, CommunicationMetricsService],
+  providers: [LearningMetricsService, CommunicationMetricsService, MetricsAccessGuard],
   exports: [LearningMetricsService, CommunicationMetricsService],
 })
 export class MetricsModule {}
