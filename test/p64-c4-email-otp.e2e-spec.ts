@@ -155,8 +155,10 @@ describe('P64 C4 — email OTP and trusted devices (e2e)', () => {
     return response.body.error;
   }
 
-  async function register(label: string): Promise<{ email: string; userId: string }> {
-    const email = uniqueTestEmail(label);
+  async function register(
+    label: string,
+    email = uniqueTestEmail(label),
+  ): Promise<{ email: string; userId: string }> {
     await http()
       .post('/auth/register')
       .send({ name: 'OTP Tester', email, password: PASSWORD })
@@ -503,6 +505,62 @@ describe('P64 C4 — email OTP and trusted devices (e2e)', () => {
 
     const response = await verify(openB.challengeId, codeA).expect(401);
     expect(err(response).messageKey).toBe('errors.auth.otpInvalid');
+  });
+
+  it('P64-C4-070 — concurrent sign-ins on different mail providers: each code email goes to its own address, only its own code opens it', async () => {
+    // Provider-agnostic by construction: one address on a big consumer
+    // host, one on a small corporate domain (the Hostinger-style case that
+    // was investigated in production). No branch anywhere keys on either.
+    const stamp = `${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
+    const a = await register('c4-070a', `p1-c4-070a-${stamp}@gmail.com`);
+    const b = await register('c4-070b', `p1.c4-070b-${stamp}@corp-mail.atlas.test`);
+
+    const [openA, openB] = await Promise.all([challenge(a.email), challenge(b.email)]);
+    const [codeA, codeB] = await Promise.all([
+      latestCode(a.userId),
+      latestCode(b.userId),
+    ]);
+
+    const outbox = await admin.communicationOutbox.findMany({
+      where: { recipientUserId: { in: [a.userId, b.userId] }, key: 'auth.email.otp' },
+    });
+    expect(outbox).toHaveLength(2);
+    await Promise.all(outbox.map((row) => dispatcher.dispatch(row.id, DISPATCH_ATTEMPT)));
+
+    const otpMail = sent.filter((item) =>
+      (item.tags ?? []).includes('key:auth.email.otp'),
+    );
+    const toA = otpMail.filter((item) => item.to === a.email);
+    const toB = otpMail.filter((item) => item.to === b.email);
+    // Exactly one code email per account, each to that account's own
+    // address, and no code email to any other address.
+    expect(toA).toHaveLength(1);
+    expect(toB).toHaveLength(1);
+    expect(
+      otpMail.filter((item) => item.to !== a.email && item.to !== b.email),
+    ).toHaveLength(0);
+    if (codeA !== codeB) {
+      expect(toA[0].text).toContain(codeA);
+      expect(toA[0].text).not.toContain(codeB);
+      expect(toB[0].text).toContain(codeB);
+      expect(toB[0].text).not.toContain(codeA);
+    }
+    // The send input has no sender field at all: the sender is added by
+    // the provider adapter from configuration and can never become `to`.
+    for (const message of [...toA, ...toB]) {
+      expect(Object.keys(message)).not.toContain('from');
+      expect(Object.keys(message)).not.toContain('fromEmail');
+    }
+
+    // Each code opens only its own account.
+    if (codeA !== codeB) {
+      await verify(openA.challengeId, codeB).expect(401);
+      await verify(openB.challengeId, codeA).expect(401);
+    }
+    const sessionA = await verify(openA.challengeId, codeA).expect(200);
+    const sessionB = await verify(openB.challengeId, codeB).expect(200);
+    expect(sessionA.body.user.id).toBe(a.userId);
+    expect(sessionB.body.user.id).toBe(b.userId);
   });
 
   it('P64-C4-031 — a reference forged to pair one account’s challenge with another’s id opens nothing', async () => {
