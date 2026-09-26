@@ -535,6 +535,12 @@ describe('Course Commerce — P13 (e2e)', () => {
       where: { id: order.id },
     });
     expect(orderRow.status).toBe('refunded');
+    // The financial mutation is audited in the same transaction, as a
+    // RECORDED refund (Atlas moves no money under manual bank transfer).
+    const audit = await admin.auditLogEntry.findMany({
+      where: { action: 'course_order.refund_recorded', targetId: order.id },
+    });
+    expect(audit).toHaveLength(1);
   });
 
   // --- 14. Refund after 30 days rejected -----------------------------------

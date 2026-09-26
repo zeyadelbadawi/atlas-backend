@@ -31,6 +31,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { EnrollmentsRepository } from '../../learning/repositories/enrollments.repository';
@@ -63,6 +64,7 @@ export class CourseOrderRefundsService {
     private readonly revenueLedgerEntriesRepository: RevenueLedgerEntriesRepository,
     private readonly communicationService: CommunicationService,
     private readonly metrics: LearningMetricsService,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   async requestRefund(
@@ -225,6 +227,27 @@ export class CourseOrderRefundsService {
           academyId: fresh.academyId,
           entity: { type: 'course_order', id: fresh.id },
           values: { courseTitle },
+        });
+
+        // Audit trail for the financial mutation, last statement inside the
+        // same transaction (house convention). Records that a refund was
+        // RECORDED — Atlas moves no money; with manual bank transfer the
+        // payment is returned outside the platform.
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: studentId,
+          organizationId: fresh.organizationId,
+          academyId: fresh.academyId,
+          role: 'student',
+          action: 'course_order.refund_recorded',
+          targetType: 'course_order',
+          targetId: fresh.id,
+          targetLabel: courseTitle,
+          context: {
+            refundId: refund.id,
+            amountMinorUnits: Number(amountMinorUnits),
+            currency: snapshot.price.currency,
+            paymentCollectionMode: succeededPayment.paymentCollectionModeSnapshot,
+          },
         });
 
         return toCourseOrderRefundResponse(refund);
