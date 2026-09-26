@@ -460,3 +460,79 @@ or added to it.
 - Any new queue processor must re-validate its target at execution time.
 - Anything that cannot be deleted must be *explained* to the person who asked for its
   deletion, not silently skipped.
+
+---
+
+## 14. `IMPLEMENTED` — Media lifecycle: archive now, destroy after 30 days (26 Sep 2026)
+
+This section follows the owner's decision of 26 September 2026. It **supersedes the
+"DESIGNED — NOT BUILT" media rows in §3 and §5** for media assets. Certificate PDFs are
+handled separately: superseded versions are purged by the `purge-superseded` job, and
+the current version is never deleted.
+
+**Policy.** Archiving never destroys bytes on the spot. That covers a staff "Delete" in
+the Media Library or Media Picker, and an academy archive, which is what account
+deletion and academy deletion do. Bytes are destroyed only when **all** of these hold,
+re-checked at execution time:
+
+- **Age:** the academy was archived ≥ 30 days ago, **or** the asset itself was archived
+  ≥ 30 days ago and nothing references it any more;
+- **No hold:** the organization has no legal hold and no open support case. This reuses
+  the retention pipeline's §31 hold, so the stronger rule wins;
+- **Purge mode:** `FLAG_MEDIA_ARCHIVE_PURGE_MODE` is `on`.
+
+**Mechanism.** `ArchivedMediaPurgeService` (`src/retention/services/`) reuses the
+existing retention machinery rather than adding a second deletion pipeline:
+
+- **Queue:** it runs on the existing `video-retention` queue and its single processor,
+  with job names `archive-purge-sweep` (every 6 h) and `archive-purge-asset`
+  (job id `media-purge-<assetId>`).
+- **Hosted video** (Stream / Normal tier) goes through
+  `VideoRetentionDeletionService.destroyAndVerify`, where a provider 404 counts as
+  success and absence must be proven.
+- **R2 objects**, public and protected, are deleted through
+  `MediaStorageProvider.deleteObject` / `ProtectedMediaStorage.deleteObject`, each
+  followed by an absence probe.
+- **Then** the row becomes a `deleted` tombstone with reason `archive_grace_elapsed`, and
+  an audit entry `media.asset.purged` is written in the same transaction.
+- **Idempotent:** a repeated or concurrent purge returns `already_deleted`.
+
+**Mode.** `off`, `dry_run` or `on`. The default is **`dry_run`**: the sweep logs what
+*would* be destroyed and destroys nothing. Switching to `on` is a single GitHub repo
+variable, synced to the VPS `.env`. Review the dry-run log lines first.
+
+**Delete from the UI.** A staff "Delete" only archives
+(`POST /academies/:id/media/:assetId/archive`, or bulk `…/media/archive-batch`).
+It is refused with `409 errors.media.inUse`, naming each usage, while anything still
+points at the asset:
+
+- lesson video, lesson content or lesson resource;
+- course intro video;
+- a learner's submission attachment;
+- a live-session recording;
+- the academy logo, a course thumbnail or a certificate-template logo;
+- website pages, website configuration or blog content.
+
+| | Delete (single) | Delete (bulk) |
+|---|---|---|
+| Client Owner (academy owner) | yes | yes |
+| Manager of that academy | yes | yes |
+| Manager of another academy, same organization | no (403) | no (403) |
+| Instructor / Learner / Platform Owner / other organization | no (403) | no (403) |
+| Anonymous | no (401) | no (401) |
+
+Enforcement: `MediaService.assertCanManage` checks the academy membership role. Tenant
+RLS bounds every read and write. The frontend only hides controls.
+
+**Restore within the grace period.** No UI exists. The bytes are intact for 30 days, so
+an operator can restore by setting the asset's status back to `active`. A restore UI is
+future work.
+
+**Tests.** Both suites run against real Postgres, S3 and the fake video provider:
+
+- `test/archived-media-purge.e2e-spec.ts` (7): immediate deletion refused, grace
+  respected, eligible public/protected/hosted assets destroyed with proof and audit,
+  referenced assets kept, cross-tenant payload refused, legal hold wins, `dry_run` inert,
+  queue path works.
+- `test/media-delete.e2e-spec.ts` (5): the matrix above, the usage guard, mixed bulk
+  outcomes, and a just-deleted asset is not purgeable.
