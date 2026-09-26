@@ -74,6 +74,13 @@ describe('New Customer Onboarding (e2e)', () => {
   });
 
   afterAll(async () => {
+    // Fixture plans need `displayOrder > 0` to be customer-facing, so they
+    // would otherwise linger in every later catalog read of this shared
+    // database — archive them (archived plans are never offered).
+    await admin.plan.updateMany({
+      where: { key: { startsWith: 'onb-' } },
+      data: { status: 'archived' },
+    });
     identityConfig.signupOrganizationMode = 'off';
     await admin.trialPolicy.updateMany({ data: originalPolicy });
     await admin.$disconnect();
