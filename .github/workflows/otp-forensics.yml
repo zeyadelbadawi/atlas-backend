@@ -1,0 +1,42 @@
+name: OTP forensics
+
+# Read-only trace of the sign-in code email path for one address
+# (deploy/otp-forensics.sh): user, challenges, outbox, deliveries (provider
+# message id + provider-reported status), suppression, and where every
+# sign-in code email of the last 12 hours went. Addresses are redacted;
+# codes, hashes, tokens and secrets are never printed.
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: Address to trace
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trace on the VPS
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          TARGET: ${{ inputs.email }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$TARGET" | grep -Eq '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'; then
+            echo "not an email address"; exit 2
+          fi
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" '${TARGET}' </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+            < deploy/otp-forensics.sh
