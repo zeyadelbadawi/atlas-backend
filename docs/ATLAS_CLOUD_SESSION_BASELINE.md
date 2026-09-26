@@ -305,11 +305,14 @@ or OTP flow was exercised from this session. To enable it:
 
 **Regression at closeout (local, real Postgres/Redis/S3):**
 
-- **Backend:** 48 e2e suites covering every `rls-*` and tenant-isolation suite plus every
-  touched area. All passed except:
-  - `plans-catalog` and `checkout-plan-catalog-fix`: they need the seeded production plan
-    catalog, and `plans-catalog` fails identically on pre-session commit `6a70173`.
-  - `P53-ATT-013`: a known load-sensitive flake (DL-30); it passes in isolation.
+- **Backend:** 151 e2e suites, 1,777 tests. 1,767 pass. The 10 failures fall into two
+  groups:
+  - **Environmental (7 tests):** `plans-catalog` and `checkout-plan-catalog-fix` need the
+    seeded production plan catalog. `plans-catalog` fails identically on pre-session
+    commit `6a70173`.
+  - **Load-sensitive (3 tests):** `P53-ATT-013` and the media oversized-payload case
+    (both the known DL-30 413-vs-500 item), and the `p64-c8` setup-link sign-in. All three
+    pass when re-run in isolation (15/15 and 21/21).
 - **Frontend:** full vitest suite, 104 files / 963 tests passing; typecheck at the
   34-error baseline; `vite build` OK.
 
