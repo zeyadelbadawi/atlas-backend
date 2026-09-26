@@ -1497,7 +1497,7 @@ backup first.
 
 # PLATFORM OWNER OBSERVABILITY CENTER — 26 September 2026
 
-## Status: DEPLOYED; ALERT PATH AND SLACK DELIVERY PRODUCTION-VERIFIED; PRODUCTION CHROME CHECK OPEN
+## Status: COMPLETE IN PRODUCTION (26 Sep 2026)
 
 Detail: `PLATFORM_OWNER_OBSERVABILITY_GUIDE.md` (operations) and
 `PLATFORM_OWNER_OBSERVABILITY_HANDOVER.md` (implementation). No secret
@@ -1611,14 +1611,26 @@ it is pre-existing.
 - **Synthetic arm rejected.** The verify workflow's arm step was rejected
   by `redis-cli` quoting. Fixed in `09c694f`.
 
-### Remaining — human only
+### Manual production verification by the owner (26 Sep 2026)
 
 1. **Slack delivery — DONE.** On 26 Sep 2026 the owner confirmed that
    `#atlas-alerts` shows both
    `[Atlas] [FIRING] AtlasSyntheticAlert (warning)` and
    `[Atlas] [RESOLVED] AtlasSyntheticAlert (warning)`, each with the
    **View alert** action.
-2. **Allow production access for Chrome checks.** Allow `atlass.dpdns.org`
-   in the cloud environment's network access, so the four pages can be
-   checked against production in Chrome. Until then, production UI
-   verification is recorded as blocked, not done.
+2. **Production browser verification — DONE.** The owner verified the live
+   production UI in a browser:
+   - System Health;
+   - Alerts Center;
+   - the `AtlasSyntheticAlert` rule detail;
+   - System Metrics;
+   - Monitoring & Alert Configuration.
+
+   The owner checked these in the responsive and Arabic states and reported
+   them working correctly. This check was done by the owner. The cloud
+   session could not reach `atlass.dpdns.org` because of its network
+   policy, so its own browser checks ran against a local stack.
+
+### Remaining
+
+None for Observability/Alerting.

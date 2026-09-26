@@ -206,11 +206,22 @@ Two production runs of the `Observability verify` workflow, both with
 - `ALERTS` history recorded the episode, which is what the Alerts Center
   reads.
 
-**Not verified from here:**
-- **The message in `#atlas-alerts`** was confirmed by the owner (FIRING and
-  RESOLVED, each with **View alert**). This session has no Slack read access.
-- **The production UI in Chrome.** The environment network policy denies
-  `atlass.dpdns.org`.
+**Manually confirmed by the owner (26 Sep 2026):**
+- **Slack channel delivery.** `#atlas-alerts` shows both
+  `[Atlas] [FIRING] AtlasSyntheticAlert (warning)` and
+  `[Atlas] [RESOLVED] AtlasSyntheticAlert (warning)`, each with
+  **View alert**. This session has no Slack read access.
+- **Production browser verification.** The owner checked these pages on
+  the live site, in responsive and Arabic states, and they work correctly:
+  - System Health;
+  - Alerts Center;
+  - the `AtlasSyntheticAlert` rule detail;
+  - System Metrics;
+  - Monitoring & Alert Configuration.
+
+  The cloud session could not reach `atlass.dpdns.org` because of its
+  network policy, so its automated browser checks (section 12) ran against
+  a local stack only.
 
 ## 14. Deployment SHAs
 
@@ -244,12 +255,14 @@ Two production runs of the `Observability verify` workflow, both with
 
 ## 16. Remaining human-only actions
 
+None. Both manual checks are closed:
+
 1. **Slack messages — DONE.** On 26 Sep 2026 the owner confirmed both
    production messages (FIRING and RESOLVED, each with **View alert**) in
    `#atlas-alerts`.
-2. **Allow production access for Chrome checks.** Allow `atlass.dpdns.org`
-   in the cloud environment's network access, so the four pages can be
-   checked against production in Chrome.
+2. **Production browser check — DONE.** The owner verified the four
+   pages and the rule detail in production, in responsive and Arabic
+   states.
 
 ## 17. Rollback
 

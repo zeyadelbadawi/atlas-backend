@@ -373,3 +373,27 @@ Click **Resolve** (or let the TTL expire). Then check:
   3. Push to `main`. The deploy copies the file and reloads Prometheus.
 - **Pausing noise.** Create an Alertmanager silence. Never delete a rule to
   silence it.
+
+## Production verification record (26 Sep 2026)
+
+This is how the live system was verified; repeat it after any major
+change.
+
+| Check | How | Result |
+|---|---|---|
+| Configuration and security | **Observability verify** workflow, checks only | 0 failures |
+| Synthetic alert (FIRING → RESOLVED) | **Observability verify**, `synthetic_minutes` = 5 (run 36229796544) | Slack accepted both notifications, with 0 delivery failures |
+| Slack channel delivery | Owner, manually in `#atlas-alerts` | FIRING and RESOLVED visible, each with **View alert** |
+| Production browser | Owner, manually | All pages below working, including responsive and Arabic |
+
+The pages the owner verified in production were System Health, Alerts
+Center, the `AtlasSyntheticAlert` rule detail, System Metrics, and
+Monitoring & Alert Configuration.
+
+The "Configuration and security" checks cover:
+- `/metrics` rejects requests without a token and with a wrong token.
+- Prometheus scrapes Atlas with the token.
+- All 24 rules are healthy.
+- The Slack receiver is loaded.
+- The anonymous API returns 401.
+- Neither secret appears in any container log.
