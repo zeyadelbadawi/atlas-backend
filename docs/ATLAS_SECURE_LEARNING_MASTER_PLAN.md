@@ -894,6 +894,7 @@ Nine steps, in this order. Nothing below has been run; each needs explicit autho
 | 2026-09-23 | 4 | **Course reviews — authenticated surface delivered.** Learner authoring (enrollment-gated, one per course+student, always `pending`, sanitized) and staff moderation (instructor/owner/administrator/manager list/approve/reject/remove) on `courses/:id/reviews*`, all under `runInUserContext` so the service guard and `course_reviews_*` RLS agree independently; scalar-FK inserts; cross-academy isolation. Public approved-list/rating/recommendations deferred to the next increment. | Claude (Phase 4) | Backend `ba099dd`; push-deploy `35838833679` success. e2e `test/p64-course-reviews.e2e-spec.ts` 10/10 (real Postgres+RLS). Prod: all review routes 401 (deployed+guarded). |
 | 2026-09-23 | 4 | **Phase 4 catalog foundation delivered (3 increments).** (1) Schema + migration `20261012000001_p64_phase4_catalog_reviews` — Course catalog columns, `CourseReview` model, level/review-status enums, `course_is_published_public` helper + 9 review RLS policies; also repaired a CI-breaking migration-ordering bug in the palette migration (verified by full `migrate reset` replay). (2) Public catalog v2 read path — level/language/price-range/ids filters, `price` sort, description-spanning search on `GET /public/websites/:academyId/courses`; new fields on `CourseResponse`. (3) Catalog authoring write path — create/update accept and persist level/language/outcomes/requirements/introVideoAssetId with bounds. All tenancy/RLS/server-side rules preserved; catalog stays published+public-scoped. | Claude (Phase 4) | Backend `de3e04f`→`1f5032c`. Migration applied via owner-approved run `35832583076`; push-deploys `35834744872`, `35836345426` success. e2e: catalog v2 8/8, course suite 46/46 (real Postgres + RLS). Prod-verified live on canary `60037b11…`: read contract + all filters (level/language/search/price-range/ids/price-sort) behave correctly on the real course; non-null-metadata-on-prod-course left honestly unverified (email-acceptability control blocks throwaway provisioning; write path e2e-proven instead). |
 | 2026-09-26 | Onboarding | **New Customer Onboarding deployed (flag off).** Backend `6f5de80` (atomic signup, signup options, onboarding status/complete APIs, computed `onboardingPending`, metrics), `7c38a6a` (e2e fixture cleanup), `9826b57` (`Onboarding verify` workflow); migration `20261017000000_onboarding_completed_at` applied through the owner-approved gated run 36239402027 (pre-migration backup taken). Frontend `0cb5d6d`/`0c0b553` (one-page signup, onboarding shell, dashboard setup card, legacy wizard removed) and `8a8dd56` (fixes from local browser journeys). Production `Onboarding verify` run 36242994451: all checks passed with the flag off (also the rollback verification). | Claude (lead) | DL-43; details and evidence in the "NEW CUSTOMER ONBOARDING" section and `NEW_CUSTOMER_ONBOARDING.md` §6–9 |
+| 2026-09-26 | Onboarding | **Flag ON in production.** Owner created the repository variable `FLAG_SIGNUP_ORGANIZATION_MODE=on` (deploy fallback unchanged: missing = off); backend redeployed without migrations (run 36245801235). `Onboarding verify` extended (server-derived eligible plans, full refusal matrix, signup aggregates, payment-method catalog) — runs 36246237835/36247509421; `Onboarding browser verify` added (`65ba3b0`) — run 36246839200. Found: production payment-method catalog empty (pre-existing configuration gap); owner mailbox already trial-used. | Claude (lead) | `NEW_CUSTOMER_ONBOARDING.md` §7–9 |
 
 ## Phase Completion Record requirements
 
@@ -1641,7 +1642,7 @@ None for Observability/Alerting.
 
 # NEW CUSTOMER ONBOARDING — 26 September 2026
 
-## Status: DEPLOYED, FLAG OFF — awaiting the owner's flag enable and production browser journey
+## Status: LIVE IN PRODUCTION (flag ON since 26 Sep 2026) — two owner inputs open (payment-method catalog, trial-eligible test mailbox)
 
 Contract, rollout, evidence and limitations: `NEW_CUSTOMER_ONBOARDING.md`.
 Decision: DL-43. No secret value is recorded anywhere.
@@ -1706,10 +1707,27 @@ Decision: DL-43. No secret value is recorded anywhere.
   and manager not routed into onboarding. Seven UX defects found and fixed
   before deploy (listed in `NEW_CUSTOMER_ONBOARDING.md` §7).
 
+### Flag-on production verification (26 Sep 2026)
+
+- `FLAG_SIGNUP_ORGANIZATION_MODE=on` (repository variable created by the
+  owner; deploy fallback stays `off`), backend redeployed without
+  migrations (run 36245801235); the running container reports `on`.
+- `Onboarding verify` (runs 36246237835 / 36247509421): signup options
+  `organizationSignup=true` with exactly the server-computed eligible plans;
+  every forged/invalid signup refused with nothing written; 5 organizations
+  already created by the one-page signup, every trialing one with its trial
+  redemption.
+- `Onboarding browser verify` (run 36246839200, EN desktop + AR mobile):
+  landing → one-page signup → sign in (pre-filled, notice) → OTP →
+  `/onboarding`, atomic state, rail semantics, layout/RTL all PASS. The
+  owner's mailbox had already used a trial, so both journeys correctly got
+  no second trial; the paid path stopped at checkout because production has
+  **no payment methods**.
+
 ### Remaining
 
-1. **Owner:** set the atlas-backend repository variable
-   `FLAG_SIGNUP_ORGANIZATION_MODE=on`, then redeploy the backend.
-2. Dispatch `Onboarding verify` with the flag on.
-3. **Owner:** the production browser journey with a real mailbox (this
-   environment cannot reach production).
+1. **Owner data:** real payment-method details (pre-existing production
+   configuration gap: the catalog is empty, so no plan can be bought).
+2. **Owner input:** a Gmail mailbox never used for an Atlas trial, to run
+   the production trial journey through Finish (verified locally end to
+   end).

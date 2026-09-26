@@ -212,8 +212,8 @@ The legacy `localStorage` wizard (`useOnboardingProgress`) is deleted, and
 | Backend code (`6f5de80`, `7c38a6a`, `9826b57`) on `main` | Deployed |
 | Migration `20261017000000_onboarding_completed_at` | Applied in production through the gated `apply_migrations` run, owner-approved (Deploy run 36239402027; pre-migration backup taken) |
 | Frontend (`0cb5d6d` merged as `0c0b553`, fixes `8a8dd56`) on `main` | Deployed (Deploy run 36242299025) |
-| `FLAG_SIGNUP_ORGANIZATION_MODE` | **Unset → `off`**. Customers see today's signup; no organization is pending onboarding |
-| Enable | The owner sets the atlas-backend repository variable `FLAG_SIGNUP_ORGANIZATION_MODE=on`, then redeploys the backend (any push to `main`, or a Deploy dispatch without migrations) |
+| `FLAG_SIGNUP_ORGANIZATION_MODE` | **`on`** since 26 Sep 2026 ~13:45 UTC — repository variable created by the owner; backend redeployed without migrations (Deploy run 36245801235); the running container reports `on` (Onboarding verify run 36246237835) |
+| Enable | Done: repository variable `FLAG_SIGNUP_ORGANIZATION_MODE=on` + a Deploy dispatch with `apply_migrations=false`. The deploy fallback stays `off`: a missing variable means off |
 | Rollback | Set the variable to `off` (or delete it) and redeploy the backend. The frontend needs no change: it follows `GET /public/signup-options`. Organizations already created stay valid; their owners keep the onboarding shell until they finish or defer |
 
 The deploy action writes a `FLAG_*` line into `/opt/atlas/.env` only when
@@ -316,13 +316,66 @@ the mobile step rail not keeping the current step in view.
 - Emails go through the existing communications outbox; no new mail path,
   no token in any response, log or document.
 
+### Production — flag ON (26 Sep 2026)
+
+**`Onboarding verify`** (runs 36246237835, 36247423268, 36247509421):
+
+- The backend container sees `FLAG_SIGNUP_ORGANIZATION_MODE=on`.
+- `GET /public/signup-options`: `organizationSignup=true`; the exposed
+  trial plans equal the set computed from the server-side rule (active,
+  customer-facing, trial-eligible, policy enabled) —
+  `starter, growth, premium-starter, premium-growth`; 2 non-trial plans
+  excluded. Production has no inactive or hidden plan to probe (those
+  refusals are covered by the e2e suite and the local run).
+- Refused with nothing written (no user, no organization): fake plan id,
+  non-trial plan, plan without organization name, name too short,
+  malformed plan id, organization fields with an academy id, and an
+  existing email (409).
+- Organizations created by the one-page signup: 5 (2 `trialing`, 3
+  `no_plan`); every trialing one has its trial redemption — the atomic
+  claim + start holds in production. `atlas_signup_total`:
+  `trial_started=1, no_trial=2, rejected_plan=2, conflict=1` since the
+  last backend restart.
+- **FAIL — the payment-method catalog is empty** (0 rows). See §8.
+
+**`Onboarding browser verify`** (run 36246839200) — real Chromium from a
+GitHub runner against production, sign-in codes read server-side for the
+journey's own account only, never logged:
+
+| Check | A — EN desktop | B — AR mobile |
+|---|---|---|
+| Landing "Start for Free" link → signup | PASS ("Get started") | PASS ("ابدأ الآن") |
+| One page: name, email, password, confirm, organization name | PASS | PASS |
+| Trial plans offered = server-eligible set (by key) | PASS | PASS |
+| Exactly one primary action, "Create Account" | PASS | PASS ("إنشاء حساب") |
+| No organization or plan page between signup and sign-in | PASS | PASS |
+| Atomic state: user + organization + primary owner membership + subscription, `onboarding_completed_at IS NULL`, `organization.created` audited | PASS | PASS |
+| Sign-in: email pre-filled, "Account created" notice | PASS | PASS |
+| OTP challenge (new device), then first page `/onboarding` | PASS | PASS |
+| Rail: Academy/Website Required, Branding/First course Recommended | PASS | — |
+| Layout: correct `dir`, no overflow, no raw keys (every screen reached) | PASS | PASS (RTL) |
+| Trial granted | **not reachable** — the mailbox had already redeemed a trial (`eligible=no` before signup), so `no_plan` and the Plan step, exactly as the anti-abuse rule requires | PASS — no second trial, 0 redemptions |
+| Plan step offers paid plans → existing checkout | PASS (landed on Plan) | PASS |
+| Checkout offers a payment method | — | **FAIL** — catalog empty |
+
+Not yet verified **in production** (verified locally, end to end, with the
+same script — both journeys all-PASS): Academy → Branding → Website →
+First course → Summary → Finish → Dashboard, Finish disabled while a
+required step is open, refresh persistence, Finish for now → dashboard
+card, and the payment → awaiting confirmation step.
+
 ## 8. Known limitations
 
-- **The flag is off in production.** Organization signup reaches customers
-  only after the owner sets the repository variable (§6).
-- **No production browser journey yet.** This environment cannot reach
-  production (network policy), and the journey needs a real mailbox for the
-  OTP. It must be run by the owner after enabling the flag.
+- **Production payment-method catalog is empty** (configuration gap,
+  pre-existing, not caused by this feature). `payment_methods` has no write
+  endpoint by design and is filled by the seed, which carries fake fixture
+  details and was never applied to production. Until real methods exist,
+  no `no_plan` or `trial_expired` organization can pay: checkout shows its
+  "no payment methods" empty state and the Plan step's "Contact support".
+  Needs the owner's real bank/wallet transfer details.
+- **Production trial-path browser journey** needs a Gmail mailbox that has
+  never redeemed an Atlas trial (Gmail ignores dots and `+tags`, so the
+  owner's usual mailbox cannot be reused).
 - On the payment details page, "Back to setup" is shown with the payment;
   if the payment fails to load, the page shows the standard error state
   without it (the owner can still use the dashboard setup card).
@@ -333,10 +386,13 @@ the mobile step rail not keeping the current step in view.
 
 ## 9. Remaining work
 
-1. Owner: set `FLAG_SIGNUP_ORGANIZATION_MODE=on` (atlas-backend repository
-   variable) and redeploy the backend.
-2. Dispatch `Onboarding verify` and confirm `organizationSignup=true` and the
-   forged-plan refusal.
-3. Owner: run the production browser journey (Start for Free → signup →
-   OTP → onboarding → Finish → dashboard) with a real mailbox, including
-   one Arabic or mobile pass.
+1. **Owner data:** real payment-method details (bank transfer and/or
+   wallet: display name, account name, bank/wallet provider, account
+   number/IBAN or wallet number, instructions). Added through a reviewed
+   data migration applied by the gated `apply_migrations` run. Then
+   `Onboarding verify` must show at least one enabled method.
+2. **Owner input:** a Gmail local part that has never been used for an
+   Atlas trial; then dispatch `Onboarding browser verify` with it
+   (journeys `A,B`) to complete the production trial path through Finish.
+3. Test organizations left by run 36246839200 ("Atlas Onboarding Verify
+   A/B", `no_plan`, pending setup) are clearly named verification data.

@@ -32,7 +32,7 @@ Both repos are at their deployed SHA; nothing is pending deploy.
 | P64 Communications | **CLOSED in production** |
 | **Account Deletion & Data Lifecycle** | **ACTIVE — `PARTIAL`** |
 | Platform Owner Observability Center | **COMPLETE in production** (26 Sep) |
-| **New Customer Onboarding** | **DEPLOYED, flag `FLAG_SIGNUP_ORGANIZATION_MODE` unset (off)** — enable + production browser journey pending the owner (`NEW_CUSTOMER_ONBOARDING.md` §9) |
+| **New Customer Onboarding** | **LIVE — flag `on`** (26 Sep). Open: production payment-method catalog is empty (owner data); trial-path production journey needs a never-trialed mailbox (`NEW_CUSTOMER_ONBOARDING.md` §9) |
 
 ---
 
