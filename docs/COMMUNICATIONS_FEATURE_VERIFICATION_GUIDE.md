@@ -189,9 +189,19 @@ The same numbers render in the UI at **Analysis › Communications**
 
 ### B.3 Where the sender identity is verified
 
-Brevo **single-sender verification**, not domain DNS. The From address (`EMAIL_FROM_EMAIL`) is a
-single mailbox verified inside the Brevo account (Senders → the address shows `active`). There is no
-verified sending *domain*; `/v3/senders/domains` is empty, and that is the approved arrangement.
+> **Superseded 26 Sep 2026 (OTP delivery incident, see `NEW_CUSTOMER_ONBOARDING.md` §10).** A
+> free-mail single sender (a `@gmail.com` address) is NOT deliverable to strict receivers: Brevo
+> cannot send as a Gmail address it is not authorised for, rewrites From to its shared
+> `…@<account>.brevosend.com` domain, and receivers such as Hostinger reject the message as spam
+> (`554 5.7.1 Spam message rejected`, provider event `softBounces`). The platform's own domain
+> `atlass.dpdns.org` is now registered in Brevo with DKIM (`brevo1/brevo2._domainkey` CNAMEs), the
+> Brevo ownership code, SPF (`include:spf.brevo.com`) and DMARC (`p=none`) in the platform's
+> Cloudflare zone, added by the `Email domain setup` workflow. `EMAIL_FROM_EMAIL` must be an address
+> on that authenticated domain.
+
+Historical arrangement (before 26 Sep 2026): Brevo **single-sender verification**, not domain DNS.
+The From address (`EMAIL_FROM_EMAIL`) was a single mailbox verified inside the Brevo account
+(Senders → the address shows `active`), with no verified sending *domain*.
 
 Consequences you must not misread as defects:
 - Free-tier Brevo appends a **"Sent with Brevo" footer** to outbound mail. That is the provider, not

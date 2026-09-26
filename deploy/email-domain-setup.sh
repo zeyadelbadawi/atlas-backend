@@ -84,6 +84,17 @@ const show = (v) => String(v).length > 70 ? String(v).slice(0, 67) + "..." : Str
     const after = await brevo("GET", "/senders/domains/" + encodeURIComponent(domain));
     console.log("INFO  Brevo now: verified=" + (after.json && after.json.verified) + " authenticated=" + (after.json && after.json.authenticated));
     for (const [label, r] of Object.entries((after.json && after.json.dns_records) || {})) console.log("INFO  Brevo record", label, "status=" + (r && r.status));
+    if (after.json && after.json.authenticated) {
+      // The platform sender on the authenticated domain.
+      const sender = "no-reply@" + domain;
+      const list = await brevo("GET", "/senders");
+      const has = ((list.json && list.json.senders) || []).find((x) => String(x.email).toLowerCase() === sender);
+      if (has) console.log("OK    sender present", sender, "active=" + has.active);
+      else {
+        const c = await brevo("POST", "/senders", { name: process.env.EMAIL_FROM_NAME || "Atlas", email: sender });
+        console.log(c.status < 300 ? "DONE  sender created" : "FAIL  sender create", sender, "->", c.status, (c.json && c.json.message) || "");
+      }
+    }
   }
 })().catch((e) => { console.log("FAIL ", e.message); process.exit(1); });
 ' "$mode" "$domain"
