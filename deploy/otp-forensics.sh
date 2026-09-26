@@ -116,3 +116,37 @@ const get = (p) => fetch('https://api.cloudflare.com/client/v4' + p, { headers: 
   if (!rel.length) console.log('no SPF/DMARC/DKIM TXT records in the zone');
 })().catch((e) => console.log('Cloudflare lookup failed:', e.message));
 "
+
+section "Brevo per-message detail (every event Brevo recorded; the body — which holds the code — is never printed)"
+docker compose exec -T backend node -e "
+const red = (e) => String(e || '-').replace(/^(.{0,3})[^@]*@/, '\$1***@');
+const key = process.env.BREVO_API_KEY;
+if (!key) { console.log('BREVO_API_KEY not configured'); process.exit(0); }
+const get = (p) => fetch('https://api.brevo.com/v3' + p, { headers: { 'api-key': key, accept: 'application/json' } }).then(async (r) => ({ status: r.status, json: r.ok ? await r.json() : null }));
+(async () => {
+  for (const id of process.argv.slice(1)) {
+    const list = await get('/smtp/emails?limit=5&messageId=' + encodeURIComponent(id));
+    const rows = (list.json && list.json.transactionalEmails) || [];
+    if (!rows.length) { console.log(id, '-> no transactional record (' + list.status + ')'); continue; }
+    for (const row of rows) {
+      const d = await get('/smtp/emails/' + encodeURIComponent(row.uuid));
+      const ev = ((d.json && d.json.events) || []).map((e) => e.name + '@' + e.time).join('  ');
+      console.log(id, '| to=' + red(row.email), '| from=' + red(row.from), '| created=' + row.date, '| events:', ev || '(none returned)');
+    }
+  }
+})().catch((e) => console.log('Brevo detail lookup failed:', e.message));
+" $ids
+
+section "Brevo deferred / blocked / error events for this address over the last 2 days"
+docker compose exec -T backend node -e "
+const key = process.env.BREVO_API_KEY;
+if (!key) { console.log('BREVO_API_KEY not configured'); process.exit(0); }
+(async () => {
+  for (const ev of ['deferred', 'blocked', 'error', 'softBounces', 'hardBounces', 'spam']) {
+    const r = await fetch('https://api.brevo.com/v3/smtp/statistics/events?limit=50&days=2&event=' + ev + '&email=' + encodeURIComponent(process.argv[1]), { headers: { 'api-key': key, accept: 'application/json' } });
+    const b = r.ok ? await r.json() : null;
+    const list = (b && b.events) || [];
+    console.log(ev + ':', list.length ? list.map((e) => e.messageId + ' @' + e.date + ' ' + (e.reason || '-')).join(' || ') : 'none' + (r.ok ? '' : ' (API ' + r.status + ')'));
+  }
+})().catch((e) => console.log('Brevo events lookup failed:', e.message));
+" "$email"
