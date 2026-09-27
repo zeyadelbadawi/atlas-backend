@@ -52,6 +52,20 @@ export interface AccountSetupInput {
   readonly email: string;
 }
 
+/**
+ * An EXISTING, active Atlas account was added to an academy by staff. It
+ * already has a password, so there is nothing to set up — the message only
+ * tells the person where they now have access and how to get in.
+ */
+export interface AddedNoticeInput {
+  readonly userId: string;
+  readonly academyId: string;
+  readonly academyName: string;
+  readonly role: AcademyMemberInviteRole;
+  /** The membership row the notice is about; re-adding after removal is a new row, so a new notice. */
+  readonly membershipId: string;
+}
+
 @Injectable()
 export class AccountSetupService {
   private readonly logger = new Logger(AccountSetupService.name);
@@ -116,6 +130,48 @@ export class AccountSetupService {
           error: error instanceof Error ? error.message : String(error),
         },
         'Could not send the account-setup email; the account exists and the person can use password recovery.',
+      );
+    }
+  }
+  /**
+   * Never throws, for the same reason as `sendInvite`: the membership has
+   * already committed, and a mail failure must not turn a successful add
+   * into an error. There is no token here — the person signs in with the
+   * credentials they already have.
+   */
+  async sendAddedNotice(input: AddedNoticeInput): Promise<void> {
+    try {
+      const outboxId = await this.tenancyContextService.runInUserContext(
+        input.userId,
+        async (tx) => {
+          const emitted = await this.communicationService.emit(tx, {
+            // Same host split as the invitation: a learner signs in on the
+            // academy website, staff on the management host.
+            key:
+              input.role === 'student' ? 'academy.learner.added' : 'academy.member.added',
+            recipientUserId: input.userId,
+            academyId: input.academyId,
+            entity: {
+              type: input.role === 'student' ? 'academy_student' : 'academy_member',
+              id: input.membershipId,
+            },
+            values: {
+              academyName: input.academyName,
+              role: input.role,
+            },
+          });
+          return emitted.outboxId;
+        },
+      );
+      await this.communicationService.enqueueAfterCommit(outboxId);
+    } catch (error) {
+      this.logger.warn(
+        {
+          userId: input.userId,
+          academyId: input.academyId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Could not send the academy-added notice; the membership stands.',
       );
     }
   }

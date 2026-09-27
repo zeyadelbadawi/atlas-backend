@@ -339,6 +339,15 @@ const EXPECTED_DEDUPE: Record<
   },
   'academy.member.invited': { values: {}, expected: null },
   'academy.learner.invited': { values: {}, expected: null },
+  // Smart member invitation — one notice per membership row.
+  'academy.member.added': {
+    values: { academyName: 'A', role: 'manager' },
+    expected: `academy_member_added:${ENTITY_ID}`,
+  },
+  'academy.learner.added': {
+    values: { academyName: 'A', role: 'student' },
+    expected: `academy_learner_added:${ENTITY_ID}`,
+  },
   'review.submitted': {
     values: { submittedAtMs: 1790000000000, courseTitle: 'Algebra' },
     expected: `course_review.submitted:${ENTITY_ID}:1790000000000`,

@@ -29,3 +29,8 @@ export function toAcademyStudentResponse(
     createdAt: user.createdAt.toISOString(),
   };
 }
+
+export type AcademyStudentAddResponse = AcademyStudentResponse & {
+  /** See `MemberAddOutcome` (`academy-member.contract.ts`). */
+  readonly outcome: import('./academy-member.contract').MemberAddOutcome;
+};

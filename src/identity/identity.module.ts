@@ -160,6 +160,10 @@ import { TrustedDevicesController } from './controllers/trusted-devices.controll
     // browsers; exported so there is one instance of this policy rather
     // than a second, weaker "forget devices" somewhere else.
     TrustedDeviceService,
+    // Smart member invitation — the staff email lookup
+    // (`AcademiesService.lookupMember`) is budgeted on the same Redis
+    // limiter as the auth routes rather than a second implementation.
+    AuthRateLimiterService,
   ],
 })
 export class IdentityModule {}

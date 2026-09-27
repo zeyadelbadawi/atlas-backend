@@ -32,3 +32,17 @@ export function toAcademyMemberResponse(
     joinedAt: member.joinedAt.toISOString(),
   };
 }
+
+/**
+ * Smart member invitation — what an add actually did, so the dialog can
+ * confirm the right thing:
+ *  - `invited`: a new (invited) Atlas account was created and sent a setup link;
+ *  - `reinvited`: the email belonged to an account that never finished setup,
+ *    so a fresh setup link was sent;
+ *  - `added`: an existing, active account was added and told so.
+ */
+export type MemberAddOutcome = 'invited' | 'reinvited' | 'added';
+
+export type AcademyMemberAddResponse = AcademyMemberResponse & {
+  readonly outcome: MemberAddOutcome;
+};

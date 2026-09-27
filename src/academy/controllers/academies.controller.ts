@@ -38,8 +38,15 @@ import { CreateAcademyStudentDto } from '../dto/create-academy-student.dto';
 import { UpdateContactSubmissionStatusDto } from '../dto/update-contact-submission-status.dto';
 import { CollectionQueryDto, ListAcademiesQueryDto } from '../dto/list-query.dto';
 import type { AcademyResponse } from '../dto/academy.contract';
-import type { AcademyMemberResponse } from '../dto/academy-member.contract';
-import type { AcademyStudentResponse } from '../dto/academy-student.contract';
+import type {
+  AcademyMemberAddResponse,
+  AcademyMemberResponse,
+} from '../dto/academy-member.contract';
+import type { AcademyStudentAddResponse } from '../dto/academy-student.contract';
+import {
+  AcademyMemberLookupQueryDto,
+  type AcademyMemberLookupResponse,
+} from '../dto/academy-member-lookup.dto';
 import type { AcademyStatsResponse } from '../dto/academy-stats.contract';
 import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
 import type { ContactSubmissionResponse } from '../dto/contact-submission.contract';
@@ -187,12 +194,33 @@ export class AcademiesController {
     );
   }
 
+  /**
+   * The Add Manager/Instructor/Student dialogs' debounced email check —
+   * see `AcademiesService.lookupMember`. UX only; the add routes below
+   * never read its answer.
+   */
+  @Get(':id/member-lookup')
+  @UseGuards(AcademyScopeGuard)
+  async lookupMember(
+    @Req() request: Request,
+    @Query() query: AcademyMemberLookupQueryDto,
+  ): Promise<AcademyMemberLookupResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.academiesService.lookupMember(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      query.email,
+      query.role,
+    );
+  }
+
   @Post(':id/members')
   @UseGuards(AcademyScopeGuard)
   async addManager(
     @Req() request: Request,
     @Body() body: AddAcademyManagerDto,
-  ): Promise<AcademyMemberResponse> {
+  ): Promise<AcademyMemberAddResponse> {
     const { academyId, organizationId } = request.academyContext!;
     return this.academiesService.addManager(
       academyId,
@@ -207,7 +235,7 @@ export class AcademiesController {
   async addInstructor(
     @Req() request: Request,
     @Body() body: AddAcademyInstructorDto,
-  ): Promise<AcademyMemberResponse> {
+  ): Promise<AcademyMemberAddResponse> {
     const { academyId, organizationId } = request.academyContext!;
     return this.academiesService.addInstructor(
       academyId,
@@ -222,7 +250,7 @@ export class AcademiesController {
   async createStudent(
     @Req() request: Request,
     @Body() body: CreateAcademyStudentDto,
-  ): Promise<AcademyStudentResponse> {
+  ): Promise<AcademyStudentAddResponse> {
     const { academyId, organizationId } = request.academyContext!;
     return this.academiesService.createStudent(
       academyId,
