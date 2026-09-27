@@ -129,6 +129,28 @@ Password reset and password change are unchanged. They still revoke sessions and
 
 **Audit:** `auth.identity.linked` (context `via`: `password | settings | setup | invitation | new_account`) and `auth.identity.unlinked`.
 
+## 2b. Frontend (Phase 3)
+
+The SPA lives in the `atlas` repository, `src/features/auth/google/`.
+
+- **Button**: "Continue with Google" on the management sign-in and sign-up, the academy website sign-in and sign-up (`?invite=` carried), and the setup link (`?setup=1`, intent `setup`). It is shown only when `GET /auth/options` answers `google: true`; otherwise nothing renders.
+- **Starting a flow** (`useGoogleStart`):
+  - stores a small context in `sessionStorage` (intent, surface, academy, where it started, where a session goes, invitation code, website locale); it holds no secret;
+  - calls `authorize` (which sets the binder cookie), then leaves for Google;
+  - a second click is ignored, and "Back" from Google (a bfcache restore) re-enables the button.
+- **Return page** `/auth/google/return` (management `AuthLayout`; academy chrome in `PublicWebsiteRouter`, in the starting page's language):
+  - reads the fragment once and removes it from the address bar, then presents the handoff exactly once (StrictMode-safe);
+  - a session → the destination; a 2FA / email-code challenge → the existing challenge forms;
+  - `link_required` / `create_account` / `activate_invited` → the step panel. Create uses the same fields and terms as the password sign-up of that surface (organization + trial plan on management); nothing is created before the person confirms;
+  - `linked` (settings) → back to settings with a confirmation; a management refusal of a learner → the academy chooser; anything else → the reason and "Back".
+- **Canonical-host redirect**: skips `/auth/google/return`, so a returning flow is never moved off its origin.
+- **Account settings → Sign-in methods** (management profile and the academy learner security page):
+  - connect and disconnect both ask for the current password;
+  - no disconnect while Google is the only way in.
+- **"Last used"**: `localStorage["atlas:last-auth-method"]`, written only where a session is established, from the response's `authMethod`. It is kept across sign-out, since that is when it is shown.
+- **API client**: the Google completion and step endpoints are auth-lifecycle paths, where a 401 is final and never a refresh. `authorize` is not, because the settings `link` intent is a signed-in call.
+- **Local verification** (the SPA build served same-origin behind a proxy, with an interactive fake Google): management create (organization, terms, email code), link with a wrong then right password, disconnect and reconnect from settings, and cancel. On an academy website in Arabic on a 390 px viewport: sign-up create, RTL with no overflow, an academy-only session, the Google-only settings state, and a returning identity signing straight in.
+
 ## 3. Data
 
 - `user_auth_identities`:
@@ -191,7 +213,7 @@ The deploy plumbing (the `vps-deploy` fragment keys and the `feature_flags` line
    - existing-identity academy sign-up join;
    - settings sign-in methods and unlink;
    - notifications `auth.identity.linked` / `unlinked`; audit.
-3. **Frontend**:
+3. **Frontend**: done (§2b):
    - buttons on the four surfaces, the `/auth/google/return` page and the steps;
    - "Last used" (browser-local, written only from a session response);
    - EN/AR/RTL/mobile;
