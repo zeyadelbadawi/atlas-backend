@@ -18,6 +18,12 @@ on:
           its plus-addresses (<local>+atlas-lsv-<run>-<tag>@gmail.com).
         required: true
         type: string
+      scope:
+        description: all = every journey + deliverability; deliverability = the read-only email facts only
+        required: false
+        default: all
+        type: choice
+        options: [all, deliverability]
 
 concurrency:
   group: launch-verify
@@ -28,6 +34,7 @@ permissions:
 
 jobs:
   api:
+    if: inputs.scope != 'deliverability'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -54,6 +61,7 @@ jobs:
         run: node verify.mjs
 
   browser:
+    if: inputs.scope != 'deliverability'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -95,6 +103,7 @@ jobs:
           retention-days: 14
 
   smi:
+    if: inputs.scope != 'deliverability'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -121,6 +130,7 @@ jobs:
         run: node verify.mjs
 
   smi-browser:
+    if: inputs.scope != 'deliverability'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -160,3 +170,29 @@ jobs:
           name: launch-verify-smi-screenshots
           path: launch-verify-out
           retention-days: 14
+
+  deliverability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Email deliverability facts (DNS, Brevo; read-only)
+        working-directory: deploy/launch-verify
+        env:
+          MODE: deliverability
+          MAILBOX: ${{ inputs.mailbox }}
+          RUN_TAG: ${{ github.run_id }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_KEY_FILE: /home/runner/.ssh/deploy_key
+        run: node verify.mjs

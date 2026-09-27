@@ -15,6 +15,9 @@
  *                 session) and the member lookup's refusals; its metric.
  *   MODE=smi-browser  "Join with it" on Academy B's sign-up → password →
  *                 B's code → /my (EN desktop, AR mobile).
+ *   MODE=deliverability  Email deliverability facts: sending domain DNS
+ *                 (SPF, DKIM, DMARC, Public Suffix List), Brevo domain /
+ *                 sender / plan and 7-day aggregates. Read-only.
  *   (docs/SMART_MEMBER_INVITE_AND_ACADEMY_JOIN.md; separate jobs because
  *   the emailed-code step shares the per-IP sign-in budget.)
  *
@@ -442,10 +445,56 @@ async function smiBrowserMode() {
   check('no uncaught runtime errors on the join journeys', errors.length === 0, errors.slice(0, 3).join(' | '));
 }
 
+// ==============================================================================
+// Email deliverability facts (read-only). DNS is resolved from the runner (the
+// public internet's view); Brevo facts come from the VPS (remote.sh mail).
+// Reports facts; fails only on what the application controls or on missing
+// authentication — inbox placement itself cannot be asserted from here.
+async function deliverabilityMode() {
+  const dns = (await import('node:dns')).promises;
+  const txt = async (name) => {
+    try { return (await dns.resolveTxt(name)).map((parts) => parts.join('')); } catch (e) { return [`<${e.code}>`]; }
+  };
+  const cname = async (name) => {
+    try { return (await dns.resolveCname(name)).join(','); } catch (e) { return `<${e.code}>`; }
+  };
+  const m = facts('mail');
+  for (const [k, v] of Object.entries(m)) info(`${k}: ${v}`);
+  const domainLine = m.brevo_domain ?? '';
+  const domain = domainLine.split('|')[0] || MGMT;
+  check('mail: the platform sender is a no-reply address on the sending domain', /^no-reply@/.test(m.from ?? '') && (m.from ?? '').endsWith(`@${domain}`), m.from);
+  check('mail: sending domain is verified AND authenticated in Brevo', /verified=true\|authenticated=true/.test(domainLine), domainLine);
+  check('mail: the sender exists and is active in Brevo', /present active=true/.test(m.brevo_sender ?? ''), m.brevo_sender);
+
+  const spf = (await txt(domain)).filter((x) => /^v=spf1/i.test(x));
+  const dmarc = (await txt(`_dmarc.${domain}`)).filter((x) => /^v=DMARC1/i.test(x));
+  info(`SPF ${domain}: ${spf.join(' | ') || 'none'}`);
+  info(`DMARC _dmarc.${domain}: ${dmarc.join(' | ') || 'none'}`);
+  check('dns: exactly one SPF record, including Brevo', spf.length === 1 && /include:spf\.brevo\.com/.test(spf[0]), spf.join(' | '));
+  check('dns: a DMARC record is published', dmarc.length === 1, dmarc.join(' | '));
+  for (const sel of ['brevo1', 'brevo2']) {
+    const target = await cname(`${sel}._domainkey.${domain}`);
+    const key = target.startsWith('<') ? [] : (await txt(target)).filter((x) => /p=/.test(x));
+    check(`dns: DKIM ${sel} resolves to a published key`, key.length > 0, `${target} → ${key.length ? 'key present' : 'no key'}`);
+  }
+  // Which domain DMARC evaluates as "organizational" depends on the Public
+  // Suffix List: if the parent is a public suffix, this domain IS the
+  // organization, with its own (and only its own) sending reputation.
+  const parent = domain.split('.').slice(1).join('.');
+  try {
+    const psl = await (await fetch('https://publicsuffix.org/list/public_suffix_list.dat')).text();
+    const listed = psl.split('\n').some((l) => l.trim() === parent);
+    info(`public suffix list: "${parent}" ${listed ? 'IS' : 'is NOT'} a public suffix (organizational domain = ${listed ? domain : parent})`);
+  } catch (e) { info(`public suffix list: unavailable (${e.message})`); }
+  info(`DMARC of parent _dmarc.${parent}: ${(await txt(`_dmarc.${parent}`)).join(' | ')}`);
+  info(`MX ${domain}: ${await dns.resolveMx(domain).then((r) => r.map((x) => x.exchange).join(',')).catch((e) => `<${e.code}>`)}`);
+}
+
 try {
   if (MODE === 'browser') await browserMode();
   else if (MODE === 'smi') await smiMode();
   else if (MODE === 'smi-browser') await smiBrowserMode();
+  else if (MODE === 'deliverability') await deliverabilityMode();
   else await apiMode();
 } catch (e) {
   check('verification ran to completion', false, e.message.slice(0, 200));
