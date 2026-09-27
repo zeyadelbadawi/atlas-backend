@@ -8,7 +8,7 @@
 #   remote.sh academies               -> two open academies with a published website: "academy|<id>|<host>"
 #   remote.sh otp <email>             -> the latest sign-in code for THAT account only (consumed by the runner, never logged)
 #   remote.sh user <email> <A> <B>    -> non-personal facts about that test account
-#   remote.sh metrics                 -> the Plan A security series (values only)
+#   remote.sh metrics                 -> the Plan A security + smart-join series (values only)
 #
 # Nothing here writes to the database. Every per-account read is keyed by a
 # test address the verification itself registered.
@@ -87,6 +87,8 @@ case "$cmd" in
     }
     echo "surface_denied|$(q 'sum%20by%20(reason)%20(atlas_auth_surface_denied_total)')"
     echo "sessions_revoked|$(q 'sum%20by%20(trigger)%20(atlas_auth_sessions_revoked_total)')"
+    echo "academy_join|$(q 'sum%20by%20(result)%20(atlas_academy_join_total)')"
+    echo "member_lookup|$(q 'sum%20by%20(result)%20(atlas_member_lookup_total)')"
     ;;
   *)
     echo "usage: remote.sh release|academies|otp|user|metrics" >&2

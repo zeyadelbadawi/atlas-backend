@@ -1,10 +1,12 @@
 name: Launch verify
 
 # Launch Stabilization Plan A + A6 — production smoke verification
-# (docs/ATLAS_LAUNCH_STABILIZATION_PLAN.md §16). Dispatch only. Two jobs on
-# separate runners (separate IPs) so the per-IP sign-in budget is never the
-# thing being measured. Test accounts are plus-addresses of the owner's own
-# mailbox; nothing is deleted, no academy or organization is created.
+# (docs/ATLAS_LAUNCH_STABILIZATION_PLAN.md §16), plus the smart member
+# invitation / academy join (docs/SMART_MEMBER_INVITE_AND_ACADEMY_JOIN.md).
+# Dispatch only. Every job on its own runner (separate IPs) so the per-IP
+# sign-in budget is never the thing being measured. Test accounts are
+# plus-addresses of the owner's own mailbox; nothing is deleted, no academy or
+# organization is created.
 # Sign-in codes are read by deploy/launch-verify/remote.sh and never logged.
 
 on:
@@ -89,5 +91,72 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: launch-verify-screenshots
+          path: launch-verify-out
+          retention-days: 14
+
+  smi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Smart academy join + member lookup (API)
+        working-directory: deploy/launch-verify
+        env:
+          MODE: smi
+          MAILBOX: ${{ inputs.mailbox }}
+          RUN_TAG: ${{ github.run_id }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_KEY_FILE: /home/runner/.ssh/deploy_key
+        run: node verify.mjs
+
+  smi-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OUT: ${{ github.workspace }}/launch-verify-out
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright (Chromium)
+        working-directory: deploy/launch-verify
+        run: |
+          npm init -y >/dev/null
+          npm install --no-save --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Smart academy join (browser, EN desktop + AR mobile)
+        working-directory: deploy/launch-verify
+        env:
+          MODE: smi-browser
+          MAILBOX: ${{ inputs.mailbox }}
+          RUN_TAG: ${{ github.run_id }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_KEY_FILE: /home/runner/.ssh/deploy_key
+        run: node verify.mjs
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-verify-smi-screenshots
           path: launch-verify-out
           retention-days: 14

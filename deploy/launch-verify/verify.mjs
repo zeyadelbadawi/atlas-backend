@@ -11,6 +11,12 @@
  *   MODE=browser  Management sign-in with the email-code UI → dashboard;
  *                 academy website sign-in with the email-code UI → /my;
  *                 uncaught runtime errors captured on every page.
+ *   MODE=smi      Smart academy join (generic 401s, join → emailed code →
+ *                 session) and the member lookup's refusals; its metric.
+ *   MODE=smi-browser  "Join with it" on Academy B's sign-up → password →
+ *                 B's code → /my (EN desktop, AR mobile).
+ *   (docs/SMART_MEMBER_INVITE_AND_ACADEMY_JOIN.md; separate jobs because
+ *   the emailed-code step shares the per-IP sign-in budget.)
  *
  * Test accounts are plus-addresses of the owner's own mailbox
  * (<mailbox>+atlas-lsv-<run>-<tag>@gmail.com) and are only ever ADDED as
@@ -319,8 +325,128 @@ async function browserMode() {
   check('no uncaught runtime errors on the critical journeys', errors.length === 0, errors.slice(0, 3).join(' | '));
 }
 
+// ==============================================================================
+// Smart member invitation / academy join (docs/SMART_MEMBER_INVITE_AND_ACADEMY_JOIN.md).
+// Its own jobs: OTP verification shares the per-IP sign-in budget, and the
+// Plan A modes above already use most of it.
+async function smiMode() {
+  const acad = remote('academies').split('\n').filter(Boolean).map((l) => l.split('|'));
+  if (acad.length < 2) { check('two open academies with a published website exist', false, `found ${acad.length}`); return; }
+  const [A, B] = acad.map(([, id, host]) => ({ id, host }));
+  info(`Academy A ${A.id} @ ${A.host}; Academy B ${B.id} @ ${B.host}`);
+  let r;
+  let f;
+
+  // ---- Smart academy join: an existing account joins B, answered like sign-in --
+  const J = mail('sj');
+  const jpw = password();
+  r = await call(A.host, 'POST', '/auth/register', { body: { name: 'Launch Verify Join', email: J, password: jpw, academyId: A.id } });
+  check('SMI join fixture: learner registers at Academy A', r.status === 201 && r.body?.account === 'new', `${r.status} ${r.key}`);
+  const ghost = await call(B.host, 'POST', '/auth/academy-join', { body: { email: mail('ghost'), password: password(), academyId: B.id } });
+  const wrong = await call(B.host, 'POST', '/auth/academy-join', { body: { email: J, password: 'not-the-password', academyId: B.id } });
+  check('SMI join: unknown email and wrong password get the same generic 401 (no name, no oracle)',
+    ghost.status === 401 && wrong.status === 401 && ghost.key === 'errors.auth.invalidCredentials' && wrong.key === ghost.key && !JSON.stringify(wrong.body).includes('Launch Verify Join'),
+    `${ghost.status} ${ghost.key} / ${wrong.status} ${wrong.key}`);
+  r = await call(B.host, 'POST', '/auth/academy-join', { body: { email: J, password: jpw, academyId: B.id } });
+  check('SMI join: the right password joins Academy B, returns the name, mints no session',
+    r.status === 200 && r.body?.account === 'existing' && r.body?.name === 'Launch Verify Join' && !r.body?.accessToken,
+    `${r.status} ${r.key} status=${r.body?.status}`);
+  f = facts('user', J, A.id, B.id);
+  check('SMI join: one user, learner rows at A and B, owner notified (account.academy.joined)',
+    f.users === '1' && f.learner_rows === '2' && f.learner_A !== '-' && f.learner_B !== '-' && Number(f.joined_notice) >= 1,
+    `users=${f.users} rows=${f.learner_rows} notice=${f.joined_notice}`);
+  r = await call(B.host, 'POST', '/auth/academy-join', { body: { email: J, password: jpw, academyId: B.id } });
+  check('SMI join: joining again answers alreadyLearnerHere', r.status === 409 && r.key === 'errors.auth.alreadyLearnerHere', `${r.status} ${r.key}`);
+  r = await signIn(B.host, J, jpw, { surface: 'academy', academyId: B.id });
+  check('SMI join: continuation asks for Academy B\'s emailed code', r.status === 200 && r.body?.emailOtpRequired === true && !r.body?.accessToken, `${r.status}`);
+  r = await verify(B.host, r.body?.challengeId, await code(J), false, 'academy');
+  check('SMI join: Academy B code signs the joined account in', r.status === 200 && !!r.body?.accessToken, `${r.status}`);
+  const sJ = r.body?.accessToken;
+
+  // ---- Smart member invitation: the staff email lookup refuses non-owners ------
+  const lookupPath = `/academies/${A.id}/member-lookup?email=${encodeURIComponent(J)}&role=manager`;
+  r = await call(MGMT, 'GET', lookupPath);
+  check('SMI lookup: anonymous caller refused (401)', r.status === 401, `${r.status} ${r.key}`);
+  r = await call(MGMT, 'GET', lookupPath, { token: sJ });
+  check('SMI lookup: academy-website session refused (managementSurfaceOnly)', r.status === 403 && r.key === 'errors.auth.managementSurfaceOnly' && !JSON.stringify(r.body).includes('Launch Verify Join'), `${r.status} ${r.key}`);
+
+  // A management session that owns nothing may not look anyone up.
+  const M = mail('sm');
+  const mpw = password();
+  r = await call(MGMT, 'POST', '/auth/register', { body: { name: 'Launch Verify Staff', email: M, password: mpw } });
+  check('SMI lookup fixture: management account registers', r.status === 201, `${r.status} ${r.key}`);
+  r = await signIn(MGMT, M, mpw);
+  if (r.body?.emailOtpRequired) r = await verify(MGMT, r.body.challengeId, await code(M), false, 'management');
+  const sM = r.body?.accessToken;
+  r = await call(MGMT, 'GET', `/academies/${A.id}/member-lookup?email=${encodeURIComponent(J)}&role=student`, { token: sM });
+  check('SMI lookup: a management session that is not the owner is refused (403, nothing disclosed)', !!sM && r.status === 403 && !JSON.stringify(r.body).includes('Launch Verify Join'), `${r.status} ${r.key}`);
+
+  await new Promise((res) => setTimeout(res, 40000)); // one Prometheus scrape (30s)
+  const m = facts('metrics');
+  info(`atlas_academy_join_total: ${m.academy_join}`);
+  info(`atlas_member_lookup_total: ${m.member_lookup}`);
+  check('metrics: academy joins recorded (joined, invalid_credentials, already_learner)', ['joined', 'invalid_credentials', 'already_learner'].every((x) => new RegExp(`(^|\\s)${x}=\\d`).test(m.academy_join)), m.academy_join);
+}
+
+async function smiBrowserMode() {
+  const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+  const acad = remote('academies').split('\n').filter(Boolean).map((l) => l.split('|'));
+  if (acad.length < 2) { check('two open academies with a published website exist', false, `found ${acad.length}`); return; }
+  const [A, B] = acad.map(([, id, host]) => ({ id, host }));
+  const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
+  const errors = [];
+  async function page(tag, { mobile = false, ar = false } = {}) {
+    const ctx = await browser.newContext({
+      viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+      isMobile: mobile, hasTouch: mobile, locale: ar ? 'ar' : 'en-US',
+    });
+    const p = await ctx.newPage();
+    p.on('pageerror', (e) => errors.push(`${tag}: ${e.message.slice(0, 160)}`));
+    return { ctx, p };
+  }
+  const shot = (p, name) => p.screenshot({ path: path.join(OUT, `${name}.png`) }).catch(() => {});
+  async function accept(p) {
+    const b = p.getByRole('button', { name: /accept all|قبول الكل/i });
+    if (await b.count()) await b.first().click().catch(() => {});
+  }
+  // Smart academy join: an account of A joins B from B's sign-up page →
+  // "Join with it" → password → B's emailed code → /my.
+  for (const v of ([{ tag: 'join-en-desktop', ar: false, mobile: false }, { tag: 'join-ar-mobile', ar: true, mobile: true }])) {
+    const email = mail(`b${v.tag.replace(/-/g, '')}`);
+    const jpw = password();
+    const reg = await call(A.host, 'POST', '/auth/register', { body: { name: 'Launch Verify Join', email, password: jpw, academyId: A.id } });
+    check(`[${v.tag}] join fixture: learner registers at Academy A (API)`, reg.status === 201, `${reg.status} ${reg.key}`);
+    const prefix = v.ar ? '/ar' : '';
+    const { ctx, p } = await page(`academy-B-${v.tag}`, v);
+    try {
+      await p.goto(`${ORIGIN(B.host)}${prefix}/sign-up`); await p.waitForLoadState('networkidle'); await accept(p);
+      await p.getByRole('button', { name: /Join with it|انضم به/ }).click();
+      await p.fill('#academy-join-email', email); await p.fill('#academy-join-password', jpw);
+      const step = await p.evaluate(() => ({ dir: document.documentElement.dir, ovf: document.documentElement.scrollWidth > window.innerWidth + 1 }));
+      await shot(p, `academy-B-${v.tag}-join-step`);
+      check(`[${v.tag}] join step (${v.ar ? 'RTL' : 'LTR'}, no overflow)`, step.dir === (v.ar ? 'rtl' : 'ltr') && !step.ovf, `dir=${step.dir} overflow=${step.ovf}`);
+      await p.press('#academy-join-password', 'Enter');
+      await p.locator('#email-otp-code').waitFor({ timeout: 25000 });
+      check(`[${v.tag}] join continues into Academy B's emailed code, greeting by name`, (await p.getByText(/Launch Verify Join/).count()) > 0);
+      await shot(p, `academy-B-${v.tag}-join-code`);
+      await p.fill('#email-otp-code', await code(email)); await p.press('#email-otp-code', 'Enter');
+      await p.waitForURL((u) => u.pathname.startsWith(`${prefix}/my`), { timeout: 25000 });
+      await p.waitForTimeout(1500); await shot(p, `academy-B-${v.tag}-join-my`);
+      check(`[${v.tag}] joined account lands on /my`, new URL(p.url()).pathname.startsWith(`${prefix}/my`), new URL(p.url()).pathname);
+      const jf = facts('user', email, A.id, B.id);
+      check(`[${v.tag}] one user, learner at A and B`, jf.users === '1' && jf.learner_rows === '2', `users=${jf.users} rows=${jf.learner_rows}`);
+    } catch (e) { await shot(p, `academy-B-${v.tag}-failed`); check(`[${v.tag}] academy join journey`, false, e.message.slice(0, 160)); }
+    await ctx.close();
+  }
+  await browser.close();
+  check('no uncaught runtime errors on the join journeys', errors.length === 0, errors.slice(0, 3).join(' | '));
+}
+
 try {
-  if (MODE === 'browser') await browserMode(); else await apiMode();
+  if (MODE === 'browser') await browserMode();
+  else if (MODE === 'smi') await smiMode();
+  else if (MODE === 'smi-browser') await smiBrowserMode();
+  else await apiMode();
 } catch (e) {
   check('verification ran to completion', false, e.message.slice(0, 200));
 }

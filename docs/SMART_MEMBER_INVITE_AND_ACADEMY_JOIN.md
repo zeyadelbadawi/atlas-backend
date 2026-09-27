@@ -178,6 +178,18 @@ email addresses.
   wrong password, join → academy sign-in → code step, direct `/my`,
   already-learner, pending, fallback, back, Arabic RTL).
 
+- Production: the `Launch verify` workflow (`deploy/launch-verify`) has two
+  more jobs, `smi` and `smi-browser` (each on its own runner, because the
+  emailed-code step shares the per-IP sign-in budget with the Plan A jobs).
+  They check, against the real hosts, the join's identical 401 for an unknown
+  email and a wrong password, a real join → Academy B emailed code →
+  session, `alreadyLearnerHere`, the lookup refusing anonymous, academy-
+  website and non-owner management callers, the `atlas_academy_join_total`
+  series, and (browser mode) the "Join with it" journey to `/my` in EN
+  desktop and AR mobile. The owner-only add/lookup success paths need an
+  organization owner's credentials and are not automated in production;
+  they are covered by the e2e suite and the local browser run.
+
 ## 6. Deliberately unchanged
 
 Plan A / A6 behaviour, JWT/session/token formats, sign-in and OTP flows,
