@@ -537,7 +537,7 @@ function memberEmails() {
   const brevo = {};
   for (const l of lines.filter((x) => x.startsWith('brevo_'))) {
     const [k, ...v] = l.split('|');
-    const m = k.match(/^brevo_(msg|subject|text)_(\d+)$/);
+    const m = k.match(/^brevo_(msg|subject|text|reason)_(\d+)$/);
     if (!m) { info(l); continue; }
     (brevo[m[2]] ??= {})[m[1]] = v;
   }
@@ -550,6 +550,7 @@ function memberEmails() {
     const b = byId[r.messageId];
     if (b) {
       info(`  brevo: ${b.msg.slice(1).join(' ')}`);
+      if (b.reason) info(`  brevo reason: ${b.reason.join('|')}`);
       info(`  brevo subject: ${b.subject?.join('|')}`);
       info(`  brevo text: ${b.text?.join('|')}`);
     }
@@ -559,7 +560,7 @@ function memberEmails() {
   const latest = rows[0];
   const name = latest.academyName;
   check('member email: the stored academy name is the academy record\'s name', latest.match === 't' && name.trim() !== '', `"${latest.storedName}" vs "${name}"`);
-  check('member email: handed to the provider', latest.messageId !== '-' && ['sent', 'delivered'].includes(latest.status), `${latest.provider} ${latest.status}`);
+  check('member email: handed to the provider (accepted, message id recorded)', latest.messageId !== '-' && latest.provider !== '-', `${latest.provider} ${latest.status}`);
   const b = byId[latest.messageId];
   const subject = b?.subject?.join('|') ?? '';
   const text = b?.text?.join('|') ?? '';

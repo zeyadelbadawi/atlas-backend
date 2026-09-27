@@ -167,6 +167,8 @@ const redact = (s) => String(s || "")
     const one = (await get("/smtp/emails/" + encodeURIComponent(t.uuid))).json || {};
     const events = (one.events || []).map((e) => e.name).join(",") || "-";
     console.log("brevo_msg_" + n + "|" + id + "|date=" + (one.date || t.date) + "|events=" + events + "|tags=" + (t.tags || []).join(","));
+    const evs = ((await get("/smtp/statistics/events?days=7&limit=20&messageId=" + encodeURIComponent(id))).json || {}).events || [];
+    for (const e of evs.filter((x) => x.reason)) console.log("brevo_reason_" + n + "|" + e.event + " " + e.date + " " + redact(e.reason).replace(/\|/g, " ").slice(0, 300));
     console.log("brevo_subject_" + n + "|" + String(one.subject || t.subject || "").replace(/\|/g, " "));
     console.log("brevo_text_" + n + "|" + redact(one.body).replace(/\|/g, " ").slice(0, 1200));
   }
