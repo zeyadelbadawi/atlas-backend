@@ -82,6 +82,22 @@ import type { SignInSurface } from '../dto/sign-in.dto';
 const DUMMY_PASSWORD = 'atlas-p1-dummy-password-for-timing-safety-only';
 
 /**
+ * Google Identity — the `password_hash` of an account that has no password
+ * (created through an external identity). Not an argon2 hash, so no input
+ * ever verifies against it (`PasswordHasherService.verify` answers false for
+ * a foreign format, exactly as for the `deleted:` sentinel).
+ */
+export const NO_PASSWORD_PREFIX = 'nopassword:';
+
+/** Whether the account has a password its owner can actually use. */
+export function hasUsablePassword(user: Pick<User, 'passwordHash'>): boolean {
+  return (
+    !user.passwordHash.startsWith(NO_PASSWORD_PREFIX) &&
+    !user.passwordHash.startsWith('deleted:')
+  );
+}
+
+/**
  * Real request metadata for the session being created or refreshed —
  * resolved server-side from headers by `request-metadata.util.ts`, never
  * taken from a request body. Optional throughout so non-HTTP callers
@@ -353,13 +369,94 @@ export class AuthService {
     }
   }
 
+  /**
+   * Google Identity — creates ONE global account whose first sign-in method
+   * is an external identity, in the same single transaction a password
+   * registration uses (user + identity + learner row / organization bundle,
+   * all or nothing). There is no usable password (`nopassword:` sentinel,
+   * which no password verifies — a password is only ever set later through
+   * the emailed reset flow). The address counts as verified only when the
+   * provider is authoritative for it; otherwise the first emailed sign-in
+   * code proves it, exactly as for a password signup. An address that
+   * already has an account is a 409: an external identity never joins or
+   * links an existing account from here.
+   */
+  async registerWithExternalIdentity(input: {
+    readonly name: string;
+    readonly email: string;
+    readonly academyId?: string;
+    readonly inviteToken?: string;
+    readonly hostname?: string;
+    readonly organizationName?: string;
+    readonly planId?: string;
+    readonly context?: { readonly ipAddress?: string; readonly userAgent?: string };
+    readonly external: {
+      readonly provider: 'google';
+      readonly subject: string;
+      readonly emailVerified: boolean;
+    };
+  }): Promise<User> {
+    const wantsOrganization =
+      input.organizationName !== undefined || input.planId !== undefined;
+    const metricMode: SignupMetricMode = wantsOrganization ? 'organization' : 'account';
+    try {
+      await this.registerInternal(
+        { ...input, password: '' },
+        wantsOrganization,
+        metricMode,
+        input.external,
+      );
+    } catch (error) {
+      if (error instanceof ConflictException) recordSignup(metricMode, 'conflict');
+      throw error;
+    }
+    const user = await this.usersRepository.findByEmail(input.email);
+    if (!user)
+      throw new ConflictException({ messageKey: 'errors.auth.emailAlreadyRegistered' });
+    return user;
+  }
+
+  /**
+   * Google Identity — an already-proven existing account (its linked Google
+   * identity) signs UP at an academy: the same membership write as the
+   * password-proven join (`admitExistingAccount`: host check, blocked /
+   * already-learner refusal, registration policy, audit, owner notice).
+   * Already a learner here is not an error for this caller — the sign-in
+   * simply continues.
+   */
+  async joinAcademyAsExistingAccount(
+    user: User,
+    input: { academyId: string; hostname?: string; inviteToken?: string },
+  ): Promise<'active' | 'pending' | 'already'> {
+    try {
+      return await this.admitExistingAccount(user, user.email, input);
+    } catch (error) {
+      if (
+        error instanceof ConflictException &&
+        (error.getResponse() as { messageKey?: string }).messageKey ===
+          'errors.auth.alreadyLearnerHere'
+      ) {
+        return 'already';
+      }
+      throw error;
+    }
+  }
+
   private async registerInternal(
     input: Parameters<AuthService['register']>[0],
     wantsOrganization: boolean,
     metricMode: SignupMetricMode,
+    external?: {
+      readonly provider: 'google';
+      readonly subject: string;
+      readonly emailVerified: boolean;
+    },
   ): Promise<RegistrationResult> {
     const email = normalizeEmail(input.email);
     const existing = await this.usersRepository.findByEmail(email);
+    if (existing && external) {
+      throw new ConflictException({ messageKey: 'errors.auth.emailAlreadyRegistered' });
+    }
     // Launch Stabilization A4 — one global identity may be a learner at many
     // academies. An academy signup with an email that already has an Atlas
     // account ADDS this academy to that account once the account's own
@@ -431,7 +528,9 @@ export class AuthService {
         )
       : undefined;
 
-    const passwordHash = await this.passwordHasher.hash(input.password);
+    const passwordHash = external
+      ? `${NO_PASSWORD_PREFIX}${randomUUID()}`
+      : await this.passwordHasher.hash(input.password);
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     // The verification link is sent only where it is the ONLY proof of
     // mailbox control this account will give. When the sign-in surface it
@@ -443,7 +542,8 @@ export class AuthService {
     // the link is still sent. `POST /auth/verify-email/resend` and the
     // link itself are unchanged.
     const signInSurface: SignInSurface = academyId ? 'academy' : 'management';
-    const sendVerificationLink = this.emailOtpService.policyFor(signInSurface) === 'off';
+    const sendVerificationLink =
+      !external?.emailVerified && this.emailOtpService.policyFor(signInSurface) === 'off';
     const rawVerificationToken = sendVerificationLink ? generateOpaqueToken() : null;
     const userId = randomUUID();
 
@@ -460,8 +560,33 @@ export class AuthService {
       .$transaction(async (tx) => {
         await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
         await tx.user.create({
-          data: { id: userId, email, passwordHash, name: input.name },
+          data: {
+            id: userId,
+            email,
+            passwordHash,
+            name: input.name,
+            // Google Identity — only an authoritative provider proves the mailbox.
+            ...(external?.emailVerified ? { emailVerifiedAt: new Date() } : {}),
+          },
         });
+        if (external) {
+          await tx.userAuthIdentity.create({
+            data: {
+              userId,
+              provider: external.provider,
+              providerSubject: external.subject,
+              emailAtLink: email,
+            },
+          });
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: userId,
+            action: 'auth.identity.linked',
+            targetType: 'user',
+            targetId: userId,
+            ...(input.academyId ? { academyId: input.academyId } : {}),
+            context: { provider: external.provider, via: 'new_account' },
+          });
+        }
         if (academyId && admission) {
           pendingApprovalOutboxIds.push(
             ...(await this.admitLearnerInTransaction(tx, {
@@ -511,6 +636,14 @@ export class AuthService {
           throw new ConflictException({
             messageKey: 'errors.auth.emailAlreadyRegistered',
           });
+        }
+        // Google Identity — two first sign-ins racing with the same Google
+        // account: the identity index decides.
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException({ messageKey: 'errors.auth.googleIdentityInUse' });
         }
         throw error;
       });

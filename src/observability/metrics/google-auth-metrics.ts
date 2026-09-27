@@ -7,7 +7,8 @@ import { Counter } from 'prom-client';
 import { METRICS_REGISTRY } from './learning-metrics.service';
 
 /** Where in the flow the outcome was decided. */
-export type GoogleAuthStage = 'authorize' | 'callback' | 'complete';
+export type GoogleAuthStage =
+  'authorize' | 'callback' | 'complete' | 'link' | 'create' | 'activate' | 'unlink';
 
 /**
  * How a stage ended:
@@ -25,7 +26,12 @@ export type GoogleAuthStage = 'authorize' | 'callback' | 'complete';
  *  - `create_account`: no Atlas account — the explicit create step follows;
  *  - `activate_invited`: an invited account the Google address may activate;
  *  - `refused`: the pipeline refused (suspended, surface, not a member …);
- *  - `rate_limited`, `disabled`.
+ *  - `rate_limited`, `disabled`;
+ *  - `linked` / `created` / `activated` / `unlinked`: the identity binding
+ *    changed (password-proven link, a new account, an invitation, settings);
+ *  - `conflict`: that Google account belongs to another Atlas account, or
+ *    this account already has a different Google account;
+ *  - `invalid_credentials`: a link step's password was wrong.
  */
 export type GoogleAuthResult =
   | 'started'
@@ -40,7 +46,13 @@ export type GoogleAuthResult =
   | 'activate_invited'
   | 'refused'
   | 'rate_limited'
-  | 'disabled';
+  | 'disabled'
+  | 'linked'
+  | 'created'
+  | 'activated'
+  | 'unlinked'
+  | 'conflict'
+  | 'invalid_credentials';
 
 function counter(name: string, help: string, labelNames: readonly string[]): Counter {
   const existing = METRICS_REGISTRY.getSingleMetric(name);

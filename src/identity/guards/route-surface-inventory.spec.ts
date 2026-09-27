@@ -49,6 +49,11 @@ const SELF_OR_LEARNER = new Set<string>([
   // Smart academy signup: the caller's own other academies, answered only
   // to an academy session on its own host, right after joining it.
   'GET auth/academy-join/summary',
+  // Google Identity: starting a flow (public for sign-in; `link` binds the
+  // caller's OWN account) and the caller's own sign-in methods.
+  'POST auth/google/authorize',
+  'GET users/me/sign-in-methods',
+  'DELETE users/me/sign-in-methods/google',
   'GET auth/2fa/status',
   'POST auth/2fa/setup',
   'POST auth/2fa/confirm',

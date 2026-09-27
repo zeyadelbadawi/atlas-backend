@@ -46,7 +46,9 @@ import { TrustedDevicesController } from './controllers/trusted-devices.controll
 import {
   AuthOptionsController,
   GoogleAuthController,
+  SignInMethodsController,
 } from './google/google-auth.controller';
+import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { GoogleAuthService } from './google/google-auth.service';
 import { GoogleOidcClient } from './google/google-oidc.client';
 import { GoogleIdentityRepository } from './google/google-identity.repository';
@@ -78,6 +80,8 @@ import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard'
     GoogleAuthController,
     AuthOptionsController,
     AuthController,
+    // Before `UsersController`: `users/me/sign-in-methods` is more specific.
+    SignInMethodsController,
     UsersController,
   ],
   providers: [
@@ -118,6 +122,7 @@ import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard'
     GoogleIdentityRepository,
     GoogleAuthService,
     GoogleAuthRateLimitGuard,
+    OptionalJwtAuthGuard,
   ],
   // `StubEmailProvider` — integration/e2e tests inject the concrete class
   // directly (`peekLastPasswordResetToken`), not the DI token.

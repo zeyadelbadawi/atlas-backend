@@ -27,6 +27,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import { FakeGoogleOidc } from './utils/fake-google-oidc';
+import { hashOpaqueToken } from '../src/identity/utils/opaque-token.util';
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
 import { METRICS_REGISTRY } from '../src/observability/metrics/learning-metrics.service';
@@ -140,14 +141,17 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
     return { email, userId: user.id };
   }
 
-  async function academy(label: string): Promise<Academy> {
+  async function academy(
+    label: string,
+    policy: 'open' | 'approval' | 'invite' = 'open',
+  ): Promise<Academy> {
     const owner = await staffAccount(`${label}-owner`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
     await seedActiveSubscriptionForOrg(admin, org.id);
     const a = await seedAcademy(admin, org.id, `${label}-academy`);
     await admin.academy.update({
       where: { id: a.id },
-      data: { status: 'active', registrationPolicy: 'open' },
+      data: { status: 'active', registrationPolicy: policy },
     });
     await seedAcademyMember(admin, a.id, owner.userId, 'owner');
     const host = `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.gid.test`;
@@ -340,7 +344,7 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
       await http()
         .post('/auth/google/authorize')
         .set('Host', PLATFORM)
-        .send({ intent: 'link' })
+        .send({ intent: 'no_such_intent' })
         .expect(400);
     });
 
@@ -766,6 +770,628 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
         'self-deletion did not complete — check the delete DTO in this test',
       );
     }
+  });
+
+  // ==================================================================
+  // Phase 2 — binding the identity
+  // ==================================================================
+
+  function step(
+    path: string,
+    host: string,
+    binder: string,
+    body: Record<string, unknown>,
+  ) {
+    return http()
+      .post(`/auth/google/${path}`)
+      .set('Host', host)
+      .set('Cookie', binder)
+      .send(body);
+  }
+
+  /** Google → complete → the follow-up step (with its binder). */
+  async function toStep(
+    host: string,
+    signIn: Parameters<FakeGoogleOidc['approve']>[1],
+    body?: Record<string, unknown>,
+  ) {
+    const flow = await throughGoogle(host, signIn, body);
+    const res = await complete(host, flow.handoff, flow.binder).expect(200);
+    return {
+      binder: flow.binder,
+      step: res.body as { googleStep: string; pending: string },
+    };
+  }
+
+  async function passwordToken(email: string, host = PLATFORM): Promise<string> {
+    const res = await http()
+      .post('/auth/sign-in')
+      .set('Host', host)
+      .send({ email, password: PASSWORD })
+      .expect(200);
+    return res.body.accessToken as string;
+  }
+
+  async function verifyOtp(host: string, userId: string, challengeId: string) {
+    return http()
+      .post('/auth/otp/verify')
+      .set('Host', host)
+      .send({
+        challengeId,
+        code: await latestCode(userId),
+        rememberDevice: false,
+        surface: 'academy',
+      })
+      .expect(200);
+  }
+
+  async function outbox(userId: string, key: string): Promise<number> {
+    return admin.communicationOutbox.count({ where: { recipientUserId: userId, key } });
+  }
+
+  describe('GID-LINK — an existing password account connects Google (link_required)', () => {
+    it('GID-LINK-01 — wrong password: generic 401 and the step stays open; right password links, then the academy code (A6) applies', async () => {
+      const a = await academy('link-a6');
+      const person = await learnerAt(a, 'link-a6-person');
+      const sub = newSub();
+      const { binder, step: s } = await toStep(a.host, { sub, email: person.email });
+      expect(s.googleStep).toBe('link_required');
+
+      const wrong = await step('link', a.host, binder, {
+        pending: s.pending,
+        password: 'nope-nope-nope',
+      }).expect(401);
+      expect(wrong.body.error.messageKey).toBe('errors.auth.invalidCredentials');
+      expect(
+        await admin.userAuthIdentity.count({ where: { userId: person.userId } }),
+      ).toBe(0);
+
+      const ok = await step('link', a.host, binder, {
+        pending: s.pending,
+        password: PASSWORD,
+      }).expect(200);
+      expect(ok.body.emailOtpRequired).toBe(true);
+      const session = await verifyOtp(a.host, person.userId, ok.body.challengeId);
+      expect(session.body.authMethod).toBe('google');
+
+      const identity = await admin.userAuthIdentity.findFirstOrThrow({
+        where: { userId: person.userId },
+      });
+      expect(identity).toMatchObject({
+        provider: 'google',
+        providerSubject: sub,
+        emailAtLink: person.email,
+      });
+      expect(await outbox(person.userId, 'auth.identity.linked')).toBe(1);
+      expect(
+        await admin.auditLogEntry.count({
+          where: { actorUserId: person.userId, action: 'auth.identity.linked' },
+        }),
+      ).toBe(1);
+
+      // The step is spent.
+      await step('link', a.host, binder, {
+        pending: s.pending,
+        password: PASSWORD,
+      }).expect(401);
+
+      // Next time the same Google account signs straight in (no step).
+      const again = await throughGoogle(a.host, { sub, email: person.email });
+      const res = await complete(a.host, again.handoff, again.binder).expect(200);
+      expect(res.body.googleStep).toBeUndefined();
+      expect(res.body.emailOtpRequired ?? res.body.accessToken).toBeTruthy();
+      expect(await admin.user.count({ where: { email: person.email } })).toBe(1);
+    });
+
+    it('GID-LINK-02 — a Platform Owner connects Google only from settings; a suspended account is refused after its password', async () => {
+      const owner = await staffAccount('link-po');
+      await admin.user.update({
+        where: { id: owner.userId },
+        data: { isPlatformOwner: true },
+      });
+      const po = await toStep(PLATFORM, { sub: newSub(), email: owner.email });
+      const refused = await step('link', PLATFORM, po.binder, {
+        pending: po.step.pending,
+        password: PASSWORD,
+      }).expect(403);
+      expect(refused.body.error.messageKey).toBe('errors.auth.googleLinkFromSettings');
+
+      const staff = await staffAccount('link-suspended');
+      await admin.user.update({
+        where: { id: staff.userId },
+        data: { status: 'suspended' },
+      });
+      const sus = await toStep(PLATFORM, { sub: newSub(), email: staff.email });
+      const res = await step('link', PLATFORM, sus.binder, {
+        pending: sus.step.pending,
+        password: PASSWORD,
+      }).expect(403);
+      expect(res.body.error.messageKey).toBe('errors.auth.accountSuspended');
+      expect(
+        await admin.userAuthIdentity.count({
+          where: { userId: { in: [owner.userId, staff.userId] } },
+        }),
+      ).toBe(0);
+    });
+
+    it('GID-LINK-03 — an account that already has a different Google account is refused (409), nothing changes', async () => {
+      const staff = await staffAccount('link-twice');
+      await linkGoogle(staff.userId, newSub(), staff.email);
+      const other = await toStep(PLATFORM, { sub: newSub(), email: staff.email });
+      // The address matches but the subject differs: a link step…
+      expect(other.step.googleStep).toBe('link_required');
+      const res = await step('link', PLATFORM, other.binder, {
+        pending: other.step.pending,
+        password: PASSWORD,
+      }).expect(409);
+      expect(res.body.error.messageKey).toBe('errors.auth.googleAlreadyLinked');
+      expect(
+        await admin.userAuthIdentity.count({ where: { userId: staff.userId } }),
+      ).toBe(1);
+    });
+
+    it('GID-LINK-04 — Case 4: an instructor at A signs UP with Google at B: linked once, joins B as a learner, A untouched, one user', async () => {
+      const a = await academy('link-c4-a');
+      const b = await academy('link-c4-b');
+      const staff = await staffAccount('link-c4-instructor');
+      await seedAcademyMember(admin, a.id, staff.userId, 'instructor');
+      const { binder, step: s } = await toStep(
+        b.host,
+        { sub: newSub(), email: staff.email },
+        { intent: 'sign_up' },
+      );
+      expect(s.googleStep).toBe('link_required');
+      const ok = await step('link', b.host, binder, {
+        pending: s.pending,
+        password: PASSWORD,
+      }).expect(200);
+      expect(ok.body.emailOtpRequired).toBe(true);
+      expect(await admin.user.count({ where: { email: staff.email } })).toBe(1);
+      const rows = await admin.academyStudent.findMany({
+        where: { userId: staff.userId },
+      });
+      expect(rows.map((r) => r.academyId)).toEqual([b.id]);
+      expect(
+        await admin.academyMember.count({
+          where: { userId: staff.userId, academyId: a.id },
+        }),
+      ).toBe(1);
+      expect(await outbox(staff.userId, 'account.academy.joined')).toBe(1);
+    });
+  });
+
+  describe('GID-NEW — a new person creates an account with Google (create_account)', () => {
+    it('GID-NEW-01 — academy signup: one account, verified (Gmail), no password, learner here; the academy code (A6) still applies', async () => {
+      const a = await academy('new-a');
+      const email = `gid-new-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@gmail.com`;
+      const sub = newSub();
+      const { binder, step: s } = await toStep(
+        a.host,
+        { sub, email, name: 'Nour G' },
+        { intent: 'sign_up' },
+      );
+      expect(s.googleStep).toBe('create_account');
+      const res = await step('create-account', a.host, binder, {
+        pending: s.pending,
+        name: 'Nour G',
+      }).expect(201);
+      expect(res.body.emailOtpRequired).toBe(true);
+
+      const user = await admin.user.findUniqueOrThrow({ where: { email } });
+      expect(user.emailVerifiedAt).not.toBeNull();
+      expect(user.passwordHash.startsWith('nopassword:')).toBe(true);
+      expect(user.name).toBe('Nour G');
+      expect(
+        await admin.userAuthIdentity.count({
+          where: { userId: user.id, providerSubject: sub },
+        }),
+      ).toBe(1);
+      const row = await admin.academyStudent.findFirstOrThrow({
+        where: { userId: user.id },
+      });
+      expect(row).toMatchObject({ academyId: a.id, status: 'active' });
+
+      const session = await verifyOtp(a.host, user.id, res.body.challengeId);
+      expect(session.body.authMethod).toBe('google');
+      const methods = await http()
+        .get('/users/me/sign-in-methods')
+        .set('Host', a.host)
+        .set('Authorization', `Bearer ${session.body.accessToken}`)
+        .expect(200);
+      expect(methods.body).toEqual({
+        password: false,
+        google: { email, linkedAt: expect.any(String) },
+      });
+
+      // A password never verifies against a Google-only account.
+      await http()
+        .post('/auth/sign-in')
+        .set('Host', a.host)
+        .send({ email, password: '', surface: 'academy', academyId: a.id })
+        .expect((r) => expect([400, 401]).toContain(r.status));
+      await admin.userAuthIdentity.deleteMany({ where: { userId: user.id } });
+    });
+
+    it('GID-NEW-02 — an address Google is not authoritative for is NOT marked verified', async () => {
+      const email = uniqueTestEmail('new-consumer');
+      const { binder, step: s } = await toStep(PLATFORM, { sub: newSub(), email });
+      await step('create-account', PLATFORM, binder, {
+        pending: s.pending,
+        name: 'Consumer',
+      }).expect(201);
+      expect(
+        (await admin.user.findUniqueOrThrow({ where: { email } })).emailVerifiedAt,
+      ).toBeNull();
+    });
+
+    it('GID-NEW-03 — organization fields on an academy site are refused and the step stays open for a corrected retry', async () => {
+      const a = await academy('new-orgfields');
+      const email = uniqueTestEmail('new-orgfields');
+      const { binder, step: s } = await toStep(a.host, { sub: newSub(), email });
+      const bad = await step('create-account', a.host, binder, {
+        pending: s.pending,
+        name: 'XX',
+        organizationName: 'Should not be here',
+      }).expect(400);
+      expect([
+        'errors.auth.signupFieldsNotAllowed',
+        'errors.auth.organizationSignupDisabled',
+      ]).toContain(bad.body.error.messageKey);
+      expect(await admin.user.count({ where: { email } })).toBe(0);
+      await step('create-account', a.host, binder, {
+        pending: s.pending,
+        name: 'XX',
+      }).expect(201);
+      expect(await admin.user.count({ where: { email } })).toBe(1);
+    });
+
+    it('GID-NEW-04 — the registration policy is authoritative: approval → pending; invite without a code → refused, retryable', async () => {
+      const approval = await academy('new-approval', 'approval');
+      const e1 = uniqueTestEmail('new-approval');
+      const s1 = await toStep(
+        approval.host,
+        { sub: newSub(), email: e1 },
+        { intent: 'sign_up' },
+      );
+      await step('create-account', approval.host, s1.binder, {
+        pending: s1.step.pending,
+        name: 'AA',
+      }).expect(201);
+      const u1 = await admin.user.findUniqueOrThrow({ where: { email: e1 } });
+      expect(
+        (await admin.academyStudent.findFirstOrThrow({ where: { userId: u1.id } }))
+          .status,
+      ).toBe('pending');
+
+      const invite = await academy('new-invite', 'invite');
+      const e2 = uniqueTestEmail('new-invite');
+      const s2 = await toStep(
+        invite.host,
+        { sub: newSub(), email: e2 },
+        { intent: 'sign_up' },
+      );
+      const refused = await step('create-account', invite.host, s2.binder, {
+        pending: s2.step.pending,
+        name: 'BB',
+      }).expect(403);
+      expect(refused.body.error.messageKey).toBe('errors.auth.inviteRequired');
+      expect(await admin.user.count({ where: { email: e2 } })).toBe(0);
+      // Still open: a (bad) code is a 400, not a dead step.
+      await step('create-account', invite.host, s2.binder, {
+        pending: s2.step.pending,
+        name: 'BB',
+        inviteToken: 'not-a-real-invite',
+      }).expect((r) => expect([400, 403]).toContain(r.status));
+    });
+
+    it('GID-NEW-05 — two first sign-ins with the same Google account race: one account, the other 409', async () => {
+      const email = uniqueTestEmail('new-race');
+      const sub = newSub();
+      const one = await toStep(PLATFORM, { sub, email });
+      const two = await toStep(PLATFORM, { sub, email });
+      const results = await Promise.all([
+        step('create-account', PLATFORM, one.binder, {
+          pending: one.step.pending,
+          name: 'RR',
+        }),
+        step('create-account', PLATFORM, two.binder, {
+          pending: two.step.pending,
+          name: 'RR',
+        }),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+      expect(await admin.user.count({ where: { email } })).toBe(1);
+      expect(
+        await admin.userAuthIdentity.count({ where: { providerSubject: sub } }),
+      ).toBe(1);
+    });
+
+    it('GID-NEW-06 — Case 3: the Google account from academy A signs UP at B: same user, joins B, A kept; again at A: no duplicate', async () => {
+      const a = await academy('new-c3-a');
+      const b = await academy('new-c3-b');
+      const email = uniqueTestEmail('new-c3');
+      const sub = newSub();
+      const first = await toStep(a.host, { sub, email }, { intent: 'sign_up' });
+      await step('create-account', a.host, first.binder, {
+        pending: first.step.pending,
+        name: 'Ahmed',
+      }).expect(201);
+      const user = await admin.user.findUniqueOrThrow({ where: { email } });
+
+      const atB = await throughGoogle(b.host, { sub, email }, { intent: 'sign_up' });
+      const resB = await complete(b.host, atB.handoff, atB.binder).expect(200);
+      expect(resB.body.googleStep).toBeUndefined();
+      expect(resB.body.emailOtpRequired).toBe(true); // B's own code (A6)
+      const rows = await admin.academyStudent.findMany({ where: { userId: user.id } });
+      expect(rows.map((r) => r.academyId).sort()).toEqual([a.id, b.id].sort());
+      expect(await admin.user.count({ where: { email } })).toBe(1);
+
+      const againA = await throughGoogle(a.host, { sub, email }, { intent: 'sign_up' });
+      await complete(a.host, againA.handoff, againA.binder).expect(200);
+      expect(await admin.academyStudent.count({ where: { userId: user.id } })).toBe(2);
+    });
+
+    it('GID-NEW-07 — an address registered meanwhile turns the create step into a 409 (never a second account)', async () => {
+      const email = uniqueTestEmail('new-taken');
+      const s = await toStep(PLATFORM, { sub: newSub(), email });
+      await http()
+        .post('/auth/register')
+        .set('Host', PLATFORM)
+        .send({ name: 'PP', email, password: PASSWORD })
+        .expect(201);
+      const res = await step('create-account', PLATFORM, s.binder, {
+        pending: s.step.pending,
+        name: 'GG',
+      }).expect(409);
+      expect(res.body.error.messageKey).toBe('errors.auth.emailAlreadyRegistered');
+      expect(await admin.user.count({ where: { email } })).toBe(1);
+    });
+  });
+
+  describe('GID-INV — invited accounts', () => {
+    it('GID-INV-01 — Google activates an invited Gmail account: active, verified, no password, setup links spent', async () => {
+      const email = `gid-inv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@gmail.com`;
+      const invited = await admin.user.create({
+        data: { email, name: 'Invited', passwordHash: 'x', status: 'invited' },
+      });
+      await admin.passwordResetToken.create({
+        data: {
+          userId: invited.id,
+          tokenHash: hashOpaqueToken(`raw-${invited.id}`),
+          expiresAt: new Date(Date.now() + 3600_000),
+        },
+      });
+      const { binder, step: s } = await toStep(PLATFORM, { sub: newSub(), email });
+      expect(s.googleStep).toBe('activate_invited');
+      const res = await step('activate', PLATFORM, binder, { pending: s.pending }).expect(
+        200,
+      );
+      expect(res.body.accessToken ?? res.body.emailOtpRequired).toBeTruthy();
+      const user = await admin.user.findUniqueOrThrow({ where: { id: invited.id } });
+      expect(user.status).toBe('active');
+      expect(user.emailVerifiedAt).not.toBeNull();
+      expect(user.passwordHash.startsWith('nopassword:')).toBe(true);
+      expect(
+        await admin.passwordResetToken.count({
+          where: { userId: invited.id, usedAt: null },
+        }),
+      ).toBe(0);
+      expect(await admin.userAuthIdentity.count({ where: { userId: invited.id } })).toBe(
+        1,
+      );
+    });
+
+    it('GID-INV-02 — the setup page: the setup token proves the mailbox, any verified Google account becomes the sign-in', async () => {
+      const email = uniqueTestEmail('inv-setup');
+      const invited = await admin.user.create({
+        data: { email, name: 'Setup', passwordHash: 'x', status: 'invited' },
+      });
+      const raw = `setup-${invited.id}`;
+      await admin.passwordResetToken.create({
+        data: {
+          userId: invited.id,
+          tokenHash: hashOpaqueToken(raw),
+          expiresAt: new Date(Date.now() + 3600_000),
+        },
+      });
+      const bad = await http()
+        .post('/auth/google/authorize')
+        .set('Host', PLATFORM)
+        .send({ intent: 'setup', setupToken: 'wrong' })
+        .expect(401);
+      expect(bad.body.error.messageKey).toBe('errors.auth.invalidResetToken');
+
+      const googleEmail = uniqueTestEmail('inv-setup-google');
+      const flow = await throughGoogle(
+        PLATFORM,
+        { sub: newSub(), email: googleEmail },
+        { intent: 'setup', setupToken: raw },
+      );
+      const res = await complete(PLATFORM, flow.handoff, flow.binder).expect(200);
+      expect(res.body.accessToken).toEqual(expect.any(String));
+      expect(res.body.user.id).toBe(invited.id);
+      const user = await admin.user.findUniqueOrThrow({ where: { id: invited.id } });
+      expect(user).toMatchObject({ status: 'active', email });
+      expect(
+        await admin.passwordResetToken.count({
+          where: { userId: invited.id, usedAt: null },
+        }),
+      ).toBe(0);
+      expect(
+        (await admin.userAuthIdentity.findFirstOrThrow({ where: { userId: invited.id } }))
+          .emailAtLink,
+      ).toBe(googleEmail);
+    });
+  });
+
+  describe('GID-SET — Account settings: connect, list, disconnect', () => {
+    it('GID-SET-01 — a signed-in account connects a Google account with ANOTHER address; that Google account then signs into it', async () => {
+      const staff = await staffAccount('set-link');
+      const token = await passwordToken(staff.email);
+      const googleEmail = uniqueTestEmail('set-link-personal');
+      const sub = newSub();
+      const started = await http()
+        .post('/auth/google/authorize')
+        .set('Host', PLATFORM)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          intent: 'link',
+          returnTo: '/settings/security',
+          currentPassword: PASSWORD,
+        })
+        .expect(200);
+      const binder = binderFrom(started);
+      const { code, state } = google.approve(started.body.authorizationUrl, {
+        sub,
+        email: googleEmail,
+      });
+      const cb = await callback({ code, state }).expect(303);
+      const res = await complete(
+        PLATFORM,
+        fragmentOf(cb.headers.location).get('h')!,
+        binder,
+      ).expect(200);
+      expect(res.body).toEqual({
+        linked: true,
+        email: googleEmail,
+        returnPath: '/settings/security',
+      });
+      expect(res.body.accessToken).toBeUndefined();
+      expect(await outbox(staff.userId, 'auth.identity.linked')).toBe(1);
+
+      const signIn = await throughGoogle(PLATFORM, { sub, email: googleEmail });
+      const session = await complete(PLATFORM, signIn.handoff, signIn.binder).expect(200);
+      expect(session.body.user.id).toBe(staff.userId);
+    });
+
+    it('GID-SET-02 — linking needs a session; a Google account owned by someone else is refused (409); a Platform Owner may link here', async () => {
+      await http()
+        .post('/auth/google/authorize')
+        .set('Host', PLATFORM)
+        .send({ intent: 'link' })
+        .expect(401);
+
+      // Re-authentication: a session alone cannot attach a sign-in method.
+      const reauth = await staffAccount('set-reauth');
+      const reauthToken = await passwordToken(reauth.email);
+      for (const currentPassword of [undefined, 'wrong-password-x']) {
+        const refused = await http()
+          .post('/auth/google/authorize')
+          .set('Host', PLATFORM)
+          .set('Authorization', `Bearer ${reauthToken}`)
+          .send({ intent: 'link', ...(currentPassword ? { currentPassword } : {}) })
+          .expect(401);
+        expect(refused.body.error.messageKey).toBe('errors.auth.invalidCurrentPassword');
+      }
+
+      const owner = await staffAccount('set-owner');
+      const ownedSub = newSub();
+      await linkGoogle(owner.userId, ownedSub, owner.email);
+      const other = await staffAccount('set-other');
+      const token = await passwordToken(other.email);
+      const started = await http()
+        .post('/auth/google/authorize')
+        .set('Host', PLATFORM)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ intent: 'link', currentPassword: PASSWORD })
+        .expect(200);
+      const { code, state } = google.approve(started.body.authorizationUrl, {
+        sub: ownedSub,
+        email: owner.email,
+      });
+      const cb = await callback({ code, state }).expect(303);
+      const res = await complete(
+        PLATFORM,
+        fragmentOf(cb.headers.location).get('h')!,
+        binderFrom(started),
+      ).expect(409);
+      expect(res.body.error.messageKey).toBe('errors.auth.googleIdentityInUse');
+      expect(JSON.stringify(res.body)).not.toContain(owner.email);
+      expect(
+        await admin.userAuthIdentity.count({ where: { userId: other.userId } }),
+      ).toBe(0);
+
+      const po = await staffAccount('set-po');
+      await admin.user.update({
+        where: { id: po.userId },
+        data: { isPlatformOwner: true },
+      });
+      const poToken = await passwordToken(po.email);
+      const poStart = await http()
+        .post('/auth/google/authorize')
+        .set('Host', PLATFORM)
+        .set('Authorization', `Bearer ${poToken}`)
+        .send({ intent: 'link', currentPassword: PASSWORD })
+        .expect(200);
+      const poGoogle = google.approve(poStart.body.authorizationUrl, {
+        sub: newSub(),
+        email: po.email,
+      });
+      const poCb = await callback(poGoogle).expect(303);
+      await complete(
+        PLATFORM,
+        fragmentOf(poCb.headers.location).get('h')!,
+        binderFrom(poStart),
+      ).expect(200);
+      expect(await admin.userAuthIdentity.count({ where: { userId: po.userId } })).toBe(
+        1,
+      );
+    });
+
+    it('GID-SET-03 — disconnect needs the current password; a Google-only account must set a password first', async () => {
+      const staff = await staffAccount('set-unlink');
+      await linkGoogle(staff.userId, newSub(), staff.email);
+      const token = await passwordToken(staff.email);
+      const auth = { Authorization: `Bearer ${token}` };
+      const listed = await http()
+        .get('/users/me/sign-in-methods')
+        .set('Host', PLATFORM)
+        .set(auth)
+        .expect(200);
+      expect(listed.body).toEqual({
+        password: true,
+        google: { email: staff.email, linkedAt: expect.any(String) },
+      });
+
+      const wrong = await http()
+        .delete('/users/me/sign-in-methods/google')
+        .set('Host', PLATFORM)
+        .set(auth)
+        .send({ currentPassword: 'wrong-password-x' })
+        .expect(401);
+      expect(wrong.body.error.messageKey).toBe('errors.auth.invalidCurrentPassword');
+      await http()
+        .delete('/users/me/sign-in-methods/google')
+        .set('Host', PLATFORM)
+        .set(auth)
+        .send({ currentPassword: PASSWORD })
+        .expect(204);
+      expect(
+        await admin.userAuthIdentity.count({ where: { userId: staff.userId } }),
+      ).toBe(0);
+      expect(await outbox(staff.userId, 'auth.identity.unlinked')).toBe(1);
+      const after = await http()
+        .get('/users/me/sign-in-methods')
+        .set('Host', PLATFORM)
+        .set(auth)
+        .expect(200);
+      expect(after.body.google).toBeNull();
+
+      // Google-only: refused, it would lock the account out.
+      const email = uniqueTestEmail('set-google-only');
+      const s = await toStep(PLATFORM, { sub: newSub(), email });
+      const created = await step('create-account', PLATFORM, s.binder, {
+        pending: s.step.pending,
+        name: 'GG',
+      }).expect(201);
+      const refused = await http()
+        .delete('/users/me/sign-in-methods/google')
+        .set('Host', PLATFORM)
+        .set({ Authorization: `Bearer ${created.body.accessToken}` })
+        .send({ currentPassword: 'anything-at-all' })
+        .expect(409);
+      expect(refused.body.error.messageKey).toBe('errors.auth.setPasswordFirst');
+    });
   });
 });
 

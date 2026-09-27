@@ -22,22 +22,41 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { AuthOAuthFlow } from '@prisma/client';
-import type { AppConfig, GoogleAuthConfig } from '../../config/configuration';
+import { Prisma } from '@prisma/client';
+import type { AuthOAuthFlow, User } from '@prisma/client';
+import type {
+  AppConfig,
+  GoogleAuthConfig,
+  IdentityConfig,
+} from '../../config/configuration';
+import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { CommunicationService } from '../../communications/services/communication.service';
+import { AuthRateLimiterService } from '../services/auth-rate-limiter.service';
+import { PasswordHasherService } from '../services/password-hasher.service';
+import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
+import { hashOpaqueToken } from '../utils/opaque-token.util';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { recordGoogleAuth } from '../../observability/metrics/google-auth-metrics';
 import type { AuthenticationResponseContract } from '../dto/contracts';
 import { UsersRepository } from '../repositories/users.repository';
 import { AcademySurfaceService } from '../services/academy-surface.service';
-import { AuthService, type SessionRequestContext } from '../services/auth.service';
+import {
+  AuthService,
+  NO_PASSWORD_PREFIX,
+  hasUsablePassword,
+  type SessionRequestContext,
+} from '../services/auth.service';
 import { GoogleIdentityRepository } from './google-identity.repository';
 import { GoogleOidcClient, GoogleOidcError } from './google-oidc.client';
 import {
@@ -62,7 +81,14 @@ const PENDING_TTL_MS = 10 * 60 * 1000;
  */
 export const PENDING_PREFIX = 'p.';
 
-export type GoogleIntent = 'sign_in' | 'sign_up';
+/**
+ * `sign_in` / `sign_up`: signed-out pages. `link`: Account settings — a
+ * signed-in person connects Google to THEIR account (the account is the
+ * session's, bound at authorize). `setup`: the invitation/setup page — the
+ * emailed setup token proves the mailbox, and Google becomes the account's
+ * sign-in instead of a password.
+ */
+export type GoogleIntent = 'sign_in' | 'sign_up' | 'link' | 'setup';
 
 /** What the SPA needs to show the next step. Never another account's data. */
 export interface GoogleStepContract {
@@ -77,9 +103,33 @@ export interface GoogleStepContract {
   readonly returnPath?: string;
 }
 
+/** `link` intent: the signed-in account now has this Google account. No session is minted. */
+export interface GoogleLinkedContract {
+  readonly linked: true;
+  readonly email: string;
+  readonly returnPath?: string;
+}
+
+export type GoogleSignInResponse = AuthenticationResponseContract & {
+  readonly returnPath?: string;
+};
+
 export type GoogleCompleteResponse =
-  | (AuthenticationResponseContract & { readonly returnPath?: string })
-  | GoogleStepContract;
+  GoogleSignInResponse | GoogleStepContract | GoogleLinkedContract;
+
+/** `GET /users/me/sign-in-methods`. */
+export interface SignInMethodsContract {
+  readonly password: boolean;
+  readonly google: { readonly email: string; readonly linkedAt: string } | null;
+}
+
+/** What a step endpoint needs of the request, beyond its own body. */
+export interface StepRequest {
+  readonly pending: string;
+  readonly binder: string | undefined;
+  readonly origin: string | null;
+  readonly context: SessionRequestContext;
+}
 
 /** Where the callback sends the browser. */
 export interface GoogleCallbackOutcome {
@@ -100,6 +150,12 @@ export class GoogleAuthService {
     private readonly academyStudents: AcademyStudentsRepository,
     private readonly usersRepository: UsersRepository,
     private readonly authService: AuthService,
+    private readonly tenancyContext: TenancyContextService,
+    private readonly auditLog: AuditLogWriterService,
+    private readonly communications: CommunicationService,
+    private readonly rateLimiter: AuthRateLimiterService,
+    private readonly passwordHasher: PasswordHasherService,
+    private readonly passwordResetTokens: PasswordResetTokensRepository,
   ) {}
 
   private get config(): GoogleAuthConfig {
@@ -180,6 +236,12 @@ export class GoogleAuthService {
     readonly hostname: string | undefined;
     readonly origin: string | null;
     readonly ipAddress?: string;
+    /** `link`: the signed-in account (from the verified access token, never the body). */
+    readonly signedInUserId?: string;
+    /** `setup`: the raw setup token from the invitation link. */
+    readonly setupToken?: string;
+    /** `link`: the account's current password (re-authentication). */
+    readonly currentPassword?: string;
   }): Promise<{ authorizationUrl: string; binder: string; expiresAt: Date }> {
     if (!this.isAvailable()) {
       recordGoogleAuth('authorize', 'disabled');
@@ -193,6 +255,7 @@ export class GoogleAuthService {
       recordGoogleAuth('authorize', 'disabled');
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
+    const linkUserId = await this.bindingUserFor(input);
 
     const state = newFlowSecret();
     const nonce = newFlowSecret();
@@ -210,6 +273,7 @@ export class GoogleAuthService {
       academyId: context.academyId,
       originHost: input.origin,
       returnPath: sanitizeReturnPath(input.returnTo),
+      linkUserId,
       ipAddress: input.ipAddress ?? null,
       expiresAt,
     });
@@ -348,21 +412,19 @@ export class GoogleAuthService {
       throw new ForbiddenException({ messageKey: 'errors.auth.googleEmailUnverified' });
     }
 
+    if (flow.intent === 'link' || flow.intent === 'setup') {
+      return this.completeBinding(flow, input.context);
+    }
+
     const identity = await this.repository.findIdentity(flow.providerSubject);
     if (identity) {
       try {
-        const response = await this.authService.continueSignIn(
-          identity.user,
-          {
-            surface: flow.surface === 'academy' ? 'academy' : 'management',
-            academyId: flow.academyId ?? undefined,
-          },
-          input.context,
-          'google',
-        );
+        const response = await this.finishSignIn(identity.user, flow, input.context, {
+          join: true,
+        });
         await this.repository.touchIdentity(identity.id, flow.providerEmail, now);
         recordGoogleAuth('complete', 'existing_identity');
-        return { ...response, ...(returnPath ? { returnPath } : {}) };
+        return response;
       } catch (error) {
         recordGoogleAuth(
           'complete',
@@ -407,5 +469,538 @@ export class GoogleAuthService {
         : {}),
       ...(returnPath ? { returnPath } : {}),
     };
+  }
+
+  // ==================================================================
+  // Phase 2 — binding the identity
+  // ==================================================================
+
+  /**
+   * `link` / `setup` — WHICH account the flow binds to is fixed when it
+   * starts: the signed-in session's account, or the setup token's account.
+   * Never the body, never the Google address.
+   */
+  private async bindingUserFor(input: {
+    readonly intent: GoogleIntent;
+    readonly signedInUserId?: string;
+    readonly setupToken?: string;
+    readonly currentPassword?: string;
+  }): Promise<string | null> {
+    if (input.intent === 'link') {
+      if (!input.signedInUserId) {
+        throw new UnauthorizedException({ messageKey: 'errors.unauthorized' });
+      }
+      // Re-authentication, like disconnecting: a session alone (a stolen
+      // short-lived access token, say) must not be able to attach a Google
+      // account that would outlive it — a new sign-in method is persistent
+      // access. An account without a usable password already has Google
+      // (it is the only other way in), and one Google account per account.
+      const user = await this.usersRepository.findById(input.signedInUserId);
+      if (!user) throw new UnauthorizedException({ messageKey: 'errors.unauthorized' });
+      if (await this.repository.findIdentityForUser(user.id)) {
+        throw new ConflictException({ messageKey: 'errors.auth.googleAlreadyLinked' });
+      }
+      await this.assertCurrentPassword(user, input.currentPassword ?? '', 'link');
+      return user.id;
+    }
+    if (input.intent === 'setup') {
+      const token = input.setupToken
+        ? await this.passwordResetTokens.findValidByHash(
+            hashOpaqueToken(input.setupToken),
+          )
+        : null;
+      const user = token ? await this.usersRepository.findById(token.userId) : null;
+      if (!user || user.status === 'deleted' || user.status === 'suspended') {
+        throw new UnauthorizedException({ messageKey: 'errors.auth.invalidResetToken' });
+      }
+      return user.id;
+    }
+    return null;
+  }
+
+  /**
+   * Spends a follow-up step's pending secret — the same browser (binder) on
+   * the same origin, within its lifetime. The caller either finishes the
+   * flow or, for a fixable failure, releases the secret for another try.
+   */
+  private async claimStep(
+    input: StepRequest,
+  ): Promise<AuthOAuthFlow & { providerSubject: string; providerEmail: string }> {
+    if (!this.isAvailable())
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    const flow = input.pending.startsWith(PENDING_PREFIX)
+      ? await this.repository.claimHandoff(hashFlowSecret(input.pending), new Date())
+      : null;
+    if (
+      !flow ||
+      !flowSecretMatches(input.binder, flow.binderHash) ||
+      !input.origin ||
+      input.origin !== flow.originHost ||
+      !flow.providerSubject ||
+      !flow.providerEmail ||
+      flow.providerEmailVerified !== true
+    ) {
+      throw new UnauthorizedException({ messageKey: 'errors.auth.googleSignInExpired' });
+    }
+    return flow as AuthOAuthFlow & { providerSubject: string; providerEmail: string };
+  }
+
+  /**
+   * The sign-in that follows a successful Google proof: an academy SIGN-UP
+   * by an account that already exists joins this academy first (the same
+   * write as the password-proven join), then the normal pipeline runs.
+   */
+  private async finishSignIn(
+    user: User,
+    flow: AuthOAuthFlow,
+    context: SessionRequestContext,
+    options: { readonly join: boolean },
+  ): Promise<GoogleSignInResponse> {
+    try {
+      if (
+        options.join &&
+        flow.surface === 'academy' &&
+        flow.intent === 'sign_up' &&
+        flow.academyId
+      ) {
+        await this.authService.joinAcademyAsExistingAccount(user, {
+          academyId: flow.academyId,
+          hostname: context.hostname,
+        });
+      }
+      const response = await this.authService.continueSignIn(
+        user,
+        {
+          surface: flow.surface === 'academy' ? 'academy' : 'management',
+          academyId: flow.academyId ?? undefined,
+        },
+        context,
+        'google',
+      );
+      return { ...response, ...(flow.returnPath ? { returnPath: flow.returnPath } : {}) };
+    } finally {
+      await this.repository.markCompleted(flow.id, new Date());
+    }
+  }
+
+  /**
+   * Writes the identity (and anything the caller adds) in ONE transaction
+   * under the account's own context, with the audit entry. The two unique
+   * indexes decide every race: this Google account taken → 409
+   * `googleIdentityInUse`; this Atlas account already holding another
+   * Google account → 409 `googleAlreadyLinked`.
+   */
+  private async bindIdentity(
+    user: User,
+    flow: { providerSubject: string; providerEmail: string; academyId: string | null },
+    via: 'password' | 'settings' | 'setup' | 'invitation',
+    also?: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<void> {
+    try {
+      await this.tenancyContext.runInUserContext(user.id, async (tx) => {
+        await this.repository.createIdentity(tx, {
+          userId: user.id,
+          subject: flow.providerSubject,
+          email: flow.providerEmail,
+        });
+        if (also) await also(tx);
+        await this.auditLog.write(tx, {
+          actorUserId: user.id,
+          action: 'auth.identity.linked',
+          targetType: 'user',
+          targetId: user.id,
+          ...(flow.academyId ? { academyId: flow.academyId } : {}),
+          context: { provider: 'google', via },
+        });
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const target = String(error.meta?.target ?? '');
+        throw new ConflictException({
+          messageKey: target.includes('user_id')
+            ? 'errors.auth.googleAlreadyLinked'
+            : 'errors.auth.googleIdentityInUse',
+        });
+      }
+      throw error;
+    }
+    await this.notify(user.id, 'auth.identity.linked');
+  }
+
+  /** Best-effort security notice after commit — a mail hiccup never undoes the change. */
+  private async notify(
+    userId: string,
+    key: 'auth.identity.linked' | 'auth.identity.unlinked',
+  ): Promise<void> {
+    try {
+      const emitted = await this.tenancyContext.runInUserContext(userId, (tx) =>
+        this.communications.emit(tx, {
+          key,
+          recipientUserId: userId,
+          entity: { type: 'user', id: userId },
+        }),
+      );
+      await this.communications.enqueueAfterCommit(emitted.outboxId);
+    } catch (error) {
+      this.logger.warn(
+        { userId, key, error: error instanceof Error ? error.message : String(error) },
+        'Could not send the Google sign-in notice; the change itself was made.',
+      );
+    }
+  }
+
+  /** The conflicts every binding path checks before writing. */
+  private async assertBindable(
+    user: User,
+    subject: string,
+    stage: 'link' | 'activate' | 'complete',
+  ): Promise<'bind' | 'already_bound'> {
+    const owner = await this.repository.findIdentity(subject);
+    if (owner && owner.userId !== user.id) {
+      recordGoogleAuth(stage, 'conflict');
+      throw new ConflictException({ messageKey: 'errors.auth.googleIdentityInUse' });
+    }
+    if (owner) return 'already_bound';
+    const current = await this.repository.findIdentityForUser(user.id);
+    if (current) {
+      recordGoogleAuth(stage, 'conflict');
+      throw new ConflictException({ messageKey: 'errors.auth.googleAlreadyLinked' });
+    }
+    return 'bind';
+  }
+
+  /**
+   * `POST /auth/google/link` — the `link_required` step: the owner of the
+   * EXISTING account with this address proves it with its password (same
+   * per-account sign-in budget, same generic 401), then Google is connected
+   * and the sign-in continues (TOTP / A6 code as usual). A Platform Owner
+   * connects Google only from signed-in Account settings.
+   */
+  async linkWithPassword(
+    input: StepRequest & { readonly password: string },
+  ): Promise<GoogleSignInResponse> {
+    const flow = await this.claimStep(input);
+    const user = await this.usersRepository.findByEmail(flow.providerEmail);
+    if (!user) {
+      await this.repository.markCompleted(flow.id, new Date());
+      throw new UnauthorizedException({ messageKey: 'errors.auth.googleSignInExpired' });
+    }
+
+    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
+    const budget = await this.rateLimiter.consume(
+      `signin:account:${user.email}`,
+      identity.signInRateLimit.max,
+      identity.signInRateLimit.windowSeconds,
+    );
+    if (!budget.allowed) {
+      await this.repository.releaseHandoff(flow.id);
+      recordGoogleAuth('link', 'rate_limited');
+      throw new HttpException(
+        { messageKey: 'errors.auth.rateLimited' },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const valid = await this.passwordHasher.verify(user.passwordHash, input.password);
+    if (!valid || user.status === 'deleted' || user.status === 'invited') {
+      await this.repository.releaseHandoff(flow.id);
+      recordGoogleAuth('link', 'invalid_credentials');
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
+    }
+    // Revealed only to someone who proved the password — as sign-in does.
+    if (user.status === 'suspended') {
+      await this.repository.markCompleted(flow.id, new Date());
+      recordGoogleAuth('link', 'refused');
+      throw new ForbiddenException({ messageKey: 'errors.auth.accountSuspended' });
+    }
+    if (user.isPlatformOwner) {
+      await this.repository.markCompleted(flow.id, new Date());
+      recordGoogleAuth('link', 'refused');
+      throw new ForbiddenException({ messageKey: 'errors.auth.googleLinkFromSettings' });
+    }
+
+    try {
+      if ((await this.assertBindable(user, flow.providerSubject, 'link')) === 'bind') {
+        await this.bindIdentity(user, flow, 'password');
+      }
+    } catch (error) {
+      await this.repository.markCompleted(flow.id, new Date());
+      throw error;
+    }
+    recordGoogleAuth('link', 'linked');
+    return this.finishSignIn(user, flow, input.context, { join: true });
+  }
+
+  /**
+   * `POST /auth/google/create-account` — the `create_account` step: ONE new
+   * global account with this Google identity, created exactly like a password
+   * signup (academy learner row under the registration policy, or the
+   * organization bundle on the management surface), then the normal sign-in.
+   * The address is verified only if Google is authoritative for it.
+   */
+  async createAccount(
+    input: StepRequest & {
+      readonly name: string;
+      readonly organizationName?: string;
+      readonly planId?: string;
+      readonly inviteToken?: string;
+      readonly clientContext?: {
+        readonly ipAddress?: string;
+        readonly userAgent?: string;
+      };
+    },
+  ): Promise<GoogleSignInResponse> {
+    const flow = await this.claimStep(input);
+    if (await this.repository.findIdentity(flow.providerSubject)) {
+      await this.repository.markCompleted(flow.id, new Date());
+      recordGoogleAuth('create', 'conflict');
+      throw new ConflictException({ messageKey: 'errors.auth.googleIdentityInUse' });
+    }
+    let user: User;
+    try {
+      user = await this.authService.registerWithExternalIdentity({
+        name: input.name.trim(),
+        email: flow.providerEmail,
+        academyId: flow.academyId ?? undefined,
+        inviteToken: input.inviteToken,
+        hostname: input.context.hostname,
+        organizationName: input.organizationName,
+        planId: input.planId,
+        context: input.clientContext,
+        external: {
+          provider: 'google',
+          subject: flow.providerSubject,
+          emailVerified: isGoogleAuthoritative({
+            email: flow.providerEmail,
+            emailVerified: true,
+            hostedDomain: flow.providerHostedDomain,
+          }),
+        },
+      });
+    } catch (error) {
+      // A fixable input (organization name, plan, invite code) keeps the
+      // step open; anything else ends the flow.
+      const fixable =
+        error instanceof BadRequestException ||
+        (error instanceof ForbiddenException &&
+          (error.getResponse() as { messageKey?: string }).messageKey ===
+            'errors.auth.inviteRequired');
+      if (fixable) {
+        await this.repository.releaseHandoff(flow.id);
+      } else {
+        await this.repository.markCompleted(flow.id, new Date());
+        if (error instanceof ConflictException) recordGoogleAuth('create', 'conflict');
+      }
+      throw error;
+    }
+    recordGoogleAuth('create', 'created');
+    return this.finishSignIn(user, flow, input.context, { join: false });
+  }
+
+  /**
+   * `POST /auth/google/activate` — the `activate_invited` step: an account
+   * somebody created for this address (Smart Member invitation) is
+   * activated by Google instead of the setup link. Allowed only where Google
+   * is AUTHORITATIVE for the address, which is the same proof of the mailbox
+   * the setup link gives. No password is set; outstanding setup links die.
+   */
+  async activateInvited(input: StepRequest): Promise<GoogleSignInResponse> {
+    const flow = await this.claimStep(input);
+    const user = await this.usersRepository.findByEmail(flow.providerEmail);
+    const authoritative = isGoogleAuthoritative({
+      email: flow.providerEmail,
+      emailVerified: true,
+      hostedDomain: flow.providerHostedDomain,
+    });
+    if (!user || user.status !== 'invited' || !authoritative) {
+      await this.repository.markCompleted(flow.id, new Date());
+      throw new UnauthorizedException({ messageKey: 'errors.auth.googleSignInExpired' });
+    }
+    try {
+      if (
+        (await this.assertBindable(user, flow.providerSubject, 'activate')) === 'bind'
+      ) {
+        await this.bindIdentity(user, flow, 'invitation', (tx) =>
+          this.activateInTransaction(tx, user.id),
+        );
+      }
+    } catch (error) {
+      await this.repository.markCompleted(flow.id, new Date());
+      throw error;
+    }
+    recordGoogleAuth('activate', 'activated');
+    const activated = await this.usersRepository.findById(user.id);
+    return this.finishSignIn(activated ?? user, flow, input.context, { join: true });
+  }
+
+  /**
+   * An invited account becomes active with Google as its sign-in: verified,
+   * no password (the unknown invitation hash is replaced by the no-password
+   * sentinel so the account honestly reports "no password"), and every
+   * outstanding setup/reset link is spent.
+   */
+  private async activateInTransaction(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<void> {
+    const now = new Date();
+    await tx.user.updateMany({
+      where: { id: userId, status: 'invited' },
+      data: {
+        status: 'active',
+        emailVerifiedAt: now,
+        passwordHash: `${NO_PASSWORD_PREFIX}${hashFlowSecret(newFlowSecret())}`,
+      },
+    });
+    await tx.passwordResetToken.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: now },
+    });
+  }
+
+  /**
+   * `link` (Account settings) and `setup` (the invitation page) — the account
+   * was fixed when the flow started. `link` returns without minting a
+   * session (the person is already signed in); `setup` activates the account
+   * like the setup link would and continues into the sign-in.
+   */
+  private async completeBinding(
+    flow: AuthOAuthFlow,
+    context: SessionRequestContext,
+  ): Promise<GoogleLinkedContract | GoogleSignInResponse> {
+    const subject = flow.providerSubject as string;
+    const email = flow.providerEmail as string;
+    const user = flow.linkUserId
+      ? await this.usersRepository.findById(flow.linkUserId)
+      : null;
+    if (!user || user.status === 'deleted' || user.status === 'suspended') {
+      await this.repository.markCompleted(flow.id, new Date());
+      throw new UnauthorizedException({ messageKey: 'errors.auth.googleSignInExpired' });
+    }
+
+    if (flow.intent === 'link') {
+      try {
+        if ((await this.assertBindable(user, subject, 'complete')) === 'bind') {
+          await this.bindIdentity(
+            user,
+            { providerSubject: subject, providerEmail: email, academyId: flow.academyId },
+            'settings',
+          );
+        }
+      } finally {
+        await this.repository.markCompleted(flow.id, new Date());
+      }
+      recordGoogleAuth('complete', 'linked');
+      return {
+        linked: true,
+        email,
+        ...(flow.returnPath ? { returnPath: flow.returnPath } : {}),
+      };
+    }
+
+    // setup: the token must still be live — it is what proves the mailbox.
+    const live = await this.tenancyContext.runInUserContext(user.id, (tx) =>
+      tx.passwordResetToken.count({
+        where: { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
+      }),
+    );
+    if (live === 0) {
+      await this.repository.markCompleted(flow.id, new Date());
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidResetToken' });
+    }
+    try {
+      if ((await this.assertBindable(user, subject, 'complete')) === 'bind') {
+        await this.bindIdentity(
+          user,
+          { providerSubject: subject, providerEmail: email, academyId: flow.academyId },
+          'setup',
+          (tx) => this.activateInTransaction(tx, user.id),
+        );
+      }
+    } catch (error) {
+      await this.repository.markCompleted(flow.id, new Date());
+      throw error;
+    }
+    recordGoogleAuth('complete', 'activated');
+    const activated = (await this.usersRepository.findById(user.id)) ?? user;
+    return this.finishSignIn(activated, flow, context, { join: false });
+  }
+
+  // ==================================================================
+  // Account settings
+  // ==================================================================
+
+  /** Settings re-authentication: the account's own password, on its sign-in budget. */
+  private async assertCurrentPassword(
+    user: User,
+    currentPassword: string,
+    stage: 'unlink' | 'link',
+  ): Promise<void> {
+    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
+    const budget = await this.rateLimiter.consume(
+      `signin:account:${user.email}`,
+      identity.signInRateLimit.max,
+      identity.signInRateLimit.windowSeconds,
+    );
+    if (!budget.allowed) {
+      recordGoogleAuth(stage, 'rate_limited');
+      throw new HttpException(
+        { messageKey: 'errors.auth.rateLimited' },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    if (!(await this.passwordHasher.verify(user.passwordHash, currentPassword))) {
+      recordGoogleAuth(stage, 'invalid_credentials');
+      throw new UnauthorizedException({
+        messageKey: 'errors.auth.invalidCurrentPassword',
+      });
+    }
+  }
+
+  async signInMethods(userId: string): Promise<SignInMethodsContract> {
+    const user = await this.usersRepository.findById(userId);
+    if (!user) throw new UnauthorizedException({ messageKey: 'errors.unauthorized' });
+    const identity = await this.repository.findIdentityForUser(userId);
+    return {
+      password: hasUsablePassword(user),
+      google: identity
+        ? { email: identity.emailAtLink, linkedAt: identity.linkedAt.toISOString() }
+        : null,
+    };
+  }
+
+  /**
+   * Disconnect Google. Only an account that can still sign in with a
+   * password may do it (otherwise it would lock itself out — set a password
+   * through "Forgot password" first), and the password is re-entered.
+   */
+  async unlink(userId: string, currentPassword: string): Promise<void> {
+    const user = await this.usersRepository.findById(userId);
+    if (!user) throw new UnauthorizedException({ messageKey: 'errors.unauthorized' });
+    if (!(await this.repository.findIdentityForUser(userId))) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    if (!hasUsablePassword(user)) {
+      recordGoogleAuth('unlink', 'refused');
+      throw new ConflictException({ messageKey: 'errors.auth.setPasswordFirst' });
+    }
+    await this.assertCurrentPassword(user, currentPassword, 'unlink');
+    await this.tenancyContext.runInUserContext(userId, async (tx) => {
+      const removed = await this.repository.deleteIdentityForUser(tx, userId);
+      if (removed) {
+        await this.auditLog.write(tx, {
+          actorUserId: userId,
+          action: 'auth.identity.unlinked',
+          targetType: 'user',
+          targetId: userId,
+          context: { provider: 'google' },
+        });
+      }
+    });
+    recordGoogleAuth('unlink', 'unlinked');
+    await this.notify(userId, 'auth.identity.unlinked');
   }
 }

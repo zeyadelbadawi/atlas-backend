@@ -104,6 +104,19 @@ export class GoogleIdentityRepository {
     });
   }
 
+  /**
+   * A follow-up step that failed for a reason the person can fix (a wrong
+   * password) gives its pending secret back, so they can try again within
+   * its lifetime instead of going through Google again. Bounded by the
+   * sign-in budget of the step itself.
+   */
+  async releaseHandoff(id: string): Promise<void> {
+    await this.prisma.authOAuthFlow.updateMany({
+      where: { id, completedAt: null },
+      data: { handedOffAt: null },
+    });
+  }
+
   async markCompleted(id: string, now: Date): Promise<void> {
     await this.prisma.authOAuthFlow.updateMany({
       where: { id, completedAt: null },
@@ -121,6 +134,43 @@ export class GoogleIdentityRepository {
       },
       include: { user: true },
     });
+  }
+
+  findIdentityForUser(userId: string): Promise<UserAuthIdentity | null> {
+    return this.prisma.userAuthIdentity.findUnique({
+      where: { userId_provider: { userId, provider: 'google' } },
+    });
+  }
+
+  /**
+   * Binds a Google identity to an account. Inside the caller's transaction;
+   * the two unique indexes decide every race (P2002 for the caller to map).
+   */
+  createIdentity(
+    tx: Prisma.TransactionClient,
+    input: { readonly userId: string; readonly subject: string; readonly email: string },
+  ): Promise<UserAuthIdentity> {
+    return tx.userAuthIdentity.create({
+      data: {
+        userId: input.userId,
+        provider: 'google',
+        providerSubject: input.subject,
+        emailAtLink: input.email,
+        lastUsedAt: new Date(),
+      },
+    });
+  }
+
+  async deleteIdentityForUser(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<UserAuthIdentity | null> {
+    const existing = await tx.userAuthIdentity.findUnique({
+      where: { userId_provider: { userId, provider: 'google' } },
+    });
+    if (!existing) return null;
+    await tx.userAuthIdentity.delete({ where: { id: existing.id } });
+    return existing;
   }
 
   /** Display-only refresh: the address Google reports today, and when it was used. */

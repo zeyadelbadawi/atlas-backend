@@ -1,6 +1,6 @@
 # Google Identity
 
-**Status: Phase 1 (backend foundation) implemented, behind `FLAG_AUTH_GOOGLE_MODE=off`.**
+**Status: Phases 1–2 (backend) implemented, behind `FLAG_AUTH_GOOGLE_MODE=off`.**
 The approved plan is the investigation report of 27 Sep 2026; every open decision there was accepted as recommended.
 
 Google is a **first factor** for the one global Atlas account. It replaces
@@ -63,6 +63,28 @@ A step returns a single-use `pending` secret (prefix `p.`, 10 min). It is bound 
 
 Stale, replayed or foreign completions all get the same 401 `errors.auth.googleSignInExpired`: an unknown/used/expired handoff, a missing or wrong binder, or another origin.
 
+## 2a. Binding the identity (Phase 2)
+
+| Endpoint | Guard | What it does |
+|---|---|---|
+| `POST /auth/google/link` `{pending, password}` | sign-in IP budget + the account's own sign-in budget | `link_required` step. The existing account's own password proves it (wrong password: generic 401 `invalidCredentials`, and the step stays open for another try). Then Google is connected and the sign-in continues (TOTP / A6 code). Suspended: 403 after the password. **A Platform Owner is refused** (403 `googleLinkFromSettings`) and links only from signed-in settings. Account already holding another Google account: 409 `googleAlreadyLinked`. An academy **sign-up** also joins this academy (Case 4). |
+| `POST /auth/google/create-account` `{pending, name, organizationName?, planId?, inviteToken?}` | register IP budget | `create_account` step. ONE account through the same single registration transaction as a password signup: user (password = the `nopassword:` sentinel), identity, and the learner row under the registration policy (or the organization bundle on the management surface). The address is verified only if Google is authoritative. A fixable input (organization fields on an academy, missing/bad invite) keeps the step open. The address being taken meanwhile gives 409 `emailAlreadyRegistered`; the same Google account racing gives 409 `googleIdentityInUse`. |
+| `POST /auth/google/activate` `{pending}` | Google IP budget | `activate_invited` step (authoritative address only). The invited account becomes active and verified with Google as its sign-in. There is no password, and outstanding setup links are spent. |
+| `POST /auth/google/authorize {intent: 'link', currentPassword}` | optional JWT (**required** for `link`) + the account's sign-in budget | Account settings. The account is the session's, fixed at start. **Re-authentication:** the current password is required (401 `invalidCurrentPassword`), because a new sign-in method is persistent access and a stolen short-lived session must not be able to attach one. An account without a usable password already has Google, so it gets 409 `googleAlreadyLinked`. `complete` answers `{linked: true, email}` with no new session. Any Google address may be connected; a Google account owned by another Atlas account gives 409 `googleIdentityInUse` (never named). Platform Owners link here. |
+| `POST /auth/google/authorize {intent: 'setup', setupToken}` | public | The invitation/setup page. The live setup token proves the mailbox, so any verified Google account becomes the sign-in, and the account is activated like the setup link would. Bad or used token: 401 `invalidResetToken`. |
+| `GET /users/me/sign-in-methods` | JWT (either surface) | `{password: boolean, google: {email, linkedAt} \| null}` |
+| `DELETE /users/me/sign-in-methods/google` `{currentPassword}` | JWT + sign-in budget | Disconnect. Requires a usable password (otherwise 409 `setPasswordFirst`; the fix is Forgot password) and its re-entry (401 `invalidCurrentPassword`). |
+
+An **existing identity** starting an academy **sign-up** joins that academy through the same write as the password-proven join (`admitExistingAccount`: policy, invite binding, blocked/already checks, audit, `account.academy.joined`). Already a learner there means the sign-in simply continues (Case 3).
+
+Password reset and password change are unchanged. They still revoke sessions and trusted devices, and they **do not** remove the Google link. A Google-only account sets a password through "Forgot password" (email-based), after which it may disconnect Google.
+
+**Notifications** (catalogue, EN/AR, email + in-app, security, never deduped, CTA = Forgot password):
+- `auth.identity.linked`: sent on password link, settings link, invitation activation and setup;
+- `auth.identity.unlinked`.
+
+**Audit:** `auth.identity.linked` (context `via`: `password | settings | setup | invitation | new_account`) and `auth.identity.unlinked`.
+
 ## 3. Data
 
 - `user_auth_identities`:
@@ -94,10 +116,11 @@ The deploy plumbing (the `vps-deploy` fragment keys and the `feature_flags` line
 
 ## 5. Observability
 
-- `atlas_google_auth_total{stage=authorize|callback|complete, result}`. Result is one of:
+- `atlas_google_auth_total{stage=authorize|callback|complete|link|create|activate|unlink, result}`. Result is one of:
   - `started`, `cancelled`, `provider_error`, `invalid_state`, `invalid_token`;
   - `unverified_email`, `existing_identity`, `link_required`, `create_account`, `activate_invited`;
-  - `refused`, `rate_limited`, `disabled`.
+  - `refused`, `rate_limited`, `disabled`;
+  - `linked`, `created`, `activated`, `unlinked`, `conflict`, `invalid_credentials`.
 - Logs carry the flow id, stage and failure kind only. They never contain codes, tokens, ID tokens, addresses or subjects.
 
 ## 6. Tests
@@ -116,8 +139,8 @@ The deploy plumbing (the `vps-deploy` fragment keys and the `feature_flags` line
 
 ## 7. Phases
 
-1. **Backend foundation**: this document.
-2. **Identity resolution**:
+1. **Backend foundation**: done.
+2. **Identity resolution**: done (§2a):
    - link with password (Platform Owner: settings only);
    - create account (academy + organization signup);
    - invited activation plus the setup page;
