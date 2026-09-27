@@ -107,19 +107,53 @@ There is **no** anonymous "does this email exist" endpoint.
 
 ### What the visitor sees
 
-- Proactive: "Already have an Atlas account? **Join with it**" under the
-  sign-up form.
-- After a 409 from sign-up: "**This email already has an Atlas account.** You
-  don't need to create another account. Enter your Atlas password to
-  continue."
-- On success: "Welcome back, *name*." → the page signs in on this academy
-  (`surface: 'academy'`) with the password just typed → A6 emailed code (new
-  device) → `/my`.
+The person's question is "why are you telling me I already have an account —
+I'm signing up here for the first time?". The page answers it in two steps,
+each disclosing only what the visitor has proven they may know.
+
+1. **Before any proof** — the sign-up was answered "email already registered"
+   (the same, rate-limited disclosure every registration form makes):
+   - **You already have an Atlas account.** *[This academy] runs on Atlas,
+     and this email is already registered on Atlas — most likely because you
+     joined another academy that also uses Atlas.* You don't need a new
+     account: continue with your Atlas account and we'll add *[this academy]*
+     to it; courses, progress and certificates stay separate per academy.
+   - The email is **locked** (read-only, lock icon) with a **Change email**
+     action that returns to the form with the name and email kept.
+   - The new-account *Password / Confirm password* fields are replaced by one
+     **Your Atlas password** field, *Use the password you already use for
+     Atlas*, and **Forgot your password? Reset it**.
+   - CTA: **Continue with my Atlas account**.
+   - Only the CURRENT academy (public) is named. No other academy is named
+     here: that would tell anyone who knows an email where its owner studies.
+2. **After full proof** — password (join) + this academy's A6 emailed code
+   (sign-in): **You're all set — [this academy] has been added to your Atlas
+   account.** *You already use this Atlas account with [Al-Nogoom Academy]…*
+   → **Go to my learning** (`/my`). With no other academy, straight to `/my`.
+
+Proactive entry: "Already have an Atlas account? **Join with it**" under the
+sign-up form (email editable, "Back to sign up").
+
 - `pending` (approval academy) → "Your request to join … has been sent"; no
   sign-in attempt.
 - Already a learner here (409 after password proof) → continues to sign in.
 - If the continuation cannot complete (network, cancelled code step, …) →
   success/fallback state: the academy was added; "Go to sign in".
+
+### Naming the other academies (`GET /auth/academy-join/summary`)
+
+Naming another tenant is a cross-academy disclosure, so it is gated at the
+sign-in bar (password **and** emailed code), not at the password alone — a
+stuffed password must not reveal where someone studies, and A5 keeps an
+academy session to its own academy:
+
+- `JwtAuthGuard`; an academy-website session on **its own** academy's host
+  (A1 — on another academy's host it is refused 403 `academyHostMismatch`);
+- non-empty only if the learner row at this academy was created in the last
+  **30 minutes** (i.e. as part of this join) — afterwards `[]`;
+- only other academies where the account is an **active, unblocked learner**
+  (staff roles and blocked/pending memberships are never named);
+- a management session, or no host academy → `[]`.
 
 `POST /auth/register` now also returns `status` for the A4 existing-account
 branch, so the same continuation applies when the right password was typed
@@ -190,7 +224,82 @@ email addresses.
   organization owner's credentials and are not automated in production;
   they are covered by the e2e suite and the local browser run.
 
-## 6. Deliberately unchanged
+- Added with the 27 Sep fixes: `academy-member-emails.spec.ts`; e2e
+  SMI-JOIN-07 (other academies named only to a signed-in session on the
+  academy just joined; 403 on another host; `[]` for management sessions and
+  after 30 min), SMI-JOIN-08 (staff account joins as a learner; staff and
+  blocked academies never named; memberships unchanged), SMI-JOIN-09
+  (suspended/deleted: generic 401 before the password, nothing joined);
+  outbox `academyName` assertions for every add outcome; frontend locked
+  email, *Change email*, welcome step and Arabic existing-account step.
+
+## 6. Production fixes — 27 September 2026
+
+### "You've been added to  on Atlas" (academy name missing)
+
+**Root cause.** After an add committed, the academy's name was read with
+`TenancyContextService.runWithoutContext` — a transaction with no tenant or
+user context. `academies` is FORCE RLS and every SELECT policy needs one
+(`app.current_organization_id`, the user's membership, or the platform
+owner), so the row was invisible, `findUnique` returned `null`, and
+`academy?.name ?? ''` turned that into an empty string. `str()` printed the
+empty string verbatim, so the template's own fallback never applied. The
+same read fed **every** setup invitation since C8 (`inviteNewMember`) and the
+new "added" notice.
+
+**Fix.** `assertCanAddMember` reads the name inside the add's own
+`runInTenantAndUserContext` transaction (where the tenant policy admits it),
+fails if the academy is not visible there, and returns it; the name travels
+with the transaction result into `sendInvite` / `sendAddedNotice` (the
+context-free read is gone). `str()` now treats a blank string as missing, so
+no template can render a hole where a value belongs. Covered by
+`academy-member-emails.spec.ts` (every template × role × locale; blank /
+whitespace / missing names) and by e2e assertions on the outbox values and
+on the email actually sent (`p64-c8`: subject "You've been added to
+<academy> on Atlas"). Against the old code the same tests fail with exactly
+the production subject.
+
+### Gmail placed the invitation in Spam
+
+Evidence (Launch verify `scope=deliverability`, 27 Sep, read-only):
+
+| Layer | Finding |
+|---|---|
+| Brevo domain `atlass.dpdns.org` | verified **and** authenticated |
+| SPF | `v=spf1 include:spf.brevo.com ~all` (single record) |
+| DKIM | `brevo1` / `brevo2` CNAME → Brevo keys, both published |
+| DMARC | `v=DMARC1; p=none; rua=mailto:rua@dmarc.brevo.com` |
+| Sender | `no-reply@atlass.dpdns.org`, active, **shared** Brevo IPs, **Free** plan |
+| Organizational domain | `dpdns.org` **is on the Public Suffix List** → `atlass.dpdns.org` is its own organizational domain, with no sending history of its own |
+| MX on the sending domain | none; `EMAIL_REPLY_TO` not set |
+| 7-day Brevo aggregate | 112 requests, 79 delivered, 3 hard bounces, 29 soft bounces, 1 blocked, 0 spam reports |
+
+Conclusions, kept apart by who can act on them:
+
+1. **Application (fixed here):** the broken subject/body ("added to  on
+   Atlas") — an incoherent, templated-looking message is itself a content
+   signal. Plain-text alternative, single first-party CTA and footer were
+   already present.
+2. **Brevo / configuration (owner action):** set `EMAIL_REPLY_TO` to a
+   monitored mailbox; review Brevo transactional link/open tracking (tracked
+   links point at a Brevo domain, not the From domain); reduce bounces
+   (≈26 % soft bounces in 7 days) — investigate the soft-bounce recipients
+   in the Brevo log.
+3. **DNS / domain (owner decision):** the sending domain is a free
+   public-suffix subdomain with no history; Gmail's "similar to messages that
+   were identified as spam" is a reputation/content-similarity verdict that
+   authentication alone does not override. A dedicated, owned domain (or at
+   least a long-lived one), gradual warm-up, and Google Postmaster Tools for
+   that domain are the durable remedies. DMARC `p=none` is acceptable while
+   monitoring; move to `quarantine` once aggregate reports are clean.
+4. **Outside the application's control:** Gmail's per-recipient spam model
+   and Brevo's shared-IP reputation. Inbox placement cannot be guaranteed.
+
+What is not known yet, and how to get it: the Gmail `Authentication-Results`
+header of the received message (Gmail → ⋮ → *Show original*) states whether
+SPF, DKIM and DMARC passed and aligned for that exact message.
+
+## 7. Deliberately unchanged
 
 Plan A / A6 behaviour, JWT/session/token formats, sign-in and OTP flows,
 registration of new accounts, the members page's button visibility for
