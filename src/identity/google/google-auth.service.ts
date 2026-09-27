@@ -70,6 +70,8 @@ import {
 
 /** Start → Google → callback. */
 const FLOW_TTL_MS = 10 * 60 * 1000;
+/** `auth_oauth_flows` rows are deleted once their lifetime ended this long ago (matches the table's 24 h retention policy). */
+const FLOW_RETENTION_MS = 24 * 60 * 60 * 1000;
 /** Callback → complete: one redirect, then one request. */
 const HANDOFF_TTL_MS = 2 * 60 * 1000;
 /** A follow-up step (link / create / activate) waiting for the person. */
@@ -280,6 +282,7 @@ export class GoogleAuthService {
       expiresAt,
     });
     recordGoogleAuth('authorize', 'started');
+    await this.pruneOldFlows();
 
     return {
       authorizationUrl: this.oidc.authorizationUrl({
@@ -290,6 +293,23 @@ export class GoogleAuthService {
       binder,
       expiresAt,
     };
+  }
+
+  /**
+   * Retention for `auth_oauth_flows` (24 h, docs/GOOGLE_IDENTITY.md §3):
+   * every new flow sweeps a bounded batch of old ones, so deletion keeps
+   * pace with creation without a separate job. Best-effort — a failed
+   * sweep never fails a sign-in; the next flow retries.
+   */
+  private async pruneOldFlows(): Promise<void> {
+    try {
+      await this.repository.pruneExpired(new Date(), FLOW_RETENTION_MS);
+    } catch (error) {
+      this.logger.warn(
+        { error: error instanceof Error ? error.message : 'error' },
+        'Google flow retention sweep failed; the next flow retries.',
+      );
+    }
   }
 
   /** Only the platform host (or a local development host) is a callback host. */

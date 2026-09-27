@@ -158,7 +158,7 @@ The SPA lives in the `atlas` repository, `src/features/auth/google/`.
   - `email_at_link` is display-only;
   - no RLS, like `users`/`refresh_tokens`/`user_two_factor`;
   - deleted with the account (`AccountDeletionService`).
-- `auth_oauth_flows`: hashed secrets, PKCE verifier and the short-lived provider claims. FORCE RLS, with server-side policies plus a 24 h retention delete (the `auth_email_challenges` pattern).
+- `auth_oauth_flows`: hashed secrets, PKCE verifier and the short-lived provider claims. FORCE RLS, with server-side policies plus a 24 h retention delete (the `auth_email_challenges` pattern). The retention is enforced: every new flow deletes a bounded batch of flows whose lifetime ended more than 24 h ago (`pruneExpired`, Phase 4 fix D-2).
 - `refresh_tokens.auth_method`, `auth_email_challenges.auth_method` (`password` | `google`):
   - the first factor of a session, carried through the TOTP (Redis payload) and the emailed-code challenge;
   - copied forward on rotation;
@@ -188,6 +188,7 @@ The deploy plumbing (the `vps-deploy` fragment keys and the `feature_flags` line
   - `refused`, `rate_limited`, `disabled`;
   - `linked`, `created`, `activated`, `unlinked`, `conflict`, `invalid_credentials`.
 - Logs carry the flow id, stage and failure kind only. They never contain codes, tokens, ID tokens, addresses or subjects.
+- The HTTP request logger censors the callback's `code` and `state` (and any `token`-like query parameter) in both the URL and the parsed query (`sensitive-query.util.ts`, Phase 4 fix D-1).
 
 ## 6. Tests
 
@@ -218,5 +219,5 @@ The deploy plumbing (the `vps-deploy` fragment keys and the `feature_flags` line
    - "Last used" (browser-local, written only from a session response);
    - EN/AR/RTL/mobile;
    - the canonical-host redirect exemption for the return page.
-4. **Verification**: full suites, local browser journeys against the fake provider.
+4. **Verification**: done. See `docs/GOOGLE_AUTH_PHASE_4_VERIFICATION.md`.
 5. **Rollout**: Google Cloud client, secrets, deploy plumbing, `allowlist` then `on`, real Google test accounts.

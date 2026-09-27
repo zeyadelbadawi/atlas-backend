@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import type { Params } from 'nestjs-pino';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AppConfig } from '../../config/configuration';
+import { redactQueryObject, redactUrlQuery } from './sensitive-query.util';
 
 interface RequestLike extends IncomingMessage {
   requestId?: string;
@@ -59,6 +60,11 @@ export function buildPinoOptions(app: AppConfig): Params {
           'req.body.token',
           'req.body.refreshToken',
           'req.body.accessToken',
+          // Google Identity — the flow's single-use secrets and codes.
+          'req.body.handoff',
+          'req.body.pending',
+          'req.body.setupToken',
+          'req.body.inviteToken',
           '*.password',
           '*.password_hash',
           '*.passwordHash',
@@ -75,10 +81,20 @@ export function buildPinoOptions(app: AppConfig): Params {
         ],
         censor: '[REDACTED]',
       },
+      // Credentials that arrive in a QUERY (an OAuth callback's `code` and
+      // `state`) are censored by name in both the URL and the parsed query
+      // — `redact` cannot reach inside the URL string (sensitive-query.util).
+      serializers: {
+        req: (req: Record<string, unknown>) => ({
+          ...req,
+          url: redactUrlQuery(req.url as string | undefined),
+          query: redactQueryObject(req.query as Record<string, unknown> | undefined),
+        }),
+      },
       customSuccessMessage: (req: IncomingMessage, res: ServerResponse) =>
-        `${req.method} ${req.url} -> ${res.statusCode}`,
+        `${req.method} ${redactUrlQuery(req.url)} -> ${res.statusCode}`,
       customErrorMessage: (req: IncomingMessage, res: ServerResponse) =>
-        `${req.method} ${req.url} -> ${res.statusCode}`,
+        `${req.method} ${redactUrlQuery(req.url)} -> ${res.statusCode}`,
     },
   };
 }

@@ -124,4 +124,80 @@ describe('validateEnv', () => {
     expect(result.R2_FORCE_PATH_STYLE).toBe(true);
     expect(result.MEDIA_MAX_UPLOAD_BYTES).toBe(10 * 1024 * 1024);
   });
+
+  // Google Identity (docs/GOOGLE_IDENTITY.md).
+  describe('Google sign-in', () => {
+    const PROD = {
+      ...VALID_BASE,
+      NODE_ENV: 'production',
+      CORS_ALLOWED_ORIGINS: 'https://atlass.dpdns.org',
+    };
+    const CREDENTIALS = {
+      GOOGLE_OAUTH_CLIENT_ID: 'client.apps.googleusercontent.com',
+      GOOGLE_OAUTH_CLIENT_SECRET: 'unit-test-google-secret',
+      GOOGLE_OAUTH_REDIRECT_URI: 'https://atlass.dpdns.org/api/v1/auth/google/callback',
+    };
+
+    it('defaults to off and boots without any Google configuration', () => {
+      expect(validateEnv(PROD).FLAG_AUTH_GOOGLE_MODE).toBe('off');
+    });
+
+    it('rejects an unknown mode', () => {
+      expect(() => validateEnv({ ...PROD, FLAG_AUTH_GOOGLE_MODE: 'yes' })).toThrow();
+    });
+
+    it.each(['allowlist', 'on'])(
+      'refuses to start in %s mode with any credential missing, naming it',
+      (mode) => {
+        for (const missing of Object.keys(CREDENTIALS)) {
+          const env: Record<string, string> = {
+            ...PROD,
+            ...CREDENTIALS,
+            FLAG_AUTH_GOOGLE_MODE: mode,
+          };
+          delete env[missing];
+          expect(() => validateEnv(env)).toThrow(new RegExp(missing));
+        }
+      },
+    );
+
+    it('starts with the flag on and all three credentials', () => {
+      const result = validateEnv({
+        ...PROD,
+        ...CREDENTIALS,
+        FLAG_AUTH_GOOGLE_MODE: 'on',
+      });
+      expect(result.FLAG_AUTH_GOOGLE_MODE).toBe('on');
+    });
+
+    it('rejects a redirect URI that is not a URL', () => {
+      expect(() =>
+        validateEnv({ ...PROD, ...CREDENTIALS, GOOGLE_OAUTH_REDIRECT_URI: 'callback' }),
+      ).toThrow();
+    });
+
+    it.each([
+      'GOOGLE_OIDC_ISSUER',
+      'GOOGLE_OIDC_AUTHORIZATION_ENDPOINT',
+      'GOOGLE_OIDC_TOKEN_ENDPOINT',
+      'GOOGLE_OIDC_JWKS_URI',
+    ])(
+      'refuses the fake-provider override %s in production, even with the flag off',
+      (key) => {
+        expect(() => validateEnv({ ...PROD, [key]: 'http://127.0.0.1:9901/x' })).toThrow(
+          /GOOGLE_OIDC_\* endpoint overrides/,
+        );
+      },
+    );
+
+    it('accepts the fake-provider overrides outside production', () => {
+      expect(() =>
+        validateEnv({
+          ...VALID_BASE,
+          NODE_ENV: 'development',
+          GOOGLE_OIDC_ISSUER: 'http://127.0.0.1:9901',
+        }),
+      ).not.toThrow();
+    });
+  });
 });

@@ -117,6 +117,27 @@ export class GoogleIdentityRepository {
     });
   }
 
+  /**
+   * Retention: flow rows hold the Google address, name and subject of an
+   * unfinished sign-in, so they are kept only as long as they are useful —
+   * a flow lives 10 minutes; anything whose lifetime ended more than
+   * `retentionMs` ago is deleted, a bounded batch at a time. The table's
+   * `auth_oauth_flows_retention_delete` policy independently refuses any
+   * row younger than 24 hours, whatever this is called with.
+   */
+  async pruneExpired(now: Date, retentionMs: number, batch = 500): Promise<number> {
+    const cutoff = new Date(now.getTime() - retentionMs);
+    return this.prisma.$executeRaw`
+      DELETE FROM "auth_oauth_flows"
+      WHERE "id" IN (
+        SELECT "id" FROM "auth_oauth_flows"
+        WHERE "expires_at" < ${cutoff}
+        ORDER BY "expires_at"
+        LIMIT ${batch}
+      )
+    `;
+  }
+
   async markCompleted(id: string, now: Date): Promise<void> {
     await this.prisma.authOAuthFlow.updateMany({
       where: { id, completedAt: null },
