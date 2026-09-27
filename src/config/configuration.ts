@@ -290,6 +290,30 @@ export interface ZoomConfig {
   readonly sdkSecret?: string;
 }
 
+/** Google Identity — `FLAG_AUTH_GOOGLE_MODE` (see `env.validation.ts`). */
+export type GoogleAuthMode = 'off' | 'allowlist' | 'on';
+
+/**
+ * Google Identity (docs/GOOGLE_IDENTITY.md). One Atlas-owned OAuth client and
+ * one central redirect URI on the platform host. The OpenID Connect
+ * endpoints default to the real Google; the overrides exist only for a
+ * local/test fake provider and are refused in production.
+ */
+export interface GoogleAuthConfig {
+  readonly mode: GoogleAuthMode;
+  /** `allowlist` mode: the academies whose websites offer Google. */
+  readonly academyIds: readonly string[];
+  readonly clientId?: string;
+  readonly clientSecret?: string;
+  readonly redirectUri?: string;
+  readonly issuer: string;
+  /** Google documents both forms of its issuer in ID tokens. */
+  readonly acceptedIssuers: readonly string[];
+  readonly authorizationEndpoint: string;
+  readonly tokenEndpoint: string;
+  readonly jwksUri: string;
+}
+
 export interface BillingConfig {
   readonly webhookSecret: string;
 }
@@ -565,6 +589,28 @@ export default () => {
     sdkSecret: env.ZOOM_SDK_SECRET || undefined,
   };
 
+  const googleIssuer = env.GOOGLE_OIDC_ISSUER || 'https://accounts.google.com';
+  const googleAuth: GoogleAuthConfig = {
+    mode: (env.FLAG_AUTH_GOOGLE_MODE ?? 'off') as GoogleAuthMode,
+    academyIds: (env.FLAG_AUTH_GOOGLE_ACADEMY_IDS ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0),
+    clientId: env.GOOGLE_OAUTH_CLIENT_ID || undefined,
+    clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET || undefined,
+    redirectUri: env.GOOGLE_OAUTH_REDIRECT_URI || undefined,
+    issuer: googleIssuer,
+    acceptedIssuers: env.GOOGLE_OIDC_ISSUER
+      ? [googleIssuer]
+      : ['https://accounts.google.com', 'accounts.google.com'],
+    authorizationEndpoint:
+      env.GOOGLE_OIDC_AUTHORIZATION_ENDPOINT ||
+      'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenEndpoint:
+      env.GOOGLE_OIDC_TOKEN_ENDPOINT || 'https://oauth2.googleapis.com/token',
+    jwksUri: env.GOOGLE_OIDC_JWKS_URI || 'https://www.googleapis.com/oauth2/v3/certs',
+  };
+
   const surfaceEnforcement: SurfaceEnforcementConfig = {
     // Defaults to full enforcement: an unset variable must never be the
     // reason a learner reaches the management surface.
@@ -721,6 +767,7 @@ export default () => {
     surfaceEnforcement,
     cloudflare,
     zoom,
+    googleAuth,
     billing,
     paymentConfiguration,
     email,

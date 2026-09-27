@@ -18,7 +18,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
-import type { User } from '@prisma/client';
+import type { AuthMethod, User } from '@prisma/client';
 import type { IdentityConfig } from '../../config/configuration';
 import { UsersRepository } from '../repositories/users.repository';
 import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
@@ -1023,6 +1023,29 @@ export class AuthService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
 
+    return this.continueSignIn(
+      user,
+      { surface: input.surface ?? 'management', academyId: input.academyId },
+      input.context,
+      'password',
+    );
+  }
+
+  /**
+   * Google Identity — everything a sign-in does AFTER its first factor has
+   * proven the person, shared by the password (`signIn`) and Google paths so
+   * both go through ONE pipeline: account status → surface resolution
+   * (host + registration policy) → TOTP → the emailed code / trusted device
+   * (A6) → `issueSession`. Extracted from `signIn` unchanged; the only new
+   * thing is `authMethod`, which rides through the challenges to the
+   * session it mints. A first factor never skips any step here.
+   */
+  async continueSignIn(
+    user: User,
+    requested: SessionSurfaceSelection,
+    context: SessionRequestContext | undefined,
+    authMethod: AuthMethod,
+  ): Promise<AuthenticationResponseContract> {
     // Phase 10.6 — a deleted account can never sign in again.
     //
     // Checked BEFORE suspension and reported as ordinary invalid
@@ -1069,14 +1092,10 @@ export class AuthService {
     // is bound to the academy the host serves and admitted under that
     // academy's registration policy. Runs before the second factor so a
     // refused surface never even starts a 2FA challenge.
-    const selection = await this.resolveSurface(
-      user,
-      { surface: input.surface ?? 'management', academyId: input.academyId },
-      input.context,
-    );
+    const selection = await this.resolveSurface(user, requested, context);
 
     if (await this.twoFactorService.isEnforcedFor(user.id)) {
-      const challenge = await this.twoFactorService.createChallenge(user.id);
+      const challenge = await this.twoFactorService.createChallenge(user.id, authMethod);
       return {
         twoFactorRequired: true,
         challengeId: challenge.challengeId,
@@ -1104,14 +1123,15 @@ export class AuthService {
         userId: user.id,
         surface: selection.surface,
         academyId: selection.academyId,
-        trustCookie: input.context?.trustCookie,
+        trustCookie: context?.trustCookie,
       })
     ) {
       const challenge = await this.emailOtpService.issue({
         user,
         surface: selection.surface,
         academyId: selection.academyId,
-        context: input.context,
+        context,
+        authMethod,
       });
       return {
         emailOtpRequired: true,
@@ -1124,7 +1144,7 @@ export class AuthService {
     }
     // =====================================================================
 
-    const session = await this.issueSession(user, input.context, selection);
+    const session = await this.issueSession(user, context, selection, authMethod);
     await this.usersRepository.touchLastSignInAt(user.id);
 
     return session;
@@ -1234,7 +1254,10 @@ export class AuthService {
     context?: SessionRequestContext,
     requested: SessionSurfaceSelection = { surface: 'management' },
   ): Promise<AuthenticationSessionContract> {
-    const userId = await this.twoFactorService.completeChallenge(challengeId, input);
+    const { userId, authMethod } = await this.twoFactorService.completeChallenge(
+      challengeId,
+      input,
+    );
 
     const user = await this.usersRepository.findById(userId);
     if (!user) {
@@ -1247,7 +1270,7 @@ export class AuthService {
     // only the user id), so a learner can no more finish a management
     // sign-in through 2FA than start one.
     const selection = await this.resolveSurface(user, requested, context);
-    const session = await this.issueSession(user, context, selection);
+    const session = await this.issueSession(user, context, selection, authMethod);
     await this.usersRepository.touchLastSignInAt(user.id);
     return session;
   }
@@ -1306,7 +1329,12 @@ export class AuthService {
       { surface: verified.surface, academyId: verified.academyId },
       context,
     );
-    const session = await this.issueSession(user, context, selection);
+    const session = await this.issueSession(
+      user,
+      context,
+      selection,
+      verified.authMethod,
+    );
     await this.usersRepository.touchLastSignInAt(user.id);
 
     // §12: "Success also sets `users.emailVerifiedAt` if null." Reading a
@@ -1747,8 +1775,9 @@ export class AuthService {
 
   private async issueSession(
     user: User,
-    context?: SessionRequestContext,
-    selection: SessionSurfaceSelection = { surface: 'management' },
+    context: SessionRequestContext | undefined,
+    selection: SessionSurfaceSelection,
+    authMethod: AuthMethod,
   ): Promise<AuthenticationSessionContract> {
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     const rawRefreshToken = generateOpaqueToken();
@@ -1789,6 +1818,7 @@ export class AuthService {
       surface: selection.surface,
       academyId: selection.academyId ?? null,
       deviceId,
+      authMethod,
     });
 
     const accessToken = this.accessTokenService.issue({
@@ -1809,6 +1839,7 @@ export class AuthService {
       accessToken: accessToken.token,
       refreshToken: rawRefreshToken,
       expiresIn: accessToken.expiresInSeconds,
+      authMethod,
       // Launch Stabilization A5 — a session minted on an academy website
       // is told only about that academy.
       user: scopeCurrentUserToSession(

@@ -64,7 +64,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomInt, randomUUID } from 'node:crypto';
-import type { Prisma, User } from '@prisma/client';
+import type { AuthMethod, Prisma, User } from '@prisma/client';
 import type { EmailOtpPolicy, IdentityConfig } from '../../config/configuration';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { CommunicationService } from '../../communications/services/communication.service';
@@ -118,6 +118,8 @@ export interface EmailOtpVerified {
   /** Read from the challenge row, never from the request body. */
   readonly surface: SignInSurface;
   readonly academyId?: string;
+  /** Google Identity — the first factor of the sign-in this code completes (from the row). */
+  readonly authMethod: AuthMethod;
 }
 
 export interface OtpRequestContext {
@@ -137,6 +139,7 @@ interface ChallengeRow {
   readonly resends: number;
   readonly expires_at: Date;
   readonly consumed_at: Date | null;
+  readonly auth_method: AuthMethod | null;
 }
 
 @Injectable()
@@ -211,6 +214,8 @@ export class EmailOtpService {
     readonly surface: SignInSurface;
     readonly academyId?: string;
     readonly context?: OtpRequestContext;
+    /** Google Identity — the first factor this code completes; carried to the session. Defaults to `password`. */
+    readonly authMethod?: AuthMethod;
   }): Promise<EmailOtpChallengeIssued> {
     const settings = this.settings;
 
@@ -246,11 +251,12 @@ export class EmailOtpService {
         await tx.$executeRaw`
           INSERT INTO "auth_email_challenges"
             ("id", "user_id", "surface", "academy_id", "code_hash", "salt",
-             "attempts", "resends", "ip_address", "expires_at", "created_at")
+             "attempts", "resends", "ip_address", "auth_method", "expires_at", "created_at")
           VALUES (
             ${challengeRowId}, ${input.user.id}, ${input.surface},
             ${input.academyId ?? null}, ${codeHash}, ${salt},
-            0, 0, ${input.context?.ipAddress ?? null}, ${expiresAt}, ${now}
+            0, 0, ${input.context?.ipAddress ?? null},
+            CAST(${input.authMethod ?? 'password'} AS "auth_method"), ${expiresAt}, ${now}
           )
         `;
 
@@ -462,7 +468,7 @@ export class EmailOtpService {
           WHERE "id" = ${reference.challengeRowId}
             AND "user_id" = ${reference.userId}
           RETURNING "id", "user_id", "surface", "academy_id", "code_hash", "salt",
-                    "attempts", "resends", "expires_at", "consumed_at"
+                    "attempts", "resends", "expires_at", "consumed_at", "auth_method"
         `;
         const row = rows[0];
         if (!row) return { kind: 'dead' };
@@ -575,6 +581,7 @@ export class EmailOtpService {
           userId: row.user_id,
           surface: row.surface === 'academy' ? 'academy' : 'management',
           academyId: row.academy_id ?? undefined,
+          authMethod: row.auth_method ?? 'password',
         };
       },
     );
@@ -586,6 +593,7 @@ export class EmailOtpService {
           userId: outcome.userId,
           surface: outcome.surface,
           academyId: outcome.academyId,
+          authMethod: outcome.authMethod,
         };
       case 'invalid':
         this.metrics.recordOtp('failed');
@@ -767,6 +775,7 @@ type VerifyOutcome =
       readonly userId: string;
       readonly surface: SignInSurface;
       readonly academyId?: string;
+      readonly authMethod: AuthMethod;
     }
   | { readonly kind: 'invalid'; readonly attemptsRemaining: number }
   | { readonly kind: 'expired' }

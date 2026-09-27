@@ -205,6 +205,13 @@ const EnvSchema = z.object({
     .default('off'),
   // New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md §2.
   FLAG_SIGNUP_ORGANIZATION_MODE: z.enum(['off', 'on']).default('off'),
+  // Google Identity (docs/GOOGLE_IDENTITY.md). `off` (default): every
+  // `/auth/google/*` route answers 404 and the sign-in pages offer no Google
+  // button. `allowlist`: academy websites in FLAG_AUTH_GOOGLE_ACADEMY_IDS
+  // only (the management surface stays off). `on`: every surface. No value
+  // changes password sign-in, the emailed code or trusted devices.
+  FLAG_AUTH_GOOGLE_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
+  FLAG_AUTH_GOOGLE_ACADEMY_IDS: z.string().optional(),
 
   // --- P64 Communications C5 (§26/§27, §43) — tenant lifecycle sequences ---
   // `off` (the default) evaluates nothing; `dry_run` evaluates every
@@ -527,6 +534,23 @@ const EnvSchema = z.object({
   ZOOM_SDK_KEY: z.string().min(1).optional(),
   ZOOM_SDK_SECRET: z.string().min(1).optional(),
 
+  // Google Identity — ONE Atlas-owned OAuth client for every surface and
+  // every academy host (custom domains included): the redirect URI is the
+  // single central callback on the platform host, configured explicitly
+  // for the same byte-for-byte reason as ZOOM_OAUTH_REDIRECT_URI. Optional:
+  // the backend boots without Google, and FLAG_AUTH_GOOGLE_MODE may only
+  // leave `off` once all three are set (checked below).
+  GOOGLE_OAUTH_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+  GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
+  // TEST/LOCAL ONLY — point the OpenID Connect client at a local fake
+  // provider. Refused in production (below): the issuer, endpoints and
+  // signing keys of the real Google are compiled in.
+  GOOGLE_OIDC_ISSUER: z.string().url().optional(),
+  GOOGLE_OIDC_AUTHORIZATION_ENDPOINT: z.string().url().optional(),
+  GOOGLE_OIDC_TOKEN_ENDPOINT: z.string().url().optional(),
+  GOOGLE_OIDC_JWKS_URI: z.string().url().optional(),
+
   // Real Cloudflare API credentials (master plan §21 P11: "real
   // Cloudflare API integration"). Deliberately OPTIONAL, unlike R2 above —
   // R2/MinIO always has a real, running endpoint even in local
@@ -679,6 +703,34 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
           'implicit/wildcard CORS policy in production (see master plan §16, "CORS").',
       );
     }
+  }
+
+  // Google Identity — never switched on half-configured, and never pointed
+  // at anything but the real Google in production.
+  if (parsed.data.FLAG_AUTH_GOOGLE_MODE !== 'off') {
+    const missing = (
+      [
+        'GOOGLE_OAUTH_CLIENT_ID',
+        'GOOGLE_OAUTH_CLIENT_SECRET',
+        'GOOGLE_OAUTH_REDIRECT_URI',
+      ] as const
+    ).filter((key) => !parsed.data[key]);
+    if (missing.length > 0) {
+      throw new Error(
+        `FLAG_AUTH_GOOGLE_MODE=${parsed.data.FLAG_AUTH_GOOGLE_MODE} requires ${missing.join(', ')} — refusing to start with Google sign-in half-configured.`,
+      );
+    }
+  }
+  if (
+    parsed.data.NODE_ENV === 'production' &&
+    (parsed.data.GOOGLE_OIDC_ISSUER ||
+      parsed.data.GOOGLE_OIDC_AUTHORIZATION_ENDPOINT ||
+      parsed.data.GOOGLE_OIDC_TOKEN_ENDPOINT ||
+      parsed.data.GOOGLE_OIDC_JWKS_URI)
+  ) {
+    throw new Error(
+      'GOOGLE_OIDC_* endpoint overrides are for local/test fake providers only — refusing to start in production.',
+    );
   }
 
   // P63g — half-configured Cloudflare credentials used to pass the token

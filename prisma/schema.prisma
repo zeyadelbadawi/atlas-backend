@@ -181,6 +181,9 @@ model User {
   communicationDigests CommunicationDigest[]
   authEmailChallenges  AuthEmailChallenge[]
   trustedDevices       TrustedDevice[]
+  /// Google Identity — the external sign-in identities bound to this account.
+  authIdentities       UserAuthIdentity[]
+  authOAuthFlowsToLink AuthOAuthFlow[]       @relation("AuthOAuthFlowLinkUser")
 
   @@index([status])
   @@index([searchVector], type: Gin)
@@ -247,11 +250,26 @@ model RefreshToken {
   /// `sessionId`, so a device's session survives refreshes.
   deviceId        String?        @map("device_id")
   device          StudentDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  /// Google Identity — the FIRST factor this session was established with
+  /// (`password` | `google`). The emailed code, TOTP and a trusted device are
+  /// additional factors and never change it. Copied forward on rotation.
+  /// Null for every session minted before this column existed: honestly
+  /// unknown, never backfilled with a guess.
+  authMethod      AuthMethod?    @map("auth_method")
 
   @@index([userId, revokedAt])
   @@index([sessionId])
   @@index([deviceId])
   @@map("refresh_tokens")
+}
+
+/// Google Identity — how a person proved who they are at sign-in (the first
+/// factor). Second factors are deliberately not in this list.
+enum AuthMethod {
+  password
+  google
+
+  @@map("auth_method")
 }
 
 /// P64 Phase 1 — where a session was created (AD-5).
@@ -5118,20 +5136,24 @@ model CommunicationDigest {
 /// is HMAC-SHA256(serverSecret, salt || code): a database read yields
 /// nothing a verifier can replay.
 model AuthEmailChallenge {
-  id                String    @id @default(uuid())
-  userId            String    @map("user_id")
-  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                String      @id @default(uuid())
+  userId            String      @map("user_id")
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   surface           String
-  academyId         String?   @map("academy_id")
-  codeHash          String    @map("code_hash")
+  academyId         String?     @map("academy_id")
+  codeHash          String      @map("code_hash")
   salt              String
-  attempts          Int       @default(0)
-  resends           Int       @default(0)
-  deviceFingerprint String?   @map("device_fingerprint")
-  ipAddress         String?   @map("ip_address")
-  expiresAt         DateTime  @map("expires_at")
-  consumedAt        DateTime? @map("consumed_at")
-  createdAt         DateTime  @default(now()) @map("created_at")
+  attempts          Int         @default(0)
+  resends           Int         @default(0)
+  deviceFingerprint String?     @map("device_fingerprint")
+  ipAddress         String?     @map("ip_address")
+  /// Google Identity — the first factor of the sign-in this code completes,
+  /// carried to the session it mints. Null means password (every challenge
+  /// opened before this column existed was a password sign-in).
+  authMethod        AuthMethod? @map("auth_method")
+  expiresAt         DateTime    @map("expires_at")
+  consumedAt        DateTime?   @map("consumed_at")
+  createdAt         DateTime    @default(now()) @map("created_at")
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([expiresAt])
@@ -5165,6 +5187,88 @@ model TrustedDevice {
   @@index([userId, surface, academyId, revokedAt])
   @@index([expiresAt])
   @@map("trusted_devices")
+}
+
+/// Google Identity — an external sign-in provider.
+enum AuthIdentityProvider {
+  google
+
+  @@map("auth_identity_provider")
+}
+
+/// Google Identity (docs/GOOGLE_IDENTITY.md) — an external identity bound to
+/// ONE global Atlas account. The binding key is the provider's stable
+/// subject (Google's `sub`), NEVER the email: an address can change owner,
+/// a subject cannot. `emailAtLink` is display-only ("connected as …").
+///
+/// Platform-scoped like `users`/`refresh_tokens`/`user_two_factor`: it is
+/// read before any user context exists (that is what sign-in is), carries
+/// no tenant id, and is reached only through the identity module — so, like
+/// them, it has no RLS policy.
+model UserAuthIdentity {
+  id              String               @id @default(uuid())
+  userId          String               @map("user_id")
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider        AuthIdentityProvider
+  providerSubject String               @map("provider_subject") @db.VarChar(255)
+  emailAtLink     String               @map("email_at_link")
+  linkedAt        DateTime             @default(now()) @map("linked_at")
+  lastUsedAt      DateTime?            @map("last_used_at")
+
+  /// One Atlas account per external identity — the final arbiter of every
+  /// link and every concurrent first sign-in.
+  @@unique([provider, providerSubject])
+  /// One identity per provider per account (v1).
+  @@unique([userId, provider])
+  @@map("user_auth_identities")
+}
+
+/// Google Identity — one sign-in attempt through an external provider, from
+/// the button press to the session. Modelled on `live_provider_oauth_states`
+/// (hashed single-use state, PKCE verifier, server-derived context) and
+/// `auth_email_challenges` (short-lived, retention-deleted).
+///
+/// EVERY secret is stored as a SHA-256 hash (`state`, `nonce`, the browser
+/// binder cookie, the handoff) except the PKCE verifier, which must be sent
+/// to the token endpoint and dies with the row. The origin host, surface and
+/// academy are derived from the request HOST when the flow starts, never
+/// from the browser, and the callback can only ever send the browser back
+/// to that host. Provider claims are held only until the flow completes and
+/// are purged with the row (24 h).
+model AuthOAuthFlow {
+  id                    String               @id @default(uuid())
+  provider              AuthIdentityProvider
+  stateHash             String               @unique @map("state_hash")
+  nonceHash             String               @map("nonce_hash")
+  binderHash            String               @map("binder_hash")
+  codeVerifier          String               @map("code_verifier")
+  /// `sign_in` | `sign_up` | `link` | `setup`.
+  intent                String
+  surface               String
+  academyId             String?              @map("academy_id")
+  /// The web ORIGIN (`scheme://host[:port]`) the flow started on — the only
+  /// place the callback may send the browser and the only one that may complete.
+  originHost            String               @map("origin_host")
+  returnPath            String?              @map("return_path")
+  /// `link` only — the signed-in account the identity is being connected to.
+  linkUserId            String?              @map("link_user_id")
+  linkUser              User?                @relation("AuthOAuthFlowLinkUser", fields: [linkUserId], references: [id], onDelete: Cascade)
+  providerSubject       String?              @map("provider_subject") @db.VarChar(255)
+  providerEmail         String?              @map("provider_email")
+  providerEmailVerified Boolean?             @map("provider_email_verified")
+  providerHostedDomain  String?              @map("provider_hosted_domain")
+  providerName          String?              @map("provider_name")
+  handoffHash           String?              @unique @map("handoff_hash")
+  handoffExpiresAt      DateTime?            @map("handoff_expires_at")
+  callbackAt            DateTime?            @map("callback_at")
+  handedOffAt           DateTime?            @map("handed_off_at")
+  completedAt           DateTime?            @map("completed_at")
+  ipAddress             String?              @map("ip_address")
+  expiresAt             DateTime             @map("expires_at")
+  createdAt             DateTime             @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("auth_oauth_flows")
 }
 
 /// P64 Communications C5/C6 — where a tenant is in the post-trial /
