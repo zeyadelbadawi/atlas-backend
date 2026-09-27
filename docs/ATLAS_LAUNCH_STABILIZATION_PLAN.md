@@ -848,6 +848,13 @@ The same local two-academy setup as §15.9 was used, **14/14 checks passed**:
 
 Nothing here changes deployment defaults, DNS, Caddy, Cloudflare, secrets or flags. `FLAG_SIGNUP_ORGANIZATION_MODE` fallbacks are untouched.
 
+**Production smoke verification:** the `Launch verify` workflow (dispatch only; input: the owner's Gmail local part).
+- It runs `deploy/launch-verify/verify.mjs` against the real public hosts, in two jobs on separate runners:
+  - **API:** A1, A3, A4, A5, A6 and observability.
+  - **Browser:** management and academy sign-in with the email-code UI, and runtime errors.
+- Sign-in codes and DB facts come from `deploy/launch-verify/remote.sh` over the deploy identity. It is read-only, keyed to its own test addresses, and never prints a code.
+- Test accounts are plus-addresses of that mailbox. Nothing is deleted, and no academy or organization is created.
+
 **Rollback:** redeploy the previous image.
 - A1 (the surface checks), A5 (the projection) and A6 (trust scoping and binding) disappear with the code.
 - A2 invited accounts remain `invited` and can still complete their setup link under the old code.
