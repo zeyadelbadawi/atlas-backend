@@ -566,7 +566,13 @@ function memberEmails() {
   const text = b?.text?.join('|') ?? '';
   check('member email: Brevo\'s sent subject names the academy (no hole)', subject.includes(name) && !/\s{2,}|to\s+on /.test(subject), subject);
   check('member email: Brevo\'s sent body names the academy', text.includes(name), `${text.split(name).length - 1} occurrence(s)`);
-  check('member email: Brevo recorded delivery', /delivered/.test(b?.msg?.join('|') ?? ''), b?.msg?.slice(1).join(' ') ?? 'no Brevo record');
+  // Delivery depends on the recipient's mailbox too (a full mailbox soft-
+  // bounces whatever we send), so it is judged over the correctly named
+  // emails in the window, and a newest one that did not arrive is reported
+  // with the provider's reason rather than hidden.
+  const delivered = rows.filter((r) => r.match === 't' && /delivered/.test(byId[r.messageId]?.msg?.join('|') ?? ''));
+  if (!/delivered/.test(b?.msg?.join('|') ?? '')) info(`newest member email not delivered yet: ${b?.msg?.slice(1).join(' ') ?? 'no Brevo record'}${b?.reason ? ` — ${b.reason.join('|')}` : ''}`);
+  check('member email: Brevo delivered a correctly named member email', delivered.length > 0, delivered.map((r) => `${r.id} ${r.createdAt}`).join(', ') || 'none delivered');
 }
 
 try {

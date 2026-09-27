@@ -259,6 +259,29 @@ on the email actually sent (`p64-c8`: subject "You've been added to
 <academy> on Atlas"). Against the old code the same tests fail with exactly
 the production subject.
 
+**Production verification (27 Sep 2026, after Deploy 214 at `c83a850`).**
+Read from production by `Launch verify` (`scope=deliverability`,
+`remote.sh member-email`, read-only; no addresses, tokens or links printed):
+
+| Outbox row (created, UTC) | Stored `academyName` | Academy record | Brevo sent subject | Brevo outcome |
+|---|---|---|---|---|
+| `4a8368da…` 12:52 (before the fix) | `""` | `ellzoz` | — (outside Brevo's log window) | delivered — the Spam message above |
+| `a6420714…` 14:54 (after the fix) | `ellzoz` | `ellzoz` | `You've been added to ellzoz on Atlas` | sent → **delivered** → opened |
+| `a2aa8859…` 16:11 (owner's Add Manager) | `ellzoz` | `ellzoz` | `You've been added to ellzoz on Atlas` | sent → soft bounce: `552 5.2.2 user is over quota` |
+
+Brevo's stored copy of both post-fix messages reads: "You've been added to
+ellzoz on Atlas · You now have access to ellzoz as Manager. Sign in with the
+email and password you already use for Atlas. Nothing about your account has
+changed. · Open Academy". Key `academy.member.added`, template
+`academy.member.added@1`, locale `en`, role `manager`.
+
+The 16:11 soft bounce is the **recipient mailbox being full** (SMTP 552 5.2.2),
+not the message — Brevo retries soft bounces on its own schedule; the
+delivery row stays `deferred` until a webhook reports the outcome. The
+invitation (`academy.member.invited`) and learner paths were not triggered in
+production; they share the fixed read and the hardened `str()`, and are
+covered per role × locale by the unit spec and by `p64-c8` / SMI e2e.
+
 ### Gmail placed the invitation in Spam
 
 **Authoritative evidence: the received message** (Gmail *Show original*,
@@ -327,7 +350,10 @@ still recommended.
 
 **Diagnostics.** `Launch verify` with `scope=deliverability` (read-only)
 re-checks the domain's SPF / DKIM / DMARC, the Public Suffix List status, the
-Brevo domain, sender and plan, and 7-day Brevo aggregates at any time.
+Brevo domain, sender and plan, and 7-day Brevo aggregates at any time, and
+reports the academy member emails of the last 48 h: the stored academy name
+against the academy record, the delivery row, and Brevo's copy of the sent
+subject/text with its events and any bounce reason.
 
 ## 7. Deliberately unchanged
 
