@@ -335,7 +335,7 @@ async function browserMode() {
 async function smiMode() {
   const acad = remote('academies').split('\n').filter(Boolean).map((l) => l.split('|'));
   if (acad.length < 2) { check('two open academies with a published website exist', false, `found ${acad.length}`); return; }
-  const [A, B] = acad.map(([, id, host]) => ({ id, host }));
+  const [A, B] = acad.map(([, id, host, name]) => ({ id, host, name }));
   info(`Academy A ${A.id} @ ${A.host}; Academy B ${B.id} @ ${B.host}`);
   let r;
   let f;
@@ -365,6 +365,12 @@ async function smiMode() {
   r = await verify(B.host, r.body?.challengeId, await code(J), false, 'academy');
   check('SMI join: Academy B code signs the joined account in', r.status === 200 && !!r.body?.accessToken, `${r.status}`);
   const sJ = r.body?.accessToken;
+  r = await call(B.host, 'GET', '/auth/academy-join/summary', { token: sJ });
+  check('SMI summary: after password + code, names the academy the account already uses (and only that)', r.status === 200 && Array.isArray(r.body?.otherAcademies) && r.body.otherAcademies.length === 1 && r.body.otherAcademies[0] === A.name, `${r.status} ${JSON.stringify(r.body)}`);
+  r = await call(A.host, 'GET', '/auth/academy-join/summary', { token: sJ });
+  check("SMI summary: the same session on another academy's host is refused (A1)", r.status === 403 && r.key === 'errors.auth.academyHostMismatch', `${r.status} ${r.key}`);
+  r = await call(B.host, 'GET', '/auth/academy-join/summary');
+  check('SMI summary: no session, no answer (401)', r.status === 401, `${r.status}`);
 
   // ---- Smart member invitation: the staff email lookup refuses non-owners ------
   const lookupPath = `/academies/${A.id}/member-lookup?email=${encodeURIComponent(J)}&role=manager`;
@@ -395,7 +401,7 @@ async function smiBrowserMode() {
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
   const acad = remote('academies').split('\n').filter(Boolean).map((l) => l.split('|'));
   if (acad.length < 2) { check('two open academies with a published website exist', false, `found ${acad.length}`); return; }
-  const [A, B] = acad.map(([, id, host]) => ({ id, host }));
+  const [A, B] = acad.map(([, id, host, name]) => ({ id, host, name }));
   const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
   const errors = [];
   async function page(tag, { mobile = false, ar = false } = {}) {
@@ -412,9 +418,12 @@ async function smiBrowserMode() {
     const b = p.getByRole('button', { name: /accept all|قبول الكل/i });
     if (await b.count()) await b.first().click().catch(() => {});
   }
-  // Smart academy join: an account of A joins B from B's sign-up page →
-  // "Join with it" → password → B's emailed code → /my.
-  for (const v of ([{ tag: 'join-en-desktop', ar: false, mobile: false }, { tag: 'join-ar-mobile', ar: true, mobile: true }])) {
+  // Smart academy join: an account of A signs UP at B with a different
+  // password → "You already have an Atlas account" (email locked, Change
+  // email, no new-account password fields, A NOT named) → its Atlas
+  // password → B's emailed code → "You're all set" naming A → /my.
+  const escape = (v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const v of [{ tag: 'join-en-desktop', ar: false, mobile: false }, { tag: 'join-ar-mobile', ar: true, mobile: true }]) {
     const email = mail(`b${v.tag.replace(/-/g, '')}`);
     const jpw = password();
     const reg = await call(A.host, 'POST', '/auth/register', { body: { name: 'Launch Verify Join', email, password: jpw, academyId: A.id } });
@@ -423,21 +432,43 @@ async function smiBrowserMode() {
     const { ctx, p } = await page(`academy-B-${v.tag}`, v);
     try {
       await p.goto(`${ORIGIN(B.host)}${prefix}/sign-up`); await p.waitForLoadState('networkidle'); await accept(p);
-      await p.getByRole('button', { name: /Join with it|انضم به/ }).click();
-      await p.fill('#academy-join-email', email); await p.fill('#academy-join-password', jpw);
+      const other = password();
+      await p.fill('#name', 'Launch Verify Join'); await p.fill('#email', email);
+      await p.fill('#password', other); await p.fill('#confirmPassword', other);
+      await p.getByRole('checkbox').first().click();
+      await p.locator('form button[type=submit]').click();
+      await p.locator('#academy-join-password').waitFor({ timeout: 20000 });
       const step = await p.evaluate(() => ({ dir: document.documentElement.dir, ovf: document.documentElement.scrollWidth > window.innerWidth + 1 }));
-      await shot(p, `academy-B-${v.tag}-join-step`);
-      check(`[${v.tag}] join step (${v.ar ? 'RTL' : 'LTR'}, no overflow)`, step.dir === (v.ar ? 'rtl' : 'ltr') && !step.ovf, `dir=${step.dir} overflow=${step.ovf}`);
+      await shot(p, `academy-B-${v.tag}-existing-account`);
+      check(`[${v.tag}] "You already have an Atlas account" explains this academy runs on Atlas`, (await p.getByText(/You already have an Atlas account|لديك حساب على Atlas بالفعل/).count()) > 0 && (await p.getByText(new RegExp(escape(B.name))).count()) > 0);
+      check(`[${v.tag}] email locked, "Change email" offered, no new-account password fields`,
+        (await p.locator('#academy-join-email').evaluate((e) => e.readOnly)) && (await p.getByRole('button', { name: /Change email|تغيير البريد الإلكتروني/ }).count()) === 1 && (await p.locator('#confirmPassword').count()) === 0);
+      check(`[${v.tag}] the other academy is NOT named before proof`, (await p.getByText(new RegExp(escape(A.name))).count()) === 0, A.name);
+      check(`[${v.tag}] existing-account step layout (${v.ar ? 'RTL' : 'LTR'}, no overflow)`, step.dir === (v.ar ? 'rtl' : 'ltr') && !step.ovf, `dir=${step.dir} overflow=${step.ovf}`);
+      if (!v.ar) {
+        // Change email unlocks the address (back to the form, kept), then the
+        // same account continues through "Join with it" — no second sign-up.
+        await p.getByRole('button', { name: /Change email/ }).click();
+        const back = await p.locator('#email').evaluate((e) => ({ readOnly: e.readOnly, value: e.value }));
+        check(`[${v.tag}] "Change email" returns to an editable form keeping the address`, !back.readOnly && back.value === email, JSON.stringify(back));
+        await p.getByRole('button', { name: /Join with it/ }).click();
+        await p.fill('#academy-join-email', email);
+      }
+      await p.fill('#academy-join-password', jpw);
       await p.press('#academy-join-password', 'Enter');
       await p.locator('#email-otp-code').waitFor({ timeout: 25000 });
-      check(`[${v.tag}] join continues into Academy B's emailed code, greeting by name`, (await p.getByText(/Launch Verify Join/).count()) > 0);
-      await shot(p, `academy-B-${v.tag}-join-code`);
+      check(`[${v.tag}] continues into Academy B's emailed code (A6), greeting by name`, (await p.getByText(/Launch Verify Join/).count()) > 0);
       await p.fill('#email-otp-code', await code(email)); await p.press('#email-otp-code', 'Enter');
+      await p.getByText(new RegExp(escape(A.name))).first().waitFor({ timeout: 25000 });
+      const welcome = await p.evaluate(() => ({ dir: document.documentElement.dir, ovf: document.documentElement.scrollWidth > window.innerWidth + 1 }));
+      await shot(p, `academy-B-${v.tag}-welcome`);
+      check(`[${v.tag}] after password + code: "You're all set" names the academy the account already uses`, (await p.getByText(new RegExp(escape(A.name))).count()) > 0 && !welcome.ovf, A.name);
+      await p.getByRole('link', { name: /Go to my learning|الانتقال إلى تعلّمي/ }).click();
       await p.waitForURL((u) => u.pathname.startsWith(`${prefix}/my`), { timeout: 25000 });
       await p.waitForTimeout(1500); await shot(p, `academy-B-${v.tag}-join-my`);
       check(`[${v.tag}] joined account lands on /my`, new URL(p.url()).pathname.startsWith(`${prefix}/my`), new URL(p.url()).pathname);
       const jf = facts('user', email, A.id, B.id);
-      check(`[${v.tag}] one user, learner at A and B`, jf.users === '1' && jf.learner_rows === '2', `users=${jf.users} rows=${jf.learner_rows}`);
+      check(`[${v.tag}] one user, learner at A and B, B's trust scoped to B`, jf.users === '1' && jf.learner_rows === '2' && jf.trust_A_live === '0', `users=${jf.users} rows=${jf.learner_rows} trustA=${jf.trust_A_live}`);
     } catch (e) { await shot(p, `academy-B-${v.tag}-failed`); check(`[${v.tag}] academy join journey`, false, e.message.slice(0, 160)); }
     await ctx.close();
   }

@@ -5,7 +5,7 @@
 # like deploy/onboarding-browser/remote.sh.
 #
 #   remote.sh release                 -> migration/column/legacy-trust facts, backend health, error-log counts
-#   remote.sh academies               -> two open academies with a published website: "academy|<id>|<host>"
+#   remote.sh academies               -> two open academies with a published website: "academy|<id>|<host>|<name>"
 #   remote.sh otp <email>             -> the latest sign-in code for THAT account only (consumed by the runner, never logged)
 #   remote.sh user <email> <A> <B>    -> non-personal facts about that test account
 #   remote.sh metrics                 -> the Plan A security + smart-join series (values only)
@@ -51,7 +51,7 @@ case "$cmd" in
   academies)
     # Two academies in DIFFERENT organizations, open registration, published
     # website, an assigned subdomain, an organization with a live subscription.
-    sql "select 'academy', a.id, coalesce(s.full_host, s.subdomain || '.' || (select base_domain from platform_domain_configuration where configured limit 1))
+    sql "select 'academy', a.id, coalesce(s.full_host, s.subdomain || '.' || (select base_domain from platform_domain_configuration where configured limit 1)), replace(a.name, '|', ' ')
          from academies a
          join subdomain_allocations s on s.academy_id=a.id and s.status='assigned'
          join website_configurations w on w.academy_id=a.id and w.status='published'
