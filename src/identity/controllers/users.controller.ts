@@ -43,7 +43,10 @@ export class UsersController {
     @CurrentAuthContext() auth: AuthContext,
   ): Promise<CurrentUserResponse> {
     // Launch Stabilization A5 — an academy-website session sees only its academy.
-    return scopeCurrentUserToSession(await this.usersService.getCurrent(auth.userId), auth);
+    return scopeCurrentUserToSession(
+      await this.usersService.getCurrent(auth.userId),
+      auth,
+    );
   }
 
   @Patch('me')

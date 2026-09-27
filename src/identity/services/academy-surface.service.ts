@@ -79,7 +79,9 @@ export class AcademySurfaceService {
    */
   async expectedAuthContext(
     rawHostname: string | undefined,
-  ): Promise<{ surface: 'academy'; academyId: string } | { surface: 'management' } | null> {
+  ): Promise<
+    { surface: 'academy'; academyId: string } | { surface: 'management' } | null
+  > {
     const academyId = await this.resolveHostAcademyId(rawHostname);
     if (academyId) return { surface: 'academy', academyId };
     const normalized = normalizeHostname(rawHostname);

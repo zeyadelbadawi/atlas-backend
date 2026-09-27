@@ -90,7 +90,12 @@ describe('ManagementSurfaceGuard', () => {
 
   describe('Launch Stabilization A1 — the session surface (D1)', () => {
     it('refuses a session minted on an academy website, whoever the person is', async () => {
-      for (const kind of ['staff', 'platform_owner', 'unaffiliated', 'learner'] as const) {
+      for (const kind of [
+        'staff',
+        'platform_owner',
+        'unaffiliated',
+        'learner',
+      ] as const) {
         const resolver = resolverFor(kind);
         const guard = new ManagementSurfaceGuard(resolver, FULLY_ON);
         await expect(

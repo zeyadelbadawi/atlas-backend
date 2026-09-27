@@ -810,16 +810,17 @@ Branch `claude/nifty-ride-h9nxql` in both repositories.
 
 The existing e2e assertions that pinned the old behaviour were updated to the approved behaviour: `auth-register`, `p64-identity-surfaces`, `p64-course-reviews`, `users-change-password`.
 
-### 16.4 Test results (local, this branch)
+### 16.4 Test results (local, this branch — final pre-release round)
 
 | Suite | Result |
 |---|---|
 | Backend typecheck (`tsc --noEmit`) | clean |
-| Backend lint (changed files) | clean |
-| Backend unit (Jest, all) | **135 suites / 3732 tests passed** |
-| Backend e2e (Jest, all 154 suites) | **1839/1842 passed** in the full run. The 3 failures (`media`, `p53-support-attachments` oversized-upload 413 vs 500; `phase10-1-trial-abuse` socket `ECONNRESET`) ran while the browser run loaded the same Postgres/S3, touch no changed code, and **pass 50/50 when re-run alone**. |
-| New `launch-stabilization.e2e-spec.ts` | **30/30** |
-| Frontend typecheck | 25 pre-existing errors (`platform-add-ons`, `platform-zoom`), **0 new** vs the base |
+| Backend lint (every changed/added `.ts` file vs `main`) | clean (three prettier line-wraps in this branch's own lines fixed in the final round) |
+| Backend unit (Jest, all) | **135 suites / 3733 tests passed** |
+| Backend e2e (Jest, all 154 suites, fully isolated) | best clean run **153/154 suites, 1845/1846 tests**; every failure across all isolated runs is proven baseline or test-data leakage in unchanged code (§16.12) |
+| `launch-stabilization.e2e-spec.ts` (A1–A6 + observability) | **34/34** |
+| Migration ↔ schema | consistent three ways (§16.11) |
+| Frontend typecheck | 25 pre-existing errors (`platform-add-ons`, `platform-zoom`), **0 new** vs `main` |
 | Frontend lint (changed files) | clean |
 | Frontend unit (Vitest, all) | **121 files / 1110 tests passed** |
 | Frontend production build | succeeded |
@@ -935,3 +936,37 @@ CREATE INDEX "trusted_devices_user_id_surface_academy_id_revoked_at_idx"
   - The live DB matches the schema, with an empty diff.
   - A fresh shadow database with **all** migrations replayed matches `schema.prisma`, with an empty diff.
 - **Rollback:** redeploy the previous image; the column stays and is ignored. Dropping it is optional and not recommended in a hurry. Applying it is only through the gated `apply_migrations` run (§16.6).
+
+### 16.12 Clean full-suite e2e evidence (pre-release round)
+
+**Conditions for every run:**
+- No app server, proxy, browser or other test process was running. Only Postgres, Redis and the local S3 stub were up.
+- The runs used the same local test database, which accumulates rows across runs.
+
+| Run | Result | Failures |
+|---|---|---|
+| Branch #1 (the leftover base-domain row was present at start) | 151/154 suites, 1840/1846 | `p63-domain-operations` (4); `media` (1); `p53-support-attachments` (1) |
+| **`main` baseline** `c18793f` (isolated worktree, pristine row) | 149/153 suites, 1808/1812 | `media` (1); `p53-support-attachments` (1); `notifications` N14 (1); `p61-granted-entitlements` GRANT-018 (1) |
+| Branch #2 (pristine row) | **153/154 suites, 1845/1846** | `p63-domain-operations` DOM-021 (1) |
+
+**Root causes, each with evidence. None is in code this branch changes**; the diff of `src/media`, `src/platform/services/support-cases.service.ts`, `src/domain`, `src/public-website`, `src/plans` and the p63 spec against `main` is empty.
+
+1. **`media` / `p53` oversized upload returns 500 instead of 413.**
+   - `parseDataUrl` (`src/media/utils/file-validation.util.ts:94`) runs `/^data:([^;]+);base64,(.+)$/` over a multi-megabyte string. The logged cause is `RangeError: Maximum call stack size exceeded at RegExp.exec`.
+   - It fails on `main` with the identical stack. It is nondeterministic: both suites passed in branch run #2 and pass when run alone.
+   - **Pre-existing product defect.** An oversized upload can answer 500 instead of 413. It is still refused, and nothing is stored.
+   - Suggested fix (separate change): split on the first `,` instead of running a backtracking regex over the payload.
+2. **`p63-domain-operations`: DOM-006, 015, 020, 022.**
+   - `domain.e2e-spec.ts` (`PATCH /platform-domain`) persists a platform base domain in `platform_domain_configuration` and never restores it. p63 then sees a base domain it does not expect.
+   - Proof: with the row present, p63 fails those 4 alone, every time. After setting it back to pristine (`base_domain NULL, configured false`), the same code passes **38/38, three times in a row**.
+   - **Pre-existing test-isolation defect.** Suggested fix (separate change): restore the configuration in `domain.e2e`'s `afterAll`.
+3. **`p63` DOM-021 (sweep cadence).**
+   - Failed once in branch run #2, while p63 ran first with the row pristine. It passed in the `main` run and **3/3 alone** from the same state.
+   - It is intermittent in unchanged code. The sweep it exercises processes accumulated test rows oldest-first in batches under a wall-clock budget. It is not claimed to be anything more specific.
+4. **`notifications` N14 and `p61` GRANT-018 (`main` only).**
+   - `connect ECONNRESET` in concurrent-request tests. Both pass alone on `main` (30/30) and pass in both branch runs.
+
+**Conclusion:**
+- Nothing fails because of this branch.
+- Every suite passed in at least one fully isolated full run on the branch, and every failure reproduces on `main` or is proven local test-data leakage.
+- A single 154/154 run was **not** obtained. The remaining nondeterminism is baseline (items 1 and 3), and fixing it is outside Plan A.
