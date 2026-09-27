@@ -1065,7 +1065,7 @@ It ran against the real public hosts, Academy A `ellzoz.atlass.dpdns.org` and Ac
 - `atlas_auth_surface_denied_total`: `management_route`, `platform_owner_route`, `account_action` and `academy_host_mismatch` were each 1 after run 1 and 2 after run 2. Exactly one per probe, and no other refusals.
 - `atlas_auth_sessions_revoked_total{password_change}`: 3, then 6.
 - The `auth.sessions.revoked` audit row was written (both runs).
-- The `AtlasSessionSurfaceDenied` alert rule fires on any increase. It will have fired for these deliberate probes and then resolved; that is expected.
+- The `AtlasSessionSurfaceDenied` alert rule fires on any increase, so these deliberate probes are expected to have triggered it (and then resolved). Alertmanager/Slack delivery was **not** checked as part of this release; an alert from 07:30–07:37 UTC on 2026-09-27 is this verification, not an incident.
 
 ### 17.6 Warnings and remaining known issues
 
