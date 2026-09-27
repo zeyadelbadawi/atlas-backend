@@ -265,7 +265,7 @@ Read from production by `Launch verify` (`scope=deliverability`,
 
 | Outbox row (created, UTC) | Stored `academyName` | Academy record | Brevo sent subject | Brevo outcome |
 |---|---|---|---|---|
-| `4a8368da…` 12:52 (before the fix) | `""` | `ellzoz` | — (outside Brevo's log window) | delivered — the Spam message above |
+| `4a8368da…` 12:52 (before the fix) | `""` | `ellzoz` | `You've been added to  on Atlas` | sent → delivered — the Spam message above |
 | `a6420714…` 14:54 (after the fix) | `ellzoz` | `ellzoz` | `You've been added to ellzoz on Atlas` | sent → **delivered** → opened |
 | `a2aa8859…` 16:11 (owner's Add Manager) | `ellzoz` | `ellzoz` | `You've been added to ellzoz on Atlas` | sent → soft bounce: `552 5.2.2 user is over quota` |
 
