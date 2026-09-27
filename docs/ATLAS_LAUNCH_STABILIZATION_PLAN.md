@@ -977,3 +977,104 @@ CREATE INDEX "trusted_devices_user_id_surface_academy_id_revoked_at_idx"
 - Nothing fails because of this branch.
 - Every suite passed in at least one fully isolated full run on the branch, and every failure reproduces on `main` or is proven local test-data leakage.
 - A single 154/154 run was **not** obtained. The remaining nondeterminism is baseline (items 1 and 3), and fixing it is outside Plan A.
+
+---
+
+## 17. Production release record — 2026-09-27
+
+**Status: LIVE IN PRODUCTION.** Plan A (A1–A5), A6, observability, the notification catalogue update and migration `20261018000000_trusted_device_academy_scope`.
+
+### 17.1 Merges
+
+| Repo | PR | Merge commit |
+|---|---|---|
+| atlas-backend | #12 Plan A + A6 | `480232c` |
+| atlas | #9 Plan A frontend | `6ac9cae` |
+| atlas-backend | #13 `Launch verify` tooling (no application code) | `f75224d` (the deployed `main`) |
+
+### 17.2 Deployment
+
+| Step | Run | Result |
+|---|---|---|
+| Frontend push deploy (`6ac9cae`) | atlas `36301385452` | success, 06:52–07:00 UTC |
+| Backend push deploy for #12 (`480232c`) | atlas-backend `36301377984` | **cancelled by the operator while still building.** A push deploy cannot apply migrations (it would only have stopped at the gate), and the approved migration deploy below builds `main` itself. It never reached the VPS. |
+| Backend push deploy for #13 (`f75224d`) | atlas-backend `36301648923` | cancelled by GitHub concurrency (superseded by the dispatch below) |
+| **Backend migration deploy** (`workflow_dispatch`, `apply_migrations=true`, `f75224d`) | atlas-backend **`36301660404`** | **success**: build 07:08–07:24, `migrate-and-deploy` 07:24:40–07:26:11 UTC |
+
+`migrate-and-deploy` log, in order:
+1. **Migration gate:** exactly **1** pending migration (`20261018000000_trusted_device_academy_scope`); no unknown or unfinished migrations.
+2. **Verified backup:** `atlas-20260927T072530Z.sql.gz` (9.6 MiB), "archive intact, completion marker present, core tables included", uploaded to `s3://atlas-backups-production/`. Pre-migration counts were recorded in `/opt/atlas/migration-evidence/precheck-20260927T072536Z.txt`.
+3. **Migration:** `prisma migrate deploy` ("125 migrations found … Applying migration `20261018000000_trusted_device_academy_scope` … All migrations have been successfully applied").
+4. **Rollout:** backend recreated, then recreated again for the env change, then "Backend healthy"; "Caddy healthy (TLS + SPA)"; last-good digests recorded, so `deploy.sh --rollback` is available.
+
+The `production-migrations` environment released the job without a wait. Nothing destructive ran: no data reset, and no deletion of any organization, academy, user, course, order, subscription, media or notification.
+
+### 17.3 Production verification: `Launch verify`
+
+It ran against the real public hosts, Academy A `ellzoz.atlass.dpdns.org` and Academy B `hfghgf.atlass.dpdns.org`. Test accounts were plus-addresses of the owner's mailbox. It creates learners and plain accounts only, and deletes nothing.
+
+| Run | Ref | API | Browser |
+|---|---|---|---|
+| `36303267257` | `main` `f75224d` | **30/30 PASS** | **9/9 PASS** (EN desktop) |
+| `36303557960` | `claude/nifty-ride-h9nxql` `d970a89` (browser journeys extended; same scripts otherwise) | **30/30 PASS** | **18/18 PASS** (EN desktop, EN mobile, AR mobile RTL, trusted re-login) |
+
+**Release state (both runs):**
+- `/health` 200 with database up and Redis up;
+- migration applied, and the `academy_id` column and index are present;
+- 0 pending or failed migrations;
+- **0 error or fatal backend log lines** since the new container started (07:26:06Z; unchanged across both runs, so there were no restarts);
+- **0 live legacy academy trust rows**, so no learner is re-prompted because of the migration. Live management trust rows are unaffected.
+
+### 17.4 A1–A6 in production
+
+- **A1:**
+  - An academy session is refused on a management endpoint (403 `managementSurfaceOnly`), on a Platform Owner endpoint (403), and on account deletion (403).
+  - An Academy B session is refused on Academy A's learner endpoint (403 `academyHostMismatch`) and still works on B (200).
+  - Management sign-in works (browser, email-code UI, lands on `/dashboard`).
+  - **Platform Owner interactive login was not directly verified, because the required credential was unavailable.** Platform Owner route protection was verified: refused for academy sessions.
+- **A2:** **not directly automated.** Creating staff requires an academy owner's own session, and no owner credential is available to the automation.
+  - Covered by e2e LS-A2-01..04 and the local browser checks (§16.5, §16.9).
+  - Legacy accounts are untouched (no data migration).
+- **A3:**
+  - A password change ended every session in both academies immediately (200, then 401/401).
+  - Audit `auth.sessions.revoked` (`password_change:3`) was written.
+  - Every trusted browser was revoked.
+  - Password *reset* is covered by e2e LS-A3-01 / LS-A6-09 / LS-OBS-02; the reset link is not read by the automation.
+- **A4:**
+  - A new learner at A got `{account:new}`; the same person at B got `{account:existing}`, with **one** user row and learner rows at A and B.
+  - The `account.academy.joined` notification was queued.
+  - A management account joined A as a learner with no duplicate user and memberships unchanged.
+- **A5:** the academy `/users/me` held only the current academy and 0 organizations.
+- **A6:**
+  - The academy sign-in asks for an emailed code.
+  - A's code is refused on B and on management (401 `otpInvalid`, no session, 2 `context_mismatch` audits).
+  - The same code works on A and remembers the browser, with a trust row for A only (A=1, B=0, null=0).
+  - The remembered browser skips the code on A (API, and browser re-login), but **not** on B.
+  - B's code works on B.
+  - A revoked trust asks again.
+  - Expired trust: covered by e2e LS-A6-07/08, since it can't be produced in production without data mutation.
+- **Frontend:**
+  - Both academy websites load.
+  - Academy sign-in with the email-code UI works in EN desktop, EN mobile and **AR mobile (dir=rtl, no horizontal overflow, lands on `/ar/my`)**.
+  - Management sign-in lands on the dashboard.
+  - **No uncaught runtime errors.**
+  - Screenshots are in the run artifacts (14-day retention).
+
+### 17.5 Observability in production
+
+- `atlas_auth_surface_denied_total`: `management_route`, `platform_owner_route`, `account_action` and `academy_host_mismatch` were each 1 after run 1 and 2 after run 2. Exactly one per probe, and no other refusals.
+- `atlas_auth_sessions_revoked_total{password_change}`: 3, then 6.
+- The `auth.sessions.revoked` audit row was written (both runs).
+- The `AtlasSessionSurfaceDenied` alert rule fires on any increase, so these deliberate probes are expected to have triggered it (and then resolved). Alertmanager/Slack delivery was **not** checked as part of this release; an alert from 07:30–07:37 UTC on 2026-09-27 is this verification, not an incident.
+
+### 17.6 Warnings and remaining known issues
+
+- **Build time:** both backend image builds today took about 16 minutes (a cold GitHub Actions layer cache, against about 5 minutes on 2026-09-26). Not a failure.
+- **CI workflow:** `CI` is `disabled_manually` on the repository (since 2026-09-23), so the PRs had no CI checks. Release evidence is the local suites (§16.4) plus the production verification above.
+- **Out of scope, unchanged (separate follow-ups):**
+  - media / support data-URL oversized upload returns 500 instead of 413;
+  - `domain.e2e` test-data leakage;
+  - the Add Manager/Instructor "Leave without saving?" prompt after success;
+  - no post-password-change notice;
+  - legacy staff-created accounts keep their staff-chosen passwords until the separate controlled test-data reset (not performed).
+- **Verification test data:** the verification added test learner and plain accounts (plus-addresses `…+atlas-lsv-<run>-…@gmail.com`) and learner rows at the two academies above. They are left in place, per the no-cleanup rule; the controlled reset will remove them.

@@ -223,8 +223,11 @@ async function browserMode() {
   const B = acad[1] ? { id: acad[1][1], host: acad[1][2] } : null;
   const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
   const errors = [];
-  async function page(tag) {
-    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  async function page(tag, { mobile = false, ar = false } = {}) {
+    const ctx = await browser.newContext({
+      viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+      isMobile: mobile, hasTouch: mobile, locale: ar ? 'ar' : 'en-US',
+    });
     const p = await ctx.newPage();
     p.on('pageerror', (e) => errors.push(`${tag}: ${e.message.slice(0, 160)}`));
     return { ctx, p };
@@ -273,7 +276,36 @@ async function browserMode() {
       await uiSignIn(p, L, lpw, `${ORIGIN(A.host)}/sign-in`, 'academy A');
       await shot(p, 'academy-A-signed-in');
       check('academy sign-in lands on the learner dashboard', new URL(p.url()).pathname.startsWith('/my'), new URL(p.url()).pathname);
+      // Sign out locally (the httpOnly trust cookie stays, as in a real browser) and sign in again.
+      await p.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+      await p.goto(`${ORIGIN(A.host)}/sign-in`); await p.waitForLoadState('networkidle'); await accept(p);
+      await p.fill('#email', L); await p.fill('#password', lpw); await p.press('#password', 'Enter');
+      const second = await Promise.race([
+        p.locator('#email-otp-code').waitFor({ timeout: 20000 }).then(() => 'otp'),
+        p.waitForURL((u) => !/sign-in/.test(u.pathname), { timeout: 20000 }).then(() => 'in'),
+      ]);
+      await p.waitForTimeout(1500); await shot(p, 'academy-A-trusted');
+      check('academy remembered browser signs in again without a code', second === 'in' && new URL(p.url()).pathname.startsWith('/my'), `${second} ${new URL(p.url()).pathname}`);
     } catch (e) { await shot(p, 'academy-A-failed'); check('academy sign-in journey', false, e.message.slice(0, 160)); }
+    await ctx.close();
+  }
+  for (const v of [{ tag: 'ar-mobile', ar: true, mobile: true }, { tag: 'en-mobile', ar: false, mobile: true }]) {
+    const email = mail(`b${v.tag.replace('-', '')}`);
+    const vpw = password();
+    const reg = await call(A.host, 'POST', '/auth/register', { body: { name: 'Launch Verify Browser', email, password: vpw, academyId: A.id } });
+    check(`[${v.tag}] academy learner registers (API)`, reg.status === 201, `${reg.status} ${reg.key}`);
+    const prefix = v.ar ? '/ar' : '';
+    const { ctx, p } = await page(`academy-A-${v.tag}`, v);
+    try {
+      await p.goto(`${ORIGIN(A.host)}${prefix}/`); await p.waitForLoadState('networkidle'); await accept(p);
+      const home = await p.evaluate(() => ({ dir: document.documentElement.dir, ovf: document.documentElement.scrollWidth > window.innerWidth + 1 }));
+      await shot(p, `academy-A-${v.tag}-home`);
+      check(`[${v.tag}] academy website direction and layout`, home.dir === (v.ar ? 'rtl' : 'ltr') && !home.ovf, `dir=${home.dir} overflow=${home.ovf}`);
+      await uiSignIn(p, email, vpw, `${ORIGIN(A.host)}${prefix}/sign-in`, `academy A ${v.tag}`);
+      const after = await p.evaluate(() => ({ dir: document.documentElement.dir, ovf: document.documentElement.scrollWidth > window.innerWidth + 1, path: location.pathname }));
+      await shot(p, `academy-A-${v.tag}-signed-in`);
+      check(`[${v.tag}] academy sign-in lands on the learner dashboard (${v.ar ? 'RTL' : 'LTR'}, no overflow)`, after.path.startsWith(`${prefix}/my`) && after.dir === (v.ar ? 'rtl' : 'ltr') && !after.ovf, `${after.path} dir=${after.dir} overflow=${after.ovf}`);
+    } catch (e) { await shot(p, `academy-A-${v.tag}-failed`); check(`[${v.tag}] academy sign-in journey`, false, e.message.slice(0, 160)); }
     await ctx.close();
   }
   if (B) {
