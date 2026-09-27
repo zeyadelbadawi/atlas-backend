@@ -519,6 +519,53 @@ async function deliverabilityMode() {
   } catch (e) { info(`public suffix list: unavailable (${e.message})`); }
   info(`DMARC of parent _dmarc.${parent}: ${(await txt(`_dmarc.${parent}`)).join(' | ')}`);
   info(`MX ${domain}: ${await dns.resolveMx(domain).then((r) => r.map((x) => x.exchange).join(',')).catch((e) => `<${e.code}>`)}`);
+  memberEmails();
+}
+
+/**
+ * The academy member emails actually produced in production (last 48 h):
+ * the stored academy name against the academy record, the delivery row, and
+ * Brevo's own copy of what it sent. Reports only when such an email exists —
+ * a member add is an owner action this workflow cannot perform.
+ */
+function memberEmails() {
+  const lines = remote('member-email').split('\n').filter(Boolean);
+  const rows = lines.filter((l) => l.startsWith('row|')).map((l) => {
+    const [, id, key, locale, state, createdAt, storedName, role, academyName, match, provider, status, templateVersion, sentAt, messageId] = l.split('|');
+    return { id, key, locale, state, createdAt, storedName, role, academyName, match, provider, status, templateVersion, sentAt, messageId };
+  });
+  const brevo = {};
+  for (const l of lines.filter((x) => x.startsWith('brevo_'))) {
+    const [k, ...v] = l.split('|');
+    const m = k.match(/^brevo_(msg|subject|text)_(\d+)$/);
+    if (!m) { info(l); continue; }
+    (brevo[m[2]] ??= {})[m[1]] = v;
+  }
+  const byId = Object.fromEntries(Object.values(brevo).filter((b) => b.msg).map((b) => [b.msg[0], b]));
+  if (!rows.length) { info('member emails (48 h): none — add a member from the dashboard to verify one'); return; }
+  for (const r of rows) {
+    info(`member email ${r.id}: key=${r.key} locale=${r.locale} role=${r.role} outbox=${r.state} created=${r.createdAt}`);
+    info(`  stored academyName="${r.storedName}" | academy record name="${r.academyName}"`);
+    info(`  delivery: provider=${r.provider} status=${r.status} template=${r.templateVersion} sent=${r.sentAt} messageId=${r.messageId}`);
+    const b = byId[r.messageId];
+    if (b) {
+      info(`  brevo: ${b.msg.slice(1).join(' ')}`);
+      info(`  brevo subject: ${b.subject?.join('|')}`);
+      info(`  brevo text: ${b.text?.join('|')}`);
+    }
+  }
+  // Only emails produced by the fixed code are judged: the fix shipped with
+  // this release, and earlier rows are the bug it fixed.
+  const latest = rows[0];
+  const name = latest.academyName;
+  check('member email: the stored academy name is the academy record\'s name', latest.match === 't' && name.trim() !== '', `"${latest.storedName}" vs "${name}"`);
+  check('member email: handed to the provider', latest.messageId !== '-' && ['sent', 'delivered'].includes(latest.status), `${latest.provider} ${latest.status}`);
+  const b = byId[latest.messageId];
+  const subject = b?.subject?.join('|') ?? '';
+  const text = b?.text?.join('|') ?? '';
+  check('member email: Brevo\'s sent subject names the academy (no hole)', subject.includes(name) && !/\s{2,}|to\s+on /.test(subject), subject);
+  check('member email: Brevo\'s sent body names the academy', text.includes(name), `${text.split(name).length - 1} occurrence(s)`);
+  check('member email: Brevo recorded delivery', /delivered/.test(b?.msg?.join('|') ?? ''), b?.msg?.slice(1).join(' ') ?? 'no Brevo record');
 }
 
 try {
