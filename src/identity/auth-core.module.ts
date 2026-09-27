@@ -40,6 +40,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { SessionRevocationService } from './services/session-revocation.service';
 import { SessionActivityService } from './services/session-activity.service';
 import { RefreshTokensRepository } from './repositories/refresh-tokens.repository';
+import { SessionSurfaceService } from './services/session-surface.service';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { RefreshTokensRepository } from './repositories/refresh-tokens.repositor
     SessionRevocationService,
     SessionActivityService,
     RefreshTokensRepository,
+    SessionSurfaceService,
   ],
   exports: [
     AccessTokenService,
@@ -63,6 +65,7 @@ import { RefreshTokensRepository } from './repositories/refresh-tokens.repositor
     // learner's sessions on that academy, which needs the same stateless
     // repository this module already provides for the guard's fallback.
     RefreshTokensRepository,
+    SessionSurfaceService,
   ],
 })
 export class AuthCoreModule {}

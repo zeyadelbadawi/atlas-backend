@@ -30,6 +30,7 @@ import {
 import type { Request } from 'express';
 import { PrincipalResolverService } from '../services/principal-resolver.service';
 import { SurfaceEnforcementService } from '../services/surface-enforcement.service';
+import { surfaceDenied } from '../../identity/guards/surface-denial.util';
 
 @Injectable()
 export class ManagementSurfaceGuard implements CanActivate {
@@ -43,6 +44,20 @@ export class ManagementSurfaceGuard implements CanActivate {
     const userId = request.authContext?.userId;
     if (!userId) {
       throw new ForbiddenException({ messageKey: 'errors.auth.managementSurfaceOnly' });
+    }
+
+    // Launch Stabilization A1 (D1) — the SESSION must have been minted on
+    // the management surface. A token issued by an academy website is
+    // refused here whatever the person behind it may manage elsewhere:
+    // academy origins are tenant-operated, and their tokens must never act
+    // as management credentials. Fail-closed: an unknown surface (no
+    // session record) is refused too.
+    if (request.authContext?.surface !== 'management') {
+      throw surfaceDenied(
+        request,
+        'management_route',
+        'errors.auth.managementSurfaceOnly',
+      );
     }
 
     const principal = await this.principalResolver.forRequest(request, userId);

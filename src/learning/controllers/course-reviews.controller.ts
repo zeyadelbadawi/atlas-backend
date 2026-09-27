@@ -30,6 +30,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { CourseReviewsService } from '../services/course-reviews.service';
 import {
   CreateCourseReviewDto,
@@ -102,6 +103,9 @@ export class CourseReviewsController {
 
   /** Every status of this course's reviews, for the course's reviewer. */
   @Get(':id/reviews/moderation')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async listForModeration(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -115,6 +119,9 @@ export class CourseReviewsController {
   }
 
   @Post(':id/reviews/:reviewId/approve')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async approve(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -128,6 +135,9 @@ export class CourseReviewsController {
   }
 
   @Post(':id/reviews/:reviewId/reject')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async reject(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -142,6 +152,9 @@ export class CourseReviewsController {
 
   /** A reviewer removes a review from their course. */
   @Delete(':id/reviews/:reviewId')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   @HttpCode(204)
   async removeAsReviewer(
     @Req() request: Request,

@@ -28,6 +28,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { QuizzesService } from '../services/quizzes.service';
 import { QuizAttemptEngineService } from '../services/quiz-attempt-engine.service';
 import { CreateQuizDto } from '../dto/create-quiz.dto';
@@ -65,6 +66,9 @@ export class QuizzesController {
   }
 
   @Get(':id/quizzes/authoring')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async getQuizzesForAuthoring(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -76,6 +80,9 @@ export class QuizzesController {
   }
 
   @Post(':id/quizzes')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async createQuiz(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -94,6 +101,9 @@ export class QuizzesController {
   }
 
   @Get(':id/quizzes/:quizId/authoring')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async getQuizForAuthoring(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -107,6 +117,9 @@ export class QuizzesController {
   }
 
   @Patch(':id/quizzes/:quizId')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async updateQuiz(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -122,6 +135,9 @@ export class QuizzesController {
   }
 
   @Delete(':id/quizzes/:quizId')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   @HttpCode(204)
   async deleteQuiz(
     @Req() request: Request,

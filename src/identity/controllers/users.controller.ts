@@ -23,7 +23,9 @@ import { DeletionPlanService } from '../services/deletion-plan.service';
 import type { DeletionPlan } from '../services/deletion-plan.service';
 import type { AccountDeletionReason } from '../services/account-deletion.service';
 import type { CurrentUserResponse } from '../dto/contracts';
+import { scopeCurrentUserToSession } from '../dto/contracts';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { ManagementSessionGuard } from '../guards/management-session.guard';
 import { CurrentAuthContext } from '../decorators/auth-context.decorator';
 import type { AuthContext } from '../guards/jwt-auth.guard';
 
@@ -40,7 +42,11 @@ export class UsersController {
   async getCurrent(
     @CurrentAuthContext() auth: AuthContext,
   ): Promise<CurrentUserResponse> {
-    return this.usersService.getCurrent(auth.userId);
+    // Launch Stabilization A5 — an academy-website session sees only its academy.
+    return scopeCurrentUserToSession(
+      await this.usersService.getCurrent(auth.userId),
+      auth,
+    );
   }
 
   @Patch('me')
@@ -48,7 +54,10 @@ export class UsersController {
     @CurrentAuthContext() auth: AuthContext,
     @Body() dto: UpdateProfileDto,
   ): Promise<CurrentUserResponse> {
-    return this.usersService.updateProfile(auth.userId, dto);
+    return scopeCurrentUserToSession(
+      await this.usersService.updateProfile(auth.userId, dto),
+      auth,
+    );
   }
 
   @Patch('me/preferences')
@@ -56,7 +65,10 @@ export class UsersController {
     @CurrentAuthContext() auth: AuthContext,
     @Body() dto: UpdatePreferencesDto,
   ): Promise<CurrentUserResponse> {
-    return this.usersService.updatePreferences(auth.userId, dto.preferences);
+    return scopeCurrentUserToSession(
+      await this.usersService.updatePreferences(auth.userId, dto.preferences),
+      auth,
+    );
   }
 
   @Post('me/password')
@@ -84,6 +96,9 @@ export class UsersController {
    * already stale by then.
    */
   @Get('me/deletion-plan')
+  // Launch Stabilization A1 (D1) — never from an academy-website session:
+  // deleting the global account also archives every academy it owns.
+  @UseGuards(ManagementSessionGuard)
   async getOwnDeletionPlan(
     @CurrentAuthContext() auth: AuthContext,
   ): Promise<DeletionPlan> {
@@ -104,6 +119,9 @@ export class UsersController {
    * structurally absent. A platform owner is refused by the service.
    */
   @Post('me/delete')
+  // Launch Stabilization A1 (D1) — never from an academy-website session:
+  // deleting the global account also archives every academy it owns.
+  @UseGuards(ManagementSessionGuard)
   @HttpCode(HttpStatus.OK)
   async deleteOwnAccount(
     @CurrentAuthContext() auth: AuthContext,

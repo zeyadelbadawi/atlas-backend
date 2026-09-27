@@ -71,6 +71,27 @@ export class AcademySurfaceService {
   }
 
   /**
+   * Launch Stabilization A6 — the authentication context a request HOST
+   * stands for, for binding an emailed code to where it is completed:
+   * an academy host → that academy; the platform host → management; a
+   * local or unrecognised host → `null` (no claim to compare against,
+   * exactly like `assertAcademyMatchesHost`).
+   */
+  async expectedAuthContext(
+    rawHostname: string | undefined,
+  ): Promise<
+    { surface: 'academy'; academyId: string } | { surface: 'management' } | null
+  > {
+    const academyId = await this.resolveHostAcademyId(rawHostname);
+    if (academyId) return { surface: 'academy', academyId };
+    const normalized = normalizeHostname(rawHostname);
+    const bare = normalized?.split(':')[0];
+    const base = this.baseDomain();
+    if (bare && base && bare === base) return { surface: 'management' };
+    return null;
+  }
+
+  /**
    * A caller-supplied `academyId` must be the academy the request host
    * serves. On an unresolvable host (local, platform host) the id is taken
    * as given — there is nothing to compare against; on a real academy host

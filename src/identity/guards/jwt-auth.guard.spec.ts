@@ -1,5 +1,6 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { SessionActivityService } from '../services/session-activity.service';
+import type { SessionSurfaceService } from '../services/session-surface.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import type { AccessTokenService } from '../services/access-token.service';
 import type { SessionRevocationService } from '../services/session-revocation.service';
@@ -46,6 +47,13 @@ const activityService = () =>
     forget: jest.fn().mockResolvedValue(undefined),
   }) as unknown as SessionActivityService;
 
+const surfaceService = () =>
+  ({
+    contextOf: jest
+      .fn()
+      .mockResolvedValue({ surface: 'academy', academyId: 'academy-1' }),
+  }) as unknown as SessionSurfaceService;
+
 describe('JwtAuthGuard', () => {
   it('rejects a request with no Authorization header', async () => {
     const accessTokenService = { verify: jest.fn() } as unknown as AccessTokenService;
@@ -53,6 +61,7 @@ describe('JwtAuthGuard', () => {
       accessTokenService,
       revocationService(),
       activityService(),
+      surfaceService(),
     );
     const { context } = buildContext(undefined);
     await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
@@ -65,6 +74,7 @@ describe('JwtAuthGuard', () => {
       accessTokenService,
       revocationService(),
       activityService(),
+      surfaceService(),
     );
     const { context } = buildContext('Basic abc123');
     await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
@@ -80,6 +90,7 @@ describe('JwtAuthGuard', () => {
       accessTokenService,
       revocationService(),
       activityService(),
+      surfaceService(),
     );
     const { context } = buildContext('Bearer some.jwt.token');
     await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
@@ -93,11 +104,19 @@ describe('JwtAuthGuard', () => {
       accessTokenService,
       revocationService(),
       activityService(),
+      surfaceService(),
     );
     const { context, request } = buildContext('Bearer valid.jwt.token');
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
-    expect(request.authContext).toEqual({ userId: 'user-1', sessionId: 'session-1' });
+    // Launch Stabilization A1 — the session's surface comes from its own
+    // record, never from the token.
+    expect(request.authContext).toEqual({
+      userId: 'user-1',
+      sessionId: 'session-1',
+      surface: 'academy',
+      academyId: 'academy-1',
+    });
   });
 
   it('Phase 10 — rejects a cryptographically VALID token whose session was revoked', async () => {
@@ -110,6 +129,7 @@ describe('JwtAuthGuard', () => {
       accessTokenService,
       revocationService(true),
       activityService(),
+      surfaceService(),
     );
     const { context, request } = buildContext('Bearer valid.jwt.token');
 

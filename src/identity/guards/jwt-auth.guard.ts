@@ -30,10 +30,21 @@ import type { Request } from 'express';
 import { AccessTokenService } from '../services/access-token.service';
 import { SessionRevocationService } from '../services/session-revocation.service';
 import { SessionActivityService } from '../services/session-activity.service';
+import { SessionSurfaceService } from '../services/session-surface.service';
+import type { SessionSurface } from '@prisma/client';
 
 export interface AuthContext {
   readonly userId: string;
   readonly sessionId: string;
+  /**
+   * Launch Stabilization A1 — where this session was minted, resolved
+   * server-side from the session's own record (never from the token or
+   * the request). `null` when the session has no record at all, which
+   * every consumer treats as "not a management session".
+   */
+  readonly surface: SessionSurface | null;
+  /** The academy an `academy`-surface session belongs to; `null` otherwise. */
+  readonly academyId: string | null;
 }
 
 declare module 'express-serve-static-core' {
@@ -51,6 +62,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly accessTokenService: AccessTokenService,
     private readonly sessionRevocationService: SessionRevocationService,
     private readonly sessionActivityService: SessionActivityService,
+    private readonly sessionSurfaceService: SessionSurfaceService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -82,7 +94,13 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException({ messageKey: 'errors.unauthorized' });
     }
 
-    request.authContext = { userId: claims.sub, sessionId: claims.sid };
+    const session = await this.sessionSurfaceService.contextOf(claims.sid);
+    request.authContext = {
+      userId: claims.sub,
+      sessionId: claims.sid,
+      surface: session?.surface ?? null,
+      academyId: session?.academyId ?? null,
+    };
 
     // Phase 11.10 — ordinary authenticated activity keeps "Last active"
     // honest. This is fire-and-forget on purpose: the response must not

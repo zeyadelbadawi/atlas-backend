@@ -6,6 +6,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   Logger,
@@ -29,6 +31,7 @@ import {
 } from '../dto/user-session.contract';
 import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
 import { PasswordHasherService } from './password-hasher.service';
+import { AuthRateLimiterService } from './auth-rate-limiter.service';
 import { AccessTokenService } from './access-token.service';
 import { SIGNUP_ORGANIZATION_PORT } from './signup-organization.port';
 import type {
@@ -40,7 +43,7 @@ import { recordSignup } from '../../observability/metrics/onboarding-metrics';
 import type { SignupMetricMode } from '../../observability/metrics/onboarding-metrics';
 import { generateOpaqueToken, hashOpaqueToken } from '../utils/opaque-token.util';
 import { normalizeEmail } from '../utils/email.util';
-import { toCurrentUser } from '../dto/contracts';
+import { scopeCurrentUserToSession, toCurrentUser } from '../dto/contracts';
 import type {
   AuthenticationResponseContract,
   AuthenticationSessionContract,
@@ -84,6 +87,11 @@ const DUMMY_PASSWORD = 'atlas-p1-dummy-password-for-timing-safety-only';
  * (tests, future background flows) can issue a session without inventing
  * an IP or user agent.
  */
+/** Launch Stabilization A4 — whether registration created an account or added an academy to an existing one. */
+export interface RegistrationResult {
+  readonly account: 'new' | 'existing';
+}
+
 export interface SessionRequestContext {
   readonly ipAddress?: string;
   readonly userAgent?: string;
@@ -190,6 +198,10 @@ export class AuthService {
     // `UsersService` already inject this service the same way).
     private readonly communicationService: CommunicationService,
     private readonly staffRecipients: AcademyStaffRecipientsService,
+    // Launch Stabilization A4 — the per-account sign-in budget, shared by
+    // the existing-account academy signup so registration can never be a
+    // second, unmetered password-guessing endpoint.
+    private readonly rateLimiter: AuthRateLimiterService,
     // New Customer Onboarding — provided by the global `OnboardingModule`;
     // absent in a module graph without it, which leaves the organization
     // signup unavailable (the safe direction). See the port's doc comment.
@@ -300,12 +312,12 @@ export class AuthService {
     planId?: string;
     /** Forensic only (recorded on a trial redemption), never a decision input. */
     context?: { readonly ipAddress?: string; readonly userAgent?: string };
-  }): Promise<void> {
+  }): Promise<RegistrationResult> {
     const wantsOrganization =
       input.organizationName !== undefined || input.planId !== undefined;
     const metricMode: SignupMetricMode = wantsOrganization ? 'organization' : 'account';
     try {
-      await this.registerInternal(input, wantsOrganization, metricMode);
+      return await this.registerInternal(input, wantsOrganization, metricMode);
     } catch (error) {
       if (error instanceof ConflictException) recordSignup(metricMode, 'conflict');
       throw error;
@@ -316,9 +328,18 @@ export class AuthService {
     input: Parameters<AuthService['register']>[0],
     wantsOrganization: boolean,
     metricMode: SignupMetricMode,
-  ): Promise<void> {
+  ): Promise<RegistrationResult> {
     const email = normalizeEmail(input.email);
     const existing = await this.usersRepository.findByEmail(email);
+    // Launch Stabilization A4 — one global identity may be a learner at many
+    // academies. An academy signup with an email that already has an Atlas
+    // account ADDS this academy to that account once the account's own
+    // password is proven; it never creates a second user. Every other
+    // registration (organization signup, management-host signup) keeps the
+    // 409 below unchanged.
+    if (existing && input.academyId && !wantsOrganization) {
+      return this.joinAcademyWithExistingAccount(existing, email, input);
+    }
     if (existing) {
       // Registration duplicate-email disclosure is the one deliberate
       // exception to "never reveal account existence" in this service —
@@ -413,39 +434,14 @@ export class AuthService {
           data: { id: userId, email, passwordHash, name: input.name },
         });
         if (academyId && admission) {
-          const student = await this.academyStudentsRepository.create(tx, {
-            academyId,
-            userId,
-            status: admission.status,
-            source: admission.source,
-            registeredViaHost: input.hostname ?? null,
-          });
-
-          // P64 C3 (plan §8 G1). A `pending` learner is BLOCKED until staff
-          // act, so nobody being told is a person stuck indefinitely whose
-          // only recourse is to complain. Emitted inside this transaction,
-          // so a registration that rolls back leaves no phantom work item.
-          //
-          // The acting context is the brand-new user's own, which can see
-          // neither the academy's members nor the academy row — hence the
-          // definer-backed staff lookup, and hence no `academyName` here
-          // (the dispatcher resolves branding itself).
-          if (admission.status === 'pending') {
-            const approvers = await this.staffRecipients.moderators(tx, academyId);
-            for (const approverUserId of approvers) {
-              const emitted = await this.communicationService.emit(tx, {
-                key: 'roster.student.awaiting_approval',
-                recipientUserId: approverUserId,
-                academyId,
-                entity: { type: 'academy_student', id: student.id },
-                // The roster link is `/dashboard/academy/:academyId/members`,
-                // so the academy travels in `values` — the rule context
-                // only sees `{ entity, values }`.
-                values: { academyId },
-              });
-              pendingApprovalOutboxIds.push(emitted.outboxId);
-            }
-          }
+          pendingApprovalOutboxIds.push(
+            ...(await this.admitLearnerInTransaction(tx, {
+              academyId,
+              userId,
+              admission,
+              hostname: input.hostname,
+            })),
+          );
         }
         if (rawVerificationToken) {
           await tx.emailVerificationToken.create({
@@ -512,13 +508,237 @@ export class AuthService {
     // Delivery is best-effort AFTER commit: the account and its token
     // exist; a bad SMTP minute must not undo a registration, and the user
     // can re-request verification at any time.
-    if (!rawVerificationToken) return;
+    if (!rawVerificationToken) return { account: 'new' };
     try {
       await this.emitEmailVerification(userId, rawVerificationToken);
     } catch (error) {
       this.logger.warn(
         { userId, error: error instanceof Error ? error.message : error },
         'Could not send the verification email; the account exists and verification can be re-requested.',
+      );
+    }
+    return { account: 'new' };
+  }
+
+  /**
+   * The academy-membership write shared by a brand-new learner and an
+   * existing account joining another academy (Launch Stabilization A4):
+   * the `academy_students` row under the registration policy's admission,
+   * and — for a `pending` admission — the approval work item for the
+   * academy's moderators. Runs inside the caller's transaction, under the
+   * LEARNER's own RLS context (`academy_students_self_insert`). Returns the
+   * outbox ids to enqueue once that transaction commits.
+   */
+  private async admitLearnerInTransaction(
+    tx: Prisma.TransactionClient,
+    input: {
+      readonly academyId: string;
+      readonly userId: string;
+      readonly admission: {
+        readonly status: 'active' | 'pending';
+        readonly source: 'self_signup' | 'invite';
+      };
+      readonly hostname?: string;
+    },
+  ): Promise<(string | null)[]> {
+    const outboxIds: (string | null)[] = [];
+    const { academyId, userId, admission } = input;
+    const student = await this.academyStudentsRepository.create(tx, {
+      academyId,
+      userId,
+      status: admission.status,
+      source: admission.source,
+      registeredViaHost: input.hostname ?? null,
+    });
+
+    // P64 C3 (plan §8 G1). A `pending` learner is BLOCKED until staff
+    // act, so nobody being told is a person stuck indefinitely whose
+    // only recourse is to complain. Emitted inside this transaction,
+    // so a registration that rolls back leaves no phantom work item.
+    //
+    // The acting context is the brand-new user's own, which can see
+    // neither the academy's members nor the academy row — hence the
+    // definer-backed staff lookup, and hence no `academyName` here
+    // (the dispatcher resolves branding itself).
+    if (admission.status === 'pending') {
+      const approvers = await this.staffRecipients.moderators(tx, academyId);
+      for (const approverUserId of approvers) {
+        const emitted = await this.communicationService.emit(tx, {
+          key: 'roster.student.awaiting_approval',
+          recipientUserId: approverUserId,
+          academyId,
+          entity: { type: 'academy_student', id: student.id },
+          // The roster link is `/dashboard/academy/:academyId/members`,
+          // so the academy travels in `values` — the rule context
+          // only sees `{ entity, values }`.
+          values: { academyId },
+        });
+        outboxIds.push(emitted.outboxId);
+      }
+    }
+    return outboxIds;
+  }
+
+  /**
+   * Launch Stabilization A4 — an EXISTING Atlas account signs up as a
+   * learner at another academy.
+   *
+   * Two steps, kept apart on purpose:
+   *
+   *  1. EXISTING-ACCOUNT AUTHENTICATION. The password typed on the signup
+   *     form must be the account's own password — verified exactly like a
+   *     sign-in (argon2), against the same per-account budget as sign-in,
+   *     so this endpoint is never a second, unmetered password oracle. A
+   *     wrong password gets the SAME 409 an existing email has always got
+   *     here, so nothing new is disclosed to someone who does not know it.
+   *  2. NEW MEMBERSHIP CREATION. Only then is ONE `academy_students` row
+   *     written, under the academy's registration policy (open / approval
+   *     / invite, the invite bound to this account's email) — the same
+   *     helper a brand-new learner goes through.
+   *
+   * Nothing else changes: no second user, no new password, no change to
+   * name, email, verification, status, organization memberships, staff
+   * roles or ownership. No session is minted — the person signs in on the
+   * academy website next, under that academy's OTP and trusted-device
+   * rules. The account owner is told by email (a leaked password must not
+   * be able to quietly attach someone to academies).
+   */
+  private async joinAcademyWithExistingAccount(
+    user: User,
+    email: string,
+    input: Parameters<AuthService['register']>[0],
+  ): Promise<RegistrationResult> {
+    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
+    const budget = await this.rateLimiter.consume(
+      `signin:account:${email}`,
+      identity.signInRateLimit.max,
+      identity.signInRateLimit.windowSeconds,
+    );
+    if (!budget.allowed) {
+      throw new HttpException(
+        { messageKey: 'errors.auth.rateLimited' },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const passwordValid = await this.passwordHasher.verify(
+      user.passwordHash,
+      input.password,
+    );
+    // Deleted and invited accounts cannot be joined to anything: exactly the
+    // answer an unknown password gets, so their state is not disclosed.
+    if (!passwordValid || user.status === 'deleted' || user.status === 'invited') {
+      throw new ConflictException({ messageKey: 'errors.auth.emailAlreadyRegistered' });
+    }
+    // Revealed only to someone who proved the password — as sign-in does.
+    if (user.status === 'suspended') {
+      throw new ForbiddenException({ messageKey: 'errors.auth.accountSuspended' });
+    }
+
+    const hostAcademyId = await this.academySurfaceService.resolveHostAcademyId(
+      input.hostname,
+    );
+    if (hostAcademyId && !input.academyId) {
+      throw new BadRequestException({ messageKey: 'errors.auth.academyContextRequired' });
+    }
+    await this.academySurfaceService.assertAcademyMatchesHost(
+      input.academyId as string,
+      input.hostname,
+    );
+    const academyId = (await this.resolveRegistrationAcademyId(
+      input.academyId,
+    )) as string;
+
+    const already = await this.tenancyContextService.runInUserContext(user.id, (tx) =>
+      this.academyStudentsRepository.findForUserInAcademy(tx, academyId, user.id),
+    );
+    if (already?.blockedAt) {
+      throw new ForbiddenException({ messageKey: 'errors.auth.academyAccessBlocked' });
+    }
+    if (already) {
+      throw new ConflictException({ messageKey: 'errors.auth.alreadyLearnerHere' });
+    }
+
+    const admission = await this.academySurfaceService.admissionForNewLearner(
+      academyId,
+      input.inviteToken,
+      email,
+    );
+
+    let outboxIds: (string | null)[] = [];
+    try {
+      outboxIds = await this.tenancyContextService.runInUserContext(
+        user.id,
+        async (tx) => {
+          const ids = await this.admitLearnerInTransaction(tx, {
+            academyId,
+            userId: user.id,
+            admission,
+            hostname: input.hostname,
+          });
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: user.id,
+            academyId,
+            action: 'academy.student.joined',
+            targetType: 'user',
+            targetId: user.id,
+            context: {
+              existingAccount: true,
+              source: admission.source,
+              status: admission.status,
+            },
+          });
+          return ids;
+        },
+      );
+    } catch (error) {
+      // A concurrent second signup for the same academy: the unique index
+      // on (academy, user) decides, and the loser gets the same answer as
+      // the sequential case.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException({ messageKey: 'errors.auth.alreadyLearnerHere' });
+      }
+      throw error;
+    }
+    for (const outboxId of outboxIds) {
+      await this.communicationService.enqueueAfterCommit(outboxId);
+    }
+    recordSignup('account', 'existing_account_joined');
+    await this.notifyAcademyJoined(user.id, academyId);
+    return { account: 'existing' };
+  }
+
+  /**
+   * Launch Stabilization A4 — tells the account owner their existing Atlas
+   * account now has access to another academy. Best-effort, after commit:
+   * the membership is already real, and a mail hiccup must not turn a
+   * successful join into an error. The academy's name is read through the
+   * learner's own definer-backed academy list (the learner context cannot
+   * read `academies` directly).
+   */
+  private async notifyAcademyJoined(userId: string, academyId: string): Promise<void> {
+    try {
+      const academies = await this.principalResolver.resolveLearnerAcademies(userId);
+      const academyName = academies.find((a) => a.academyId === academyId)?.name ?? '';
+      const emitted: EmitResult = await this.tenancyContextService.runInUserContext(
+        userId,
+        (tx) =>
+          this.communicationService.emit(tx, {
+            key: 'account.academy.joined',
+            recipientUserId: userId,
+            academyId,
+            entity: { type: 'academy_student', id: `${academyId}:${userId}` },
+            values: { academyName },
+          }),
+      );
+      await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    } catch (error) {
+      this.logger.warn(
+        { userId, academyId, error: error instanceof Error ? error.message : error },
+        'Could not send the academy-joined notice; the membership itself was created.',
       );
     }
   }
@@ -662,6 +882,14 @@ export class AuthService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
 
+    // Launch Stabilization A2 (D2) — an account somebody else created has a
+    // password nobody knows until its owner sets one through the emailed
+    // setup link. Refused exactly like a wrong password, so nothing about
+    // the account's state is disclosed.
+    if (user.status === 'invited') {
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
+    }
+
     // Suspension is only ever revealed to someone who already proved they
     // know the correct password — no enumeration signal added.
     if (user.status === 'suspended') {
@@ -721,6 +949,7 @@ export class AuthService {
       await this.emailOtpService.isRequired({
         userId: user.id,
         surface: selection.surface,
+        academyId: selection.academyId,
         trustCookie: input.context?.trustCookie,
       })
     ) {
@@ -895,10 +1124,18 @@ export class AuthService {
     rememberDevice: boolean,
     context?: SessionRequestContext,
   ): Promise<AuthenticationSessionContract> {
-    const verified = await this.emailOtpService.verify(challengeId, code, {
-      ipAddress: context?.ipAddress,
-      userAgent: context?.userAgent,
-    });
+    // Launch Stabilization A6 — the code must be completed where it was
+    // issued for: the context comes from the request HOST, and a mismatch is
+    // answered like a wrong code.
+    const expected = await this.academySurfaceService.expectedAuthContext(
+      context?.hostname,
+    );
+    const verified = await this.emailOtpService.verify(
+      challengeId,
+      code,
+      { ipAddress: context?.ipAddress, userAgent: context?.userAgent },
+      expected,
+    );
 
     const user = await this.usersRepository.findById(verified.userId);
     if (!user) {
@@ -937,7 +1174,7 @@ export class AuthService {
     }
 
     if (rememberDevice) {
-      await this.rememberDevice(user.id, selection.surface, context);
+      await this.rememberDevice(user.id, selection.surface, context, selection.academyId);
     }
 
     return session;
@@ -956,11 +1193,13 @@ export class AuthService {
     userId: string,
     surface: SignInSurface,
     context?: SessionRequestContext,
+    academyId?: string,
   ): Promise<void> {
     try {
       const minted = await this.trustedDeviceService.trust({
         userId,
         surface,
+        academyId,
         userAgent: context?.userAgent,
         previousCookieValue: context?.trustCookie,
       });
@@ -1184,7 +1423,16 @@ export class AuthService {
 
     await this.usersRepository.updatePasswordHash(resetToken.userId, passwordHash);
     await this.passwordResetTokensRepository.markUsed(resetToken.id);
-    await this.refreshTokensRepository.revokeAllForUser(resetToken.userId);
+    // Launch Stabilization A2 (D2) — the setup link for an account staff
+    // created is this same reset token: setting a password here is what
+    // activates an `invited` account, and the link reaching the inbox
+    // proves the address.
+    await this.usersRepository.completeInvitation(resetToken.userId, new Date());
+    // Launch Stabilization A3 (D3) — refresh rows AND live access tokens.
+    const sessionsRevoked = await this.sessionRevocationService.revokeAllSessionsForUser(
+      resetToken.userId,
+      'password_reset',
+    );
     // P64 Communications C4 (§12) — a reset is exactly the "this account
     // may be compromised" moment, so every browser that could skip the
     // emailed code loses that privilege too. Revoking sessions while
@@ -1195,6 +1443,23 @@ export class AuthService {
       'password_reset',
     );
     if (forgotten > 0) this.communicationMetrics.recordTrustedDevice('revoked_all');
+    // Launch Stabilization A3 — the durable security record of what the
+    // reset ended. Best-effort in its own small user-context transaction:
+    // the revocations above have already happened and an audit failure
+    // must never undo or block them.
+    await this.tenancyContextService.runInUserContext(resetToken.userId, (tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: resetToken.userId,
+        action: 'auth.sessions.revoked',
+        targetType: 'user',
+        targetId: resetToken.userId,
+        context: {
+          trigger: 'password_reset',
+          sessionsRevoked,
+          trustedDevicesRevoked: forgotten,
+        },
+      }),
+    );
 
     // Phase P15 retroactive audit coverage (master plan §8: "security
     // events... fold into audit_log_entries"). This flow predates any
@@ -1390,10 +1655,15 @@ export class AuthService {
       accessToken: accessToken.token,
       refreshToken: rawRefreshToken,
       expiresIn: accessToken.expiresInSeconds,
-      user: toCurrentUser(user, organizationMemberships, {
-        ...principal,
-        managementSurfaceEnforced: this.surfaceEnforcement.isEnforcedFor(principal),
-      }),
+      // Launch Stabilization A5 — a session minted on an academy website
+      // is told only about that academy.
+      user: scopeCurrentUserToSession(
+        toCurrentUser(user, organizationMemberships, {
+          ...principal,
+          managementSurfaceEnforced: this.surfaceEnforcement.isEnforcedFor(principal),
+        }),
+        { surface: selection.surface, academyId: selection.academyId ?? null },
+      ),
     };
   }
 }

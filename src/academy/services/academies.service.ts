@@ -12,8 +12,10 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type { AcademyMember, AcademyMemberRole } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -173,6 +175,8 @@ export const MEMBER_ROLE_LIMIT: Record<
 
 @Injectable()
 export class AcademiesService {
+  private readonly logger = new Logger(AcademiesService.name);
+
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly academiesRepository: AcademiesRepository,
@@ -242,11 +246,36 @@ export class AcademiesService {
   ): Promise<{ user: User; created: boolean } | null> {
     const existing = await this.usersRepository.findByEmail(email);
     if (existing) return { user: existing, created: false };
-    if (!name || !password) return null;
+    if (!name) return null;
+    this.warnIgnoredPassword(password);
 
-    const passwordHash = await this.passwordHasherService.hash(password);
-    const user = await this.usersRepository.create({ email, passwordHash, name });
+    const user = await this.createInvitedUser(email, name);
     return { user, created: true };
+  }
+
+  /**
+   * Launch Stabilization A2 (D2) — an account somebody else creates is
+   * `invited`, with a password hash NOBODY knows (a random secret, hashed
+   * and discarded). Identity is global: a password chosen by the staff
+   * member who created the account would let them sign in as that person
+   * anywhere, for as long as the person had not set their own. The person
+   * sets it through the emailed setup link (`AccountSetupService`), which
+   * is what activates the account.
+   */
+  private async createInvitedUser(email: string, name: string): Promise<User> {
+    const passwordHash = await this.passwordHasherService.hash(
+      randomBytes(48).toString('base64url'),
+    );
+    return this.usersRepository.create({ email, passwordHash, name, status: 'invited' });
+  }
+
+  /** The deprecated staff-chosen `password` field is accepted for compatibility and never used. */
+  private warnIgnoredPassword(password: string | undefined): void {
+    if (password) {
+      this.logger.warn(
+        'A staff-supplied password was ignored: invited accounts set their own password through the emailed setup link.',
+      );
+    }
   }
 
   /**
@@ -1039,12 +1068,8 @@ export class AcademiesService {
           });
         }
 
-        const passwordHash = await this.passwordHasherService.hash(payload.password);
-        const created = await this.usersRepository.create({
-          email: payload.email,
-          passwordHash,
-          name: payload.name,
-        });
+        this.warnIgnoredPassword(payload.password);
+        const created = await this.createInvitedUser(payload.email, payload.name);
 
         // Phase 1 (Extended Scope, Decision 11, dependency D) — a
         // Manager/Owner-created student now gets the exact same real

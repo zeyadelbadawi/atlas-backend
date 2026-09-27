@@ -133,7 +133,9 @@ export class LiveProviderOAuthController {
    * to the user making this call.
    */
   @Post('live-sessions/oauth/callback')
-  @UseGuards(JwtAuthGuard)
+  // Launch Stabilization A1 (D1) — completing a provider connection is
+  // management work; never from an academy-website session.
+  @UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
   @HttpCode(HttpStatus.OK)
   async callback(
     @Req() request: Request,

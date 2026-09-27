@@ -38,6 +38,10 @@ import { ConfigService } from '@nestjs/config';
 import { RedisService } from '../../redis/redis.service';
 import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
 import type { IdentityConfig } from '../../config/configuration';
+import {
+  recordSessionsRevoked,
+  type SessionRevocationTrigger,
+} from '../../observability/metrics/auth-security-metrics';
 
 const KEY_PREFIX = 'session:revoked:';
 
@@ -79,6 +83,38 @@ export class SessionRevocationService {
         'Could not write session revocation to Redis; the database revocation stands and the guard will fall back to it.',
       );
     }
+  }
+
+  /**
+   * Launch Stabilization A3 (D3) — ends EVERY session a user holds, on the
+   * very next request: revokes the refresh rows (durable record) and then
+   * denylists each session id so access tokens already issued stop working
+   * immediately instead of living out their 15 minutes. For credential
+   * changes (password reset / change), where any existing session may
+   * belong to whoever knew the old password.
+   *
+   * Observable: `atlas_auth_sessions_revoked_total{trigger}` plus one
+   * structured log line. The durable audit row is written by the caller,
+   * which already holds the user-context transaction machinery this core
+   * module deliberately does not import.
+   */
+  async revokeAllSessionsForUser(
+    userId: string,
+    trigger: SessionRevocationTrigger,
+  ): Promise<number> {
+    const sessionIds = await this.refreshTokensRepository.revokeAllForUser(userId);
+    await Promise.all(sessionIds.map((sessionId) => this.markRevoked(sessionId)));
+    recordSessionsRevoked(trigger, sessionIds.length);
+    this.logger.log(
+      {
+        event: 'auth.sessions.revoked',
+        userId,
+        trigger,
+        sessionsRevoked: sessionIds.length,
+      },
+      'Every session of the account was ended after a credential change.',
+    );
+    return sessionIds.length;
   }
 
   /**

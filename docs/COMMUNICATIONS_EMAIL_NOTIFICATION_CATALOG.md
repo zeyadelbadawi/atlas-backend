@@ -9,10 +9,10 @@ patching it by hand.
 
 ## The exact count
 
-**Atlas has 74 communication events.**
+**Atlas has 75 communication events.**
 
 Not 69. The 69-row matrix in the Communications & Lifecycle master plan was
-correct when it was written; the catalogue has legitimately grown by five
+correct when it was written; the catalogue has legitimately grown by six
 since:
 
 | Added | Key | Why |
@@ -22,18 +22,19 @@ since:
 | W-EXC | `assessment.exception.granted` | A learner given extra time or attempts was never told. |
 | W-EXC | `assessment.exception.activated` | A *scheduled* exception opening is a second, later fact. |
 | W-EXC | `assessment.exception.revoked` | An accommodation withdrawn is news the learner must not discover mid-attempt. |
+| Launch Stabilization A4 | `account.academy.joined` | An existing account was used (with its password) to join another academy through that academy's sign-up; the owner is told, so a join they did not make is visible. |
 
-Of those 74:
+Of those 75:
 
 | Split | Count |
 |---|---|
-| Sends an email (ever) | 61 |
-| Appears in the in-app feed (ever) | 64 |
-| Both channels | 51 |
+| Sends an email (ever) | 62 |
+| Appears in the in-app feed (ever) | 65 |
+| Both channels | 52 |
 | Email only — never in the feed | 10 |
 | In-app only — never emailed | 13 |
-| Audience: learner / staff / platform | 36 / 32 / 6 |
-| Branding: academy host / platform host | 36 / 38 |
+| Audience: learner / staff / platform | 36 / 32 / 7 |
+| Branding: academy host / platform host | 36 / 39 |
 
 ## How to read a row
 
@@ -146,7 +147,7 @@ where to look to find out how to trigger the event by hand.
 | 31 | `retention.video.warning_24h` | always | always | Last call: your hosted videos are deleted tomorrow | `/dashboard/tenant/retention` | `retention/services/video-retention.service` |
 | 32 | `retention.video.deleted` | always | always | Your hosted videos have been deleted | `/dashboard/tenant/retention` | `retention/services/video-retention-deletion.service` |
 
-### Platform — 6 events
+### Platform — 7 events
 
 | # | Key | In-app | Email | Email subject (EN) | Link goes to | Emitted by |
 |---|---|---|---|---|---|---|
@@ -155,11 +156,12 @@ where to look to find out how to trigger the event by hand.
 | 3 | `auth.email.otp` | — | always | 048915 is your sign-in code | `none` | `identity/services/email-otp.service` |
 | 4 | `auth.password.reset` | — | always | Reset your password | `/auth/reset-password?token=TOKEN` | `identity/queue/password-reset-email.processor` |
 | 5 | `auth.password.reset_confirmed` | always | always | Your password was reset | `/auth/forgot-password` | `identity/services/auth.service` |
-| 6 | `retention.video.deletion_failed` | always | always | Video retention: deletion failed for asset  | `/dashboard/analytics/delivery` | `retention/services/video-retention-deletion.service` |
+| 6 | `account.academy.joined` | always | always | Your account now has access to Northwind Academy | `/auth/forgot-password` | `identity/services/auth.service` |
+| 7 | `retention.video.deletion_failed` | always | always | Video retention: deletion failed for asset  | `/dashboard/analytics/delivery` | `retention/services/video-retention-deletion.service` |
 
 ## Dead links: none remaining
 
-`action-url-routes.spec.ts` resolves all 74 CTAs against the frontend's real
+`action-url-routes.spec.ts` resolves all 75 CTAs against the frontend's real
 route registry, on the host each entry's `branding` selects. Its
 `KNOWN_BROKEN` exemption ledger is now **empty** — it was carrying seven keys.
 

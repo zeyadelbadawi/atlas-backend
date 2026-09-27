@@ -34,7 +34,7 @@ import type { AuthContext } from '../guards/jwt-auth.guard';
 import { SignInRateLimitGuard } from '../guards/signin-rate-limit.guard';
 import { PasswordResetRateLimitGuard } from '../guards/password-reset-rate-limit.guard';
 import { RegisterRateLimitGuard } from '../guards/register-rate-limit.guard';
-import type { SessionRequestContext } from '../services/auth.service';
+import type { RegistrationResult, SessionRequestContext } from '../services/auth.service';
 import {
   resolveClientCountry,
   resolveClientIp,
@@ -99,8 +99,14 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(RegisterRateLimitGuard)
-  async register(@Body() dto: RegisterDto, @Req() request: Request): Promise<void> {
-    await this.authService.register({
+  async register(
+    @Body() dto: RegisterDto,
+    @Req() request: Request,
+  ): Promise<RegistrationResult> {
+    // Launch Stabilization A4 — `{ account: 'existing' }` when an academy
+    // signup added this academy to an account that already existed (its own
+    // password proven); `{ account: 'new' }` otherwise. Still no session.
+    return this.authService.register({
       ...dto,
       hostname: request.hostname,
       // Forensic only — recorded on a signup trial's redemption, exactly as

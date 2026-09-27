@@ -5,7 +5,7 @@
  */
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { UsersRepository } from '../repositories/users.repository';
-import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
+import { SessionRevocationService } from './session-revocation.service';
 import { PasswordHasherService } from './password-hasher.service';
 import { toCurrentUser } from '../dto/contracts';
 import type { CurrentUserResponse, UserPreferences } from '../dto/contracts';
@@ -16,13 +16,14 @@ import type { EmitResult } from '../../communications/services/communication.ser
 import { PrincipalResolverService } from '../../tenancy/services/principal-resolver.service';
 import { SurfaceEnforcementService } from '../../tenancy/services/surface-enforcement.service';
 import { TrustedDeviceService } from './trusted-device.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import type { Principal } from '../../tenancy/services/principal-resolver.service';
 
 @Injectable()
 export class UsersService {
   constructor(
     private readonly usersRepository: UsersRepository,
-    private readonly refreshTokensRepository: RefreshTokensRepository,
+    private readonly sessionRevocationService: SessionRevocationService,
     private readonly passwordHasher: PasswordHasherService,
     private readonly userOrganizationsService: UserOrganizationsService,
     private readonly tenancyContextService: TenancyContextService,
@@ -30,6 +31,7 @@ export class UsersService {
     private readonly principalResolver: PrincipalResolverService,
     private readonly surfaceEnforcement: SurfaceEnforcementService,
     private readonly trustedDeviceService: TrustedDeviceService,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   /**
@@ -118,12 +120,33 @@ export class UsersService {
 
     const newHash = await this.passwordHasher.hash(newPassword);
     await this.usersRepository.updatePasswordHash(userId, newHash);
-    await this.refreshTokensRepository.revokeAllForUser(userId);
+    // Launch Stabilization A3 (D3) — refresh rows AND live access tokens,
+    // including this one: the old password may be in someone else's hands.
+    const sessionsRevoked = await this.sessionRevocationService.revokeAllSessionsForUser(
+      userId,
+      'password_change',
+    );
     // P64 Communications C4 (§12) — trust is revoked by a password change
     // for the same reason every session is: a browser that could still
     // skip the emailed code would keep whoever knew the OLD password a
     // step ahead of the owner who just changed it.
-    await this.trustedDeviceService.revokeAllForUser(userId, 'password_change');
+    const trustedDevicesRevoked = await this.trustedDeviceService.revokeAllForUser(
+      userId,
+      'password_change',
+    );
+    // Launch Stabilization A3 — the durable security record of what the
+    // credential change ended. Best-effort in its own small transaction
+    // (the documented `writeBestEffort` pattern): the revocation above has
+    // already happened and must never be undone by an audit failure.
+    await this.tenancyContextService.runInUserContext(userId, (tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: userId,
+        action: 'auth.sessions.revoked',
+        targetType: 'user',
+        targetId: userId,
+        context: { trigger: 'password_change', sessionsRevoked, trustedDevicesRevoked },
+      }),
+    );
 
     // Phase P17 — a security-relevant event that should fire every time,
     // never deduped (see `Notification`'s own schema.prisma doc comment:

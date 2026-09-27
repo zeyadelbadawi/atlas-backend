@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { ForumsService } from '../services/forums.service';
 import { CreateForumThreadDto } from '../dto/create-forum-thread.dto';
 import { CreateForumReplyDto } from '../dto/create-forum-reply.dto';
@@ -97,6 +98,9 @@ export class ForumsController {
   }
 
   @Post(':id/forum/threads/:threadId/pin')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async pinThread(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -106,6 +110,9 @@ export class ForumsController {
   }
 
   @Post(':id/forum/threads/:threadId/unpin')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async unpinThread(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -119,6 +126,9 @@ export class ForumsController {
   }
 
   @Post(':id/forum/threads/:threadId/lock')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async lockThread(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -128,6 +138,9 @@ export class ForumsController {
   }
 
   @Post(':id/forum/threads/:threadId/unlock')
+  // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
+  // an academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
   async unlockThread(
     @Req() request: Request,
     @Param('id') courseId: string,

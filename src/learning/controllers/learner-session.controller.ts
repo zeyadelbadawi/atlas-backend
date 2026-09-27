@@ -29,7 +29,10 @@ import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { AcademySurfaceService } from '../../identity/services/academy-surface.service';
 import { LearnerSessionService } from '../services/learner-session.service';
 import type { TakeoverResult } from '../services/learner-session.service';
-import { learningRequestContext } from '../dto/learning-request.util';
+import {
+  assertSessionServesHostAcademy,
+  learningRequestContext,
+} from '../dto/learning-request.util';
 import { SessionTakeoverDto } from '../dto/playback.dto';
 
 @Controller('learning')
@@ -86,7 +89,10 @@ export class LearnerSessionController {
     const hostAcademyId = await this.academySurfaceService.resolveHostAcademyId(
       request.hostname,
     );
-    if (hostAcademyId) return hostAcademyId;
+    if (hostAcademyId) {
+      assertSessionServesHostAcademy(request, hostAcademyId);
+      return hostAcademyId;
+    }
     const fallback = (request.query as Record<string, unknown>).academyId;
     if (typeof fallback === 'string' && fallback.length > 0) return fallback;
     throw new BadRequestException({ messageKey: 'errors.academy.hostUnresolved' });

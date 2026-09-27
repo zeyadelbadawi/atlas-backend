@@ -27,7 +27,9 @@ export type SignupMetricOutcome =
   | 'no_trial'
   | 'rejected_plan'
   | 'rejected_policy'
-  | 'conflict';
+  | 'conflict'
+  /** Launch Stabilization A4 — an existing account joined another academy through its signup. */
+  | 'existing_account_joined';
 
 const signups = counter(
   'atlas_signup_total',

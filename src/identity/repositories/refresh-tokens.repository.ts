@@ -4,7 +4,7 @@
  * `rotate()` is the concurrency-critical method — see its doc comment.
  */
 import { Injectable } from '@nestjs/common';
-import type { RefreshToken } from '@prisma/client';
+import type { RefreshToken, SessionSurface } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 
 export interface CreateRefreshTokenInput {
@@ -175,6 +175,20 @@ export class RefreshTokensRepository {
     return result.count;
   }
 
+  /**
+   * Launch Stabilization A1 — the surface and academy a session was minted
+   * for. Every rotation copies both forward, so any row of the family
+   * answers; `null` when no row exists at all.
+   */
+  findSessionContext(
+    sessionId: string,
+  ): Promise<{ surface: SessionSurface; academyId: string | null } | null> {
+    return this.prisma.refreshToken.findFirst({
+      where: { sessionId },
+      select: { surface: true, academyId: true },
+    });
+  }
+
   /** Phase 10 — how many rows in this rotation family are still usable. `0` means the session is dead. Used as `SessionRevocationService`'s authoritative fallback when Redis is unavailable. */
   countLiveRowsForSession(sessionId: string): Promise<number> {
     return this.prisma.refreshToken.count({
@@ -214,12 +228,22 @@ export class RefreshTokensRepository {
     return rows.map((row) => row.sessionId);
   }
 
-  /** Revokes every active refresh token for a user — password reset / change-password only (master plan §8/§21 P1). Never used by plain sign-out. */
-  async revokeAllForUser(userId: string): Promise<void> {
-    await this.prisma.refreshToken.updateMany({
-      where: { userId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
+  /**
+   * Revokes every active refresh token for a user — password reset / change-password only (master plan §8/§21 P1). Never used by plain sign-out.
+   *
+   * Launch Stabilization A3 (D3) — returns the distinct session ids it
+   * revoked, from the SAME statement (`UPDATE … RETURNING`), so a session
+   * minted concurrently can never be revoked in the database yet missed by
+   * the access-token denylist the caller writes next.
+   */
+  async revokeAllForUser(userId: string): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<{ session_id: string }[]>`
+      UPDATE "refresh_tokens"
+      SET "revoked_at" = NOW()
+      WHERE "user_id" = ${userId} AND "revoked_at" IS NULL
+      RETURNING "session_id"
+    `;
+    return [...new Set(rows.map((row) => row.session_id))];
   }
 
   /**

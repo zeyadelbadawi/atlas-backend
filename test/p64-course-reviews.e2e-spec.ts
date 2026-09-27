@@ -359,15 +359,18 @@ describe('Course Reviews (e2e)', () => {
       .set(auth(instructor.accessToken))
       .expect(201);
 
-    // The enrolled learner is not a reviewer — moderation surface is 404.
-    await request(app.getHttpServer())
+    // The enrolled learner is not a reviewer. Launch Stabilization A1:
+    // moderation is management work, so the surface guard refuses the
+    // learner's session before the reviewer check (formerly a 404) runs.
+    const listing = await request(app.getHttpServer())
       .get(`/courses/${course.id}/reviews/moderation`)
       .set(auth(learner.accessToken))
-      .expect(404);
+      .expect(403);
+    expect(listing.body.error.messageKey).toBe('errors.auth.managementSurfaceOnly');
     await request(app.getHttpServer())
       .post(`/courses/${course.id}/reviews/${review.body.id}/reject`)
       .set(auth(learner.accessToken))
-      .expect(404);
+      .expect(403);
   });
 
   it("a reviewer of one course cannot moderate another course's review (cross-course/academy isolation)", async () => {
