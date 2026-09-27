@@ -10,6 +10,9 @@
 #   remote.sh user <email> <A> <B>    -> non-personal facts about that test account
 #   remote.sh metrics                 -> the Plan A security + smart-join series (values only)
 #   remote.sh mail                    -> email deliverability facts: sender, Brevo domain/sender/plan, 7-day aggregates
+#   remote.sh member-email            -> the latest academy member/learner emails: stored academy name vs the academy
+#                                        record, delivery row, and what Brevo actually sent (subject, events, text
+#                                        with every link and address redacted)
 #
 # Nothing here writes to the database. Every per-account read is keyed by a
 # test address the verification itself registered.
@@ -125,8 +128,57 @@ const get = async (p) => { const r = await fetch("https://api.brevo.com/v3" + p,
 })().catch((e) => console.log("brevo|error " + e.message));
 '
     ;;
+  member-email)
+    # Read-only. Never prints a recipient address, the setup token or a link:
+    # only the academy name / role from the stored values, the academy's
+    # authoritative name, the delivery row, and Brevo's copy of the message
+    # with every URL and email address redacted.
+    sql "select 'row', o.id, o.key, o.locale, o.state, o.created_at, replace(coalesce(o.values->>'academyName','<missing>'),'|',' '), coalesce(o.values->>'role','-'), replace(coalesce(a.name,'<no academy>'),'|',' '), (o.values->>'academyName') = a.name,
+                coalesce(d.provider,'-'), coalesce(d.status::text,'-'), coalesce(d.template_version,'-'), coalesce(d.sent_at::text,'-'), coalesce(d.provider_message_id,'-')
+         from communication_outbox o
+         left join academies a on a.id=o.academy_id
+         left join lateral (select * from communication_deliveries x where x.outbox_id=o.id and x.channel='email' order by x.created_at desc limit 1) d on true
+         where o.key in ('academy.member.invited','academy.member.added','academy.learner.invited','academy.learner.added')
+           and o.created_at > now() - interval '48 hours'
+         order by o.created_at desc limit 5"
+    ids=$(sql "select string_agg(d.provider_message_id, ' ' order by d.created_at desc) from (select o.id from communication_outbox o where o.key in ('academy.member.invited','academy.member.added','academy.learner.invited','academy.learner.added') and o.created_at > now() - interval '48 hours' order by o.created_at desc limit 5) o join communication_deliveries d on d.outbox_id=o.id and d.provider_message_id is not null")
+    safe=""
+    for id in $ids; do printf '%s' "$id" | grep -Eq '^<?[A-Za-z0-9._@+=-]+>?$' && safe="$safe $id"; done
+    docker compose exec -T -e MSG_IDS="$safe" backend node -e '
+const key = process.env.BREVO_API_KEY;
+if (!key) { console.log("brevo|not configured"); process.exit(0); }
+const get = async (p) => { const r = await fetch("https://api.brevo.com/v3" + p, { headers: { "api-key": key, accept: "application/json" } }); try { return { status: r.status, json: await r.json() }; } catch { return { status: r.status, json: null }; } };
+const redact = (s) => String(s || "")
+  .replace(/<(style|script)[\s\S]*?<\/\1>/gi, " ")
+  .replace(/<[^>]+>/g, " ")
+  .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&rsquo;/g, "\x27").replace(/&quot;/g, "\"")
+  .replace(/https?:\/\/\S+/g, "<link>")
+  .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "<address>")
+  .replace(/\s+/g, " ").trim();
+(async () => {
+  const ids = String(process.env.MSG_IDS || "").trim().split(/\s+/).filter(Boolean);
+  if (!ids.length) { console.log("brevo_msg|none"); return; }
+  let n = 0;
+  for (const id of ids) {
+    n += 1;
+    const list = (await get("/smtp/emails?limit=5&messageId=" + encodeURIComponent(id))).json || {};
+    const t = (list.transactionalEmails || [])[0];
+    if (!t) { console.log("brevo_msg_" + n + "|" + id + "|not found in Brevo logs"); continue; }
+    const detail = await get("/smtp/emails/" + encodeURIComponent(t.uuid));
+    const one = detail.json || {};
+    if (detail.status !== 200) console.log("brevo_note|message " + n + " detail answered HTTP " + detail.status);
+    const events = (one.events || []).map((e) => e.name).join(",") || "-";
+    console.log("brevo_msg_" + n + "|" + id + "|date=" + (one.date || t.date) + "|events=" + events + "|tags=" + (t.tags || []).join(","));
+    const evs = ((await get("/smtp/statistics/events?days=7&limit=20&messageId=" + encodeURIComponent(id))).json || {}).events || [];
+    for (const e of evs.filter((x) => x.reason)) console.log("brevo_reason_" + n + "|" + e.event + " " + e.date + " " + redact(e.reason).replace(/\|/g, " ").slice(0, 300));
+    console.log("brevo_subject_" + n + "|" + String(one.subject || t.subject || "").replace(/\|/g, " "));
+    console.log("brevo_text_" + n + "|" + redact(one.body).replace(/\|/g, " ").slice(0, 1200));
+  }
+})().catch((e) => console.log("brevo|error " + e.message));
+'
+    ;;
   *)
-    echo "usage: remote.sh release|academies|otp|user|metrics|mail" >&2
+    echo "usage: remote.sh release|academies|otp|user|metrics|mail|member-email" >&2
     exit 2
     ;;
 esac
