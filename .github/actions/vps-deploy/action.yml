@@ -109,6 +109,22 @@ inputs:
     required: false
     default: ''
     description: Zoom webhook secret token, synced into the VPS .env.
+  # Google Identity (docs/GOOGLE_IDENTITY.md). The one Atlas OAuth client;
+  # the redirect URI is the central platform callback, byte-for-byte as
+  # registered with Google. Empty values are dropped like every other key,
+  # so an unset secret never blanks a live value.
+  google_client_id:
+    required: false
+    default: ''
+    description: Google OAuth client id, synced into the VPS .env.
+  google_client_secret:
+    required: false
+    default: ''
+    description: Google OAuth client secret, synced into the VPS .env.
+  google_redirect_uri:
+    required: false
+    default: ''
+    description: Google OAuth redirect URI (the platform callback), synced into the VPS .env.
 
 runs:
   using: composite
@@ -124,6 +140,9 @@ runs:
         ZOOM_OAUTH_CLIENT_SECRET: ${{ inputs.zoom_client_secret }}
         ZOOM_OAUTH_REDIRECT_URI: ${{ inputs.zoom_redirect_uri }}
         ZOOM_WEBHOOK_SECRET_TOKEN: ${{ inputs.zoom_webhook_secret_token }}
+        GOOGLE_OAUTH_CLIENT_ID: ${{ inputs.google_client_id }}
+        GOOGLE_OAUTH_CLIENT_SECRET: ${{ inputs.google_client_secret }}
+        GOOGLE_OAUTH_REDIRECT_URI: ${{ inputs.google_redirect_uri }}
         EMAIL_PROVIDERS: ${{ inputs.email_providers }}
         BREVO_API_KEY: ${{ inputs.brevo_api_key }}
         RESEND_API_KEY: ${{ inputs.resend_api_key }}
@@ -166,6 +185,10 @@ runs:
           'EMAIL_FROM_EMAIL', 'EMAIL_FROM_NAME', 'EMAIL_REPLY_TO',
           'BREVO_WEBHOOK_SECRET', 'RESEND_WEBHOOK_SECRET',
           'PLATFORM_WEB_URL', 'ALERT_SLACK_WEBHOOK_URL',
+          # Google Identity — the backend refuses to start with
+          # FLAG_AUTH_GOOGLE_MODE on and any of these missing.
+          'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET',
+          'GOOGLE_OAUTH_REDIRECT_URI',
         ]
         lines = [f"{k}={os.environ[k]}" for k in keys if os.environ.get(k)]
         # P64 feature flags: FLAG_* keys only; values limited to what a mode

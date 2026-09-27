@@ -299,6 +299,39 @@ groups:
   # route pattern for triage.
   - name: atlas-security
     rules:
+      # Google Identity (docs/GOOGLE_IDENTITY.md), series from
+      # `google-auth-metrics.ts`. Password sign-in never depends on Google,
+      # so these are warnings: Google sign-in is degraded, nothing else.
+      - alert: AtlasGoogleSignInProviderErrors
+        expr: |
+          sum(increase(atlas_google_auth_total{stage="callback",result="provider_error"}[15m])) > 5
+        for: 5m
+        labels: { severity: warning, team: atlas, service: auth }
+        annotations:
+          summary: "Google sign-in callbacks are failing at Google's end"
+          description: "{{ $value }} Google callback(s) in 15m could not exchange the code or fetch Google's signing keys. Most often the OAuth client secret was rotated in Google Cloud but not in the GOOGLE_OAUTH_CLIENT_SECRET secret, or Google is unreachable. Password sign-in is unaffected; set FLAG_AUTH_GOOGLE_MODE=off to hide the button while fixing."
+          threshold: "> 5 provider errors in 15m, for 5m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasGoogleInvalidIdTokens
+        expr: |
+          sum(increase(atlas_google_auth_total{result="invalid_token"}[15m])) > 0
+        for: 0m
+        labels: { severity: warning, team: atlas, service: auth }
+        annotations:
+          summary: "A Google ID token failed verification"
+          description: "{{ $value }} Google ID token(s) in 15m failed signature, issuer, audience, expiry or nonce checks. Nothing was signed in. A client-id mismatch (GOOGLE_OAUTH_CLIENT_ID) or a forged callback; search logs for 'Google sign-in callback failed.' (reason only, never the token)."
+          threshold: "any invalid ID token in 15m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasGoogleInvalidFlowSurge
+        expr: |
+          sum(increase(atlas_google_auth_total{result="invalid_state"}[15m])) > 20
+        for: 5m
+        labels: { severity: warning, team: atlas, service: auth }
+        annotations:
+          summary: "Many Google sign-ins presented an unknown, replayed or foreign flow"
+          description: "{{ $value }} Google callbacks/completions in 15m carried a state or handoff that was unknown, expired, replayed, or presented from another browser or origin. Either a broken return path (proxy/host change) or replay attempts; no session is issued for any of them."
+          threshold: "> 20 in 15m, for 5m"
+          current_value: '{{ $value | humanize }}'
       - alert: AtlasSessionSurfaceDenied
         expr: |
           sum by (reason) (increase(atlas_auth_surface_denied_total[15m])) > 0

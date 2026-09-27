@@ -1,0 +1,81 @@
+# Google Identity — production verification (docs/GOOGLE_AUTH_PRODUCTION_CLOSEOUT.md).
+#
+# Read-only: prints PASS/FAIL and non-secret facts about what the running
+# backend received (never a secret value), the verified academy, public
+# probes of the flow (including whether GOOGLE accepts the client and the
+# redirect URI), data integrity, log redaction, metrics and the latest
+# backup. Its only side effect is an unfinished flow row per authorize
+# probe (expires in 10 min, purged after 24 h).
+name: Google verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      expect_mode:
+        description: The Google mode production is expected to run (off | allowlist | on)
+        required: true
+        default: 'off'
+        type: choice
+        options: ['off', allowlist, 'on']
+      checks:
+        description: Comma-separated subset (config,academy,probe,data,logs,metrics,backup,user) or all
+        required: false
+        default: all
+        type: string
+      academy_id:
+        description: The allowlisted academy UUID to verify
+        required: false
+        default: b794e760-eb63-4b17-85a3-7a4f6a0c9418
+        type: string
+      mailbox:
+        description: Gmail local part of the owner's own mailbox (user facts only for it and its plus-addresses)
+        required: false
+        default: ''
+        type: string
+      user_email:
+        description: One of the owner's own addresses to report non-secret account facts for
+        required: false
+        default: ''
+        type: string
+      log_hours:
+        description: How many hours of backend logs to scan for credential leaks
+        required: false
+        default: '24'
+        type: string
+
+concurrency:
+  group: google-verify
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Google verification
+        working-directory: deploy/google-verify
+        env:
+          EXPECT_MODE: ${{ inputs.expect_mode }}
+          CHECKS: ${{ inputs.checks }}
+          ACADEMY_ID: ${{ inputs.academy_id }}
+          MAILBOX: ${{ inputs.mailbox }}
+          USER_EMAIL: ${{ inputs.user_email }}
+          LOG_HOURS: ${{ inputs.log_hours }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_KEY_FILE: /home/runner/.ssh/deploy_key
+        run: node verify.mjs
