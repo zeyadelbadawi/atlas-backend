@@ -40,6 +40,7 @@ import type {
   SignupOrganizationResult,
 } from './signup-organization.port';
 import { recordSignup } from '../../observability/metrics/onboarding-metrics';
+import { recordAcademyJoin } from '../../observability/metrics/member-metrics';
 import type { SignupMetricMode } from '../../observability/metrics/onboarding-metrics';
 import { generateOpaqueToken, hashOpaqueToken } from '../utils/opaque-token.util';
 import { normalizeEmail } from '../utils/email.util';
@@ -90,6 +91,18 @@ const DUMMY_PASSWORD = 'atlas-p1-dummy-password-for-timing-safety-only';
 /** Launch Stabilization A4 — whether registration created an account or added an academy to an existing one. */
 export interface RegistrationResult {
   readonly account: 'new' | 'existing';
+  /**
+   * Set when an existing account joined an academy (A4): whether its new
+   * learner membership is already active or awaits the academy's approval.
+   */
+  readonly status?: 'active' | 'pending';
+}
+
+/** `POST /auth/academy-join` — returned only after the password is proven. */
+export interface AcademyJoinResult {
+  readonly account: 'existing';
+  readonly status: 'active' | 'pending';
+  readonly name: string;
 }
 
 export interface SessionRequestContext {
@@ -635,6 +648,80 @@ export class AuthService {
       throw new ForbiddenException({ messageKey: 'errors.auth.accountSuspended' });
     }
 
+    const admitted = await this.admitExistingAccount(user, email, input);
+    return { account: 'existing', status: admitted };
+  }
+
+  /**
+   * Smart academy signup — `POST /auth/academy-join`: an EXISTING Atlas
+   * account joins this academy as a learner, and nothing else. It is the
+   * explicit, join-only twin of the A4 branch of `register` above, for the
+   * signup page's "you already have an Atlas account — enter your password"
+   * step, and it never creates an account.
+   *
+   * It is a sign-in in every respect that matters for enumeration: the same
+   * `SignInRateLimitGuard` budget (per IP and per account), the same
+   * dummy-hash verification for an unknown email, and the SAME generic 401
+   * `invalidCredentials` for an unknown email, a wrong password, and an
+   * invited or deleted account — so it answers nothing `POST /auth/sign-in`
+   * does not already answer. The account's display name is returned only
+   * after the password has been proven.
+   */
+  async joinAcademy(input: {
+    email: string;
+    password: string;
+    academyId: string;
+    inviteToken?: string;
+    hostname?: string;
+  }): Promise<AcademyJoinResult> {
+    const email = normalizeEmail(input.email);
+    const user = await this.usersRepository.findByEmail(email);
+    if (!user) {
+      await this.passwordHasher.verify(await this.getDummyHash(), input.password);
+      recordAcademyJoin('invalid_credentials');
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
+    }
+    const passwordValid = await this.passwordHasher.verify(
+      user.passwordHash,
+      input.password,
+    );
+    if (!passwordValid || user.status === 'deleted' || user.status === 'invited') {
+      recordAcademyJoin('invalid_credentials');
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
+    }
+    if (user.status === 'suspended') {
+      recordAcademyJoin('refused');
+      throw new ForbiddenException({ messageKey: 'errors.auth.accountSuspended' });
+    }
+
+    try {
+      const status = await this.admitExistingAccount(user, email, input);
+      recordAcademyJoin('joined');
+      return { account: 'existing', status, name: user.name };
+    } catch (error) {
+      recordAcademyJoin(
+        error instanceof ConflictException ? 'already_learner' : 'refused',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * The membership half of an existing account's academy join, shared by
+   * `register` (A4) and `joinAcademy`: runs only once the caller has proven
+   * the account's password. Resolves and checks the academy against the
+   * request host, refuses a blocked or existing learner, and writes ONE
+   * `academy_students` row under the academy's registration policy.
+   */
+  private async admitExistingAccount(
+    user: User,
+    email: string,
+    input: {
+      academyId?: string;
+      inviteToken?: string;
+      hostname?: string;
+    },
+  ): Promise<'active' | 'pending'> {
     const hostAcademyId = await this.academySurfaceService.resolveHostAcademyId(
       input.hostname,
     );
@@ -708,7 +795,7 @@ export class AuthService {
     }
     recordSignup('account', 'existing_account_joined');
     await this.notifyAcademyJoined(user.id, academyId);
-    return { account: 'existing' };
+    return admission.status;
   }
 
   /**
