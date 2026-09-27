@@ -129,6 +129,8 @@ export interface StepRequest {
   readonly binder: string | undefined;
   readonly origin: string | null;
   readonly context: SessionRequestContext;
+  /** An `invite`-policy academy sign-up's invitation code (see `finishSignIn`). */
+  readonly inviteToken?: string;
 }
 
 /** Where the callback sends the browser. */
@@ -381,6 +383,7 @@ export class GoogleAuthService {
     readonly binder: string | undefined;
     readonly origin: string | null;
     readonly context: SessionRequestContext;
+    readonly inviteToken?: string;
   }): Promise<GoogleCompleteResponse> {
     if (!this.isAvailable()) {
       recordGoogleAuth('complete', 'disabled');
@@ -421,6 +424,7 @@ export class GoogleAuthService {
       try {
         const response = await this.finishSignIn(identity.user, flow, input.context, {
           join: true,
+          inviteToken: input.inviteToken,
         });
         await this.repository.touchIdentity(identity.id, flow.providerEmail, now);
         recordGoogleAuth('complete', 'existing_identity');
@@ -549,12 +553,21 @@ export class GoogleAuthService {
    * The sign-in that follows a successful Google proof: an academy SIGN-UP
    * by an account that already exists joins this academy first (the same
    * write as the password-proven join), then the normal pipeline runs.
+   *
+   * The academy is the flow's (fixed from the request host when the flow
+   * started). For an `invite`-policy academy the invitation code is
+   * redeemed by the canonical `claim_academy_invite` against THAT academy
+   * and the ACCOUNT's own email, atomically — exactly as `POST
+   * /auth/academy-join` redeems it for a password-proven account. Google
+   * never bypasses the policy: no code → `inviteRequired`, a bad, foreign,
+   * expired, revoked, exhausted or other-address code → `inviteInvalid`. An
+   * account that is already a learner here spends nothing and signs in.
    */
   private async finishSignIn(
     user: User,
     flow: AuthOAuthFlow,
     context: SessionRequestContext,
-    options: { readonly join: boolean },
+    options: { readonly join: boolean; readonly inviteToken?: string },
   ): Promise<GoogleSignInResponse> {
     try {
       if (
@@ -566,6 +579,7 @@ export class GoogleAuthService {
         await this.authService.joinAcademyAsExistingAccount(user, {
           academyId: flow.academyId,
           hostname: context.hostname,
+          inviteToken: options.inviteToken,
         });
       }
       const response = await this.authService.continueSignIn(
@@ -731,7 +745,10 @@ export class GoogleAuthService {
       throw error;
     }
     recordGoogleAuth('link', 'linked');
-    return this.finishSignIn(user, flow, input.context, { join: true });
+    return this.finishSignIn(user, flow, input.context, {
+      join: true,
+      inviteToken: input.inviteToken,
+    });
   }
 
   /**
@@ -833,7 +850,10 @@ export class GoogleAuthService {
     }
     recordGoogleAuth('activate', 'activated');
     const activated = await this.usersRepository.findById(user.id);
-    return this.finishSignIn(activated ?? user, flow, input.context, { join: true });
+    return this.finishSignIn(activated ?? user, flow, input.context, {
+      join: true,
+      inviteToken: input.inviteToken,
+    });
   }
 
   /**

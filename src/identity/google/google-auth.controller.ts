@@ -164,15 +164,17 @@ export class GoogleAuthController {
       binder: readCookie(request.headers.cookie, GOOGLE_BINDER_COOKIE),
       origin: originOf(this.googleAuth, request),
       context: sessionContextWithDeviceCookie(request, response),
+      inviteToken: dto.inviteToken,
     });
     // A follow-up step still needs the binder; anything final does not.
     if (!('googleStep' in result)) clearBinder(request, response);
     return result;
   }
 
-  private step(request: Request, response: Response, pending: string): StepRequest {
+  private step(request: Request, response: Response, dto: GoogleStepDto): StepRequest {
     return {
-      pending,
+      pending: dto.pending,
+      inviteToken: dto.inviteToken,
       binder: readCookie(request.headers.cookie, GOOGLE_BINDER_COOKIE),
       origin: originOf(this.googleAuth, request),
       context: sessionContextWithDeviceCookie(request, response),
@@ -189,7 +191,7 @@ export class GoogleAuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<GoogleSignInResponse> {
     const result = await this.googleAuth.linkWithPassword({
-      ...this.step(request, response, dto.pending),
+      ...this.step(request, response, dto),
       password: dto.password,
     });
     clearBinder(request, response);
@@ -206,7 +208,7 @@ export class GoogleAuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<GoogleSignInResponse> {
     const result = await this.googleAuth.createAccount({
-      ...this.step(request, response, dto.pending),
+      ...this.step(request, response, dto),
       name: dto.name,
       organizationName: dto.organizationName,
       planId: dto.planId,
@@ -230,7 +232,7 @@ export class GoogleAuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<GoogleSignInResponse> {
     const result = await this.googleAuth.activateInvited(
-      this.step(request, response, dto.pending),
+      this.step(request, response, dto),
     );
     clearBinder(request, response);
     return result;

@@ -27,7 +27,11 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import { FakeGoogleOidc } from './utils/fake-google-oidc';
-import { hashOpaqueToken } from '../src/identity/utils/opaque-token.util';
+import { existsSync, readFileSync } from 'node:fs';
+import {
+  generateOpaqueToken,
+  hashOpaqueToken,
+} from '../src/identity/utils/opaque-token.util';
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
 import { METRICS_REGISTRY } from '../src/observability/metrics/learning-metrics.service';
@@ -1391,6 +1395,350 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
         .send({ currentPassword: 'anything-at-all' })
         .expect(409);
       expect(refused.body.error.messageKey).toBe('errors.auth.setPasswordFirst');
+    });
+  });
+
+  // ==================================================================
+  // Phase 2 hardening — invite-only academy + an existing Google identity
+  // ==================================================================
+
+  describe('GID-INVITE — an existing Google-linked account redeems an academy invitation', () => {
+    /** A learner invitation for `academyId` (the canonical `academy_invites` row). */
+    async function invite(
+      academyId: string,
+      createdBy: string,
+      opts: {
+        email?: string | null;
+        maxUses?: number;
+        usedCount?: number;
+        expiresAt?: Date;
+        revokedAt?: Date | null;
+      } = {},
+    ): Promise<{ raw: string; id: string }> {
+      const raw = generateOpaqueToken();
+      const row = await admin.academyInvite.create({
+        data: {
+          academyId,
+          tokenHash: hashOpaqueToken(raw),
+          createdBy,
+          email: opts.email === undefined ? null : opts.email,
+          maxUses: opts.maxUses ?? 1,
+          usedCount: opts.usedCount ?? 0,
+          expiresAt: opts.expiresAt ?? new Date(Date.now() + 3600_000),
+          revokedAt: opts.revokedAt ?? null,
+        },
+      });
+      return { raw, id: row.id };
+    }
+
+    /**
+     * Ahmed: learner at A, INSTRUCTOR at A2, Google connected. B is
+     * invite-only. Returns everything a test needs to prove nothing else moved.
+     */
+    async function ahmed(label: string) {
+      const a = await academy(`${label}-a`);
+      const a2 = await academy(`${label}-a2`);
+      const b = await academy(`${label}-b`, 'invite');
+      const person = await learnerAt(a, `${label}-ahmed`);
+      await seedAcademyMember(admin, a2.id, person.userId, 'instructor');
+      const sub = newSub();
+      await linkGoogle(person.userId, sub, person.email);
+      const owner = (
+        await admin.academyMember.findFirstOrThrow({
+          where: { academyId: b.id, role: 'owner' },
+        })
+      ).userId;
+      return { a, a2, b, person, sub, owner };
+    }
+
+    async function signUpWithGoogle(
+      b: Academy,
+      sub: string,
+      email: string,
+      inviteToken?: string,
+      expected?: number,
+    ) {
+      const flow = await throughGoogle(b.host, { sub, email }, { intent: 'sign_up' });
+      const req = http()
+        .post('/auth/google/complete')
+        .set('Host', b.host)
+        .set('Cookie', flow.binder)
+        .send({ handoff: flow.handoff, ...(inviteToken ? { inviteToken } : {}) });
+      return expected ? req.expect(expected) : req;
+    }
+
+    async function snapshot(userId: string) {
+      const [students, staff, users] = await Promise.all([
+        admin.academyStudent.findMany({
+          where: { userId },
+          select: { academyId: true, status: true, source: true },
+          orderBy: { academyId: 'asc' },
+        }),
+        admin.academyMember.findMany({
+          where: { userId },
+          select: { academyId: true, role: true, status: true },
+          orderBy: { academyId: 'asc' },
+        }),
+        admin.user.count({ where: { id: userId } }),
+      ]);
+      return { students, staff, users };
+    }
+
+    /** The user-facing copy exists in English AND Arabic (when the frontend is checked out). */
+    function expectBilingualCopy(messageKey: string) {
+      const root = process.env.ATLAS_FRONTEND_DIR ?? '/home/user/atlas-front';
+      const key = messageKey.replace(/^errors\./, '').split('.');
+      for (const lang of ['en', 'ar']) {
+        const file = `${root}/src/localization/resources/${lang}/errors.json`;
+        if (!existsSync(file)) return;
+        let node: unknown = JSON.parse(readFileSync(file, 'utf8'));
+        for (const part of key) node = (node as Record<string, unknown>)?.[part];
+        expect({
+          lang,
+          messageKey,
+          copy: typeof node === 'string' && node.length > 0,
+        }).toEqual({
+          lang,
+          messageKey,
+          copy: true,
+        });
+      }
+    }
+
+    it('GID-INVITE-01 — a valid invitation: joins invite-only B as the SAME user; A and A2 untouched; B’s own code (A6) applies', async () => {
+      const { a, a2, b, person, sub, owner } = await ahmed('inv-ok');
+      const before = await snapshot(person.userId);
+      const inv = await invite(b.id, owner, { email: person.email });
+
+      const res = await signUpWithGoogle(b, sub, person.email, inv.raw, 200);
+      expect(res.body.emailOtpRequired).toBe(true); // A6: B's own code
+      expect(res.body.accessToken).toBeUndefined();
+
+      const after = await snapshot(person.userId);
+      expect(after.users).toBe(1);
+      expect(await admin.user.count({ where: { email: person.email } })).toBe(1);
+      expect(after.staff).toEqual(before.staff); // instructor at A2, unchanged
+      expect(after.students).toEqual(
+        [
+          { academyId: a.id, status: 'active', source: 'self_signup' },
+          { academyId: b.id, status: 'active', source: 'invite' },
+        ].sort((x, y) => x.academyId.localeCompare(y.academyId)),
+      );
+      expect(after.staff.map((r) => r.academyId)).toEqual([a2.id]);
+      expect(
+        (await admin.academyInvite.findUniqueOrThrow({ where: { id: inv.id } }))
+          .usedCount,
+      ).toBe(1);
+
+      const session = await http()
+        .post('/auth/otp/verify')
+        .set('Host', b.host)
+        .send({
+          challengeId: res.body.challengeId,
+          code: await latestCode(person.userId),
+          rememberDevice: false,
+          surface: 'academy',
+        })
+        .expect(200);
+      expect(session.body.authMethod).toBe('google');
+      expect(await latestSessionMethod(person.userId)).toMatchObject({
+        surface: 'academy',
+        academyId: b.id,
+        authMethod: 'google',
+      });
+    });
+
+    it('GID-INVITE-02 — no code: inviteRequired; a wrong code: inviteInvalid (EN + AR copy); nothing joined', async () => {
+      const { b, person, sub } = await ahmed('inv-none');
+      const none = await signUpWithGoogle(b, sub, person.email, undefined, 403);
+      expect(none.body.error.messageKey).toBe('errors.auth.inviteRequired');
+      expectBilingualCopy('errors.auth.inviteRequired');
+
+      const wrong = await signUpWithGoogle(
+        b,
+        sub,
+        person.email,
+        generateOpaqueToken(),
+        400,
+      );
+      expect(wrong.body.error.messageKey).toBe('errors.auth.inviteInvalid');
+      expectBilingualCopy('errors.auth.inviteInvalid');
+      expect(
+        await admin.academyStudent.count({
+          where: { userId: person.userId, academyId: b.id },
+        }),
+      ).toBe(0);
+    });
+
+    it('GID-INVITE-03 — refused: another academy’s code, expired, revoked, used up, addressed to someone else', async () => {
+      const { b, person, sub, owner } = await ahmed('inv-bad');
+      const c = await academy('inv-bad-c', 'invite');
+      const cases = {
+        foreignAcademy: await invite(c.id, owner, { email: person.email }),
+        expired: await invite(b.id, owner, { expiresAt: new Date(Date.now() - 60_000) }),
+        revoked: await invite(b.id, owner, { revokedAt: new Date() }),
+        usedUp: await invite(b.id, owner, { maxUses: 1, usedCount: 1 }),
+        otherAddress: await invite(b.id, owner, { email: 'someone-else@atlas.test' }),
+      };
+      for (const [label, inv] of Object.entries(cases)) {
+        await flushRateLimitKeys();
+        const res = await signUpWithGoogle(b, sub, person.email, inv.raw);
+        expect({ label, status: res.status, key: res.body.error?.messageKey }).toEqual({
+          label,
+          status: 400,
+          key: 'errors.auth.inviteInvalid',
+        });
+      }
+      expect(
+        await admin.academyStudent.count({
+          where: { userId: person.userId, academyId: b.id },
+        }),
+      ).toBe(0);
+      // Nothing was spent by the refusals.
+      expect(
+        (await admin.academyInvite.findUniqueOrThrow({ where: { id: cases.usedUp.id } }))
+          .usedCount,
+      ).toBe(1);
+      expect(
+        (
+          await admin.academyInvite.findUniqueOrThrow({
+            where: { id: cases.foreignAcademy.id },
+          })
+        ).usedCount,
+      ).toBe(0);
+    });
+
+    it('GID-INVITE-04 — already a learner at B: a used-up code is not needed or spent; the sign-in just continues', async () => {
+      const { b, person, sub, owner } = await ahmed('inv-already');
+      const inv = await invite(b.id, owner, { email: person.email });
+      await signUpWithGoogle(b, sub, person.email, inv.raw, 200);
+      expect(
+        (await admin.academyInvite.findUniqueOrThrow({ where: { id: inv.id } }))
+          .usedCount,
+      ).toBe(1);
+
+      // Same code again (now used up), and no code at all: both simply sign in.
+      for (const token of [inv.raw, undefined]) {
+        await flushRateLimitKeys();
+        const res = await signUpWithGoogle(b, sub, person.email, token, 200);
+        expect(res.body.emailOtpRequired ?? res.body.accessToken).toBeTruthy();
+      }
+      expect(
+        await admin.academyStudent.count({
+          where: { userId: person.userId, academyId: b.id },
+        }),
+      ).toBe(1);
+      expect(
+        (await admin.academyInvite.findUniqueOrThrow({ where: { id: inv.id } }))
+          .usedCount,
+      ).toBe(1);
+    });
+
+    it('GID-INVITE-05 — the same account redeeming the same single-use code concurrently: exactly one membership, one use', async () => {
+      const { b, person, sub, owner } = await ahmed('inv-race');
+      const inv = await invite(b.id, owner, { email: person.email, maxUses: 1 });
+      const one = await throughGoogle(
+        b.host,
+        { sub, email: person.email },
+        { intent: 'sign_up' },
+      );
+      const two = await throughGoogle(
+        b.host,
+        { sub, email: person.email },
+        { intent: 'sign_up' },
+      );
+      const results = await Promise.all(
+        [one, two].map((f) =>
+          http()
+            .post('/auth/google/complete')
+            .set('Host', b.host)
+            .set('Cookie', f.binder)
+            .send({ handoff: f.handoff, inviteToken: inv.raw }),
+        ),
+      );
+      // One joins; the other either finds the account already a learner
+      // (and signs in) or finds the code spent — never a second row.
+      for (const r of results) expect([200, 400]).toContain(r.status);
+      expect(results.some((r) => r.status === 200)).toBe(true);
+      expect(
+        await admin.academyStudent.count({
+          where: { userId: person.userId, academyId: b.id },
+        }),
+      ).toBe(1);
+      expect(
+        (await admin.academyInvite.findUniqueOrThrow({ where: { id: inv.id } }))
+          .usedCount,
+      ).toBe(1);
+      expect(await admin.user.count({ where: { email: person.email } })).toBe(1);
+    });
+
+    it('GID-INVITE-06 — Case 4 at an invite-only academy: an instructor with a PASSWORD account links Google and redeems the code in the link step', async () => {
+      const a = await academy('inv-c4-a');
+      const b = await academy('inv-c4-b', 'invite');
+      const staff = await staffAccount('inv-c4-instructor');
+      await seedAcademyMember(admin, a.id, staff.userId, 'instructor');
+      const owner = (
+        await admin.academyMember.findFirstOrThrow({
+          where: { academyId: b.id, role: 'owner' },
+        })
+      ).userId;
+      const inv = await invite(b.id, owner, { email: staff.email });
+      const { binder, step: s } = await toStep(
+        b.host,
+        { sub: newSub(), email: staff.email },
+        { intent: 'sign_up' },
+      );
+      expect(s.googleStep).toBe('link_required');
+      const res = await step('link', b.host, binder, {
+        pending: s.pending,
+        password: PASSWORD,
+        inviteToken: inv.raw,
+      }).expect(200);
+      expect(res.body.emailOtpRequired).toBe(true);
+      const row = await admin.academyStudent.findFirstOrThrow({
+        where: { userId: staff.userId },
+      });
+      expect(row).toMatchObject({ academyId: b.id, status: 'active', source: 'invite' });
+      expect(
+        await admin.academyMember.count({
+          where: { userId: staff.userId, academyId: a.id, role: 'instructor' },
+        }),
+      ).toBe(1);
+      expect(await admin.user.count({ where: { email: staff.email } })).toBe(1);
+    });
+
+    it('GID-INVITE-07 — a code addressed to the account’s Atlas email works even though the Google address differs', async () => {
+      const { b, person, owner } = await ahmed('inv-addr');
+      // Re-link this person's Google account with a DIFFERENT Google address.
+      await admin.userAuthIdentity.deleteMany({ where: { userId: person.userId } });
+      const sub = newSub();
+      const googleEmail = uniqueTestEmail('inv-addr-google');
+      await linkGoogle(person.userId, sub, googleEmail);
+      const inv = await invite(b.id, owner, { email: person.email });
+      await signUpWithGoogle(b, sub, googleEmail, inv.raw, 200);
+      expect(
+        await admin.academyStudent.count({
+          where: { userId: person.userId, academyId: b.id },
+        }),
+      ).toBe(1);
+
+      // …and one addressed to the GOOGLE address is refused: invitations bind
+      // to the Atlas account's email, as for the password join.
+      const c = await academy('inv-addr-c', 'invite');
+      const cOwner = (
+        await admin.academyMember.findFirstOrThrow({
+          where: { academyId: c.id, role: 'owner' },
+        })
+      ).userId;
+      const googleAddressed = await invite(c.id, cOwner, { email: googleEmail });
+      const refused = await signUpWithGoogle(
+        c,
+        sub,
+        googleEmail,
+        googleAddressed.raw,
+        400,
+      );
+      expect(refused.body.error.messageKey).toBe('errors.auth.inviteInvalid');
     });
   });
 });

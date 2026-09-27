@@ -37,8 +37,22 @@ export class GoogleAuthorizeDto {
   readonly setupToken?: string;
 }
 
+/**
+ * An academy's invitation code, for an `invite`-policy academy SIGN-UP by an
+ * account that already exists. Authorization context, not identity: it is
+ * checked and spent only by the canonical `claim_academy_invite` (this
+ * flow's academy — fixed from the request host when the flow started — and
+ * the ACCOUNT's own email, atomically), exactly as the password join does.
+ */
+class WithInviteToken {
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  readonly inviteToken?: string;
+}
+
 /** `POST /auth/google/complete` — the single-use handoff from the URL fragment. */
-export class GoogleCompleteDto {
+export class GoogleCompleteDto extends WithInviteToken {
   @IsNotEmpty()
   @IsString()
   @MaxLength(128)
@@ -46,7 +60,7 @@ export class GoogleCompleteDto {
 }
 
 /** A follow-up step's single-use reference (`googleStep` responses). */
-export class GoogleStepDto {
+export class GoogleStepDto extends WithInviteToken {
   @IsNotEmpty()
   @IsString()
   @MaxLength(128)
@@ -80,12 +94,6 @@ export class GoogleCreateAccountDto extends GoogleStepDto {
   @IsString()
   @MaxLength(64)
   readonly planId?: string;
-
-  /** Academy surface, `invite` registration policy. */
-  @IsOptional()
-  @IsString()
-  @MaxLength(256)
-  readonly inviteToken?: string;
 }
 
 /** `DELETE /users/me/sign-in-methods/google`. */

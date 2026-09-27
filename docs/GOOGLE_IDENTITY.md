@@ -77,6 +77,50 @@ Stale, replayed or foreign completions all get the same 401 `errors.auth.googleS
 
 An **existing identity** starting an academy **sign-up** joins that academy through the same write as the password-proven join (`admitExistingAccount`: policy, invite binding, blocked/already checks, audit, `account.academy.joined`). Already a learner there means the sign-in simply continues (Case 3).
 
+### Invite-only academies and an existing Google identity (Phase 2 hardening, 27 Sep 2026)
+
+**Classification: a real Phase 2 gap, not an intended rule.**
+
+The password path has always supported this. `POST /auth/academy-join` (an existing account proven by its password) accepts `inviteToken` and passes it to `admitExistingAccount`, which redeems it through the canonical `claim_academy_invite`.
+
+On the Google path the code was lost:
+- `finishSignIn` called the same join write, `joinAcademyAsExistingAccount`, without a code, because no Google endpoint except `create-account` accepted one. The global validation pipe even rejected the extra field.
+- So an existing Google-linked account (or a password account linking Google in the same step) could never redeem a valid invitation at an `invite`-policy academy.
+
+**Supported behavior now.** `POST /auth/google/complete`, `POST /auth/google/link` and `POST /auth/google/activate` accept an optional `inviteToken`. It is used only for an academy **sign-up** by an account that already exists, and it goes to the SAME join write as the password path.
+
+- The academy is the flow's, fixed from the request host when the flow started. A code can never choose the academy.
+- The code is redeemed only by `claim_academy_invite`: one atomic conditional `UPDATE` that matches this academy, not revoked, not expired, `used_count < max_uses`, and an addressed invite only for the **Atlas account's** email. This is the same binding the password join uses; the Google address is irrelevant.
+- The registration policy stays authoritative:
+  - no code → 403 `inviteRequired`;
+  - a wrong, foreign-academy, expired, revoked, used-up or other-address code → 400 `inviteInvalid` (existing EN/AR copy), nothing written, nothing spent.
+- An account that is already a learner there spends nothing and signs in; that check runs before the claim.
+- The same user, the same memberships and roles elsewhere, no second account.
+- A6: the newly joined academy's own emailed code still applies.
+- Disclosure: the answers are the existing invite answers, and they are reachable only after Google proof plus the single-use handoff (or pending secret), the browser binder and the origin.
+
+**Security model.** The invite code is authorization context, never identity. Google proves who the person is; Atlas decides admission from its own invitation row. The code travels in the body of the request that performs the join, and is not stored on the flow. It is a bearer credential the person already holds from their invite link, validated and spent server-side only; the academy and account it applies to come from server-side state.
+
+**Races.** Two concurrent redemptions of a single-use code by the same account give exactly one membership and one use:
+- the claim is one atomic `UPDATE`;
+- the `(academy, user)` unique index decides the membership;
+- the loser either finds the account already a learner (and signs in) or finds the code spent (`inviteInvalid`).
+
+With a multi-use code a concurrent loser can spend one extra use. That is the existing semantics of the password join, which claims before inserting, and it is unchanged here.
+
+**Tests** (`GID-INVITE-01..07`):
+- a valid code joins B as the same user, with A/A2 memberships and roles unchanged, `source: invite`, one use, B's own code (A6), and an `authMethod: google` session on B;
+- no code and a wrong code are refused, with EN + AR copy checked;
+- foreign academy, expired, revoked, used up and other address are all refused, nothing spent;
+- already a learner: nothing spent, the sign-in continues;
+- a concurrent redemption gives one membership and one use;
+- Case 4 via the link step (a password account links Google and redeems the code);
+- a code bound to the Atlas email works when the Google address differs, and one bound to the Google address is refused.
+
+Against the pre-fix code, `GID-INVITE-01` and `-06` fail (400: the field is rejected). A Google account owned by another Atlas account stays refused without naming anyone (`GID-SET-02`).
+
+**Remaining, deliberate:** an invitation binds to the Atlas account's email, not to the Google address. This is the existing invitation semantics, unchanged.
+
 Password reset and password change are unchanged. They still revoke sessions and trusted devices, and they **do not** remove the Google link. A Google-only account sets a password through "Forgot password" (email-based), after which it may disconnect Google.
 
 **Notifications** (catalogue, EN/AR, email + in-app, security, never deduped, CTA = Forgot password):
