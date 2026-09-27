@@ -210,28 +210,48 @@ describe('P64 C8 — academy member onboarding (e2e)', () => {
     });
   });
 
-  it('does NOT re-onboard an existing Atlas user added to a second academy', async () => {
-    // They already have a password and know what Atlas is; a "set your
-    // password" email would be confusing at best.
+  it('tells an existing Atlas user added to a second academy — without re-onboarding them', async () => {
+    // They already have a password and know what Atlas is: they get a
+    // "you've been added" notice, never a "set your password" link, and
+    // nothing about their account (name, password) changes.
     const existing = await signUpAndSignIn('c8-existing');
     const { owner, academyId } = await seedOwnerWithAcademy('c8-second');
 
-    await request(app.getHttpServer())
+    const added = await request(app.getHttpServer())
       .post(`/academies/${academyId}/members`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ name: 'Existing User', email: existing.email, password: PASSWORD })
-      .expect((res) => {
-        if (![200, 201].includes(res.status)) {
-          throw new Error(`add member failed: ${res.status} ${res.text}`);
-        }
-      });
+      .send({
+        name: 'A Different Name',
+        email: existing.email,
+        password: 'ignored-password',
+      })
+      .expect(201);
+    expect(added.body.outcome).toBe('added');
 
-    // Give the dispatcher the same window the positive cases get.
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const count = await admin.communicationOutbox.count({
+        where: { key: 'academy.member.added', recipientUserId: existing.userId },
+      });
+      if (count > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(
+      await admin.communicationOutbox.count({
+        where: { key: 'academy.member.added', recipientUserId: existing.userId },
+      }),
+    ).toBe(1);
     expect(
       await admin.communicationOutbox.count({
         where: { key: 'academy.member.invited', recipientUserId: existing.userId },
       }),
     ).toBe(0);
+
+    const user = await admin.user.findUniqueOrThrow({ where: { id: existing.userId } });
+    expect(user.name).toBe('c8-existing');
+    expect(user.status).toBe('active');
+    await request(app.getHttpServer())
+      .post('/auth/sign-in')
+      .send({ email: existing.email, password: PASSWORD })
+      .expect(200);
   });
 });

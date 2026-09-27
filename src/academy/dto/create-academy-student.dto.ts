@@ -3,22 +3,19 @@
  *
  * Unlike Manager/Instructor, "student" is not — and cannot be, see
  * `AcademiesService.createStudent`'s doc comment — an `academy_members`
- * row: `AcademyMemberRole` has no `student` value, and `Enrollment` (the
- * real, only definition of "being a student" in this codebase) requires
- * no academy/organization membership at all. So there is nothing to
- * "grant" an existing user; this always creates a brand-new Atlas account
- * (name + email + password all required, unlike the optional-creation
- * shape of Manager/Instructor) that the owner can hand to a real test
- * student, who then self-discovers and self-enrolls in courses exactly
- * like any other Atlas user would.
+ * row: the learner relationship is an `academy_students` row. An email
+ * that already has an Atlas account is added to this academy as-is; a new
+ * email becomes an invited account, which is the only case that needs
+ * `name` (the service answers 400 `nameRequiredForNewAccount` without it).
  */
 import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateAcademyStudentDto {
-  @IsNotEmpty()
+  /** Required only when creating a brand-new account (no existing user for `email`). */
+  @IsOptional()
   @IsString()
   @MinLength(2)
-  readonly name!: string;
+  readonly name?: string;
 
   @IsNotEmpty()
   @IsEmail()

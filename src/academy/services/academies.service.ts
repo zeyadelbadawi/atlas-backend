@@ -9,8 +9,11 @@
  * `AcademyScopeGuard`'s own reads — see that guard's doc comment for why.
  */
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
@@ -55,7 +58,6 @@ import type { AcademyResponse, AcademyAddressResponse } from '../dto/academy.con
 import { toAcademyMemberResponse } from '../dto/academy-member.contract';
 import type { AcademyMemberResponse } from '../dto/academy-member.contract';
 import { toAcademyStudentResponse } from '../dto/academy-student.contract';
-import type { AcademyStudentResponse } from '../dto/academy-student.contract';
 import type { AcademyStatsResponse } from '../dto/academy-stats.contract';
 import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
 import {
@@ -75,6 +77,24 @@ import type { AddAcademyManagerDto } from '../dto/add-academy-manager.dto';
 import type { AddAcademyInstructorDto } from '../dto/add-academy-instructor.dto';
 import type { CreateAcademyStudentDto } from '../dto/create-academy-student.dto';
 import type { User } from '@prisma/client';
+import {
+  recordMemberAdd,
+  recordMemberAddRace,
+  recordMemberLookup,
+  type MemberAddAccount,
+  type MemberAddRole,
+} from '../../observability/metrics/member-metrics';
+import type {
+  AcademyMemberAddResponse,
+  MemberAddOutcome,
+} from '../dto/academy-member.contract';
+import type { AcademyStudentAddResponse } from '../dto/academy-student.contract';
+import type {
+  AcademyMemberLookupResponse,
+  MemberLookupRole,
+} from '../dto/academy-member-lookup.dto';
+import { AuthRateLimiterService } from '../../identity/services/auth-rate-limiter.service';
+import { normalizeEmail } from '../../identity/utils/email.util';
 
 /**
  * Roles permitted to write to an Academy (create/update/branding/archive)
@@ -110,6 +130,27 @@ const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
  * narrow rather than presenting a capability the database would then deny.
  */
 const GRANTS_MANAGER_ROLES = new Set(['owner']);
+
+/** The account an add resolved to, inside the add's own transaction. */
+interface ResolvedMemberAccount {
+  readonly user: User;
+  readonly account: MemberAddAccount;
+}
+
+/** A Prisma unique-constraint violation (`P2002`) — the only error the add path retries. */
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+/**
+ * Staff member lookups, per acting user. Generous for a person typing into
+ * a dialog (the frontend debounces), tight enough that a self-serve owner
+ * account cannot be used to harvest the names behind a list of emails.
+ */
+const MEMBER_LOOKUP_LIMITS = [
+  { window: 'short', max: 30, windowSeconds: 600 },
+  { window: 'day', max: 300, windowSeconds: 86_400 },
+] as const;
 
 /**
  * Phase 5 (Onboarding & Provisioning Completion) — who may create a brand
@@ -198,6 +239,7 @@ export class AcademiesService {
     private readonly domainProviderReleaseService: DomainProviderReleaseService,
     private readonly platformDomainService: PlatformDomainService,
     private readonly publicWebsiteCacheService: PublicWebsiteCacheService,
+    private readonly authRateLimiter: AuthRateLimiterService,
     configService: ConfigService,
   ) {
     this.environmentBaseDomain = configService
@@ -225,32 +267,128 @@ export class AcademiesService {
   }
 
   /**
-   * Resolves the target user for a Manager/Instructor grant: an existing
-   * account found by email, or — when `name`+`password` are BOTH supplied
-   * — a brand-new one created on the spot (there is no invitation/email
-   * system in this codebase; this is the closest equivalent an owner has
-   * to "invite someone who doesn't have an account yet"). Returns `null`
-   * only when no account exists AND no creation fields were supplied,
-   * letting the caller report the pre-existing "that email has no Atlas
-   * account yet" 404 unchanged.
+   * Smart member invitation — resolves the account an add is about, INSIDE
+   * the caller's transaction, so the user row and the membership commit or
+   * roll back together (no orphaned `invited` account when a later check
+   * refuses the add):
+   *  - an existing, active account → reused as-is (password, name and every
+   *    other membership untouched);
+   *  - an existing account that never finished setup (`invited`) → reused,
+   *    and the caller sends a FRESH setup link rather than an "added"
+   *    notice it could not act on;
+   *  - a suspended or deleted account → refused;
+   *  - no account and a `name` → a new `invited` account (A2);
+   *  - no account and no `name` → `null` (the caller's "not found").
+   *
+   * The frontend lookup is never trusted: this is the only resolution that
+   * decides anything.
    */
-  /**
-   * Reports whether the account was CREATED here, because only a brand-new
-   * person needs the onboarding email — an existing Atlas user being added
-   * to a second academy already has a password and knows what Atlas is.
-   */
-  private async findOrCreateUserByEmail(
+  private async resolveMemberAccount(
+    tx: Prisma.TransactionClient,
     email: string,
-    name?: string,
-    password?: string,
-  ): Promise<{ user: User; created: boolean } | null> {
-    const existing = await this.usersRepository.findByEmail(email);
-    if (existing) return { user: existing, created: false };
+    name: string | undefined,
+  ): Promise<ResolvedMemberAccount | null> {
+    const existing = await this.usersRepository.findByEmail(email, tx);
+    if (existing) {
+      if (existing.status === 'suspended' || existing.status === 'deleted') {
+        throw new ConflictException({ messageKey: 'errors.academy.accountUnavailable' });
+      }
+      return {
+        user: existing,
+        account: existing.status === 'invited' ? 'pending_setup' : 'existing',
+      };
+    }
     if (!name) return null;
-    this.warnIgnoredPassword(password);
+    return { user: await this.createInvitedUser(email, name, tx), account: 'new' };
+  }
 
-    const user = await this.createInvitedUser(email, name);
-    return { user, created: true };
+  /**
+   * Two owners adding the same email at the same moment race on
+   * `users.email` (or on the membership's own unique constraint). The loser's
+   * transaction rolls back completely — its user row included — and is run
+   * ONCE more, when it simply finds what the winner committed (an existing
+   * account, or an existing membership → the usual 409). A second collision
+   * is reported as that 409 rather than a 500.
+   */
+  private async withAddRaceRetry<T>(
+    role: MemberAddRole,
+    conflictMessageKey: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      recordMemberAddRace(role);
+      try {
+        return await run();
+      } catch (retryError) {
+        if (isUniqueViolation(retryError)) {
+          throw new ConflictException({ messageKey: conflictMessageKey });
+        }
+        throw retryError;
+      }
+    }
+  }
+
+  /**
+   * Who may add a member at all: the academy's `owner`-role member — and,
+   * for a Manager or Instructor grant, the organization owner as well (the
+   * `organization_memberships_owner_grants_insert` RLS policy admits the
+   * org-membership INSERT only for them; see `GRANTS_MANAGER_ROLES`).
+   */
+  private async assertCanAddMember(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    organizationId: string,
+    actingUserId: string,
+    role: MemberAddRole,
+  ): Promise<void> {
+    const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
+      tx,
+      academyId,
+      actingUserId,
+    );
+    if (!actingMembership || !GRANTS_MANAGER_ROLES.has(actingMembership.role)) {
+      throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+    }
+    if (role === 'student') return;
+    const organization = await this.organizationsRepository.findById(tx, organizationId);
+    if (!organization || organization.ownerUserId !== actingUserId) {
+      throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+    }
+  }
+
+  /**
+   * After the add committed: a new or never-activated account gets a setup
+   * link (`AccountSetupService.sendInvite`, a fresh token each time); an
+   * existing, active account gets the "you've been added" notice. Both are
+   * best-effort and never throw — the membership stands either way.
+   */
+  private async notifyMemberAdded(input: {
+    readonly userId: string;
+    readonly email: string;
+    readonly account: MemberAddAccount;
+    readonly academyId: string;
+    readonly role: MemberAddRole;
+    readonly membershipId: string;
+  }): Promise<MemberAddOutcome> {
+    recordMemberAdd(input.role, input.account);
+    if (input.account === 'existing') {
+      const academy = await this.tenancyContextService.runWithoutContext((tx) =>
+        tx.academy.findUnique({ where: { id: input.academyId }, select: { name: true } }),
+      );
+      await this.accountSetupService.sendAddedNotice({
+        userId: input.userId,
+        academyId: input.academyId,
+        academyName: academy?.name ?? '',
+        role: input.role,
+        membershipId: input.membershipId,
+      });
+      return 'added';
+    }
+    await this.inviteNewMember(input.userId, input.academyId, input.role, input.email);
+    return input.account === 'new' ? 'invited' : 'reinvited';
   }
 
   /**
@@ -262,11 +400,18 @@ export class AcademiesService {
    * sets it through the emailed setup link (`AccountSetupService`), which
    * is what activates the account.
    */
-  private async createInvitedUser(email: string, name: string): Promise<User> {
+  private async createInvitedUser(
+    email: string,
+    name: string,
+    tx: Prisma.TransactionClient,
+  ): Promise<User> {
     const passwordHash = await this.passwordHasherService.hash(
       randomBytes(48).toString('base64url'),
     );
-    return this.usersRepository.create({ email, passwordHash, name, status: 'invited' });
+    return this.usersRepository.create(
+      { email, passwordHash, name, status: 'invited' },
+      tx,
+    );
   }
 
   /** The deprecated staff-chosen `password` field is accepted for compatibility and never used. */
@@ -784,118 +929,23 @@ export class AcademiesService {
     organizationId: string,
     actingUserId: string,
     payload: AddAcademyManagerDto,
-  ): Promise<AcademyMemberResponse> {
-    const result = await this.tenancyContextService.runInTenantAndUserContext(
+  ): Promise<AcademyMemberAddResponse> {
+    this.warnIgnoredPassword(payload.password);
+    return this.addStaffMember(
+      academyId,
       organizationId,
       actingUserId,
-      async (tx) => {
-        const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
-          tx,
-          academyId,
-          actingUserId,
-        );
-        if (!actingMembership || !GRANTS_MANAGER_ROLES.has(actingMembership.role)) {
-          throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
-        }
-
-        const organization = await this.organizationsRepository.findById(
-          tx,
-          organizationId,
-        );
-        if (!organization || organization.ownerUserId !== actingUserId) {
-          // Backstops the RLS policy's own check (see this method's doc
-          // comment) with a clean application-level error instead of
-          // letting the later INSERT fail on the database constraint.
-          throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
-        }
-
-        const targetUser = await this.findOrCreateUserByEmail(
-          payload.email,
-          payload.name,
-          payload.password,
-        );
-        if (!targetUser) {
-          throw new NotFoundException({
-            messageKey: 'errors.academy.managerUserNotFound',
-          });
-        }
-
-        const existingAcademyMembership =
-          await this.academyMembersRepository.findForUserInAcademy(
-            tx,
-            academyId,
-            targetUser.user.id,
-          );
-        if (existingAcademyMembership) {
-          throw new ConflictException({
-            messageKey: 'errors.academy.managerAlreadyMember',
-          });
-        }
-
-        const existingOrgMembership =
-          await this.organizationMembershipsRepository.findForUserInOrganization(
-            tx,
-            organizationId,
-            targetUser.user.id,
-          );
-        if (!existingOrgMembership) {
-          await this.organizationMembershipsRepository.create(tx, {
-            organizationId,
-            userId: targetUser.user.id,
-            role: 'manager',
-            permissions: ORGANIZATION_MANAGER_PERMISSIONS,
-            isPrimary: false,
-          });
-        }
-
-        const created = await this.createAcademyMember(tx, organizationId, {
-          academyId,
-          userId: targetUser.user.id,
-          role: 'manager',
-        });
-
-        await this.auditLogWriterService.write(tx, {
-          actorUserId: actingUserId,
-          organizationId,
-          action: 'academy.manager.added',
-          targetType: 'academy_member',
-          targetId: created.id,
-          targetLabel: targetUser.user.email,
-        });
-
-        return {
-          member: toAcademyMemberResponse({
-            ...created,
-            user: {
-              id: targetUser.user.id,
-              name: targetUser.user.name,
-              email: targetUser.user.email,
-            },
-          }),
-          invitedUserId: targetUser.created ? targetUser.user.id : null,
-          email: targetUser.user.email,
-        };
-      },
+      payload,
+      'manager',
     );
-
-    if (result.invitedUserId) {
-      await this.inviteNewMember(
-        result.invitedUserId,
-        academyId,
-        'manager',
-        result.email,
-      );
-    }
-    return result.member;
   }
 
   /**
    * `POST /academies/:id/instructors` — the Instructor counterpart of
-   * `addManager` above; same shape, same owner-only gate, same
-   * find-or-create-by-email resolution, same two-row (org membership +
-   * academy member) grant — only the role and the granted permission set
-   * differ (`ORGANIZATION_INSTRUCTOR_PERMISSIONS`, deliberately narrower
-   * than a Manager's, see that constant's doc comment).
+   * `addManager` above; same owner-only gate, same smart email resolution,
+   * same two-row (org membership + academy member) grant — only the role
+   * and the granted permission set differ (`ORGANIZATION_INSTRUCTOR_PERMISSIONS`,
+   * deliberately narrower than a Manager's, see that constant's doc comment).
    *
    * This grant does NOT, by itself, connect the instructor to any course
    * — `course_instructors` (a separate table `InstructorService` actually
@@ -914,198 +964,331 @@ export class AcademiesService {
     organizationId: string,
     actingUserId: string,
     payload: AddAcademyInstructorDto,
-  ): Promise<AcademyMemberResponse> {
-    return this.tenancyContextService
-      .runInTenantAndUserContext(organizationId, actingUserId, async (tx) => {
-        const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
-          tx,
-          academyId,
-          actingUserId,
-        );
-        if (!actingMembership || !GRANTS_MANAGER_ROLES.has(actingMembership.role)) {
-          throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
-        }
-
-        const organization = await this.organizationsRepository.findById(
-          tx,
-          organizationId,
-        );
-        if (!organization || organization.ownerUserId !== actingUserId) {
-          throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
-        }
-
-        const targetUser = await this.findOrCreateUserByEmail(
-          payload.email,
-          payload.name,
-          payload.password,
-        );
-        if (!targetUser) {
-          throw new NotFoundException({
-            messageKey: 'errors.academy.managerUserNotFound',
-          });
-        }
-
-        const existingAcademyMembership =
-          await this.academyMembersRepository.findForUserInAcademy(
-            tx,
-            academyId,
-            targetUser.user.id,
-          );
-        if (existingAcademyMembership) {
-          throw new ConflictException({
-            messageKey: 'errors.academy.managerAlreadyMember',
-          });
-        }
-
-        const existingOrgMembership =
-          await this.organizationMembershipsRepository.findForUserInOrganization(
-            tx,
-            organizationId,
-            targetUser.user.id,
-          );
-        if (!existingOrgMembership) {
-          await this.organizationMembershipsRepository.create(tx, {
-            organizationId,
-            userId: targetUser.user.id,
-            role: 'instructor',
-            permissions: ORGANIZATION_INSTRUCTOR_PERMISSIONS,
-            isPrimary: false,
-          });
-        }
-
-        // Phase 2 (Decision 4) — live `instructors` limit check, after
-        // every authorization/conflict check above (a caller who was
-        // never allowed to grant this, or a target who is already a
-        // member, gets that specific error first — a limit rejection
-        // only fires for an otherwise-legitimate grant). The check itself
-        // now lives in `createAcademyMember`, keyed by role, so a future
-        // member path cannot forget it the way the `staff` limit was
-        // forgotten — the ORDERING it depends on is unchanged.
-        const created = await this.createAcademyMember(tx, organizationId, {
-          academyId,
-          userId: targetUser.user.id,
-          role: 'instructor',
-        });
-
-        await this.auditLogWriterService.write(tx, {
-          actorUserId: actingUserId,
-          organizationId,
-          action: 'academy.instructor.added',
-          targetType: 'academy_member',
-          targetId: created.id,
-          targetLabel: targetUser.user.email,
-        });
-
-        return {
-          member: toAcademyMemberResponse({
-            ...created,
-            user: {
-              id: targetUser.user.id,
-              name: targetUser.user.name,
-              email: targetUser.user.email,
-            },
-          }),
-          user: { email: targetUser.user.email },
-          invitedUserId: targetUser.created ? targetUser.user.id : null,
-        };
-      })
-      .then(async (response) => {
-        // Phase 2 — real reactive usage-recompute trigger (an `instructors`
-        // count change), run after the granting transaction has committed.
-        await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
-        // Only a BRAND-NEW account needs onboarding; an existing Atlas
-        // user added to a second academy already has a password.
-        if (response.invitedUserId) {
-          await this.inviteNewMember(
-            response.invitedUserId,
-            academyId,
-            'instructor',
-            response.user.email,
-          );
-        }
-        return response.member;
-      });
+  ): Promise<AcademyMemberAddResponse> {
+    this.warnIgnoredPassword(payload.password);
+    const response = await this.addStaffMember(
+      academyId,
+      organizationId,
+      actingUserId,
+      payload,
+      'instructor',
+    );
+    // Phase 2 — real reactive usage-recompute trigger (an `instructors`
+    // count change), run after the granting transaction has committed.
+    await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
+    return response;
   }
 
   /**
-   * `POST /academies/:id/students` — creates a brand-new Atlas account for
-   * a real test/actual student. Deliberately NOT a Manager/Instructor-style
-   * grant: "student" is never an `academy_members` row in this codebase
-   * (`AcademyMemberRole` has no `student` value) and never an
-   * `organization_memberships` row either — `Enrollment`'s own RLS
-   * policies key only on `student_id = app.current_user_id`, with no
-   * academy/organization predicate at all (confirmed against
-   * `schema.prisma` and the P6 migration). So this method creates ONLY a
-   * `users` row (name + email + password, all required — there is no
-   * existing account to "find" the way Manager/Instructor can, since the
-   * whole point is a fresh test student) and does nothing else; the
-   * returned account then self-discovers and self-enrolls in courses
-   * through the ordinary student flow, exactly like any other Atlas user.
+   * The shared Manager/Instructor add. ONE transaction resolves the email
+   * (`resolveMemberAccount`), creates the organization membership if the
+   * person has none there yet (an existing one — whatever its role — is left
+   * exactly as it is), creates the `academy_members` row (with the Phase 2
+   * entitlement check, after every authorization/conflict check so a caller
+   * who was never allowed, or a target already a member, gets that specific
+   * error first) and writes the audit row. Notification happens after
+   * commit (`notifyMemberAdded`).
+   */
+  private async addStaffMember(
+    academyId: string,
+    organizationId: string,
+    actingUserId: string,
+    payload: { readonly email: string; readonly name?: string },
+    role: 'manager' | 'instructor',
+  ): Promise<AcademyMemberAddResponse> {
+    const result = await this.withAddRaceRetry(
+      role,
+      'errors.academy.managerAlreadyMember',
+      () =>
+        this.tenancyContextService.runInTenantAndUserContext(
+          organizationId,
+          actingUserId,
+          async (tx) => {
+            await this.assertCanAddMember(
+              tx,
+              academyId,
+              organizationId,
+              actingUserId,
+              role,
+            );
+
+            const target = await this.resolveMemberAccount(
+              tx,
+              payload.email,
+              payload.name,
+            );
+            if (!target) {
+              throw new NotFoundException({
+                messageKey: 'errors.academy.managerUserNotFound',
+              });
+            }
+
+            const existingAcademyMembership =
+              await this.academyMembersRepository.findForUserInAcademy(
+                tx,
+                academyId,
+                target.user.id,
+              );
+            if (existingAcademyMembership) {
+              throw new ConflictException({
+                messageKey: 'errors.academy.managerAlreadyMember',
+              });
+            }
+
+            const existingOrgMembership =
+              await this.organizationMembershipsRepository.findForUserInOrganization(
+                tx,
+                organizationId,
+                target.user.id,
+              );
+            if (!existingOrgMembership) {
+              await this.organizationMembershipsRepository.create(tx, {
+                organizationId,
+                userId: target.user.id,
+                role,
+                permissions:
+                  role === 'manager'
+                    ? ORGANIZATION_MANAGER_PERMISSIONS
+                    : ORGANIZATION_INSTRUCTOR_PERMISSIONS,
+                isPrimary: false,
+              });
+            }
+
+            const created = await this.createAcademyMember(tx, organizationId, {
+              academyId,
+              userId: target.user.id,
+              role,
+            });
+
+            await this.auditLogWriterService.write(tx, {
+              actorUserId: actingUserId,
+              organizationId,
+              action:
+                role === 'manager' ? 'academy.manager.added' : 'academy.instructor.added',
+              targetType: 'academy_member',
+              targetId: created.id,
+              targetLabel: target.user.email,
+              context: { account: target.account },
+            });
+
+            return {
+              member: toAcademyMemberResponse({
+                ...created,
+                user: {
+                  id: target.user.id,
+                  name: target.user.name,
+                  email: target.user.email,
+                },
+              }),
+              userId: target.user.id,
+              email: target.user.email,
+              account: target.account,
+              membershipId: created.id,
+            };
+          },
+        ),
+    );
+
+    const outcome = await this.notifyMemberAdded({
+      userId: result.userId,
+      email: result.email,
+      account: result.account,
+      academyId,
+      role,
+      membershipId: result.membershipId,
+    });
+    return { ...result.member, outcome };
+  }
+
+  /**
+   * `POST /academies/:id/students` — adds a learner to this academy.
+   *
+   * A student is never an `academy_members` row and never an
+   * `organization_memberships` row — `Enrollment`'s own RLS policies key
+   * only on `student_id = app.current_user_id`. The learner relationship is
+   * the `academy_students` row (Phase 1, Decision 11), created here with
+   * `source: 'staff_created'` exactly as self-registration creates its own.
+   *
+   * Smart member invitation: the email may belong to an existing Atlas
+   * account (a learner elsewhere, or staff anywhere) — it is then added to
+   * THIS academy as a learner and told so; nothing else about the account
+   * changes. A new email becomes an `invited` account (A2) with a setup
+   * link. `name` is required only for a new account.
    */
   async createStudent(
     academyId: string,
     organizationId: string,
     actingUserId: string,
     payload: CreateAcademyStudentDto,
-  ): Promise<AcademyStudentResponse> {
-    const result = await this.tenancyContextService.runInTenantAndUserContext(
-      organizationId,
-      actingUserId,
-      async (tx) => {
-        const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
-          tx,
-          academyId,
-          actingUserId,
-        );
-        if (!actingMembership || !GRANTS_MANAGER_ROLES.has(actingMembership.role)) {
-          throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
-        }
-
-        const existing = await this.usersRepository.findByEmail(payload.email);
-        if (existing) {
-          throw new ConflictException({
-            messageKey: 'errors.auth.emailAlreadyRegistered',
-          });
-        }
-
-        this.warnIgnoredPassword(payload.password);
-        const created = await this.createInvitedUser(payload.email, payload.name);
-
-        // Phase 1 (Extended Scope, Decision 11, dependency D) — a
-        // Manager/Owner-created student now gets the exact same real
-        // Academy membership self-registration does, closing the gap this
-        // response type's own pre-existing doc comment named explicitly
-        // ("a student is never an `academy_members` row" — true, and now
-        // also no longer true that they have NO academy row at all).
-        // Staff-insert policy (`academy_students_staff_insert`), tenant-
-        // scoped exactly like `academy_members_insert` — the role check
-        // above already gates who may reach this point.
-        await this.academyStudentsRepository.create(tx, {
-          academyId,
-          userId: created.id,
-        });
-
-        await this.auditLogWriterService.write(tx, {
-          actorUserId: actingUserId,
+  ): Promise<AcademyStudentAddResponse> {
+    this.warnIgnoredPassword(payload.password);
+    const result = await this.withAddRaceRetry(
+      'student',
+      'errors.academy.studentAlreadyMember',
+      () =>
+        this.tenancyContextService.runInTenantAndUserContext(
           organizationId,
-          action: 'academy.student.created',
-          targetType: 'user',
-          targetId: created.id,
-          targetLabel: created.email,
-        });
+          actingUserId,
+          async (tx) => {
+            await this.assertCanAddMember(
+              tx,
+              academyId,
+              organizationId,
+              actingUserId,
+              'student',
+            );
 
-        return {
-          response: toAcademyStudentResponse(created, academyId),
-          userId: created.id,
-        };
-      },
+            const target = await this.resolveMemberAccount(
+              tx,
+              payload.email,
+              payload.name,
+            );
+            if (!target) {
+              throw new BadRequestException({
+                messageKey: 'errors.academy.nameRequiredForNewAccount',
+              });
+            }
+
+            const existingLearner =
+              await this.academyStudentsRepository.findForUserInAcademy(
+                tx,
+                academyId,
+                target.user.id,
+              );
+            if (existingLearner) {
+              throw existingLearner.blockedAt
+                ? new ForbiddenException({ messageKey: 'errors.academy.studentBlocked' })
+                : new ConflictException({
+                    messageKey: 'errors.academy.studentAlreadyMember',
+                  });
+            }
+
+            // Staff-insert policy (`academy_students_staff_insert`), tenant-
+            // scoped exactly like `academy_members_insert` — the role check
+            // above already gates who may reach this point.
+            const learner = await this.academyStudentsRepository.create(tx, {
+              academyId,
+              userId: target.user.id,
+              source: 'staff_created',
+            });
+
+            await this.auditLogWriterService.write(tx, {
+              actorUserId: actingUserId,
+              organizationId,
+              action:
+                target.account === 'new'
+                  ? 'academy.student.created'
+                  : 'academy.student.added',
+              targetType: 'user',
+              targetId: target.user.id,
+              targetLabel: target.user.email,
+              context: { account: target.account },
+            });
+
+            return {
+              response: toAcademyStudentResponse(target.user, academyId),
+              userId: target.user.id,
+              email: target.user.email,
+              account: target.account,
+              membershipId: learner.id,
+            };
+          },
+        ),
     );
 
-    // AFTER the transaction: the account exists, so a mail failure is
-    // recoverable. A staff-created learner has no password of their own
-    // until they follow this link.
-    await this.inviteNewMember(result.userId, academyId, 'student', payload.email);
-    return result.response;
+    // AFTER the transaction: the learner row exists, so a mail failure is
+    // recoverable (password recovery reaches the same page).
+    const outcome = await this.notifyMemberAdded({
+      userId: result.userId,
+      email: result.email,
+      account: result.account,
+      academyId,
+      role: 'student',
+      membershipId: result.membershipId,
+    });
+    return { ...result.response, outcome };
+  }
+
+  /**
+   * `GET /academies/:id/member-lookup` — the invitation dialog's debounced
+   * email check. UX only: the add call above re-resolves everything in its
+   * own transaction and never reads this answer.
+   *
+   * Only someone who could perform the matching add may ask (the same
+   * `assertCanAddMember` gate), the answer is scoped to THIS academy, and it
+   * carries nothing but a status and — when an account exists — its display
+   * name. Rate-limited per acting user so an owner account cannot be used to
+   * map a list of emails to names.
+   */
+  async lookupMember(
+    academyId: string,
+    organizationId: string,
+    actingUserId: string,
+    email: string,
+    role: MemberLookupRole,
+  ): Promise<AcademyMemberLookupResponse> {
+    for (const limit of MEMBER_LOOKUP_LIMITS) {
+      const check = await this.authRateLimiter.consume(
+        `member-lookup:${limit.window}:${actingUserId}`,
+        limit.max,
+        limit.windowSeconds,
+      );
+      if (!check.allowed) {
+        recordMemberLookup('rate_limited');
+        throw new HttpException(
+          { messageKey: 'errors.academy.memberLookupRateLimited' },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+
+    try {
+      const answer = await this.tenancyContextService.runInTenantAndUserContext(
+        organizationId,
+        actingUserId,
+        async (tx): Promise<AcademyMemberLookupResponse> => {
+          await this.assertCanAddMember(
+            tx,
+            academyId,
+            organizationId,
+            actingUserId,
+            role,
+          );
+
+          const user = await tx.user.findUnique({
+            where: { email: normalizeEmail(email) },
+            select: { id: true, name: true, status: true },
+          });
+          if (!user) return { status: 'new' };
+          if (user.status === 'suspended' || user.status === 'deleted') {
+            return { status: 'unavailable' };
+          }
+          const alreadyHere =
+            role === 'student'
+              ? await this.academyStudentsRepository.findForUserInAcademy(
+                  tx,
+                  academyId,
+                  user.id,
+                )
+              : await this.academyMembersRepository.findForUserInAcademy(
+                  tx,
+                  academyId,
+                  user.id,
+                );
+          if (alreadyHere) return { status: 'already_member' };
+          return user.status === 'invited'
+            ? { status: 'existing_pending_setup', name: user.name }
+            : { status: 'existing', name: user.name };
+        },
+      );
+      recordMemberLookup(
+        answer.status === 'existing_pending_setup' ? 'pending_setup' : answer.status,
+      );
+      return answer;
+    } catch (error) {
+      if (error instanceof ForbiddenException) recordMemberLookup('denied');
+      throw error;
+    }
   }
 
   async getStats(

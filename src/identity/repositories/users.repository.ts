@@ -5,7 +5,7 @@
  * decide business rules, repositories only talk to Postgres.
  */
 import { Injectable } from '@nestjs/common';
-import type { User, UserAccountStatus } from '@prisma/client';
+import type { Prisma, User, UserAccountStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { normalizeEmail } from '../utils/email.util';
 
@@ -30,16 +30,27 @@ export interface UpdateProfileInput {
 export class UsersRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  findByEmail(email: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { email: normalizeEmail(email) } });
+  /**
+   * `client` lets a caller run the lookup inside its own transaction (the
+   * staff member-add path creates the user and the membership atomically).
+   * `users` has no RLS, so any client sees the same row.
+   */
+  findByEmail(
+    email: string,
+    client: Prisma.TransactionClient = this.prisma,
+  ): Promise<User | null> {
+    return client.user.findUnique({ where: { email: normalizeEmail(email) } });
   }
 
   findById(id: string): Promise<User | null> {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  create(input: CreateUserInput): Promise<User> {
-    return this.prisma.user.create({
+  create(
+    input: CreateUserInput,
+    client: Prisma.TransactionClient = this.prisma,
+  ): Promise<User> {
+    return client.user.create({
       data: {
         email: normalizeEmail(input.email),
         passwordHash: input.passwordHash,

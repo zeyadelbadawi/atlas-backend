@@ -9,10 +9,10 @@ patching it by hand.
 
 ## The exact count
 
-**Atlas has 75 communication events.**
+**Atlas has 77 communication events.**
 
 Not 69. The 69-row matrix in the Communications & Lifecycle master plan was
-correct when it was written; the catalogue has legitimately grown by six
+correct when it was written; the catalogue has legitimately grown by eight
 since:
 
 | Added | Key | Why |
@@ -23,18 +23,20 @@ since:
 | W-EXC | `assessment.exception.activated` | A *scheduled* exception opening is a second, later fact. |
 | W-EXC | `assessment.exception.revoked` | An accommodation withdrawn is news the learner must not discover mid-attempt. |
 | Launch Stabilization A4 | `account.academy.joined` | An existing account was used (with its password) to join another academy through that academy's sign-up; the owner is told, so a join they did not make is visible. |
+| Smart member invitation | `academy.member.added` | An **existing** Atlas account was added to an academy as Manager or Instructor; they already have a password, so they are told where they now have access instead of being sent a setup link. |
+| Smart member invitation | `academy.learner.added` | The same for an existing account added as a Student — academy-branded, because a learner signs in on the academy host. |
 
-Of those 75:
+Of those 77:
 
 | Split | Count |
 |---|---|
-| Sends an email (ever) | 62 |
-| Appears in the in-app feed (ever) | 65 |
-| Both channels | 52 |
+| Sends an email (ever) | 64 |
+| Appears in the in-app feed (ever) | 67 |
+| Both channels | 54 |
 | Email only — never in the feed | 10 |
 | In-app only — never emailed | 13 |
-| Audience: learner / staff / platform | 36 / 32 / 7 |
-| Branding: academy host / platform host | 36 / 39 |
+| Audience: learner / staff / platform | 37 / 33 / 7 |
+| Branding: academy host / platform host | 37 / 40 |
 
 ## How to read a row
 
@@ -69,15 +71,15 @@ where to look to find out how to trigger the event by hand.
 
 ## The matrix
 
-### Learner — 36 events
+### Learner — 37 events
 
 | # | Key | In-app | Email | Email subject (EN) | Link goes to | Emitted by |
 |---|---|---|---|---|---|---|
 | 1 | `course.order.paid` | always | always | Purchase confirmed | `/my/purchases` | `course-commerce/services/platform-course-order-payments.service` |
 | 2 | `course.order.payment_failed` | always | always | Payment failed | `/my/purchases` | `course-commerce/services/platform-course-order-payments.service` |
 | 3 | `course.order.refunded` | always | always | Refund processed | `/my/purchases` | `course-commerce/services/course-order-refunds.service` |
-| 4 | `academy.member.invited` | — | always | You've been added to Northwind Academy on Atlas | `/auth/reset-password?token=TOKEN&setup=1` | `identity/services/account-setup.service` |
-| 5 | `academy.learner.invited` | — | always | You've been added to Northwind Academy on Atlas | `/reset-password?token=TOKEN&setup=1` | `identity/services/account-setup.service` |
+| 4 | `academy.member.invited` | — | always | You've been invited to Northwind Academy on Atlas | `/auth/reset-password?token=TOKEN&setup=1` | `identity/services/account-setup.service` |
+| 5 | `academy.learner.invited` | — | always | You've been invited to Northwind Academy on Atlas | `/reset-password?token=TOKEN&setup=1` | `identity/services/account-setup.service` |
 | 6 | `live_session.scheduled` | always | — | — | `/my/courses/COURSE` | `live-sessions/services/live-session-notifications.service` |
 | 7 | `live_session.rescheduled` | always | — | — | `/my/courses/COURSE` | `live-sessions/services/live-session-notifications.service` |
 | 8 | `live_session.cancelled` | always | — | — | `/my/courses/COURSE` | `live-sessions/controllers/live-sessions.controller<br>live-sessions/services/live-session-notifications.service` |
@@ -109,8 +111,9 @@ where to look to find out how to trigger the event by hand.
 | 34 | `device.limit_reached` | always | — | — | `/my/devices` | `learning/services/lesson-content.service` |
 | 35 | `session.taken_over` | always | — | — | `/my/devices` | `learning/services/learner-session.service<br>media/video/video-gate-revocation.service` |
 | 36 | `announcement.published` | always | — | — | `/my/courses/COURSE` | `community/services/announcements.service` |
+| 37 | `academy.learner.added` | always | always | You've been added to Northwind Academy on Atlas | `/sign-in` | `identity/services/account-setup.service` |
 
-### Staff — 32 events
+### Staff — 33 events
 
 | # | Key | In-app | Email | Email subject (EN) | Link goes to | Emitted by |
 |---|---|---|---|---|---|---|
@@ -146,6 +149,7 @@ where to look to find out how to trigger the event by hand.
 | 30 | `retention.video.warning_7d` | always | always | Final warning: your hosted videos are deleted on  | `/dashboard/tenant/retention` | `retention/services/video-retention.service` |
 | 31 | `retention.video.warning_24h` | always | always | Last call: your hosted videos are deleted tomorrow | `/dashboard/tenant/retention` | `retention/services/video-retention.service` |
 | 32 | `retention.video.deleted` | always | always | Your hosted videos have been deleted | `/dashboard/tenant/retention` | `retention/services/video-retention-deletion.service` |
+| 33 | `academy.member.added` | always | always | You've been added to Northwind Academy on Atlas | `/auth/sign-in` | `identity/services/account-setup.service` |
 
 ### Platform — 7 events
 
@@ -272,8 +276,14 @@ Now the create call is followed by a setup invitation:
    two invitations are separate keys: a learner who set a password on the
    management surface would be refused with a 403 when they tried to use it.
 
-An **existing** Atlas user added to a second academy gets no invitation —
-they already have a password.
+An **existing** Atlas user added to another academy gets no invitation —
+they already have a password. Since the smart member invitation
+(`docs/SMART_MEMBER_INVITE_AND_ACADEMY_JOIN.md`) they get
+`academy.member.added` / `academy.learner.added` instead: "You've been added
+to [Academy]", with an **Open Academy** button to the sign-in page of the
+right host, and nothing about their account (name, password, other
+memberships) changes. An existing account that was invited but never
+finished setup is sent a **fresh** setup invitation.
 
 A **Client Owner** never needs this: there is no code path where somebody
 else creates a Client Owner account. They self-register and choose their own

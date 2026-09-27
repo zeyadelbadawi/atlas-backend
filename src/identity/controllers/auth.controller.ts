@@ -18,6 +18,7 @@ import {
 import type { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import { RegisterDto } from '../dto/register.dto';
+import { AcademyJoinDto } from '../dto/academy-join.dto';
 import { SignInDto } from '../dto/sign-in.dto';
 import { RefreshTokenDto } from '../dto/refresh-token.dto';
 import { PasswordResetRequestDto } from '../dto/password-reset-request.dto';
@@ -34,7 +35,11 @@ import type { AuthContext } from '../guards/jwt-auth.guard';
 import { SignInRateLimitGuard } from '../guards/signin-rate-limit.guard';
 import { PasswordResetRateLimitGuard } from '../guards/password-reset-rate-limit.guard';
 import { RegisterRateLimitGuard } from '../guards/register-rate-limit.guard';
-import type { RegistrationResult, SessionRequestContext } from '../services/auth.service';
+import type {
+  AcademyJoinResult,
+  RegistrationResult,
+  SessionRequestContext,
+} from '../services/auth.service';
 import {
   resolveClientCountry,
   resolveClientIp,
@@ -116,6 +121,23 @@ export class AuthController {
         userAgent: resolveUserAgent(request),
       },
     });
+  }
+
+  /**
+   * Smart academy signup — an existing Atlas account joins this academy as
+   * a learner, proven by its own password. Metered and answered exactly
+   * like `sign-in` (same guard, same generic 401), so it is not an
+   * account-existence oracle. Establishes no session: the caller signs in
+   * next, under the academy's emailed-code and trusted-device rules.
+   */
+  @Post('academy-join')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(SignInRateLimitGuard)
+  async academyJoin(
+    @Body() dto: AcademyJoinDto,
+    @Req() request: Request,
+  ): Promise<AcademyJoinResult> {
+    return this.authService.joinAcademy({ ...dto, hostname: request.hostname });
   }
 
   @Post('sign-in')

@@ -463,7 +463,7 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
       const learner = await learnerAt(a, 'a4-learner');
 
       const joined = await registerAt(b, learner.email).expect(201);
-      expect(joined.body).toEqual({ account: 'existing' });
+      expect(joined.body).toEqual({ account: 'existing', status: 'active' });
 
       expect(await admin.user.count({ where: { email: learner.email } })).toBe(1);
       const rows = await admin.academyStudent.findMany({
@@ -525,7 +525,7 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
           select: { organizationId: true, role: true },
         });
         const res = await registerAt(b, person.email).expect(201);
-        expect(res.body).toEqual({ account: 'existing' });
+        expect(res.body).toEqual({ account: 'existing', status: 'active' });
         const after = await admin.organizationMembership.findMany({
           where: { userId: person.userId },
           select: { organizationId: true, role: true },

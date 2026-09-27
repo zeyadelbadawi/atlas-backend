@@ -519,6 +519,47 @@ const CATALOG = {
     // sign-in on (403 by surface enforcement, which is correct).
     actionUrl: ({ values }) => `/reset-password?token=${str(values, 'token')}&setup=1`,
   },
+  // Smart member invitation — an EXISTING, active Atlas account was added
+  // to an academy by its owner. Nothing to set up (the account already has
+  // a password); the message says where the person now has access and to
+  // sign in with the credentials they already use. One notice per
+  // membership row: a double submit cannot create a second row (unique
+  // constraint), and re-adding after a removal is a new row, so a new
+  // notice. The same host split as the invitation pair above.
+  'academy.member.added': {
+    category: 'transactional',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'account',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `academy_member_added:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    // Staff sign in on the MANAGEMENT host.
+    branding: 'platform',
+    template: 'academy.member.added',
+    titleKey: 'notifications:events.academyMemberAdded.title',
+    messageKey: 'notifications:events.academyMemberAdded.message',
+    actionUrl: () => '/auth/sign-in',
+  },
+  'academy.learner.added': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'account',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `academy_learner_added:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    // A learner signs in on the ACADEMY website.
+    branding: 'academy',
+    template: 'academy.member.added',
+    titleKey: 'notifications:events.academyLearnerAdded.title',
+    messageKey: 'notifications:events.academyLearnerAdded.message',
+    actionUrl: () => '/sign-in',
+  },
   'auth.email.otp': {
     category: 'security',
     audience: 'platform',
