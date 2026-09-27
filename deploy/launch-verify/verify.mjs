@@ -570,9 +570,11 @@ function memberEmails() {
   // bounces whatever we send), so it is judged over the correctly named
   // emails in the window, and a newest one that did not arrive is reported
   // with the provider's reason rather than hidden.
-  const delivered = rows.filter((r) => r.match === 't' && /delivered/.test(byId[r.messageId]?.msg?.join('|') ?? ''));
+  // Delivered per Brevo's event log, or per the delivery row (which Brevo's
+  // delivery webhook updates) when the log lookup comes back empty.
+  const delivered = rows.filter((r) => r.match === 't' && (/delivered/.test(byId[r.messageId]?.msg?.join('|') ?? '') || r.status === 'delivered'));
   if (!/delivered/.test(b?.msg?.join('|') ?? '')) info(`newest member email not delivered yet: ${b?.msg?.slice(1).join(' ') ?? 'no Brevo record'}${b?.reason ? ` — ${b.reason.join('|')}` : ''}`);
-  check('member email: Brevo delivered a correctly named member email', delivered.length > 0, delivered.map((r) => `${r.id} ${r.createdAt}`).join(', ') || 'none delivered');
+  check('member email: Brevo delivered a correctly named member email', delivered.length > 0, delivered.map((r) => `${r.id} ${r.createdAt} (row=${r.status})`).join(', ') || 'none delivered');
 }
 
 try {

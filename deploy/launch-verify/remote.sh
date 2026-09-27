@@ -164,7 +164,9 @@ const redact = (s) => String(s || "")
     const list = (await get("/smtp/emails?limit=5&messageId=" + encodeURIComponent(id))).json || {};
     const t = (list.transactionalEmails || [])[0];
     if (!t) { console.log("brevo_msg_" + n + "|" + id + "|not found in Brevo logs"); continue; }
-    const one = (await get("/smtp/emails/" + encodeURIComponent(t.uuid))).json || {};
+    const detail = await get("/smtp/emails/" + encodeURIComponent(t.uuid));
+    const one = detail.json || {};
+    if (detail.status !== 200) console.log("brevo_note|message " + n + " detail answered HTTP " + detail.status);
     const events = (one.events || []).map((e) => e.name).join(",") || "-";
     console.log("brevo_msg_" + n + "|" + id + "|date=" + (one.date || t.date) + "|events=" + events + "|tags=" + (t.tags || []).join(","));
     const evs = ((await get("/smtp/statistics/events?days=7&limit=20&messageId=" + encodeURIComponent(id))).json || {}).events || [];
