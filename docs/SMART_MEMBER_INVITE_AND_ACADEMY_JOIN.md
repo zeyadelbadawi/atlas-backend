@@ -261,43 +261,73 @@ the production subject.
 
 ### Gmail placed the invitation in Spam
 
-Evidence (Launch verify `scope=deliverability`, 27 Sep, read-only):
+**Authoritative evidence: the received message** (Gmail *Show original*,
+27 Sep 12:52 UTC, the "added" notice with the empty academy name).
 
-| Layer | Finding |
-|---|---|
-| Brevo domain `atlass.dpdns.org` | verified **and** authenticated |
-| SPF | `v=spf1 include:spf.brevo.com ~all` (single record) |
-| DKIM | `brevo1` / `brevo2` CNAME → Brevo keys, both published |
-| DMARC | `v=DMARC1; p=none; rua=mailto:rua@dmarc.brevo.com` |
-| Sender | `no-reply@atlass.dpdns.org`, active, **shared** Brevo IPs, **Free** plan |
-| Organizational domain | `dpdns.org` **is on the Public Suffix List** → `atlass.dpdns.org` is its own organizational domain, with no sending history of its own |
-| MX on the sending domain | none; `EMAIL_REPLY_TO` not set |
-| 7-day Brevo aggregate | 112 requests, 79 delivered, 3 hard bounces, 29 soft bounces, 1 blocked, 0 spam reports |
+| Header | Value | Meaning |
+|---|---|---|
+| `Authentication-Results` | `dkim=pass header.i=@atlass.dpdns.org header.s=brevo2` | Signed by our own domain (Brevo selector 2) |
+| | `spf=pass … smtp.mailfrom=bounces-…@gz.d.sender-sib.com` (77.32.148.26) | SPF passes for **Brevo's** bounce domain (not aligned with From — expected) |
+| | `dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=atlass.dpdns.org` | DMARC passes through the **aligned DKIM** signature |
+| `Received` | from `gz.d.sender-sib.com [77.32.148.26]`, TLS 1.3 | Brevo relay IP |
+| `Feedback-ID` | `77.32.148.26:12256708_-1:12256708:Sendinblue` | Brevo account/IP feedback loop id |
+| `X-CSA-Complaints` | `csa-complaints@eco.de` | Brevo relay participates in the CSA certification complaint loop |
+| `List-Unsubscribe` + `List-Unsubscribe-Post: One-Click` | Brevo URL on `…r.bh.d.sendibt3.com` | Added by **Brevo**, not by our dispatcher |
+| `From` | `"Atlas" <no-reply@atlass.dpdns.org>` | — |
+| `Reply-To` | absent | see below |
+| `Subject` / body | `You've been added to  on Atlas`; `You now have access to  as Manager.` | the empty academy name (fixed in this change) |
+| Links in the HTML | the "Open Academy" button and "Manage email settings" both rewritten to `https://bccfghai.r.bh.d.sendibt3.com/tr/cl/…`; a hidden open-tracking pixel on the same host | Brevo transactional click/open tracking; the plain-text part keeps the direct `atlass.dpdns.org` URLs |
+| `Delivered-To` | a Google Workspace mailbox on the recipient organization's own domain | Gmail filtering, plus any Workspace-admin spam settings of that organization |
 
-Conclusions, kept apart by who can act on them:
+**What this proves and what it does not**
 
-1. **Application (fixed here):** the broken subject/body ("added to  on
-   Atlas") — an incoherent, templated-looking message is itself a content
-   signal. Plain-text alternative, single first-party CTA and footer were
-   already present.
-2. **Brevo / configuration (owner action):** set `EMAIL_REPLY_TO` to a
-   monitored mailbox; review Brevo transactional link/open tracking (tracked
-   links point at a Brevo domain, not the From domain); reduce bounces
-   (≈26 % soft bounces in 7 days) — investigate the soft-bounce recipients
-   in the Brevo log.
-3. **DNS / domain (owner decision):** the sending domain is a free
-   public-suffix subdomain with no history; Gmail's "similar to messages that
-   were identified as spam" is a reputation/content-similarity verdict that
-   authentication alone does not override. A dedicated, owned domain (or at
-   least a long-lived one), gradual warm-up, and Google Postmaster Tools for
-   that domain are the durable remedies. DMARC `p=none` is acceptable while
-   monitoring; move to `quarantine` once aggregate reports are clean.
-4. **Outside the application's control:** Gmail's per-recipient spam model
-   and Brevo's shared-IP reputation. Inbox placement cannot be guaranteed.
+- **Authentication is not the cause.** SPF, DKIM and DMARC all passed, and
+  DMARC aligned on our own domain through DKIM. Nothing to fix in DNS for
+  this message.
+- **Gmail does not state its reason.** The message carries no spam-verdict
+  header; the only reason given is the UI's "similar to messages that were
+  identified as spam in the past", which is Gmail's content/reputation
+  similarity classification. Any cause below is a contributing factor
+  supported by the evidence, not a proven verdict.
 
-What is not known yet, and how to get it: the Gmail `Authentication-Results`
-header of the received message (Gmail → ⋮ → *Show original*) states whether
-SPF, DKIM and DMARC passed and aligned for that exact message.
+**Contributing factors, by who can act on them**
+
+1. **Application — fixed here.** The message was visibly broken: a subject
+   and body with the academy name missing ("added to  on Atlas", "access to
+    as Manager"), leaving a very short, generic, templated-looking message
+   that names nothing specific except "Atlas". That is a content-quality
+   signal we control.
+2. **Brevo configuration — owner review.** Every HTML link and the open
+   pixel are rewritten to Brevo's shared tracking host (`sendibt3.com`), so
+   the message's links do not point at the sending domain, and they share
+   that host's reputation with Brevo's other senders. Brevo documents
+   tracking settings at the account level (*Settings → Automations →
+   Transactional emails → Tracking*); we found no documented per-message API
+   switch, so this is an account decision, not an application change.
+   Brevo also injects the `List-Unsubscribe` pair on this transactional
+   notice; that is standard and not harmful by itself.
+3. **Domain / reputation — owner decision.** `dpdns.org` is on the Public
+   Suffix List, so `atlass.dpdns.org` is its own organizational domain with
+   almost no sending history, sending from Brevo's shared Free-plan pool.
+   Gmail weighs domain and IP reputation heavily for new senders. Brevo's
+   7-day numbers (112 requests, 29 soft bounces, 3 hard bounces) point the
+   same way: fix bounce sources, build volume gradually, and monitor the
+   domain in Google Postmaster Tools. A long-lived owned domain is the
+   durable remedy. DMARC `p=none` passed and does not lower placement.
+4. **Outside our control.** Gmail's per-recipient model, the recipient
+   organization's Workspace policies, and Brevo's shared-IP reputation.
+   Inbox placement cannot be guaranteed.
+
+**Reply-To.** Absent, and the sending domain has no MX, so a reply to
+`no-reply@atlass.dpdns.org` cannot be received. There is no evidence in this
+message that its absence contributed to the Spam placement, and Gmail does
+not require one — it is a product/support concern (replies go nowhere), not
+a demonstrated spam cause. Setting `EMAIL_REPLY_TO` to a monitored mailbox is
+still recommended.
+
+**Diagnostics.** `Launch verify` with `scope=deliverability` (read-only)
+re-checks the domain's SPF / DKIM / DMARC, the Public Suffix List status, the
+Brevo domain, sender and plan, and 7-day Brevo aggregates at any time.
 
 ## 7. Deliberately unchanged
 
