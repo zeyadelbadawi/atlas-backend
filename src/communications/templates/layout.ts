@@ -59,7 +59,10 @@ export function escapeHtml(value: string): string {
 /** Reads a string-ish value; never renders `undefined`. */
 export function str(values: TemplateValues, key: string, fallback = ''): string {
   const value = values[key];
-  if (typeof value === 'string') return value;
+  // A blank string is a MISSING value, not content: rendering it would put
+  // a hole in the sentence ("You've been added to  on Atlas") instead of
+  // the fallback the template chose for exactly that case.
+  if (typeof value === 'string') return value.trim() === '' ? fallback : value;
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return fallback;
 }

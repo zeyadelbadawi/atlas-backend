@@ -24,7 +24,6 @@ import type { AcademyMember, AcademyMemberRole } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { AccountSetupService } from '../../identity/services/account-setup.service';
-import type { AcademyMemberInviteRole } from '../../identity/services/account-setup.service';
 import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
@@ -343,7 +342,7 @@ export class AcademiesService {
     organizationId: string,
     actingUserId: string,
     role: MemberAddRole,
-  ): Promise<void> {
+  ): Promise<{ readonly academyName: string }> {
     const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
       tx,
       academyId,
@@ -352,11 +351,28 @@ export class AcademiesService {
     if (!actingMembership || !GRANTS_MANAGER_ROLES.has(actingMembership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
     }
-    if (role === 'student') return;
-    const organization = await this.organizationsRepository.findById(tx, organizationId);
-    if (!organization || organization.ownerUserId !== actingUserId) {
-      throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+    if (role !== 'student') {
+      const organization = await this.organizationsRepository.findById(
+        tx,
+        organizationId,
+      );
+      if (!organization || organization.ownerUserId !== actingUserId) {
+        throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+      }
     }
+    // The academy's name, read HERE — inside the caller's tenant context,
+    // where `academies` RLS lets it be seen. It is the authoritative value
+    // every "invited"/"added" email names; reading it later without a
+    // context returns nothing (FORCE RLS), which is how those emails once
+    // said "You've been added to  on Atlas".
+    const academy = await tx.academy.findUnique({
+      where: { id: academyId },
+      select: { name: true },
+    });
+    if (!academy?.name) {
+      throw new NotFoundException({ messageKey: 'errors.academy.notFound' });
+    }
+    return { academyName: academy.name };
   }
 
   /**
@@ -370,24 +386,29 @@ export class AcademiesService {
     readonly email: string;
     readonly account: MemberAddAccount;
     readonly academyId: string;
+    /** From `assertCanAddMember`, read inside the add's own transaction. */
+    readonly academyName: string;
     readonly role: MemberAddRole;
     readonly membershipId: string;
   }): Promise<MemberAddOutcome> {
     recordMemberAdd(input.role, input.account);
     if (input.account === 'existing') {
-      const academy = await this.tenancyContextService.runWithoutContext((tx) =>
-        tx.academy.findUnique({ where: { id: input.academyId }, select: { name: true } }),
-      );
       await this.accountSetupService.sendAddedNotice({
         userId: input.userId,
         academyId: input.academyId,
-        academyName: academy?.name ?? '',
+        academyName: input.academyName,
         role: input.role,
         membershipId: input.membershipId,
       });
       return 'added';
     }
-    await this.inviteNewMember(input.userId, input.academyId, input.role, input.email);
+    await this.accountSetupService.sendInvite({
+      userId: input.userId,
+      academyId: input.academyId,
+      academyName: input.academyName,
+      role: input.role,
+      email: input.email,
+    });
     return input.account === 'new' ? 'invited' : 'reinvited';
   }
 
@@ -421,31 +442,6 @@ export class AcademiesService {
         'A staff-supplied password was ignored: invited accounts set their own password through the emailed setup link.',
       );
     }
-  }
-
-  /**
-   * The onboarding email for an account somebody else just created.
-   *
-   * Best-effort and AFTER the creating transaction: a transient mail
-   * failure must not stop an owner adding a member, and the person can
-   * always recover with "forgot password" because the account exists.
-   */
-  private async inviteNewMember(
-    userId: string,
-    academyId: string,
-    role: AcademyMemberInviteRole,
-    email: string,
-  ): Promise<void> {
-    const academy = await this.tenancyContextService.runWithoutContext((tx) =>
-      tx.academy.findUnique({ where: { id: academyId }, select: { name: true } }),
-    );
-    await this.accountSetupService.sendInvite({
-      userId,
-      academyId,
-      academyName: academy?.name ?? '',
-      role,
-      email,
-    });
   }
 
   async list(query: ListAcademiesQueryDto): Promise<PaginatedResult<AcademyResponse>> {
@@ -1004,7 +1000,7 @@ export class AcademiesService {
           organizationId,
           actingUserId,
           async (tx) => {
-            await this.assertCanAddMember(
+            const { academyName } = await this.assertCanAddMember(
               tx,
               academyId,
               organizationId,
@@ -1084,6 +1080,7 @@ export class AcademiesService {
               email: target.user.email,
               account: target.account,
               membershipId: created.id,
+              academyName,
             };
           },
         ),
@@ -1094,6 +1091,7 @@ export class AcademiesService {
       email: result.email,
       account: result.account,
       academyId,
+      academyName: result.academyName,
       role,
       membershipId: result.membershipId,
     });
@@ -1130,7 +1128,7 @@ export class AcademiesService {
           organizationId,
           actingUserId,
           async (tx) => {
-            await this.assertCanAddMember(
+            const { academyName } = await this.assertCanAddMember(
               tx,
               academyId,
               organizationId,
@@ -1191,6 +1189,7 @@ export class AcademiesService {
               email: target.user.email,
               account: target.account,
               membershipId: learner.id,
+              academyName,
             };
           },
         ),
@@ -1203,6 +1202,7 @@ export class AcademiesService {
       email: result.email,
       account: result.account,
       academyId,
+      academyName: result.academyName,
       role: 'student',
       membershipId: result.membershipId,
     });

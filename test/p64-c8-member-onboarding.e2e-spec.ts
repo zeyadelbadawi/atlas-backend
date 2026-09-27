@@ -175,13 +175,23 @@ describe('P64 C8 — academy member onboarding (e2e)', () => {
       const token = await waitForSetupToken(email);
       expect(token).toBeTruthy();
 
-      // 2. It never shows the token, and never a password.
+      // 2. It names the academy the person was invited to — in the subject
+      //    and the body — and never leaves a hole where the name belongs.
       const visible = visibleNonUrlText(email);
+      const academy = await admin.academy.findUniqueOrThrow({ where: { id: academyId } });
+      const sent = stub
+        .recordedSends()
+        .filter((x) => x.to.toLowerCase() === email.toLowerCase());
+      expect(sent[sent.length - 1].subject).toContain(academy.name);
+      expect(visible).toContain(academy.name);
+      expect(visible).not.toMatch(/to\s+on Atlas/);
+
+      // 3. It never shows the token, and never a password.
       expect(visible).not.toContain(token);
       expect(visible).not.toContain(PASSWORD);
       expect(visible.toLowerCase()).not.toContain('token');
 
-      // 3. THE PROOF: the link actually works. A setup link that arrives
+      // 4. THE PROOF: the link actually works. A setup link that arrives
       //    and cannot set a password is the same failure as no link.
       const chosen = 'a-password-i-chose-myself';
       await request(app.getHttpServer())
@@ -245,6 +255,23 @@ describe('P64 C8 — academy member onboarding (e2e)', () => {
         where: { key: 'academy.member.invited', recipientUserId: existing.userId },
       }),
     ).toBe(0);
+
+    // The email actually sent — the case production got wrong ("You've been
+    // added to  on Atlas") — names the academy in its subject and body.
+    const academy = await admin.academy.findUniqueOrThrow({ where: { id: academyId } });
+    let notice: ReturnType<typeof stub.recordedSends>[number] | undefined;
+    for (let attempt = 0; attempt < 80 && !notice; attempt += 1) {
+      notice = stub
+        .recordedSends()
+        .find(
+          (x) =>
+            x.to.toLowerCase() === existing.email.toLowerCase() &&
+            x.subject.startsWith("You've been added"),
+        );
+      if (!notice) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(notice?.subject).toBe(`You've been added to ${academy.name} on Atlas`);
+    expect(notice?.text).toContain(`You now have access to ${academy.name} as Manager.`);
 
     const user = await admin.user.findUniqueOrThrow({ where: { id: existing.userId } });
     expect(user.name).toBe('c8-existing');

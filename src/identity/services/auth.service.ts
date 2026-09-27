@@ -98,6 +98,22 @@ export interface RegistrationResult {
   readonly status?: 'active' | 'pending';
 }
 
+/**
+ * `GET /auth/academy-join/summary` — the account's OTHER academies, named
+ * only to a fully signed-in session on the academy it just joined.
+ */
+export interface AcademyJoinSummary {
+  readonly otherAcademies: readonly string[];
+}
+
+/**
+ * How long after an existing account joined an academy its academy-website
+ * session may ask which other academies the account already belongs to.
+ * The question only makes sense as part of that join; afterwards the
+ * academy session is told about its own academy only (A5).
+ */
+const JOIN_SUMMARY_WINDOW_MS = 30 * 60 * 1000;
+
 /** `POST /auth/academy-join` — returned only after the password is proven. */
 export interface AcademyJoinResult {
   readonly account: 'existing';
@@ -704,6 +720,57 @@ export class AuthService {
       );
       throw error;
     }
+  }
+
+  /** The academy the request host resolves to (null on the management host). */
+  hostAcademyId(hostname: string | undefined): Promise<string | null> {
+    return this.academySurfaceService.resolveHostAcademyId(hostname);
+  }
+
+  /**
+   * Smart academy signup — after an existing Atlas account has joined this
+   * academy AND signed in here (its own password, then this academy's
+   * emailed code), the page explains "you already use Atlas with <other
+   * academy>". Naming another tenant is a disclosure, so it is gated at the
+   * sign-in bar, not the password alone: an academy-website session for THIS
+   * host's academy, whose learner row here was created moments ago. Anything
+   * else — a management session, another academy's session, an old
+   * membership — gets an empty list, never another academy's name. (An
+   * academy session presented on ANOTHER academy's host is refused before
+   * this, by the controller's A1 check.)
+   */
+  async academyJoinSummary(
+    auth: {
+      readonly userId: string;
+      readonly surface: string | null;
+      readonly academyId: string | null;
+    },
+    hostAcademyId: string | null,
+  ): Promise<AcademyJoinSummary> {
+    if (
+      !hostAcademyId ||
+      auth.surface !== 'academy' ||
+      auth.academyId !== hostAcademyId
+    ) {
+      return { otherAcademies: [] };
+    }
+    const here = await this.tenancyContextService.runInUserContext(auth.userId, (tx) =>
+      this.academyStudentsRepository.findForUserInAcademy(tx, hostAcademyId, auth.userId),
+    );
+    if (!here || Date.now() - here.joinedAt.getTime() > JOIN_SUMMARY_WINDOW_MS) {
+      return { otherAcademies: [] };
+    }
+    const academies = await this.principalResolver.resolveLearnerAcademies(auth.userId);
+    return {
+      otherAcademies: academies
+        .filter(
+          (a) =>
+            a.academyId !== hostAcademyId &&
+            !a.blocked &&
+            a.membershipStatus === 'active',
+        )
+        .map((a) => a.name),
+    };
   }
 
   /**

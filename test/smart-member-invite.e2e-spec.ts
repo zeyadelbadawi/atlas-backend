@@ -179,6 +179,23 @@ describe('Smart member invitation + academy join (e2e)', () => {
       .send({ email, password, academyId });
   }
 
+  /**
+   * The values an email was emitted with. The academy name must be the
+   * academy's own, never blank — production once rendered "You've been
+   * added to  on Atlas" because it was read outside any tenant context.
+   */
+  async function outboxAcademyName(userId: string, key: string): Promise<unknown> {
+    const row = await admin.communicationOutbox.findFirstOrThrow({
+      where: { recipientUserId: userId, key },
+      orderBy: { createdAt: 'desc' },
+    });
+    return (row.values as Record<string, unknown> | null)?.academyName;
+  }
+
+  async function academyName(id: string): Promise<string> {
+    return (await admin.academy.findUniqueOrThrow({ where: { id } })).name;
+  }
+
   async function outboxCount(userId: string, key: string): Promise<number> {
     return admin.communicationOutbox.count({ where: { recipientUserId: userId, key } });
   }
@@ -351,6 +368,9 @@ describe('Smart member invitation + academy join (e2e)', () => {
       ).toBe(1);
       expect(await outboxCount(user.id, 'academy.member.invited')).toBe(1);
       expect(await outboxCount(user.id, 'academy.member.added')).toBe(0);
+      expect(await outboxAcademyName(user.id, 'academy.member.invited')).toBe(
+        await academyName(a.id),
+      );
     });
 
     it('SMI-ADD-02 — an existing account keeps its name, password and memberships; only this academy is added', async () => {
@@ -383,6 +403,9 @@ describe('Smart member invitation + academy join (e2e)', () => {
       ).toBe(1);
       expect(await outboxCount(person.userId, 'academy.member.added')).toBe(1);
       expect(await outboxCount(person.userId, 'academy.member.invited')).toBe(0);
+      expect(await outboxAcademyName(person.userId, 'academy.member.added')).toBe(
+        await academyName(a.id),
+      );
       // Still signs in with the password they chose.
       await http()
         .post('/auth/sign-in')
@@ -403,6 +426,9 @@ describe('Smart member invitation + academy join (e2e)', () => {
       });
       expect(row.source).toBe('staff_created');
       expect(await outboxCount(staff.userId, 'academy.learner.added')).toBe(1);
+      expect(await outboxAcademyName(staff.userId, 'academy.learner.added')).toBe(
+        await academyName(a.id),
+      );
       expect(await outboxCount(staff.userId, 'academy.learner.invited')).toBe(0);
 
       const again = await add(a, owner.token, 'student', { email: staff.email });
@@ -427,6 +453,10 @@ describe('Smart member invitation + academy join (e2e)', () => {
       expect(after).toMatchObject({ id: user.id, name: 'First Name', status: 'invited' });
       expect(await admin.user.count({ where: { email } })).toBe(1);
       expect(await outboxCount(user.id, 'academy.learner.invited')).toBe(1);
+      // The reinvite names the academy that just added them (B), not A.
+      expect(await outboxAcademyName(user.id, 'academy.learner.invited')).toBe(
+        await academyName(b.id),
+      );
     });
 
     it('SMI-ADD-05 — a new learner needs a name; a suspended account cannot be added', async () => {
@@ -680,6 +710,142 @@ describe('Smart member invitation + academy join (e2e)', () => {
       });
       expect(wrong.status).toBe(409);
       expect(wrong.body.error.messageKey).toBe('errors.auth.emailAlreadyRegistered');
+    });
+
+    /** Existing account signs in on `a` with the emailed code: returns the access token. */
+    async function academySignIn(a: Academy, email: string): Promise<string> {
+      const open = await http()
+        .post('/auth/sign-in')
+        .set('Host', a.host)
+        .send({ email, password: PASSWORD, surface: 'academy', academyId: a.id })
+        .expect(200);
+      if (open.body.accessToken) return open.body.accessToken as string;
+      const user = await admin.user.findUniqueOrThrow({ where: { email } });
+      const session = await http()
+        .post('/auth/otp/verify')
+        .set('Host', a.host)
+        .send({
+          challengeId: open.body.challengeId,
+          code: await latestCode(user.id),
+          rememberDevice: false,
+          surface: 'academy',
+        })
+        .expect(200);
+      return session.body.accessToken as string;
+    }
+
+    function summaryAt(a: Academy, token: string) {
+      return http()
+        .get('/auth/academy-join/summary')
+        .set('Host', a.host)
+        .set(bearer(token));
+    }
+
+    it('SMI-JOIN-07 — other academies are named only to a signed-in session on the academy just joined', async () => {
+      const { academy: a } = await freshAcademy('sum-a');
+      const { academy: b } = await freshAcademy('sum-b');
+      const { academy: c } = await freshAcademy('sum-c');
+      const person = await learnerAt(a, 'sum-person', 'Multi Learner');
+      await joinAt(b, person.email).expect(200);
+
+      // Before sign-in: nothing.
+      await http().get('/auth/academy-join/summary').set('Host', c.host).expect(401);
+
+      // Joining C, then signing in on C: A and B are named — nothing about C
+      // itself, nothing an unrelated academy would learn.
+      await joinAt(c, person.email).expect(200);
+      const cToken = await academySignIn(c, person.email);
+      const summary = await summaryAt(c, cToken).expect(200);
+      expect([...summary.body.otherAcademies].sort()).toEqual(
+        [await academyName(a.id), await academyName(b.id)].sort(),
+      );
+      expect(JSON.stringify(summary.body)).not.toContain(a.id);
+
+      // The same session on another academy's host: refused (A1) — never a list.
+      const cross = await summaryAt(a, cToken);
+      expect(cross.status).toBe(403);
+      expect(cross.body.error.messageKey).toBe('errors.auth.academyHostMismatch');
+
+      // A management session of the same person: nothing.
+      const mgmt = await http()
+        .post('/auth/sign-in')
+        .send({ email: person.email, password: PASSWORD })
+        .expect((res) => expect([200, 403]).toContain(res.status));
+      if (mgmt.body.accessToken) {
+        expect((await summaryAt(c, mgmt.body.accessToken).expect(200)).body).toEqual({
+          otherAcademies: [],
+        });
+      }
+
+      // Long after the join: nothing (A5 — an academy session is told about
+      // its own academy only).
+      await admin.academyStudent.updateMany({
+        where: { userId: person.userId, academyId: c.id },
+        data: { joinedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+      });
+      expect((await summaryAt(c, cToken).expect(200)).body).toEqual({
+        otherAcademies: [],
+      });
+    });
+
+    it('SMI-JOIN-08 — a staff account joins as a learner; blocked or pending academies are not named', async () => {
+      const { owner: staff, academy: a } = await freshAcademy('sum-staff');
+      const { academy: b } = await freshAcademy('sum-staff-b');
+      const { academy: blockedAt } = await freshAcademy('sum-staff-blocked');
+      await registerAt(blockedAt, staff.email).expect(201);
+      await admin.academyStudent.updateMany({
+        where: { userId: staff.userId, academyId: blockedAt.id },
+        data: { blockedAt: new Date() },
+      });
+
+      const joined = await joinAt(b, staff.email).expect(200);
+      expect(joined.body).toMatchObject({ account: 'existing', status: 'active' });
+      const orgsBefore = await admin.organizationMembership.count({
+        where: { userId: staff.userId },
+      });
+
+      const token = await academySignIn(b, staff.email);
+      const summary = await summaryAt(b, token).expect(200);
+      // Staff of A, never a learner there; a learner of a blocked academy.
+      expect(summary.body.otherAcademies).toEqual([]);
+      expect(summary.body.otherAcademies).not.toContain(await academyName(a.id));
+      expect(summary.body.otherAcademies).not.toContain(await academyName(blockedAt.id));
+      expect(
+        await admin.organizationMembership.count({ where: { userId: staff.userId } }),
+      ).toBe(orgsBefore);
+    });
+
+    it('SMI-JOIN-09 — suspended and deleted accounts: nothing is disclosed before the password, nothing joined', async () => {
+      const { academy: a } = await freshAcademy('state-a');
+      const { academy: other } = await freshAcademy('state-other');
+      const suspended = await learnerAt(other, 'state-suspended', 'Suspended Person');
+      const deleted = await learnerAt(other, 'state-deleted', 'Deleted Person');
+      await admin.user.update({
+        where: { id: suspended.userId },
+        data: { status: 'suspended' },
+      });
+      await admin.user.update({
+        where: { id: deleted.userId },
+        data: { status: 'deleted' },
+      });
+
+      const wrongSuspended = await joinAt(a, suspended.email, 'not-the-password');
+      expect(wrongSuspended.status).toBe(401);
+      expect(wrongSuspended.body.error.messageKey).toBe('errors.auth.invalidCredentials');
+
+      const rightSuspended = await joinAt(a, suspended.email);
+      expect(rightSuspended.status).toBe(403);
+      expect(rightSuspended.body.error.messageKey).toBe('errors.auth.accountSuspended');
+
+      const deletedJoin = await joinAt(a, deleted.email);
+      expect(deletedJoin.status).toBe(401);
+      expect(deletedJoin.body.error.messageKey).toBe('errors.auth.invalidCredentials');
+
+      for (const id of [suspended.userId, deleted.userId]) {
+        expect(
+          await admin.academyStudent.count({ where: { userId: id, academyId: a.id } }),
+        ).toBe(0);
+      }
     });
   });
 });

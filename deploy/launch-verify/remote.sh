@@ -5,10 +5,11 @@
 # like deploy/onboarding-browser/remote.sh.
 #
 #   remote.sh release                 -> migration/column/legacy-trust facts, backend health, error-log counts
-#   remote.sh academies               -> two open academies with a published website: "academy|<id>|<host>"
+#   remote.sh academies               -> two open academies with a published website: "academy|<id>|<host>|<name>"
 #   remote.sh otp <email>             -> the latest sign-in code for THAT account only (consumed by the runner, never logged)
 #   remote.sh user <email> <A> <B>    -> non-personal facts about that test account
 #   remote.sh metrics                 -> the Plan A security + smart-join series (values only)
+#   remote.sh mail                    -> email deliverability facts: sender, Brevo domain/sender/plan, 7-day aggregates
 #
 # Nothing here writes to the database. Every per-account read is keyed by a
 # test address the verification itself registered.
@@ -50,7 +51,7 @@ case "$cmd" in
   academies)
     # Two academies in DIFFERENT organizations, open registration, published
     # website, an assigned subdomain, an organization with a live subscription.
-    sql "select 'academy', a.id, coalesce(s.full_host, s.subdomain || '.' || (select base_domain from platform_domain_configuration where configured limit 1))
+    sql "select 'academy', a.id, coalesce(s.full_host, s.subdomain || '.' || (select base_domain from platform_domain_configuration where configured limit 1)), replace(a.name, '|', ' ')
          from academies a
          join subdomain_allocations s on s.academy_id=a.id and s.status='assigned'
          join website_configurations w on w.academy_id=a.id and w.status='published'
@@ -90,8 +91,42 @@ case "$cmd" in
     echo "academy_join|$(q 'sum%20by%20(result)%20(atlas_academy_join_total)')"
     echo "member_lookup|$(q 'sum%20by%20(result)%20(atlas_member_lookup_total)')"
     ;;
+  mail)
+    # Email deliverability facts (read-only). Prints the platform sender and
+    # aggregate numbers only — never a recipient address, a key or content.
+    echo "provider_chain|$(env_value EMAIL_PROVIDERS || true) (legacy EMAIL_PROVIDER=$(env_value EMAIL_PROVIDER))"
+    echo "from|$(env_value EMAIL_FROM_EMAIL | grep -E '^no-reply@|^noreply@' || echo 'other (not printed)')"
+    echo "from_name|$(env_value EMAIL_FROM_NAME)"
+    echo "reply_to_configured|$([ -n "$(env_value EMAIL_REPLY_TO)" ] && echo yes || echo no)"
+    docker compose exec -T backend node -e '
+const key = process.env.BREVO_API_KEY;
+if (!key) { console.log("brevo|not configured"); process.exit(0); }
+const from = String(process.env.EMAIL_FROM_EMAIL || "");
+const domain = from.split("@")[1] || "";
+const get = async (p) => { const r = await fetch("https://api.brevo.com/v3" + p, { headers: { "api-key": key, accept: "application/json" } }); try { return { status: r.status, json: await r.json() }; } catch { return { status: r.status, json: null }; } };
+(async () => {
+  const acct = await get("/account");
+  const plans = ((acct.json && acct.json.plan) || []).map((x) => x.type + (x.creditsType ? "/" + x.creditsType : "")).join(",");
+  console.log("brevo_plan|" + (plans || "-") + "|relay=" + !!(acct.json && acct.json.relay && acct.json.relay.enabled));
+  const d = await get("/senders/domains/" + encodeURIComponent(domain));
+  console.log("brevo_domain|" + domain + "|verified=" + (d.json && d.json.verified) + "|authenticated=" + (d.json && d.json.authenticated));
+  for (const [label, r] of Object.entries((d.json && d.json.dns_records) || {})) console.log("brevo_record_" + label + "|status=" + (r && r.status));
+  const senders = ((await get("/senders")).json || {}).senders || [];
+  const s = senders.find((x) => String(x.email).toLowerCase() === from.toLowerCase());
+  console.log("brevo_sender|" + (s ? "present active=" + s.active + " ips=" + ((s.ips || []).length ? "dedicated" : "shared") : "NOT FOUND"));
+  const agg = (await get("/smtp/statistics/aggregatedReport?days=7")).json || {};
+  console.log("brevo_7d|requests=" + agg.requests + " delivered=" + agg.delivered + " hardBounces=" + agg.hardBounces + " softBounces=" + agg.softBounces + " blocked=" + agg.blocked + " spamReports=" + agg.spamReports + " invalid=" + agg.invalid + " opens=" + agg.uniqueOpens + " clicks=" + agg.uniqueClicks);
+  for (const tag of ["key:academy.member.invited", "key:academy.member.added", "key:academy.learner.invited", "key:academy.learner.added"]) {
+    const ev = (await get("/smtp/statistics/events?days=7&limit=100&tags=" + encodeURIComponent(tag))).json || {};
+    const counts = {};
+    for (const e of ev.events || []) counts[e.event] = (counts[e.event] || 0) + 1;
+    console.log("brevo_events_" + tag.replace("key:", "") + "|" + (Object.entries(counts).map(([k, v]) => k + "=" + v).join(" ") || "none"));
+  }
+})().catch((e) => console.log("brevo|error " + e.message));
+'
+    ;;
   *)
-    echo "usage: remote.sh release|academies|otp|user|metrics" >&2
+    echo "usage: remote.sh release|academies|otp|user|metrics|mail" >&2
     exit 2
     ;;
 esac

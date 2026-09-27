@@ -46,6 +46,9 @@ const SELF_OR_LEARNER = new Set<string>([
   'GET auth/trusted-devices',
   'DELETE auth/trusted-devices/:id',
   'DELETE auth/trusted-devices',
+  // Smart academy signup: the caller's own other academies, answered only
+  // to an academy session on its own host, right after joining it.
+  'GET auth/academy-join/summary',
   'GET auth/2fa/status',
   'POST auth/2fa/setup',
   'POST auth/2fa/confirm',

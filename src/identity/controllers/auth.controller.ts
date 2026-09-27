@@ -37,6 +37,7 @@ import { PasswordResetRateLimitGuard } from '../guards/password-reset-rate-limit
 import { RegisterRateLimitGuard } from '../guards/register-rate-limit.guard';
 import type {
   AcademyJoinResult,
+  AcademyJoinSummary,
   RegistrationResult,
   SessionRequestContext,
 } from '../services/auth.service';
@@ -49,6 +50,7 @@ import type { UserSessionResponse } from '../dto/user-session.contract';
 import { deviceCookieOptions, readCookie } from '../../common/http/cookies.util';
 import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
 import { TRUST_COOKIE_NAME } from '../services/trusted-device.service';
+import { assertSessionServesHostAcademy } from '../../learning/dto/learning-request.util';
 
 /** Real, server-resolved request metadata for a session write. See `request-metadata.util.ts` for the trust model behind these headers. */
 function sessionContext(request: Request): SessionRequestContext {
@@ -138,6 +140,24 @@ export class AuthController {
     @Req() request: Request,
   ): Promise<AcademyJoinResult> {
     return this.authService.joinAcademy({ ...dto, hostname: request.hostname });
+  }
+
+  /**
+   * Smart academy signup — the other academies an existing account already
+   * belongs to, for the "you already use Atlas with …" confirmation. Only a
+   * signed-in academy session, on the academy it joined minutes ago, gets a
+   * non-empty answer (see `AuthService.academyJoinSummary`).
+   */
+  @Get('academy-join/summary')
+  @UseGuards(JwtAuthGuard)
+  async academyJoinSummary(
+    @CurrentAuthContext() auth: AuthContext,
+    @Req() request: Request,
+  ): Promise<AcademyJoinSummary> {
+    const hostAcademyId = await this.authService.hostAcademyId(request.hostname);
+    // A1 — an academy session is answered only on its own academy's host.
+    assertSessionServesHostAcademy(request, hostAcademyId);
+    return this.authService.academyJoinSummary(auth, hostAcademyId);
   }
 
   @Post('sign-in')
