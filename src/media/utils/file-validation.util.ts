@@ -82,6 +82,10 @@ export interface DataUrlParts {
   readonly buffer: Buffer;
 }
 
+/** A data URL's header (`data:<mime>;base64`) is never longer than this. */
+const MAX_DATA_URL_HEADER_LENGTH = 256;
+const BASE64_SUFFIX = ';base64';
+
 /**
  * Parses a `data:<mime>;base64,<payload>` URL. Rejects anything else
  * outright (a plain base64 string with no `data:` prefix, a non-base64
@@ -89,23 +93,84 @@ export interface DataUrlParts {
  * produces the full data-URL form (`UploadMediaAssetPayload.dataUrl`'s
  * own doc comment), so accepting a bare string would only widen the
  * surface for no real caller.
+ *
+ * LINEAR AND SIZE-FIRST. The payload can be tens of megabytes, so it is
+ * never matched by a regular expression (a backtracking `(.+)` over it
+ * exhausted V8's stack and answered 500), and when `maxBytes` is given
+ * the decoded size is computed from the base64 LENGTH before anything is
+ * decoded: an oversized upload is a 413 without allocating it. Malformed
+ * input is a 400.
  */
-export function parseDataUrl(dataUrl: string): DataUrlParts {
-  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
-  if (!match) {
+export function parseDataUrl(dataUrl: string, maxBytes?: number): DataUrlParts {
+  const parsed = splitBase64Payload(dataUrl, { allowBare: false });
+  if (!parsed.declaredMimeType) {
     throw new BadRequestException({ messageKey: 'errors.media.invalidDataUrl' });
   }
-  const [, declaredMimeType, payload] = match;
-  let buffer: Buffer;
-  try {
-    buffer = Buffer.from(payload, 'base64');
-  } catch {
+  const buffer = decodeBase64Checked(parsed.payload, maxBytes);
+  return { declaredMimeType: parsed.declaredMimeType, buffer };
+}
+
+/**
+ * A `data:` URL or bare base64 (the protected-media bridge), decoded with
+ * the same linear, size-first rules as `parseDataUrl`.
+ */
+export function decodeBase64Upload(value: string, maxBytes?: number): Buffer {
+  return decodeBase64Checked(
+    splitBase64Payload(value, { allowBare: true }).payload,
+    maxBytes,
+  );
+}
+
+function splitBase64Payload(
+  value: string,
+  options: { readonly allowBare: boolean },
+): { readonly declaredMimeType?: string; readonly payload: string } {
+  if (typeof value !== 'string' || value.length === 0) {
     throw new BadRequestException({ messageKey: 'errors.media.invalidDataUrl' });
   }
+  if (!value.startsWith('data:')) {
+    if (!options.allowBare) {
+      throw new BadRequestException({ messageKey: 'errors.media.invalidDataUrl' });
+    }
+    return { payload: value };
+  }
+  // Only the bounded header is searched; the payload is never scanned by a pattern.
+  const comma = value.indexOf(',', 0);
+  if (comma < 0 || comma > MAX_DATA_URL_HEADER_LENGTH) {
+    throw new BadRequestException({ messageKey: 'errors.media.invalidDataUrl' });
+  }
+  const header = value.slice('data:'.length, comma);
+  if (!header.endsWith(BASE64_SUFFIX)) {
+    throw new BadRequestException({ messageKey: 'errors.media.invalidDataUrl' });
+  }
+  const declaredMimeType = header.slice(0, header.length - BASE64_SUFFIX.length);
+  if (!declaredMimeType || declaredMimeType.includes(';')) {
+    throw new BadRequestException({ messageKey: 'errors.media.invalidDataUrl' });
+  }
+  return { declaredMimeType, payload: value.slice(comma + 1) };
+}
+
+/** Upper bound of the bytes a base64 string of this length decodes to. */
+export function maxDecodedBase64Bytes(base64Length: number): number {
+  return Math.floor((base64Length * 3) / 4);
+}
+
+function decodeBase64Checked(payload: string, maxBytes?: number): Buffer {
+  if (payload.length === 0) {
+    throw new BadRequestException({ messageKey: 'errors.media.invalidDataUrl' });
+  }
+  // Whitespace/padding make the estimate an upper bound: never a false 413
+  // for a file that decodes within the limit by more than a few bytes, so
+  // the exact check below still runs on the decoded buffer.
+  if (maxBytes !== undefined && maxDecodedBase64Bytes(payload.length) > maxBytes + 3) {
+    throw new PayloadTooLargeException({ messageKey: 'errors.media.fileTooLarge' });
+  }
+  const buffer = Buffer.from(payload, 'base64');
   if (buffer.length === 0) {
     throw new BadRequestException({ messageKey: 'errors.media.invalidDataUrl' });
   }
-  return { declaredMimeType, buffer };
+  if (maxBytes !== undefined) assertWithinSizeLimit(buffer, maxBytes);
+  return buffer;
 }
 
 /**

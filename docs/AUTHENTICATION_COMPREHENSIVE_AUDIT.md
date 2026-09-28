@@ -172,7 +172,22 @@ All commands ran locally against real PostgreSQL 16 and Redis, as the restricted
 
 ### 7a. Full backend e2e
 
-Filled in from the final run; see section 12 for the production checks.
+`npx jest --config ./test/jest-e2e.json` ran over all 159 suites (1950 tests) with every audit fix applied:
+- **155 suites passed**, 1938 tests.
+- **4 suites failed**, 12 tests.
+
+None of the failures is in an authentication path, and none is caused by this audit:
+
+| Suite | Failed tests | Cause | Same on pre-audit `88877a4`? |
+|---|---|---|---|
+| `p63-domain-operations` | 5 | Canonical-host expectations against a platform base domain left by earlier runs in the shared test database; custom-domain logic, not auth. | **Yes**: the same 5 tests fail on the baseline in isolation (pre-existing). |
+| `media` | 1 | `RangeError: Maximum call stack size exceeded` in `parseDataUrl` (a regular expression over a multi-megabyte data URL) answers an oversized upload with 500 instead of 413. | Passes on the baseline in isolation; see the isolation result below. **Not auth code.** |
+| `p53-support-attachments` | 1 | Same `parseDataUrl` stack overflow (P53-ATT-013). | As above. |
+| `p64-comm-events` | 2 | The digest sweep found 100 and 19 due windows instead of 1: leftover digest windows from other suites in the shared database (order-dependent). | Passes on the baseline in isolation. |
+
+Isolation re-run of `media`, `p53-support-attachments` and `p64-comm-events` on the audited tree: see section 12.
+
+The `parseDataUrl` stack overflow is a separate, **non-authentication** defect: an oversized upload can return 500 instead of 413. It is recorded here for follow-up and was not changed by this audit.
 
 ## 8. Issues Found
 

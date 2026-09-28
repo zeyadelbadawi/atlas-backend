@@ -45,7 +45,11 @@ import { VideoProviderRegistry } from '../video/video-provider.registry';
 import { VideoTierService } from '../../plans/services/video-tier.service';
 import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
 import { AcademyOriginsService } from '../video/academy-origins.service';
-import { detectFileKind, sanitizeFileName } from '../utils/file-validation.util';
+import {
+  decodeBase64Upload,
+  detectFileKind,
+  sanitizeFileName,
+} from '../utils/file-validation.util';
 import { parseMp4Duration } from './video-duration.util';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import type { ProtectedMediaConfig } from '../../config/configuration';
@@ -118,13 +122,8 @@ export class ProtectedMediaService {
     courseId: string,
     input: UploadProtectedFileInput,
   ): Promise<MediaAsset> {
-    const buffer = decodeBase64Payload(input.file);
-    if (buffer.length > this.config.maxUploadBytes) {
-      throw new BadRequestException({
-        messageKey: 'errors.media.fileTooLarge',
-        details: { maxBytes: this.config.maxUploadBytes },
-      });
-    }
+    // Size-first and linear (413 before decoding an oversized payload).
+    const buffer = decodeBase64Upload(input.file, this.config.maxUploadBytes);
     const kind = detectFileKind(buffer);
     if (!kind) {
       throw new BadRequestException({ messageKey: 'errors.media.unsupportedFileType' });
@@ -187,13 +186,8 @@ export class ProtectedMediaService {
     userId: string,
     input: UploadProtectedFileInput,
   ): Promise<MediaAsset> {
-    const buffer = decodeBase64Payload(input.file);
-    if (buffer.length > this.config.maxUploadBytes) {
-      throw new BadRequestException({
-        messageKey: 'errors.media.fileTooLarge',
-        details: { maxBytes: this.config.maxUploadBytes },
-      });
-    }
+    // Size-first and linear (413 before decoding an oversized payload).
+    const buffer = decodeBase64Upload(input.file, this.config.maxUploadBytes);
     // Real magic-byte detection, not the declared extension — the same
     // validator the public tier uses, so a "protected" upload is not a
     // weaker path into the platform's storage.
@@ -605,11 +599,4 @@ export class ProtectedMediaService {
       throw new ForbiddenException({ messageKey: 'errors.media.insufficientRole' });
     }
   }
-}
-
-/** Accepts a `data:` URI or bare base64, exactly like the public upload bridge. */
-function decodeBase64Payload(value: string): Buffer {
-  const comma = value.indexOf(',');
-  const base64 = value.startsWith('data:') && comma > 0 ? value.slice(comma + 1) : value;
-  return Buffer.from(base64, 'base64');
 }

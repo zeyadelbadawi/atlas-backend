@@ -25,6 +25,7 @@ export class UploadMediaAssetDto {
 
   @IsNotEmpty()
   @IsString()
+  @MaxLength(255)
   readonly mimeType!: string;
 
   @IsInt()

@@ -26,7 +26,6 @@ import { TenantInvoicesRepository } from '../repositories/tenant-invoices.reposi
 import { PaymentProofStorageService } from '../storage/payment-proof-storage.service';
 import { buildPaymentProofStorageKey } from '../utils/payment-proof-key.util';
 import {
-  assertWithinSizeLimit,
   detectFileKind,
   parseDataUrl,
   sanitizeFileName,
@@ -217,8 +216,7 @@ export class PaymentService {
     paymentId: string,
     payload: SubmitPaymentProofDto,
   ): Promise<PaymentResponse> {
-    const { buffer } = parseDataUrl(payload.fileData);
-    assertWithinSizeLimit(buffer, MAX_PAYMENT_PROOF_FILE_SIZE);
+    const { buffer } = parseDataUrl(payload.fileData, MAX_PAYMENT_PROOF_FILE_SIZE);
     const kind = detectFileKind(buffer);
     if (!kind || !ALLOWED_PAYMENT_PROOF_MIME_TYPES.includes(kind.mimeType)) {
       throw new BadRequestException({

@@ -181,6 +181,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return { status: HttpStatus.BAD_REQUEST, messageKey: 'errors.validation.failed' };
     }
 
+    // The body parser's own refusals (`http-errors` objects, not Nest
+    // exceptions): a body over the request limit is a 413, malformed JSON a
+    // 400 — the client's error, never a 500.
+    const transport = transportError(exception);
+    if (transport) return transport;
+
     // Anything that isn't a deliberate HttpException is an unexpected,
     // unhandled failure — never leak its raw message to the client (it may
     // contain internals/stack detail); the full detail is still logged above.
@@ -260,4 +266,33 @@ export function isInvalidInputDatabaseError(exception: unknown): boolean {
     );
   }
   return false;
+}
+
+/** `http-errors` raised by the body parser before any handler runs. */
+function transportError(
+  exception: unknown,
+): { status: number; messageKey: string } | undefined {
+  if (!exception || typeof exception !== 'object') return undefined;
+  const { type, status, expose } = exception as {
+    type?: unknown;
+    status?: unknown;
+    expose?: unknown;
+  };
+  if (type === 'entity.too.large') {
+    return {
+      status: HttpStatus.PAYLOAD_TOO_LARGE,
+      messageKey: 'errors.media.fileTooLarge',
+    };
+  }
+  if (
+    expose === true &&
+    typeof status === 'number' &&
+    status >= 400 &&
+    status < 500 &&
+    typeof type === 'string' &&
+    type.startsWith('entity.')
+  ) {
+    return { status: HttpStatus.BAD_REQUEST, messageKey: 'errors.validation.failed' };
+  }
+  return undefined;
 }

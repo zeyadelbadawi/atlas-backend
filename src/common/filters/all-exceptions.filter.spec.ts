@@ -87,6 +87,27 @@ describe('AllExceptionsFilter', () => {
     expect(status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
   });
 
+  it("answers the body parser's refusals as the client's errors: too large 413, malformed JSON 400", () => {
+    const tooLarge = Object.assign(new Error('request entity too large'), {
+      type: 'entity.too.large',
+      status: 413,
+      expose: true,
+    });
+    const malformed = Object.assign(new Error('Unexpected token'), {
+      type: 'entity.parse.failed',
+      status: 400,
+      expose: true,
+    });
+    for (const [exception, expected] of [
+      [tooLarge, HttpStatus.PAYLOAD_TOO_LARGE],
+      [malformed, HttpStatus.BAD_REQUEST],
+    ] as const) {
+      const { host, status } = createMockHost('req-body');
+      new AllExceptionsFilter(createMockLogger()).catch(exception, host);
+      expect(status).toHaveBeenCalledWith(expected);
+    }
+  });
+
   it('shapes a NotFoundException as kind "notFound", non-retryable', () => {
     const logger = createMockLogger();
     const filter = new AllExceptionsFilter(logger);

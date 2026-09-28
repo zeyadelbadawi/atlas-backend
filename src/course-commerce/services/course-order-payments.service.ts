@@ -41,7 +41,6 @@ import { PaymentProviderRegistry } from '../../billing/providers/payment-provide
 import { PaymentProofStorageService } from '../../billing/storage/payment-proof-storage.service';
 import { ATLAS_MANUAL_PROVIDER_KEY } from '../../billing/dto/billing.constants';
 import {
-  assertWithinSizeLimit,
   detectFileKind,
   parseDataUrl,
   sanitizeFileName,
@@ -450,8 +449,7 @@ export class CourseOrderPaymentsService {
     paymentId: string,
     payload: SubmitCourseOrderPaymentProofDto,
   ): Promise<CourseOrderPaymentResponse> {
-    const { buffer } = parseDataUrl(payload.fileData);
-    assertWithinSizeLimit(buffer, MAX_PAYMENT_PROOF_FILE_SIZE);
+    const { buffer } = parseDataUrl(payload.fileData, MAX_PAYMENT_PROOF_FILE_SIZE);
     const kind = detectFileKind(buffer);
     if (!kind || !ALLOWED_PAYMENT_PROOF_MIME_TYPES.includes(kind.mimeType)) {
       throw new ConflictException({
