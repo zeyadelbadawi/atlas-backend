@@ -62,6 +62,28 @@
 -- auditable crossing, and it yields ids only.
 
 -- ---------------------------------------------------------------------------
+-- 0. Precondition — the resolvers below must be able to read past RLS.
+-- ---------------------------------------------------------------------------
+-- A SECURITY DEFINER function runs as the role that owns it, which is the
+-- role running this migration. FORCE ROW LEVEL SECURITY applies even to a
+-- table's owner unless that role is a superuser or BYPASSRLS; if it were
+-- neither, every resolver would silently return NULL and nobody could sign
+-- in. Refuse to continue in that case: the migration rolls back and the
+-- deployment stops at the migration gate with the previous release intact.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_roles
+     WHERE rolname = current_user AND (rolsuper OR rolbypassrls)
+  ) THEN
+    RAISE EXCEPTION
+      'identity_tables_rls: the migrating role % must be SUPERUSER or BYPASSRLS so the SECURITY DEFINER resolvers can read past RLS',
+      current_user;
+  END IF;
+END
+$$;
+
+-- ---------------------------------------------------------------------------
 -- 1. Credential tables — strictly per-user.
 -- ---------------------------------------------------------------------------
 DO $$

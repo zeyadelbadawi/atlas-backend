@@ -100,7 +100,14 @@ From the code:
 
 ### 1.3 Browser compatibility assessment
 
-Recorded in section 1.5, *Assessment evidence* (filled in from the local run).
+See section 1.5. Summary: **zero violations on 25 page loads**, covering:
+- platform public pages, auth pages, signed-in dashboard pages and an academy
+  site;
+- EN and AR (RTL);
+- desktop and mobile widths.
+
+A positive control proves the detector works. Real-browser report delivery
+was confirmed end to end for both reporting mechanisms.
 
 ### 1.4 Enforcement plan (evidence-gated)
 
@@ -126,7 +133,60 @@ tightened.
 
 ### 1.5 Assessment evidence
 
-_See the section appended below after the local browser run._
+**Setup** (28 Sep 2026):
+- the production frontend build (`pnpm build`), served by **Caddy 2.10.2**
+  using this repository's `(security_headers)` and `(csp_report_only)`
+  snippets verbatim;
+- `/api/*` proxied to the built backend on the local test database;
+- **Chromium** (Playwright), with a `securitypolicyviolation` listener
+  installed before any page script runs.
+
+The production Caddyfile was checked with `caddy adapt` (the Cloudflare DNS
+module stripped, since it is not in the stock binary). It adapts cleanly and
+emits both headers.
+
+**Page sweep: 25 loads, 0 violations, all HTTP 200, all carrying the
+header.**
+
+| Group | Pages |
+|---|---|
+| Platform, public | `/`, `/features`, `/pricing`, `/blog`, `/auth/sign-in`, `/auth/register`, `/auth/forgot-password`, `/privacy-policy`; sign-in AR at mobile width; register AR |
+| Platform, signed in (Platform Owner) | `/dashboard`, `/dashboard/profile`, `/dashboard/settings`, `/dashboard/platform`, `/dashboard/platform/users`, `/dashboard/analytics` (recharts), `/dashboard/platform/observability`, `/dashboard/notifications`, `/dashboard/search`; settings AR at mobile width |
+| Academy site (a real connected academy host) | home, courses, sign-in, register; home AR at mobile width |
+
+The signed-in and academy loads were confirmed to render their real content
+(the "Platform" heading, and the academy's own name), not a redirect.
+
+**Positive control.** On `/auth/sign-in`, an injected inline `<script>` and an
+`ftp:` image were both reported (`script-src-elem inline`, `img-src ftp`).
+The inline script still ran, which is correct for Report-Only.
+
+**Delivery, end to end, in a real browser:**
+- **Legacy `report-uri`** (a site with no `report-to`): Chromium POSTed
+  `application/csp-report`; the backend answered 204 and logged
+  `{directive: script-src-elem, blockedKind: inline, documentPath:
+  127.0.0.1:8089/auth/sign-in, line: 2}`.
+- **Reporting API**, with the production snippet over HTTPS (Caddy internal
+  CA): Chromium POSTed `application/reports+json` after its batching delay;
+  204, and the same normalised record for `localhost:8443/auth/sign-in`.
+  Over plain HTTP the Reporting API does not upload. That is irrelevant in
+  production, which is HTTPS-only, and older browsers still fall back to
+  `report-uri`.
+- **Redaction:** a report whose blocked URL carried `?t=SECRET` was logged as
+  origin only, and `SECRET` appears nowhere in the log.
+
+**Not exercised locally** (no suitable fixture data, or an external service);
+the production observation window covers these:
+- a YouTube lesson;
+- HLS playback (hls.js worker);
+- direct-to-storage uploads;
+- the certificate template editor;
+- the website-builder preview;
+- live-session (Zoom) pages;
+- Cloudflare-injected scripts, if any are enabled on the zone.
+
+These are exactly the directives kept broad (`frame-src`, `worker-src`, and
+`https:` for media and connect).
 
 ---
 

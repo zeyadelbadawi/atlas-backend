@@ -13,25 +13,26 @@ The system was already strong in the places that matter most:
   - emailed codes are HMAC-hashed and bound to host and challenge;
   - TOTP has replay protection;
   - remembered devices are scoped per academy.
-- **Surface and tenancy:** surface separation (an academy session is refused on every management route, enforced by a route inventory test), RLS on 69 of 89 tables, and dozens of tenant-isolation suites.
+- **Surface and tenancy:** surface separation (an academy session is refused on every management route, enforced by a route inventory test), FORCE RLS on 97 of 110 tables (the seven identity tables included, AUTH-13), and dozens of tenant-isolation suites.
 - **Google:** PKCE, state, nonce, a binder cookie and a one-time handoff.
 
-**Eleven issues were found and fixed** with regression tests, each proven to fail on the pre-fix code:
+**Eighteen issues were found and fixed** (AUTH-01 to AUTH-18), with regression tests. Eleven came from the audit's own findings. Five came from the owner's decisions on the items the first pass could not change alone (account deletion, identity-table RLS, registration enumeration, CSP, and oversized uploads). Two more were caught while regression-testing those:
 
 | Severity | Count | IDs |
 |---|---|---|
 | High / critical | 0 | — |
-| Medium | 6 | AUTH-01, AUTH-03, AUTH-04, AUTH-06, AUTH-07, AUTH-09 |
-| Low | 4 | AUTH-02, AUTH-05, AUTH-08, AUTH-11 |
+| Medium | 8 | AUTH-01, 03, 04, 06, 07, 09, 12, 15 |
+| Low | 9 | AUTH-02, 05, 08, 11, 13, 14, 16, 17, 18 |
 | Informational | 1 | AUTH-10 |
 
-**Four items need an owner decision or a staged rollout**, so they were not changed (section 17):
-- account deletion without re-authentication;
-- RLS on the identity tables;
-- registration email disclosure;
-- a Content-Security-Policy for the SPA.
+**What the decisions changed:**
+- **Account deletion (D1):** now needs a purpose-bound code emailed to the verified address.
+- **Identity tables (D2):** all seven carry FORCE RLS. Pre-authentication entry is confined to narrow, id-only resolvers.
+- **Registration (D3):** no longer reveals whether an email has an account.
+- **CSP (D4):** a Content-Security-Policy runs in Report-Only mode with a report pipeline. A browser assessment of 25 page loads found zero violations. Enforcement and the token-storage migration are planned and evidence-gated.
+- **Oversized uploads (D5):** oversized or malformed uploads answer 413/400 everywhere instead of 500.
 
-**Final status: PASS WITH KNOWN LIMITATIONS** (section 18).
+**Final status:** see section 18.
 
 ## 2. Audit Scope
 
@@ -96,7 +97,7 @@ Both first factors end in **one pipeline**, `AuthService.continueSignIn`:
 
 **Surface separation.** Management routes carry `ManagementSurfaceGuard`, `PlatformOwnerGuard` or `ManagementSessionGuard`. Every authenticated route must be classified in `route-surface-inventory.spec.ts`. Academy routes assert that the session serves the host's academy.
 
-**Tenancy.** Guards decide first; RLS (FORCE, on the runtime role `atlas_app`) decides independently on 69 of 89 tables.
+**Tenancy.** Guards decide first; RLS (FORCE, on the runtime role `atlas_app`) decides independently on 97 of 110 tables, now including the identity tables (AUTH-13).
 
 **Recovery and invitation.**
 - **Password reset:** a 256-bit token, hashed and single-use, 30 minutes for a reset or 72 hours for a staff-created account's setup link. The same token type activates an `invited` account.
@@ -157,37 +158,54 @@ Both first factors end in **one pipeline**, `AuthService.continueSignIn`:
 
 ## 7. Tests Executed
 
-All commands ran locally against real PostgreSQL 16 and Redis, as the restricted runtime role for RLS, unless noted.
+All commands ran locally against real PostgreSQL 16 and Redis (plus an S3 emulator for media), with the application connecting as the restricted runtime role `atlas_app`, so RLS was in force.
 
-| Command | Suite | Passed | Failed | Notes |
+| Command | Scope | Passed | Failed | Notes |
 |---|---|---|---|---|
-| `npx jest --config ./test/jest-e2e.json test/auth-audit-hardening.e2e-spec.ts` | new audit suite AUD-01…AUD-08 | 9 | 0 | same suite on the pre-fix source: **9 failed**, which proves each test detects its defect |
-| `npx jest` (backend unit) | 139 suites | 3890 | 0 | includes the new filter and redaction tests |
-| `npx jest --config ./test/jest-e2e.json` (full backend e2e, 160 suites) | all | see §7a | see §7a | |
-| `pnpm exec vitest run` (frontend) | 128 files | 1167 | 0 | includes the new `auth-audit.test.tsx` (6); on the pre-fix source: 5 of 6 fail (the 6th asserts a legal path) |
-| `pnpm run lint` / `npm run lint` scope | frontend / changed backend files | clean | — | |
-| `npm run typecheck` (backend) | | clean | — | |
-| `pnpm run typecheck` (frontend) | | — | 34 | **pre-existing**, identical count before and after, none in files touched here |
-| `npm run build` / `pnpm run build` | | ✓ | — | |
+| `npx jest` (backend unit) | 140 suites | 3950 | 0 | |
+| `npx jest --config ./test/jest-e2e.json` (full backend e2e) | 162 suites, 1976 tests | 158 suites, 1962 tests | 4 suites, 14 tests | shared-database pollution only; see §7a |
+| the 4 failing suites on a **freshly migrated database** | 4 suites | 79 | 0 | proves §7a |
+| `test/identity-rls.e2e-spec.ts` | IDRLS-01..07 | 7 | 0 | attacks the policies directly as `atlas_app` |
+| `test/csp-reports.e2e-spec.ts` | CSP-01..04 | 4 | 0 | |
+| `test/account-deletion-otp.e2e-spec.ts` | DELOTP-01..11 | 11 | 0 | |
+| `test/registration-enumeration.e2e-spec.ts` | ENUM-01..06 | 6 | 0 | |
+| `test/auth-audit-hardening.e2e-spec.ts` | AUD-01..08 | 9 | 0 | on the pre-fix source: **9 failed** |
+| `pnpm exec vitest run` (frontend) | 129 files | 1170 | 0 | includes `auth-audit.test.tsx`, `delete-account-card.test.tsx`, `sign-in-registered-notice.test.tsx` |
+| lint (`pnpm run lint`; backend eslint on changed files) | | clean | 0 errors | 3 pre-existing `no-console` warnings in ops scripts |
+| typecheck (`tsc --noEmit` backend) | | clean | — | |
+| typecheck (frontend) | | — | 34 | **pre-existing**, identical count before and after; none in touched files |
+| `npm run build` / `pnpm build` | | ✓ | — | |
+| `caddy adapt` (Caddy 2.10.2) on the production Caddyfile | | ✓ | — | both CSP headers emitted |
+| migration on an empty database; precondition guard against a non-bypass role | | ✓ | — | the guard aborts as designed |
+| CSP browser assessment (Chromium) | 25 page loads | 0 violations | — | §7b |
 
 ### 7a. Full backend e2e
 
-`npx jest --config ./test/jest-e2e.json` ran over all 159 suites (1950 tests) with every audit fix applied:
-- **155 suites passed**, 1938 tests.
-- **4 suites failed**, 12 tests.
+Full run: **158 of 162 suites passed.** The 4 that failed all pass on a freshly migrated database (79 of 79 tests), so they are leftover-data effects in the long-lived shared test database, not defects:
+- **`platform-add-ons-management` and `platform-add-ons-http`:** the database held 124 add-ons from earlier runs, and the test reads one page of 100.
+- **`p63-domain-operations`:** canonical-host expectations against a platform base domain left behind by earlier runs. This was already recorded as pre-existing.
+- **`p64-comm-lifecycle-sequences`:** a 60-second fake-clock test timed out under full-run load.
 
-None of the failures is in an authentication path, and none is caused by this audit:
+Earlier failures, now fixed and passing:
+- `media` and `p53-support-attachments`: the data-URL stack overflow (AUTH-16).
+- The RLS suites' own `createUser` fixtures, which seeded users (including platform owners) through the RLS-bound application client. They now seed through the owner connection like every other fixture (`fixtureUsers()`); what they test is unchanged.
+- Specs that verified identity rows through the application client (the same change).
 
-| Suite | Failed tests | Cause | Same on pre-audit `88877a4`? |
-|---|---|---|---|
-| `p63-domain-operations` | 5 | Canonical-host expectations against a platform base domain left by earlier runs in the shared test database; custom-domain logic, not auth. | **Yes**: the same 5 tests fail on the baseline in isolation (pre-existing). |
-| `media` | 1 | `RangeError: Maximum call stack size exceeded` in `parseDataUrl` (a regular expression over a multi-megabyte data URL) answers an oversized upload with 500 instead of 413. | Passes on the baseline in isolation; see the isolation result below. **Not auth code.** |
-| `p53-support-attachments` | 1 | Same `parseDataUrl` stack overflow (P53-ATT-013). | As above. |
-| `p64-comm-events` | 2 | The digest sweep found 100 and 19 due windows instead of 1: leftover digest windows from other suites in the shared database (order-dependent). | Passes on the baseline in isolation. |
+### 7b. CSP browser assessment
 
-Isolation re-run of `media`, `p53-support-attachments` and `p64-comm-events` on the audited tree: see section 12.
+The production frontend build was served by Caddy 2.10.2 with the production snippets, with `/api` on the built backend. Chromium loaded 25 pages with a `securitypolicyviolation` listener installed before any page script:
+- platform public and auth pages;
+- Platform Owner dashboard pages, including charts;
+- a real academy host;
+- EN and AR, at desktop and mobile widths.
 
-The `parseDataUrl` stack overflow is a separate, **non-authentication** defect: an oversized upload can return 500 instead of 413. It is recorded here for follow-up and was not changed by this audit.
+**Results:**
+- **Zero violations**, and every page returned 200 carrying the header.
+- **Positive control:** an injected inline script and an `ftp:` image were both caught.
+- **Delivery:** confirmed from a real browser for both `report-uri` (`application/csp-report`) and the Reporting API (`application/reports+json`, over HTTPS).
+- **Redaction:** confirmed.
+
+Details and what was not exercised: `docs/CSP_AND_TOKEN_STORAGE.md` §1.5.
 
 ## 8. Issues Found
 
@@ -336,21 +354,134 @@ Severity follows impact as deployed, not worst-case theory.
 - **Tests:** unit (22021 and P2023 give 400; connection loss stays 500) and AUD-08 (a sweep of 8 hostile values across 13 public endpoints plus the id routes: no 5xx).
 - **Verification:** passes; fails before (two 500s).
 
+### AUTH-12 — Account deletion had no confirmation beyond the session (Decision 1)
+
+- **Severity:** MEDIUM
+- **Component:** `POST /users/me/delete`, `AccountDeletionChallengeService` (new), `DeleteAccountCard` (frontend).
+- **Description:** a valid management session alone could delete the account and archive every academy it owned.
+- **Decision:** confirm by a code emailed to the account's verified address (option D).
+- **Fix:**
+  - `POST /users/me/delete/request` issues a purpose-bound challenge (`account_deletion_challenges`, FORCE RLS, self-scoped). It is bound to the account and to the requesting session (`sid`). The code is 6 CSPRNG digits; only HMAC(serverKey, id‖salt‖code) is stored.
+  - Lifetime and limits: 10 minutes; 5 wrong attempts burn the challenge; a 60-second resend cooldown; at most 5 requests an hour. A new request retires every open challenge. Both routes sit behind the credential-check limiter.
+  - Consumption is one conditional `UPDATE`, so a replay or a second concurrent confirmation fails, and deletion itself is idempotent.
+  - Every failure gives the caller one uniform answer. The code is never logged or audited; the audit trail records requested, code failed, locked out and confirmed.
+  - Refused before any mail is sent: an unverified address (409), a platform owner (403), an inactive account.
+  - **Deletion now also:**
+    - revokes trusted devices;
+    - consumes open sign-in codes;
+    - closes pending Google link flows;
+    - removes deletion challenges.
+
+    It still:
+    - revokes every refresh-token family and denylists every `sid`;
+    - deletes the TOTP secret, recovery codes, Google identity, and reset and verification tokens;
+    - anonymises the account;
+    - removes memberships and archives owned academies.
+  - **Frontend:** a two-step dialog (email → code), with a masked address, resend with a cooldown and in-place errors, in EN/AR (RTL, digits LTR) and on mobile.
+  - **Platform Owner administrative deletion** (`/platform-user-management/:id/delete`) deletes *someone else*, so it cannot be confirmed by that person's mailbox. It keeps its own guard, confirmation and audit (`DeleteAccountBaseDto`).
+- **Tests:** `test/account-deletion-otp.e2e-spec.ts` DELOTP-01..11, the adapted `phase10-6`, `google-identity` and `p64-phase3` deletion tests, and `delete-account-card.test.tsx` (3).
+
+### AUTH-13 — Identity tables had no row-level security (Decision 2)
+
+- **Severity:** LOW (defence in depth). No exploit path exists without first reaching the database as `atlas_app`, but the tables that hold every credential relied on one gate.
+- **Decision:** designed and implemented here (the owner delegated the architecture).
+- **Fix:** migration `20261021000000_identity_tables_rls`:
+  - **Credential tables** (`refresh_tokens`, `password_reset_tokens`, `email_verification_tokens`, `user_two_factor`, `two_factor_recovery_codes`, `user_auth_identities`):
+    - ENABLE + FORCE RLS;
+    - SELECT/INSERT/UPDATE/DELETE admitted only when `user_id = app.current_user_id`, with `WITH CHECK` on writes;
+    - no platform-owner policy and no `USING (true)`.
+  - **`users`** is the identity *directory*: rosters, reviews, certificates, audit actors and search legitimately join to other people's names.
+    - SELECT requires an established user or tenant context (a context-less query sees nothing).
+    - UPDATE is self-only, or the Platform Owner.
+    - DELETE is Platform Owner only.
+    - INSERT is only in the new id's own context, or as an `invited` account inside a tenant context (staff member-add).
+    - No insert can create a platform owner. Column privileges keep `is_platform_owner`, `id` and `created_at` out of the application role's reach, so promotion is an operator action on the owner connection (`provision-platform-owner`).
+  - **Pre-authentication entry** (sign-in by email, refresh, reset and verification by token hash, Google by subject, background jobs needing a platform-owner id):
+    - goes through six narrow `SECURITY DEFINER` resolvers that return an **owner id and nothing else**;
+    - they are `STABLE`, pin `search_path`, and are executable only by `atlas_app`;
+    - all are called from one class, `IdentityResolver`;
+    - every read and write that follows runs in the owner's own context.
+  - **Staff:** the one staff-facing read of another account's sessions (the roster's active-session count) is a count-only definer function gated by the existing `can_view_academy_student()`.
+- **Why the application role cannot bypass it:**
+  - `atlas_app` is NOSUPERUSER NOBYPASSRLS and owns none of the tables;
+  - FORCE applies policies to the owner too;
+  - referential-integrity checks and cascades are outside RLS, so `ON DELETE CASCADE` still works.
+- **Code:**
+  - every access site was moved into the right context: repositories, two-factor, Google, deletion, the platform console, analytics, search, communications and scripts;
+  - unique-conflict handling no longer depends on the P2002 target, which PostgreSQL hides under RLS.
+- **Tests:**
+  - `test/identity-rls.e2e-spec.ts` IDRLS-01..07, which attack the policies directly as `atlas_app`: role attributes; FORCE on all seven tables; no permissive policy; zero rows without context; cross-user read, update, delete, insert and re-parenting refused on every credential table; the users write rules and column privileges; the resolvers' shape and grants.
+  - All auth, Google, 2FA, deletion, invitation, onboarding and RLS suites pass (section 7).
+
+### AUTH-14 — Registration disclosed whether an email has an account (Decision 3)
+
+- **Severity:** LOW
+- **Decision:** "If an account exists, we'll help you continue."
+- **Fix:**
+  - Platform, organization and academy sign-up answer an existing address exactly like a new one: `201 {account:'new'}`, nothing created.
+  - The existing owner receives `auth.account.signup_attempt` (EN/AR, at most once an hour, no link).
+  - An academy sign-up with the existing account's *correct* password still joins it as before.
+  - Rule failures (organization name, invitation code) are identical for both.
+  - An unproven existing address never spends an invitation code.
+  - The per-address budget meters every address alike.
+  - A lost race for a new address answers the same.
+  - Frontend copy on all three surfaces is generic (EN/AR).
+  - Google keeps its 409, because that address was proven by Google.
+- **Tests:** `registration-enumeration.e2e-spec.ts` ENUM-01..06, plus updated `auth-register`, `new-customer-onboarding`, `launch-stabilization` and `smart-member-invite`.
+
+### AUTH-15 — No Content-Security-Policy on the SPA; tokens in `localStorage` (Decision 4)
+
+- **Severity:** MEDIUM (impact multiplier for any XSS)
+- **Decision:** staged: Report-Only first, enforce on evidence; the token-storage migration is a scoped follow-up.
+- **Fix:**
+  - `Content-Security-Policy-Report-Only` plus `Reporting-Endpoints` on every document, on both Caddy site blocks.
+  - `POST /api/v1/security/csp-reports`: public and throttled. It normalises reports so no URL query or fragment survives, logs them, and counts them in `atlas_csp_violations_total` with closed-vocabulary labels.
+  - The policy, the browser compatibility assessment, the enforcement criteria and the cookie/BFF migration plan (risk, target, phases, compatibility, rollout and rollback) are in `docs/CSP_AND_TOKEN_STORAGE.md`.
+- **Tests:** `csp-report.util.spec.ts` (4) and `csp-reports.e2e-spec.ts` CSP-01..04; `caddy adapt` with Caddy 2.10.2; the browser assessment (section 7b).
+- **Remaining:** enforcement (evidence-gated) and the token-storage migration (section 16).
+
+### AUTH-16 — Oversized or malformed data URLs answered 500 (Decision 5)
+
+- **Severity:** LOW
+- **Description:** `parseDataUrl` ran a regular expression over the whole data URL. A multi-megabyte upload overflowed the stack (`RangeError`), answering 500 instead of 413 (the media and p53 failures in the first full run). Body-parser refusals were also 500.
+- **Fix:**
+  - a linear, regex-free parser with a 256-byte header cap;
+  - the size is estimated **before** decoding (413 `errors.media.fileTooLarge`), then checked exactly;
+  - malformed input is 400;
+  - the size limit is passed at every caller: media, support attachments, both payment-proof paths, and protected media (whose decoder was replaced);
+  - `mimeType` is bounded on the upload DTOs;
+  - body-parser `entity.too.large` is 413, other `entity.*` 400.
+
+  The remaining regular expressions in the codebase run on bounded inputs (swept).
+- **Tests:** unit (a 60 MB body gives 413 in under 1 second; boundaries; malformed input); media e2e hostile bodies (31 MB gives 413, malformed JSON 400, bad data URLs 400, valid 201); `P53-ATT-013b`.
+
+### AUTH-17 — Found during regression: Decision 1 had also gated the Platform Owner's deletion of *another* user
+
+- **Severity:** LOW (functional regression, never released)
+- **Description:** `POST /platform-user-management/:id/delete` shares the deletion DTO, which now required the self-service `challengeId`/`code`, so every administrative deletion would have been refused 400. `platform-user-deletion.e2e-spec` caught it.
+- **Fix:** `DeleteAccountBaseDto` (confirmation, reason, feedback) for the administrative route; `DeleteAccountDto` extends it with the code for self-service only.
+
+### AUTH-18 — Roster "active sessions" counted a learner's sessions everywhere (cross-organization detail)
+
+- **Severity:** LOW
+- **Description:** the academy roster's `activeSessionCount` counted every live session of the learner, including management sessions at other organizations, so staff could observe activity outside their academy.
+- **Fix:** counted by `academy_student_session_count()`: this academy's academy-surface sessions only, and only for a viewer `can_view_academy_student()` admits (AUTH-13).
+- **Tests:** `p64-roster-lifecycle`, IDRLS-07.
+
 ## 9. Issues Fixed
 
-AUTH-01 through AUTH-11 (section 8). All carry regression tests, and each backend test was run against the pre-fix source to confirm it fails there.
+AUTH-01 to AUTH-18 (section 8). Each carries regression tests. The audit-found backend fixes (AUTH-01 to AUTH-11) were each shown to fail on the pre-fix source. The decision items (AUTH-12 to AUTH-16) are new behaviour, proven by dedicated suites. AUTH-17 and AUTH-18 were caught by the existing suites during regression and fixed before any release.
 
 ## 10. Issues Not Fixed
 
-| ID | Severity | Item | Why not fixed |
+| ID | Severity | Item | Status |
 |---|---|---|---|
-| DEC-1 | MEDIUM | `POST /users/me/delete` has no re-authentication. A stolen management session can delete the account, which also archives every academy it owns. | **Human decision.** Re-authentication by password excludes Google-only accounts. The options are password-or-Google re-auth, a recent-sign-in window, or an emailed confirmation, and each is a product policy (section 17). |
-| DEC-2 | LOW (defence in depth) | The identity tables (`users`, `refresh_tokens`, `password_reset_tokens`, `email_verification_tokens`, `user_two_factor`, `two_factor_recovery_codes`, `user_auth_identities`) have no RLS. | **Pre-existing, documented (O1), owner decision.** Identity is deliberately cross-tenant. Every query is scoped by the verified user id, and it matters only to an attacker already running SQL as `atlas_app`. User-scoped RLS touches every module and belongs in its own phase. |
-| DEC-3 | LOW | Registration answers 409 for an existing email (account existence disclosed). | **Pre-existing, documented (O2/DL-12), owner decision.** The smart academy join is already non-enumerating; the platform signup message is a product choice. |
-| DEC-4 | MEDIUM | No Content-Security-Policy on the SPA documents, while access and refresh tokens are in `localStorage` (any XSS could read them). | **Staged rollout required.** Academy themes, embeds and video need an inventory; a CSP shipped blind could break production sites. Recommended: `Content-Security-Policy-Report-Only` with a report endpoint, then enforce. |
-| INFO-1 | INFORMATIONAL | Reset request timing differs slightly for existing and unknown emails (a database write and enqueue). | Accepted: rate-limited per IP and email, and the response is identical. |
+| CSP-ENF | MEDIUM | The CSP is **Report-Only**; nothing is blocked yet. | By decision (D4): enforce only on production evidence. Criteria are in `docs/CSP_AND_TOKEN_STORAGE.md` §1.4. `script-src 'self'` can be enforced first. |
+| TOK-1 | MEDIUM | Access and refresh tokens remain in `localStorage`. | By decision (D4): a scoped follow-up (an HttpOnly `__Host-` refresh cookie and an in-memory access token), phased and flag-gated. Plan: `docs/CSP_AND_TOKEN_STORAGE.md` §2. Mitigated meanwhile by the CSP, refresh-reuse detection (AUTH-07), surface binding and the `sid` denylist. |
+| INFO-1 | INFORMATIONAL | Reset-request timing differs slightly for existing and unknown emails. | Accepted: rate-limited per IP and email, identical response. |
 | INFO-2 | INFORMATIONAL | `POST /auth/verify-email` has no rate limit. | 256-bit single-use tokens; guessing is infeasible. |
-| INFO-3 | INFORMATIONAL | There is no product path to suspend a user; suspension is a database operation. | Out of auth scope. AUTH-06 makes a suspension effective on the next refresh once one exists. |
+| INFO-3 | INFORMATIONAL | There is no product path to suspend a user. | Out of scope. AUTH-06 makes a suspension effective on the next refresh. |
+| TEST-1 | INFORMATIONAL | Four e2e suites depend on a clean database (§7a). | Test hygiene, not product. They pass on a fresh database. |
 
 ## 11. Positive Findings
 
@@ -377,7 +508,7 @@ These controls were verified and hold:
   - an academy session is refused on management routes;
   - the route inventory test fails if any authenticated route is unclassified;
   - academy routes assert the host;
-  - RLS FORCE on 69/89 tables, plus about 40 tenant-isolation and RLS e2e suites.
+  - RLS FORCE on 97/110 tables (identity tables included), plus about 40 tenant-isolation and RLS e2e suites.
 - **ID-based access:** `/auth/sessions/:id`, `/auth/trusted-devices/:id` and sign-in methods have no user id in the path and are scoped by the verified user, so a foreign id gives not-found.
 - **IP trust:** forwarded headers are believed only from private peers (Caddy); Caddy believes only Cloudflare ranges; per-IP limits cannot be evaded by forging headers.
 - **Cookies:** device, trust and Google binder cookies are HttpOnly and SameSite=Lax, Secure over HTTPS; the binder is host-only on its own path.
@@ -414,15 +545,59 @@ Filled in after the release (see sections 14 and 15).
 - `deploy/google-verify/remote.sh`, `deploy/google-verify/verify.mjs`
 - `docs/AUTHENTICATION_COMPREHENSIVE_AUDIT.md` (new)
 
+**Backend, decisions D1–D5 and the regression fixes:**
+- **Migrations:**
+  - `prisma/migrations/20261020000000_account_deletion_challenges/`;
+  - `prisma/migrations/20261021000000_identity_tables_rls/`;
+  - `prisma/schema.prisma`.
+- **Account deletion (D1):**
+  - `src/identity/services/account-deletion-challenge.service.ts` (new), `account-deletion.service.ts`, `deletion-plan.service.ts`;
+  - `src/identity/dto/delete-account.dto.ts`, `src/identity/controllers/users.controller.ts`, `src/platform/controllers/platform-user-management.controller.ts`;
+  - `src/communications/templates/keys/auth.account.deletion_code.ts` and `auth.account.signup_attempt.ts` (new), plus the catalogue and registry.
+- **Registration and sign-in paths:**
+  - `src/identity/services/auth.service.ts`, `academy-surface.service.ts`, `two-factor.service.ts`, `session-*.service.ts`;
+  - `src/identity/guards/jwt-auth.guard.ts`;
+  - `src/identity/google/google-auth.service.ts`, `google-identity.repository.ts`.
+- **Identity data access (D2):**
+  - `src/identity/repositories/identity-resolver.ts` (new), `users.repository.ts`, `refresh-tokens.repository.ts`, `password-reset-tokens.repository.ts`, `email-verification-tokens.repository.ts`;
+  - `src/database/user-context.ts` (new), `src/database/prisma.module.ts`, `src/tenancy/services/tenancy-context.service.ts`;
+  - `src/platform/` (users repository, service, controller, organizations-access guard), `src/analytics/`, `src/search/`, `src/communications/services/{suppression,delivery-event}.service.ts`, `src/learning/` (roster count);
+  - `src/scripts/{provision-platform-owner,delete-user}.ts`.
+- **Uploads (D5):** `src/media/utils/file-validation.util.ts` and its callers (media, support, billing, course-order payments, protected media).
+- **CSP (D4):** `src/security-reports/` (new), `src/observability/metrics/csp-metrics.ts` (new), `src/main.ts`, `src/app.module.ts`.
+- **Tests:**
+  - new: `identity-rls`, `account-deletion-otp`, `registration-enumeration`, `csp-reports`;
+  - adapted: the RLS suites' fixtures, several auth suites' verification client, and `test/utils/{db-admin,test-app,account-deletion}.ts`.
+- **Docs:** `docs/CSP_AND_TOKEN_STORAGE.md` (new).
+
 **Frontend (`atlas`):**
 - `src/features/auth/pages/SignInPage.tsx`
 - `src/features/auth/components/RegistrationForm.tsx`
 - `src/localization/resources/en/auth.json`, `src/localization/resources/ar/auth.json`
 - `src/features/auth/auth-audit.test.tsx` (new)
+- `src/features/profile/components/DeleteAccountCard.tsx`, `src/services/identity/current-user.service.ts`, `delete-account-card.test.tsx` (new), deletion and notification copy (EN/AR)
+- `src/features/auth/…` and `public-website` post-sign-up copy (EN/AR), `sign-in-registered-notice.test.tsx`
+- `Caddyfile` (`csp_report_only`)
 
 ## 14. Commits
 
-Filled in after the release.
+**Backend (`claude/nifty-ride-h9nxql`):**
+- `b754dd2` audit fixes AUTH-01..11
+- `5541f2c` report draft
+- `c5fac49` uploads (D5)
+- `6bb78ed` account deletion (D1)
+- `10b5650` registration enumeration (D3)
+- `396c304` identity RLS (D2) with AUTH-17/18
+- `ef60292` CSP endpoint and plan (D4)
+- plus the final report and guard commit
+
+**Frontend:**
+- `56ca87e` redirect guard and name bound
+- `53aac34` delete-account dialog (D1)
+- `44a90f2` generic post-sign-up copy (D3)
+- `a9c08fe` CSP Report-Only (D4)
+
+Merge commits on `main`: section 15.
 
 ## 15. Deployment Status
 
@@ -430,29 +605,24 @@ Filled in after the release.
 
 ## 16. Remaining Risks
 
-- **Brevo webhook secret:** it was logged before AUTH-09. Rotate it (Brevo webhook URL plus the backend secret), because older log lines may still hold it.
-- **XSS impact:** because tokens live in `localStorage`, an XSS would be session theft until a CSP ships (DEC-4).
-- **Account deletion:** it has no re-authentication (DEC-1).
+- **Brevo webhook secret:** it was written to request logs before AUTH-09. **Rotate it after this release** (the steps are in the release notes), because older log lines may still hold it.
+- **XSS:** until the CSP is enforced and the token-storage migration ships, an XSS would still be session theft (CSP-ENF, TOK-1). The Report-Only data will show when enforcement is safe.
+- **`users` SELECT scope:** row visibility on `users` is context-gated, not relationship-scoped. Any established context can read the directory's rows, including `password_hash`. A column-level split, or a Prisma `omit`, for `password_hash` is the next step if defence in depth is wanted beyond this (the credential tables themselves are strictly per-user).
+- **Operator actions:** promoting a platform owner now requires the owner database connection (`provision-platform-owner` uses `DATABASE_URL`). This is intentional.
 
 ## 17. Human Decisions Required
 
-1. **DEC-1: re-authentication for account deletion.**
-   - **Why a decision:** it changes what a signed-in person must do to delete, and Google-only accounts have no password.
-   - **Options:**
-     - (a) current password, or a fresh Google sign-in for Google-only accounts: strongest, and more UI;
-     - (b) require a sign-in within the last N minutes: simple, with a weaker guarantee;
-     - (c) an emailed confirmation link: works for every account, but deletion becomes asynchronous.
-   - **Consequence of doing nothing:** a stolen management session can delete the account and archive its academies.
-2. **DEC-2: user-scoped RLS on the identity tables** (O1).
-   - **Options:** (a) add policies scoped to `app.current_user_id` plus service-role paths for sign-in and refresh: a large cross-module phase; (b) keep application-level scoping (status quo).
-   - **Consequence:** only relevant if SQL execution as `atlas_app` is ever achieved.
-3. **DEC-3: registration email disclosure** (O2).
-   - **Options:**
-     - (a) always answer "check your email" and mail the existing owner: no disclosure, and a slower signup UX;
-     - (b) keep the 409 plus "sign in instead" (status quo).
-4. **DEC-4: Content-Security-Policy rollout.**
-   - **Options:** (a) Report-Only first, then enforce: recommended; (b) enforce now: risk to academy sites; (c) none (status quo).
-   - **Consequence:** any XSS is token theft.
+**Decided, and implemented in this release:**
+- **D1: account deletion.** An emailed code (AUTH-12).
+- **D2: identity-table RLS.** The architecture was delegated and has been implemented (AUTH-13).
+- **D3: registration.** "If an account exists, we'll help you continue" (AUTH-14).
+- **D4: CSP.** Report-Only first, with token storage as a follow-up (AUTH-15; plan document).
+- **D5: uploads.** Fixed everywhere (AUTH-16).
+
+**Still needed from a human:**
+1. **Approve the `production-migrations` environment** for the Deploy run that applies `20261020000000_account_deletion_challenges` and `20261021000000_identity_tables_rls`.
+2. **Rotate the Brevo webhook secret** after the deploy (section 16).
+3. **Later:** after the Report-Only observation window, approve the switch to enforcement (`docs/CSP_AND_TOKEN_STORAGE.md` §1.4), and schedule the token-storage follow-up.
 
 ## 18. Final Audit Status
 
