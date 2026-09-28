@@ -146,6 +146,15 @@ describe('validateEnv', () => {
       expect(() => validateEnv({ ...PROD, FLAG_AUTH_GOOGLE_MODE: 'yes' })).toThrow();
     });
 
+    it('keeps the platform (management) switch off unless it is exactly on', () => {
+      expect(validateEnv(PROD).FLAG_AUTH_GOOGLE_PLATFORM).toBe('off');
+      expect(
+        validateEnv({ ...PROD, FLAG_AUTH_GOOGLE_PLATFORM: 'on' })
+          .FLAG_AUTH_GOOGLE_PLATFORM,
+      ).toBe('on');
+      expect(() => validateEnv({ ...PROD, FLAG_AUTH_GOOGLE_PLATFORM: 'true' })).toThrow();
+    });
+
     it.each(['allowlist', 'on'])(
       'refuses to start in %s mode with any credential missing, naming it',
       (mode) => {

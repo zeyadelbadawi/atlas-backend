@@ -29,6 +29,7 @@ sql() {
   if [ -n "${LOCAL_DB_URL:-}" ]; then psql "$LOCAL_DB_URL" -t -A -F'|' -c "$1"; return; fi
   docker compose exec -T postgres psql -U "$PGUSER_" -d "$PGDB_" -t -A -F'|' -c "$1"
 }
+BASE=$(env_value PLATFORM_BASE_DOMAIN)
 uuid_ok() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; }
 
 case "$cmd" in
@@ -42,6 +43,7 @@ case "$cmd" in
       console.log("platform_base_domain|" + (e.PLATFORM_BASE_DOMAIN || ""));
       console.log("mode|" + (e.FLAG_AUTH_GOOGLE_MODE || "(unset → off)"));
       console.log("academy_ids|" + (e.FLAG_AUTH_GOOGLE_ACADEMY_IDS || ""));
+      console.log("platform|" + (e.FLAG_AUTH_GOOGLE_PLATFORM || "(unset → off)"));
       console.log("redirect_uri|" + (e.GOOGLE_OAUTH_REDIRECT_URI || ""));
       console.log("client_id_present|" + (id.length > 0));
       console.log("client_id_shape_ok|" + /^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(id));
@@ -51,7 +53,7 @@ case "$cmd" in
       console.log("fake_provider_overrides|" + (overrides.join(",") || "none"));
     '
     # The same three in .env (presence only) — proves the deploy sync wrote them.
-    for k in GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET GOOGLE_OAUTH_REDIRECT_URI FLAG_AUTH_GOOGLE_MODE FLAG_AUTH_GOOGLE_ACADEMY_IDS; do
+    for k in GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET GOOGLE_OAUTH_REDIRECT_URI FLAG_AUTH_GOOGLE_MODE FLAG_AUTH_GOOGLE_ACADEMY_IDS FLAG_AUTH_GOOGLE_PLATFORM; do
       if grep -qE "^$k=.+" .env; then echo "dotenv_$k|present"; else echo "dotenv_$k|absent"; fi
     done
     sql "select 'migration', coalesce((select case when finished_at is not null and rolled_back_at is null then 'applied' else 'unfinished' end from _prisma_migrations where migration_name='20261019000000_google_identity_foundation'), 'absent')"
@@ -72,7 +74,7 @@ case "$cmd" in
     uuid_ok "$id" || { echo "refused: not a uuid" >&2; exit 2; }
     sql "select 'academy', a.id, replace(a.name,'|',' '), a.slug, a.status, coalesce(a.archived_at::text,'-'), a.registration_policy, a.organization_id is not null
          from academies a where a.id='$id'"
-    sql "select 'subdomain', s.status, coalesce(s.full_host, s.subdomain || '.' || (select base_domain from platform_domain_configuration where configured limit 1))
+    sql "select 'subdomain', s.status, coalesce(s.full_host, s.subdomain || '.' || coalesce((select base_domain from platform_domain_configuration where configured limit 1), '$BASE'))
          from subdomain_allocations s where s.academy_id='$id'"
     sql "select 'custom_domain', d.status, d.hostname from domain_connections d where d.academy_id='$id'"
     sql "select 'website', w.status from website_configurations w where w.academy_id='$id'"
@@ -80,10 +82,10 @@ case "$cmd" in
     sql "select 'learners', count(*) from academy_students where academy_id='$id'"
     ;;
   hosts)
-    sql "select 'host', a.id, replace(a.name,'|',' '), a.registration_policy, coalesce(s.full_host, s.subdomain || '.' || (select base_domain from platform_domain_configuration where configured limit 1))
+    sql "select 'host', a.id, replace(a.name,'|',' '), a.registration_policy, coalesce(s.full_host, s.subdomain || '.' || coalesce((select base_domain from platform_domain_configuration where configured limit 1), '$BASE'))
          from academies a join subdomain_allocations s on s.academy_id=a.id and s.status='assigned'
          join website_configurations w on w.academy_id=a.id and w.status='published'
-         where a.archived_at is null and a.status not in ('archived','suspended') order by a.created_at limit 20"
+         where a.archived_at is null and a.status not in ('archived','suspended') order by a.created_at desc limit 20"
     sql "select 'custom', d.academy_id, d.hostname from domain_connections d where d.status='connected' order by d.created_at limit 20"
     ;;
   data)
@@ -102,12 +104,34 @@ case "$cmd" in
     sql "select 'audit', action, count(*) from audit_log_entries where action like 'auth.identity.%' group by action order by action"
     sql "select 'outbox', key, count(*) from communication_outbox where key like 'auth.identity.%' group by key order by key"
     ;;
+  recent)
+    # The latest Google identities and what their accounts look like, with
+    # every address masked (first two characters + domain). For following a
+    # real-Google test without typing its address anywhere.
+    mask="(left(%s, 2) || '***' || substr(%s, strpos(%s, '@')))"
+    sql "select 'identity', i.user_id, $(printf "$mask" i.email_at_link i.email_at_link i.email_at_link), $(printf "$mask" u.email u.email u.email), u.status, (u.password_hash not like 'nopassword:%'), u.email_verified_at is not null, i.linked_at, coalesce(i.last_used_at::text,'-')
+         from user_auth_identities i join users u on u.id=i.user_id order by i.linked_at desc limit 20"
+    sql "select 'member_of', s.user_id, s.academy_id, s.status, s.source, s.joined_at from academy_students s
+         where s.user_id in (select user_id from user_auth_identities order by linked_at desc limit 20) order by s.joined_at"
+    sql "select 'staff_of', m.user_id, m.academy_id, m.role from academy_members m
+         where m.user_id in (select user_id from user_auth_identities order by linked_at desc limit 20)"
+    sql "select 'session', r.user_id, r.surface, coalesce(r.academy_id,'-'), coalesce(r.auth_method::text,'null'), r.created_at, (r.revoked_at is not null) from refresh_tokens r
+         where r.user_id in (select user_id from user_auth_identities order by linked_at desc limit 20) and r.created_at > now() - interval '48 hours' order by r.created_at"
+    sql "select 'trusted', t.user_id, t.surface, coalesce(t.academy_id,'-'), t.created_at from trusted_devices t
+         where t.user_id in (select user_id from user_auth_identities order by linked_at desc limit 20) and t.revoked_at is null and t.expires_at > now()"
+    sql "select 'totp', user_id from user_two_factor where confirmed_at is not null and user_id in (select user_id from user_auth_identities)"
+    sql "select 'audit', a.actor_user_id, a.action, a.context::text, a.occurred_at from audit_log_entries a where a.action like 'auth.identity.%' order by a.occurred_at desc limit 30"
+    sql "select 'outbox', o.recipient_user_id, o.key, o.created_at from communication_outbox o where o.key like 'auth.identity.%' order by o.created_at desc limit 30"
+    sql "select 'flow', intent, surface, coalesce(academy_id,'-'), (callback_at is not null), (completed_at is not null), created_at from auth_oauth_flows order by created_at desc limit 40"
+    ;;
   logs)
     hours="${2:-24}"
     printf '%s' "$hours" | grep -Eq '^[0-9]{1,3}$' || { echo "refused: hours" >&2; exit 2; }
     logs=$(docker compose logs --no-color --since "${hours}h" backend 2>/dev/null)
     cb=$(printf '%s\n' "$logs" | grep 'auth/google/callback')
     echo "callback_lines|$(printf '%s\n' "$cb" | grep -c 'auth/google/callback')"
+    # Only a line that CARRIES a code/state can leak one; each must show the censor.
+    echo "callback_lines_with_code|$(printf '%s\n' "$cb" | grep -Ec '(code|state)=')"
     echo "callback_lines_redacted|$(printf '%s\n' "$cb" | grep -c 'code=\[REDACTED\]')"
     # A code/state value that is NOT the censor, anywhere in a callback line.
     echo "callback_raw_code_or_state|$(printf '%s\n' "$cb" | grep -Ec '(code|state)=[^[&" ]' )"
@@ -160,7 +184,7 @@ case "$cmd" in
     sql "select 'outbox', key, count(*), max(created_at) from communication_outbox where recipient_user_id=$U and key like 'auth.identity.%' group by key"
     ;;
   *)
-    echo "usage: remote.sh config|academy <uuid>|hosts|data|logs <hours>|metrics|backup|user <email> <mailbox>" >&2
+    echo "usage: remote.sh config|academy <uuid>|hosts|data|recent|logs <hours>|metrics|backup|user <email> <mailbox>" >&2
     exit 2
     ;;
 esac

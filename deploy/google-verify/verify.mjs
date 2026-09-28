@@ -17,6 +17,9 @@ const PORT = process.env.PROBE_PORT ? `:${process.env.PROBE_PORT}` : '';
 const CALLBACK = process.env.EXPECT_CALLBACK || `https://${PLATFORM}/api/v1/auth/google/callback`;
 const CHECKS = (process.env.CHECKS || 'all').split(',').map((s) => s.trim());
 const EXPECT_MODE = process.env.EXPECT_MODE || 'off';
+/** `allowlist` mode: whether Atlas's own pages (platform host, management surface) offer Google. */
+const EXPECT_PLATFORM = process.env.EXPECT_PLATFORM === 'on' ? 'on' : 'off';
+const MANAGEMENT_ON = EXPECT_MODE === 'on' || (EXPECT_MODE === 'allowlist' && EXPECT_PLATFORM === 'on');
 const ACADEMY_ID = process.env.ACADEMY_ID || '';
 const want = (c) => CHECKS.includes('all') || CHECKS.includes(c);
 
@@ -69,6 +72,8 @@ async function callOnce(host, method, p, { body, origin, headers = {} } = {}) {
       ...headers,
     },
     body: body ? JSON.stringify(body) : undefined,
+    // A dead host (e.g. a custom domain whose DNS moved) must fail fast.
+    signal: AbortSignal.timeout(10_000),
   });
   const text = await r.text();
   let json = null;
@@ -99,7 +104,10 @@ async function main() {
       check('redirect URI is exactly the central callback', config.redirect_uri === CALLBACK, config.redirect_uri);
     }
     if (EXPECT_MODE === 'allowlist') {
-      check('allowlist names exactly the verified academy', config.academy_ids === ACADEMY_ID, config.academy_ids);
+      const expectedIds = [ACADEMY_ID, ...(process.env.ALSO_ACADEMY_IDS || '').split(',').map((x) => x.trim()).filter(Boolean)].sort().join(',');
+      check('allowlist names exactly the verified academies', config.academy_ids.split(',').map((x) => x.trim()).sort().join(',') === expectedIds, config.academy_ids);
+      const platform = (config.platform || '').startsWith('(unset') ? 'off' : config.platform;
+      check(`platform switch is the expected "${EXPECT_PLATFORM}"`, platform === EXPECT_PLATFORM, config.platform);
     }
     check('no error/fatal log lines in the last 30m', config.log_error_lines_30m === '0' && config.log_fatal_lines_30m === '0', `error=${config.log_error_lines_30m} fatal=${config.log_fatal_lines_30m}`);
   }
@@ -124,30 +132,41 @@ async function main() {
   // ---------------------------------------------------------------- probes
   if (want('probe')) {
     const hostsText = remote('hosts');
-    const hosts = lines(hostsText).filter((r) => r[0] === 'host').map(([, id, name, policy, host]) => ({ id, name, policy, host }));
+    const allHosts = lines(hostsText).filter((r) => r[0] === 'host').map(([, id, name, policy, host]) => ({ id, name, policy, host }));
+    // The allowlisted academies first (they must be probed), then the newest others.
+    const listed = (process.env.ALSO_ACADEMY_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const first = new Set([ACADEMY_ID, ...listed].filter(Boolean));
+    const hosts = [...allHosts.filter((h) => first.has(h.id)), ...allHosts.filter((h) => !first.has(h.id))].filter((h) => h.host);
+    for (const h of hosts.slice(0, 8)) info(`host ${h.id} ${h.host} policy=${h.policy}`);
     const customs = lines(hostsText).filter((r) => r[0] === 'custom').map(([, id, host]) => ({ id, host }));
     if (!academyHost && ACADEMY_ID) academyHost = hosts.find((h) => h.id === ACADEMY_ID)?.host ?? '';
 
     const options = await call(PLATFORM, 'GET', '/auth/options', { origin: null });
     check('platform /auth/options answers', options.status === 200, `${options.status}`);
-    check(`management offers Google only when mode=on (mode ${EXPECT_MODE})`, options.json?.google === (EXPECT_MODE === 'on'), JSON.stringify(options.json));
+    check(`platform (management) offers Google = ${MANAGEMENT_ON} (mode ${EXPECT_MODE}, platform ${EXPECT_PLATFORM})`, options.json?.google === MANAGEMENT_ON, JSON.stringify(options.json));
 
     for (const h of hosts.slice(0, 8)) {
       const o = await call(h.host, 'GET', '/auth/options', { origin: null });
-      const expected = EXPECT_MODE === 'on' || (EXPECT_MODE === 'allowlist' && h.id === ACADEMY_ID);
+      const expected = EXPECT_MODE === 'on' || (EXPECT_MODE === 'allowlist' && first.has(h.id));
       check(`${h.host} offers Google = ${expected}`, o.status === 200 && o.json?.google === expected, `${o.status} ${JSON.stringify(o.json)}`);
     }
     for (const c of customs.slice(0, 4)) {
       const o = await call(c.host, 'GET', '/auth/options', { origin: null }).catch((e) => ({ status: 0, json: null, e }));
-      const expected = EXPECT_MODE === 'on' || (EXPECT_MODE === 'allowlist' && c.id === ACADEMY_ID);
+      const expected = EXPECT_MODE === 'on' || (EXPECT_MODE === 'allowlist' && first.has(c.id));
       check(`custom domain ${c.host} offers Google = ${expected}`, o.status === 200 && o.json?.google === expected, `${o.status} ${JSON.stringify(o.json)}`);
     }
 
-    const mgmt = await call(PLATFORM, 'POST', '/auth/google/authorize', { body: { intent: 'sign_in' } });
-    if (EXPECT_MODE === 'on') {
-      check('management authorize works (mode on)', mgmt.status === 200, `${mgmt.status}`);
+    const mgmt = await call(PLATFORM, 'POST', '/auth/google/authorize', { body: { intent: 'sign_up', returnTo: '/auth/register' } });
+    if (MANAGEMENT_ON) {
+      check('platform authorize works', mgmt.status === 200, `${mgmt.status} ${mgmt.key}`);
+      if (mgmt.status === 200) {
+        const q = new URL(mgmt.json.authorizationUrl).searchParams;
+        check('platform flow: exact central redirect URI, PKCE S256, state and nonce', q.get('redirect_uri') === CALLBACK && q.get('code_challenge_method') === 'S256' && (q.get('state') || '').length >= 40 && (q.get('nonce') || '').length >= 40);
+      }
+      const foreignPlatform = await call(PLATFORM, 'POST', '/auth/google/authorize', { body: { intent: 'sign_in' }, origin: 'https://evil.example' });
+      check('a foreign Origin cannot start a platform flow', foreignPlatform.status === 403, `${foreignPlatform.status} ${foreignPlatform.key}`);
     } else {
-      check('management authorize is refused (404) unless mode=on', mgmt.status === 404, `${mgmt.status} ${mgmt.key}`);
+      check('platform (management) authorize is refused (404)', mgmt.status === 404, `${mgmt.status} ${mgmt.key}`);
     }
 
     if (EXPECT_MODE !== 'off' && academyHost) {
@@ -172,7 +191,7 @@ async function main() {
 
         // Does GOOGLE accept this client + redirect URI? A misconfigured
         // client answers with an error page or an error redirect.
-        const g = await fetch(started.json.authorizationUrl, { redirect: 'manual' });
+        const g = await fetch(started.json.authorizationUrl, { redirect: 'manual', signal: AbortSignal.timeout(15_000) });
         const loc = g.headers.get('location') || '';
         const body = g.status >= 400 ? await g.text() : '';
         const locUrl = loc ? new URL(loc, 'https://accounts.google.com') : null;
@@ -212,7 +231,7 @@ async function main() {
   if (want('logs')) {
     const l = facts('logs', process.env.LOG_HOURS || '24');
     printFacts('logs', Object.entries(l).map(([k, v]) => `${k}|${v}`).join('\n'));
-    check('every callback log line is redacted', l.callback_lines === l.callback_lines_redacted || l.callback_lines === '0', `${l.callback_lines_redacted}/${l.callback_lines}`);
+    check('every callback log line carrying a code shows it redacted', l.callback_lines_with_code === l.callback_lines_redacted, `${l.callback_lines_redacted}/${l.callback_lines_with_code} (of ${l.callback_lines} callback lines)`);
     check('no raw code/state in any callback log line', l.callback_raw_code_or_state === '0' && l.callback_raw_query_json === '0');
     check('no client secret in logs (literal or GOCSPX-shaped)', l.client_secret_shaped === '0' && ['0', 'n/a'].includes(l.client_secret_literal));
     check('no JWT / Google access token shaped value in logs', l.jwt_shaped === '0' && l.google_access_token_shaped === '0');
@@ -229,6 +248,9 @@ async function main() {
     printFacts('backup', Object.entries(b).map(([k, v]) => `${k}|${v}`).join('\n'));
     check('a database backup from the last 26 h exists', Number(b.backup_age_hours) <= 26, `${b.backup_file} age ${b.backup_age_hours}h`);
     check('backup passes gzip integrity and contains the users table', b.backup_gzip === 'ok' && b.backup_has_users_table === '1');
+  }
+  if (CHECKS.includes('recent')) {
+    printFacts('recent', remote('recent'));
   }
   if (want('user') && process.env.USER_EMAIL) {
     printFacts('user', remote('user', process.env.USER_EMAIL, process.env.MAILBOX));

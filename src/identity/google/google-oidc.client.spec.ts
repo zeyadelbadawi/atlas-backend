@@ -11,6 +11,7 @@ function client(): GoogleOidcClient {
     getOrThrow: () => ({
       mode: 'on',
       academyIds: [],
+      platform: false,
       clientId: CLIENT_ID,
       clientSecret: 'secret',
       redirectUri: 'https://atlas.test/api/v1/auth/google/callback',

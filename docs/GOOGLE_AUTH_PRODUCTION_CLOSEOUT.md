@@ -48,6 +48,7 @@ The `Google verify` workflow's `probe` check asks Google itself to accept the cl
 | `GOOGLE_OAUTH_REDIRECT_URI` | GitHub secret | the authorize and token requests |
 | `FLAG_AUTH_GOOGLE_MODE` | GitHub variable | `off` (default) · `allowlist` · `on` |
 | `FLAG_AUTH_GOOGLE_ACADEMY_IDS` | GitHub variable | comma-separated academy UUIDs for `allowlist` |
+| `FLAG_AUTH_GOOGLE_PLATFORM` | GitHub variable (optional) | `allowlist` only: `on` also offers Google on Atlas's own sign-in and sign-up (the platform host). `deploy.yml` passes `on` when the variable is unset; set it to `off` to turn the platform pages off without touching the academies. |
 
 **Path:** GitHub secrets/variables → `deploy.yml` (both jobs) → `.github/actions/vps-deploy` → a base64 fragment over SSH stdin → `deploy.sh --sync-env` upserts `/opt/atlas/.env`, dropping empty values and never printing any → `docker-compose.prod.yml` `env_file: .env` → backend recreated.
 
@@ -62,6 +63,11 @@ The `Google verify` workflow's `probe` check asks Google itself to accept the cl
 3. Set `FLAG_AUTH_GOOGLE_ACADEMY_IDS=b794e760-eb63-4b17-85a3-7a4f6a0c9418` (ellzoz, after fresh verification) and `FLAG_AUTH_GOOGLE_MODE=allowlist`, then redeploy. **Management stays off in allowlist mode by design.**
 4. Real-Google verification on ellzoz.
 5. The final state stays **allowlist**. Moving to `on` is a separate, explicit product decision (§20).
+6. **Atlas's own sign-in and sign-up pages** (the platform host) get Google through their own switch, `FLAG_AUTH_GOOGLE_PLATFORM=on`, which the deploy workflow sets unless the variable says `off`. The switch doesn't change the academy allowlist, and unlisted academies stay off.
+
+   In Atlas, "platform" and "management" are **one surface**: `atlass.dpdns.org/auth/sign-in` is the management sign-in, and it mints management sessions for organization owners, staff and platform admins. A Google sign-in there runs the same pipeline as a password sign-in: account status, surface rules, TOTP, the management emailed code and trusted devices.
+
+   A new person on `/auth/register` (alias `/auth/sign-up`) gets the Google create step, which carries the same organization-name and plan fields as the password form. Both are validated by the same canonical signup (`registerInternal` → `prepareSignupOrganization`), which creates the organization (onboarding pending), the owner membership and the trial atomically.
 
 ## 6. Migration
 
@@ -69,16 +75,96 @@ The `Google verify` workflow's `probe` check asks Google itself to accept the cl
 
 A push to `main` whose image carries it stops before rolling: "Nothing was migrated and nothing was rolled".
 
-## 7. Deployment commits — *pending*
+## 7. Deployment commits and runs
 
-- Backend branch head: `bc8bfac`.
-- Frontend branch head: `d71a83b`.
+| What | Value |
+|---|---|
+| Backend `main` | `598e134` (merge of `claude/nifty-ride-h9nxql` at `bc79fc7`) |
+| Frontend `main` | `fa429ac` (merge at `d71a83b`) |
+| Pre-release snapshot | Google verify #1, run `36386447738` (28 Sep 06:26 UTC): healthy; latest backup `atlas-20260928T030852Z.sql.gz` gzip-OK with the users table; Google migration absent; ellzoz facts fresh |
+| Push deploy | Deploy #216, run `36386437154`: stopped at the migration gate by design ("nothing migrated, nothing rolled") |
+| Gated migration + deploy | Deploy #217, run `36386543938` (`apply_migrations=true`, `production-migrations` approved by the owner), completed 06:43 UTC; backend started 06:43:19 UTC; backup `atlas-20260928T064244Z.sql.gz` taken at release |
+| Frontend deploy | atlas Deploy #124, run `36386503555` |
+| Allowlist deploy | Deploy #218, run `36392199721` (`apply_migrations=false`), after `FLAG_AUTH_GOOGLE_MODE=allowlist` and `FLAG_AUTH_GOOGLE_ACADEMY_IDS=<ellzoz>,<hfghgf>` |
 
-To be completed with the merge commits and the run IDs of the deploy and migration runs.
+## 8. Production verification with Google OFF (28 Sep 2026, 07:03–07:06 UTC)
 
-## 8–13. Production verification — *pending*
+**Google verify #2, run `36389539352`** (secrets and release).
 
-Timestamps, the G1–G16 real-Google matrix, results, security, observability and retention evidence. The source is the `Google verify` workflow runs (`expect_mode=off`, then `allowlist`), the Launch verify baseline runs, and the real-Google browser sessions.
+The running backend received:
+- mode `off`;
+- the exact redirect URI `https://atlass.dpdns.org/api/v1/auth/google/callback`;
+- a client id shaped like a Google web client id;
+- a client secret (presence only, 35 characters);
+- no `GOOGLE_OIDC_*` override.
+
+Also confirmed:
+- migration `20261019000000_google_identity_foundation` applied;
+- both tables present, FORCE RLS on flows, `refresh_tokens.auth_method` present;
+- health 200 (database and Redis up) and zero error lines;
+- the three Google alerts loaded in Prometheus;
+- the release backup is gzip-OK.
+
+**Google verify #4, run `36389770660`** (after the tooling fixes).
+- `/auth/options` answers `google:false` on the platform and on eight academy hosts, including ellzoz and hfghgf.
+- Management authorize is 404, authorize on ellzoz is 404, and the callback is a dead end (400).
+- No identities or flows; no duplicate user or email.
+- New sessions carry `auth_method` (`password/academy` 10, `password/management` 2).
+- The one callback log line carrying a `code` shows `code=[REDACTED]`, the Phase 4 D-1 fix live in production.
+- No secret-, JWT- or token-shaped values in 24 h of logs.
+
+**Launch verify #10, run `36389556432`** (password baseline on the new backend): all five jobs pass.
+- **API:**
+  - A4: new learner; existing-account join with one user row.
+  - A6:
+    - Academy A's code is refused on B and on management;
+    - the trust row is scoped to A, and a remembered browser skips only A's code;
+    - a revoked device is asked again.
+  - A5: academy-scoped `/users/me`.
+  - A1: surface refusals.
+  - A3: a password change revokes every session and every trusted device.
+  - Metrics.
+- **Browser:** management and academy sign-in with the emailed code.
+- **Smart join:** API, plus browser in English (desktop) and Arabic (mobile).
+- **Deliverability.**
+
+**Test academies re-verified from live data** (Google verify #2/#3):
+- ellzoz `b794e760-eb63-4b17-85a3-7a4f6a0c9418`: `ellzoz.atlass.dpdns.org`, website published, open registration, subscription trialing, 29 learners.
+- hfghgf `9efcaacf-10e1-49e9-b82c-fefb198bd942`: `hfghgf.atlass.dpdns.org`, website published, open registration, subscription trialing, 10 learners.
+
+## 9. Production verification in allowlist mode (28 Sep 2026, 07:34–07:36 UTC)
+
+**Google verify #5, run `36392401888`** (`expect_mode=allowlist`), after Deploy #218. Every check passed.
+
+**Allowlist:**
+- ellzoz and hfghgf report `google:true`.
+- The platform (management) reports `google:false`, and management authorize is 404.
+- The six other academy hosts report `google:false`, including `sure-education` (invite policy).
+
+**Flow start on ellzoz:**
+- A foreign `Origin` is refused with 403.
+- Authorize answers 200 with `https://accounts.google.com/o/oauth2/v2/auth`:
+  - the exact redirect URI;
+  - `response_type=code` and `scope=openid email profile`;
+  - PKCE `S256`, with state and nonce present;
+  - `prompt=select_account`;
+  - a client id shaped like a Google web client id.
+- The binder cookie is HttpOnly, Secure, SameSite=Lax, host-only, with path `/api/v1/auth/google`.
+
+**Google accepted the configured client and redirect URI.** The authorize URL answered 302 to `accounts.google.com/v3/signin/identifier`, with no `redirect_uri_mismatch` and no `invalid_client`.
+
+**Negative probes:**
+- A callback on an academy host is 404.
+- An unknown state is 400.
+- An unknown handoff is 401 `googleSignInExpired`.
+
+**Data, logs and metrics:**
+- One flow row (the probe's own flow), with no identities and no duplicate users.
+- All three callback lines carrying a code are redacted.
+- No secret-, JWT- or token-shaped values in the logs.
+- The Google alerts are loaded.
+
+## 10–13. Real-Google verification — *pending*
 
 ## 14. Known limitations
 
@@ -114,6 +200,13 @@ Timestamps, the G1–G16 real-Google matrix, results, security, observability an
 
 Everything Google returns 404 and the button disappears. Linked accounts keep their identities, and those without a password recover with "Forgot password".
 
+**Only Atlas's own pages:**
+1. Set the repository variable `FLAG_AUTH_GOOGLE_PLATFORM=off` (an explicit `off`: an empty value is dropped by the env sync and would keep the last value).
+2. Deploy as above.
+3. Run `Google verify` with `expect_mode=allowlist` and `expect_platform=off`.
+
+The academies are unaffected.
+
 ## 18. Rotate the Google client secret safely
 
 1. In Google Cloud, **add** a new secret to the client. Google allows two active secrets.
@@ -137,7 +230,7 @@ This is a product decision, not an automatic step. Before switching:
 - rerun the full real-Google matrix on at least two academies, including one custom domain.
 
 Then:
-1. Set `FLAG_AUTH_GOOGLE_MODE=on`. This also enables **management** sign-in and sign-up.
+1. Set `FLAG_AUTH_GOOGLE_MODE=on`. This enables every academy, and the platform whatever `FLAG_AUTH_GOOGLE_PLATFORM` says.
 2. Deploy.
 3. Run `Google verify` with `expect_mode=on`.
 

@@ -303,6 +303,8 @@ export interface GoogleAuthConfig {
   readonly mode: GoogleAuthMode;
   /** `allowlist` mode: the academies whose websites offer Google. */
   readonly academyIds: readonly string[];
+  /** `allowlist` mode: Atlas's own pages (the platform host, management surface) offer Google too. */
+  readonly platform: boolean;
   readonly clientId?: string;
   readonly clientSecret?: string;
   readonly redirectUri?: string;
@@ -596,6 +598,7 @@ export default () => {
       .split(',')
       .map((id) => id.trim())
       .filter((id) => id.length > 0),
+    platform: env.FLAG_AUTH_GOOGLE_PLATFORM === 'on',
     clientId: env.GOOGLE_OAUTH_CLIENT_ID || undefined,
     clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET || undefined,
     redirectUri: env.GOOGLE_OAUTH_REDIRECT_URI || undefined,
