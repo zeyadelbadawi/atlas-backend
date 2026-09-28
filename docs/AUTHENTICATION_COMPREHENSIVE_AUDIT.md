@@ -566,6 +566,15 @@ All checks ran from GitHub-hosted runners against `atlass.dpdns.org` on 28 Septe
 
 **Launch verify #12**, the first run, which predates the frontend deploy: its `smi-browser` job failed, because the verifier still asserted the pre-Decision-3 automatic "You already have an Atlas account" step. That step is the account disclosure Decision 3 removed. The verifier was updated (`0d9d7a5`), and #13 passes. Its `api`, `smi`, `browser` and `deliverability` jobs had already passed against the new backend.
 
+**Brevo webhook secret rotation** (owner-performed; verified on 28 September 2026):
+1. The owner updated `BREVO_WEBHOOK_SECRET` in GitHub and the webhook URL in Brevo.
+2. Deploy #222 (21:04 UTC) wrote the new value: the log shows `Env changed — force-recreating backend`.
+3. Launch verify #14 then sent real transactional mail, which produced delivery events.
+4. Google verify #13 (logs) found, since the new backend started:
+   - **19 delivery webhooks accepted, 0 refused (401/403)**, so the new secret matches on both sides;
+   - 19 of the 21 webhook lines carry the secret redacted; the other 2 are the route-registration lines at startup;
+   - **0 raw secret values.**
+
 ## 13. Files Changed
 
 **Backend (`atlas-backend`):**
@@ -666,7 +675,7 @@ All checks ran from GitHub-hosted runners against `atlass.dpdns.org` on 28 Septe
 
 ## 16. Remaining Risks
 
-- **Brevo webhook secret:** it was written to request logs before AUTH-09. **Rotate it after this release** (the steps are in the release notes), because older log lines may still hold it.
+- **Brevo webhook secret:** it was written to request logs before AUTH-09. It has been **rotated** (section 12), so any value in older log lines is now invalid.
 - **XSS:** until the CSP is enforced and the token-storage migration ships, an XSS would still be session theft (CSP-ENF, TOK-1). The Report-Only data will show when enforcement is safe.
 - **`users` SELECT scope:** row visibility on `users` is context-gated, not relationship-scoped. Any established context can read the directory's rows, including `password_hash`. A column-level split, or a Prisma `omit`, for `password_hash` is the next step if defence in depth is wanted beyond this (the credential tables themselves are strictly per-user).
 - **Operator actions:** promoting a platform owner now requires the owner database connection (`provision-platform-owner` uses `DATABASE_URL`). This is intentional.
@@ -681,8 +690,8 @@ All checks ran from GitHub-hosted runners against `atlass.dpdns.org` on 28 Septe
 - **D5: uploads.** Fixed everywhere (AUTH-16).
 
 **Still needed from a human:**
-1. **Approve the `production-migrations` environment** for the Deploy run that applies `20261020000000_account_deletion_challenges` and `20261021000000_identity_tables_rls`.
-2. **Rotate the Brevo webhook secret** after the deploy (section 16).
+1. ~~Approve the `production-migrations` environment~~: **done** (Deploy #221).
+2. ~~Rotate the Brevo webhook secret~~: **done**, and verified (section 12).
 3. **Later:** after the Report-Only observation window, approve the switch to enforcement (`docs/CSP_AND_TOKEN_STORAGE.md` §1.4), and schedule the token-storage follow-up.
 
 ## 18. Final Audit Status
@@ -698,5 +707,5 @@ All checks ran from GitHub-hosted runners against `atlass.dpdns.org` on 28 Septe
 - **CSP enforcement:** the CSP is Report-Only until the observation window has produced evidence (CSP-ENF).
 - **Token storage:** tokens stay in `localStorage` until the cookie/BFF follow-up (TOK-1).
 - **`users` rows:** readable within any established context (section 16).
-- **Brevo webhook secret:** must still be rotated by the owner (section 17). Nothing now writes it to the logs (verified), but earlier log lines may exist.
+- ~~Brevo webhook secret rotation~~: **done** and verified: 19 webhooks accepted, 0 refused, 0 raw values (section 12).
 

@@ -163,6 +163,10 @@ case "$cmd" in
     echo "webhook_lines_since_start|$(printf '%s\n' "$since_start" | grep -c 'webhooks/email')"
     echo "webhook_secret_redacted_since_start|$(printf '%s\n' "$since_start" | grep -c 'secret=\[REDACTED\]')"
     echo "webhook_secret_raw_since_start|$(printf '%s\n' "$since_start" | grep -Ec 'secret=[^[&" ]')"
+    # Outcome of each delivery webhook since this backend started: a secret
+    # mismatch (e.g. mid-rotation) shows as 401/403.
+    echo "webhook_accepted_since_start|$(printf '%s\n' "$since_start" | grep -Ec 'webhooks/email/[a-z]+[^ ]* -> 2[0-9][0-9]')"
+    echo "webhook_refused_since_start|$(printf '%s\n' "$since_start" | grep -Ec 'webhooks/email/[a-z]+[^ ]* -> (401|403)')"
     echo "google_retention_sweep_failures|$(printf '%s\n' "$logs" | grep -c 'Google flow retention sweep failed')"
     ;;
   metrics)
