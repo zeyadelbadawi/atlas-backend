@@ -282,6 +282,12 @@ async function main() {
     }).catch(() => null);
     check('CSP report endpoint accepts a report (204)', report?.status === 204, `${report?.status ?? 'no response'}`);
   }
+  if (CHECKS.includes('csp')) {
+    // Production evidence for CSP enforcement: every report the browsers sent,
+    // already normalised by the backend (no query, no path here).
+    const text = remote('csp', process.env.LOG_HOURS || '24');
+    for (const [k, ...v] of lines(text)) info(`csp ${k}: ${v.join(' | ')}`);
+  }
   if (CHECKS.includes('recent')) {
     printFacts('recent', remote('recent'));
   }

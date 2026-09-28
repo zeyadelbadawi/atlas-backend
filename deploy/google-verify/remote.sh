@@ -12,6 +12,8 @@
 #   remote.sh data                 -> flow retention, identity integrity, session auth_method, audit/outbox counts
 #   remote.sh logs <hours>         -> callback log lines and every way a credential could have leaked into logs
 #   remote.sh metrics              -> atlas_google_auth_total by stage/result (Prometheus)
+#   remote.sh csp <hours>          -> CSP violation reports, normalised (directive, kind, origin, page HOST
+#                                     only) and counted, plus atlas_csp_violations_total
 #   remote.sh backup               -> the latest database backup: name, age, size, gzip integrity
 #   remote.sh user <email> <local> -> non-secret facts about ONE test account of the owner's own mailbox
 #
@@ -172,6 +174,24 @@ case "$cmd" in
     echo "webhook_accepted_since_start|$(printf '%s\n' "$since_start" | grep -Ec 'webhooks/email/[a-z]+[^ ]* -> 2[0-9][0-9]')"
     echo "webhook_refused_since_start|$(printf '%s\n' "$since_start" | grep -Ec 'webhooks/email/[a-z]+[^ ]* -> (401|403)')"
     echo "google_retention_sweep_failures|$(printf '%s\n' "$logs" | grep -c 'Google flow retention sweep failed')"
+    ;;
+  csp)
+    hours="${2:-24}"
+    printf '%s' "$hours" | grep -Eq '^[0-9]{1,4}$' || { echo "refused: hours" >&2; exit 2; }
+    started=$(docker inspect -f '{{.State.StartedAt}}' "$(docker compose ps -q backend)" 2>/dev/null)
+    echo "backend_started|$started"
+    # The backend already reduced each report to closed fields; the page is cut
+    # to its host here so no path can surface either. The verify probe is left out.
+    docker compose logs --no-color --since "${hours}h" backend 2>/dev/null \
+      | grep 'Content-Security-Policy violation reported' \
+      | grep -v 'verify-probe.invalid' \
+      | grep -o '"csp":{[^}]*}' \
+      | sed -E 's#"documentPath":"([^/"]*)[^"]*"#"page":"\1"#; s#,"line":[^,}]*##; s#,"sourceOrigin":null##' \
+      | sort | uniq -c | sort -rn | head -60 \
+      | awk '{n=$1; $1=""; sub(/^ /,""); print "violation|" n "|" $0}'
+    echo "violation_lines|$(docker compose logs --no-color --since "${hours}h" backend 2>/dev/null | grep 'Content-Security-Policy violation reported' | grep -vc 'verify-probe.invalid')"
+    docker compose exec -T prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=sum%20by%20(directive%2Cblocked%2Cdisposition)%20(atlas_csp_violations_total)' 2>/dev/null \
+      | docker compose exec -T backend node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{try{const d=JSON.parse(s);for(const r of d.data.result)console.log('metric|'+Object.entries(r.metric).map(([k,v])=>k+'='+v).join(',')+'|'+r.value[1])}catch{console.log('metric|unavailable')}})"
     ;;
   metrics)
     q() {
