@@ -521,7 +521,50 @@ These controls were verified and hold:
 
 ## 12. Production Verification
 
-Filled in after the release (see sections 14 and 15).
+All checks ran from GitHub-hosted runners against `atlass.dpdns.org` on 28 September 2026, after the release in section 15. No production data was modified beyond each verifier's own tagged test accounts and one synthetic CSP report.
+
+**Deploy evidence (Deploy #221, `migrate-and-deploy`):**
+- a pre-migration backup, `atlas-20260928T202049Z.sql.gz`, was uploaded to S3 before anything ran;
+- `20261020000000_account_deletion_challenges` and `20261021000000_identity_tables_rls` applied, and the RLS precondition guard passed;
+- backend healthy, then Caddy healthy (TLS and SPA), and the last-good digests recorded for rollback.
+
+**Google verify #11** (`expect_mode=allowlist`, `expect_platform=on`, all checks): **all checks passed.**
+
+| Area | Result |
+|---|---|
+| **config** | Google configured |
+| **academy** | `ellzoz` (b794e760…) assigned and published |
+| **probe: Google offered** | on the platform, `ellzoz` and `hfghgf` |
+| **probe: Google not offered** | on the six non-allowlisted academies |
+| **probe: authorize flow** | the platform and academy authorize use the exact central redirect URI, PKCE S256, state and nonce; a foreign Origin gets 403 |
+| **probe: Google side** | Google accepts the client and the redirect URI |
+| **probe: callback edges** | the callback 404s on academy hosts; an unknown state is a 400 dead end; an unknown handoff gets 401 |
+| **data** | no flow kept past retention; no duplicate subject; no user with two identities; no orphaned identity; no identity on a deleted account; no duplicate email |
+| **logs** | every callback code line redacted (3/3); no client secret, JWT or handoff token |
+| **logs: Brevo webhook secret (AUTH-09)** | `webhook_secret_raw_since_start = 0`: 23 of 25 webhook lines carry it redacted (the other 2 carry no secret) |
+| **metrics** | the Google alert rules are loaded |
+| **backup** | the release backup: 0 h old, gzip OK, contains `users` |
+| **security** (new): identity RLS | FORCE RLS on all **7** identity tables; **0** permissive `true` policies |
+| **security**: definer functions | **7** definer functions, callable by `atlas_app` only |
+| **security**: the application role | `atlas_app` has no SUPERUSER or BYPASSRLS; no UPDATE on `users.is_platform_owner` |
+| **security**: deletion challenges and migrations | `account_deletion_challenges` has FORCE RLS; both migrations applied |
+| **security**: sessions | **18 real sessions minted since the RLS migration** (sign-in, emailed code and refresh working through the resolvers) |
+| **security**: CSP | the platform and `ellzoz` documents carry `Content-Security-Policy-Report-Only` and `Reporting-Endpoints`; no enforcing CSP yet; the report endpoint answers 204 |
+| **browser** | Google on Atlas's own pages, EN/AR, desktop and mobile |
+
+**Launch verify #13** (`mailbox=zeyadelbadawi.ze`, all jobs): **passed.**
+- **api:** A1–A6 and observability, including real sign-in with the emailed code, surface binding and session revocation.
+- **smi:** the smart academy join and member lookup, over the API.
+- **browser:** management and academy sign-in with the emailed code.
+- **deliverability:** passed.
+- **smi-browser:** the academy join journey, now under Decision 3:
+  1. an address that already has an account signs up at academy B with another password, and gets the generic answer: no join step, academy A not named, no learner row created;
+  2. it then uses "Join with it" with its own password and B's emailed code;
+  3. "You're all set" names A, and it lands on `/my`.
+
+  EN desktop and AR mobile.
+
+**Launch verify #12**, the first run, which predates the frontend deploy: its `smi-browser` job failed, because the verifier still asserted the pre-Decision-3 automatic "You already have an Atlas account" step. That step is the account disclosure Decision 3 removed. The verifier was updated (`0d9d7a5`), and #13 passes. Its `api`, `smi`, `browser` and `deliverability` jobs had already passed against the new backend.
 
 ## 13. Files Changed
 
@@ -581,27 +624,45 @@ Filled in after the release (see sections 14 and 15).
 
 ## 14. Commits
 
-**Backend (`claude/nifty-ride-h9nxql`):**
-- `b754dd2` audit fixes AUTH-01..11
+**Backend, on `main` through merge `cf977d0`:**
+- `b754dd2` AUTH-01..11
 - `5541f2c` report draft
 - `c5fac49` uploads (D5)
 - `6bb78ed` account deletion (D1)
-- `10b5650` registration enumeration (D3)
-- `396c304` identity RLS (D2) with AUTH-17/18
+- `10b5650` registration (D3)
+- `396c304` identity RLS (D2) and AUTH-17/18
 - `ef60292` CSP endpoint and plan (D4)
-- plus the final report and guard commit
+- `75bb6cc` report, and the fail-closed migration precondition
 
-**Frontend:**
+**Verification tooling, on the branch** (merged with this report):
+- `b2de77b` the Google verify `security` check
+- `0d9d7a5` the Launch verify journey for Decision 3
+
+**Frontend, on `main` through merge `f907bb0`:**
 - `56ca87e` redirect guard and name bound
 - `53aac34` delete-account dialog (D1)
 - `44a90f2` generic post-sign-up copy (D3)
 - `a9c08fe` CSP Report-Only (D4)
 
-Merge commits on `main`: section 15.
-
 ## 15. Deployment Status
 
-Filled in after the release.
+**Released to production on 28 September 2026.**
+
+**Backend:**
+1. Deploy #220 (push of `cf977d0`):
+   - its first image build crashed in GitHub's arm64 emulation (QEMU `Illegal instruction` during `npm ci`), an infrastructure fault; unchanged dependencies built on the re-run;
+   - the deploy then stopped at the migration gate as designed: nothing migrated, the stack untouched.
+2. Deploy #221 (`apply_migrations=true`) was approved by the owner through the `production-migrations` environment:
+   - backup taken;
+   - two migrations applied;
+   - backend and Caddy healthy at 20:21 UTC.
+
+**Frontend:** Deploy #126 (`f907bb0`) succeeded at 20:47 UTC.
+
+**Rollback:**
+- `vps-deploy --rollback` restores the recorded last-good digests.
+- The migrations are additive (a new table, plus policies and functions) and have no down-migration. Reverting D2 would be a new migration that drops the policies and functions.
+- The release backup is `atlas-20260928T202049Z.sql.gz`.
 
 ## 16. Remaining Risks
 
@@ -626,4 +687,16 @@ Filled in after the release.
 
 ## 18. Final Audit Status
 
-**PASS WITH KNOWN LIMITATIONS.** There are no critical or high issues. Every medium issue that can be fixed without a policy decision is fixed, tested and released. The known limitations are DEC-1 to DEC-4 (section 17) and the Brevo secret rotation (section 16).
+**PASS WITH KNOWN LIMITATIONS.**
+- **Issues:** eighteen found and eighteen fixed, with regression tests (0 high or critical). All five decisions are implemented, released and verified in production.
+- **Test suites:** the complete suites pass:
+  - backend unit 3950/3950;
+  - frontend 1170/1170;
+  - backend e2e 162/162 suites on a clean database (the 4 shared-database failures are explained and proven in §7a).
+
+**Known limitations, each with a plan and an owner:**
+- **CSP enforcement:** the CSP is Report-Only until the observation window has produced evidence (CSP-ENF).
+- **Token storage:** tokens stay in `localStorage` until the cookie/BFF follow-up (TOK-1).
+- **`users` rows:** readable within any established context (section 16).
+- **Brevo webhook secret:** must still be rotated by the owner (section 17). Nothing now writes it to the logs (verified), but earlier log lines may exist.
+
