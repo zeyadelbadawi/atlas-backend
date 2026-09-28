@@ -24,7 +24,7 @@ on:
         type: choice
         options: ['on', 'off']
       checks:
-        description: Comma-separated subset (config,academy,probe,data,logs,metrics,backup,user,recent,browser) or all
+        description: Comma-separated subset (config,academy,probe,data,logs,metrics,backup,security,user,recent,browser) or all
         required: false
         default: all
         type: string

@@ -104,6 +104,18 @@ case "$cmd" in
     sql "select 'audit', action, count(*) from audit_log_entries where action like 'auth.identity.%' group by action order by action"
     sql "select 'outbox', key, count(*) from communication_outbox where key like 'auth.identity.%' group by key order by key"
     ;;
+  security)
+    # Authentication audit — identity-table RLS and the resolver surface, as
+    # the database itself reports them. Read-only catalogue queries.
+    sql "select 'identity_tables_force_rls', count(*) from pg_class where relkind='r' and relname in ('users','refresh_tokens','password_reset_tokens','email_verification_tokens','user_two_factor','two_factor_recovery_codes','user_auth_identities') and relrowsecurity and relforcerowsecurity"
+    sql "select 'identity_permissive_true_policies', count(*) from pg_policies where tablename in ('users','refresh_tokens','password_reset_tokens','email_verification_tokens','user_two_factor','two_factor_recovery_codes','user_auth_identities') and (qual='true' or with_check='true')"
+    sql "select 'resolver_functions', count(*) from pg_proc where prosecdef and proname in ('auth_user_id_by_email','auth_refresh_token_owner','auth_password_reset_token_owner','auth_email_verification_token_owner','auth_identity_owner','platform_owner_user_id','academy_student_session_count') and not has_function_privilege('public', oid, 'EXECUTE') and has_function_privilege('atlas_app', oid, 'EXECUTE')"
+    sql "select 'app_role_bypass', count(*) from pg_roles where rolname='atlas_app' and (rolsuper or rolbypassrls)"
+    sql "select 'app_role_can_update_platform_owner', case when has_column_privilege('atlas_app','users','is_platform_owner','UPDATE') then 1 else 0 end"
+    sql "select 'deletion_challenges_force_rls', count(*) from pg_class where relname='account_deletion_challenges' and relrowsecurity and relforcerowsecurity"
+    sql "select 'audit_migrations_applied', count(*) from _prisma_migrations where finished_at is not null and rolled_back_at is null and migration_name in ('20261020000000_account_deletion_challenges','20261021000000_identity_tables_rls')"
+    sql "select 'sessions_since_release', count(*) from refresh_tokens where created_at > (select finished_at from _prisma_migrations where migration_name='20261021000000_identity_tables_rls')"
+    ;;
   recent)
     # The latest Google identities and what their accounts look like, with
     # every address masked (first two characters + domain). For following a

@@ -250,6 +250,35 @@ async function main() {
     check('a database backup from the last 26 h exists', Number(b.backup_age_hours) <= 26, `${b.backup_file} age ${b.backup_age_hours}h`);
     check('backup passes gzip integrity and contains the users table', b.backup_gzip === 'ok' && b.backup_has_users_table === '1');
   }
+  // ---------------------------------------------------------------- security (authentication audit)
+  if (want('security')) {
+    const f = facts('security');
+    printFacts('security', Object.entries(f).map(([k, v]) => `${k}|${v}`).join('\n'));
+    check('all 7 identity tables have ENABLE + FORCE row-level security', f.identity_tables_force_rls === '7', f.identity_tables_force_rls);
+    check('no permissive USING/WITH CHECK (true) policy on an identity table', f.identity_permissive_true_policies === '0', f.identity_permissive_true_policies);
+    check('7 SECURITY DEFINER resolvers, atlas_app-only (not PUBLIC)', f.resolver_functions === '7', f.resolver_functions);
+    check('atlas_app is neither SUPERUSER nor BYPASSRLS', f.app_role_bypass === '0');
+    check('atlas_app cannot UPDATE users.is_platform_owner', f.app_role_can_update_platform_owner === '0');
+    check('account_deletion_challenges has FORCE row-level security', f.deletion_challenges_force_rls === '1');
+    check('both audit migrations applied', f.audit_migrations_applied === '2', f.audit_migrations_applied);
+    info(`sessions minted since the RLS migration: ${f.sessions_since_release}`);
+
+    // CSP (Decision 4) — Report-Only on every document, and the report endpoint.
+    const docHosts = [PLATFORM, academyHost].filter(Boolean);
+    for (const host of docHosts) {
+      const res = await fetch(`${SCHEME}://${host}${PORT}/auth/sign-in`, { redirect: 'manual' }).catch(() => null);
+      const csp = res?.headers.get('content-security-policy-report-only') ?? '';
+      check(`${host} documents carry Content-Security-Policy-Report-Only`, res?.status === 200 && csp.includes("script-src 'self'") && csp.includes('report-uri /api/v1/security/csp-reports'), `${res?.status ?? 'no response'}`);
+      check(`${host} documents carry Reporting-Endpoints`, (res?.headers.get('reporting-endpoints') ?? '').includes('/api/v1/security/csp-reports'));
+      check(`${host} does not ENFORCE a CSP on documents yet (staged rollout)`, !res?.headers.get('content-security-policy'));
+    }
+    const report = await fetch(`${SCHEME}://${PLATFORM}${PORT}/api/v1/security/csp-reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/csp-report' },
+      body: JSON.stringify({ 'csp-report': { 'document-uri': `https://${PLATFORM}/google-verify-probe`, 'effective-directive': 'img-src', 'blocked-uri': 'https://verify-probe.invalid/x.png', disposition: 'report' } }),
+    }).catch(() => null);
+    check('CSP report endpoint accepts a report (204)', report?.status === 204, `${report?.status ?? 'no response'}`);
+  }
   if (CHECKS.includes('recent')) {
     printFacts('recent', remote('recent'));
   }
