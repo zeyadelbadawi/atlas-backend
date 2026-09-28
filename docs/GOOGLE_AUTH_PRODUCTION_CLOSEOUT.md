@@ -126,7 +126,39 @@ Also confirmed:
 - ellzoz `b794e760-eb63-4b17-85a3-7a4f6a0c9418`: `ellzoz.atlass.dpdns.org`, website published, open registration, subscription trialing, 29 learners.
 - hfghgf `9efcaacf-10e1-49e9-b82c-fefb198bd942`: `hfghgf.atlass.dpdns.org`, website published, open registration, subscription trialing, 10 learners.
 
-## 9–13. Allowlist and real-Google verification — *pending*
+## 9. Production verification in allowlist mode (28 Sep 2026, 07:34–07:36 UTC)
+
+**Google verify #5, run `36392401888`** (`expect_mode=allowlist`), after Deploy #218. Every check passed.
+
+**Allowlist:**
+- ellzoz and hfghgf report `google:true`.
+- The platform (management) reports `google:false`, and management authorize is 404.
+- The six other academy hosts report `google:false`, including `sure-education` (invite policy).
+
+**Flow start on ellzoz:**
+- A foreign `Origin` is refused with 403.
+- Authorize answers 200 with `https://accounts.google.com/o/oauth2/v2/auth`:
+  - the exact redirect URI;
+  - `response_type=code` and `scope=openid email profile`;
+  - PKCE `S256`, with state and nonce present;
+  - `prompt=select_account`;
+  - a client id shaped like a Google web client id.
+- The binder cookie is HttpOnly, Secure, SameSite=Lax, host-only, with path `/api/v1/auth/google`.
+
+**Google accepted the configured client and redirect URI.** The authorize URL answered 302 to `accounts.google.com/v3/signin/identifier`, with no `redirect_uri_mismatch` and no `invalid_client`.
+
+**Negative probes:**
+- A callback on an academy host is 404.
+- An unknown state is 400.
+- An unknown handoff is 401 `googleSignInExpired`.
+
+**Data, logs and metrics:**
+- One flow row (the probe's own flow), with no identities and no duplicate users.
+- All three callback lines carrying a code are redacted.
+- No secret-, JWT- or token-shaped values in the logs.
+- The Google alerts are loaded.
+
+## 10–13. Real-Google verification — *pending*
 
 ## 14. Known limitations
 
