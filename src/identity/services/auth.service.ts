@@ -465,23 +465,18 @@ export class AuthService {
     if (existing && external) {
       throw new ConflictException({ messageKey: 'errors.auth.emailAlreadyRegistered' });
     }
+    const academySignup = !external && !!input.academyId && !wantsOrganization;
+    // An academy signup can prove an existing account (its own password),
+    // so it is metered like a sign-in — for EVERY address, existing or not,
+    // so the budget itself says nothing about which addresses exist.
+    if (academySignup) await this.consumeSignupPasswordBudget(email);
     // Launch Stabilization A4 — one global identity may be a learner at many
     // academies. An academy signup with an email that already has an Atlas
     // account ADDS this academy to that account once the account's own
-    // password is proven; it never creates a second user. Every other
-    // registration (organization signup, management-host signup) keeps the
-    // 409 below unchanged.
-    if (existing && input.academyId && !wantsOrganization) {
-      return this.joinAcademyWithExistingAccount(existing, email, input);
-    }
-    if (existing) {
-      // Registration duplicate-email disclosure is the one deliberate
-      // exception to "never reveal account existence" in this service —
-      // the caller must be told to sign in instead, and the frontend has
-      // no other way to explain a failed registration.
-      throw new ConflictException({
-        messageKey: 'errors.auth.emailAlreadyRegistered',
-      });
+    // password is proven; it never creates a second user.
+    if (existing && academySignup) {
+      const joined = await this.joinAcademyWithExistingAccount(existing, email, input);
+      if (joined) return joined;
     }
 
     // Phase 10.1 — disposable/undeliverable addresses are refused here,
@@ -525,6 +520,26 @@ export class AuthService {
     // Validated BEFORE the account is created — a bad/unknown academyId
     // must never leave an orphaned user record behind.
     const academyId = await this.resolveRegistrationAcademyId(input.academyId);
+
+    // Authentication audit (Decision 3) — an address that already has an
+    // account and did not prove it: NOTHING is created, and the answer is
+    // exactly the one a new address gets — every rule above has already run
+    // identically, the registration policy is applied without spending an
+    // invitation, and a password is hashed as a new account's would be. The
+    // real owner is told by email how to continue (sign in, Google, reset).
+    if (existing) {
+      if (academyId) {
+        await this.academySurfaceService.previewAdmissionForNewLearner(
+          academyId,
+          input.inviteToken,
+          email,
+        );
+      }
+      await this.passwordHasher.hash(input.password || randomUUID());
+      await this.noticeSignupAttempt(existing, academyId ?? undefined);
+      return { account: 'new' };
+    }
+
     const admission = academyId
       ? await this.academySurfaceService.admissionForNewLearner(
           academyId,
@@ -564,97 +579,111 @@ export class AuthService {
     // all exist or none do. The membership insert runs under the new
     // user's own identity (`academy_students_self_insert`), so the user
     // id is minted here and the RLS context set on the same connection.
-    await this.prisma
-      .$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
-        await tx.user.create({
-          data: {
-            id: userId,
-            email,
-            passwordHash,
-            name: input.name,
-            // Google Identity — only an authoritative provider proves the mailbox.
-            ...(external?.emailVerified ? { emailVerifiedAt: new Date() } : {}),
-          },
-        });
-        if (external) {
-          await tx.userAuthIdentity.create({
+    try {
+      await this.prisma
+        .$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+          await tx.user.create({
             data: {
-              userId,
-              provider: external.provider,
-              providerSubject: external.subject,
-              emailAtLink: email,
+              id: userId,
+              email,
+              passwordHash,
+              name: input.name,
+              // Google Identity — only an authoritative provider proves the mailbox.
+              ...(external?.emailVerified ? { emailVerifiedAt: new Date() } : {}),
             },
           });
-          await this.auditLogWriterService.write(tx, {
-            actorUserId: userId,
-            action: 'auth.identity.linked',
-            targetType: 'user',
-            targetId: userId,
-            ...(input.academyId ? { academyId: input.academyId } : {}),
-            context: { provider: external.provider, via: 'new_account' },
-          });
-        }
-        if (academyId && admission) {
-          pendingApprovalOutboxIds.push(
-            ...(await this.admitLearnerInTransaction(tx, {
-              academyId,
-              userId,
-              admission,
-              hostname: input.hostname,
-            })),
-          );
-        }
-        if (rawVerificationToken) {
-          await tx.emailVerificationToken.create({
-            data: {
-              userId,
-              tokenHash: hashOpaqueToken(rawVerificationToken),
-              expiresAt: new Date(
-                Date.now() + identity.emailVerificationTokenTtlMinutes * 60 * 1000,
-              ),
-            },
-          });
-        }
+          if (external) {
+            await tx.userAuthIdentity.create({
+              data: {
+                userId,
+                provider: external.provider,
+                providerSubject: external.subject,
+                emailAtLink: email,
+              },
+            });
+            await this.auditLogWriterService.write(tx, {
+              actorUserId: userId,
+              action: 'auth.identity.linked',
+              targetType: 'user',
+              targetId: userId,
+              ...(input.academyId ? { academyId: input.academyId } : {}),
+              context: { provider: external.provider, via: 'new_account' },
+            });
+          }
+          if (academyId && admission) {
+            pendingApprovalOutboxIds.push(
+              ...(await this.admitLearnerInTransaction(tx, {
+                academyId,
+                userId,
+                admission,
+                hostname: input.hostname,
+              })),
+            );
+          }
+          if (rawVerificationToken) {
+            await tx.emailVerificationToken.create({
+              data: {
+                userId,
+                tokenHash: hashOpaqueToken(rawVerificationToken),
+                expiresAt: new Date(
+                  Date.now() + identity.emailVerificationTokenTtlMinutes * 60 * 1000,
+                ),
+              },
+            });
+          }
 
-        // New Customer Onboarding — the Organization, owner membership,
-        // subscription and (when the mailbox is eligible) Free Trial, in THIS
-        // transaction: the account and its organization exist together or not
-        // at all. The tenant context is the organization id minted here — the
-        // exact pair of contexts `POST /organizations` sets.
-        if (preparedOrganization && organizationId && this.signupOrganizationPort) {
-          await tx.$executeRaw`SELECT set_config('app.current_organization_id', ${organizationId}, true)`;
-          organizationResult = await this.signupOrganizationPort.createInTransaction(tx, {
-            organizationId,
-            owner: { id: userId, email },
-            prepared: preparedOrganization,
-            context: input.context,
-          });
-        }
-      })
-      .catch((error: unknown) => {
-        // Two concurrent registrations of one address both pass the
-        // `findByEmail` check above; the unique index decides, and the loser
-        // gets the same 409 as the sequential case instead of a 500.
-        if (
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === 'P2002' &&
-          isUserEmailTarget(error)
-        ) {
-          throw new ConflictException({
-            messageKey: 'errors.auth.emailAlreadyRegistered',
-          });
-        }
-        // Google Identity — two first sign-ins racing with the same Google
-        // account: the identity index decides.
-        if (
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === 'P2002'
-        ) {
-          throw new ConflictException({ messageKey: 'errors.auth.googleIdentityInUse' });
-        }
-        throw error;
-      });
+          // New Customer Onboarding — the Organization, owner membership,
+          // subscription and (when the mailbox is eligible) Free Trial, in THIS
+          // transaction: the account and its organization exist together or not
+          // at all. The tenant context is the organization id minted here — the
+          // exact pair of contexts `POST /organizations` sets.
+          if (preparedOrganization && organizationId && this.signupOrganizationPort) {
+            await tx.$executeRaw`SELECT set_config('app.current_organization_id', ${organizationId}, true)`;
+            organizationResult = await this.signupOrganizationPort.createInTransaction(
+              tx,
+              {
+                organizationId,
+                owner: { id: userId, email },
+                prepared: preparedOrganization,
+                context: input.context,
+              },
+            );
+          }
+        })
+        .catch((error: unknown) => {
+          // Two concurrent registrations of one address both pass the
+          // `findByEmail` check above; the unique index decides, and the loser
+          // gets the same 409 as the sequential case instead of a 500.
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002' &&
+            isUserEmailTarget(error)
+          ) {
+            // Decision 3 — the loser of a race for a NEW address is answered
+            // like any other registration (the Google path keeps its 409:
+            // that address was proven by Google).
+            if (!external) throw new RegistrationRaceLost();
+            throw new ConflictException({
+              messageKey: 'errors.auth.emailAlreadyRegistered',
+            });
+          }
+          // Google Identity — two first sign-ins racing with the same Google
+          // account: the identity index decides.
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          ) {
+            throw new ConflictException({
+              messageKey: 'errors.auth.googleIdentityInUse',
+            });
+          }
+          throw error;
+        });
+    } catch (error) {
+      if (error instanceof RegistrationRaceLost) return { account: 'new' };
+      throw error;
+    }
 
     for (const outboxId of organizationResult?.outboxIds ?? []) {
       await this.communicationService.enqueueAfterCommit(outboxId);
@@ -773,11 +802,8 @@ export class AuthService {
    * rules. The account owner is told by email (a leaked password must not
    * be able to quietly attach someone to academies).
    */
-  private async joinAcademyWithExistingAccount(
-    user: User,
-    email: string,
-    input: Parameters<AuthService['register']>[0],
-  ): Promise<RegistrationResult> {
+  /** The sign-in budget (per address) for a signup that may prove a password. */
+  private async consumeSignupPasswordBudget(email: string): Promise<void> {
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     const budget = await this.rateLimiter.consume(
       `signin:account:${email}`,
@@ -790,15 +816,53 @@ export class AuthService {
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
+  }
 
+  /**
+   * Decision 3 — the only place an existing address learns that somebody
+   * tried to register it: an email to that address, at most one an hour
+   * (catalogue dedupe window). Best-effort: a mail hiccup must not turn the
+   * generic answer into a different one.
+   */
+  private async noticeSignupAttempt(user: User, academyId?: string): Promise<void> {
+    if (user.status === 'deleted') return;
+    try {
+      const emitted = await this.tenancyContextService.runInUserContext(user.id, (tx) =>
+        this.communicationService.emit(tx, {
+          key: 'auth.account.signup_attempt',
+          recipientUserId: user.id,
+          organizationId: null,
+          academyId: academyId ?? null,
+          entity: { type: 'user', id: user.id },
+          values: { window: String(Math.floor(Date.now() / 3_600_000)) },
+        }),
+      );
+      await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    } catch (error) {
+      this.logger.warn(
+        {
+          userId: user.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Could not send the sign-up attempt notice (ignored).',
+      );
+    }
+  }
+
+  private async joinAcademyWithExistingAccount(
+    user: User,
+    email: string,
+    input: Parameters<AuthService['register']>[0],
+  ): Promise<RegistrationResult | null> {
     const passwordValid = await this.passwordHasher.verify(
       user.passwordHash,
       input.password,
     );
-    // Deleted and invited accounts cannot be joined to anything: exactly the
-    // answer an unknown password gets, so their state is not disclosed.
+    // Not proven (a wrong password, or an invited/deleted account that
+    // cannot be joined to anything): the caller answers exactly as for a
+    // new address and emails the owner — nothing is disclosed here.
     if (!passwordValid || user.status === 'deleted' || user.status === 'invited') {
-      throw new ConflictException({ messageKey: 'errors.auth.emailAlreadyRegistered' });
+      return null;
     }
     // Revealed only to someone who proved the password — as sign-in does.
     if (user.status === 'suspended') {
@@ -2075,3 +2139,6 @@ function isUserEmailTarget(error: Prisma.PrismaClientKnownRequestError): boolean
       : [];
   return fields.some((field) => String(field).includes('email'));
 }
+
+/** Decision 3 — a concurrent registration of the same new address won the race. */
+class RegistrationRaceLost extends Error {}

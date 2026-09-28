@@ -264,6 +264,7 @@ describe('Account deletion by emailed code (e2e)', () => {
       data: {
         userId: a.userId,
         surface: 'management',
+        label: 'Chrome on macOS',
         tokenHash: `delotp10-${Date.now()}`,
         expiresAt: new Date(Date.now() + 86_400_000),
       },

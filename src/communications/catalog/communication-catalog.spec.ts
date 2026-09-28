@@ -132,6 +132,10 @@ const EXPECTED_DEDUPE: Record<
   // P64 C4 — a resend MUST produce a second email, so this one can never
   // carry a dedupe key; the `values` are what the OTP template renders.
   'auth.email.otp': { values: { code: '123456', expiresInMinutes: 10 }, expected: null },
+  'auth.account.signup_attempt': {
+    values: { window: '480000' },
+    expected: 'account_signup_attempt:480000',
+  },
   'auth.account.deletion_code': {
     values: { code: '123456', expiresInMinutes: 10 },
     expected: null,

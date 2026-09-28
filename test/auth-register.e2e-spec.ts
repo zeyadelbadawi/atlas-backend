@@ -60,7 +60,7 @@ describe('POST /auth/register (e2e)', () => {
     expect(user?.passwordHash.startsWith('$argon2id$')).toBe(true);
   });
 
-  it('rejects a duplicate email with a normalized conflict error', async () => {
+  it('answers a duplicate email exactly like a new one and creates nothing (audit Decision 3)', async () => {
     const email = uniqueTestEmail('register-dup');
     await request(app.getHttpServer())
       .post('/auth/register')
@@ -70,10 +70,13 @@ describe('POST /auth/register (e2e)', () => {
     const response = await request(app.getHttpServer())
       .post('/auth/register')
       .send({ name: 'Second', email, password: 'another-password-here' })
-      .expect(409);
+      .expect(201);
 
-    expect(response.body.error.kind).toBe('conflict');
-    expect(response.body.error.messageKey).toBe('errors.auth.emailAlreadyRegistered');
+    expect(response.body).toEqual({ account: 'new' });
+    // Still ONE account, still the first one's name and password.
+    const users = await admin.user.findMany({ where: { email } });
+    expect(users).toHaveLength(1);
+    expect(users[0].name).toBe('First');
   });
 
   it('rejects an invalid payload (short password) as a validation error', async () => {
@@ -114,7 +117,13 @@ describe('POST /auth/register (e2e)', () => {
         email: base.toUpperCase(),
         password: 'correct-horse-battery',
       })
-      .expect(409);
+      // Audit Decision 3: the collision answers like a new address…
+      .expect(201);
+    // …and still creates nothing: one account, the lower-case one.
+    const users = await admin.user.findMany({
+      where: { email: { equals: base, mode: 'insensitive' } },
+    });
+    expect(users.map((u) => u.name)).toEqual(['Lower']);
   });
 
   /* ------- Phase 1 (Extended Scope, Decision 11, dependency D) ------- */
