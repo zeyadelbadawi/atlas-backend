@@ -69,16 +69,64 @@ The `Google verify` workflow's `probe` check asks Google itself to accept the cl
 
 A push to `main` whose image carries it stops before rolling: "Nothing was migrated and nothing was rolled".
 
-## 7. Deployment commits — *pending*
+## 7. Deployment commits and runs
 
-- Backend branch head: `bc8bfac`.
-- Frontend branch head: `d71a83b`.
+| What | Value |
+|---|---|
+| Backend `main` | `598e134` (merge of `claude/nifty-ride-h9nxql` at `bc79fc7`) |
+| Frontend `main` | `fa429ac` (merge at `d71a83b`) |
+| Pre-release snapshot | Google verify #1, run `36386447738` (28 Sep 06:26 UTC): healthy; latest backup `atlas-20260928T030852Z.sql.gz` gzip-OK with the users table; Google migration absent; ellzoz facts fresh |
+| Push deploy | Deploy #216, run `36386437154`: stopped at the migration gate by design ("nothing migrated, nothing rolled") |
+| Gated migration + deploy | Deploy #217, run `36386543938` (`apply_migrations=true`, `production-migrations` approved by the owner), completed 06:43 UTC; backend started 06:43:19 UTC; backup `atlas-20260928T064244Z.sql.gz` taken at release |
+| Frontend deploy | atlas Deploy #124, run `36386503555` |
+| Allowlist deploy | Deploy #218, run `36392199721` (`apply_migrations=false`), after `FLAG_AUTH_GOOGLE_MODE=allowlist` and `FLAG_AUTH_GOOGLE_ACADEMY_IDS=<ellzoz>,<hfghgf>` |
 
-To be completed with the merge commits and the run IDs of the deploy and migration runs.
+## 8. Production verification with Google OFF (28 Sep 2026, 07:03–07:06 UTC)
 
-## 8–13. Production verification — *pending*
+**Google verify #2, run `36389539352`** (secrets and release).
 
-Timestamps, the G1–G16 real-Google matrix, results, security, observability and retention evidence. The source is the `Google verify` workflow runs (`expect_mode=off`, then `allowlist`), the Launch verify baseline runs, and the real-Google browser sessions.
+The running backend received:
+- mode `off`;
+- the exact redirect URI `https://atlass.dpdns.org/api/v1/auth/google/callback`;
+- a client id shaped like a Google web client id;
+- a client secret (presence only, 35 characters);
+- no `GOOGLE_OIDC_*` override.
+
+Also confirmed:
+- migration `20261019000000_google_identity_foundation` applied;
+- both tables present, FORCE RLS on flows, `refresh_tokens.auth_method` present;
+- health 200 (database and Redis up) and zero error lines;
+- the three Google alerts loaded in Prometheus;
+- the release backup is gzip-OK.
+
+**Google verify #4, run `36389770660`** (after the tooling fixes).
+- `/auth/options` answers `google:false` on the platform and on eight academy hosts, including ellzoz and hfghgf.
+- Management authorize is 404, authorize on ellzoz is 404, and the callback is a dead end (400).
+- No identities or flows; no duplicate user or email.
+- New sessions carry `auth_method` (`password/academy` 10, `password/management` 2).
+- The one callback log line carrying a `code` shows `code=[REDACTED]`, the Phase 4 D-1 fix live in production.
+- No secret-, JWT- or token-shaped values in 24 h of logs.
+
+**Launch verify #10, run `36389556432`** (password baseline on the new backend): all five jobs pass.
+- **API:**
+  - A4: new learner; existing-account join with one user row.
+  - A6:
+    - Academy A's code is refused on B and on management;
+    - the trust row is scoped to A, and a remembered browser skips only A's code;
+    - a revoked device is asked again.
+  - A5: academy-scoped `/users/me`.
+  - A1: surface refusals.
+  - A3: a password change revokes every session and every trusted device.
+  - Metrics.
+- **Browser:** management and academy sign-in with the emailed code.
+- **Smart join:** API, plus browser in English (desktop) and Arabic (mobile).
+- **Deliverability.**
+
+**Test academies re-verified from live data** (Google verify #2/#3):
+- ellzoz `b794e760-eb63-4b17-85a3-7a4f6a0c9418`: `ellzoz.atlass.dpdns.org`, website published, open registration, subscription trialing, 29 learners.
+- hfghgf `9efcaacf-10e1-49e9-b82c-fefb198bd942`: `hfghgf.atlass.dpdns.org`, website published, open registration, subscription trialing, 10 learners.
+
+## 9–13. Allowlist and real-Google verification — *pending*
 
 ## 14. Known limitations
 
