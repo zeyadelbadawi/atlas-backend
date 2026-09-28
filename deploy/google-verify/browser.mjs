@@ -38,7 +38,8 @@ async function open(label, url, { lang = 'en', mobile = false } = {}) {
   });
   await context.addInitScript((language) => {
     try {
-      localStorage.setItem('i18nextLng', language);
+      // Atlas keeps the language as JSON under `atlas:language` (LocalizationProvider).
+      localStorage.setItem('atlas:language', JSON.stringify(language));
     } catch {
       // storage unavailable: the page's default language is used
     }
