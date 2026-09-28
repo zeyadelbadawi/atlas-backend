@@ -19,6 +19,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { Counter } from 'prom-client';
 
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
+import { deletionCodeFor } from './utils/account-deletion';
 import {
   createAdminPrisma,
   seedAcademy,
@@ -764,7 +765,10 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
       .post('/users/me/delete')
       .set('Host', PLATFORM)
       .set('Authorization', `Bearer ${signIn.body.accessToken}`)
-      .send({ confirm: true });
+      .send({
+        ...(await deletionCodeFor(app, admin, signIn.body.accessToken)),
+        confirm: true,
+      });
     const user = await admin.user.findUniqueOrThrow({ where: { id: staff.userId } });
     if (user.status === 'deleted') {
       expect(

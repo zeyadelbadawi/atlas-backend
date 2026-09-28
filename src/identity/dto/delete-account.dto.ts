@@ -11,6 +11,8 @@ import {
   IsIn,
   IsOptional,
   IsString,
+  IsUUID,
+  Matches,
   MaxLength,
 } from 'class-validator';
 import { ACCOUNT_DELETION_REASONS } from '../services/account-deletion.service';
@@ -32,4 +34,13 @@ export class DeleteAccountDto {
   @IsString()
   @MaxLength(2000, { message: 'validation:maxLength' })
   feedback?: string;
+
+  /** The challenge from `POST /users/me/delete/request` (Decision 1). */
+  @IsUUID('4', { message: 'validation:invalidValue' })
+  challengeId!: string;
+
+  /** The code emailed to the account's verified address. */
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'validation:invalidValue' })
+  code!: string;
 }

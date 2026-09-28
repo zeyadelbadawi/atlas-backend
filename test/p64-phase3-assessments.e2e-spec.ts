@@ -15,6 +15,7 @@ import type { ConfigService } from '@nestjs/config';
 import request from 'supertest';
 import type { PrismaClient } from '@prisma/client';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
+import { deletionCodeFor } from './utils/account-deletion';
 import {
   createAdminPrisma,
   seedAcademy,
@@ -968,10 +969,13 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       attemptsAllowed: 1,
       extraAttempts: 0,
     });
-    const list0 = await http().get(attemptsPath(w)).set(auth(w.student.token)).expect(200);
-    expect(list0.body.items.every((a: { canRetry: boolean }) => a.canRetry === false)).toBe(
-      true,
-    );
+    const list0 = await http()
+      .get(attemptsPath(w))
+      .set(auth(w.student.token))
+      .expect(200);
+    expect(
+      list0.body.items.every((a: { canRetry: boolean }) => a.canRetry === false),
+    ).toBe(true);
     await http().post(attemptsPath(w)).set(auth(w.student.token)).expect(403);
 
     // Reviewer grants +3.
@@ -986,7 +990,10 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     // attempts list canRetry flips true — the same figure the engine uses.
     const detail1 = await http().get(quizPath).set(auth(w.student.token)).expect(200);
     expect(detail1.body).toMatchObject({ attemptsAllowed: 4, extraAttempts: 3 });
-    const list1 = await http().get(attemptsPath(w)).set(auth(w.student.token)).expect(200);
+    const list1 = await http()
+      .get(attemptsPath(w))
+      .set(auth(w.student.token))
+      .expect(200);
     expect(list1.body.items.some((a: { canRetry: boolean }) => a.canRetry === true)).toBe(
       true,
     );
@@ -1446,7 +1453,11 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     await http()
       .post('/users/me/delete')
       .set(auth(w.student.token))
-      .send({ confirm: true, reason: 'no_longer_needed' })
+      .send({
+        ...(await deletionCodeFor(app, admin, w.student.token)),
+        confirm: true,
+        reason: 'no_longer_needed',
+      })
       .expect(200);
 
     const until = Date.now() + 15_000;
@@ -1554,10 +1565,7 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     const w = await world('p4g-palette');
     const templatePath = `/academies/${w.academy.id}/certificate-template`;
 
-    const initial = await http()
-      .get(templatePath)
-      .set(auth(w.owner.token))
-      .expect(200);
+    const initial = await http().get(templatePath).set(auth(w.owner.token)).expect(200);
     expect(initial.body.palette).toEqual(DEFAULT_PALETTE);
 
     const saved = await http()
@@ -1592,7 +1600,9 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       .set(auth(w.owner.token))
       .send({ textColor: '#BBBBBB', backgroundColor: '#FFFFFF' })
       .expect(400);
-    expect(JSON.stringify(lowText.body)).toContain('errors.certificate.textContrastTooLow');
+    expect(JSON.stringify(lowText.body)).toContain(
+      'errors.certificate.textContrastTooLow',
+    );
 
     // A dark background is refused (print-friendliness).
     await http()
@@ -1669,7 +1679,11 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     await http()
       .put(`/academies/${w.academy.id}/courses/${w.course.id}/completion-rule`)
       .set(auth(w.owner.token))
-      .send({ requiredQuizIds: [w.quiz.id], certificatesEnabled: true, certificateMinScore: 50 })
+      .send({
+        requiredQuizIds: [w.quiz.id],
+        certificatesEnabled: true,
+        certificateMinScore: 50,
+      })
       .expect(200);
 
     await http()
@@ -1737,11 +1751,14 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     const w = await world('p4g-iso');
     const other = await world('p4g-iso-foreign');
     const templatePath = `/academies/${w.academy.id}/certificate-template`;
-    await http().get(templatePath).set(auth(other.owner.token)).expect((res) => {
-      if (![403, 404].includes(res.status)) {
-        throw new Error(`expected 403/404, got ${res.status}`);
-      }
-    });
+    await http()
+      .get(templatePath)
+      .set(auth(other.owner.token))
+      .expect((res) => {
+        if (![403, 404].includes(res.status)) {
+          throw new Error(`expected 403/404, got ${res.status}`);
+        }
+      });
     await http()
       .put(templatePath)
       .set(auth(other.owner.token))

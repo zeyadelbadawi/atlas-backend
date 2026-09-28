@@ -24,6 +24,7 @@ import { PasswordResetTokensRepository } from './repositories/password-reset-tok
 import { EmailVerificationTokensRepository } from './repositories/email-verification-tokens.repository';
 import { EmailRiskService } from './services/email-risk.service';
 import { AccountDeletionService } from './services/account-deletion.service';
+import { AccountDeletionChallengeService } from './services/account-deletion-challenge.service';
 import { DeletionPlanService } from './services/deletion-plan.service';
 import { TwoFactorService } from './services/two-factor.service';
 import { TotpSecretCipher } from './services/totp-secret-cipher.service';
@@ -102,6 +103,7 @@ import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-li
     EmailVerificationTokensRepository,
     EmailRiskService,
     AccountDeletionService,
+    AccountDeletionChallengeService,
     DeletionPlanService,
     TwoFactorService,
     TotpSecretCipher,

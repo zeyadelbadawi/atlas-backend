@@ -367,7 +367,10 @@ export class AccountDeletionService {
     input: DeleteAccountInput,
     actor: DeletionActor,
   ): Promise<string[]> {
-    return this.prisma.$transaction(async (tx) => {
+    // The deleted account's OWN context: every per-user table below is
+    // row-level secured to its owner, and a context-free statement would
+    // silently match nothing.
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const liveSessions = await tx.refreshToken.findMany({
         where: { userId, revokedAt: null },
         select: { sessionId: true },
@@ -391,6 +394,23 @@ export class AccountDeletionService {
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.passwordResetToken.deleteMany({ where: { userId } });
       await tx.emailVerificationToken.deleteMany({ where: { userId } });
+      // Authentication audit — nothing that could still vouch for this
+      // person outlives the account: remembered browsers are revoked, open
+      // sign-in codes and pending Google flows (a settings link) are closed,
+      // and deletion codes are removed.
+      await tx.trustedDevice.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      await tx.authEmailChallenge.updateMany({
+        where: { userId, consumedAt: null },
+        data: { consumedAt: now },
+      });
+      await tx.authOAuthFlow.updateMany({
+        where: { linkUserId: userId, completedAt: null },
+        data: { completedAt: now },
+      });
+      await tx.accountDeletionChallenge.deleteMany({ where: { userId } });
 
       // NOTE: memberships are NOT removed here. They are tenant-scoped
       // and RLS-protected, and this transaction runs with no tenant
