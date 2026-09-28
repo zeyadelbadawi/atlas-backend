@@ -24,7 +24,7 @@ on:
         type: choice
         options: ['on', 'off']
       checks:
-        description: Comma-separated subset (config,academy,probe,data,logs,metrics,backup,user) or all
+        description: Comma-separated subset (config,academy,probe,data,logs,metrics,backup,user,recent,browser) or all
         required: false
         default: all
         type: string
@@ -92,3 +92,35 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           SSH_KEY_FILE: /home/runner/.ssh/deploy_key
         run: node verify.mjs
+
+  # Google on Atlas's own pages and the allowlisted academy, in a real
+  # browser (EN desktop, AR mobile). Starts one Google flow; signs nobody in.
+  browser:
+    if: inputs.checks == 'all' || contains(inputs.checks, 'browser')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OUT: ${{ github.workspace }}/google-verify-out
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright (Chromium)
+        working-directory: deploy/google-verify
+        run: |
+          npm init -y >/dev/null
+          npm install --no-save --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Browser verification
+        working-directory: deploy/google-verify
+        env:
+          EXPECT_PLATFORM: ${{ inputs.expect_mode == 'on' && 'on' || inputs.expect_mode == 'off' && 'off' || inputs.expect_platform }}
+        run: node browser.mjs
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: google-verify-screenshots
+          path: google-verify-out
+          retention-days: 14
