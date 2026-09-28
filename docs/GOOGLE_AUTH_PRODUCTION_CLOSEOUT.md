@@ -220,6 +220,15 @@ Verify tooling: `91e0280` and `9ca79ad` (branch).
 
 **Launch verify #11, run `36411535243`** (on the new backend): all jobs pass — the password, emailed-code, trusted-device, A1–A6, smart-join and deliverability journeys are unchanged.
 
+**First real platform Google sign-up (28 Sep, 13:00 UTC, reported as "code not received").** Google verify #10, run `36430865440` (`user` check, delivery diagnostics added in `8831d06`), recorded:
+- one active user with its Google identity and one organization membership;
+- an emailed-code challenge for `management` with `auth_method=google`;
+- the `auth.email.otp` outbox row dispatched within 1 s;
+- Brevo delivery status `delivered` (provider message id present, the same as the trial-started email a second earlier);
+- the address not suppressed, and no mail-pipeline warnings.
+
+The code was never entered (0 attempts) and expired at 13:10. The server side worked end to end. The message reached Gmail, so it was filed outside the inbox (Spam/Promotions/All Mail). This is not a code defect.
+
 **Still to do by a person:** one real Google sign-up on `https://atlass.dpdns.org/auth/register` with a Google account that has no Atlas account (organization name + plan → emailed code → onboarding), and one Google sign-in on `/auth/sign-in` with a linked owner.
 
 ## 10–13. Real-Google verification — *pending*
