@@ -391,9 +391,7 @@ describe('P64 C6 — tenant retention page read (e2e)', () => {
   it('gives a Manager of the SAME organisation nothing — this page is owner-only', async () => {
     // The manager really does hold the manager permission set; what it
     // does not hold is the owner-exclusive billing marker.
-    expect(ORGANIZATION_MANAGER_PERMISSIONS).not.toContain(
-      'tenant.subscription.view',
-    );
+    expect(ORGANIZATION_MANAGER_PERMISSIONS).not.toContain('tenant.subscription.view');
     await get(organizationId, manager.accessToken).expect(403);
   });
 

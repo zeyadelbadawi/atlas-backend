@@ -428,7 +428,8 @@ describe('Identity tables — row-level security (e2e)', () => {
     // A directory read inside a context carries no credential column at all.
     const row = await asUser<Record<string, unknown>[]>(
       alice.userId,
-      (tx) => tx.$queryRaw`SELECT "password_hash" FROM "users" WHERE "id" = ${bob.userId}`,
+      (tx) =>
+        tx.$queryRaw`SELECT "password_hash" FROM "users" WHERE "id" = ${bob.userId}`,
     );
     expect(row[0].password_hash ?? null).toBeNull();
 

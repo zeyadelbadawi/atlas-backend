@@ -40,9 +40,7 @@ export type SurfaceDenialReason =
  * grace (that one session family — two parties hold it).
  */
 export type SessionRevocationTrigger =
-  | 'password_reset'
-  | 'password_change'
-  | 'refresh_token_reuse';
+  'password_reset' | 'password_change' | 'refresh_token_reuse';
 
 const surfaceDenied = counter(
   'atlas_auth_surface_denied_total',
@@ -92,5 +90,7 @@ const AUTH_KEY = /^errors\.auth\.[A-Za-z]{1,48}$/;
 
 export function recordAuthRefusal(messageKey: string): void {
   if (!messageKey.startsWith('errors.auth.')) return;
-  authRefusals.inc({ key: AUTH_KEY.test(messageKey) ? messageKey.slice('errors.auth.'.length) : 'other' });
+  authRefusals.inc({
+    key: AUTH_KEY.test(messageKey) ? messageKey.slice('errors.auth.'.length) : 'other',
+  });
 }

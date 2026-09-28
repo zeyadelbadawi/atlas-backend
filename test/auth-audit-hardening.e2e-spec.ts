@@ -406,7 +406,9 @@ describe('Authentication audit hardening (e2e)', () => {
     });
     expect(audit?.context).toMatchObject({ trigger: 'refresh_token_reuse' });
     // And it is visible to alerting: the revocation counter carries the trigger.
-    const revoked = await METRICS_REGISTRY.getSingleMetric('atlas_auth_sessions_revoked_total')!.get();
+    const revoked = await METRICS_REGISTRY.getSingleMetric(
+      'atlas_auth_sessions_revoked_total',
+    )!.get();
     expect(
       revoked.values.find((v) => v.labels.trigger === 'refresh_token_reuse')?.value ?? 0,
     ).toBeGreaterThanOrEqual(1);

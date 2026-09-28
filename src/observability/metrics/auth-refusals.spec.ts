@@ -17,7 +17,10 @@ async function refusals(): Promise<Record<string, number>> {
 function hostFor(): ArgumentsHost {
   const response = { status: () => response, json: () => response };
   return {
-    switchToHttp: () => ({ getResponse: () => response, getRequest: () => ({ requestId: 'r1' }) }),
+    switchToHttp: () => ({
+      getResponse: () => response,
+      getRequest: () => ({ requestId: 'r1' }),
+    }),
   } as unknown as ArgumentsHost;
 }
 
@@ -26,13 +29,19 @@ describe('atlas_auth_refusals_total', () => {
 
   it('the exception filter counts an errors.auth.* refusal by its key', async () => {
     const before = (await refusals()).invalidCredentials ?? 0;
-    filter.catch(new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' }), hostFor());
+    filter.catch(
+      new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' }),
+      hostFor(),
+    );
     expect((await refusals()).invalidCredentials).toBe(before + 1);
   });
 
   it('ignores refusals that are not authentication refusals', async () => {
     const before = await refusals();
-    filter.catch(new BadRequestException({ messageKey: 'errors.validation.failed' }), hostFor());
+    filter.catch(
+      new BadRequestException({ messageKey: 'errors.validation.failed' }),
+      hostFor(),
+    );
     expect(await refusals()).toEqual(before);
   });
 

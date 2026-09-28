@@ -74,16 +74,24 @@ describe('P64 C4 — RLS on auth_email_challenges and trusted_devices (e2e)', ()
   describe('trusted_devices', () => {
     it('C4-RLS-1: a user sees their own device rows', async () => {
       const id = await seedDevice(alice);
-      const rows = await tenancy.runInUserContext(alice, (tx) =>
-        tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "trusted_devices" WHERE "id" = ${id}`,
+      const rows = await tenancy.runInUserContext(
+        alice,
+        (tx) =>
+          tx.$queryRaw<
+            { id: string }[]
+          >`SELECT "id" FROM "trusted_devices" WHERE "id" = ${id}`,
       );
       expect(rows).toHaveLength(1);
     });
 
     it("C4-RLS-2: a user CANNOT see another user's device rows", async () => {
       const id = await seedDevice(alice);
-      const rows = await tenancy.runInUserContext(bob, (tx) =>
-        tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "trusted_devices" WHERE "id" = ${id}`,
+      const rows = await tenancy.runInUserContext(
+        bob,
+        (tx) =>
+          tx.$queryRaw<
+            { id: string }[]
+          >`SELECT "id" FROM "trusted_devices" WHERE "id" = ${id}`,
       );
       // Before the tightening this returned the row: `_system_select
       // USING (true)` OR-ed past `_self_select`.
@@ -92,8 +100,10 @@ describe('P64 C4 — RLS on auth_email_challenges and trusted_devices (e2e)', ()
 
     it("C4-RLS-3: a user CANNOT revoke another user's device by updating it", async () => {
       const id = await seedDevice(alice);
-      const updated = await tenancy.runInUserContext(bob, (tx) =>
-        tx.$executeRaw`UPDATE "trusted_devices" SET "revoked_at" = now() WHERE "id" = ${id}`,
+      const updated = await tenancy.runInUserContext(
+        bob,
+        (tx) =>
+          tx.$executeRaw`UPDATE "trusted_devices" SET "revoked_at" = now() WHERE "id" = ${id}`,
       );
       expect(updated).toBe(0);
       const still = await admin.$queryRaw<
@@ -104,8 +114,10 @@ describe('P64 C4 — RLS on auth_email_challenges and trusted_devices (e2e)', ()
 
     it('C4-RLS-4: a user cannot mint a device row that belongs to someone else', async () => {
       await expect(
-        tenancy.runInUserContext(bob, (tx) =>
-          tx.$executeRaw`
+        tenancy.runInUserContext(
+          bob,
+          (tx) =>
+            tx.$executeRaw`
             INSERT INTO "trusted_devices" ("id", "user_id", "surface", "token_hash", "label", "expires_at", "created_at")
             VALUES (${randomUUID()}, ${alice}, 'management', ${'forged'}, 'Forged', now() + INTERVAL '30 days', now())
           `,
@@ -127,26 +139,34 @@ describe('P64 C4 — RLS on auth_email_challenges and trusted_devices (e2e)', ()
 
     it('C4-RLS-5: a user sees their own challenge', async () => {
       const id = await seedChallenge(alice);
-      const rows = await tenancy.runInUserContext(alice, (tx) =>
-        tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "auth_email_challenges" WHERE "id" = ${id}`,
+      const rows = await tenancy.runInUserContext(
+        alice,
+        (tx) =>
+          tx.$queryRaw<
+            { id: string }[]
+          >`SELECT "id" FROM "auth_email_challenges" WHERE "id" = ${id}`,
       );
       expect(rows).toHaveLength(1);
     });
 
     it("C4-RLS-6: a user CANNOT read another user's login challenge", async () => {
       const id = await seedChallenge(alice);
-      const rows = await tenancy.runInUserContext(bob, (tx) =>
-        tx.$queryRaw<
-          { id: string; code_hash: string }[]
-        >`SELECT "id", "code_hash" FROM "auth_email_challenges" WHERE "id" = ${id}`,
+      const rows = await tenancy.runInUserContext(
+        bob,
+        (tx) =>
+          tx.$queryRaw<
+            { id: string; code_hash: string }[]
+          >`SELECT "id", "code_hash" FROM "auth_email_challenges" WHERE "id" = ${id}`,
       );
       expect(rows).toHaveLength(0);
     });
 
     it("C4-RLS-7: a user CANNOT consume or tamper with another user's challenge", async () => {
       const id = await seedChallenge(alice);
-      const updated = await tenancy.runInUserContext(bob, (tx) =>
-        tx.$executeRaw`UPDATE "auth_email_challenges" SET "attempts" = 0, "consumed_at" = NULL WHERE "id" = ${id}`,
+      const updated = await tenancy.runInUserContext(
+        bob,
+        (tx) =>
+          tx.$executeRaw`UPDATE "auth_email_challenges" SET "attempts" = 0, "consumed_at" = NULL WHERE "id" = ${id}`,
       );
       expect(updated).toBe(0);
     });
@@ -166,8 +186,12 @@ describe('P64 C4 — RLS on auth_email_challenges and trusted_devices (e2e)', ()
         select: { id: true },
       });
 
-      const rows = await tenancy.runInUserContext(owner.id, (tx) =>
-        tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "auth_email_challenges" WHERE "id" = ${id}`,
+      const rows = await tenancy.runInUserContext(
+        owner.id,
+        (tx) =>
+          tx.$queryRaw<
+            { id: string }[]
+          >`SELECT "id" FROM "auth_email_challenges" WHERE "id" = ${id}`,
       );
       expect(rows).toHaveLength(0);
     });

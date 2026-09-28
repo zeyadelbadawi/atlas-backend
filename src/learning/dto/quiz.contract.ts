@@ -129,7 +129,10 @@ export function toQuizResponse(
     questions?: (PrismaQuizQuestion & { options?: PrismaQuizQuestionOption[] })[];
   },
   questionCount: number,
-  perStudent?: { readonly extraAttempts: number; readonly attemptsAllowed: number | null },
+  perStudent?: {
+    readonly extraAttempts: number;
+    readonly attemptsAllowed: number | null;
+  },
 ): QuizResponse {
   return {
     id: quiz.id,

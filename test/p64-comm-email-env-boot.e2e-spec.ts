@@ -118,7 +118,8 @@ describe('P64 Communications — email configuration boot contract', () => {
   });
 
   it('refuses a live provider with no way to build a link (no web URL, no base domain)', () => {
-    const { PLATFORM_BASE_DOMAIN: _omitted, ...withoutDomain } = PRODUCTION_BASE;
+    const withoutDomain: Record<string, unknown> = { ...PRODUCTION_BASE };
+    delete withoutDomain.PLATFORM_BASE_DOMAIN;
     expect(() =>
       validateEnv({
         ...withoutDomain,
