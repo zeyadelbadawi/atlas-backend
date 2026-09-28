@@ -266,14 +266,20 @@ async function main() {
     check('both audit migrations applied', f.audit_migrations_applied === '2', f.audit_migrations_applied);
     info(`sessions minted since the RLS migration: ${f.sessions_since_release}`);
 
-    // CSP (Decision 4) — Report-Only on every document, and the report endpoint.
+    // CSP — ENFORCED on every document (production-readiness pass), with reporting kept on.
     const docHosts = [PLATFORM, academyHost].filter(Boolean);
     for (const host of docHosts) {
       const res = await fetch(`${SCHEME}://${host}${PORT}/auth/sign-in`, { redirect: 'manual' }).catch(() => null);
-      const csp = res?.headers.get('content-security-policy-report-only') ?? '';
-      check(`${host} documents carry Content-Security-Policy-Report-Only`, res?.status === 200 && csp.includes("script-src 'self'") && csp.includes('report-uri /api/v1/security/csp-reports'), `${res?.status ?? 'no response'}`);
-      check(`${host} documents carry Reporting-Endpoints`, (res?.headers.get('reporting-endpoints') ?? '').includes('/api/v1/security/csp-reports'));
-      check(`${host} does not ENFORCE a CSP on documents yet (staged rollout)`, !res?.headers.get('content-security-policy'));
+      const csp = res?.headers.get('content-security-policy') ?? '';
+      check(`${host} documents ENFORCE Content-Security-Policy (script-src 'self', no unsafe-inline/eval for scripts)`,
+        res?.status === 200 && /script-src 'self';/.test(csp) && !/script-src[^;]*unsafe-(inline|eval)/.test(csp) && csp.includes("object-src 'none'") && csp.includes("frame-ancestors 'self'"),
+        `${res?.status ?? 'no response'}`);
+      check(`${host} CSP still reports violations`, csp.includes('report-uri /api/v1/security/csp-reports') && (res?.headers.get('reporting-endpoints') ?? '').includes('/api/v1/security/csp-reports'));
+      // Every script the served document loads is same-origin (nothing injected at the edge).
+      const html = res?.status === 200 ? await res.text() : '';
+      const scripts = [...html.matchAll(/<script\b([^>]*)>/gi)].map((m) => m[1]);
+      const foreign = scripts.filter((a) => /src=["']?(https?:)?\/\//i.test(a) || (!/src=/i.test(a) && !/type=["']?application\/(ld\+)?json/i.test(a)));
+      check(`${host} document loads only same-origin scripts (no inline, no third-party)`, html.length > 0 && foreign.length === 0, `${scripts.length} script tag(s), ${foreign.length} foreign/inline`);
     }
     const report = await fetch(`${SCHEME}://${PLATFORM}${PORT}/api/v1/security/csp-reports`, {
       method: 'POST',

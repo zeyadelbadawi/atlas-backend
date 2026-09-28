@@ -34,8 +34,15 @@ export type SurfaceDenialReason =
   | 'account_action'
   | 'academy_host_mismatch';
 
-/** A3 — what ended every session of an account. */
-export type SessionRevocationTrigger = 'password_reset' | 'password_change';
+/**
+ * What ended sessions: A3's password reset/change (every session of the
+ * account), or a rotated refresh token presented again after the multi-tab
+ * grace (that one session family — two parties hold it).
+ */
+export type SessionRevocationTrigger =
+  | 'password_reset'
+  | 'password_change'
+  | 'refresh_token_reuse';
 
 const surfaceDenied = counter(
   'atlas_auth_surface_denied_total',
@@ -45,7 +52,7 @@ const surfaceDenied = counter(
 
 const sessionsRevoked = counter(
   'atlas_auth_sessions_revoked_total',
-  'Sessions ended because the account password was reset or changed (Launch Stabilization A3).',
+  'Sessions ended because the account password was reset or changed (A3), or because a rotated refresh token was replayed (trigger="refresh_token_reuse" — possible token theft).',
   ['trigger'],
 );
 
@@ -60,4 +67,30 @@ export function recordSessionsRevoked(
   // `inc(0)` still creates the labelled series, so a reset with no live
   // session is visible as a zero-valued sample rather than as absence.
   sessionsRevoked.inc({ trigger }, count);
+}
+
+/**
+ * Production-readiness pass — every authentication REFUSAL, by its
+ * `errors.auth.*` message key. Recorded once, centrally, by the global
+ * exception filter, so no throw site can forget it and no second counting
+ * path exists. The key set is the code's own constant vocabulary (bounded;
+ * anything not shaped like one is folded into `other`), never user input.
+ *
+ * What it detects: brute force (`invalidCredentials`, `rateLimited`), TOTP
+ * guessing (`invalidTwoFactorCode`), reset-link abuse (`invalidResetToken`),
+ * stolen/replayed refresh cookies (`invalidRefreshToken`,
+ * `crossOriginSession`), email-code guessing (`otpInvalid`), tenancy probing
+ * (`academyHostMismatch`, `studentUseAcademySignIn`).
+ */
+const authRefusals = counter(
+  'atlas_auth_refusals_total',
+  'Authentication requests refused, by errors.auth.* message key (brute force, TOTP/OTP guessing, reset abuse, refresh replay, cross-origin session use).',
+  ['key'],
+);
+
+const AUTH_KEY = /^errors\.auth\.[A-Za-z]{1,48}$/;
+
+export function recordAuthRefusal(messageKey: string): void {
+  if (!messageKey.startsWith('errors.auth.')) return;
+  authRefusals.inc({ key: AUTH_KEY.test(messageKey) ? messageKey.slice('errors.auth.'.length) : 'other' });
 }

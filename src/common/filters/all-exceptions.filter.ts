@@ -21,6 +21,7 @@ import * as Sentry from '@sentry/node';
 import { Logger } from 'nestjs-pino';
 import type { FieldViolation, NormalizedApiErrorResponse } from '../dto/api-error.dto';
 import { isRetryableKind, mapStatusToErrorKind } from './error-kind.util';
+import { recordAuthRefusal } from '../../observability/metrics/auth-security-metrics';
 
 type Primitive = string | number | boolean;
 type ErrorDetailValue = Primitive | readonly Readonly<Record<string, Primitive>>[];
@@ -96,6 +97,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       });
     } else {
       this.logger.warn({ requestId, status, messageKey }, 'Request failed');
+      recordAuthRefusal(messageKey);
     }
 
     response.status(status).json(body);

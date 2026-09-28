@@ -20,6 +20,7 @@ import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import request from 'supertest';
+import { METRICS_REGISTRY } from '../src/observability/metrics/learning-metrics.service';
 import type { PrismaClient } from '@prisma/client';
 import { generate } from 'otplib';
 
@@ -404,6 +405,11 @@ describe('Authentication audit hardening (e2e)', () => {
       orderBy: { occurredAt: 'desc' },
     });
     expect(audit?.context).toMatchObject({ trigger: 'refresh_token_reuse' });
+    // And it is visible to alerting: the revocation counter carries the trigger.
+    const revoked = await METRICS_REGISTRY.getSingleMetric('atlas_auth_sessions_revoked_total')!.get();
+    expect(
+      revoked.values.find((v) => v.labels.trigger === 'refresh_token_reuse')?.value ?? 0,
+    ).toBeGreaterThanOrEqual(1);
     // A fresh sign-in is unaffected.
     await signIn(person.email).expect(200);
   });

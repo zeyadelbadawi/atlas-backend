@@ -77,6 +77,7 @@ import { AcademyStaffRecipientsService } from '../../communications/services/aca
 import { TrustedDeviceService } from './trusted-device.service';
 import type { EmailOtpChallengeContract } from '../dto/contracts';
 import type { SignInSurface } from '../dto/sign-in.dto';
+import { recordSessionsRevoked } from '../../observability/metrics/auth-security-metrics';
 
 /**
  * Real request metadata for the session being created or refreshed —
@@ -1648,6 +1649,7 @@ export class AuthService {
           reused.userId,
         );
         await this.sessionRevocationService.markRevoked(reused.sessionId);
+        recordSessionsRevoked('refresh_token_reuse', revoked > 0 ? 1 : 0);
         this.logger.warn(
           { event: 'auth.refresh.reuse_detected', userId: reused.userId, revoked },
           'A rotated refresh token was presented again; its session was ended.',
