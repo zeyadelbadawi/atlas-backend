@@ -36,24 +36,29 @@ export class RegisterDto {
   @IsNotEmpty()
   @IsString()
   @MinLength(2)
+  @MaxLength(100)
   readonly name!: string;
 
   @IsNotEmpty()
   @IsEmail()
+  @MaxLength(254)
   readonly email!: string;
 
   @IsNotEmpty()
   @IsString()
   @MinLength(8)
+  @MaxLength(1024)
   readonly password!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   readonly academyId?: string;
 
   /** P64 Phase 1 (D3) — required when the academy's registration policy is `invite`. */
   @IsOptional()
   @IsString()
+  @MaxLength(512)
   readonly inviteToken?: string;
 
   /**

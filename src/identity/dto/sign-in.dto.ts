@@ -16,6 +16,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  MaxLength,
 } from 'class-validator';
 
 export const SIGN_IN_SURFACES = ['management', 'academy'] as const;
@@ -24,10 +25,12 @@ export type SignInSurface = (typeof SIGN_IN_SURFACES)[number];
 export class SignInDto {
   @IsNotEmpty()
   @IsEmail()
+  @MaxLength(254)
   readonly email!: string;
 
   @IsNotEmpty()
   @IsString()
+  @MaxLength(1024)
   readonly password!: string;
 
   @IsOptional()
@@ -46,5 +49,6 @@ export class SignInDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   readonly academyId?: string;
 }

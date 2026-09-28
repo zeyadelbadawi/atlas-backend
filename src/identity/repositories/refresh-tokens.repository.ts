@@ -179,6 +179,30 @@ export class RefreshTokensRepository {
   }
 
   /**
+   * Refresh-token REUSE: the presented token exists, was retired by a
+   * rotation (a newer row exists in the same family), and that rotation
+   * happened more than `graceMs` ago. Two tabs refreshing the same token a
+   * few milliseconds apart look like reuse to the loser, so a short grace
+   * separates that benign race from a copied token replayed later. Returns
+   * the family to end, or null.
+   */
+  async findReusedRotation(
+    presentedTokenHash: string,
+    graceMs: number,
+  ): Promise<{ sessionId: string; userId: string } | null> {
+    const row = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash: presentedTokenHash },
+      select: { sessionId: true, userId: true, revokedAt: true, createdAt: true },
+    });
+    if (!row?.revokedAt) return null;
+    if (Date.now() - row.revokedAt.getTime() <= graceMs) return null;
+    const rotatedInto = await this.prisma.refreshToken.count({
+      where: { sessionId: row.sessionId, createdAt: { gt: row.createdAt } },
+    });
+    return rotatedInto > 0 ? { sessionId: row.sessionId, userId: row.userId } : null;
+  }
+
+  /**
    * Launch Stabilization A1 — the surface and academy a session was minted
    * for. Every rotation copies both forward, so any row of the family
    * answers; `null` when no row exists at all.

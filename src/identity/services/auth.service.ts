@@ -105,6 +105,14 @@ export function hasUsablePassword(user: Pick<User, 'passwordHash'>): boolean {
  * an IP or user agent.
  */
 /** Launch Stabilization A4 — whether registration created an account or added an academy to an existing one. */
+
+/**
+ * How long after a rotation a retired refresh token may be presented again
+ * without being treated as stolen: two tabs refreshing the same token race
+ * within milliseconds; a copied token is replayed minutes or days later.
+ */
+export const REFRESH_REUSE_GRACE_MS = 60_000;
+
 export interface RegistrationResult {
   readonly account: 'new' | 'existing';
   /**
@@ -1228,7 +1236,13 @@ export class AuthService {
     const selection = await this.resolveSurface(user, requested, context);
 
     if (await this.twoFactorService.isEnforcedFor(user.id)) {
-      const challenge = await this.twoFactorService.createChallenge(user.id, authMethod);
+      const challenge = await this.twoFactorService.createChallenge(
+        user.id,
+        authMethod,
+        selection.surface === 'academy' && selection.academyId
+          ? { surface: 'academy', academyId: selection.academyId }
+          : { surface: 'management' },
+      );
       return {
         twoFactorRequired: true,
         challengeId: challenge.challengeId,
@@ -1387,10 +1401,16 @@ export class AuthService {
     context?: SessionRequestContext,
     requested: SessionSurfaceSelection = { surface: 'management' },
   ): Promise<AuthenticationSessionContract> {
-    const { userId, authMethod } = await this.twoFactorService.completeChallenge(
-      challengeId,
-      input,
+    // Like the emailed code: the challenge records the surface/academy the
+    // sign-in was resolved for, and it must be completed on that host.
+    const expected = await this.academySurfaceService.expectedAuthContext(
+      context?.hostname,
     );
+    const {
+      userId,
+      authMethod,
+      selection: challenged,
+    } = await this.twoFactorService.completeChallenge(challengeId, input, expected);
 
     const user = await this.usersRepository.findById(userId);
     if (!user) {
@@ -1399,10 +1419,11 @@ export class AuthService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
 
-    // P64 Phase 1 — the surface is re-resolved here (the challenge holds
-    // only the user id), so a learner can no more finish a management
-    // sign-in through 2FA than start one.
-    const selection = await this.resolveSurface(user, requested, context);
+    // P64 Phase 1 — the surface is re-resolved here, so a learner can no
+    // more finish a management sign-in through 2FA than start one. It is
+    // the CHALLENGE's surface, never the body's; the body is read only for
+    // a challenge minted before challenges recorded one.
+    const selection = await this.resolveSurface(user, challenged ?? requested, context);
     const session = await this.issueSession(user, context, selection, authMethod);
     await this.usersRepository.touchLastSignInAt(user.id);
     return session;
@@ -1572,10 +1593,54 @@ export class AuthService {
     });
 
     if (!result) {
+      // A token that was already rotated away and is presented again later
+      // means two parties hold the same session: the whole family ends
+      // (refresh rows and live access tokens), whoever holds it. A benign
+      // concurrent-refresh race (within the grace) just fails.
+      const reused = await this.refreshTokensRepository.findReusedRotation(
+        presentedHash,
+        REFRESH_REUSE_GRACE_MS,
+      );
+      if (reused) {
+        const revoked = await this.refreshTokensRepository.revokeSessionForUser(
+          reused.sessionId,
+          reused.userId,
+        );
+        await this.sessionRevocationService.markRevoked(reused.sessionId);
+        this.logger.warn(
+          { event: 'auth.refresh.reuse_detected', userId: reused.userId, revoked },
+          'A rotated refresh token was presented again; its session was ended.',
+        );
+        await this.tenancyContextService.runInUserContext(reused.userId, (tx) =>
+          this.auditLogWriterService.writeBestEffort(tx, {
+            actorUserId: reused.userId,
+            action: 'auth.sessions.revoked',
+            targetType: 'user',
+            targetId: reused.userId,
+            context: {
+              trigger: 'refresh_token_reuse',
+              sessionsRevoked: revoked > 0 ? 1 : 0,
+            },
+          }),
+        );
+      }
       // Covers: unknown token, already-revoked token (including a replay
       // of a token a concurrent request just rotated), and expired token —
       // all collapse to the same generic 401, never distinguishing which,
       // so a caller can't probe for which failure mode applies.
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
+    }
+
+    // A session outlives nothing about its account: once the account is no
+    // longer active (suspended, deleted, back to invited), a refresh ends the
+    // session instead of renewing it — the same refusal a new sign-in gets.
+    const owner = await this.usersRepository.findById(result.created.userId);
+    if (!owner || owner.status !== 'active') {
+      await this.refreshTokensRepository.revokeSessionForUser(
+        result.created.sessionId,
+        result.created.userId,
+      );
+      await this.sessionRevocationService.markRevoked(result.created.sessionId);
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
     }
 
@@ -1727,17 +1792,27 @@ export class AuthService {
    */
   async confirmPasswordReset(rawToken: string, newPassword: string): Promise<void> {
     const tokenHash = hashOpaqueToken(rawToken);
+    // A cheap read first, so an unknown token never costs a password hash.
+    if (!(await this.passwordResetTokensRepository.findValidByHash(tokenHash))) {
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidResetToken' });
+    }
+    const passwordHash = await this.passwordHasher.hash(newPassword);
+    // Then ONE conditional write consumes it: a link confirmed twice
+    // concurrently is honoured once, never twice.
     const resetToken =
-      await this.passwordResetTokensRepository.findValidByHash(tokenHash);
+      await this.passwordResetTokensRepository.claimValidByHash(tokenHash);
 
     if (!resetToken) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidResetToken' });
     }
-
-    const passwordHash = await this.passwordHasher.hash(newPassword);
+    const owner = await this.usersRepository.findById(resetToken.userId);
+    if (!owner || owner.status === 'deleted') {
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidResetToken' });
+    }
 
     await this.usersRepository.updatePasswordHash(resetToken.userId, passwordHash);
-    await this.passwordResetTokensRepository.markUsed(resetToken.id);
+    // Any other outstanding reset/setup link for this account dies with it.
+    await this.passwordResetTokensRepository.spendAllForUser(resetToken.userId);
     // Launch Stabilization A2 (D2) — the setup link for an account staff
     // created is this same reset token: setting a password here is what
     // activates an `invited` account, and the link reaching the inbox

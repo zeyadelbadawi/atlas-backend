@@ -144,6 +144,13 @@ case "$cmd" in
     secret=$(env_value GOOGLE_OAUTH_CLIENT_SECRET)
     if [ -n "$secret" ]; then echo "client_secret_literal|$(printf '%s\n' "$logs" | grep -cF -- "$secret")"; else echo "client_secret_literal|n/a"; fi
     echo "google_warn_lines|$(printf '%s\n' "$logs" | grep -c 'Google sign-in callback failed.')"
+    # A URL-carried webhook secret (Brevo `?secret=`) since THIS backend
+    # started: every line must show the censor (audit F-9).
+    started=$(docker inspect -f '{{.State.StartedAt}}' "$(docker compose ps -q backend)" 2>/dev/null)
+    since_start=$(docker compose logs --no-color --since "$started" backend 2>/dev/null | grep 'webhooks/email')
+    echo "webhook_lines_since_start|$(printf '%s\n' "$since_start" | grep -c 'webhooks/email')"
+    echo "webhook_secret_redacted_since_start|$(printf '%s\n' "$since_start" | grep -c 'secret=\[REDACTED\]')"
+    echo "webhook_secret_raw_since_start|$(printf '%s\n' "$since_start" | grep -Ec 'secret=[^[&" ]')"
     echo "google_retention_sweep_failures|$(printf '%s\n' "$logs" | grep -c 'Google flow retention sweep failed')"
     ;;
   metrics)

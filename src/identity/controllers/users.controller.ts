@@ -28,6 +28,7 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { ManagementSessionGuard } from '../guards/management-session.guard';
 import { CurrentAuthContext } from '../decorators/auth-context.decorator';
 import type { AuthContext } from '../guards/jwt-auth.guard';
+import { CredentialCheckRateLimitGuard } from '../guards/credential-check-rate-limit.guard';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard)
@@ -73,6 +74,7 @@ export class UsersController {
 
   @Post('me/password')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(CredentialCheckRateLimitGuard)
   async changePassword(
     @CurrentAuthContext() auth: AuthContext,
     @Body() dto: ChangePasswordDto,

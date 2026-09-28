@@ -16,6 +16,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import * as Sentry from '@sentry/node';
 import { Logger } from 'nestjs-pino';
 import type { FieldViolation, NormalizedApiErrorResponse } from '../dto/api-error.dto';
@@ -171,6 +172,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return { status, messageKey: this.toMessageKey(status, exception.message) };
     }
 
+    // Input the database cannot represent is the CALLER's error, not a
+    // server fault: a NUL byte in a string (SQLSTATE 22021), text that is not
+    // a valid value of the column's type (22P02) or a malformed id (Prisma
+    // P2023). Answered as a plain validation failure — no detail leaked —
+    // instead of a 500 that pages someone.
+    if (isInvalidInputDatabaseError(exception)) {
+      return { status: HttpStatus.BAD_REQUEST, messageKey: 'errors.validation.failed' };
+    }
+
     // Anything that isn't a deliberate HttpException is an unexpected,
     // unhandled failure — never leak its raw message to the client (it may
     // contain internals/stack detail); the full detail is still logged above.
@@ -231,4 +241,23 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (exception instanceof Error) return exception.stack ?? exception.message;
     return String(exception);
   }
+}
+
+/** A database error caused by the request's own data (see `resolve`). */
+export function isInvalidInputDatabaseError(exception: unknown): boolean {
+  if (
+    exception instanceof Prisma.PrismaClientKnownRequestError &&
+    exception.code === 'P2023'
+  ) {
+    return true;
+  }
+  if (
+    exception instanceof Prisma.PrismaClientUnknownRequestError ||
+    exception instanceof Prisma.PrismaClientKnownRequestError
+  ) {
+    return /code: "(22021|22P02)"|invalid byte sequence for encoding/.test(
+      exception.message,
+    );
+  }
+  return false;
 }

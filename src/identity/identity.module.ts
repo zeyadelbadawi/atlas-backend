@@ -53,6 +53,7 @@ import { GoogleAuthService } from './google/google-auth.service';
 import { GoogleOidcClient } from './google/google-oidc.client';
 import { GoogleIdentityRepository } from './google/google-identity.repository';
 import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard';
+import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-limit.guard';
 
 @Module({
   imports: [
@@ -112,6 +113,7 @@ import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard'
     EmailOtpService,
     TrustedDeviceService,
     SignInRateLimitGuard,
+    CredentialCheckRateLimitGuard,
     PasswordResetRateLimitGuard,
     RegisterRateLimitGuard,
     PlatformOwnerGuard,

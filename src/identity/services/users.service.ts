@@ -5,6 +5,7 @@
  */
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { UsersRepository } from '../repositories/users.repository';
+import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
 import { SessionRevocationService } from './session-revocation.service';
 import { PasswordHasherService } from './password-hasher.service';
 import { toCurrentUser } from '../dto/contracts';
@@ -32,6 +33,7 @@ export class UsersService {
     private readonly surfaceEnforcement: SurfaceEnforcementService,
     private readonly trustedDeviceService: TrustedDeviceService,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly passwordResetTokensRepository: PasswordResetTokensRepository,
   ) {}
 
   /**
@@ -120,6 +122,9 @@ export class UsersService {
 
     const newHash = await this.passwordHasher.hash(newPassword);
     await this.usersRepository.updatePasswordHash(userId, newHash);
+    // An outstanding reset/setup link would otherwise still be able to set
+    // the password the owner just changed.
+    await this.passwordResetTokensRepository.spendAllForUser(userId);
     // Launch Stabilization A3 (D3) — refresh rows AND live access tokens,
     // including this one: the old password may be in someone else's hands.
     const sessionsRevoked = await this.sessionRevocationService.revokeAllSessionsForUser(

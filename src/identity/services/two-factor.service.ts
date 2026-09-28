@@ -87,6 +87,11 @@ export interface TwoFactorStatus {
   readonly recoveryCodesRemaining: number;
 }
 
+/** The surface (and academy) a sign-in was resolved for before its second factor. */
+export type TwoFactorChallengeSelection =
+  | { readonly surface: 'management'; readonly academyId?: undefined }
+  | { readonly surface: 'academy'; readonly academyId: string };
+
 @Injectable()
 export class TwoFactorService {
   private readonly logger = new Logger(TwoFactorService.name);
@@ -241,12 +246,20 @@ export class TwoFactorService {
   async createChallenge(
     userId: string,
     authMethod: AuthMethod = 'password',
+    selection?: TwoFactorChallengeSelection,
   ): Promise<{ challengeId: string; expiresIn: number }> {
     const challengeId = randomBytes(32).toString('base64url');
-    // Google Identity — a password challenge keeps storing the bare user id
-    // (so challenges already in Redis across a deploy stay valid); any other
-    // first factor is appended after a `|`, which a UUID never contains.
-    const value = authMethod === 'password' ? userId : `${userId}|${authMethod}`;
+    // `userId|authMethod|surface|academyId` — `|` never occurs in a UUID.
+    // The surface (and academy) the sign-in was resolved for is recorded,
+    // exactly as an emailed-code challenge records it, so the second factor
+    // completes THAT sign-in and nothing else: the verify body cannot
+    // re-aim it at another surface or academy. Older values (`userId`,
+    // `userId|google`) are still read while they live out their TTL.
+    const value = selection
+      ? [userId, authMethod, selection.surface, selection.academyId ?? ''].join('|')
+      : authMethod === 'password'
+        ? userId
+        : `${userId}|${authMethod}`;
     await this.redisService
       .getClient()
       .set(`${CHALLENGE_PREFIX}${challengeId}`, value, 'EX', CHALLENGE_TTL_SECONDS);
@@ -265,14 +278,27 @@ export class TwoFactorService {
   async completeChallenge(
     challengeId: string,
     input: { token?: string; recoveryCode?: string },
-  ): Promise<{ userId: string; authMethod: AuthMethod }> {
+    expected: TwoFactorChallengeSelection | null = null,
+  ): Promise<{
+    userId: string;
+    authMethod: AuthMethod;
+    selection?: TwoFactorChallengeSelection;
+  }> {
     const key = `${CHALLENGE_PREFIX}${challengeId}`;
     const stored = await this.redisService.getClient().get(key);
-    const [userId, storedMethod] = (stored ?? '').split('|');
+    const [userId, storedMethod, storedSurface, storedAcademyId] = (stored ?? '').split(
+      '|',
+    );
     const authMethod: AuthMethod = storedMethod === 'google' ? 'google' : 'password';
     if (!userId) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
+    const selection: TwoFactorChallengeSelection | undefined =
+      storedSurface === 'academy' && storedAcademyId
+        ? { surface: 'academy', academyId: storedAcademyId }
+        : storedSurface === 'management'
+          ? { surface: 'management' }
+          : undefined;
 
     // Bounded guessing. Counted per challenge, so an attacker cannot get
     // a fresh budget by retrying the password — a new challenge costs
@@ -287,6 +313,19 @@ export class TwoFactorService {
       // Burn the challenge outright rather than merely refusing: the
       // attacker must go back through the password.
       await this.redisService.getClient().del(key);
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
+    }
+
+    // The code must be completed where the sign-in was started (the host's
+    // surface and academy), answered exactly like a wrong code — the same
+    // rule as an emailed-code challenge. An unresolvable host (local
+    // development) has nothing to compare against.
+    if (
+      selection &&
+      expected &&
+      (selection.surface !== expected.surface ||
+        (selection.surface === 'academy' && selection.academyId !== expected.academyId))
+    ) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
 
@@ -320,7 +359,7 @@ export class TwoFactorService {
 
     // One challenge, one session.
     await this.redisService.getClient().del(key, attemptKey);
-    return { userId, authMethod };
+    return { userId, authMethod, ...(selection ? { selection } : {}) };
   }
 
   // -----------------------------------------------------------------
