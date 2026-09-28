@@ -90,11 +90,11 @@ export class JwtAuthGuard implements CanActivate {
     // A revoked session yields the same undifferentiated 401 as a bad
     // signature: a caller must not be able to tell "revoked" from
     // "forged" from "expired".
-    if (await this.sessionRevocationService.isRevoked(claims.sid)) {
+    if (await this.sessionRevocationService.isRevoked(claims.sid, claims.sub)) {
       throw new UnauthorizedException({ messageKey: 'errors.unauthorized' });
     }
 
-    const session = await this.sessionSurfaceService.contextOf(claims.sid);
+    const session = await this.sessionSurfaceService.contextOf(claims.sid, claims.sub);
     request.authContext = {
       userId: claims.sub,
       sessionId: claims.sid,
@@ -109,7 +109,7 @@ export class JwtAuthGuard implements CanActivate {
     // and returns true only when the per-session lease says it is time to
     // flush to Postgres — at most once every few minutes per session, so
     // this is not a write on every request.
-    void this.sessionActivityService.trackRequest(claims.sid);
+    void this.sessionActivityService.trackRequest(claims.sub, claims.sid);
 
     return true;
   }

@@ -25,6 +25,7 @@
  */
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { fixtureUsers } from './utils/db-admin';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
@@ -46,7 +47,7 @@ describe('Row-Level Security — academies / academy_members (direct, no guards)
   });
 
   async function createUser(label: string): Promise<{ id: string }> {
-    const user = await prisma.user.create({
+    const user = await fixtureUsers().create({
       data: { email: uniqueTestEmail(label), passwordHash: 'x', name: label },
     });
     return { id: user.id };

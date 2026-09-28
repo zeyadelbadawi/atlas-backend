@@ -21,14 +21,23 @@
  *     password — idempotent.)
  *   - Touches only this one row; never deletes or edits anyone else.
  *
+ * AN OPERATOR ACTION, ON THE OWNER CONNECTION. Since the authentication
+ * audit (Decision 2) the application role cannot create a platform owner or
+ * set `is_platform_owner` at all (RLS `WITH CHECK` on insert, no UPDATE
+ * privilege on the column). Promotion is deliberately outside the
+ * application's reach, so this script uses the migration/owner connection
+ * (`DATABASE_URL`) for its one row, never `APP_DATABASE_URL`.
+ *
  * Run (on the host that can reach the target DB), e.g. on the VPS:
  *   PLATFORM_OWNER_EMAIL=... PLATFORM_OWNER_PASSWORD=... \
  *     node dist/scripts/provision-platform-owner.js
  * or in dev via ts-node. It prints only a non-secret confirmation.
  */
 import { NestFactory } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
+import { PrismaClient } from '@prisma/client';
 import { AppModule } from '../app.module';
-import { PrismaService } from '../database/prisma.service';
+import type { DatabaseConfig } from '../config/configuration';
 import { PasswordHasherService } from '../identity/services/password-hasher.service';
 
 async function main(): Promise<void> {
@@ -44,8 +53,16 @@ async function main(): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn'],
   });
+  const ownerUrl = app.get(ConfigService).get<DatabaseConfig>('database')?.url;
+  if (!ownerUrl) {
+    await app.close();
+    console.error(
+      'DATABASE_URL (the owner connection) is required for this operator action.',
+    );
+    process.exit(1);
+  }
+  const prisma = new PrismaClient({ datasources: { db: { url: ownerUrl } } });
   try {
-    const prisma = app.get(PrismaService);
     const hasher = app.get(PasswordHasherService);
 
     const existing = await prisma.user.findUnique({
@@ -90,6 +107,7 @@ async function main(): Promise<void> {
       }),
     );
   } finally {
+    await prisma.$disconnect();
     await app.close();
   }
 }

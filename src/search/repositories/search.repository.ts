@@ -39,7 +39,6 @@
  */
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { PrismaService } from '../../database/prisma.service';
 
 export interface UserSearchRow {
   readonly id: string;
@@ -75,11 +74,17 @@ const TS_CONFIG = 'english';
 
 @Injectable()
 export class SearchRepository {
-  constructor(private readonly prisma: PrismaService) {}
-
-  /** `users` has no RLS: the GIN index serves this predicate directly. */
-  searchUsers(query: string, limit: number): Promise<UserSearchRow[]> {
-    return this.prisma.$queryRaw<UserSearchRow[]>`
+  /**
+   * `users` is readable only inside an established context (authentication
+   * audit, Decision 2), so this runs on the caller's transaction — the
+   * Platform Owner's own context. The GIN index serves the predicate.
+   */
+  searchUsers(
+    tx: Prisma.TransactionClient,
+    query: string,
+    limit: number,
+  ): Promise<UserSearchRow[]> {
+    return tx.$queryRaw<UserSearchRow[]>`
       WITH q AS (SELECT websearch_to_tsquery(${TS_CONFIG}::regconfig, ${query}::text) AS tsq)
       SELECT u."id", u."name", u."email"
       FROM "users" u, q

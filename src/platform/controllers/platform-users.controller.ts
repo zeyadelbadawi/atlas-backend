@@ -31,7 +31,10 @@ export class PlatformUsersController {
   }
 
   @Get(':id')
-  async getById(@Param('id') id: string): Promise<PlatformUserDetailResponse> {
-    return this.platformUsersService.getUser(id);
+  async getById(
+    @CurrentAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ): Promise<PlatformUserDetailResponse> {
+    return this.platformUsersService.getUser(auth.userId, id);
   }
 }

@@ -630,3 +630,26 @@ export async function seedRevenueLedgerEntry(
     },
   });
 }
+
+let fixtureClient: PrismaClient | null = null;
+
+/**
+ * The owner connection, shared per test file, for seeding `users` rows.
+ *
+ * Since the authentication audit (Decision 2) `users` carries FORCE ROW
+ * LEVEL SECURITY: the app's own client can insert an account only in that
+ * account's own context and can never insert a platform owner. Specs that
+ * test OTHER tables' policies seed their people here, past RLS, exactly as
+ * they seed every other fixture through `createAdminPrisma`.
+ */
+export function fixtureUsers(): PrismaClient['user'] {
+  fixtureClient ??= createAdminPrisma();
+  return fixtureClient.user;
+}
+
+// Registered when this module loads (once per test file), never from inside
+// a test, and a no-op in files that never seeded through `fixtureUsers`.
+afterAll(async () => {
+  await fixtureClient?.$disconnect();
+  fixtureClient = null;
+});

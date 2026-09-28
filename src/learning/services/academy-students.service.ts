@@ -231,7 +231,7 @@ export class AcademyStudentsService {
         const [attempts, submissions, activeSessionCount] = await Promise.all([
           this.rosterRepository.findQuizAttemptsForStudent(tx, studentUserId, courseIds),
           this.rosterRepository.findSubmissionsForStudent(tx, studentUserId, courseIds),
-          this.rosterRepository.countDevicesForStudent(tx, studentUserId),
+          this.rosterRepository.countDevicesForStudent(tx, academyId, studentUserId),
         ]);
 
         const counts = {

@@ -49,7 +49,7 @@ export class SessionSurfaceService {
   }
 
   /** The surface and academy this session was minted for, or `null` when no session row exists. */
-  async contextOf(sessionId: string): Promise<SessionContext | null> {
+  async contextOf(sessionId: string, userId: string): Promise<SessionContext | null> {
     try {
       const cached = await this.redisService.getClient().get(this.key(sessionId));
       if (cached) return JSON.parse(cached) as SessionContext;
@@ -60,7 +60,7 @@ export class SessionSurfaceService {
       );
     }
 
-    const row = await this.refreshTokensRepository.findSessionContext(sessionId);
+    const row = await this.refreshTokensRepository.findSessionContext(userId, sessionId);
     if (!row) return null;
     const context: SessionContext = { surface: row.surface, academyId: row.academyId };
 

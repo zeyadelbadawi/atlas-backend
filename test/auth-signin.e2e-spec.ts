@@ -1,10 +1,11 @@
+import type { PrismaClient } from '@prisma/client';
+import { createAdminPrisma } from './utils/db-admin';
 /**
  * `POST /auth/sign-in` e2e — this file's checklist item C.
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
-import { PrismaService } from '../src/database/prisma.service';
 
 async function registerUser(
   app: INestApplication,
@@ -19,15 +20,19 @@ async function registerUser(
 
 describe('POST /auth/sign-in (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
+  let prisma: PrismaClient;
 
   beforeAll(async () => {
     const testApp = await createTestApp();
     app = testApp.app;
-    prisma = testApp.prisma;
+    // Fixture and verification reads go through the owner connection: the
+    // app's own client is RLS-bound and sees identity rows only inside a
+    // user context (authentication audit, Decision 2).
+    prisma = createAdminPrisma();
   });
 
   afterAll(async () => {
+    await prisma.$disconnect();
     await app.close();
   });
 

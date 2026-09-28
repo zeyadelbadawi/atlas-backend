@@ -45,7 +45,7 @@ import { AccountDeletionService } from '../../identity/services/account-deletion
 import type { AccountDeletionReason } from '../../identity/services/account-deletion.service';
 import { DeletionPlanService } from '../../identity/services/deletion-plan.service';
 import type { DeletionPlan } from '../../identity/services/deletion-plan.service';
-import { DeleteAccountDto } from '../../identity/dto/delete-account.dto';
+import { DeleteAccountBaseDto } from '../../identity/dto/delete-account.dto';
 
 @Controller('platform-user-management')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
@@ -84,7 +84,7 @@ export class PlatformUserManagementController {
   async deleteUser(
     @CurrentAuthContext() auth: AuthContext,
     @Param('userId') userId: string,
-    @Body() dto: DeleteAccountDto,
+    @Body() dto: DeleteAccountBaseDto,
   ): Promise<{ deleted: boolean; academiesArchived: number }> {
     return this.accountDeletionService.deleteUserAsPlatformOwner(auth.userId, userId, {
       reason: dto.reason as AccountDeletionReason | undefined,

@@ -127,7 +127,9 @@ describe('Account deletion by emailed code (e2e)', () => {
     const { challengeId, code, body } = await requestCode(a.token);
     expect(code).toMatch(/^\d{6}$/);
     expect(body.maskedEmail).not.toBe(a.email);
-    expect(body.maskedEmail).toContain('***');
+    expect(body.maskedEmail).toBe(
+      `${a.email[0]}•••${a.email.slice(a.email.indexOf('@'))}`,
+    );
     expect(new Date(body.expiresAt).getTime() - Date.now()).toBeLessThanOrEqual(
       10 * 60 * 1000,
     );

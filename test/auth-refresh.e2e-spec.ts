@@ -1,3 +1,5 @@
+import type { PrismaClient } from '@prisma/client';
+import { createAdminPrisma } from './utils/db-admin';
 /**
  * `POST /auth/refresh` e2e — this file's checklist item D (excluding the
  * dedicated concurrency test, which lives in
@@ -7,7 +9,6 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { createTestApp, uniqueRawTokenFixture, uniqueTestEmail } from './utils/test-app';
-import { PrismaService } from '../src/database/prisma.service';
 import { hashOpaqueToken } from '../src/identity/utils/opaque-token.util';
 
 async function signUpAndSignIn(
@@ -31,15 +32,19 @@ async function signUpAndSignIn(
 
 describe('POST /auth/refresh (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
+  let prisma: PrismaClient;
 
   beforeAll(async () => {
     const testApp = await createTestApp();
     app = testApp.app;
-    prisma = testApp.prisma;
+    // Fixture and verification reads go through the owner connection: the
+    // app's own client is RLS-bound and sees identity rows only inside a
+    // user context (authentication audit, Decision 2).
+    prisma = createAdminPrisma();
   });
 
   afterAll(async () => {
+    await prisma.$disconnect();
     await app.close();
   });
 

@@ -56,6 +56,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { PrismaService } from '../../database/prisma.service';
+import { runInUserContext } from '../../database/user-context';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 
 declare module 'express-serve-static-core' {
@@ -80,10 +81,14 @@ export class OrganizationsAccessGuard implements CanActivate {
       throw new ForbiddenException({ messageKey: 'errors.forbidden' });
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { isPlatformOwner: true },
-    });
+    // Read in the caller's own context: `users` is not readable without one
+    // (authentication audit, Decision 2).
+    const user = await runInUserContext(this.prisma, userId, (tx) =>
+      tx.user.findUnique({
+        where: { id: userId },
+        select: { isPlatformOwner: true },
+      }),
+    );
     if (user?.isPlatformOwner) {
       request.isPlatformOwnerCaller = true;
       return true;

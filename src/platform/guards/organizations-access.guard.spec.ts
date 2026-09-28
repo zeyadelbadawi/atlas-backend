@@ -13,6 +13,19 @@ function buildContext(
   } as unknown as ExecutionContext;
 }
 
+/**
+ * The guard reads `users` inside the caller's own RLS context (one
+ * transaction that sets `app.current_user_id`); the stub runs that
+ * transaction on the same object so the `user.findUnique` spies still see
+ * every read.
+ */
+function inUserContext(prisma: PrismaService): PrismaService {
+  const client = prisma as unknown as Record<string, unknown>;
+  client.$executeRaw = jest.fn().mockResolvedValue(1);
+  client.$transaction = jest.fn((work: (tx: unknown) => unknown) => work(client));
+  return prisma;
+}
+
 describe('OrganizationsAccessGuard', () => {
   it('allows a verified Platform Owner through unconditionally, for the bare list route (no :id)', async () => {
     const prisma = {
@@ -21,7 +34,7 @@ describe('OrganizationsAccessGuard', () => {
     const membershipGuard = {
       canActivate: jest.fn(),
     } as unknown as OrganizationMembershipGuard;
-    const guard = new OrganizationsAccessGuard(prisma, membershipGuard);
+    const guard = new OrganizationsAccessGuard(inUserContext(prisma), membershipGuard);
     const context = buildContext({}, { userId: 'platform-owner-1' });
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -35,7 +48,7 @@ describe('OrganizationsAccessGuard', () => {
     const membershipGuard = {
       canActivate: jest.fn(),
     } as unknown as OrganizationMembershipGuard;
-    const guard = new OrganizationsAccessGuard(prisma, membershipGuard);
+    const guard = new OrganizationsAccessGuard(inUserContext(prisma), membershipGuard);
     const context = buildContext(
       { id: 'some-other-org' },
       { userId: 'platform-owner-1' },
@@ -52,7 +65,7 @@ describe('OrganizationsAccessGuard', () => {
     const membershipGuard = {
       canActivate: jest.fn(),
     } as unknown as OrganizationMembershipGuard;
-    const guard = new OrganizationsAccessGuard(prisma, membershipGuard);
+    const guard = new OrganizationsAccessGuard(inUserContext(prisma), membershipGuard);
     const context = buildContext({}, { userId: 'tenant-user-1' });
 
     await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
@@ -66,7 +79,7 @@ describe('OrganizationsAccessGuard', () => {
     const membershipGuard = {
       canActivate: jest.fn().mockResolvedValue(true),
     } as unknown as OrganizationMembershipGuard;
-    const guard = new OrganizationsAccessGuard(prisma, membershipGuard);
+    const guard = new OrganizationsAccessGuard(inUserContext(prisma), membershipGuard);
     const context = buildContext({ id: 'org-1' }, { userId: 'tenant-user-1' });
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -80,7 +93,7 @@ describe('OrganizationsAccessGuard', () => {
     const membershipGuard = {
       canActivate: jest.fn().mockRejectedValue(new ForbiddenException()),
     } as unknown as OrganizationMembershipGuard;
-    const guard = new OrganizationsAccessGuard(prisma, membershipGuard);
+    const guard = new OrganizationsAccessGuard(inUserContext(prisma), membershipGuard);
     const context = buildContext({ id: 'org-1' }, { userId: 'tenant-user-1' });
 
     await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
@@ -93,7 +106,7 @@ describe('OrganizationsAccessGuard', () => {
     const membershipGuard = {
       canActivate: jest.fn(),
     } as unknown as OrganizationMembershipGuard;
-    const guard = new OrganizationsAccessGuard(prisma, membershipGuard);
+    const guard = new OrganizationsAccessGuard(inUserContext(prisma), membershipGuard);
     const context = buildContext({ id: 'org-1' }, undefined);
 
     await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
@@ -106,7 +119,7 @@ describe('OrganizationsAccessGuard', () => {
     const membershipGuard = {
       canActivate: jest.fn(),
     } as unknown as OrganizationMembershipGuard;
-    const guard = new OrganizationsAccessGuard(prisma, membershipGuard);
+    const guard = new OrganizationsAccessGuard(inUserContext(prisma), membershipGuard);
 
     await guard.canActivate(buildContext({}, { userId: 'user-x' }));
     expect(findUnique).toHaveBeenCalledWith({

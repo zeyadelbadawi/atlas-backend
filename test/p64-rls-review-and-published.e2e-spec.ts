@@ -17,6 +17,7 @@
  */
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { fixtureUsers } from './utils/db-admin';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
@@ -38,7 +39,7 @@ describe('P64 Phase 1 — RLS with published+public fixtures and the review tier
   });
 
   async function createUser(label: string) {
-    return prisma.user.create({
+    return fixtureUsers().create({
       data: { email: uniqueTestEmail(label), passwordHash: 'x', name: label },
     });
   }

@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
+import { IdentityResolver } from '../identity/repositories/identity-resolver';
 
 /**
  * Global so every future domain module (P1 onward) can inject
@@ -9,7 +10,7 @@ import { PrismaService } from './prisma.service';
  */
 @Global()
 @Module({
-  providers: [PrismaService],
-  exports: [PrismaService],
+  providers: [PrismaService, IdentityResolver],
+  exports: [PrismaService, IdentityResolver],
 })
 export class DatabaseModule {}

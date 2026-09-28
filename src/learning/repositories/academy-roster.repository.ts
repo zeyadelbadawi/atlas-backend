@@ -241,16 +241,21 @@ export class AcademyRosterRepository {
     });
   }
 
-  countDevicesForStudent(tx: Prisma.TransactionClient, userId: string): Promise<number> {
-    // Phase 1 contract: distinct active sessions stand in for devices
-    // until the Phase 2 device registry exists.
-    return tx.refreshToken
-      .findMany({
-        where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
-        distinct: ['sessionId'],
-        select: { sessionId: true },
-      })
-      .then((rows) => rows.length);
+  /**
+   * Live sessions the learner holds ON THIS ACADEMY. Staff never read a
+   * session row — `refresh_tokens` is strictly per-user under RLS
+   * (authentication audit, Decision 2) — so the count comes from the
+   * `academy_student_session_count` definer function, which answers only a
+   * viewer `can_view_academy_student()` admits and returns 0 otherwise.
+   */
+  async countDevicesForStudent(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+  ): Promise<number> {
+    const rows = await tx.$queryRaw<{ count: number }[]>`
+      SELECT academy_student_session_count(${academyId}, ${userId}) AS count`;
+    return rows[0]?.count ?? 0;
   }
 
   updateMembership(

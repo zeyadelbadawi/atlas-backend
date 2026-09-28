@@ -78,10 +78,10 @@ export class SessionActivityService {
    * Never throws: activity is telemetry, and a request must not fail
    * because its timestamp could not be written.
    */
-  async trackRequest(sessionId: string): Promise<void> {
+  async trackRequest(userId: string, sessionId: string): Promise<void> {
     try {
       if (await this.recordActivity(sessionId)) {
-        await this.refreshTokensRepository.touchSessionActivity(sessionId);
+        await this.refreshTokensRepository.touchSessionActivity(userId, sessionId);
       }
     } catch (error) {
       this.logger.debug(

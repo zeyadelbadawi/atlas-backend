@@ -1,9 +1,16 @@
 /**
  * PasswordResetTokensRepository.
+ *
+ * Authentication audit, Decision 2 — `password_reset_tokens` is strictly
+ * per-user under RLS. A confirmation presents only the token, so its owner
+ * is found through `IdentityResolver` by the token's hash, and every
+ * statement then runs in that owner's context.
  */
 import { Injectable } from '@nestjs/common';
-import type { PasswordResetToken } from '@prisma/client';
+import type { PasswordResetToken, Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { runInUserContext } from '../../database/user-context';
+import { IdentityResolver } from './identity-resolver';
 
 export interface CreatePasswordResetTokenInput {
   readonly userId: string;
@@ -13,23 +20,44 @@ export interface CreatePasswordResetTokenInput {
 
 @Injectable()
 export class PasswordResetTokensRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly identityResolver: IdentityResolver,
+  ) {}
+
+  private asUser<T>(
+    userId: string,
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return runInUserContext(this.prisma, userId, work);
+  }
 
   create(input: CreatePasswordResetTokenInput): Promise<PasswordResetToken> {
-    return this.prisma.passwordResetToken.create({
-      data: {
-        userId: input.userId,
-        tokenHash: input.tokenHash,
-        expiresAt: input.expiresAt,
-      },
-    });
+    return this.asUser(input.userId, (tx) =>
+      tx.passwordResetToken.create({
+        data: {
+          userId: input.userId,
+          tokenHash: input.tokenHash,
+          expiresAt: input.expiresAt,
+        },
+      }),
+    );
   }
 
   /** Only a not-yet-used, not-yet-expired token is ever "valid" — matches master plan §8: "reject invalid/expired/used tokens." */
-  findValidByHash(tokenHash: string): Promise<PasswordResetToken | null> {
-    return this.prisma.passwordResetToken.findFirst({
-      where: { tokenHash, usedAt: null, expiresAt: { gt: new Date() } },
-    });
+  async findValidByHash(tokenHash: string): Promise<PasswordResetToken | null> {
+    const ownerId = await this.identityResolver.passwordResetTokenOwner(tokenHash);
+    if (!ownerId) return null;
+    return this.asUser(ownerId, (tx) =>
+      tx.passwordResetToken.findFirst({
+        where: {
+          tokenHash,
+          userId: ownerId,
+          usedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+      }),
+    );
   }
 
   /**
@@ -39,13 +67,17 @@ export class PasswordResetTokensRepository {
    * unknown, expired or already used.
    */
   async claimValidByHash(tokenHash: string): Promise<PasswordResetToken | null> {
+    const ownerId = await this.identityResolver.passwordResetTokenOwner(tokenHash);
+    if (!ownerId) return null;
     const now = new Date();
-    const claimed = await this.prisma.passwordResetToken.updateMany({
-      where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
-      data: { usedAt: now },
+    return this.asUser(ownerId, async (tx) => {
+      const claimed = await tx.passwordResetToken.updateMany({
+        where: { tokenHash, userId: ownerId, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      if (claimed.count !== 1) return null;
+      return tx.passwordResetToken.findFirst({ where: { tokenHash } });
     });
-    if (claimed.count !== 1) return null;
-    return this.prisma.passwordResetToken.findFirst({ where: { tokenHash } });
   }
 
   /**
@@ -54,17 +86,12 @@ export class PasswordResetTokensRepository {
    * a second reset request) must not be able to set it again.
    */
   async spendAllForUser(userId: string): Promise<number> {
-    const result = await this.prisma.passwordResetToken.updateMany({
-      where: { userId, usedAt: null },
-      data: { usedAt: new Date() },
-    });
+    const result = await this.asUser(userId, (tx) =>
+      tx.passwordResetToken.updateMany({
+        where: { userId, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+    );
     return result.count;
-  }
-
-  markUsed(id: string): Promise<PasswordResetToken> {
-    return this.prisma.passwordResetToken.update({
-      where: { id },
-      data: { usedAt: new Date() },
-    });
   }
 }

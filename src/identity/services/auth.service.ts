@@ -264,6 +264,24 @@ export class AuthService {
   ) {}
 
   /**
+   * Whether a registration's P2002 came from `users.email` — the only unique
+   * index a duplicate registration can hit besides a federated identity's.
+   * PostgreSQL names the index only when the caller may see the conflicting
+   * row; under the identity tables' RLS (authentication audit, Decision 2)
+   * it does not, so an unnamed conflict is settled by asking whether the
+   * address now has an account. Anything else is a real defect and must not
+   * be disguised as "email already registered".
+   */
+  private async isEmailConflict(
+    error: Prisma.PrismaClientKnownRequestError,
+    email: string,
+  ): Promise<boolean> {
+    const fields = uniqueTargetFields(error);
+    if (fields.length > 0) return fields.some((field) => field.includes('email'));
+    return (await this.usersRepository.findByEmail(email)) !== null;
+  }
+
+  /**
    * New Customer Onboarding — the organization signup's preconditions,
    * all checked before any write (docs/NEW_CUSTOMER_ONBOARDING.md §3.2).
    * The browser's plan choice is only a lookup key; the port re-reads the
@@ -651,14 +669,14 @@ export class AuthService {
             );
           }
         })
-        .catch((error: unknown) => {
+        .catch(async (error: unknown) => {
           // Two concurrent registrations of one address both pass the
           // `findByEmail` check above; the unique index decides, and the loser
           // gets the same 409 as the sequential case instead of a 500.
           if (
             error instanceof Prisma.PrismaClientKnownRequestError &&
             error.code === 'P2002' &&
-            isUserEmailTarget(error)
+            (await this.isEmailConflict(error, email))
           ) {
             // Decision 3 — the loser of a race for a NEW address is answered
             // like any other registration (the Google path keeps its 409:
@@ -2125,19 +2143,14 @@ export class AuthService {
   }
 }
 
-/**
- * Whether a P2002 came from `users.email` — the only unique index a
- * duplicate registration can hit. Anything else is a real defect and must
- * not be disguised as "email already registered".
- */
-function isUserEmailTarget(error: Prisma.PrismaClientKnownRequestError): boolean {
+/** The unique-index columns a P2002 names, when PostgreSQL reports them. */
+function uniqueTargetFields(error: Prisma.PrismaClientKnownRequestError): string[] {
   const target = error.meta?.target;
-  const fields = Array.isArray(target)
-    ? target
+  return Array.isArray(target)
+    ? target.map(String)
     : typeof target === 'string'
       ? [target]
       : [];
-  return fields.some((field) => String(field).includes('email'));
 }
 
 /** Decision 3 — a concurrent registration of the same new address won the race. */

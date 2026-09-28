@@ -7,7 +7,7 @@
  */
 import { INestApplication } from '@nestjs/common';
 import { uniqueTestEmail, createTestApp } from './utils/test-app';
-import { createAdminPrisma } from './utils/db-admin';
+import { createAdminPrisma, fixtureUsers } from './utils/db-admin';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import type { PrismaClient } from '@prisma/client';
@@ -32,7 +32,7 @@ describe('Row-Level Security — P7 Instructor Operations & Community tables (di
   });
 
   async function createUser(label: string): Promise<{ id: string }> {
-    const user = await prisma.user.create({
+    const user = await fixtureUsers().create({
       data: { email: uniqueTestEmail(label), passwordHash: 'x', name: label },
     });
     return { id: user.id };

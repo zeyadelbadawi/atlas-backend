@@ -1,3 +1,5 @@
+import type { PrismaClient } from '@prisma/client';
+import { createAdminPrisma } from './utils/db-admin';
 /**
  * Dedicated concurrency proof for refresh-token rotation (master plan §21
  * P1 requirement #9/"Refresh": "Add a dedicated concurrency test proving
@@ -9,19 +11,22 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
-import { PrismaService } from '../src/database/prisma.service';
 
 describe('Refresh-token rotation concurrency (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
+  let prisma: PrismaClient;
 
   beforeAll(async () => {
     const testApp = await createTestApp();
     app = testApp.app;
-    prisma = testApp.prisma;
+    // Fixture and verification reads go through the owner connection: the
+    // app's own client is RLS-bound and sees identity rows only inside a
+    // user context (authentication audit, Decision 2).
+    prisma = createAdminPrisma();
   });
 
   afterAll(async () => {
+    await prisma.$disconnect();
     await app.close();
   });
 

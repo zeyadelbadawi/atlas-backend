@@ -5,7 +5,6 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
-import { PrismaService } from '../src/database/prisma.service';
 import {
   createAdminPrisma,
   seedAcademy,
@@ -15,19 +14,23 @@ import type { PrismaClient } from '@prisma/client';
 
 describe('POST /auth/register (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
+  let prisma: PrismaClient;
   let admin: PrismaClient;
   let flushRateLimitKeys: () => Promise<void>;
 
   beforeAll(async () => {
     const testApp = await createTestApp();
     app = testApp.app;
-    prisma = testApp.prisma;
+    // Fixture and verification reads go through the owner connection: the
+    // app's own client is RLS-bound and sees identity rows only inside a
+    // user context (authentication audit, Decision 2).
+    prisma = createAdminPrisma();
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
   });
 
   afterAll(async () => {
+    await prisma.$disconnect();
     await admin.$disconnect();
     await app.close();
   });

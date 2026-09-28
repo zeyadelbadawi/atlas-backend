@@ -47,22 +47,22 @@ export class PlatformUsersService {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
-    const { items, totalItems } = await this.platformUsersRepository.findMany({
-      search: query.search,
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    });
-
-    // One batched `GROUP BY` for the whole page's `organizationCount`
-    // column (master plan §27's N+1-avoidance), not one query per row.
-    const countsByUserId = await this.tenancyContextService.runInUserContext(
-      platformOwnerId,
-      (tx) =>
-        this.organizationMembershipsRepository.countManyForUsers(
-          tx,
-          items.map((user) => user.id),
-        ),
-    );
+    const { items, totalItems, countsByUserId } =
+      await this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
+        const { items, totalItems } = await this.platformUsersRepository.findMany(tx, {
+          search: query.search,
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        });
+        // One batched `GROUP BY` for the whole page's `organizationCount`
+        // column (master plan §27's N+1-avoidance), not one query per row.
+        const countsByUserId =
+          await this.organizationMembershipsRepository.countManyForUsers(
+            tx,
+            items.map((user) => user.id),
+          );
+        return { items, totalItems, countsByUserId };
+      });
 
     return {
       items: items.map((user) =>
@@ -72,8 +72,14 @@ export class PlatformUsersService {
     };
   }
 
-  async getUser(userId: string): Promise<PlatformUserDetailResponse> {
-    const user = await this.platformUsersRepository.findById(userId);
+  async getUser(
+    platformOwnerId: string,
+    userId: string,
+  ): Promise<PlatformUserDetailResponse> {
+    const user = await this.tenancyContextService.runInUserContext(
+      platformOwnerId,
+      (tx) => this.platformUsersRepository.findById(tx, userId),
+    );
     if (!user) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }

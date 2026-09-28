@@ -1,14 +1,11 @@
 /**
- * PlatformUsersRepository — `users` carries no RLS at all (identity is
- * not tenant-scoped; confirmed directly against every migration — no
- * `ALTER TABLE "users" ENABLE ROW LEVEL SECURITY` exists anywhere), so
- * this repository uses the raw `PrismaService` directly, matching
- * `UsersRepository`'s (P1) own established precedent for this one table.
- * `PlatformOwnerGuard` at the controller is the real, sufficient
- * authorization boundary for the cross-tenant reach this grants — the
- * SAME boundary `UsersRepository` itself already relies on implicitly
- * (it has always been globally queryable by any authenticated backend
- * code path; nothing this phase adds widens that).
+ * PlatformUsersRepository — the Platform Owner's cross-tenant user list.
+ *
+ * `users` carries FORCE ROW LEVEL SECURITY (authentication audit,
+ * Decision 2): rows are readable only inside an established context. Every
+ * method therefore takes the transaction the service opened in the Platform
+ * Owner's own context; `PlatformOwnerGuard` at the controller remains the
+ * authorization boundary for the cross-tenant reach.
  *
  * The `select` clause below is the real, enforced "never expose
  * `passwordHash`/tokens" boundary — not merely the response DTO's own
@@ -18,7 +15,6 @@
  */
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { PrismaService } from '../../database/prisma.service';
 import type { PlatformUserRow } from '../dto/platform-user.contract';
 
 const SAFE_SELECT = {
@@ -39,9 +35,8 @@ export interface PlatformUserListFilter {
 
 @Injectable()
 export class PlatformUsersRepository {
-  constructor(private readonly prisma: PrismaService) {}
-
   async findMany(
+    tx: Prisma.TransactionClient,
     filter: PlatformUserListFilter,
   ): Promise<{ items: PlatformUserRow[]; totalItems: number }> {
     const where: Prisma.UserWhereInput = filter.search
@@ -54,20 +49,20 @@ export class PlatformUsersRepository {
       : {};
 
     const [items, totalItems] = await Promise.all([
-      this.prisma.user.findMany({
+      tx.user.findMany({
         where,
         select: SAFE_SELECT,
         orderBy: { createdAt: 'desc' },
         skip: filter.skip,
         take: filter.take,
       }),
-      this.prisma.user.count({ where }),
+      tx.user.count({ where }),
     ]);
 
     return { items, totalItems };
   }
 
-  findById(id: string): Promise<PlatformUserRow | null> {
-    return this.prisma.user.findUnique({ where: { id }, select: SAFE_SELECT });
+  findById(tx: Prisma.TransactionClient, id: string): Promise<PlatformUserRow | null> {
+    return tx.user.findUnique({ where: { id }, select: SAFE_SELECT });
   }
 }

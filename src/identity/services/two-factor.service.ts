@@ -49,7 +49,8 @@ import { RedisService } from '../../redis/redis.service';
 import { TotpSecretCipher } from './totp-secret-cipher.service';
 import { PasswordHasherService } from './password-hasher.service';
 import type { AppConfig } from '../../config/configuration';
-import type { AuthMethod } from '@prisma/client';
+import type { AuthMethod, Prisma } from '@prisma/client';
+import { runInUserContext } from '../../database/user-context';
 
 /** How long a half-authenticated sign-in may sit unfinished. Short: it is a live credential. */
 const CHALLENGE_TTL_SECONDS = 300;
@@ -104,14 +105,29 @@ export class TwoFactorService {
     private readonly configService: ConfigService,
   ) {}
 
+  /**
+   * Authentication audit, Decision 2 — `user_two_factor` and
+   * `two_factor_recovery_codes` are strictly per-user under RLS, so every
+   * statement runs in the account's own context. The sign-in challenge
+   * learns the account from its Redis entry, never from the request.
+   */
+  private asUser<T>(
+    userId: string,
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return runInUserContext(this.prisma, userId, work);
+  }
+
   // -----------------------------------------------------------------
   // Status and setup
   // -----------------------------------------------------------------
 
   async getStatus(userId: string): Promise<TwoFactorStatus> {
     const [record, remaining] = await Promise.all([
-      this.prisma.userTwoFactor.findUnique({ where: { userId } }),
-      this.prisma.twoFactorRecoveryCode.count({ where: { userId, usedAt: null } }),
+      this.asUser(userId, (tx) => tx.userTwoFactor.findUnique({ where: { userId } })),
+      this.asUser(userId, (tx) =>
+        tx.twoFactorRecoveryCode.count({ where: { userId, usedAt: null } }),
+      ),
     ]);
 
     return {
@@ -132,28 +148,34 @@ export class TwoFactorService {
    * the password.
    */
   async startSetup(userId: string): Promise<TwoFactorSetupResult> {
-    const existing = await this.prisma.userTwoFactor.findUnique({ where: { userId } });
+    const existing = await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.findUnique({ where: { userId } }),
+    );
     if (existing?.confirmedAt) {
       throw new BadRequestException({
         messageKey: 'errors.auth.twoFactorAlreadyEnabled',
       });
     }
 
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: { email: true },
-    });
+    const user = await this.asUser(userId, (tx) =>
+      tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { email: true },
+      }),
+    );
 
     const secret = generateSecret({ length: 20 });
     const encryptedSecret = this.cipher.encrypt(secret);
 
-    await this.prisma.userTwoFactor.upsert({
-      where: { userId },
-      create: { userId, encryptedSecret },
-      // Replaces any abandoned pending secret; `confirmedAt` is already
-      // null here (guarded above) so this cannot un-confirm active 2FA.
-      update: { encryptedSecret, lastTimeStep: null },
-    });
+    await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.upsert({
+        where: { userId },
+        create: { userId, encryptedSecret },
+        // Replaces any abandoned pending secret; `confirmedAt` is already
+        // null here (guarded above) so this cannot un-confirm active 2FA.
+        update: { encryptedSecret, lastTimeStep: null },
+      }),
+    );
 
     const app = this.configService.getOrThrow<AppConfig>('app');
     const uri = generateURI({
@@ -183,7 +205,9 @@ export class TwoFactorService {
     userId: string,
     token: string,
   ): Promise<{ recoveryCodes: string[] }> {
-    const record = await this.prisma.userTwoFactor.findUnique({ where: { userId } });
+    const record = await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.findUnique({ where: { userId } }),
+    );
     if (!record) {
       throw new BadRequestException({ messageKey: 'errors.auth.twoFactorNotStarted' });
     }
@@ -204,7 +228,7 @@ export class TwoFactorService {
 
     const recoveryCodes = this.generateRecoveryCodes();
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.asUser(userId, async (tx) => {
       await tx.userTwoFactor.update({
         where: { userId },
         data: { confirmedAt: new Date(), lastTimeStep: result.timeStep },
@@ -229,10 +253,12 @@ export class TwoFactorService {
 
   /** Whether sign-in must stop and demand a second factor for this user. */
   async isEnforcedFor(userId: string): Promise<boolean> {
-    const record = await this.prisma.userTwoFactor.findUnique({
-      where: { userId },
-      select: { confirmedAt: true },
-    });
+    const record = await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.findUnique({
+        where: { userId },
+        select: { confirmedAt: true },
+      }),
+    );
     return Boolean(record?.confirmedAt);
   }
 
@@ -329,7 +355,9 @@ export class TwoFactorService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
 
-    const record = await this.prisma.userTwoFactor.findUnique({ where: { userId } });
+    const record = await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.findUnique({ where: { userId } }),
+    );
     if (!record?.confirmedAt) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
@@ -349,10 +377,12 @@ export class TwoFactorService {
       }
       // Persist the accepted step BEFORE returning — this is what makes
       // the code single-use.
-      await this.prisma.userTwoFactor.update({
-        where: { userId },
-        data: { lastTimeStep: result.timeStep },
-      });
+      await this.asUser(userId, (tx) =>
+        tx.userTwoFactor.update({
+          where: { userId },
+          data: { lastTimeStep: result.timeStep },
+        }),
+      );
     } else {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
@@ -376,7 +406,7 @@ export class TwoFactorService {
   async disable(userId: string, password: string): Promise<void> {
     await this.assertPassword(userId, password);
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.asUser(userId, async (tx) => {
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.userTwoFactor.deleteMany({ where: { userId } });
     });
@@ -396,13 +426,15 @@ export class TwoFactorService {
   ): Promise<{ recoveryCodes: string[] }> {
     await this.assertPassword(userId, password);
 
-    const record = await this.prisma.userTwoFactor.findUnique({ where: { userId } });
+    const record = await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.findUnique({ where: { userId } }),
+    );
     if (!record?.confirmedAt) {
       throw new BadRequestException({ messageKey: 'errors.auth.twoFactorNotEnabled' });
     }
 
     const recoveryCodes = this.generateRecoveryCodes();
-    await this.prisma.$transaction(async (tx) => {
+    await this.asUser(userId, async (tx) => {
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.twoFactorRecoveryCode.createMany({
         data: recoveryCodes.map((code) => ({ userId, codeHash: hashRecoveryCode(code) })),
@@ -417,10 +449,12 @@ export class TwoFactorService {
   // -----------------------------------------------------------------
 
   private async assertPassword(userId: string, password: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { passwordHash: true },
-    });
+    const user = await this.asUser(userId, (tx) =>
+      tx.user.findUnique({
+        where: { id: userId },
+        select: { passwordHash: true },
+      }),
+    );
     if (!user || !(await this.passwordHasher.verify(user.passwordHash, password))) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
@@ -461,10 +495,12 @@ export class TwoFactorService {
    * wins.
    */
   private async consumeRecoveryCode(userId: string, rawCode: string): Promise<void> {
-    const claim = await this.prisma.twoFactorRecoveryCode.updateMany({
-      where: { userId, codeHash: hashRecoveryCode(rawCode), usedAt: null },
-      data: { usedAt: new Date() },
-    });
+    const claim = await this.asUser(userId, (tx) =>
+      tx.twoFactorRecoveryCode.updateMany({
+        where: { userId, codeHash: hashRecoveryCode(rawCode), usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+    );
 
     if (claim.count !== 1) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });

@@ -97,8 +97,8 @@ export class PlatformMetricsService {
       this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
         this.platformScaleRepository.countAcademies(tx, lastMonthCutoff),
       ),
-      this.platformScaleRepository.countUsers(),
-      this.platformScaleRepository.countUsers(lastMonthCutoff),
+      this.platformScaleRepository.countUsers(platformOwnerId),
+      this.platformScaleRepository.countUsers(platformOwnerId, lastMonthCutoff),
       this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
         this.platformScaleRepository.countPublishedCourses(tx),
       ),

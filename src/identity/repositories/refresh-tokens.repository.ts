@@ -2,10 +2,19 @@
  * RefreshTokensRepository.
  *
  * `rotate()` is the concurrency-critical method — see its doc comment.
+ *
+ * Authentication audit, Decision 2 — `refresh_tokens` is strictly per-user
+ * under RLS, so every statement runs in the owner's own context
+ * (`runInUserContext`). The two entry points that start from a presented
+ * token (`rotate`, `findReusedRotation`) learn the owner from
+ * `IdentityResolver` first; every other method takes the user id from the
+ * verified access token.
  */
 import { Injectable } from '@nestjs/common';
-import type { AuthMethod, RefreshToken, SessionSurface } from '@prisma/client';
+import type { AuthMethod, Prisma, RefreshToken, SessionSurface } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { runInUserContext } from '../../database/user-context';
+import { IdentityResolver } from './identity-resolver';
 
 export interface CreateRefreshTokenInput {
   readonly userId: string;
@@ -47,38 +56,40 @@ export interface SessionSummaryRow {
 
 @Injectable()
 export class RefreshTokensRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly identityResolver: IdentityResolver,
+  ) {}
+
+  private asUser<T>(
+    userId: string,
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return runInUserContext(this.prisma, userId, work);
+  }
 
   create(input: CreateRefreshTokenInput): Promise<RefreshToken> {
-    return this.prisma.refreshToken.create({
-      data: {
-        userId: input.userId,
-        tokenHash: input.tokenHash,
-        expiresAt: input.expiresAt,
-        deviceLabel: input.deviceLabel,
-        sessionId: input.sessionId,
-        ipAddress: input.ipAddress,
-        userAgent: input.userAgent,
-        locationCountry: input.locationCountry,
-        surface: input.surface ?? 'management',
-        academyId: input.academyId ?? null,
-        deviceId: input.deviceId ?? null,
-        authMethod: input.authMethod ?? null,
-        // A brand-new session's last activity is its creation — a real
-        // timestamp for a real event, not a placeholder.
-        lastUsedAt: new Date(),
-      },
-    });
-  }
-
-  findById(id: string): Promise<RefreshToken | null> {
-    return this.prisma.refreshToken.findUnique({ where: { id } });
-  }
-
-  findValidByHash(tokenHash: string): Promise<RefreshToken | null> {
-    return this.prisma.refreshToken.findFirst({
-      where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() } },
-    });
+    return this.asUser(input.userId, (tx) =>
+      tx.refreshToken.create({
+        data: {
+          userId: input.userId,
+          tokenHash: input.tokenHash,
+          expiresAt: input.expiresAt,
+          deviceLabel: input.deviceLabel,
+          sessionId: input.sessionId,
+          ipAddress: input.ipAddress,
+          userAgent: input.userAgent,
+          locationCountry: input.locationCountry,
+          surface: input.surface ?? 'management',
+          academyId: input.academyId ?? null,
+          deviceId: input.deviceId ?? null,
+          authMethod: input.authMethod ?? null,
+          // A brand-new session's last activity is its creation — a real
+          // timestamp for a real event, not a placeholder.
+          lastUsedAt: new Date(),
+        },
+      }),
+    );
   }
 
   /**
@@ -89,10 +100,12 @@ export class RefreshTokensRepository {
    * view even if the session was already gone.
    */
   async revokeByIdForUser(id: string, userId: string): Promise<void> {
-    await this.prisma.refreshToken.updateMany({
-      where: { id, userId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
+    await this.asUser(userId, (tx) =>
+      tx.refreshToken.updateMany({
+        where: { id, userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    );
   }
 
   /**
@@ -117,27 +130,33 @@ export class RefreshTokensRepository {
    * session whose row was revoked between the lease and this write should
    * quietly match nothing rather than throw.
    */
-  async touchSessionActivity(sessionId: string): Promise<void> {
-    await this.prisma.refreshToken.updateMany({
-      where: { sessionId, revokedAt: null },
-      data: { lastUsedAt: new Date() },
-    });
+  async touchSessionActivity(userId: string, sessionId: string): Promise<void> {
+    await this.asUser(userId, (tx) =>
+      tx.refreshToken.updateMany({
+        where: { sessionId, userId, revokedAt: null },
+        data: { lastUsedAt: new Date() },
+      }),
+    );
   }
 
   async findActiveSessionsForUser(userId: string): Promise<SessionSummaryRow[]> {
     const now = new Date();
-    const live = await this.prisma.refreshToken.findMany({
-      where: { userId, revokedAt: null, expiresAt: { gt: now } },
-      orderBy: { lastUsedAt: 'desc' },
+    const { live, starts } = await this.asUser(userId, async (tx) => {
+      const live = await tx.refreshToken.findMany({
+        where: { userId, revokedAt: null, expiresAt: { gt: now } },
+        orderBy: { lastUsedAt: 'desc' },
+      });
+      if (live.length === 0) return { live, starts: [] };
+      // One extra query for the whole page rather than one per session.
+      const starts = await tx.refreshToken.groupBy({
+        by: ['sessionId'],
+        where: { userId, sessionId: { in: live.map((row) => row.sessionId) } },
+        _min: { createdAt: true },
+      });
+      return { live, starts };
     });
     if (live.length === 0) return [];
 
-    // One extra query for the whole page rather than one per session.
-    const starts = await this.prisma.refreshToken.groupBy({
-      by: ['sessionId'],
-      where: { userId, sessionId: { in: live.map((row) => row.sessionId) } },
-      _min: { createdAt: true },
-    });
     const startedBySession = new Map(
       starts.map((row) => [row.sessionId, row._min.createdAt]),
     );
@@ -171,10 +190,12 @@ export class RefreshTokensRepository {
    * caller supplying another user's session id revokes nothing.
    */
   async revokeSessionForUser(sessionId: string, userId: string): Promise<number> {
-    const result = await this.prisma.refreshToken.updateMany({
-      where: { sessionId, userId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
+    const result = await this.asUser(userId, (tx) =>
+      tx.refreshToken.updateMany({
+        where: { sessionId, userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    );
     return result.count;
   }
 
@@ -190,16 +211,20 @@ export class RefreshTokensRepository {
     presentedTokenHash: string,
     graceMs: number,
   ): Promise<{ sessionId: string; userId: string } | null> {
-    const row = await this.prisma.refreshToken.findUnique({
-      where: { tokenHash: presentedTokenHash },
-      select: { sessionId: true, userId: true, revokedAt: true, createdAt: true },
+    const ownerId = await this.identityResolver.refreshTokenOwner(presentedTokenHash);
+    if (!ownerId) return null;
+    return this.asUser(ownerId, async (tx) => {
+      const row = await tx.refreshToken.findUnique({
+        where: { tokenHash: presentedTokenHash },
+        select: { sessionId: true, userId: true, revokedAt: true, createdAt: true },
+      });
+      if (!row?.revokedAt) return null;
+      if (Date.now() - row.revokedAt.getTime() <= graceMs) return null;
+      const rotatedInto = await tx.refreshToken.count({
+        where: { sessionId: row.sessionId, createdAt: { gt: row.createdAt } },
+      });
+      return rotatedInto > 0 ? { sessionId: row.sessionId, userId: row.userId } : null;
     });
-    if (!row?.revokedAt) return null;
-    if (Date.now() - row.revokedAt.getTime() <= graceMs) return null;
-    const rotatedInto = await this.prisma.refreshToken.count({
-      where: { sessionId: row.sessionId, createdAt: { gt: row.createdAt } },
-    });
-    return rotatedInto > 0 ? { sessionId: row.sessionId, userId: row.userId } : null;
   }
 
   /**
@@ -208,19 +233,24 @@ export class RefreshTokensRepository {
    * answers; `null` when no row exists at all.
    */
   findSessionContext(
+    userId: string,
     sessionId: string,
   ): Promise<{ surface: SessionSurface; academyId: string | null } | null> {
-    return this.prisma.refreshToken.findFirst({
-      where: { sessionId },
-      select: { surface: true, academyId: true },
-    });
+    return this.asUser(userId, (tx) =>
+      tx.refreshToken.findFirst({
+        where: { sessionId, userId },
+        select: { surface: true, academyId: true },
+      }),
+    );
   }
 
   /** Phase 10 — how many rows in this rotation family are still usable. `0` means the session is dead. Used as `SessionRevocationService`'s authoritative fallback when Redis is unavailable. */
-  countLiveRowsForSession(sessionId: string): Promise<number> {
-    return this.prisma.refreshToken.count({
-      where: { sessionId, revokedAt: null, expiresAt: { gt: new Date() } },
-    });
+  countLiveRowsForSession(userId: string, sessionId: string): Promise<number> {
+    return this.asUser(userId, (tx) =>
+      tx.refreshToken.count({
+        where: { sessionId, userId, revokedAt: null, expiresAt: { gt: new Date() } },
+      }),
+    );
   }
 
   /**
@@ -242,17 +272,19 @@ export class RefreshTokensRepository {
     userId: string,
     academyId: string,
   ): Promise<string[]> {
-    const rows = await this.prisma.refreshToken.findMany({
-      where: { userId, academyId, revokedAt: null },
-      distinct: ['sessionId'],
-      select: { sessionId: true },
+    return this.asUser(userId, async (tx) => {
+      const rows = await tx.refreshToken.findMany({
+        where: { userId, academyId, revokedAt: null },
+        distinct: ['sessionId'],
+        select: { sessionId: true },
+      });
+      if (rows.length === 0) return [];
+      await tx.refreshToken.updateMany({
+        where: { userId, academyId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      return rows.map((row) => row.sessionId);
     });
-    if (rows.length === 0) return [];
-    await this.prisma.refreshToken.updateMany({
-      where: { userId, academyId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-    return rows.map((row) => row.sessionId);
   }
 
   /**
@@ -264,12 +296,15 @@ export class RefreshTokensRepository {
    * the access-token denylist the caller writes next.
    */
   async revokeAllForUser(userId: string): Promise<string[]> {
-    const rows = await this.prisma.$queryRaw<{ session_id: string }[]>`
-      UPDATE "refresh_tokens"
-      SET "revoked_at" = NOW()
-      WHERE "user_id" = ${userId} AND "revoked_at" IS NULL
-      RETURNING "session_id"
-    `;
+    const rows = await this.asUser(
+      userId,
+      (tx) => tx.$queryRaw<{ session_id: string }[]>`
+        UPDATE "refresh_tokens"
+        SET "revoked_at" = NOW()
+        WHERE "user_id" = ${userId} AND "revoked_at" IS NULL
+        RETURNING "session_id"
+      `,
+    );
     return [...new Set(rows.map((row) => row.session_id))];
   }
 
@@ -297,7 +332,12 @@ export class RefreshTokensRepository {
     presentedTokenHash: string,
     newToken: Omit<CreateRefreshTokenInput, 'userId' | 'sessionId'>,
   ): Promise<{ claimed: RefreshToken; created: RefreshToken } | null> {
-    return this.prisma.$transaction(async (tx) => {
+    // The owner is looked up by the presented hash; an unknown token has no
+    // owner and simply fails. Everything below runs in that owner's context,
+    // so even a wrong owner could only ever see — and claim — its own rows.
+    const ownerId = await this.identityResolver.refreshTokenOwner(presentedTokenHash);
+    if (!ownerId) return null;
+    return this.asUser(ownerId, async (tx) => {
       const now = new Date();
       const claim = await tx.refreshToken.updateMany({
         where: { tokenHash: presentedTokenHash, revokedAt: null, expiresAt: { gt: now } },

@@ -37,7 +37,6 @@
  * a real academy-scoped read path.
  */
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 
 /**
@@ -94,10 +93,7 @@ const MAX_EXAMPLES = 5;
 
 @Injectable()
 export class DeletionPlanService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly tenancyContextService: TenancyContextService,
-  ) {}
+  constructor(private readonly tenancyContextService: TenancyContextService) {}
 
   /**
    * Builds the plan for `userId`.
@@ -108,12 +104,14 @@ export class DeletionPlanService {
    * belongs to the controller; this only describes.
    */
   async buildForUser(userId: string): Promise<DeletionPlan> {
-    // `users` has no RLS, so this needs no context. Every subsequent read
-    // does, and says which.
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, isPlatformOwner: true, status: true },
-    });
+    // `users` is readable only inside a context (authentication audit,
+    // Decision 2): the subject's own. Every subsequent read says which.
+    const user = await this.tenancyContextService.runInUserContext(userId, (tx) =>
+      tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true, isPlatformOwner: true, status: true },
+      }),
+    );
 
     if (!user) {
       return {
