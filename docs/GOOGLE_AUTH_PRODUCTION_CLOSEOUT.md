@@ -218,6 +218,10 @@ Verify tooling: `91e0280` and `9ca79ad` (branch).
 - **Round trip:** after typing an organization name and clicking Continue with Google, the browser reaches `accounts.google.com`. The name appears in **no** URL, and the tab's flow context carries it (`intent=sign_up`, `surface=management`).
 - **Academy:** the ellzoz sign-in still shows Google.
 
+**Launch verify #11, run `36411535243`** (on the new backend): all jobs pass — the password, emailed-code, trusted-device, A1–A6, smart-join and deliverability journeys are unchanged.
+
+**Still to do by a person:** one real Google sign-up on `https://atlass.dpdns.org/auth/register` with a Google account that has no Atlas account (organization name + plan → emailed code → onboarding), and one Google sign-in on `/auth/sign-in` with a linked owner.
+
 ## 10–13. Real-Google verification — *pending*
 
 ## 14. Known limitations
