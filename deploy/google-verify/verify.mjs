@@ -69,6 +69,8 @@ async function callOnce(host, method, p, { body, origin, headers = {} } = {}) {
       ...headers,
     },
     body: body ? JSON.stringify(body) : undefined,
+    // A dead host (e.g. a custom domain whose DNS moved) must fail fast.
+    signal: AbortSignal.timeout(10_000),
   });
   const text = await r.text();
   let json = null;
@@ -178,7 +180,7 @@ async function main() {
 
         // Does GOOGLE accept this client + redirect URI? A misconfigured
         // client answers with an error page or an error redirect.
-        const g = await fetch(started.json.authorizationUrl, { redirect: 'manual' });
+        const g = await fetch(started.json.authorizationUrl, { redirect: 'manual', signal: AbortSignal.timeout(15_000) });
         const loc = g.headers.get('location') || '';
         const body = g.status >= 400 ? await g.text() : '';
         const locUrl = loc ? new URL(loc, 'https://accounts.google.com') : null;
