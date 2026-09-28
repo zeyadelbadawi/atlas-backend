@@ -166,6 +166,7 @@ jobs:
             # Google Identity: off (default) | allowlist | on.
             FLAG_AUTH_GOOGLE_MODE=${{ vars.FLAG_AUTH_GOOGLE_MODE }}
             FLAG_AUTH_GOOGLE_ACADEMY_IDS=${{ vars.FLAG_AUTH_GOOGLE_ACADEMY_IDS }}
+            FLAG_AUTH_GOOGLE_PLATFORM=${{ vars.FLAG_AUTH_GOOGLE_PLATFORM || 'on' }}
 
   # 3. MIGRATION DEPLOYMENT — dispatch only, with the input explicitly set.
   #
@@ -246,3 +247,4 @@ jobs:
             # Google Identity: off (default) | allowlist | on.
             FLAG_AUTH_GOOGLE_MODE=${{ vars.FLAG_AUTH_GOOGLE_MODE }}
             FLAG_AUTH_GOOGLE_ACADEMY_IDS=${{ vars.FLAG_AUTH_GOOGLE_ACADEMY_IDS }}
+            FLAG_AUTH_GOOGLE_PLATFORM=${{ vars.FLAG_AUTH_GOOGLE_PLATFORM || 'on' }}

@@ -208,10 +208,15 @@ const EnvSchema = z.object({
   // Google Identity (docs/GOOGLE_IDENTITY.md). `off` (default): every
   // `/auth/google/*` route answers 404 and the sign-in pages offer no Google
   // button. `allowlist`: academy websites in FLAG_AUTH_GOOGLE_ACADEMY_IDS
-  // only (the management surface stays off). `on`: every surface. No value
-  // changes password sign-in, the emailed code or trusted devices.
+  // only (the management surface stays off unless FLAG_AUTH_GOOGLE_PLATFORM
+  // is `on`). `on`: every surface. No value changes password sign-in, the
+  // emailed code or trusted devices.
   FLAG_AUTH_GOOGLE_MODE: z.enum(['off', 'allowlist', 'on']).default('off'),
   FLAG_AUTH_GOOGLE_ACADEMY_IDS: z.string().optional(),
+  // `allowlist` mode only: `on` also offers Google on Atlas's own sign-in and
+  // sign-up pages (the platform host — the management surface), through the
+  // same pipeline (TOTP, emailed code, surface rules). Ignored by `off`/`on`.
+  FLAG_AUTH_GOOGLE_PLATFORM: z.enum(['off', 'on']).default('off'),
 
   // --- P64 Communications C5 (§26/§27, §43) — tenant lifecycle sequences ---
   // `off` (the default) evaluates nothing; `dry_run` evaluates every

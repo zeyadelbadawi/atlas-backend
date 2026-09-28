@@ -48,6 +48,7 @@ The `Google verify` workflow's `probe` check asks Google itself to accept the cl
 | `GOOGLE_OAUTH_REDIRECT_URI` | GitHub secret | the authorize and token requests |
 | `FLAG_AUTH_GOOGLE_MODE` | GitHub variable | `off` (default) · `allowlist` · `on` |
 | `FLAG_AUTH_GOOGLE_ACADEMY_IDS` | GitHub variable | comma-separated academy UUIDs for `allowlist` |
+| `FLAG_AUTH_GOOGLE_PLATFORM` | GitHub variable (optional) | `allowlist` only: `on` also offers Google on Atlas's own sign-in and sign-up (the platform host). `deploy.yml` passes `on` when the variable is unset; set it to `off` to turn the platform pages off without touching the academies. |
 
 **Path:** GitHub secrets/variables → `deploy.yml` (both jobs) → `.github/actions/vps-deploy` → a base64 fragment over SSH stdin → `deploy.sh --sync-env` upserts `/opt/atlas/.env`, dropping empty values and never printing any → `docker-compose.prod.yml` `env_file: .env` → backend recreated.
 
@@ -62,6 +63,11 @@ The `Google verify` workflow's `probe` check asks Google itself to accept the cl
 3. Set `FLAG_AUTH_GOOGLE_ACADEMY_IDS=b794e760-eb63-4b17-85a3-7a4f6a0c9418` (ellzoz, after fresh verification) and `FLAG_AUTH_GOOGLE_MODE=allowlist`, then redeploy. **Management stays off in allowlist mode by design.**
 4. Real-Google verification on ellzoz.
 5. The final state stays **allowlist**. Moving to `on` is a separate, explicit product decision (§20).
+6. **Atlas's own sign-in and sign-up pages** (the platform host) get Google through their own switch, `FLAG_AUTH_GOOGLE_PLATFORM=on`, which the deploy workflow sets unless the variable says `off`. The switch doesn't change the academy allowlist, and unlisted academies stay off.
+
+   In Atlas, "platform" and "management" are **one surface**: `atlass.dpdns.org/auth/sign-in` is the management sign-in, and it mints management sessions for organization owners, staff and platform admins. A Google sign-in there runs the same pipeline as a password sign-in: account status, surface rules, TOTP, the management emailed code and trusted devices.
+
+   A new person on `/auth/register` (alias `/auth/sign-up`) gets the Google create step, which carries the same organization-name and plan fields as the password form. Both are validated by the same canonical signup (`registerInternal` → `prepareSignupOrganization`), which creates the organization (onboarding pending), the owner membership and the trial atomically.
 
 ## 6. Migration
 
@@ -194,6 +200,13 @@ Also confirmed:
 
 Everything Google returns 404 and the button disappears. Linked accounts keep their identities, and those without a password recover with "Forgot password".
 
+**Only Atlas's own pages:**
+1. Set the repository variable `FLAG_AUTH_GOOGLE_PLATFORM=off` (an explicit `off`: an empty value is dropped by the env sync and would keep the last value).
+2. Deploy as above.
+3. Run `Google verify` with `expect_mode=allowlist` and `expect_platform=off`.
+
+The academies are unaffected.
+
 ## 18. Rotate the Google client secret safely
 
 1. In Google Cloud, **add** a new secret to the client. Google allows two active secrets.
@@ -217,7 +230,7 @@ This is a product decision, not an automatic step. Before switching:
 - rerun the full real-Google matrix on at least two academies, including one custom domain.
 
 Then:
-1. Set `FLAG_AUTH_GOOGLE_MODE=on`. This also enables **management** sign-in and sign-up.
+1. Set `FLAG_AUTH_GOOGLE_MODE=on`. This enables every academy, and the platform whatever `FLAG_AUTH_GOOGLE_PLATFORM` says.
 2. Deploy.
 3. Run `Google verify` with `expect_mode=on`.
 

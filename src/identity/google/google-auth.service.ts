@@ -170,12 +170,18 @@ export class GoogleAuthService {
     return this.configService.getOrThrow<AppConfig>('app').nodeEnv === 'production';
   }
 
-  /** Whether Google sign-in is offered for this surface (flag + credentials). */
+  /**
+   * Whether Google sign-in is offered for this surface (flag + credentials).
+   * `allowlist`: an academy only when listed; the platform host (Atlas's own
+   * sign-in/sign-up — the management surface) only with its own explicit
+   * switch, so listing academies never turns it on by accident.
+   */
   isEnabledFor(surface: 'management' | 'academy', academyId?: string | null): boolean {
-    const { mode, academyIds } = this.config;
+    const { mode, academyIds, platform } = this.config;
     if (mode === 'off' || !this.oidc.isConfigured()) return false;
     if (mode === 'on') return true;
-    return surface === 'academy' && !!academyId && academyIds.includes(academyId);
+    if (surface === 'management') return platform;
+    return !!academyId && academyIds.includes(academyId);
   }
 
   /** Any surface at all — the routes answer 404 while this is false. */

@@ -17,6 +17,12 @@ on:
         default: 'off'
         type: choice
         options: ['off', allowlist, 'on']
+      expect_platform:
+        description: allowlist mode — whether Atlas's own sign-in/sign-up (platform host) is expected to offer Google
+        required: false
+        default: 'on'
+        type: choice
+        options: ['on', 'off']
       checks:
         description: Comma-separated subset (config,academy,probe,data,logs,metrics,backup,user) or all
         required: false
@@ -75,6 +81,7 @@ jobs:
         working-directory: deploy/google-verify
         env:
           EXPECT_MODE: ${{ inputs.expect_mode }}
+          EXPECT_PLATFORM: ${{ inputs.expect_platform }}
           CHECKS: ${{ inputs.checks }}
           ACADEMY_ID: ${{ inputs.academy_id }}
           ALSO_ACADEMY_IDS: ${{ inputs.also_academy_ids }}

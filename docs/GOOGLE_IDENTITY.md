@@ -173,7 +173,8 @@ Migration `20261019000000_google_identity_foundation` is additive. It has no bac
 
 | Variable | Where | Notes |
 |---|---|---|
-| `FLAG_AUTH_GOOGLE_MODE` | repository variable → `feature_flags` | `off` (default: every Google route 404, options `false`) · `allowlist` (academy websites in `FLAG_AUTH_GOOGLE_ACADEMY_IDS` only; management off) · `on` |
+| `FLAG_AUTH_GOOGLE_MODE` | repository variable → `feature_flags` | `off` (default: every Google route 404, options `false`) · `allowlist` (academy websites in `FLAG_AUTH_GOOGLE_ACADEMY_IDS`; the platform/management host only with `FLAG_AUTH_GOOGLE_PLATFORM=on`) · `on` |
+| `FLAG_AUTH_GOOGLE_PLATFORM` | repository variable → `feature_flags` | `allowlist` only: `on` offers Google on Atlas's own sign-in/sign-up (the management surface); `off` (backend default). `deploy.yml` passes `on` unless the variable says `off`. |
 | `FLAG_AUTH_GOOGLE_ACADEMY_IDS` | repository variable | comma-separated academy ids |
 | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_REDIRECT_URI` | GitHub secrets → VPS `.env` | the backend refuses to start with the flag on and any of them missing. Redirect URI: `https://<platform>/api/v1/auth/google/callback`, byte-for-byte as registered |
 | `GOOGLE_OIDC_ISSUER` / `_AUTHORIZATION_ENDPOINT` / `_TOKEN_ENDPOINT` / `_JWKS_URI` | local/test only | a fake provider; **refused in production** |

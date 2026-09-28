@@ -43,6 +43,7 @@ case "$cmd" in
       console.log("platform_base_domain|" + (e.PLATFORM_BASE_DOMAIN || ""));
       console.log("mode|" + (e.FLAG_AUTH_GOOGLE_MODE || "(unset → off)"));
       console.log("academy_ids|" + (e.FLAG_AUTH_GOOGLE_ACADEMY_IDS || ""));
+      console.log("platform|" + (e.FLAG_AUTH_GOOGLE_PLATFORM || "(unset → off)"));
       console.log("redirect_uri|" + (e.GOOGLE_OAUTH_REDIRECT_URI || ""));
       console.log("client_id_present|" + (id.length > 0));
       console.log("client_id_shape_ok|" + /^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(id));
@@ -52,7 +53,7 @@ case "$cmd" in
       console.log("fake_provider_overrides|" + (overrides.join(",") || "none"));
     '
     # The same three in .env (presence only) — proves the deploy sync wrote them.
-    for k in GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET GOOGLE_OAUTH_REDIRECT_URI FLAG_AUTH_GOOGLE_MODE FLAG_AUTH_GOOGLE_ACADEMY_IDS; do
+    for k in GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET GOOGLE_OAUTH_REDIRECT_URI FLAG_AUTH_GOOGLE_MODE FLAG_AUTH_GOOGLE_ACADEMY_IDS FLAG_AUTH_GOOGLE_PLATFORM; do
       if grep -qE "^$k=.+" .env; then echo "dotenv_$k|present"; else echo "dotenv_$k|absent"; fi
     done
     sql "select 'migration', coalesce((select case when finished_at is not null and rolled_back_at is null then 'applied' else 'unfinished' end from _prisma_migrations where migration_name='20261019000000_google_identity_foundation'), 'absent')"

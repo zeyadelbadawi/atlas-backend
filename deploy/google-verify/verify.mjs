@@ -17,6 +17,9 @@ const PORT = process.env.PROBE_PORT ? `:${process.env.PROBE_PORT}` : '';
 const CALLBACK = process.env.EXPECT_CALLBACK || `https://${PLATFORM}/api/v1/auth/google/callback`;
 const CHECKS = (process.env.CHECKS || 'all').split(',').map((s) => s.trim());
 const EXPECT_MODE = process.env.EXPECT_MODE || 'off';
+/** `allowlist` mode: whether Atlas's own pages (platform host, management surface) offer Google. */
+const EXPECT_PLATFORM = process.env.EXPECT_PLATFORM === 'on' ? 'on' : 'off';
+const MANAGEMENT_ON = EXPECT_MODE === 'on' || (EXPECT_MODE === 'allowlist' && EXPECT_PLATFORM === 'on');
 const ACADEMY_ID = process.env.ACADEMY_ID || '';
 const want = (c) => CHECKS.includes('all') || CHECKS.includes(c);
 
@@ -103,6 +106,8 @@ async function main() {
     if (EXPECT_MODE === 'allowlist') {
       const expectedIds = [ACADEMY_ID, ...(process.env.ALSO_ACADEMY_IDS || '').split(',').map((x) => x.trim()).filter(Boolean)].sort().join(',');
       check('allowlist names exactly the verified academies', config.academy_ids.split(',').map((x) => x.trim()).sort().join(',') === expectedIds, config.academy_ids);
+      const platform = (config.platform || '').startsWith('(unset') ? 'off' : config.platform;
+      check(`platform switch is the expected "${EXPECT_PLATFORM}"`, platform === EXPECT_PLATFORM, config.platform);
     }
     check('no error/fatal log lines in the last 30m', config.log_error_lines_30m === '0' && config.log_fatal_lines_30m === '0', `error=${config.log_error_lines_30m} fatal=${config.log_fatal_lines_30m}`);
   }
@@ -138,7 +143,7 @@ async function main() {
 
     const options = await call(PLATFORM, 'GET', '/auth/options', { origin: null });
     check('platform /auth/options answers', options.status === 200, `${options.status}`);
-    check(`management offers Google only when mode=on (mode ${EXPECT_MODE})`, options.json?.google === (EXPECT_MODE === 'on'), JSON.stringify(options.json));
+    check(`platform (management) offers Google = ${MANAGEMENT_ON} (mode ${EXPECT_MODE}, platform ${EXPECT_PLATFORM})`, options.json?.google === MANAGEMENT_ON, JSON.stringify(options.json));
 
     for (const h of hosts.slice(0, 8)) {
       const o = await call(h.host, 'GET', '/auth/options', { origin: null });
@@ -151,11 +156,17 @@ async function main() {
       check(`custom domain ${c.host} offers Google = ${expected}`, o.status === 200 && o.json?.google === expected, `${o.status} ${JSON.stringify(o.json)}`);
     }
 
-    const mgmt = await call(PLATFORM, 'POST', '/auth/google/authorize', { body: { intent: 'sign_in' } });
-    if (EXPECT_MODE === 'on') {
-      check('management authorize works (mode on)', mgmt.status === 200, `${mgmt.status}`);
+    const mgmt = await call(PLATFORM, 'POST', '/auth/google/authorize', { body: { intent: 'sign_up', returnTo: '/auth/register' } });
+    if (MANAGEMENT_ON) {
+      check('platform authorize works', mgmt.status === 200, `${mgmt.status} ${mgmt.key}`);
+      if (mgmt.status === 200) {
+        const q = new URL(mgmt.json.authorizationUrl).searchParams;
+        check('platform flow: exact central redirect URI, PKCE S256, state and nonce', q.get('redirect_uri') === CALLBACK && q.get('code_challenge_method') === 'S256' && (q.get('state') || '').length >= 40 && (q.get('nonce') || '').length >= 40);
+      }
+      const foreignPlatform = await call(PLATFORM, 'POST', '/auth/google/authorize', { body: { intent: 'sign_in' }, origin: 'https://evil.example' });
+      check('a foreign Origin cannot start a platform flow', foreignPlatform.status === 403, `${foreignPlatform.status} ${foreignPlatform.key}`);
     } else {
-      check('management authorize is refused (404) unless mode=on', mgmt.status === 404, `${mgmt.status} ${mgmt.key}`);
+      check('platform (management) authorize is refused (404)', mgmt.status === 404, `${mgmt.status} ${mgmt.key}`);
     }
 
     if (EXPECT_MODE !== 'off' && academyHost) {
