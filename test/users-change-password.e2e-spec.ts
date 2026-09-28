@@ -1,6 +1,7 @@
 /**
  * `POST /users/me/password` e2e — this file's checklist item I.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
@@ -52,7 +53,7 @@ describe('POST /users/me/password (e2e)', () => {
     // The refresh token from the pre-change session is revoked...
     await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken: signIn.body.refreshToken })
+      .send({ refreshToken: sessionTokenFrom(signIn) })
       .expect(401);
 
     // ...and so is its access token, immediately (Launch Stabilization A3):

@@ -1,3 +1,4 @@
+import { sessionTokenFrom } from './utils/session-cookie';
 import type { PrismaClient } from '@prisma/client';
 import { createAdminPrisma } from './utils/db-admin';
 /**
@@ -41,7 +42,7 @@ describe('Refresh-token rotation concurrency (e2e)', () => {
       .post('/auth/sign-in')
       .send({ email, password })
       .expect(200);
-    const refreshToken: string = signIn.body.refreshToken;
+    const refreshToken: string = sessionTokenFrom(signIn) as string;
 
     const CONCURRENT_ATTEMPTS = 8;
     const responses = await Promise.all(
@@ -65,7 +66,7 @@ describe('Refresh-token rotation concurrency (e2e)', () => {
     expect(revokedCount).toBe(1);
 
     // The single winning new token is fully usable afterward.
-    const winnersNewToken: string = succeeded[0].body.refreshToken;
+    const winnersNewToken = sessionTokenFrom(succeeded[0]) as string;
     await request(app.getHttpServer())
       .post('/auth/refresh')
       .send({ refreshToken: winnersNewToken })

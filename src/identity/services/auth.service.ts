@@ -1781,6 +1781,26 @@ export class AuthService {
   }
 
   /**
+   * Sign-out when the page no longer holds a valid access token: the
+   * session is identified by the refresh token in its HttpOnly cookie. The
+   * owner is found by the token's hash (never from the request), the whole
+   * rotation family is revoked and its access tokens denied. An unknown or
+   * already-revoked token is a silent no-op — signing out of nothing is not
+   * an error.
+   */
+  async signOutByRefreshToken(rawRefreshToken: string): Promise<void> {
+    const session = await this.refreshTokensRepository.findSessionOfToken(
+      hashOpaqueToken(rawRefreshToken),
+    );
+    if (!session) return;
+    await this.refreshTokensRepository.revokeSessionForUser(
+      session.sessionId,
+      session.userId,
+    );
+    await this.sessionRevocationService.markRevoked(session.sessionId);
+  }
+
+  /**
    * Backs `GET /auth/validate` (`authenticationService.validateSession`).
    * Reaching this method at all means the auth guard already verified the
    * access token — there's nothing further to check or return.

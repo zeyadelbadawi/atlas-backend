@@ -5,6 +5,7 @@
  * Every case here is a real HTTP round trip against the real database with
  * RLS enforced; nothing is mocked.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
@@ -898,7 +899,7 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
 
     await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken: signIn.body.refreshToken })
+      .send({ refreshToken: sessionTokenFrom(signIn) })
       .expect(200);
 
     const rotated = await admin.refreshToken.findFirstOrThrow({

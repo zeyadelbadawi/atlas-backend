@@ -21,6 +21,7 @@
  * deleted and the memberships survived. P106-DEL-004 exists specifically
  * so that cannot regress unnoticed.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
@@ -212,7 +213,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
       .expect(401);
     await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken: second.body.refreshToken })
+      .send({ refreshToken: sessionTokenFrom(second) })
       .expect(401);
     await request(app.getHttpServer())
       .post('/auth/sign-in')

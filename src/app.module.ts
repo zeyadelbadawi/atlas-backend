@@ -35,6 +35,7 @@ import { DatabaseModule } from './database/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
 import { SecurityReportsModule } from './security-reports/security-reports.module';
+import { SessionCookieInterceptor } from './identity/session-cookie/session-cookie.interceptor';
 import { MetricsModule } from './observability/metrics/metrics.module';
 import { IdentityModule } from './identity/identity.module';
 import { TenancyModule } from './tenancy/tenancy.module';
@@ -215,6 +216,9 @@ import { DashboardModule } from './dashboard/dashboard.module';
       exists.
     */
     { provide: APP_INTERCEPTOR, useClass: SubscriptionAccessInterceptor },
+    // Production-readiness pass — refresh tokens leave the server only in the
+    // HttpOnly session cookie, never in a response body (see the interceptor).
+    { provide: APP_INTERCEPTOR, useClass: SessionCookieInterceptor },
   ],
 })
 export class AppModule implements NestModule {

@@ -36,6 +36,7 @@
  * otherwise the background worker claims these rows mid-assertion and the
  * spec tests a race rather than a rule.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { PrismaClient } from '@prisma/client';
@@ -304,7 +305,7 @@ describe('P64 C4 — email OTP and trusted devices (e2e)', () => {
     const response = await signInWithCode(email, userId);
 
     expect(response.body.accessToken).toEqual(expect.any(String));
-    expect(response.body.refreshToken).toEqual(expect.any(String));
+    expect(sessionTokenFrom(response)).toEqual(expect.any(String));
     expect(response.body.user.id).toBe(userId);
 
     await http()

@@ -228,6 +228,24 @@ export class RefreshTokensRepository {
   }
 
   /**
+   * The session (family) a presented refresh token belongs to — revoked or
+   * not — for cookie-identified sign-out. The owner comes from the token's
+   * hash, never from the caller.
+   */
+  async findSessionOfToken(
+    tokenHash: string,
+  ): Promise<{ sessionId: string; userId: string } | null> {
+    const ownerId = await this.identityResolver.refreshTokenOwner(tokenHash);
+    if (!ownerId) return null;
+    return this.asUser(ownerId, (tx) =>
+      tx.refreshToken.findUnique({
+        where: { tokenHash },
+        select: { sessionId: true, userId: true },
+      }),
+    );
+  }
+
+  /**
    * Launch Stabilization A1 — the surface and academy a session was minted
    * for. Every rotation copies both forward, so any row of the family
    * answers; `null` when no row exists at all.

@@ -14,6 +14,7 @@
  *      database on a per-session lease, so these assert the value the API
  *      returns rather than the column directly.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
@@ -64,7 +65,7 @@ describe('Phase 11.9 session location & activity (e2e) — P119-SES-001..014', (
       email,
       userId: response.body.user.id as string,
       token: response.body.accessToken as string,
-      refreshToken: response.body.refreshToken as string,
+      refreshToken: sessionTokenFrom(response) as string,
     };
   }
 

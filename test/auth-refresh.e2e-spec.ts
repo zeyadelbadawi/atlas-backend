@@ -1,3 +1,4 @@
+import { sessionTokenFrom } from './utils/session-cookie';
 import type { PrismaClient } from '@prisma/client';
 import { createAdminPrisma } from './utils/db-admin';
 /**
@@ -26,7 +27,7 @@ async function signUpAndSignIn(
     .expect(200);
   return {
     accessToken: response.body.accessToken,
-    refreshToken: response.body.refreshToken,
+    refreshToken: sessionTokenFrom(response) as string,
   };
 }
 
@@ -57,7 +58,7 @@ describe('POST /auth/refresh (e2e)', () => {
       .send({ refreshToken })
       .expect(200);
 
-    expect(response.body.refreshToken).not.toBe(refreshToken);
+    expect(sessionTokenFrom(response)).not.toBe(refreshToken);
     expect(typeof response.body.accessToken).toBe('string');
 
     const user = await prisma.user.findUniqueOrThrow({ where: { email } });
@@ -75,7 +76,7 @@ describe('POST /auth/refresh (e2e)', () => {
     // The new token works.
     await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken: response.body.refreshToken })
+      .send({ refreshToken: sessionTokenFrom(response) })
       .expect(200);
   });
 

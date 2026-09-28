@@ -13,6 +13,7 @@
  * follow-up step classification (nothing is ever created or linked by an
  * email match), and the `auth_method` of sessions.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { PrismaClient } from '@prisma/client';
@@ -646,7 +647,7 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
       const refreshed = await http()
         .post('/auth/refresh')
         .set('Host', PLATFORM)
-        .send({ refreshToken: res.body.refreshToken })
+        .send({ refreshToken: sessionTokenFrom(res) })
         .expect(200);
       expect(refreshed.body.accessToken).toEqual(expect.any(String));
       expect((await latestSessionMethod(staff.userId)).authMethod).toBe('google');

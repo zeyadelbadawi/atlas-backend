@@ -16,6 +16,7 @@
  *   AUD-08  malformed / oversized / Unicode / control-character input to every
  *           public auth endpoint is refused with 4xx, never a 5xx.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import request from 'supertest';
@@ -356,7 +357,7 @@ describe('Authentication audit hardening (e2e)', () => {
     });
     await http()
       .post('/auth/refresh')
-      .send({ refreshToken: session.body.refreshToken })
+      .send({ refreshToken: sessionTokenFrom(session) })
       .expect(401);
     expect(
       await admin.refreshToken.count({
@@ -373,19 +374,19 @@ describe('Authentication audit hardening (e2e)', () => {
   it('AUD-07 — a rotated refresh token replayed after the grace ends the whole session; within the grace it only fails', async () => {
     const person = await register('aud07');
     const session = await signIn(person.email).expect(200);
-    const first = session.body.refreshToken as string;
+    const first = sessionTokenFrom(session) as string;
     const rotated = await http()
       .post('/auth/refresh')
       .send({ refreshToken: first })
       .expect(200);
-    const second = rotated.body.refreshToken as string;
+    const second = sessionTokenFrom(rotated) as string;
 
     // A concurrent tab presenting the old token a moment later: 401, but the
     // session lives on.
     await http().post('/auth/refresh').send({ refreshToken: first }).expect(401);
-    const third = (
-      await http().post('/auth/refresh').send({ refreshToken: second }).expect(200)
-    ).body.refreshToken as string;
+    const third = sessionTokenFrom(
+      await http().post('/auth/refresh').send({ refreshToken: second }).expect(200),
+    ) as string;
 
     // The same old token presented after the grace: the family ends.
     await admin.refreshToken.update({

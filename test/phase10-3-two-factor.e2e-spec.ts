@@ -12,6 +12,7 @@
  * A 2FA implementation that got those wrong would look completely
  * functional in a browser while providing no security at all.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { generate } from 'otplib';
@@ -250,7 +251,7 @@ describe('Phase 10.3 two-factor authentication (e2e) — P103-2FA-001..020', () 
       .expect(200);
 
     expect(verified.body.accessToken).toBeTruthy();
-    expect(verified.body.refreshToken).toBeTruthy();
+    expect(sessionTokenFrom(verified)).toBeTruthy();
     expect(verified.body.user.id).toBe(enrolled.userId);
 
     // And the issued token really works.
