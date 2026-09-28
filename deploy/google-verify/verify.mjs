@@ -235,6 +235,7 @@ async function main() {
     check('no raw code/state in any callback log line', l.callback_raw_code_or_state === '0' && l.callback_raw_query_json === '0');
     check('no client secret in logs (literal or GOCSPX-shaped)', l.client_secret_shaped === '0' && ['0', 'n/a'].includes(l.client_secret_literal));
     check('no webhook secret in a request URL logged since the backend started', l.webhook_secret_raw_since_start === '0', `${l.webhook_secret_redacted_since_start ?? '?'} redacted of ${l.webhook_lines_since_start ?? '?'} webhook lines`);
+    check('no delivery webhook refused (401/403) since the backend started — the webhook secret matches', l.webhook_refused_since_start === '0', `${l.webhook_accepted_since_start ?? '?'} accepted, ${l.webhook_refused_since_start ?? '?'} refused`);
     check('no JWT / Google access token shaped value in logs', l.jwt_shaped === '0' && l.google_access_token_shaped === '0');
     check('no handoff/pending/setup token in logs', l.handoff_or_pending_body === '0');
     check('flow retention sweep has not failed', l.google_retention_sweep_failures === '0');
