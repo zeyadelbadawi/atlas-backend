@@ -238,6 +238,9 @@ async function main() {
     check('a database backup from the last 26 h exists', Number(b.backup_age_hours) <= 26, `${b.backup_file} age ${b.backup_age_hours}h`);
     check('backup passes gzip integrity and contains the users table', b.backup_gzip === 'ok' && b.backup_has_users_table === '1');
   }
+  if (CHECKS.includes('recent')) {
+    printFacts('recent', remote('recent'));
+  }
   if (want('user') && process.env.USER_EMAIL) {
     printFacts('user', remote('user', process.env.USER_EMAIL, process.env.MAILBOX));
   }

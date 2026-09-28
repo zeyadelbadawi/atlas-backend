@@ -103,6 +103,26 @@ case "$cmd" in
     sql "select 'audit', action, count(*) from audit_log_entries where action like 'auth.identity.%' group by action order by action"
     sql "select 'outbox', key, count(*) from communication_outbox where key like 'auth.identity.%' group by key order by key"
     ;;
+  recent)
+    # The latest Google identities and what their accounts look like, with
+    # every address masked (first two characters + domain). For following a
+    # real-Google test without typing its address anywhere.
+    mask="(left(%s, 2) || '***' || substr(%s, strpos(%s, '@')))"
+    sql "select 'identity', i.user_id, $(printf "$mask" i.email_at_link i.email_at_link i.email_at_link), $(printf "$mask" u.email u.email u.email), u.status, (u.password_hash not like 'nopassword:%'), u.email_verified_at is not null, i.linked_at, coalesce(i.last_used_at::text,'-')
+         from user_auth_identities i join users u on u.id=i.user_id order by i.linked_at desc limit 20"
+    sql "select 'member_of', s.user_id, s.academy_id, s.status, s.source, s.joined_at from academy_students s
+         where s.user_id in (select user_id from user_auth_identities order by linked_at desc limit 20) order by s.joined_at"
+    sql "select 'staff_of', m.user_id, m.academy_id, m.role from academy_members m
+         where m.user_id in (select user_id from user_auth_identities order by linked_at desc limit 20)"
+    sql "select 'session', r.user_id, r.surface, coalesce(r.academy_id,'-'), coalesce(r.auth_method::text,'null'), r.created_at, (r.revoked_at is not null) from refresh_tokens r
+         where r.user_id in (select user_id from user_auth_identities order by linked_at desc limit 20) and r.created_at > now() - interval '48 hours' order by r.created_at"
+    sql "select 'trusted', t.user_id, t.surface, coalesce(t.academy_id,'-'), t.created_at from trusted_devices t
+         where t.user_id in (select user_id from user_auth_identities order by linked_at desc limit 20) and t.revoked_at is null and t.expires_at > now()"
+    sql "select 'totp', user_id from user_two_factor where confirmed_at is not null and user_id in (select user_id from user_auth_identities)"
+    sql "select 'audit', a.actor_user_id, a.action, a.context::text, a.occurred_at from audit_log_entries a where a.action like 'auth.identity.%' order by a.occurred_at desc limit 30"
+    sql "select 'outbox', o.recipient_user_id, o.key, o.created_at from communication_outbox o where o.key like 'auth.identity.%' order by o.created_at desc limit 30"
+    sql "select 'flow', intent, surface, coalesce(academy_id,'-'), (callback_at is not null), (completed_at is not null), created_at from auth_oauth_flows order by created_at desc limit 40"
+    ;;
   logs)
     hours="${2:-24}"
     printf '%s' "$hours" | grep -Eq '^[0-9]{1,3}$' || { echo "refused: hours" >&2; exit 2; }
@@ -163,7 +183,7 @@ case "$cmd" in
     sql "select 'outbox', key, count(*), max(created_at) from communication_outbox where recipient_user_id=$U and key like 'auth.identity.%' group by key"
     ;;
   *)
-    echo "usage: remote.sh config|academy <uuid>|hosts|data|logs <hours>|metrics|backup|user <email> <mailbox>" >&2
+    echo "usage: remote.sh config|academy <uuid>|hosts|data|recent|logs <hours>|metrics|backup|user <email> <mailbox>" >&2
     exit 2
     ;;
 esac
