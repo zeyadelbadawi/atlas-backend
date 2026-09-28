@@ -99,7 +99,8 @@ async function main() {
       check('redirect URI is exactly the central callback', config.redirect_uri === CALLBACK, config.redirect_uri);
     }
     if (EXPECT_MODE === 'allowlist') {
-      check('allowlist names exactly the verified academy', config.academy_ids === ACADEMY_ID, config.academy_ids);
+      const expectedIds = [ACADEMY_ID, ...(process.env.ALSO_ACADEMY_IDS || '').split(',').map((x) => x.trim()).filter(Boolean)].sort().join(',');
+      check('allowlist names exactly the verified academies', config.academy_ids.split(',').map((x) => x.trim()).sort().join(',') === expectedIds, config.academy_ids);
     }
     check('no error/fatal log lines in the last 30m', config.log_error_lines_30m === '0' && config.log_fatal_lines_30m === '0', `error=${config.log_error_lines_30m} fatal=${config.log_fatal_lines_30m}`);
   }
@@ -124,7 +125,12 @@ async function main() {
   // ---------------------------------------------------------------- probes
   if (want('probe')) {
     const hostsText = remote('hosts');
-    const hosts = lines(hostsText).filter((r) => r[0] === 'host').map(([, id, name, policy, host]) => ({ id, name, policy, host }));
+    const allHosts = lines(hostsText).filter((r) => r[0] === 'host').map(([, id, name, policy, host]) => ({ id, name, policy, host }));
+    // The allowlisted academies first (they must be probed), then the newest others.
+    const listed = (process.env.ALSO_ACADEMY_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const first = new Set([ACADEMY_ID, ...listed].filter(Boolean));
+    const hosts = [...allHosts.filter((h) => first.has(h.id)), ...allHosts.filter((h) => !first.has(h.id))].filter((h) => h.host);
+    for (const h of hosts.slice(0, 8)) info(`host ${h.id} ${h.host} policy=${h.policy}`);
     const customs = lines(hostsText).filter((r) => r[0] === 'custom').map(([, id, host]) => ({ id, host }));
     if (!academyHost && ACADEMY_ID) academyHost = hosts.find((h) => h.id === ACADEMY_ID)?.host ?? '';
 
@@ -134,12 +140,12 @@ async function main() {
 
     for (const h of hosts.slice(0, 8)) {
       const o = await call(h.host, 'GET', '/auth/options', { origin: null });
-      const expected = EXPECT_MODE === 'on' || (EXPECT_MODE === 'allowlist' && h.id === ACADEMY_ID);
+      const expected = EXPECT_MODE === 'on' || (EXPECT_MODE === 'allowlist' && first.has(h.id));
       check(`${h.host} offers Google = ${expected}`, o.status === 200 && o.json?.google === expected, `${o.status} ${JSON.stringify(o.json)}`);
     }
     for (const c of customs.slice(0, 4)) {
       const o = await call(c.host, 'GET', '/auth/options', { origin: null }).catch((e) => ({ status: 0, json: null, e }));
-      const expected = EXPECT_MODE === 'on' || (EXPECT_MODE === 'allowlist' && c.id === ACADEMY_ID);
+      const expected = EXPECT_MODE === 'on' || (EXPECT_MODE === 'allowlist' && first.has(c.id));
       check(`custom domain ${c.host} offers Google = ${expected}`, o.status === 200 && o.json?.google === expected, `${o.status} ${JSON.stringify(o.json)}`);
     }
 
@@ -212,7 +218,7 @@ async function main() {
   if (want('logs')) {
     const l = facts('logs', process.env.LOG_HOURS || '24');
     printFacts('logs', Object.entries(l).map(([k, v]) => `${k}|${v}`).join('\n'));
-    check('every callback log line is redacted', l.callback_lines === l.callback_lines_redacted || l.callback_lines === '0', `${l.callback_lines_redacted}/${l.callback_lines}`);
+    check('every callback log line carrying a code shows it redacted', l.callback_lines_with_code === l.callback_lines_redacted, `${l.callback_lines_redacted}/${l.callback_lines_with_code} (of ${l.callback_lines} callback lines)`);
     check('no raw code/state in any callback log line', l.callback_raw_code_or_state === '0' && l.callback_raw_query_json === '0');
     check('no client secret in logs (literal or GOCSPX-shaped)', l.client_secret_shaped === '0' && ['0', 'n/a'].includes(l.client_secret_literal));
     check('no JWT / Google access token shaped value in logs', l.jwt_shaped === '0' && l.google_access_token_shaped === '0');

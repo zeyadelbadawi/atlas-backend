@@ -29,6 +29,7 @@ sql() {
   if [ -n "${LOCAL_DB_URL:-}" ]; then psql "$LOCAL_DB_URL" -t -A -F'|' -c "$1"; return; fi
   docker compose exec -T postgres psql -U "$PGUSER_" -d "$PGDB_" -t -A -F'|' -c "$1"
 }
+BASE=$(env_value PLATFORM_BASE_DOMAIN)
 uuid_ok() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; }
 
 case "$cmd" in
@@ -72,7 +73,7 @@ case "$cmd" in
     uuid_ok "$id" || { echo "refused: not a uuid" >&2; exit 2; }
     sql "select 'academy', a.id, replace(a.name,'|',' '), a.slug, a.status, coalesce(a.archived_at::text,'-'), a.registration_policy, a.organization_id is not null
          from academies a where a.id='$id'"
-    sql "select 'subdomain', s.status, coalesce(s.full_host, s.subdomain || '.' || (select base_domain from platform_domain_configuration where configured limit 1))
+    sql "select 'subdomain', s.status, coalesce(s.full_host, s.subdomain || '.' || coalesce((select base_domain from platform_domain_configuration where configured limit 1), '$BASE'))
          from subdomain_allocations s where s.academy_id='$id'"
     sql "select 'custom_domain', d.status, d.hostname from domain_connections d where d.academy_id='$id'"
     sql "select 'website', w.status from website_configurations w where w.academy_id='$id'"
@@ -80,10 +81,10 @@ case "$cmd" in
     sql "select 'learners', count(*) from academy_students where academy_id='$id'"
     ;;
   hosts)
-    sql "select 'host', a.id, replace(a.name,'|',' '), a.registration_policy, coalesce(s.full_host, s.subdomain || '.' || (select base_domain from platform_domain_configuration where configured limit 1))
+    sql "select 'host', a.id, replace(a.name,'|',' '), a.registration_policy, coalesce(s.full_host, s.subdomain || '.' || coalesce((select base_domain from platform_domain_configuration where configured limit 1), '$BASE'))
          from academies a join subdomain_allocations s on s.academy_id=a.id and s.status='assigned'
          join website_configurations w on w.academy_id=a.id and w.status='published'
-         where a.archived_at is null and a.status not in ('archived','suspended') order by a.created_at limit 20"
+         where a.archived_at is null and a.status not in ('archived','suspended') order by a.created_at desc limit 20"
     sql "select 'custom', d.academy_id, d.hostname from domain_connections d where d.status='connected' order by d.created_at limit 20"
     ;;
   data)
@@ -108,6 +109,8 @@ case "$cmd" in
     logs=$(docker compose logs --no-color --since "${hours}h" backend 2>/dev/null)
     cb=$(printf '%s\n' "$logs" | grep 'auth/google/callback')
     echo "callback_lines|$(printf '%s\n' "$cb" | grep -c 'auth/google/callback')"
+    # Only a line that CARRIES a code/state can leak one; each must show the censor.
+    echo "callback_lines_with_code|$(printf '%s\n' "$cb" | grep -Ec '(code|state)=')"
     echo "callback_lines_redacted|$(printf '%s\n' "$cb" | grep -c 'code=\[REDACTED\]')"
     # A code/state value that is NOT the censor, anywhere in a callback line.
     echo "callback_raw_code_or_state|$(printf '%s\n' "$cb" | grep -Ec '(code|state)=[^[&" ]' )"

@@ -27,6 +27,11 @@ on:
         required: false
         default: b794e760-eb63-4b17-85a3-7a4f6a0c9418
         type: string
+      also_academy_ids:
+        description: Other allowlisted academy UUIDs (comma-separated) the probes expect Google on
+        required: false
+        default: ''
+        type: string
       mailbox:
         description: Gmail local part of the owner's own mailbox (user facts only for it and its plus-addresses)
         required: false
@@ -72,6 +77,7 @@ jobs:
           EXPECT_MODE: ${{ inputs.expect_mode }}
           CHECKS: ${{ inputs.checks }}
           ACADEMY_ID: ${{ inputs.academy_id }}
+          ALSO_ACADEMY_IDS: ${{ inputs.also_academy_ids }}
           MAILBOX: ${{ inputs.mailbox }}
           USER_EMAIL: ${{ inputs.user_email }}
           LOG_HOURS: ${{ inputs.log_hours }}
