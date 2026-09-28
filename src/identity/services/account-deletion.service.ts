@@ -393,6 +393,8 @@ export class AccountDeletionService {
       // same Google account can later start a fresh Atlas account (the
       // anonymised row survives, so the FK cascade never fires on its own).
       await tx.userAuthIdentity.deleteMany({ where: { userId } });
+      // The password credential: with no row, no password can ever verify.
+      await tx.userCredential.deleteMany({ where: { userId } });
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.passwordResetToken.deleteMany({ where: { userId } });
       await tx.emailVerificationToken.deleteMany({ where: { userId } });
@@ -436,10 +438,6 @@ export class AccountDeletionService {
           name: 'Deleted account',
           avatarUrl: null,
           preferences: {},
-          // Replaced with a value no password can produce, so even a
-          // future code path that forgot the status check could not
-          // authenticate this row.
-          passwordHash: `deleted:${randomUUID()}`,
           status: 'deleted',
           deletedAt: now,
           deletionReason: input.reason ?? null,

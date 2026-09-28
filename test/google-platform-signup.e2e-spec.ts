@@ -391,7 +391,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
     expect(users).toHaveLength(1);
     const user = users[0];
     expect(user.status).toBe('active');
-    expect(user.passwordHash.startsWith('nopassword:')).toBe(true);
+    expect(await admin.userCredential.count({ where: { userId: user.id } })).toBe(0);
     expect(await sessionRows(user.id)).toBe(0);
     const identities = await admin.userAuthIdentity.findMany({
       where: { providerSubject: sub },

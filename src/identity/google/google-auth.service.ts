@@ -43,7 +43,6 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { CommunicationService } from '../../communications/services/communication.service';
 import { AuthRateLimiterService } from '../services/auth-rate-limiter.service';
-import { PasswordHasherService } from '../services/password-hasher.service';
 import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
 import { hashOpaqueToken } from '../utils/opaque-token.util';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
@@ -51,12 +50,8 @@ import { recordGoogleAuth } from '../../observability/metrics/google-auth-metric
 import type { AuthenticationResponseContract } from '../dto/contracts';
 import { UsersRepository } from '../repositories/users.repository';
 import { AcademySurfaceService } from '../services/academy-surface.service';
-import {
-  AuthService,
-  NO_PASSWORD_PREFIX,
-  hasUsablePassword,
-  type SessionRequestContext,
-} from '../services/auth.service';
+import { AuthService, type SessionRequestContext } from '../services/auth.service';
+import { PasswordCredentialsService } from '../services/password-credentials.service';
 import { GoogleIdentityRepository } from './google-identity.repository';
 import { GoogleOidcClient, GoogleOidcError } from './google-oidc.client';
 import {
@@ -158,7 +153,7 @@ export class GoogleAuthService {
     private readonly auditLog: AuditLogWriterService,
     private readonly communications: CommunicationService,
     private readonly rateLimiter: AuthRateLimiterService,
-    private readonly passwordHasher: PasswordHasherService,
+    private readonly passwordCredentials: PasswordCredentialsService,
     private readonly passwordResetTokens: PasswordResetTokensRepository,
   ) {}
 
@@ -757,7 +752,7 @@ export class GoogleAuthService {
       );
     }
 
-    const valid = await this.passwordHasher.verify(user.passwordHash, input.password);
+    const valid = await this.passwordCredentials.verify(user.id, input.password);
     if (!valid || user.status === 'deleted' || user.status === 'invited') {
       await this.repository.releaseHandoff(flow.id);
       recordGoogleAuth('link', 'invalid_credentials');
@@ -897,9 +892,8 @@ export class GoogleAuthService {
 
   /**
    * An invited account becomes active with Google as its sign-in: verified,
-   * no password (the unknown invitation hash is replaced by the no-password
-   * sentinel so the account honestly reports "no password"), and every
-   * outstanding setup/reset link is spent.
+   * no password (any credential is removed, so the account honestly reports
+   * "no password"), and every outstanding setup/reset link is spent.
    */
   private async activateInTransaction(
     tx: Prisma.TransactionClient,
@@ -911,9 +905,9 @@ export class GoogleAuthService {
       data: {
         status: 'active',
         emailVerifiedAt: now,
-        passwordHash: `${NO_PASSWORD_PREFIX}${hashFlowSecret(newFlowSecret())}`,
       },
     });
+    await this.passwordCredentials.remove(userId, tx);
     await tx.passwordResetToken.updateMany({
       where: { userId, usedAt: null },
       data: { usedAt: now },
@@ -1011,7 +1005,7 @@ export class GoogleAuthService {
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
-    if (!(await this.passwordHasher.verify(user.passwordHash, currentPassword))) {
+    if (!(await this.passwordCredentials.verify(user.id, currentPassword))) {
       recordGoogleAuth(stage, 'invalid_credentials');
       throw new UnauthorizedException({
         messageKey: 'errors.auth.invalidCurrentPassword',
@@ -1024,7 +1018,7 @@ export class GoogleAuthService {
     if (!user) throw new UnauthorizedException({ messageKey: 'errors.unauthorized' });
     const identity = await this.repository.findIdentityForUser(userId);
     return {
-      password: hasUsablePassword(user),
+      password: await this.passwordCredentials.has(user.id),
       google: identity
         ? { email: identity.emailAtLink, linkedAt: identity.linkedAt.toISOString() }
         : null,
@@ -1042,7 +1036,7 @@ export class GoogleAuthService {
     if (!(await this.repository.findIdentityForUser(userId))) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
-    if (!hasUsablePassword(user)) {
+    if (!(await this.passwordCredentials.has(user.id))) {
       recordGoogleAuth('unlink', 'refused');
       throw new ConflictException({ messageKey: 'errors.auth.setPasswordFirst' });
     }

@@ -33,7 +33,7 @@ describe('Row-Level Security — P7 Instructor Operations & Community tables (di
 
   async function createUser(label: string): Promise<{ id: string }> {
     const user = await fixtureUsers().create({
-      data: { email: uniqueTestEmail(label), passwordHash: 'x', name: label },
+      data: { email: uniqueTestEmail(label), name: label },
     });
     return { id: user.id };
   }

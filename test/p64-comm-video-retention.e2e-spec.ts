@@ -150,7 +150,6 @@ describe('P64 C6 — hosted-video retention (e2e, fake clock, fake provider)', (
     const owner = await admin.user.create({
       data: {
         email: uniqueTestEmail('retention-platform-owner'),
-        passwordHash: 'x',
         name: 'retention platform owner',
         isPlatformOwner: true,
       },
@@ -216,7 +215,6 @@ describe('P64 C6 — hosted-video retention (e2e, fake clock, fake provider)', (
     const user = await admin.user.create({
       data: {
         email: uniqueTestEmail(`${label}-owner`),
-        passwordHash: 'x',
         name: `${label} owner`,
       },
     });

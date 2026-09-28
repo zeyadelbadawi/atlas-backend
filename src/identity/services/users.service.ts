@@ -7,7 +7,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { UsersRepository } from '../repositories/users.repository';
 import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
 import { SessionRevocationService } from './session-revocation.service';
-import { PasswordHasherService } from './password-hasher.service';
+import { PasswordCredentialsService } from './password-credentials.service';
 import { toCurrentUser } from '../dto/contracts';
 import type { CurrentUserResponse, UserPreferences } from '../dto/contracts';
 import { UserOrganizationsService } from '../../tenancy/services/user-organizations.service';
@@ -25,7 +25,7 @@ export class UsersService {
   constructor(
     private readonly usersRepository: UsersRepository,
     private readonly sessionRevocationService: SessionRevocationService,
-    private readonly passwordHasher: PasswordHasherService,
+    private readonly passwordCredentials: PasswordCredentialsService,
     private readonly userOrganizationsService: UserOrganizationsService,
     private readonly tenancyContextService: TenancyContextService,
     private readonly communicationService: CommunicationService,
@@ -108,20 +108,16 @@ export class UsersService {
     currentPassword: string,
     newPassword: string,
   ): Promise<void> {
-    const user = await this.requireUser(userId);
+    await this.requireUser(userId);
 
-    const currentValid = await this.passwordHasher.verify(
-      user.passwordHash,
-      currentPassword,
-    );
+    const currentValid = await this.passwordCredentials.verify(userId, currentPassword);
     if (!currentValid) {
       throw new UnauthorizedException({
         messageKey: 'errors.auth.invalidCurrentPassword',
       });
     }
 
-    const newHash = await this.passwordHasher.hash(newPassword);
-    await this.usersRepository.updatePasswordHash(userId, newHash);
+    await this.passwordCredentials.set(userId, newPassword);
     // An outstanding reset/setup link would otherwise still be able to set
     // the password the owner just changed.
     await this.passwordResetTokensRepository.spendAllForUser(userId);

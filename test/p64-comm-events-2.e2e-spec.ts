@@ -216,7 +216,6 @@ describe('P64 Communications C3 (second pass) — devices, commerce, learning, a
     return admin.user.create({
       data: {
         email: overrides.email ?? uniqueTestEmail(label),
-        passwordHash: 'x',
         name: label,
         preferences: overrides.preferences as never,
       },

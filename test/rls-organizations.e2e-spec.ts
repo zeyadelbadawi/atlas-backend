@@ -45,7 +45,7 @@ describe('Row-Level Security — organizations / organization_memberships (direc
   async function createUser(label: string): Promise<{ id: string; email: string }> {
     const email = uniqueTestEmail(label);
     const user = await fixtureUsers().create({
-      data: { email, passwordHash: 'x', name: label },
+      data: { email, name: label },
     });
     return { id: user.id, email };
   }

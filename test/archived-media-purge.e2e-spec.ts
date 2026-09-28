@@ -57,7 +57,6 @@ describe('Archived-media purge — 30-day grace (e2e)', () => {
       data: {
         email: `purge-po-${randomUUID()}@example.test`,
         name: 'purge-po',
-        passwordHash: 'x',
         isPlatformOwner: true,
       },
     });
@@ -88,7 +87,6 @@ describe('Archived-media purge — 30-day grace (e2e)', () => {
       data: {
         email: `${label}-${randomUUID()}@example.test`,
         name: label,
-        passwordHash: 'x',
       },
     });
     const org = await seedOrganizationWithOwner(admin, owner.id, `${label}-org`);

@@ -34,7 +34,6 @@ describe('Row-Level Security — Provisioning (provisioning_requests/provisionin
     return fixtureUsers().create({
       data: {
         email: uniqueTestEmail(label),
-        passwordHash: 'x',
         name: label,
         isPlatformOwner,
       },

@@ -43,7 +43,6 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
           data: {
             email: uniqueTestEmail('zoom-ops-po'),
             name: 'Zoom Ops Platform Owner',
-            passwordHash: 'x',
             isPlatformOwner: true,
             emailVerifiedAt: new Date(),
           },
@@ -64,7 +63,6 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
       data: {
         email: uniqueTestEmail(`${label}-o`),
         name: `${label} owner`,
-        passwordHash: 'x',
         emailVerifiedAt: new Date(),
       },
     });

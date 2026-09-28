@@ -47,7 +47,7 @@ import { generateSecret, generateURI, verify } from 'otplib';
 import { PrismaService } from '../../database/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { TotpSecretCipher } from './totp-secret-cipher.service';
-import { PasswordHasherService } from './password-hasher.service';
+import { PasswordCredentialsService } from './password-credentials.service';
 import type { AppConfig } from '../../config/configuration';
 import type { AuthMethod, Prisma } from '@prisma/client';
 import { runInUserContext } from '../../database/user-context';
@@ -101,7 +101,7 @@ export class TwoFactorService {
     private readonly prisma: PrismaService,
     private readonly redisService: RedisService,
     private readonly cipher: TotpSecretCipher,
-    private readonly passwordHasher: PasswordHasherService,
+    private readonly passwordCredentials: PasswordCredentialsService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -449,13 +449,7 @@ export class TwoFactorService {
   // -----------------------------------------------------------------
 
   private async assertPassword(userId: string, password: string): Promise<void> {
-    const user = await this.asUser(userId, (tx) =>
-      tx.user.findUnique({
-        where: { id: userId },
-        select: { passwordHash: true },
-      }),
-    );
-    if (!user || !(await this.passwordHasher.verify(user.passwordHash, password))) {
+    if (!(await this.passwordCredentials.verify(userId, password))) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
   }

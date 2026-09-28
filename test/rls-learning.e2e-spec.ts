@@ -37,7 +37,7 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
 
   async function createUser(label: string): Promise<{ id: string }> {
     const user = await fixtureUsers().create({
-      data: { email: uniqueTestEmail(label), passwordHash: 'x', name: label },
+      data: { email: uniqueTestEmail(label), name: label },
     });
     return { id: user.id };
   }

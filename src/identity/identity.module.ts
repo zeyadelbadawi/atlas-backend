@@ -16,6 +16,7 @@ import { AuthService } from './services/auth.service';
 import { AccountSetupService } from './services/account-setup.service';
 import { UsersService } from './services/users.service';
 import { PasswordHasherService } from './services/password-hasher.service';
+import { PasswordCredentialsService } from './services/password-credentials.service';
 import { AuthRateLimiterService } from './services/auth-rate-limiter.service';
 import { CommunicationsProvidersModule } from '../communications/communications-providers.module';
 import { UsersRepository } from './repositories/users.repository';
@@ -92,6 +93,7 @@ import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-li
     UsersService,
     AcademySurfaceService,
     PasswordHasherService,
+    PasswordCredentialsService,
     AuthRateLimiterService,
     // P64 Communications — `EMAIL_PROVIDER` now resolves to
     // `EmailProviderRegistry` (Brevo primary → Resend fallback, or the stub
@@ -169,6 +171,7 @@ import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-li
     UsersRepository,
     PlatformOwnerGuard,
     PasswordHasherService,
+    PasswordCredentialsService,
     // P64 Phase 2 — the learner surface scopes every read by the academy
     // the request HOST resolved to, and this is the service that resolves
     // it. Exported rather than duplicated so "which academy is this host"

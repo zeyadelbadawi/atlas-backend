@@ -206,7 +206,6 @@ describe('P64 Communications C3 — new transactional events and digests (e2e)',
     return admin.user.create({
       data: {
         email: overrides.email ?? uniqueTestEmail(label),
-        passwordHash: 'x',
         name: label,
         preferences: overrides.preferences as never,
       },

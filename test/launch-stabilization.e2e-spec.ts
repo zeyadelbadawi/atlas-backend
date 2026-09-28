@@ -348,8 +348,8 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
     it('LS-A2-03 — adding an EXISTING account as manager leaves its password untouched', async () => {
       const { owner, academy: a } = await freshAcademy('a2-existing');
       const existing = await staffAccount('a2-existing-person');
-      const before = await admin.user.findUniqueOrThrow({
-        where: { id: existing.userId },
+      const before = await admin.userCredential.findUniqueOrThrow({
+        where: { userId: existing.userId },
       });
       await http()
         .post(`/academies/${a.id}/members`)
@@ -359,7 +359,10 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
       const after = await admin.user.findUniqueOrThrow({
         where: { id: existing.userId },
       });
-      expect(after.passwordHash).toBe(before.passwordHash);
+      const credentialAfter = await admin.userCredential.findUniqueOrThrow({
+        where: { userId: existing.userId },
+      });
+      expect(credentialAfter.passwordHash).toBe(before.passwordHash);
       expect(after.status).toBe('active');
     });
 

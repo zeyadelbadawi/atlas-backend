@@ -37,7 +37,6 @@ async function seedUser(admin: PrismaClient, label: string, isPlatformOwner = fa
     data: {
       email: `${label}-${randomUUID()}@example.test`,
       name: label,
-      passwordHash: 'not-a-real-hash',
       isPlatformOwner,
     },
   });

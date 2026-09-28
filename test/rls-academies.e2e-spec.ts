@@ -48,7 +48,7 @@ describe('Row-Level Security — academies / academy_members (direct, no guards)
 
   async function createUser(label: string): Promise<{ id: string }> {
     const user = await fixtureUsers().create({
-      data: { email: uniqueTestEmail(label), passwordHash: 'x', name: label },
+      data: { email: uniqueTestEmail(label), name: label },
     });
     return { id: user.id };
   }

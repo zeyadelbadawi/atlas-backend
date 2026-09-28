@@ -42,7 +42,6 @@ describe('Row-Level Security — billing (checkouts/payments/*, direct, no guard
     const user = await fixtureUsers().create({
       data: {
         email: uniqueTestEmail(label),
-        passwordHash: 'x',
         name: label,
         isPlatformOwner,
       },

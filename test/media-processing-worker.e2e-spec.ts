@@ -50,7 +50,6 @@ describe('media-processing worker (e2e) — real BullMQ/Redis', () => {
     const owner = await admin.user.create({
       data: {
         email: `${label}-${Date.now()}@test.local`,
-        passwordHash: 'x',
         name: label,
       },
     });

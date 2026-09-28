@@ -255,7 +255,9 @@ async function main() {
   if (want('security')) {
     const f = facts('security');
     printFacts('security', Object.entries(f).map(([k, v]) => `${k}|${v}`).join('\n'));
-    check('all 7 identity tables have ENABLE + FORCE row-level security', f.identity_tables_force_rls === '7', f.identity_tables_force_rls);
+    check('all 8 identity tables (credentials included) have ENABLE + FORCE row-level security', f.identity_tables_force_rls === '8', f.identity_tables_force_rls);
+    check('no password credential on the users directory row', ['0', 'column_dropped'].includes(f.directory_rows_with_credential), f.directory_rows_with_credential);
+    info(`accounts with a password credential: ${f.accounts_with_password}`);
     check('no permissive USING/WITH CHECK (true) policy on an identity table', f.identity_permissive_true_policies === '0', f.identity_permissive_true_policies);
     check('7 SECURITY DEFINER resolvers, atlas_app-only (not PUBLIC)', f.resolver_functions === '7', f.resolver_functions);
     check('atlas_app is neither SUPERUSER nor BYPASSRLS', f.app_role_bypass === '0');

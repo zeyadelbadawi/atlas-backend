@@ -79,7 +79,6 @@ enum UserAccountStatus {
 model User {
   id               String                   @id @default(uuid())
   email            String                   @unique
-  passwordHash     String                   @map("password_hash")
   name             String
   avatarUrl        String?                  @map("avatar_url")
   isPlatformOwner  Boolean                  @default(false) @map("is_platform_owner")
@@ -112,6 +111,10 @@ model User {
   refreshTokens                                 RefreshToken[]
   passwordResetTokens                           PasswordResetToken[]
   emailVerificationTokens                       EmailVerificationToken[]
+  /// Production-readiness pass — the password credential lives in its own
+  /// strictly self-scoped table, never on the directory row. No row = the
+  /// account has no password (Google-only, invited, deleted).
+  credential                                    UserCredential?
   twoFactor                                     UserTwoFactor?
   twoFactorRecoveryCodes                        TwoFactorRecoveryCode[]
   ownedOrganizations                            Organization[]                           @relation("OrganizationOwner")
@@ -174,17 +177,17 @@ model User {
 
   /// P64 Phase 2 — the learner's registered devices and their own
   /// content-access history.
-  studentDevices       StudentDevice[]
-  contentAccessLog     ContentAccessLog[]
+  studentDevices            StudentDevice[]
+  contentAccessLog          ContentAccessLog[]
   /// P64 Communications.
-  communicationOutbox  CommunicationOutbox[]
-  communicationDigests CommunicationDigest[]
-  authEmailChallenges  AuthEmailChallenge[]
+  communicationOutbox       CommunicationOutbox[]
+  communicationDigests      CommunicationDigest[]
+  authEmailChallenges       AuthEmailChallenge[]
   accountDeletionChallenges AccountDeletionChallenge[]
-  trustedDevices       TrustedDevice[]
+  trustedDevices            TrustedDevice[]
   /// Google Identity — the external sign-in identities bound to this account.
-  authIdentities       UserAuthIdentity[]
-  authOAuthFlowsToLink AuthOAuthFlow[]       @relation("AuthOAuthFlowLinkUser")
+  authIdentities            UserAuthIdentity[]
+  authOAuthFlowsToLink      AuthOAuthFlow[]            @relation("AuthOAuthFlowLinkUser")
 
   @@index([status])
   @@index([searchVector], type: Gin)
@@ -295,6 +298,26 @@ enum SessionSurface {
 /// specifically for this purpose — see `TotpSecretCipher`. It is never
 /// stored, logged, or returned in plaintext after the one-time setup
 /// response that the user needs in order to enrol.
+/// Production-readiness pass — the account's password credential.
+///
+/// Split out of `users` so that the identity DIRECTORY (joined by rosters,
+/// reviews, certificates, audit, search, the platform console…) never carries
+/// a credential: no `select`, `include` or serialiser anywhere in the product
+/// can put a hash on the wire or in a log, because the directory row does not
+/// have one. FORCE ROW LEVEL SECURITY admits a row only in its owner's own
+/// `app.current_user_id` context, and only `CredentialsRepository` reads or
+/// writes it.
+model UserCredential {
+  userId       String   @id @map("user_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Argon2id PHC string. Never logged, never returned.
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("user_credentials")
+}
+
 model UserTwoFactor {
   userId          String    @id @map("user_id")
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)

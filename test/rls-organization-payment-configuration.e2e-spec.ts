@@ -45,7 +45,6 @@ describe('Row-Level Security — organization payment configuration (direct, no 
     const user = await fixtureUsers().create({
       data: {
         email: uniqueTestEmail(label),
-        passwordHash: 'x',
         name: label,
         isPlatformOwner,
       },

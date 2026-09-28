@@ -52,14 +52,12 @@ describe('Superseded certificate PDF purge (e2e)', () => {
       data: {
         email: `${label}-o-${randomUUID()}@example.test`,
         name: label,
-        passwordHash: 'x',
       },
     });
     const student = await admin.user.create({
       data: {
         email: `${label}-s-${randomUUID()}@example.test`,
         name: 'Real Name',
-        passwordHash: 'x',
       },
     });
     const org = await seedOrganizationWithOwner(admin, owner.id, `${label}-org`);

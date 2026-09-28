@@ -59,8 +59,14 @@ describe('POST /auth/register (e2e)', () => {
     const user = await prisma.user.findUnique({ where: { email } });
     expect(user).not.toBeNull();
     expect(user?.status).toBe('active');
-    expect(user?.passwordHash).not.toBe('correct-horse-battery');
-    expect(user?.passwordHash.startsWith('$argon2id$')).toBe(true);
+    // The credential lives in its own table, as an Argon2id hash — never on
+    // the directory row and never the plaintext.
+    const credential = await prisma.userCredential.findUniqueOrThrow({
+      where: { userId: user!.id },
+    });
+    expect(credential.passwordHash).not.toBe('correct-horse-battery');
+    expect(credential.passwordHash.startsWith('$argon2id$')).toBe(true);
+    expect(Object.keys(user!)).not.toContain('passwordHash');
   });
 
   it('answers a duplicate email exactly like a new one and creates nothing (audit Decision 3)', async () => {
@@ -133,7 +139,7 @@ describe('POST /auth/register (e2e)', () => {
 
   async function seedRealAcademy(label: string) {
     const owner = await admin.user.create({
-      data: { email: uniqueTestEmail(`${label}-owner`), passwordHash: 'x', name: label },
+      data: { email: uniqueTestEmail(`${label}-owner`), name: label },
     });
     const org = await seedOrganizationWithOwner(admin, owner.id, `${label}-org`);
     return seedAcademy(admin, org.id, `${label}-academy`);
