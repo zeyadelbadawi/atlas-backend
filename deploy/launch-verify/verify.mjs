@@ -418,10 +418,13 @@ async function smiBrowserMode() {
     const b = p.getByRole('button', { name: /accept all|قبول الكل/i });
     if (await b.count()) await b.first().click().catch(() => {});
   }
-  // Smart academy join: an account of A signs UP at B with a different
-  // password → "You already have an Atlas account" (email locked, Change
-  // email, no new-account password fields, A NOT named) → its Atlas
-  // password → B's emailed code → "You're all set" naming A → /my.
+  // Smart academy join under the authentication audit's Decision 3
+  // (registration never reveals an existing account): an account of A signs
+  // UP at B with a different password → the SAME answer a new address gets
+  // (nothing reveals the account; A is not named; no join step; the owner is
+  // emailed) → then the visible "Already have an Atlas account? Join with it"
+  // link → its Atlas password → B's emailed code → "You're all set" naming A
+  // → /my.
   const escape = (v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   for (const v of [{ tag: 'join-en-desktop', ar: false, mobile: false }, { tag: 'join-ar-mobile', ar: true, mobile: true }]) {
     const email = mail(`b${v.tag.replace(/-/g, '')}`);
@@ -437,23 +440,20 @@ async function smiBrowserMode() {
       await p.fill('#password', other); await p.fill('#confirmPassword', other);
       await p.getByRole('checkbox').first().click();
       await p.locator('form button[type=submit]').click();
-      await p.locator('#academy-join-password').waitFor({ timeout: 20000 });
+      const generic = /If you already have an Atlas account with this email|وإذا كان لديك حساب أطلس بهذا البريد الإلكتروني بالفعل/;
+      await p.getByText(generic).first().waitFor({ timeout: 20000 });
       const step = await p.evaluate(() => ({ dir: document.documentElement.dir, ovf: document.documentElement.scrollWidth > window.innerWidth + 1 }));
-      await shot(p, `academy-B-${v.tag}-existing-account`);
-      check(`[${v.tag}] "You already have an Atlas account" explains this academy runs on Atlas`, (await p.getByText(/You already have an Atlas account|لديك حساب على Atlas بالفعل/).count()) > 0 && (await p.getByText(new RegExp(escape(B.name))).count()) > 0);
-      check(`[${v.tag}] email locked, "Change email" offered, no new-account password fields`,
-        (await p.locator('#academy-join-email').evaluate((e) => e.readOnly)) && (await p.getByRole('button', { name: /Change email|تغيير البريد الإلكتروني/ }).count()) === 1 && (await p.locator('#confirmPassword').count()) === 0);
-      check(`[${v.tag}] the other academy is NOT named before proof`, (await p.getByText(new RegExp(escape(A.name))).count()) === 0, A.name);
-      check(`[${v.tag}] existing-account step layout (${v.ar ? 'RTL' : 'LTR'}, no overflow)`, step.dir === (v.ar ? 'rtl' : 'ltr') && !step.ovf, `dir=${step.dir} overflow=${step.ovf}`);
-      if (!v.ar) {
-        // Change email unlocks the address (back to the form, kept), then the
-        // same account continues through "Join with it" — no second sign-up.
-        await p.getByRole('button', { name: /Change email/ }).click();
-        const back = await p.locator('#email').evaluate((e) => ({ readOnly: e.readOnly, value: e.value }));
-        check(`[${v.tag}] "Change email" returns to an editable form keeping the address`, !back.readOnly && back.value === email, JSON.stringify(back));
-        await p.getByRole('button', { name: /Join with it/ }).click();
-        await p.fill('#academy-join-email', email);
-      }
+      await shot(p, `academy-B-${v.tag}-generic-answer`);
+      check(`[${v.tag}] an existing address gets the generic sign-up answer (nothing reveals the account)`,
+        (await p.locator('#academy-join-password').count()) === 0 && (await p.getByText(/You already have an Atlas account|لديك حساب على Atlas بالفعل/).count()) === 0);
+      check(`[${v.tag}] the other academy is NOT named`, (await p.getByText(new RegExp(escape(A.name))).count()) === 0, A.name);
+      check(`[${v.tag}] generic answer layout (${v.ar ? 'RTL' : 'LTR'}, no overflow)`, step.dir === (v.ar ? 'rtl' : 'ltr') && !step.ovf, `dir=${step.dir} overflow=${step.ovf}`);
+      const notice = facts('user', email, A.id, B.id);
+      check(`[${v.tag}] still exactly one account, not yet a learner at B`, notice.users === '1' && notice.learner_rows === '1', `users=${notice.users} rows=${notice.learner_rows}`);
+      // The legitimate next step: join with the existing account.
+      await p.goto(`${ORIGIN(B.host)}${prefix}/sign-up`); await p.waitForLoadState('networkidle'); await accept(p);
+      await p.getByRole('button', { name: /Join with it|انضم به/ }).click();
+      await p.fill('#academy-join-email', email);
       await p.fill('#academy-join-password', jpw);
       await p.press('#academy-join-password', 'Enter');
       await p.locator('#email-otp-code').waitFor({ timeout: 25000 });
