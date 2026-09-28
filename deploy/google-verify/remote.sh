@@ -182,6 +182,30 @@ case "$cmd" in
     sql "select 'totp', count(*) from user_two_factor where user_id=$U and confirmed_at is not null"
     sql "select 'audit', action, count(*), max(occurred_at) from audit_log_entries where actor_user_id=$U and action like 'auth.identity.%' group by action"
     sql "select 'outbox', key, count(*), max(created_at) from communication_outbox where recipient_user_id=$U and key like 'auth.identity.%' group by key"
+    # Delivery diagnostics — states, errors, channels; never the values (a code lives there).
+    sql "select 'challenge', surface, coalesce(academy_id,'-'), coalesce(auth_method::text,'null'), attempts, resends, created_at, expires_at, coalesce(consumed_at::text,'-') from auth_email_challenges where user_id=$U order by created_at desc limit 5"
+    sql "select 'outbox_row', key, state, attempts, coalesce(replace(left(last_error,200),'|','/'),'-'), channels::text, created_at, coalesce(dispatched_at::text,'-') from communication_outbox where recipient_user_id=$U order by created_at desc limit 12"
+    sql "select 'delivery', o.key, d.channel, coalesce(d.provider,'-'), d.status, coalesce(d.error_code,'-'), d.attempts, coalesce(d.sent_at::text,'-'), (d.provider_message_id is not null) from communication_deliveries d join communication_outbox o on o.id=d.outbox_id where o.recipient_user_id=$U order by d.created_at desc limit 12"
+    sql "select 'suppressed', count(*), coalesce(max(reason::text),'-'), coalesce(max(source),'-') from communication_suppressions where email_hash=encode(sha256(convert_to(lower(trim('$email')),'UTF8')),'hex') and (expires_at is null or expires_at > now())"
+    sql "select 'user_created', created_at from users where id=$U"
+    # Mail pipeline warnings/errors in the last 6 h: level + message only
+    # (never the line itself, which could carry an address or a value).
+    docker compose logs --no-color --since 6h backend 2>/dev/null | sed 's/^[^{]*//' \
+      | docker compose exec -T backend node -e '
+        const lines = require("fs").readFileSync(0, "utf8").split("\n");
+        const counts = new Map();
+        for (const l of lines) {
+          let j; try { j = JSON.parse(l); } catch { continue; }
+          if ((j.level ?? 0) < 40) continue;
+          const text = `${j.context ?? "-"} :: ${String(j.msg ?? "").slice(0, 140)} :: ${j.err?.type ?? j.err?.code ?? "-"}`;
+          if (!/mail|communicat|outbox|deliver|smtp|resend|brevo|ses|otp/i.test(text)) continue;
+          counts.set(text, (counts.get(text) ?? 0) + 1);
+        }
+        for (const [t, n] of counts) console.log(`mail_log|${n}|${t.replace(/[\w.+-]+@[\w.-]+/g, "<address>").replace(/\|/g, "/")}`);
+        if (counts.size === 0) console.log("mail_log|0|none");
+      '
+    # Worker/queue health for outbound mail.
+    sql "select 'outbox_backlog', state, count(*), min(created_at) from communication_outbox where created_at > now() - interval '6 hours' group by state"
     ;;
   *)
     echo "usage: remote.sh config|academy <uuid>|hosts|data|recent|logs <hours>|metrics|backup|user <email> <mailbox>" >&2
