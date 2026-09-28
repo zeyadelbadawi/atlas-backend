@@ -10,6 +10,7 @@
  */
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { fixtureUsers } from './utils/db-admin';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
@@ -31,7 +32,7 @@ describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_e
   });
 
   async function createUser(label: string, isPlatformOwner = false) {
-    return prisma.user.create({
+    return fixtureUsers().create({
       data: {
         email: uniqueTestEmail(label),
         passwordHash: 'x',

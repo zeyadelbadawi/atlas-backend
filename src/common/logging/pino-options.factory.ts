@@ -65,6 +65,14 @@ export function buildPinoOptions(app: AppConfig): Params {
           'req.body.pending',
           'req.body.setupToken',
           'req.body.inviteToken',
+          // Second factors and codes (bodies are not logged by default; this
+          // keeps it true if a future serializer ever adds them).
+          'req.body.code',
+          'req.body.recoveryCode',
+          'req.body.challengeId',
+          'req.body.secret',
+          '*.encryptedSecret',
+          '*.codeHash',
           '*.password',
           '*.password_hash',
           '*.passwordHash',

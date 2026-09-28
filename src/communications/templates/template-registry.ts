@@ -21,6 +21,8 @@ import { template as authIdentityUnlinked } from './keys/auth.identity.unlinked'
 import { template as accountAcademyJoined } from './keys/account.academy.joined';
 import { template as authEmailVerification } from './keys/auth.email.verification';
 import { template as authEmailOtp } from './keys/auth.email.otp';
+import { template as authAccountDeletionCode } from './keys/auth.account.deletion_code';
+import { template as authAccountSignupAttempt } from './keys/auth.account.signup_attempt';
 import { template as authPasswordReset } from './keys/auth.password.reset';
 import { template as authPasswordResetConfirmed } from './keys/auth.password.reset_confirmed';
 import { template as liveSessionRecordingAvailable } from './keys/live_session.recording_available';
@@ -103,6 +105,8 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'auth.identity.unlinked': authIdentityUnlinked,
   'auth.email.verification': authEmailVerification,
   'auth.email.otp': authEmailOtp,
+  'auth.account.deletion_code': authAccountDeletionCode,
+  'auth.account.signup_attempt': authAccountSignupAttempt,
   'auth.password.reset': authPasswordReset,
   'auth.password.reset_confirmed': authPasswordResetConfirmed,
   'live_session.recording_available': liveSessionRecordingAvailable,

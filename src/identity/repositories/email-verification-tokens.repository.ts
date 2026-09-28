@@ -5,10 +5,16 @@
  * Deliberately mirrors `PasswordResetTokensRepository`: same hashed-token
  * storage, same single-use semantics, same "never look up by raw token"
  * discipline.
+ *
+ * Authentication audit, Decision 2 — the table is strictly per-user under
+ * RLS; `claim` finds the owner by the token's hash through
+ * `IdentityResolver`, and every statement runs in the owner's context.
  */
 import { Injectable } from '@nestjs/common';
-import type { EmailVerificationToken } from '@prisma/client';
+import type { EmailVerificationToken, Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { runInUserContext } from '../../database/user-context';
+import { IdentityResolver } from './identity-resolver';
 
 export interface CreateEmailVerificationTokenInput {
   readonly userId: string;
@@ -19,10 +25,22 @@ export interface CreateEmailVerificationTokenInput {
 
 @Injectable()
 export class EmailVerificationTokensRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly identityResolver: IdentityResolver,
+  ) {}
+
+  private asUser<T>(
+    userId: string,
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return runInUserContext(this.prisma, userId, work);
+  }
 
   create(input: CreateEmailVerificationTokenInput): Promise<EmailVerificationToken> {
-    return this.prisma.emailVerificationToken.create({ data: { ...input } });
+    return this.asUser(input.userId, (tx) =>
+      tx.emailVerificationToken.create({ data: { ...input } }),
+    );
   }
 
   /**
@@ -41,15 +59,19 @@ export class EmailVerificationTokensRepository {
    *          cannot be used to probe which tokens exist.
    */
   async claim(tokenHash: string): Promise<EmailVerificationToken | null> {
+    const ownerId = await this.identityResolver.emailVerificationTokenOwner(tokenHash);
+    if (!ownerId) return null;
     const now = new Date();
-    const claim = await this.prisma.emailVerificationToken.updateMany({
-      where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
-      data: { usedAt: now },
+    return this.asUser(ownerId, async (tx) => {
+      const claim = await tx.emailVerificationToken.updateMany({
+        where: { tokenHash, userId: ownerId, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+
+      if (claim.count !== 1) return null;
+
+      return tx.emailVerificationToken.findUnique({ where: { tokenHash } });
     });
-
-    if (claim.count !== 1) return null;
-
-    return this.prisma.emailVerificationToken.findUnique({ where: { tokenHash } });
   }
 
   /**
@@ -60,9 +82,11 @@ export class EmailVerificationTokensRepository {
    * keeps the audit trail of how many were issued.
    */
   async invalidateAllForUser(userId: string): Promise<void> {
-    await this.prisma.emailVerificationToken.updateMany({
-      where: { userId, usedAt: null },
-      data: { usedAt: new Date() },
-    });
+    await this.asUser(userId, (tx) =>
+      tx.emailVerificationToken.updateMany({
+        where: { userId, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+    );
   }
 }

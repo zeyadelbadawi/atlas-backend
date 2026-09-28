@@ -23,6 +23,7 @@ import type {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { IdentityResolver } from '../../identity/repositories/identity-resolver';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { normalizeEmail } from '../../identity/utils/email.util';
 
@@ -55,6 +56,7 @@ export class SuppressionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenancyContextService: TenancyContextService,
+    private readonly identityResolver: IdentityResolver,
   ) {}
 
   async isSuppressed(email: string, now = new Date()): Promise<boolean> {
@@ -145,11 +147,10 @@ export class SuppressionService {
   }
 
   private async platformOwnerId(): Promise<string | null> {
-    const owner = await this.prisma.user.findFirst({
-      where: { isPlatformOwner: true },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true },
-    });
+    // `users` is not readable without a context (authentication audit,
+    // Decision 2); the resolver returns the id and nothing else.
+    const ownerId = await this.identityResolver.platformOwnerId();
+    const owner = ownerId ? { id: ownerId } : null;
     if (owner) return owner.id;
     if (!this.warnedNoOwner) {
       this.warnedNoOwner = true;

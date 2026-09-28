@@ -7,6 +7,8 @@
 import { Injectable } from '@nestjs/common';
 import type { AuthOAuthFlow, Prisma, User, UserAuthIdentity } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { runInUserContext } from '../../database/user-context';
+import { IdentityResolver } from '../repositories/identity-resolver';
 
 export interface CreateFlowInput {
   readonly stateHash: string;
@@ -33,7 +35,10 @@ export interface FlowClaimsInput {
 
 @Injectable()
 export class GoogleIdentityRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly identityResolver: IdentityResolver,
+  ) {}
 
   createFlow(input: CreateFlowInput): Promise<AuthOAuthFlow> {
     return this.prisma.authOAuthFlow.create({
@@ -145,22 +150,36 @@ export class GoogleIdentityRepository {
     });
   }
 
-  findIdentity(
+  /**
+   * Authentication audit, Decision 2 — `user_auth_identities` is strictly
+   * per-user under RLS. A callback knows only Google's subject, so the
+   * linked account is found through `IdentityResolver` and the row is read
+   * in that account's own context. A caller that passes `client` brings its
+   * own (already established) context.
+   */
+  async findIdentity(
     subject: string,
-    client: Prisma.TransactionClient = this.prisma,
+    client?: Prisma.TransactionClient,
   ): Promise<(UserAuthIdentity & { user: User }) | null> {
-    return client.userAuthIdentity.findUnique({
-      where: {
-        provider_providerSubject: { provider: 'google', providerSubject: subject },
-      },
-      include: { user: true },
-    });
+    const read = (tx: Prisma.TransactionClient) =>
+      tx.userAuthIdentity.findUnique({
+        where: {
+          provider_providerSubject: { provider: 'google', providerSubject: subject },
+        },
+        include: { user: true },
+      });
+    if (client) return read(client);
+    const ownerId = await this.identityResolver.identityOwner('google', subject);
+    if (!ownerId) return null;
+    return runInUserContext(this.prisma, ownerId, read);
   }
 
   findIdentityForUser(userId: string): Promise<UserAuthIdentity | null> {
-    return this.prisma.userAuthIdentity.findUnique({
-      where: { userId_provider: { userId, provider: 'google' } },
-    });
+    return runInUserContext(this.prisma, userId, (tx) =>
+      tx.userAuthIdentity.findUnique({
+        where: { userId_provider: { userId, provider: 'google' } },
+      }),
+    );
   }
 
   /**
@@ -195,10 +214,17 @@ export class GoogleIdentityRepository {
   }
 
   /** Display-only refresh: the address Google reports today, and when it was used. */
-  async touchIdentity(id: string, email: string, now: Date): Promise<void> {
-    await this.prisma.userAuthIdentity.update({
-      where: { id },
-      data: { lastUsedAt: now, emailAtLink: email },
-    });
+  async touchIdentity(
+    userId: string,
+    id: string,
+    email: string,
+    now: Date,
+  ): Promise<void> {
+    await runInUserContext(this.prisma, userId, (tx) =>
+      tx.userAuthIdentity.update({
+        where: { id },
+        data: { lastUsedAt: now, emailAtLink: email },
+      }),
+    );
   }
 }

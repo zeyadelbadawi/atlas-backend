@@ -10,13 +10,15 @@
  * under `TenancyContextService.runInUserContext(platformOwnerId)` by the
  * service layer, reusing the exact `_platform_select` policies P15 already
  * added (no new RLS needed this phase — see this module's own doc
- * comment). `users`/`plans` carry no RLS at all (P1/P4's own established
- * precedent, reused verbatim by `PlatformUsersRepository`) — those methods
- * take the raw `PrismaService` instead, exactly like that repository.
+ * comment). `plans` carries no RLS. `users` does since the authentication
+ * audit (Decision 2) — readable only inside an established context — so the
+ * user counts take the Platform Owner's id and open that context
+ * themselves.
  */
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { runInUserContext } from '../../database/user-context';
 
 @Injectable()
 export class PlatformScaleRepository {
@@ -284,27 +286,38 @@ export class PlatformScaleRepository {
     };
   }
 
-  // --- Unprotected tables (no RLS) ------------------------------------
+  // --- users (context-gated directory; Platform Owner context) ---------
 
-  countUsers(asOf?: Date): Promise<number> {
-    return this.prisma.user.count({
-      where: asOf ? { createdAt: { lte: asOf } } : undefined,
-    });
+  countUsers(platformOwnerId: string, asOf?: Date): Promise<number> {
+    return runInUserContext(this.prisma, platformOwnerId, (tx) =>
+      tx.user.count({
+        where: asOf ? { createdAt: { lte: asOf } } : undefined,
+      }),
+    );
   }
 
-  countActiveUsers(from: Date, to: Date): Promise<number> {
-    return this.prisma.user.count({ where: { lastSignInAt: { gte: from, lte: to } } });
+  countActiveUsers(platformOwnerId: string, from: Date, to: Date): Promise<number> {
+    return runInUserContext(this.prisma, platformOwnerId, (tx) =>
+      tx.user.count({ where: { lastSignInAt: { gte: from, lte: to } } }),
+    );
   }
 
   /** One `GROUP BY` per day a user was ever created, up to `to` (a small, bounded result — one row per distinct day, never one row per user) — the service layer fills gaps and computes the running cumulative total. */
-  async usersCreatedByDay(to: Date): Promise<{ day: string; count: number }[]> {
-    const rows = await this.prisma.$queryRaw<{ day: Date; count: bigint }[]>`
-      SELECT date_trunc('day', "created_at") AS day, COUNT(*) AS count
-      FROM "users"
-      WHERE "created_at" <= ${to}
-      GROUP BY 1
-      ORDER BY 1
-    `;
+  async usersCreatedByDay(
+    platformOwnerId: string,
+    to: Date,
+  ): Promise<{ day: string; count: number }[]> {
+    const rows = await runInUserContext(
+      this.prisma,
+      platformOwnerId,
+      (tx) => tx.$queryRaw<{ day: Date; count: bigint }[]>`
+        SELECT date_trunc('day', "created_at") AS day, COUNT(*) AS count
+        FROM "users"
+        WHERE "created_at" <= ${to}
+        GROUP BY 1
+        ORDER BY 1
+      `,
+    );
     return rows.map((r) => ({
       day: r.day.toISOString().slice(0, 10),
       count: Number(r.count),
@@ -313,16 +326,21 @@ export class PlatformScaleRepository {
 
   /** Active-user counts bucketed by day, `lastSignInAt` within `[from, to]` — bounded to the requested window only (an "active" event, unlike a signup, has no meaningful "before the window" carry-forward). */
   async activeUsersByDay(
+    platformOwnerId: string,
     from: Date,
     to: Date,
   ): Promise<{ day: string; count: number }[]> {
-    const rows = await this.prisma.$queryRaw<{ day: Date; count: bigint }[]>`
-      SELECT date_trunc('day', "last_sign_in_at") AS day, COUNT(*) AS count
-      FROM "users"
-      WHERE "last_sign_in_at" >= ${from} AND "last_sign_in_at" <= ${to}
-      GROUP BY 1
-      ORDER BY 1
-    `;
+    const rows = await runInUserContext(
+      this.prisma,
+      platformOwnerId,
+      (tx) => tx.$queryRaw<{ day: Date; count: bigint }[]>`
+        SELECT date_trunc('day', "last_sign_in_at") AS day, COUNT(*) AS count
+        FROM "users"
+        WHERE "last_sign_in_at" >= ${from} AND "last_sign_in_at" <= ${to}
+        GROUP BY 1
+        ORDER BY 1
+      `,
+    );
     return rows.map((r) => ({
       day: r.day.toISOString().slice(0, 10),
       count: Number(r.count),

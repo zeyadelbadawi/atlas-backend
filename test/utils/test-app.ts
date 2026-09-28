@@ -100,6 +100,8 @@ export async function createTestApp(
   // `main.ts`'s identical computation (see its own doc comment).
   app.useBodyParser('json', {
     limit: mediaConfig.maxUploadBytes * 3,
+    // Mirrors `main.ts`: CSP violation reports' media types are JSON too.
+    type: ['application/json', 'application/csp-report', 'application/reports+json'],
     // Mirrors `main.ts`'s raw-body capture for signed webhook paths (no
     // global prefix/version in the test app, so the bare route).
     verify: (

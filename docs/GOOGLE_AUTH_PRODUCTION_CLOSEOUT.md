@@ -164,6 +164,73 @@ Also confirmed:
 - No secret-, JWT- or token-shaped values in the logs.
 - The Google alerts are loaded.
 
+## 9b. Google on Atlas's own sign-in and sign-up (28 Sep 2026, 10:18–10:42 UTC)
+
+**Finding from the real academy testing.** The platform pages (`/auth/sign-in`, `/auth/register`) showed no Google button. Allowlist mode only ever enabled listed academies. The platform host is the management surface, so `/auth/options` answered `google:false` there, and `GoogleSignInOption` renders nothing in that case.
+
+The button, the Google create step (organization name + plan) and the canonical signup behind it already existed. A second gap: the sign-up page consumes the pricing-page plan intent on load, so after the Google round trip the create step started with no plan and no organization name.
+
+**Fix:**
+- **Backend:** `FLAG_AUTH_GOOGLE_PLATFORM`. In allowlist mode it enables the platform on its own switch; unlisted academies stay off.
+- **Frontend:**
+  - the sign-up page hands its draft (organization name, chosen plan, intended plan key) to Continue with Google;
+  - the draft is saved in the tab's flow context (sessionStorage, never in a URL) and restored on the create step;
+  - the same required-field rules apply there, and the server re-validates;
+  - `/auth/sign-up` now redirects to `/auth/register`, keeping the query.
+
+**Commits:**
+
+| Repo | Branch commit | Merge to `main` |
+|---|---|---|
+| Backend | `216012f` | `162bf6f` |
+| Frontend | `cef314a` | `479190e` |
+
+Verify tooling: `91e0280` and `9ca79ad` (branch).
+
+**Deploys:** backend Deploy #219 (`36408888135`, push, no migration; backend started 10:27:19 UTC) and frontend Deploy #125 (`36408893134`).
+
+**Tests:**
+- New backend e2e `google-platform-signup` passes 8/8.
+- Google, onboarding and auth e2e regression: 164/164 across 10 suites.
+- Backend unit tests: 3888/3888.
+- Frontend: 1161/1161, including the new `google-platform-signup.test.tsx`.
+- Lint, backend typecheck and both builds are clean.
+
+**Google verify #7, run `36410491321`** (`allowlist`, `expect_platform=on`, from `main`): all checks passed.
+- **Running config:** the platform switch is `on`.
+- **Platform:** `/auth/options` answers `google:true`.
+- **Academies:** ellzoz and hfghgf answer `true`; the six others answer `false`.
+- **Platform flow:**
+  - platform authorize returns 200 with the exact redirect URI, PKCE S256, state and nonce;
+  - a foreign Origin gets 403 on the platform and on the academy;
+  - Google accepts the client.
+- **Data, logs and alerts:**
+  - no duplicate identities or users;
+  - 3/3 callback code lines are redacted;
+  - no secrets or tokens in the logs;
+  - the alerts are loaded.
+
+**Google verify #9, run `36411155358`** (browser job, a real Chromium against production): all checks passed.
+- **Pages:** in EN desktop and AR mobile, the platform sign-in and sign-up show Continue with Google beside the password form.
+- **Fields:** sign-up shows the organization fields.
+- **Layout:** Arabic is RTL, with no horizontal overflow.
+- **Alias:** `/auth/sign-up?plan=starter` lands on `/auth/register?plan=starter`.
+- **Round trip:** after typing an organization name and clicking Continue with Google, the browser reaches `accounts.google.com`. The name appears in **no** URL, and the tab's flow context carries it (`intent=sign_up`, `surface=management`).
+- **Academy:** the ellzoz sign-in still shows Google.
+
+**Launch verify #11, run `36411535243`** (on the new backend): all jobs pass — the password, emailed-code, trusted-device, A1–A6, smart-join and deliverability journeys are unchanged.
+
+**First real platform Google sign-up (28 Sep, 13:00 UTC, reported as "code not received").** Google verify #10, run `36430865440` (`user` check, delivery diagnostics added in `8831d06`), recorded:
+- one active user with its Google identity and one organization membership;
+- an emailed-code challenge for `management` with `auth_method=google`;
+- the `auth.email.otp` outbox row dispatched within 1 s;
+- Brevo delivery status `delivered` (provider message id present, the same as the trial-started email a second earlier);
+- the address not suppressed, and no mail-pipeline warnings.
+
+The code was never entered (0 attempts) and expired at 13:10. The server side worked end to end. The message reached Gmail, so it was filed outside the inbox (Spam/Promotions/All Mail). This is not a code defect.
+
+**Still to do by a person:** one real Google sign-up on `https://atlass.dpdns.org/auth/register` with a Google account that has no Atlas account (organization name + plan → emailed code → onboarding), and one Google sign-in on `/auth/sign-in` with a linked owner.
+
 ## 10–13. Real-Google verification — *pending*
 
 ## 14. Known limitations

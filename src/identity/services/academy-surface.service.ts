@@ -143,6 +143,41 @@ export class AcademySurfaceService {
   }
 
   /**
+   * Authentication audit (Decision 3) — the SAME policy answer
+   * `admissionForNewLearner` would give, WITHOUT spending an invitation.
+   * The invitation claim runs inside a transaction that is always rolled
+   * back, so a registration that creates nothing (an address that already
+   * has an account) cannot be told apart by its invite answer and cannot
+   * consume a code.
+   */
+  async previewAdmissionForNewLearner(
+    academyId: string,
+    inviteToken: string | undefined,
+    email: string,
+  ): Promise<void> {
+    const policy = await this.registrationPolicy(academyId);
+    if (policy !== 'invite') return;
+    if (!inviteToken) {
+      throw new ForbiddenException({ messageKey: 'errors.auth.inviteRequired' });
+    }
+    let claimable = false;
+    await this.prisma
+      .$transaction(async (tx) => {
+        const rows = await tx.$queryRaw<{ claimed: boolean }[]>(
+          Prisma.sql`SELECT claim_academy_invite(${academyId}, ${hashOpaqueToken(inviteToken)}, ${email}) AS claimed`,
+        );
+        claimable = rows[0]?.claimed === true;
+        throw new PreviewRollback();
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof PreviewRollback)) throw error;
+      });
+    if (!claimable) {
+      throw new BadRequestException({ messageKey: 'errors.auth.inviteInvalid' });
+    }
+  }
+
+  /**
    * Applies the registration policy to a brand-new learner: returns the
    * membership status the new `academy_students` row must carry, or throws
    * the policy's refusal.
@@ -174,3 +209,6 @@ export class AcademySurfaceService {
     }
   }
 }
+
+/** Thrown only to roll back an invitation-claim preview. */
+class PreviewRollback extends Error {}

@@ -617,6 +617,40 @@ const CATALOG = {
     titleKey: 'notifications:events.emailOtp.title',
     messageKey: 'notifications:events.emailOtp.message',
   },
+  'auth.account.deletion_code': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'auth.account.deletion_code',
+    titleKey: 'notifications:events.accountDeletionCode.title',
+    messageKey: 'notifications:events.accountDeletionCode.message',
+  },
+  'auth.account.signup_attempt': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    // One notice per person per hour: repeated sign-up attempts with the
+    // same address must not turn this into a way to flood a mailbox.
+    dedupe: ({ values }) => `account_signup_attempt:${str(values, 'window')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'academy',
+    template: 'auth.account.signup_attempt',
+    titleKey: 'notifications:events.accountSignupAttempt.title',
+    messageKey: 'notifications:events.accountSignupAttempt.message',
+    // No link: the owner already knows where they sign in, and a security
+    // email that asks to be clicked is the shape phishing copies.
+  },
   'auth.password.reset': {
     category: 'security',
     audience: 'platform',

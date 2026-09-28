@@ -358,6 +358,23 @@ describe('P53 support ticket attachments (e2e) — P53-ATT-001..015', () => {
     expect(response.status).toBe(413);
   });
 
+  it('P53-ATT-013b — a hostile attachment fails safely: 60 MB-scale payload 413, malformed data URL 400, never 500', async () => {
+    const requester = await seedRequester('p53-013b');
+    // Well past the upload ceiling but inside the body limit: refused as 413
+    // from the base64 length, before decoding.
+    const huge = `data:image/png;base64,${'A'.repeat(25 * 1024 * 1024)}`;
+    const tooLarge = await createTicket(requester.token, requester.organizationId, {
+      attachment: { ...attachment(huge), sizeBytes: 10 },
+    });
+    expect(tooLarge.status).toBe(413);
+    for (const bad of ['data:image/png;base64', 'data:image/png;charset=x;base64,AAAA']) {
+      const response = await createTicket(requester.token, requester.organizationId, {
+        attachment: { ...attachment(bad), sizeBytes: 10 },
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+
   it('P53-ATT-014 — a malformed data URL is refused', async () => {
     const requester = await seedRequester('p53-014');
 

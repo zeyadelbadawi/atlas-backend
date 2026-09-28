@@ -34,6 +34,7 @@ import { RequestContextMiddleware } from './common/middleware/request-context.mi
 import { DatabaseModule } from './database/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
+import { SecurityReportsModule } from './security-reports/security-reports.module';
 import { MetricsModule } from './observability/metrics/metrics.module';
 import { IdentityModule } from './identity/identity.module';
 import { TenancyModule } from './tenancy/tenancy.module';
@@ -167,6 +168,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     NotificationEventsModule,
     CommunicationsModule,
     HealthModule,
+    SecurityReportsModule,
     // P64 Phase 2 §U — the first metrics registry in the codebase.
     MetricsModule,
     ObservabilityModule,

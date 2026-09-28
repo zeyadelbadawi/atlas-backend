@@ -708,8 +708,9 @@ describe('Smart member invitation + academy join (e2e)', () => {
         password: 'another-password',
         academyId: a.id,
       });
-      expect(wrong.status).toBe(409);
-      expect(wrong.body.error.messageKey).toBe('errors.auth.emailAlreadyRegistered');
+      // Audit Decision 3 — the same answer a new address gets.
+      expect(wrong.status).toBe(201);
+      expect(wrong.body).toEqual({ account: 'new' });
     });
 
     /** Existing account signs in on `a` with the emailed code: returns the access token. */

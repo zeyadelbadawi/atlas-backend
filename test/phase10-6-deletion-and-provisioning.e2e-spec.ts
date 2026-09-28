@@ -24,6 +24,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
+import { deletionCodeFor } from './utils/account-deletion';
 import { createAdminPrisma } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
@@ -146,7 +147,11 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     const response = await request(app.getHttpServer())
       .post('/users/me/delete')
       .set('Authorization', `Bearer ${account.token}`)
-      .send({ confirm: true, reason: 'no_longer_needed' })
+      .send({
+        ...(await deletionCodeFor(app, admin, account.token)),
+        confirm: true,
+        reason: 'no_longer_needed',
+      })
       .expect(200);
 
     expect(response.body.deleted).toBe(true);
@@ -171,7 +176,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     await request(app.getHttpServer())
       .post('/users/me/delete')
       .set('Authorization', `Bearer ${owner.token}`)
-      .send({ confirm: true })
+      .send({ ...(await deletionCodeFor(app, admin, owner.token)), confirm: true })
       .expect(200);
 
     // Every one of these was silently left behind at some point while
@@ -194,7 +199,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     await request(app.getHttpServer())
       .post('/users/me/delete')
       .set('Authorization', `Bearer ${account.token}`)
-      .send({ confirm: true })
+      .send({ ...(await deletionCodeFor(app, admin, account.token)), confirm: true })
       .expect(200);
 
     await request(app.getHttpServer())
@@ -231,7 +236,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     await request(app.getHttpServer())
       .post('/users/me/delete')
       .set('Authorization', `Bearer ${account.token}`)
-      .send({ confirm: true })
+      .send({ ...(await deletionCodeFor(app, admin, account.token)), confirm: true })
       .expect(200);
 
     expect(await admin.userTwoFactor.count({ where: { userId: account.userId } })).toBe(
@@ -257,11 +262,21 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
       .send({ email: account.email, password: PASSWORD })
       .expect(200);
 
+    // Refused before any code is mailed…
+    await request(app.getHttpServer())
+      .post('/users/me/delete/request')
+      .set('Authorization', `Bearer ${fresh.body.accessToken}`)
+      .expect(403);
+    // …and without a code there is nothing to confirm.
     await request(app.getHttpServer())
       .post('/users/me/delete')
       .set('Authorization', `Bearer ${fresh.body.accessToken}`)
-      .send({ confirm: true })
-      .expect(403);
+      .send({
+        confirm: true,
+        challengeId: '00000000-0000-4000-8000-000000000000',
+        code: '000000',
+      })
+      .expect(401);
 
     // Untouched.
     const user = await admin.user.findUniqueOrThrow({ where: { id: account.userId } });
@@ -273,7 +288,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     await request(app.getHttpServer())
       .post('/users/me/delete')
       .set('Authorization', `Bearer ${account.token}`)
-      .send({ confirm: true })
+      .send({ ...(await deletionCodeFor(app, admin, account.token)), confirm: true })
       .expect(200);
 
     // The token is dead, so a second attempt cannot even authenticate —
@@ -321,7 +336,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     const response = await request(app.getHttpServer())
       .post('/users/me/delete')
       .set('Authorization', `Bearer ${owner.token}`)
-      .send({ confirm: true })
+      .send({ ...(await deletionCodeFor(app, admin, owner.token)), confirm: true })
       .expect(200);
 
     expect(response.body.academiesArchived).toBeGreaterThan(0);

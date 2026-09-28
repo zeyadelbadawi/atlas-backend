@@ -41,7 +41,6 @@ import {
   type MediaStorageProvider,
 } from '../../media/storage/media-storage.interface';
 import {
-  assertWithinSizeLimit,
   buildSupportAttachmentStorageKey,
   detectFileKind,
   parseDataUrl,
@@ -529,8 +528,7 @@ export class SupportCasesService {
     // Never the declared `mimeType`/`sizeBytes` — the decoded buffer is the
     // only fact. Identical to `MediaService.parseAndValidate`, using the
     // very same functions rather than a second copy of the rules.
-    const { buffer } = parseDataUrl(input.dataUrl);
-    assertWithinSizeLimit(buffer, this.storageConfig.maxUploadBytes);
+    const { buffer } = parseDataUrl(input.dataUrl, this.storageConfig.maxUploadBytes);
 
     const kind = detectFileKind(buffer);
     if (!kind) {

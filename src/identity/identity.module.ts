@@ -24,6 +24,7 @@ import { PasswordResetTokensRepository } from './repositories/password-reset-tok
 import { EmailVerificationTokensRepository } from './repositories/email-verification-tokens.repository';
 import { EmailRiskService } from './services/email-risk.service';
 import { AccountDeletionService } from './services/account-deletion.service';
+import { AccountDeletionChallengeService } from './services/account-deletion-challenge.service';
 import { DeletionPlanService } from './services/deletion-plan.service';
 import { TwoFactorService } from './services/two-factor.service';
 import { TotpSecretCipher } from './services/totp-secret-cipher.service';
@@ -53,6 +54,7 @@ import { GoogleAuthService } from './google/google-auth.service';
 import { GoogleOidcClient } from './google/google-oidc.client';
 import { GoogleIdentityRepository } from './google/google-identity.repository';
 import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard';
+import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-limit.guard';
 
 @Module({
   imports: [
@@ -101,6 +103,7 @@ import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard'
     EmailVerificationTokensRepository,
     EmailRiskService,
     AccountDeletionService,
+    AccountDeletionChallengeService,
     DeletionPlanService,
     TwoFactorService,
     TotpSecretCipher,
@@ -112,6 +115,7 @@ import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard'
     EmailOtpService,
     TrustedDeviceService,
     SignInRateLimitGuard,
+    CredentialCheckRateLimitGuard,
     PasswordResetRateLimitGuard,
     RegisterRateLimitGuard,
     PlatformOwnerGuard,

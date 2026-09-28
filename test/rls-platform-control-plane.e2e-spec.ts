@@ -10,7 +10,7 @@
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
-import { createAdminPrisma } from './utils/db-admin';
+import { createAdminPrisma, fixtureUsers } from './utils/db-admin';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import type { PrismaClient } from '@prisma/client';
@@ -35,7 +35,7 @@ describe('Row-Level Security — Platform Owner Control Plane (direct, no guards
   });
 
   async function createUser(label: string, isPlatformOwner = false) {
-    return prisma.user.create({
+    return fixtureUsers().create({
       data: {
         email: uniqueTestEmail(label),
         passwordHash: 'x',

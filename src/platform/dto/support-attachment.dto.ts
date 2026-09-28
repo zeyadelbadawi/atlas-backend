@@ -26,6 +26,7 @@ export class SupportAttachmentInputDto {
 
   @IsNotEmpty()
   @IsString()
+  @MaxLength(255)
   readonly mimeType!: string;
 
   @IsInt()

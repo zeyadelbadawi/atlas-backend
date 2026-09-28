@@ -34,6 +34,7 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import type { AuthContext } from '../guards/jwt-auth.guard';
 import { CurrentAuthContext } from '../decorators/auth-context.decorator';
 import { SignInRateLimitGuard } from '../guards/signin-rate-limit.guard';
+import { CredentialCheckRateLimitGuard } from '../guards/credential-check-rate-limit.guard';
 import {
   ConfirmTwoFactorDto,
   DisableTwoFactorDto,
@@ -136,7 +137,7 @@ export class TwoFactorController {
    */
   @Post('disable')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CredentialCheckRateLimitGuard)
   async disable(
     @CurrentAuthContext() auth: AuthContext,
     @Body() dto: DisableTwoFactorDto,
@@ -147,7 +148,7 @@ export class TwoFactorController {
   /** Issues a new set of recovery codes and invalidates every old one. Password-gated for the same reason as disable. */
   @Post('recovery-codes')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CredentialCheckRateLimitGuard)
   async regenerateRecoveryCodes(
     @CurrentAuthContext() auth: AuthContext,
     @Body() dto: RegenerateRecoveryCodesDto,

@@ -67,7 +67,7 @@ export class SearchService {
     const groups: SearchResultGroupResponse[] = [];
 
     if (isPlatformOwner) {
-      groups.push(await this.searchUsersGroup(query));
+      groups.push(await this.searchUsersGroup(userId, query));
       groups.push(await this.searchPlatformGroup(userId, query));
       groups.push(await this.searchContentGroupForPlatformOwner(userId, query));
     } else {
@@ -85,8 +85,14 @@ export class SearchService {
 
   // --- users (Platform Owner only) --------------------------------------
 
-  private async searchUsersGroup(query: string): Promise<SearchResultGroupResponse> {
-    const rows = await this.searchRepository.searchUsers(query, MAX_RESULTS_PER_CATEGORY);
+  private async searchUsersGroup(
+    platformOwnerId: string,
+    query: string,
+  ): Promise<SearchResultGroupResponse> {
+    const rows = await this.tenancyContextService.runInUserContext(
+      platformOwnerId,
+      (tx) => this.searchRepository.searchUsers(tx, query, MAX_RESULTS_PER_CATEGORY),
+    );
     return this.toGroup(
       'users',
       rows.map((r) => ({

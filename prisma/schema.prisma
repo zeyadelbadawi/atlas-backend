@@ -180,6 +180,7 @@ model User {
   communicationOutbox  CommunicationOutbox[]
   communicationDigests CommunicationDigest[]
   authEmailChallenges  AuthEmailChallenge[]
+  accountDeletionChallenges AccountDeletionChallenge[]
   trustedDevices       TrustedDevice[]
   /// Google Identity — the external sign-in identities bound to this account.
   authIdentities       UserAuthIdentity[]
@@ -5128,6 +5129,30 @@ model CommunicationDigest {
   @@unique([recipientUserId, kind, windowStart])
   @@index([state, windowEnd])
   @@map("communication_digests")
+}
+
+/// Authentication audit (Decision 1) — the emailed confirmation code that
+/// authorises deleting the caller's OWN account. A table of its own, never a
+/// sign-in challenge with a flag: no sign-in path can read or accept one, and
+/// one can only ever confirm a deletion. Bound to the account AND the session
+/// that asked for it; the code is HMAC(serverKey, id.salt.code); one-time
+/// consumption is a conditional UPDATE. RLS: the account's own context only.
+model AccountDeletionChallenge {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The requesting session (`refresh_tokens.session_id`); another session of
+  /// the same account cannot complete it.
+  sessionId  String    @map("session_id")
+  codeHash   String    @map("code_hash")
+  salt       String
+  attempts   Int       @default(0)
+  expiresAt  DateTime  @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("account_deletion_challenges")
 }
 
 /// P64 Communications C4 — an email OTP challenge. A TABLE, not Redis, so

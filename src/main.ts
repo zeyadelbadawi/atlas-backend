@@ -101,6 +101,10 @@ async function bootstrap(): Promise<void> {
   ];
   app.useBodyParser('json', {
     limit: bodyLimitBytes,
+    // Authentication audit, Decision 4 — browsers send CSP violation
+    // reports as `application/csp-report` (report-uri) or
+    // `application/reports+json` (Reporting API); both are JSON.
+    type: ['application/json', 'application/csp-report', 'application/reports+json'],
     verify: (
       request: IncomingMessage & { rawBody?: Buffer },
       _res: unknown,

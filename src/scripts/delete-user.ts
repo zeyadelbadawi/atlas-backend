@@ -36,6 +36,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
 import { PrismaService } from '../database/prisma.service';
+import { runInUserContext } from '../database/user-context';
 import { AccountDeletionService } from '../identity/services/account-deletion.service';
 import type { AccountDeletionReason } from '../identity/services/account-deletion.service';
 
@@ -62,16 +63,20 @@ async function main(): Promise<void> {
     // Resolve BOTH before acting, and say so. An operator reading this log
     // afterwards must be able to see which account was actually targeted,
     // not just the uuid they typed.
-    const [actor, target] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: actorId },
-        select: { id: true, email: true, isPlatformOwner: true },
-      }),
-      prisma.user.findUnique({
-        where: { id: targetId },
-        select: { id: true, email: true, isPlatformOwner: true, status: true },
-      }),
-    ]);
+    // Read in the actor's context: `users` is not readable without one
+    // (authentication audit, Decision 2).
+    const [actor, target] = await runInUserContext(prisma, actorId, (tx) =>
+      Promise.all([
+        tx.user.findUnique({
+          where: { id: actorId },
+          select: { id: true, email: true, isPlatformOwner: true },
+        }),
+        tx.user.findUnique({
+          where: { id: targetId },
+          select: { id: true, email: true, isPlatformOwner: true, status: true },
+        }),
+      ]),
+    );
 
     if (!actor) {
       console.error(JSON.stringify({ refused: 'actor_not_found', actorId }));

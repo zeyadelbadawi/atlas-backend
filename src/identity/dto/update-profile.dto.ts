@@ -4,12 +4,13 @@
  * P1 / "Profile update": deliberately just these two fields — no email
  * change, phone, or bio, because the frontend form has no such fields.
  */
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   @MinLength(2)
+  @MaxLength(100)
   readonly name?: string;
 
   // Plain string, not `@IsUrl` — P1 has no Media Library (that's Phase P8),
@@ -20,5 +21,6 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   @MinLength(1)
+  @MaxLength(2048)
   readonly avatar?: string;
 }

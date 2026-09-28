@@ -18,7 +18,6 @@
  * nothing else in the system would catch.
  */
 import { DeletionPlanService } from './deletion-plan.service';
-import type { PrismaService } from '../../database/prisma.service';
 import type { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 
 interface Fixture {
@@ -74,9 +73,6 @@ function build(fixture: Fixture) {
       findMany: async () => f.memberRoles.map((role) => ({ role })),
     },
     courseInstructor: { count: async () => f.instructorships },
-  };
-
-  const prisma = {
     user: {
       findUnique: async () =>
         fixture.missing
@@ -87,7 +83,7 @@ function build(fixture: Fixture) {
               status: fixture.status ?? 'active',
             },
     },
-  } as unknown as PrismaService;
+  };
 
   // The context runners are pass-throughs here. What they would really do
   // — set `app.current_user_id` / `app.current_organization_id` — is the
@@ -97,7 +93,7 @@ function build(fixture: Fixture) {
     runInTenantContext: async (_id: string, work: (t: unknown) => unknown) => work(tx),
   } as unknown as TenancyContextService;
 
-  return new DeletionPlanService(prisma, tenancy);
+  return new DeletionPlanService(tenancy);
 }
 
 /** The treatment recorded for `key`, or undefined when the line is absent. */

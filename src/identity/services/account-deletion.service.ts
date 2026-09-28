@@ -59,7 +59,6 @@ import {
   CERTIFICATE_JOBS_QUEUE,
   type CertificateAnonymizeJobPayload,
 } from '../../certificates/queue/certificate-jobs.types';
-import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { SessionRevocationService } from './session-revocation.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
@@ -108,7 +107,6 @@ export class AccountDeletionService {
 
   constructor(
     @InjectQueue(CERTIFICATE_JOBS_QUEUE) private readonly certificateQueue: Queue,
-    private readonly prisma: PrismaService,
     private readonly tenancyContextService: TenancyContextService,
     private readonly sessionRevocationService: SessionRevocationService,
     private readonly auditLogWriterService: AuditLogWriterService,
@@ -166,10 +164,12 @@ export class AccountDeletionService {
     targetUserId: string,
     input: DeleteAccountInput,
   ): Promise<DeleteAccountResult> {
-    const actor = await this.prisma.user.findUnique({
-      where: { id: actorUserId },
-      select: { isPlatformOwner: true },
-    });
+    const actor = await this.tenancyContextService.runInUserContext(actorUserId, (tx) =>
+      tx.user.findUnique({
+        where: { id: actorUserId },
+        select: { isPlatformOwner: true },
+      }),
+    );
 
     if (!actor?.isPlatformOwner) {
       throw new ForbiddenException({ messageKey: 'errors.forbidden' });
@@ -197,10 +197,12 @@ export class AccountDeletionService {
     input: DeleteAccountInput,
     actor: DeletionActor,
   ): Promise<DeleteAccountResult> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, isPlatformOwner: true, status: true },
-    });
+    const user = await this.tenancyContextService.runInUserContext(userId, (tx) =>
+      tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true, isPlatformOwner: true, status: true },
+      }),
+    );
 
     if (!user) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
@@ -367,7 +369,10 @@ export class AccountDeletionService {
     input: DeleteAccountInput,
     actor: DeletionActor,
   ): Promise<string[]> {
-    return this.prisma.$transaction(async (tx) => {
+    // The deleted account's OWN context: every per-user table below is
+    // row-level secured to its owner, and a context-free statement would
+    // silently match nothing.
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const liveSessions = await tx.refreshToken.findMany({
         where: { userId, revokedAt: null },
         select: { sessionId: true },
@@ -391,6 +396,23 @@ export class AccountDeletionService {
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.passwordResetToken.deleteMany({ where: { userId } });
       await tx.emailVerificationToken.deleteMany({ where: { userId } });
+      // Authentication audit — nothing that could still vouch for this
+      // person outlives the account: remembered browsers are revoked, open
+      // sign-in codes and pending Google flows (a settings link) are closed,
+      // and deletion codes are removed.
+      await tx.trustedDevice.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      await tx.authEmailChallenge.updateMany({
+        where: { userId, consumedAt: null },
+        data: { consumedAt: now },
+      });
+      await tx.authOAuthFlow.updateMany({
+        where: { linkUserId: userId, completedAt: null },
+        data: { completedAt: now },
+      });
+      await tx.accountDeletionChallenge.deleteMany({ where: { userId } });
 
       // NOTE: memberships are NOT removed here. They are tenant-scoped
       // and RLS-protected, and this transaction runs with no tenant

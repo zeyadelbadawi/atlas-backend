@@ -16,6 +16,16 @@ export const SENSITIVE_QUERY_KEYS: readonly string[] = [
   'id_token',
   'access_token',
   'refresh_token',
+  // A provider webhook authenticated by a shared secret in its URL (Brevo:
+  // `POST /webhooks/email/brevo?secret=…`) — every delivery would otherwise
+  // write the secret into the request log.
+  'secret',
+  'api_key',
+  'apikey',
+  'key',
+  'signature',
+  'sig',
+  'password',
 ];
 
 const CENSOR = '[REDACTED]';

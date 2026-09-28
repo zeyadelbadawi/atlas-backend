@@ -35,6 +35,7 @@ import type { AuthContext } from '../guards/jwt-auth.guard';
 import { SignInRateLimitGuard } from '../guards/signin-rate-limit.guard';
 import { PasswordResetRateLimitGuard } from '../guards/password-reset-rate-limit.guard';
 import { RegisterRateLimitGuard } from '../guards/register-rate-limit.guard';
+import { CredentialCheckRateLimitGuard } from '../guards/credential-check-rate-limit.guard';
 import type {
   AcademyJoinResult,
   AcademyJoinSummary,
@@ -302,6 +303,7 @@ export class AuthController {
 
   @Post('password-reset/confirm')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(CredentialCheckRateLimitGuard)
   async confirmPasswordReset(@Body() dto: PasswordResetConfirmDto): Promise<void> {
     await this.authService.confirmPasswordReset(dto.token, dto.newPassword);
   }

@@ -447,15 +447,15 @@ describe('New Customer Onboarding (e2e)', () => {
           }),
         ),
       );
+      // Audit Decision 3 — every racer gets the same answer; exactly one
+      // account and one organization exist afterwards.
       const codes = results.map((r) => r.status).sort();
-      expect(codes).toEqual([201, 409, 409, 409, 409]);
-      for (const r of results.filter((x) => x.status === 409)) {
-        expect(r.body.error.messageKey).toBe('errors.auth.emailAlreadyRegistered');
-      }
+      expect(codes).toEqual([201, 201, 201, 201, 201]);
+      for (const r of results) expect(r.body).toEqual({ account: 'new' });
       expect(await rowsForEmail(email)).toEqual({ users: 1, orgs: 1 });
     });
 
-    it('a retry after success is a clean 409 (the account already exists)', async () => {
+    it('a retry after success gets the same answer and creates nothing more (audit Decision 3)', async () => {
       const email = uniqueTestEmail('onb-retry');
       const body = {
         name: 'Retry',
@@ -465,8 +465,8 @@ describe('New Customer Onboarding (e2e)', () => {
         planId: trialPlan.id,
       };
       await register(body).expect(201);
-      const again = await register(body).expect(409);
-      expect(again.body.error.messageKey).toBe('errors.auth.emailAlreadyRegistered');
+      const again = await register(body).expect(201);
+      expect(again.body).toEqual({ account: 'new' });
       expect(await rowsForEmail(email)).toEqual({ users: 1, orgs: 1 });
     });
 

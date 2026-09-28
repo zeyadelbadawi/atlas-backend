@@ -1,6 +1,8 @@
+import { BadRequestException, PayloadTooLargeException } from '@nestjs/common';
 import {
   assertWithinSizeLimit,
   buildStorageKey,
+  decodeBase64Upload,
   detectFileKind,
   parseDataUrl,
   sanitizeFileName,
@@ -31,6 +33,51 @@ describe('parseDataUrl', () => {
 
   it('rejects a plain (non-base64) data: URL', () => {
     expect(() => parseDataUrl('data:text/plain,hello')).toThrow();
+  });
+
+  it('answers a huge payload with 413 BEFORE decoding it — linear, no regex, no stack overflow', () => {
+    // 60 MB of base64: the old `/^data:([^;]+);base64,(.+)$/` overflowed
+    // V8's stack on inputs of this size (a 500).
+    const huge = `data:image/png;base64,${'A'.repeat(60 * 1024 * 1024)}`;
+    const started = Date.now();
+    expect(() => parseDataUrl(huge, 10 * 1024 * 1024)).toThrow(PayloadTooLargeException);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('decodes a file exactly at the limit, and refuses one byte over (413)', () => {
+    const exact = Buffer.alloc(3000, 7);
+    const over = Buffer.alloc(3001, 7);
+    expect(
+      parseDataUrl(`data:image/png;base64,${exact.toString('base64')}`, 3000).buffer
+        .length,
+    ).toBe(3000);
+    expect(() =>
+      parseDataUrl(`data:image/png;base64,${over.toString('base64')}`, 3000),
+    ).toThrow(PayloadTooLargeException);
+  });
+
+  it.each([
+    ['no comma', 'data:image/png;base64'],
+    ['header longer than 256 characters', `data:${'x'.repeat(300)};base64,AAAA`],
+    ['empty MIME type', 'data:;base64,AAAA'],
+    ['parameters in the MIME type', 'data:image/png;charset=x;base64,AAAA'],
+    ['not base64', 'data:image/png;utf8,AAAA'],
+    ['empty string', ''],
+  ])('refuses a malformed data URL (%s) with 400', (_label, value) => {
+    expect(() => parseDataUrl(value, 1000)).toThrow(BadRequestException);
+  });
+
+  it('decodeBase64Upload accepts bare base64 or a data URL, size-first', () => {
+    expect(decodeBase64Upload(REAL_PNG_BASE64).length).toBeGreaterThan(0);
+    expect(
+      decodeBase64Upload(`data:image/png;base64,${REAL_PNG_BASE64}`).length,
+    ).toBeGreaterThan(0);
+    expect(() => decodeBase64Upload('A'.repeat(40 * 1024 * 1024), 1024)).toThrow(
+      PayloadTooLargeException,
+    );
+    expect(() => decodeBase64Upload('data:image/png;base64')).toThrow(
+      BadRequestException,
+    );
   });
 });
 

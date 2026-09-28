@@ -452,7 +452,12 @@ export class GoogleAuthService {
           join: true,
           inviteToken: input.inviteToken,
         });
-        await this.repository.touchIdentity(identity.id, flow.providerEmail, now);
+        await this.repository.touchIdentity(
+          identity.userId,
+          identity.id,
+          flow.providerEmail,
+          now,
+        );
         recordGoogleAuth('complete', 'existing_identity');
         return response;
       } catch (error) {
@@ -658,9 +663,17 @@ export class GoogleAuthService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
+        // PostgreSQL names the losing index only when the caller may see the
+        // conflicting row, which RLS on `user_auth_identities` now prevents
+        // (authentication audit, Decision 2) — so ask which one it was: this
+        // account already holding a Google identity, or the subject being
+        // someone else's.
         const target = String(error.meta?.target ?? '');
+        const alreadyLinked = target
+          ? target.includes('user_id')
+          : (await this.repository.findIdentityForUser(user.id)) !== null;
         throw new ConflictException({
-          messageKey: target.includes('user_id')
+          messageKey: alreadyLinked
             ? 'errors.auth.googleAlreadyLinked'
             : 'errors.auth.googleIdentityInUse',
         });

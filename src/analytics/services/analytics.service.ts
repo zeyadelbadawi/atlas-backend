@@ -62,14 +62,28 @@ export class AnalyticsService {
     const previous = previousPeriod(range);
 
     const [totalUsersNow, totalUsersAtStart, totalUsersAtPrevStart] = await Promise.all([
-      this.platformScaleRepository.countUsers(range.to),
-      this.platformScaleRepository.countUsers(new Date(range.from.getTime() - 1)),
-      this.platformScaleRepository.countUsers(new Date(previous.from.getTime() - 1)),
+      this.platformScaleRepository.countUsers(platformOwnerId, range.to),
+      this.platformScaleRepository.countUsers(
+        platformOwnerId,
+        new Date(range.from.getTime() - 1),
+      ),
+      this.platformScaleRepository.countUsers(
+        platformOwnerId,
+        new Date(previous.from.getTime() - 1),
+      ),
     ]);
 
     const [activeUsersNow, activeUsersPrevious] = await Promise.all([
-      this.platformScaleRepository.countActiveUsers(range.from, range.to),
-      this.platformScaleRepository.countActiveUsers(previous.from, previous.to),
+      this.platformScaleRepository.countActiveUsers(
+        platformOwnerId,
+        range.from,
+        range.to,
+      ),
+      this.platformScaleRepository.countActiveUsers(
+        platformOwnerId,
+        previous.from,
+        previous.to,
+      ),
     ]);
 
     const [revenueNow, revenuePrevious] = await Promise.all([
@@ -119,11 +133,11 @@ export class AnalyticsService {
     const days = enumerateDays(range);
 
     if (metric === 'users') {
-      const values = await this.cumulativeUsersSeries(days, range);
+      const values = await this.cumulativeUsersSeries(platformOwnerId, days, range);
       return this.toSeries('users', days, values);
     }
     if (metric === 'engagement') {
-      const values = await this.engagementSeries(days, range);
+      const values = await this.engagementSeries(platformOwnerId, days, range);
       return this.toSeries('engagement', days, values);
     }
     // metric === 'revenue'
@@ -188,12 +202,16 @@ export class AnalyticsService {
   }
 
   private async cumulativeUsersSeries(
+    platformOwnerId: string,
     days: readonly string[],
     range: ResolvedDateRange,
   ): Promise<number[]> {
     const [rows, baseline] = await Promise.all([
-      this.platformScaleRepository.usersCreatedByDay(range.to),
-      this.platformScaleRepository.countUsers(new Date(range.from.getTime() - 1)),
+      this.platformScaleRepository.usersCreatedByDay(platformOwnerId, range.to),
+      this.platformScaleRepository.countUsers(
+        platformOwnerId,
+        new Date(range.from.getTime() - 1),
+      ),
     ]);
     const byDay = new Map(rows.map((r) => [r.day, r.count]));
     // Only the days within the requested range carry a "new count" —
@@ -206,12 +224,17 @@ export class AnalyticsService {
   }
 
   private async engagementSeries(
+    platformOwnerId: string,
     days: readonly string[],
     range: ResolvedDateRange,
   ): Promise<number[]> {
     const [activeRows, cumulativeTotals] = await Promise.all([
-      this.platformScaleRepository.activeUsersByDay(range.from, range.to),
-      this.cumulativeUsersSeries(days, range),
+      this.platformScaleRepository.activeUsersByDay(
+        platformOwnerId,
+        range.from,
+        range.to,
+      ),
+      this.cumulativeUsersSeries(platformOwnerId, days, range),
     ]);
     const activeByDay = new Map(activeRows.map((r) => [r.day, r.count]));
     const activeSeries = fillFlowSeries(days, activeByDay);

@@ -485,13 +485,13 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
       ).toEqual([b.id]);
     });
 
-    it('LS-A4-02 — a wrong password gets the SAME 409 an existing email always got, and writes nothing', async () => {
+    it('LS-A4-02 — a wrong password gets the new-address answer (audit Decision 3), and writes nothing', async () => {
       const { academy: a } = await freshAcademy('a4-wrong-a');
       const { academy: b } = await freshAcademy('a4-wrong-b');
       const learner = await learnerAt(a, 'a4-wrong');
 
-      const res = await registerAt(b, learner.email, 'not-the-password-1').expect(409);
-      expect(res.body.error.messageKey).toBe('errors.auth.emailAlreadyRegistered');
+      const res = await registerAt(b, learner.email, 'not-the-password-1').expect(201);
+      expect(res.body).toEqual({ account: 'new' });
       expect(
         await admin.academyStudent.count({
           where: { userId: learner.userId, academyId: b.id },

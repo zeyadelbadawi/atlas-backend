@@ -206,6 +206,53 @@ describe('Media Library (e2e)', () => {
       .expect(413);
   });
 
+  it('fails safely on hostile upload bodies: over the request limit 413, malformed JSON 400, malformed data URL 400 — never a 500', async () => {
+    const { owner, academy } = await seedManagedAcademy('media-hostile');
+    const url = `/academies/${academy.id}/media`;
+    // Over the global JSON body limit (3 x the upload ceiling): refused by
+    // the body parser before any handler, as a 413.
+    const overBody = 'A'.repeat(31 * 1024 * 1024);
+    await request(app.getHttpServer())
+      .post(url)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        fileName: 'huge.png',
+        mimeType: 'image/png',
+        sizeBytes: 1,
+        dataUrl: `data:image/png;base64,${overBody}`,
+      })
+      .expect(413);
+    await request(app.getHttpServer())
+      .post(url)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .set('Content-Type', 'application/json')
+      .send('{"fileName": "x.png", "dataUrl": ')
+      .expect(400);
+    for (const dataUrl of [
+      'data:image/png;base64',
+      `data:${'x'.repeat(400)};base64,AAAA`,
+      'data:image/png;charset=x;base64,AAAA',
+      REAL_PNG_BASE64,
+    ]) {
+      await request(app.getHttpServer())
+        .post(url)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ fileName: 'x.png', mimeType: 'image/png', sizeBytes: 10, dataUrl })
+        .expect(400);
+    }
+    // A legitimate upload still works.
+    await request(app.getHttpServer())
+      .post(url)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        fileName: 'ok.png',
+        mimeType: 'image/png',
+        sizeBytes: 10,
+        dataUrl: `data:image/png;base64,${REAL_PNG_BASE64}`,
+      })
+      .expect(201);
+  });
+
   it('a plain org member (no academy role) cannot upload, update, or archive media, but can still list it', async () => {
     const { academy, org } = await seedManagedAcademy('media-authz');
     const plainMember = await signUpAndSignIn(app, 'media-authz-member');

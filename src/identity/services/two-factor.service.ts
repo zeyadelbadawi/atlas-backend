@@ -49,7 +49,8 @@ import { RedisService } from '../../redis/redis.service';
 import { TotpSecretCipher } from './totp-secret-cipher.service';
 import { PasswordHasherService } from './password-hasher.service';
 import type { AppConfig } from '../../config/configuration';
-import type { AuthMethod } from '@prisma/client';
+import type { AuthMethod, Prisma } from '@prisma/client';
+import { runInUserContext } from '../../database/user-context';
 
 /** How long a half-authenticated sign-in may sit unfinished. Short: it is a live credential. */
 const CHALLENGE_TTL_SECONDS = 300;
@@ -87,6 +88,11 @@ export interface TwoFactorStatus {
   readonly recoveryCodesRemaining: number;
 }
 
+/** The surface (and academy) a sign-in was resolved for before its second factor. */
+export type TwoFactorChallengeSelection =
+  | { readonly surface: 'management'; readonly academyId?: undefined }
+  | { readonly surface: 'academy'; readonly academyId: string };
+
 @Injectable()
 export class TwoFactorService {
   private readonly logger = new Logger(TwoFactorService.name);
@@ -99,14 +105,29 @@ export class TwoFactorService {
     private readonly configService: ConfigService,
   ) {}
 
+  /**
+   * Authentication audit, Decision 2 — `user_two_factor` and
+   * `two_factor_recovery_codes` are strictly per-user under RLS, so every
+   * statement runs in the account's own context. The sign-in challenge
+   * learns the account from its Redis entry, never from the request.
+   */
+  private asUser<T>(
+    userId: string,
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return runInUserContext(this.prisma, userId, work);
+  }
+
   // -----------------------------------------------------------------
   // Status and setup
   // -----------------------------------------------------------------
 
   async getStatus(userId: string): Promise<TwoFactorStatus> {
     const [record, remaining] = await Promise.all([
-      this.prisma.userTwoFactor.findUnique({ where: { userId } }),
-      this.prisma.twoFactorRecoveryCode.count({ where: { userId, usedAt: null } }),
+      this.asUser(userId, (tx) => tx.userTwoFactor.findUnique({ where: { userId } })),
+      this.asUser(userId, (tx) =>
+        tx.twoFactorRecoveryCode.count({ where: { userId, usedAt: null } }),
+      ),
     ]);
 
     return {
@@ -127,28 +148,34 @@ export class TwoFactorService {
    * the password.
    */
   async startSetup(userId: string): Promise<TwoFactorSetupResult> {
-    const existing = await this.prisma.userTwoFactor.findUnique({ where: { userId } });
+    const existing = await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.findUnique({ where: { userId } }),
+    );
     if (existing?.confirmedAt) {
       throw new BadRequestException({
         messageKey: 'errors.auth.twoFactorAlreadyEnabled',
       });
     }
 
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: { email: true },
-    });
+    const user = await this.asUser(userId, (tx) =>
+      tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { email: true },
+      }),
+    );
 
     const secret = generateSecret({ length: 20 });
     const encryptedSecret = this.cipher.encrypt(secret);
 
-    await this.prisma.userTwoFactor.upsert({
-      where: { userId },
-      create: { userId, encryptedSecret },
-      // Replaces any abandoned pending secret; `confirmedAt` is already
-      // null here (guarded above) so this cannot un-confirm active 2FA.
-      update: { encryptedSecret, lastTimeStep: null },
-    });
+    await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.upsert({
+        where: { userId },
+        create: { userId, encryptedSecret },
+        // Replaces any abandoned pending secret; `confirmedAt` is already
+        // null here (guarded above) so this cannot un-confirm active 2FA.
+        update: { encryptedSecret, lastTimeStep: null },
+      }),
+    );
 
     const app = this.configService.getOrThrow<AppConfig>('app');
     const uri = generateURI({
@@ -178,7 +205,9 @@ export class TwoFactorService {
     userId: string,
     token: string,
   ): Promise<{ recoveryCodes: string[] }> {
-    const record = await this.prisma.userTwoFactor.findUnique({ where: { userId } });
+    const record = await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.findUnique({ where: { userId } }),
+    );
     if (!record) {
       throw new BadRequestException({ messageKey: 'errors.auth.twoFactorNotStarted' });
     }
@@ -199,7 +228,7 @@ export class TwoFactorService {
 
     const recoveryCodes = this.generateRecoveryCodes();
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.asUser(userId, async (tx) => {
       await tx.userTwoFactor.update({
         where: { userId },
         data: { confirmedAt: new Date(), lastTimeStep: result.timeStep },
@@ -224,10 +253,12 @@ export class TwoFactorService {
 
   /** Whether sign-in must stop and demand a second factor for this user. */
   async isEnforcedFor(userId: string): Promise<boolean> {
-    const record = await this.prisma.userTwoFactor.findUnique({
-      where: { userId },
-      select: { confirmedAt: true },
-    });
+    const record = await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.findUnique({
+        where: { userId },
+        select: { confirmedAt: true },
+      }),
+    );
     return Boolean(record?.confirmedAt);
   }
 
@@ -241,12 +272,20 @@ export class TwoFactorService {
   async createChallenge(
     userId: string,
     authMethod: AuthMethod = 'password',
+    selection?: TwoFactorChallengeSelection,
   ): Promise<{ challengeId: string; expiresIn: number }> {
     const challengeId = randomBytes(32).toString('base64url');
-    // Google Identity — a password challenge keeps storing the bare user id
-    // (so challenges already in Redis across a deploy stay valid); any other
-    // first factor is appended after a `|`, which a UUID never contains.
-    const value = authMethod === 'password' ? userId : `${userId}|${authMethod}`;
+    // `userId|authMethod|surface|academyId` — `|` never occurs in a UUID.
+    // The surface (and academy) the sign-in was resolved for is recorded,
+    // exactly as an emailed-code challenge records it, so the second factor
+    // completes THAT sign-in and nothing else: the verify body cannot
+    // re-aim it at another surface or academy. Older values (`userId`,
+    // `userId|google`) are still read while they live out their TTL.
+    const value = selection
+      ? [userId, authMethod, selection.surface, selection.academyId ?? ''].join('|')
+      : authMethod === 'password'
+        ? userId
+        : `${userId}|${authMethod}`;
     await this.redisService
       .getClient()
       .set(`${CHALLENGE_PREFIX}${challengeId}`, value, 'EX', CHALLENGE_TTL_SECONDS);
@@ -265,14 +304,27 @@ export class TwoFactorService {
   async completeChallenge(
     challengeId: string,
     input: { token?: string; recoveryCode?: string },
-  ): Promise<{ userId: string; authMethod: AuthMethod }> {
+    expected: TwoFactorChallengeSelection | null = null,
+  ): Promise<{
+    userId: string;
+    authMethod: AuthMethod;
+    selection?: TwoFactorChallengeSelection;
+  }> {
     const key = `${CHALLENGE_PREFIX}${challengeId}`;
     const stored = await this.redisService.getClient().get(key);
-    const [userId, storedMethod] = (stored ?? '').split('|');
+    const [userId, storedMethod, storedSurface, storedAcademyId] = (stored ?? '').split(
+      '|',
+    );
     const authMethod: AuthMethod = storedMethod === 'google' ? 'google' : 'password';
     if (!userId) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
+    const selection: TwoFactorChallengeSelection | undefined =
+      storedSurface === 'academy' && storedAcademyId
+        ? { surface: 'academy', academyId: storedAcademyId }
+        : storedSurface === 'management'
+          ? { surface: 'management' }
+          : undefined;
 
     // Bounded guessing. Counted per challenge, so an attacker cannot get
     // a fresh budget by retrying the password — a new challenge costs
@@ -290,7 +342,22 @@ export class TwoFactorService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
 
-    const record = await this.prisma.userTwoFactor.findUnique({ where: { userId } });
+    // The code must be completed where the sign-in was started (the host's
+    // surface and academy), answered exactly like a wrong code — the same
+    // rule as an emailed-code challenge. An unresolvable host (local
+    // development) has nothing to compare against.
+    if (
+      selection &&
+      expected &&
+      (selection.surface !== expected.surface ||
+        (selection.surface === 'academy' && selection.academyId !== expected.academyId))
+    ) {
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
+    }
+
+    const record = await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.findUnique({ where: { userId } }),
+    );
     if (!record?.confirmedAt) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
@@ -310,17 +377,19 @@ export class TwoFactorService {
       }
       // Persist the accepted step BEFORE returning — this is what makes
       // the code single-use.
-      await this.prisma.userTwoFactor.update({
-        where: { userId },
-        data: { lastTimeStep: result.timeStep },
-      });
+      await this.asUser(userId, (tx) =>
+        tx.userTwoFactor.update({
+          where: { userId },
+          data: { lastTimeStep: result.timeStep },
+        }),
+      );
     } else {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
 
     // One challenge, one session.
     await this.redisService.getClient().del(key, attemptKey);
-    return { userId, authMethod };
+    return { userId, authMethod, ...(selection ? { selection } : {}) };
   }
 
   // -----------------------------------------------------------------
@@ -337,7 +406,7 @@ export class TwoFactorService {
   async disable(userId: string, password: string): Promise<void> {
     await this.assertPassword(userId, password);
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.asUser(userId, async (tx) => {
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.userTwoFactor.deleteMany({ where: { userId } });
     });
@@ -357,13 +426,15 @@ export class TwoFactorService {
   ): Promise<{ recoveryCodes: string[] }> {
     await this.assertPassword(userId, password);
 
-    const record = await this.prisma.userTwoFactor.findUnique({ where: { userId } });
+    const record = await this.asUser(userId, (tx) =>
+      tx.userTwoFactor.findUnique({ where: { userId } }),
+    );
     if (!record?.confirmedAt) {
       throw new BadRequestException({ messageKey: 'errors.auth.twoFactorNotEnabled' });
     }
 
     const recoveryCodes = this.generateRecoveryCodes();
-    await this.prisma.$transaction(async (tx) => {
+    await this.asUser(userId, async (tx) => {
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.twoFactorRecoveryCode.createMany({
         data: recoveryCodes.map((code) => ({ userId, codeHash: hashRecoveryCode(code) })),
@@ -378,10 +449,12 @@ export class TwoFactorService {
   // -----------------------------------------------------------------
 
   private async assertPassword(userId: string, password: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { passwordHash: true },
-    });
+    const user = await this.asUser(userId, (tx) =>
+      tx.user.findUnique({
+        where: { id: userId },
+        select: { passwordHash: true },
+      }),
+    );
     if (!user || !(await this.passwordHasher.verify(user.passwordHash, password))) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
@@ -422,10 +495,12 @@ export class TwoFactorService {
    * wins.
    */
   private async consumeRecoveryCode(userId: string, rawCode: string): Promise<void> {
-    const claim = await this.prisma.twoFactorRecoveryCode.updateMany({
-      where: { userId, codeHash: hashRecoveryCode(rawCode), usedAt: null },
-      data: { usedAt: new Date() },
-    });
+    const claim = await this.asUser(userId, (tx) =>
+      tx.twoFactorRecoveryCode.updateMany({
+        where: { userId, codeHash: hashRecoveryCode(rawCode), usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+    );
 
     if (claim.count !== 1) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });

@@ -22,6 +22,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { runInUserContext } from '../../database/user-context';
 
 @Injectable()
 export class TenancyContextService {
@@ -86,10 +87,7 @@ export class TenancyContextService {
     userId: string,
     work: (tx: Prisma.TransactionClient) => Promise<T>,
   ): Promise<T> {
-    return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
-      return work(tx);
-    }, this.transactionOptions);
+    return runInUserContext(this.prisma, userId, work);
   }
 
   /**

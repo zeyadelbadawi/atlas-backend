@@ -54,6 +54,7 @@ export class VerifyTwoFactorDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(64, { message: 'validation:invalidValue' })
   readonly academyId?: string;
 }
 

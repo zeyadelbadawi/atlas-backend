@@ -22,7 +22,6 @@
  */
 import { ForbiddenException } from '@nestjs/common';
 import { AccountDeletionService } from './account-deletion.service';
-import type { PrismaService } from '../../database/prisma.service';
 import type { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import type { SessionRevocationService } from './session-revocation.service';
 import type { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
@@ -56,11 +55,12 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
     twoFactorRecoveryCode: { deleteMany: async () => ({}) },
     passwordResetToken: { deleteMany: async () => ({}) },
     emailVerificationToken: { deleteMany: async () => ({}) },
-    user: { update: async () => ({}) },
-  };
-
-  const prisma = {
+    trustedDevice: { updateMany: async () => ({}) },
+    authEmailChallenge: { updateMany: async () => ({}) },
+    authOAuthFlow: { updateMany: async () => ({}) },
+    accountDeletionChallenge: { deleteMany: async () => ({}) },
     user: {
+      update: async () => ({}),
       findUnique: async ({ where }: { where: { id: string } }) => {
         const row = users[where.id];
         return row
@@ -72,8 +72,7 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
           : null;
       },
     },
-    $transaction: async (work: (t: unknown) => unknown) => work(tx),
-  } as unknown as PrismaService;
+  };
 
   const tenancy = {
     runInUserContext: async (_i: string, w: (t: unknown) => unknown) => w(tx),
@@ -87,7 +86,6 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
 
   const service = new AccountDeletionService(
     { add: async (...a: unknown[]) => enqueued.push(a) } as never,
-    prisma,
     tenancy,
     {
       markRevoked: async (s: string) => revoked.push(s),

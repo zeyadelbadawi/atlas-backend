@@ -3,11 +3,23 @@
  *
  * Matches the master plan §11 "Repository / Data Access" layer: services
  * decide business rules, repositories only talk to Postgres.
+ *
+ * Authentication audit, Decision 2 — `users` carries FORCE ROW LEVEL
+ * SECURITY: a row is readable only inside an established context and
+ * writable only by its own account (or the Platform Owner). So every method
+ * here that is given an id runs in THAT account's own context, a lookup by
+ * email first learns the id through `IdentityResolver`, and a new account is
+ * inserted in the context of its own pre-generated id. A caller that passes
+ * its own `client` brings its own context (the staff member-add path creates
+ * an `invited` account inside its tenant context).
  */
 import { Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import type { Prisma, User, UserAccountStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { runInUserContext } from '../../database/user-context';
 import { normalizeEmail } from '../utils/email.util';
+import { IdentityResolver } from './identity-resolver';
 
 export interface CreateUserInput {
   readonly email: string;
@@ -28,60 +40,82 @@ export interface UpdateProfileInput {
 
 @Injectable()
 export class UsersRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly identityResolver: IdentityResolver,
+  ) {}
+
+  private asUser<T>(
+    userId: string,
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return runInUserContext(this.prisma, userId, work);
+  }
 
   /**
    * `client` lets a caller run the lookup inside its own transaction (the
-   * staff member-add path creates the user and the membership atomically).
-   * `users` has no RLS, so any client sees the same row.
+   * staff member-add path creates the user and the membership atomically);
+   * that transaction's context must already be established. Without one,
+   * the owner is resolved by email and read in its own context.
    */
-  findByEmail(
+  async findByEmail(
     email: string,
-    client: Prisma.TransactionClient = this.prisma,
+    client?: Prisma.TransactionClient,
   ): Promise<User | null> {
-    return client.user.findUnique({ where: { email: normalizeEmail(email) } });
+    const normalized = normalizeEmail(email);
+    if (client) return client.user.findUnique({ where: { email: normalized } });
+    const id = await this.identityResolver.userIdByEmail(normalized);
+    if (!id) return null;
+    return this.findById(id);
   }
 
   findById(id: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { id } });
+    return this.asUser(id, (tx) => tx.user.findUnique({ where: { id } }));
   }
 
-  create(
-    input: CreateUserInput,
-    client: Prisma.TransactionClient = this.prisma,
-  ): Promise<User> {
-    return client.user.create({
-      data: {
-        email: normalizeEmail(input.email),
-        passwordHash: input.passwordHash,
-        name: input.name,
-        // `status` defaults to 'active' per the schema. Launch Stabilization
-        // A2 writes `invited` for staff-created accounts.
-        ...(input.status ? { status: input.status } : {}),
-      },
-    });
+  create(input: CreateUserInput, client?: Prisma.TransactionClient): Promise<User> {
+    const id = randomUUID();
+    const write = (tx: Prisma.TransactionClient) =>
+      tx.user.create({
+        data: {
+          id,
+          email: normalizeEmail(input.email),
+          passwordHash: input.passwordHash,
+          name: input.name,
+          // `status` defaults to 'active' per the schema. Launch Stabilization
+          // A2 writes `invited` for staff-created accounts.
+          ...(input.status ? { status: input.status } : {}),
+        },
+      });
+    return client ? write(client) : this.asUser(id, write);
   }
 
   updateProfile(id: string, input: UpdateProfileInput): Promise<User> {
-    return this.prisma.user.update({
-      where: { id },
-      data: {
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.avatarUrl !== undefined ? { avatarUrl: input.avatarUrl } : {}),
-      },
-    });
+    return this.asUser(id, (tx) =>
+      tx.user.update({
+        where: { id },
+        data: {
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.avatarUrl !== undefined ? { avatarUrl: input.avatarUrl } : {}),
+        },
+      }),
+    );
   }
 
   updatePasswordHash(id: string, passwordHash: string): Promise<User> {
-    return this.prisma.user.update({ where: { id }, data: { passwordHash } });
+    return this.asUser(id, (tx) =>
+      tx.user.update({ where: { id }, data: { passwordHash } }),
+    );
   }
 
   /** Phase 10.1 — records that this address proved it can receive mail. */
   markEmailVerified(id: string, verifiedAt: Date): Promise<User> {
-    return this.prisma.user.update({
-      where: { id },
-      data: { emailVerifiedAt: verifiedAt },
-    });
+    return this.asUser(id, (tx) =>
+      tx.user.update({
+        where: { id },
+        data: { emailVerifiedAt: verifiedAt },
+      }),
+    );
   }
 
   /**
@@ -94,14 +128,18 @@ export class UsersRepository {
     // Only an `invited` account changes, in one statement: every other
     // account (including legacy staff-created `active` ones) keeps its
     // status and verification state exactly as a reset always left them.
-    await this.prisma.user.updateMany({
-      where: { id, status: 'invited' },
-      data: { status: 'active', emailVerifiedAt: verifiedAt },
-    });
+    await this.asUser(id, (tx) =>
+      tx.user.updateMany({
+        where: { id, status: 'invited' },
+        data: { status: 'active', emailVerifiedAt: verifiedAt },
+      }),
+    );
   }
 
   touchLastSignInAt(id: string): Promise<User> {
-    return this.prisma.user.update({ where: { id }, data: { lastSignInAt: new Date() } });
+    return this.asUser(id, (tx) =>
+      tx.user.update({ where: { id }, data: { lastSignInAt: new Date() } }),
+    );
   }
 
   /**
@@ -115,15 +153,13 @@ export class UsersRepository {
    * mechanism. Which specific platform owner is returned does not matter:
    * `is_platform_owner(uid)` only checks the boolean flag on that one row,
    * so any user with `isPlatformOwner: true` satisfies every policy this
-   * job relies on identically. `users` carries no RLS (see this
-   * repository's own doc comment), so this is a plain, unscoped read.
+   * job relies on identically. A context-less job cannot read `users`
+   * under RLS, so the id comes from the `platform_owner_user_id()`
+   * resolver (ids only).
    */
-  findFirstPlatformOwnerId(): Promise<Pick<User, 'id'> | null> {
-    return this.prisma.user.findFirst({
-      where: { isPlatformOwner: true },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true },
-    });
+  async findFirstPlatformOwnerId(): Promise<Pick<User, 'id'> | null> {
+    const id = await this.identityResolver.platformOwnerId();
+    return id ? { id } : null;
   }
 
   /**
@@ -135,12 +171,14 @@ export class UsersRepository {
    * SQL — Prisma's tagged-template `$executeRaw` parameterizes every `${}`.
    */
   async mergePreferences(id: string, partial: Record<string, unknown>): Promise<User> {
-    await this.prisma.$executeRaw`
-      UPDATE users
-      SET preferences = preferences || ${JSON.stringify(partial)}::jsonb,
-          updated_at = now()
-      WHERE id = ${id}
-    `;
-    return this.prisma.user.findUniqueOrThrow({ where: { id } });
+    return this.asUser(id, async (tx) => {
+      await tx.$executeRaw`
+        UPDATE users
+        SET preferences = preferences || ${JSON.stringify(partial)}::jsonb,
+            updated_at = now()
+        WHERE id = ${id}
+      `;
+      return tx.user.findUniqueOrThrow({ where: { id } });
+    });
   }
 }

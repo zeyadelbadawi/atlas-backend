@@ -29,6 +29,7 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../guards/optional-jwt-auth.guard';
 import { SignInRateLimitGuard } from '../guards/signin-rate-limit.guard';
 import { RegisterRateLimitGuard } from '../guards/register-rate-limit.guard';
+import { CredentialCheckRateLimitGuard } from '../guards/credential-check-rate-limit.guard';
 import { CurrentAuthContext } from '../decorators/auth-context.decorator';
 import type { AuthContext } from '../guards/jwt-auth.guard';
 import {
@@ -256,6 +257,7 @@ export class SignInMethodsController {
 
   @Delete('google')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(CredentialCheckRateLimitGuard)
   async unlinkGoogle(
     @CurrentAuthContext() auth: AuthContext,
     @Body() dto: UnlinkGoogleDto,

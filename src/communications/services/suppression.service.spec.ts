@@ -1,6 +1,7 @@
 /** SuppressionService — hashing, canonicalisation, expiry defaults; Prisma/tenancy stubbed. */
 import { SuppressionService, defaultExpiry, hashEmail } from './suppression.service';
 import type { PrismaService } from '../../database/prisma.service';
+import type { IdentityResolver } from '../../identity/repositories/identity-resolver';
 import type { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { createHash } from 'node:crypto';
 
@@ -10,15 +11,17 @@ function harness(ownerId: string | null, row: { expiresAt: Date | null } | null)
   const create = jest.fn().mockResolvedValue({});
   const tx = { communicationSuppression: { findUnique, upsert } };
   const prisma = {
-    user: { findFirst: jest.fn().mockResolvedValue(ownerId ? { id: ownerId } : null) },
     communicationSuppression: { create },
   } as unknown as PrismaService;
+  const resolver = {
+    platformOwnerId: jest.fn().mockResolvedValue(ownerId),
+  } as unknown as IdentityResolver;
   const runInUserContext = jest.fn(
     async (_id: string, work: (t: typeof tx) => Promise<unknown>) => work(tx),
   );
   const tenancy = { runInUserContext } as unknown as TenancyContextService;
   return {
-    service: new SuppressionService(prisma, tenancy),
+    service: new SuppressionService(prisma, tenancy, resolver),
     findUnique,
     upsert,
     create,

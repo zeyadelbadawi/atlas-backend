@@ -123,7 +123,7 @@ export class SessionRevocationService {
    * own FAILURE BEHAVIOUR note for why neither fail-open nor global
    * fail-closed is acceptable here.
    */
-  async isRevoked(sessionId: string): Promise<boolean> {
+  async isRevoked(sessionId: string, userId: string): Promise<boolean> {
     try {
       const hit = await this.redisService.getClient().get(this.key(sessionId));
       if (hit) return true;
@@ -133,7 +133,7 @@ export class SessionRevocationService {
         { sessionId, error: error instanceof Error ? error.message : error },
         'Redis unavailable for session revocation check; falling back to the database.',
       );
-      return this.isRevokedInDatabase(sessionId);
+      return this.isRevokedInDatabase(userId, sessionId);
     }
   }
 
@@ -144,8 +144,11 @@ export class SessionRevocationService {
    * because the migration backfilled `session_id` to each row's own id,
    * which is exactly what their access tokens carry as `sid`.
    */
-  private async isRevokedInDatabase(sessionId: string): Promise<boolean> {
-    const live = await this.refreshTokensRepository.countLiveRowsForSession(sessionId);
+  private async isRevokedInDatabase(userId: string, sessionId: string): Promise<boolean> {
+    const live = await this.refreshTokensRepository.countLiveRowsForSession(
+      userId,
+      sessionId,
+    );
     return live === 0;
   }
 }

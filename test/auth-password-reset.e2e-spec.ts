@@ -1,3 +1,5 @@
+import type { PrismaClient } from '@prisma/client';
+import { createAdminPrisma } from './utils/db-admin';
 /**
  * Password reset request/confirm e2e — this file's checklist item F.
  * Rate limiting itself is covered by the dedicated
@@ -11,23 +13,26 @@ import {
   uniqueTestEmail,
   waitFor,
 } from './utils/test-app';
-import { PrismaService } from '../src/database/prisma.service';
 import { StubEmailProvider } from '../src/identity/services/stub-email.provider';
 import { hashOpaqueToken } from '../src/identity/utils/opaque-token.util';
 
 describe('Password reset (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
+  let prisma: PrismaClient;
   let stubEmailProvider: StubEmailProvider;
 
   beforeAll(async () => {
     const testApp = await createTestApp();
     app = testApp.app;
-    prisma = testApp.prisma;
+    // Fixture and verification reads go through the owner connection: the
+    // app's own client is RLS-bound and sees identity rows only inside a
+    // user context (authentication audit, Decision 2).
+    prisma = createAdminPrisma();
     stubEmailProvider = testApp.stubEmailProvider;
   });
 
   afterAll(async () => {
+    await prisma.$disconnect();
     await app.close();
   });
 

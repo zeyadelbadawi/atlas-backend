@@ -279,8 +279,7 @@ export class MediaService {
     buffer: Buffer;
     kind: NonNullable<ReturnType<typeof detectFileKind>>;
   } {
-    const { buffer } = parseDataUrl(payload.dataUrl);
-    assertWithinSizeLimit(buffer, this.storageConfig.maxUploadBytes);
+    const { buffer } = parseDataUrl(payload.dataUrl, this.storageConfig.maxUploadBytes);
 
     const kind = detectFileKind(buffer);
     if (!kind) {
