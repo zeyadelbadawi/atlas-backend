@@ -118,6 +118,11 @@ jobs:
           zoom_client_secret: ${{ secrets.ZOOM_OAUTH_CLIENT_SECRET }}
           zoom_redirect_uri: ${{ secrets.ZOOM_OAUTH_REDIRECT_URI }}
           zoom_webhook_secret_token: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}
+          # Google Identity — secrets; the mode and academies are the
+          # FLAG_AUTH_GOOGLE_* variables below.
+          google_client_id: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          google_client_secret: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          google_redirect_uri: ${{ secrets.GOOGLE_OAUTH_REDIRECT_URI }}
           # P64 Communications. The provider CHAIN is a repository
           # VARIABLE (it is configuration, not a secret, and the ability
           # to read it is how an operator sees which providers are live);
@@ -158,6 +163,9 @@ jobs:
             FLAG_VIDEO_RETENTION_MODE=${{ vars.FLAG_VIDEO_RETENTION_MODE }}
             FLAG_MEDIA_ARCHIVE_PURGE_MODE=${{ vars.FLAG_MEDIA_ARCHIVE_PURGE_MODE }}
             FLAG_SIGNUP_ORGANIZATION_MODE=${{ vars.FLAG_SIGNUP_ORGANIZATION_MODE }}
+            # Google Identity: off (default) | allowlist | on.
+            FLAG_AUTH_GOOGLE_MODE=${{ vars.FLAG_AUTH_GOOGLE_MODE }}
+            FLAG_AUTH_GOOGLE_ACADEMY_IDS=${{ vars.FLAG_AUTH_GOOGLE_ACADEMY_IDS }}
 
   # 3. MIGRATION DEPLOYMENT — dispatch only, with the input explicitly set.
   #
@@ -190,6 +198,11 @@ jobs:
           zoom_client_secret: ${{ secrets.ZOOM_OAUTH_CLIENT_SECRET }}
           zoom_redirect_uri: ${{ secrets.ZOOM_OAUTH_REDIRECT_URI }}
           zoom_webhook_secret_token: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}
+          # Google Identity — secrets; the mode and academies are the
+          # FLAG_AUTH_GOOGLE_* variables below.
+          google_client_id: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          google_client_secret: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          google_redirect_uri: ${{ secrets.GOOGLE_OAUTH_REDIRECT_URI }}
           # P64 Communications. The provider CHAIN is a repository
           # VARIABLE (it is configuration, not a secret, and the ability
           # to read it is how an operator sees which providers are live);
@@ -230,3 +243,6 @@ jobs:
             FLAG_VIDEO_RETENTION_MODE=${{ vars.FLAG_VIDEO_RETENTION_MODE }}
             FLAG_MEDIA_ARCHIVE_PURGE_MODE=${{ vars.FLAG_MEDIA_ARCHIVE_PURGE_MODE }}
             FLAG_SIGNUP_ORGANIZATION_MODE=${{ vars.FLAG_SIGNUP_ORGANIZATION_MODE }}
+            # Google Identity: off (default) | allowlist | on.
+            FLAG_AUTH_GOOGLE_MODE=${{ vars.FLAG_AUTH_GOOGLE_MODE }}
+            FLAG_AUTH_GOOGLE_ACADEMY_IDS=${{ vars.FLAG_AUTH_GOOGLE_ACADEMY_IDS }}

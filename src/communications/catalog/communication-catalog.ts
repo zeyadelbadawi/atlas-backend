@@ -386,6 +386,48 @@ const CATALOG = {
     actionUrl: () => FORGOT_PASSWORD_PATH,
   },
   /**
+   * Google Identity — a Google account was connected to this account. A security notice like
+   * `auth.password.changed`: the owner hears about it, and the CTA is the
+   * signed-out recovery page.
+   */
+  'auth.identity.linked': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'auth.identity.linked',
+    titleKey: 'notifications:events.googleLinked.title',
+    messageKey: 'notifications:events.googleLinked.message',
+    actionUrl: () => FORGOT_PASSWORD_PATH,
+  },
+  /**
+   * Google Identity — the Google sign-in was disconnected. A security notice like
+   * `auth.password.changed`: the owner hears about it, and the CTA is the
+   * signed-out recovery page.
+   */
+  'auth.identity.unlinked': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'auth.identity.unlinked',
+    titleKey: 'notifications:events.googleUnlinked.title',
+    messageKey: 'notifications:events.googleUnlinked.message',
+    actionUrl: () => FORGOT_PASSWORD_PATH,
+  },
+  /**
    * Launch Stabilization A4 — an existing Atlas account used its own
    * password to join another academy through that academy's signup page.
    * A security notice, like `auth.password.changed`: if a leaked password

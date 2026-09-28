@@ -43,6 +43,16 @@ import { TrustedDeviceService } from './services/trusted-device.service';
 import { AuthChallengeCipher } from './services/auth-challenge-cipher.service';
 import { EmailOtpController } from './controllers/email-otp.controller';
 import { TrustedDevicesController } from './controllers/trusted-devices.controller';
+import {
+  AuthOptionsController,
+  GoogleAuthController,
+  SignInMethodsController,
+} from './google/google-auth.controller';
+import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
+import { GoogleAuthService } from './google/google-auth.service';
+import { GoogleOidcClient } from './google/google-oidc.client';
+import { GoogleIdentityRepository } from './google/google-identity.repository';
+import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard';
 
 @Module({
   imports: [
@@ -66,7 +76,12 @@ import { TrustedDevicesController } from './controllers/trusted-devices.controll
     TwoFactorController,
     EmailOtpController,
     TrustedDevicesController,
+    // Google Identity — `/auth/google/*` and `GET /auth/options`.
+    GoogleAuthController,
+    AuthOptionsController,
     AuthController,
+    // Before `UsersController`: `users/me/sign-in-methods` is more specific.
+    SignInMethodsController,
     UsersController,
   ],
   providers: [
@@ -102,6 +117,12 @@ import { TrustedDevicesController } from './controllers/trusted-devices.controll
     PlatformOwnerGuard,
     PasswordResetEmailProducer,
     PasswordResetEmailProcessor,
+    // Google Identity (docs/GOOGLE_IDENTITY.md).
+    GoogleOidcClient,
+    GoogleIdentityRepository,
+    GoogleAuthService,
+    GoogleAuthRateLimitGuard,
+    OptionalJwtAuthGuard,
   ],
   // `StubEmailProvider` — integration/e2e tests inject the concrete class
   // directly (`peekLastPasswordResetToken`), not the DI token.

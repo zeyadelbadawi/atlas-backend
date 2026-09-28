@@ -384,6 +384,10 @@ export class AccountDeletionService {
       // Authentication material is destroyed outright — none of it has
       // any audit value, and all of it is dangerous to retain.
       await tx.userTwoFactor.deleteMany({ where: { userId } });
+      // Google Identity — the external identity dies with the account, so the
+      // same Google account can later start a fresh Atlas account (the
+      // anonymised row survives, so the FK cascade never fires on its own).
+      await tx.userAuthIdentity.deleteMany({ where: { userId } });
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.passwordResetToken.deleteMany({ where: { userId } });
       await tx.emailVerificationToken.deleteMany({ where: { userId } });

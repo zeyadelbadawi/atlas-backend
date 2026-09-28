@@ -49,6 +49,7 @@ import { RedisService } from '../../redis/redis.service';
 import { TotpSecretCipher } from './totp-secret-cipher.service';
 import { PasswordHasherService } from './password-hasher.service';
 import type { AppConfig } from '../../config/configuration';
+import type { AuthMethod } from '@prisma/client';
 
 /** How long a half-authenticated sign-in may sit unfinished. Short: it is a live credential. */
 const CHALLENGE_TTL_SECONDS = 300;
@@ -239,11 +240,16 @@ export class TwoFactorService {
    */
   async createChallenge(
     userId: string,
+    authMethod: AuthMethod = 'password',
   ): Promise<{ challengeId: string; expiresIn: number }> {
     const challengeId = randomBytes(32).toString('base64url');
+    // Google Identity — a password challenge keeps storing the bare user id
+    // (so challenges already in Redis across a deploy stay valid); any other
+    // first factor is appended after a `|`, which a UUID never contains.
+    const value = authMethod === 'password' ? userId : `${userId}|${authMethod}`;
     await this.redisService
       .getClient()
-      .set(`${CHALLENGE_PREFIX}${challengeId}`, userId, 'EX', CHALLENGE_TTL_SECONDS);
+      .set(`${CHALLENGE_PREFIX}${challengeId}`, value, 'EX', CHALLENGE_TTL_SECONDS);
     return { challengeId, expiresIn: CHALLENGE_TTL_SECONDS };
   }
 
@@ -259,9 +265,11 @@ export class TwoFactorService {
   async completeChallenge(
     challengeId: string,
     input: { token?: string; recoveryCode?: string },
-  ): Promise<string> {
+  ): Promise<{ userId: string; authMethod: AuthMethod }> {
     const key = `${CHALLENGE_PREFIX}${challengeId}`;
-    const userId = await this.redisService.getClient().get(key);
+    const stored = await this.redisService.getClient().get(key);
+    const [userId, storedMethod] = (stored ?? '').split('|');
+    const authMethod: AuthMethod = storedMethod === 'google' ? 'google' : 'password';
     if (!userId) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
@@ -312,7 +320,7 @@ export class TwoFactorService {
 
     // One challenge, one session.
     await this.redisService.getClient().del(key, attemptKey);
-    return userId;
+    return { userId, authMethod };
   }
 
   // -----------------------------------------------------------------

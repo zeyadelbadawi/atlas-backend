@@ -4,7 +4,7 @@
  * `rotate()` is the concurrency-critical method — see its doc comment.
  */
 import { Injectable } from '@nestjs/common';
-import type { RefreshToken, SessionSurface } from '@prisma/client';
+import type { AuthMethod, RefreshToken, SessionSurface } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 
 export interface CreateRefreshTokenInput {
@@ -27,6 +27,8 @@ export interface CreateRefreshTokenInput {
    * still succeeds, only CONTENT delivery is refused.
    */
   readonly deviceId?: string | null;
+  /** Google Identity — the session's first factor. */
+  readonly authMethod?: AuthMethod | null;
 }
 
 /** One device session: the rotation family's newest row, plus when the family began. */
@@ -61,6 +63,7 @@ export class RefreshTokensRepository {
         surface: input.surface ?? 'management',
         academyId: input.academyId ?? null,
         deviceId: input.deviceId ?? null,
+        authMethod: input.authMethod ?? null,
         // A brand-new session's last activity is its creation — a real
         // timestamp for a real event, not a placeholder.
         lastUsedAt: new Date(),
@@ -319,6 +322,9 @@ export class RefreshTokensRepository {
           // stolen refresh token would want to make), and a device the
           // learner has since removed cannot be re-attached by refreshing.
           deviceId: claimed.deviceId,
+          // Google Identity — how the session was established never changes
+          // across a rotation either.
+          authMethod: claimed.authMethod,
         },
       });
 

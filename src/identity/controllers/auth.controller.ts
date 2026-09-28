@@ -53,7 +53,7 @@ import { TRUST_COOKIE_NAME } from '../services/trusted-device.service';
 import { assertSessionServesHostAcademy } from '../../learning/dto/learning-request.util';
 
 /** Real, server-resolved request metadata for a session write. See `request-metadata.util.ts` for the trust model behind these headers. */
-function sessionContext(request: Request): SessionRequestContext {
+export function sessionContext(request: Request): SessionRequestContext {
   return {
     ipAddress: resolveClientIp(request),
     userAgent: resolveUserAgent(request),
@@ -82,7 +82,7 @@ function sessionContext(request: Request): SessionRequestContext {
  * dropped by every browser — which would mean the feature quietly did not
  * work for developers while appearing to.
  */
-function sessionContextWithDeviceCookie(
+export function sessionContextWithDeviceCookie(
   request: Request,
   response: Response,
 ): SessionRequestContext {

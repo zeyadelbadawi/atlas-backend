@@ -16,6 +16,8 @@ import { template as platformPaymentRejected } from './keys/platform.payment.rej
 import { template as supportCaseReply } from './keys/support.case.reply';
 import { template as supportCaseStatusChanged } from './keys/support.case.status_changed';
 import { template as authPasswordChanged } from './keys/auth.password.changed';
+import { template as authIdentityLinked } from './keys/auth.identity.linked';
+import { template as authIdentityUnlinked } from './keys/auth.identity.unlinked';
 import { template as accountAcademyJoined } from './keys/account.academy.joined';
 import { template as authEmailVerification } from './keys/auth.email.verification';
 import { template as authEmailOtp } from './keys/auth.email.otp';
@@ -97,6 +99,8 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'support.case.status_changed': supportCaseStatusChanged,
   'auth.password.changed': authPasswordChanged,
   'account.academy.joined': accountAcademyJoined,
+  'auth.identity.linked': authIdentityLinked,
+  'auth.identity.unlinked': authIdentityUnlinked,
   'auth.email.verification': authEmailVerification,
   'auth.email.otp': authEmailOtp,
   'auth.password.reset': authPasswordReset,

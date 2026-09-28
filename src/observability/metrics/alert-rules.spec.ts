@@ -33,6 +33,7 @@ const SERVICE_PATHS = [
   resolve(__dirname, '../platform/observability.service.ts'),
   // Launch Stabilization A1/A3 authentication security series.
   resolve(__dirname, 'auth-security-metrics.ts'),
+  resolve(__dirname, 'google-auth-metrics.ts'),
 ];
 
 const rules = readFileSync(RULES_PATH, 'utf8');
