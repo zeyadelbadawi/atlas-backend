@@ -107,7 +107,31 @@ export const SECTION_TYPES = [
   'instructors',
   'gallery',
   'contact',
+  // Theme 1 plan §D.2 — shared by every theme, each with a base renderer.
+  'pageHeader',
+  'courseCategories',
+  'steps',
+  'featureSplit',
 ] as const;
+
+/** Theme 1 plan §B density: one idea per section, 3–6 items. */
+export const MAX_SECTION_STEPS = 6;
+export const MAX_FEATURE_SPLIT_ITEMS = 6;
+export const MAX_HERO_HIGHLIGHTS = 4;
+export const MAX_CHIP_TEXT = 40;
+export const MIN_COURSE_CATEGORIES = 2;
+
+/**
+ * What an image field may hold (Theme 1 plan §E.4): a theme asset
+ * reference (`theme-asset:<theme>/<key>`), an http(s) URL (MediaAsset/R2
+ * public URLs; http only matters for local/CI object stores), a LEGACY
+ * inline upload (`data:image/...;base64,` — the only types uploads ever
+ * accepted), or empty. Anything else — `javascript:`, `data:text/html`,
+ * `blob:`, relative paths — is rejected.
+ */
+export const THEME_ASSET_REFERENCE_PATTERN = /^theme-asset:[a-z0-9-]+\/[a-z0-9-]+$/;
+export const LEGACY_DATA_IMAGE_PATTERN =
+  /^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 
 /** `courseCatalog` page-size bounds — match the frontend `website.constants.ts` exactly. */
 export const MIN_COURSE_CATALOG_PAGE_SIZE = 6;

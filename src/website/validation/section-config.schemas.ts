@@ -54,13 +54,19 @@ import { z } from 'zod';
 import {
   COURSE_CATALOG_SORT_VALUES,
   FEATURE_ICON_OPTIONS,
+  MAX_CHIP_TEXT,
   MAX_COURSE_CATALOG_PAGE_SIZE,
+  MAX_FEATURE_SPLIT_ITEMS,
+  MAX_HERO_HIGHLIGHTS,
   MAX_LONG_TEXT,
   MAX_SECTION_ITEMS,
+  MAX_SECTION_STEPS,
   MAX_SHORT_TEXT,
   MIN_COURSE_CATALOG_PAGE_SIZE,
+  MIN_COURSE_CATEGORIES,
   SECTION_TYPES,
 } from '../constants/website.constants';
+import { isAllowedImageValue } from './image-value.util';
 import { isSafeExternalUrl } from './url-safety.util';
 
 export const sectionTypeSchema = z.enum(SECTION_TYPES);
@@ -135,21 +141,37 @@ const websiteCtaSchema = z.object({
     .or(z.literal('')),
 });
 
+/** Any image field — see `image-value.util.ts` for what's allowed and why. */
+const imageValueSchema = z
+  .string()
+  .refine(isAllowedImageValue, { message: 'validation:invalidImage' });
+
+/** Theme 1 plan §C.1 — a short label chip under the hero (e.g. "Certificates"). */
+const heroHighlightSchema = z.object({
+  id: z.string(),
+  label: localizedRequired(MAX_CHIP_TEXT),
+});
+
 export const heroSectionSchema = z.object({
   eyebrow: localizedOptional(MAX_SHORT_TEXT).optional(),
   title: localizedRequired(MAX_SHORT_TEXT),
   subtitle: localizedOptional(MAX_SHORT_TEXT).optional(),
   description: localizedOptional(MAX_LONG_TEXT).optional(),
-  image: z.string().optional(),
+  image: imageValueSchema.optional(),
   imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
   cta: websiteCtaSchema.optional(),
   secondaryCta: websiteCtaSchema.optional(),
+  /** Theme 1 plan §D.2 — the one title phrase a theme may emphasise; ignored if it's no longer in the title. */
+  highlight: localizedOptional(MAX_SHORT_TEXT).optional(),
+  highlights: z.array(heroHighlightSchema).max(MAX_HERO_HIGHLIGHTS).optional(),
+  /** Inline course search in the hero (submits to the catalog, `/courses?q=`). */
+  showSearch: z.boolean().optional(),
 });
 
 export const aboutSectionSchema = z.object({
   title: localizedRequired(MAX_SHORT_TEXT),
   body: localizedRequired(MAX_LONG_TEXT),
-  image: z.string().optional(),
+  image: imageValueSchema.optional(),
   imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
 });
 
@@ -205,6 +227,8 @@ export const featuresSectionSchema = z.object({
   title: localizedOptional(MAX_SHORT_TEXT).optional(),
   description: localizedOptional(MAX_LONG_TEXT).optional(),
   items: z.array(featureItemSchema).max(MAX_SECTION_ITEMS),
+  /** Theme 1 plan §D.2 — `strip` is a compact highlights band; absent means today's cards. */
+  layout: z.enum(['cards', 'strip']).optional(),
 });
 
 const testimonialItemSchema = z.object({
@@ -216,8 +240,15 @@ const testimonialItemSchema = z.object({
     .min(1, 'validation:required')
     .max(MAX_SHORT_TEXT, 'validation:maxLength'),
   authorRole: localizedOptional(MAX_SHORT_TEXT).optional(),
-  avatar: z.string().optional(),
+  avatar: imageValueSchema.optional(),
   avatarAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
+  rating: z.number().int().min(1).max(5).optional(),
+  /**
+   * Theme 1 plan §D.4 — starter content for preview/design only. Never
+   * public: the public pages payload strips it, publish warns about it, and
+   * only the Owner's explicit "This is a real testimonial" clears it.
+   */
+  sample: z.boolean().optional(),
 });
 
 export const testimonialsSectionSchema = z.object({
@@ -240,12 +271,18 @@ export const faqSectionSchema = z.object({
   title: localizedOptional(MAX_SHORT_TEXT).optional(),
   items: z.array(faqItemSchema).max(MAX_SECTION_ITEMS),
   libraryEntryIds: z.array(z.string()).max(MAX_SECTION_ITEMS).optional(),
+  /** Theme 1 plan §D.2 — show only the first N (a teaser), with a link to the rest. */
+  maxItems: z.number().int().min(1).max(MAX_SECTION_ITEMS).optional(),
+  cta: websiteCtaSchema.optional(),
 });
 
 export const ctaSectionSchema = z.object({
   title: localizedRequired(MAX_SHORT_TEXT),
   description: localizedOptional(MAX_LONG_TEXT).optional(),
   cta: websiteCtaSchema,
+  secondaryCta: websiteCtaSchema.optional(),
+  image: imageValueSchema.optional(),
+  imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
 });
 
 export const instructorsSectionSchema = z.object({
@@ -256,7 +293,7 @@ export const instructorsSectionSchema = z.object({
 
 const galleryImageSchema = z.object({
   id: z.string(),
-  image: z.string().min(1, 'validation:required'),
+  image: imageValueSchema.pipe(z.string().min(1, 'validation:required')),
   caption: localizedOptional(MAX_SHORT_TEXT).optional(),
   imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
 });
@@ -283,6 +320,60 @@ export const contactSectionSchema = z.object({
   showForm: z.boolean(),
 });
 
+/**
+ * Theme 1 plan §D.2 — an inner page's title band (Courses, About, FAQs,
+ * Contact). `search` puts the page's own search in it: the course catalog
+ * or the FAQ filter.
+ */
+export const pageHeaderSectionSchema = z.object({
+  eyebrow: localizedOptional(MAX_SHORT_TEXT).optional(),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  image: imageValueSchema.optional(),
+  imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
+  search: z.enum(['none', 'courses', 'faq']).optional(),
+});
+
+/** Theme 1 plan §C.1 #3 — the Academy's real categories (live); hidden publicly with fewer than two. */
+export const courseCategoriesSectionSchema = z.object({
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  maxItems: z.number().int().min(MIN_COURSE_CATEGORIES).max(MAX_SECTION_ITEMS),
+  showCounts: z.boolean(),
+});
+
+const stepItemSchema = z.object({
+  id: z.string(),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+});
+
+/** Theme 1 plan §C.1 #6 — "How it works": an ordered, numbered sequence. */
+export const stepsSectionSchema = z.object({
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(stepItemSchema).max(MAX_SECTION_STEPS),
+});
+
+const featureSplitItemSchema = z.object({
+  id: z.string(),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+});
+
+/** Theme 1 plan §C.1 #5 / §C.4 — an image beside a title, lead and numbered benefits. */
+export const featureSplitSectionSchema = z.object({
+  eyebrow: localizedOptional(MAX_SHORT_TEXT).optional(),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  image: imageValueSchema.optional(),
+  imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
+  /** Logical side: `start` is left in English and right in Arabic. */
+  imagePosition: z.enum(['start', 'end']),
+  items: z.array(featureSplitItemSchema).max(MAX_FEATURE_SPLIT_ITEMS),
+  cta: websiteCtaSchema.optional(),
+});
+
 /** Matches the frontend's `SECTION_SCHEMAS` map exactly — one schema per `SectionType`, `satisfies Record<SectionType, ZodTypeAny>`. */
 const SECTION_CONFIG_SCHEMAS = {
   hero: heroSectionSchema,
@@ -297,6 +388,10 @@ const SECTION_CONFIG_SCHEMAS = {
   instructors: instructorsSectionSchema,
   gallery: gallerySectionSchema,
   contact: contactSectionSchema,
+  pageHeader: pageHeaderSectionSchema,
+  courseCategories: courseCategoriesSectionSchema,
+  steps: stepsSectionSchema,
+  featureSplit: featureSplitSectionSchema,
 } satisfies Record<(typeof SECTION_TYPES)[number], z.ZodTypeAny>;
 
 /** Resolves the right Zod schema for a section type — matches `getSectionConfigSchema`. */
@@ -376,6 +471,26 @@ export const sectionInstanceSchema = z.discriminatedUnion('type', [
     ...sectionInstanceBase,
     type: z.literal('contact'),
     config: contactSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('pageHeader'),
+    config: pageHeaderSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('courseCategories'),
+    config: courseCategoriesSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('steps'),
+    config: stepsSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('featureSplit'),
+    config: featureSplitSectionSchema,
   }),
 ]);
 

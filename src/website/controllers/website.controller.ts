@@ -21,7 +21,10 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
-import { WebsiteConfigurationService } from '../services/website-configuration.service';
+import {
+  WebsiteConfigurationService,
+  type PublishWebsiteResponse,
+} from '../services/website-configuration.service';
 import { WebsitePagesService } from '../services/website-pages.service';
 import type { EditingParticipant } from '../../concurrency/services/editing-presence.service';
 import { UpdateWebsiteConfigurationDto } from '../dto/update-website-configuration.dto';
@@ -66,7 +69,7 @@ export class WebsiteController {
   }
 
   @Post(':id/website/publish')
-  async publish(@Req() request: Request): Promise<WebsiteConfigurationResponse> {
+  async publish(@Req() request: Request): Promise<PublishWebsiteResponse> {
     const { academyId, organizationId } = request.academyContext!;
     return this.websiteConfigurationService.publishConfiguration(
       academyId,

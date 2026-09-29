@@ -55,6 +55,8 @@ import { CourseInstructorsRepository } from './repositories/course-instructors.r
     CourseSectionsRepository,
     CourseLessonsRepository,
     CourseInstructorsRepository,
+    // Theme 1 plan Phase 2 — the public website's category listing.
+    CourseCategoriesRepository,
   ],
 })
 export class CourseModule {}

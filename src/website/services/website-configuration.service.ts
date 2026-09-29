@@ -28,6 +28,12 @@
  * `WebsitePublishStatus` type exactly) for a future P11 async
  * render-worker to use — this phase just never produces them itself.
  */
+import { resolveBrandUpdate } from '../brand/brand-palette-update';
+import { WebsitePagesRepository } from '../repositories/website-pages.repository';
+import {
+  collectSampleContent,
+  type SampleContentEntry,
+} from '../utils/sample-content.util';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -52,6 +58,11 @@ import { parseOrThrow } from '../../common/validation/zod-violations.util';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
+/** The publish response: the configuration plus the sample-content warning (§D.4). Additive — older clients ignore it. */
+export type PublishWebsiteResponse = WebsiteConfigurationResponse & {
+  readonly sampleContent: readonly SampleContentEntry[];
+};
+
 @Injectable()
 export class WebsiteConfigurationService {
   constructor(
@@ -60,6 +71,7 @@ export class WebsiteConfigurationService {
     private readonly websiteBootstrapService: WebsiteBootstrapService,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly sectionReferenceValidatorService: SectionReferenceValidatorService,
+    private readonly websitePagesRepository: WebsitePagesRepository,
   ) {}
 
   private async assertCanManage(
@@ -148,8 +160,14 @@ export class WebsiteConfigurationService {
 
         if (payload.brand !== undefined) {
           const patch = parseOrThrow(websiteBrandPatchSchema, payload.brand);
-          const merged = { ...(current.brand as Record<string, unknown>), ...patch };
-          data.brand = parseOrThrow(websiteBrandSchema, merged);
+          // Theme 1 plan §F.4.3 — palettes are re-derived and validated
+          // here; legacy colours and the palette are kept in step.
+          const merged = resolveBrandUpdate(
+            current.brand as Record<string, unknown>,
+            patch as Record<string, unknown>,
+            { userId, now: new Date() },
+          );
+          data.brand = parseOrThrow(websiteBrandSchema, merged) as Prisma.InputJsonValue;
         }
 
         if (payload.seo !== undefined) {
@@ -201,7 +219,7 @@ export class WebsiteConfigurationService {
     academyId: string,
     organizationId: string,
     userId: string,
-  ): Promise<WebsiteConfigurationResponse> {
+  ): Promise<PublishWebsiteResponse> {
     return this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
@@ -215,7 +233,23 @@ export class WebsiteConfigurationService {
           lastPublishError: Prisma.JsonNull,
           configVersion: { increment: 1 },
         });
-        return toWebsiteConfigurationResponse(updated);
+        // Theme 1 plan §D.4 — a warning, never a block: which visible
+        // sections still hold sample testimonials (stripped from the public
+        // site, listed here so the Owner can review them).
+        const visiblePages = await this.websitePagesRepository.findAllPublished(
+          tx,
+          academyId,
+        );
+        return {
+          ...toWebsiteConfigurationResponse(updated),
+          sampleContent: collectSampleContent(
+            visiblePages.map((page) => ({
+              id: page.id,
+              title: page.title,
+              sections: page.sections as unknown[],
+            })),
+          ),
+        };
       },
     );
   }
