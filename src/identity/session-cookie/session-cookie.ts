@@ -73,14 +73,34 @@ export function clearSessionCookie(request: Request, response: Response): void {
 
 /**
  * Refuses a cookie-authenticated request unless the browser says it came from
- * this very origin. Browsers always send `Origin` on a `fetch`/XHR POST, so a
- * legitimate call from the Atlas page on this host always passes.
+ * this very site: the `Origin` header's scheme and host must equal the
+ * request's own (`request.protocol` / `request.hostname`, which honour
+ * `X-Forwarded-Proto` / `X-Forwarded-Host` only from the trusted proxy — the
+ * same host every tenancy decision resolves from). Browsers always send
+ * `Origin` on a `fetch`/XHR POST, so a legitimate call from the Atlas page on
+ * this host always passes; a page on any other host — another academy's
+ * subdomain included — never does. Only one HTTPS port is ever served, so the
+ * port carries no separate meaning here.
  */
 export function assertSameOriginCookieRequest(request: Request): void {
-  const origin = request.headers.origin;
-  const host = request.headers.host;
-  const expected = host ? `${request.protocol}://${host}` : null;
-  if (!origin || !expected || origin.toLowerCase() !== expected.toLowerCase()) {
+  const origin = parseOrigin(request.headers.origin);
+  const hostname = request.hostname?.toLowerCase();
+  if (
+    !origin ||
+    !hostname ||
+    origin.protocol !== `${request.protocol}:` ||
+    origin.hostname !== hostname
+  ) {
     throw new ForbiddenException({ messageKey: 'errors.auth.crossOriginSession' });
+  }
+}
+
+function parseOrigin(raw: string | undefined): URL | null {
+  if (!raw || raw === 'null' || raw.length > 512) return null;
+  try {
+    const url = new URL(raw);
+    return url.origin === raw.toLowerCase().replace(/\/$/, '') ? url : null;
+  } catch {
+    return null;
   }
 }
