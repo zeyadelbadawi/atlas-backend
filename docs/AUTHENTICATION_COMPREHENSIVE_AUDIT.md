@@ -32,7 +32,7 @@ The system was already strong in the places that matter most:
 - **CSP (D4):** a Content-Security-Policy runs in Report-Only mode with a report pipeline. A browser assessment of 25 page loads found zero violations. Enforcement and the token-storage migration are planned and evidence-gated.
 - **Oversized uploads (D5):** oversized or malformed uploads answer 413/400 everywhere instead of 500.
 
-**Final status:** see section 18.
+**Final status: AUTHENTICATION — PRODUCTION READY.** The production-readiness pass (section 19) resolved the three known limitations: enforced CSP, HttpOnly cookie sessions, and credential isolation. It fixed four further findings and verified all of it in production. See section 18.
 
 ## 2. Audit Scope
 
@@ -476,8 +476,8 @@ AUTH-01 to AUTH-18 (section 8). Each carries regression tests. The audit-found b
 
 | ID | Severity | Item | Status |
 |---|---|---|---|
-| CSP-ENF | MEDIUM | The CSP is **Report-Only**; nothing is blocked yet. | By decision (D4): enforce only on production evidence. Criteria are in `docs/CSP_AND_TOKEN_STORAGE.md` §1.4. `script-src 'self'` can be enforced first. |
-| TOK-1 | MEDIUM | Access and refresh tokens remain in `localStorage`. | By decision (D4): a scoped follow-up (an HttpOnly `__Host-` refresh cookie and an in-memory access token), phased and flag-gated. Plan: `docs/CSP_AND_TOKEN_STORAGE.md` §2. Mitigated meanwhile by the CSP, refresh-reuse detection (AUTH-07), surface binding and the `sid` denylist. |
+| CSP-ENF | MEDIUM | ~~The CSP is Report-Only.~~ **Resolved (AUTH-21):** enforced. | By decision (D4): enforce only on production evidence. Criteria are in `docs/CSP_AND_TOKEN_STORAGE.md` §1.4. `script-src 'self'` can be enforced first. |
+| TOK-1 | MEDIUM | ~~Tokens in `localStorage`.~~ **Resolved (AUTH-20):** HttpOnly cookie plus an in-memory access token. | By decision (D4): a scoped follow-up (an HttpOnly `__Host-` refresh cookie and an in-memory access token), phased and flag-gated. Plan: `docs/CSP_AND_TOKEN_STORAGE.md` §2. Mitigated meanwhile by the CSP, refresh-reuse detection (AUTH-07), surface binding and the `sid` denylist. |
 | INFO-1 | INFORMATIONAL | Reset-request timing differs slightly for existing and unknown emails. | Accepted: rate-limited per IP and email, identical response. |
 | INFO-2 | INFORMATIONAL | `POST /auth/verify-email` has no rate limit. | 256-bit single-use tokens; guessing is infeasible. |
 | INFO-3 | INFORMATIONAL | There is no product path to suspend a user. | Out of scope. AUTH-06 makes a suspension effective on the next refresh. |
@@ -676,8 +676,8 @@ All checks ran from GitHub-hosted runners against `atlass.dpdns.org` on 28 Septe
 ## 16. Remaining Risks
 
 - **Brevo webhook secret:** it was written to request logs before AUTH-09. It has been **rotated** (section 12), so any value in older log lines is now invalid.
-- **XSS:** until the CSP is enforced and the token-storage migration ships, an XSS would still be session theft (CSP-ENF, TOK-1). The Report-Only data will show when enforcement is safe.
-- **`users` SELECT scope:** row visibility on `users` is context-gated, not relationship-scoped. Any established context can read the directory's rows, including `password_hash`. A column-level split, or a Prisma `omit`, for `password_hash` is the next step if defence in depth is wanted beyond this (the credential tables themselves are strictly per-user).
+- **XSS:** ~~session theft through XSS~~ resolved. `script-src 'self'` is enforced, and no refresh token is readable by script (AUTH-20, AUTH-21). An injected script, were one ever to run, could act only within the page's own lifetime, with a 15-minute access token.
+- **`users` SELECT scope:** row visibility on `users` stays context-gated (directory data: name, email, status). It no longer holds any credential. The password hash lives in `user_credentials` with self-only RLS (AUTH-19).
 - **Operator actions:** promoting a platform owner now requires the owner database connection (`provision-platform-owner` uses `DATABASE_URL`). This is intentional.
 
 ## 17. Human Decisions Required
@@ -692,20 +692,95 @@ All checks ran from GitHub-hosted runners against `atlass.dpdns.org` on 28 Septe
 **Still needed from a human:**
 1. ~~Approve the `production-migrations` environment~~: **done** (Deploy #221).
 2. ~~Rotate the Brevo webhook secret~~: **done**, and verified (section 12).
-3. **Later:** after the Report-Only observation window, approve the switch to enforcement (`docs/CSP_AND_TOKEN_STORAGE.md` §1.4), and schedule the token-storage follow-up.
+3. ~~Approve the CSP enforcement and schedule the token-storage follow-up~~: **done** in the production-readiness pass (section 19).
 
 ## 18. Final Audit Status
 
-**PASS WITH KNOWN LIMITATIONS.**
-- **Issues:** eighteen found and eighteen fixed, with regression tests (0 high or critical). All five decisions are implemented, released and verified in production.
-- **Test suites:** the complete suites pass:
-  - backend unit 3950/3950;
-  - frontend 1170/1170;
-  - backend e2e 162/162 suites on a clean database (the 4 shared-database failures are explained and proven in §7a).
+**AUTHENTICATION — PRODUCTION READY** (production-readiness pass, 29 September 2026; section 19).
 
-**Known limitations, each with a plan and an owner:**
-- **CSP enforcement:** the CSP is Report-Only until the observation window has produced evidence (CSP-ENF).
-- **Token storage:** tokens stay in `localStorage` until the cookie/BFF follow-up (TOK-1).
-- **`users` rows:** readable within any established context (section 16).
-- ~~Brevo webhook secret rotation~~: **done** and verified: 19 webhooks accepted, 0 refused, 0 raw values (section 12).
+The three known limitations of the first pass are resolved and verified in production:
+- **CSP enforcement (CSP-ENF):** **done.** The CSP is enforced (AUTH-21).
+- **Token storage (TOK-1):** **done.** HttpOnly `__Host-` cookie refresh token; in-memory access token (AUTH-20).
+- **`users` rows and `password_hash`:** **done.** The credential is in its own self-only RLS table; the directory carries none (AUTH-19).
 
+The pass also fixed AUTH-22 to AUTH-25. Across both passes: 25 issues found and 25 fixed, 0 high or critical.
+
+*First-pass status (28 September 2026), superseded:* PASS WITH KNOWN LIMITATIONS.
+
+## 19. Production-Readiness Pass (29 September 2026)
+
+A second, independent pass took the three known limitations as its starting point, then re-opened the rest of the system rather than trusting sections 1–18.
+
+### 19.1 Findings and fixes
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| AUTH-19 | MEDIUM | **Password hashes lived in the `users` directory.** `users` rows are visible to any established context (§16), so `password_hash` was database-readable alongside ordinary directory data. It never left the API: every response is an explicit projection, and the hashes were redacted in logs. | The hash moved to a new `user_credentials` table: FORCE RLS with **self-only** policies, an Argon2-only `CHECK`, and a cascade FK; no row means no password. `PasswordCredentialsService` is the single path that reads or writes it: verify with a dummy-hash timing equaliser, set, remove, has. The `no-password:`/`deleted:` sentinels are gone. Staged migration: stage 1 copies, verifies the counts (raising on mismatch), NULLs the old column, and captures any legacy write with triggers, so the previous container keeps working during the migration window. Stage 2 drops the column. |
+| AUTH-20 | MEDIUM | **Tokens in `localStorage`** (TOK-1). | Refresh token only in `__Host-atlas_session` (HttpOnly, Secure, SameSite=Strict, host-only). The access token lives in memory. A global interceptor is the one place a refresh token leaves the server. A strict same-origin gate protects the two cookie routes. Legacy tokens are converted once. Cross-tab refresh uses Web Locks. `docs/CSP_AND_TOKEN_STORAGE.md` §2. |
+| AUTH-21 | MEDIUM | **CSP Report-Only** (CSP-ENF). The enforcement sweep found one real break: the certificate PDF preview is a `blob:` frame that `frame-src` did not allow. | `frame-src` gains `blob:`. The CSP is **enforced** with reporting kept on, backed by bundle analysis, dynamic-source probes, a 24-page enforced browser sweep and production reports. `docs/CSP_AND_TOKEN_STORAGE.md` §1. |
+| AUTH-22 | LOW | **Log redaction missed root-level keys.** `*.accessToken` matches one level down only, so a service logging `{ accessToken }` itself would have leaked it. OAuth `codeVerifier`/`nonce` and TOTP enrolment material had no paths. No current call site did this. | Root-level and nested paths were added for every secret class. Pinned through real pino (`pino-redaction.spec.ts`, 19 cases). |
+| AUTH-23 | LOW | **Missing security telemetry.** Brute force, TOTP/emailed-code guessing, reset-link abuse, cross-origin session use and refresh-token replay had no metric or alert. | `atlas_auth_refusals_total{key}` is recorded once in the global exception filter for every `errors.auth.*` refusal (bounded labels). `atlas_auth_sessions_revoked_total{trigger="refresh_token_reuse"}` covers replay. Five alerts: `AtlasAuthBruteForce`, `AtlasAuthRefreshTokenReuse`, `AtlasAuthCrossOriginSession`, `AtlasAuthSecondFactorGuessing`, `AtlasAuthResetLinkAbuse`. |
+| AUTH-24 | LOW | **`EMAIL_DELIVERABILITY_CHECK_ENABLED=false` never disabled the check.** `configuration.ts` coalesced the raw string, and `'false'` is truthy. It fails safe (the check stays on). | The string is compared. Unit-tested. |
+| AUTH-25 | INFO | Found during the pass, before release: the session-cookie Origin gate first compared against the raw `Host` header, while every tenancy decision uses `request.hostname`. That is behind-proxy-inconsistent and false-refused proxied dev/e2e. | The gate now uses scheme + `request.hostname`, parses Origin strictly, and is unit-tested (sibling academies, look-alike suffixes, scheme downgrade, `null`/malformed). |
+
+### 19.2 Re-verified (not changed)
+
+- **Identity:** one identity per person. Google linking and unlinking keep a usable sign-in method (unlink is refused without a password credential).
+- **Registration:** enumeration-safe (D3).
+- **Refresh:** atomic rotation, 60 s reuse grace, family revocation.
+- **Revocation:** the `sid` denylist makes it immediate.
+- **Surface binding:** route inventory test.
+- **Second factors:** OTP host/challenge binding; per-academy trusted devices.
+- **Rate limiting:** a Redis-backed per-IP global throttle (120/min) plus dedicated guards on every credential-accepting route. Refresh and verify-email tokens are 256-bit single-use.
+- **CORS:** allows credentials only for platform origins. The cookie routes additionally require the exact origin, so a sibling academy's page cannot use another host's session even though CORS would let it read a response.
+- **Google OAuth:** state, nonce, PKCE, binder cookie, one-time handoff to the original host (unchanged). Its completion now sets the cookie on that host through the same interceptor.
+- **RLS:** eight identity tables (the seven, plus `user_credentials`) carry FORCE RLS. `account_deletion_challenges` is included.
+
+### 19.3 Performance
+
+Measured locally against real Postgres and Redis:
+- **Password sign-in:** p50 70 ms, p90 84 ms, dominated by Argon2id by design.
+- **Cookie refresh:** p50 16 ms, p90 38 ms.
+
+The credential lookup is a primary-key read under the caller's own RLS context. Refresh uses the unique `token_hash` index. No N+1 was introduced.
+
+### 19.4 Tests
+
+| Suite | Result |
+|---|---|
+| Backend unit | 3989 / 3989 |
+| Backend e2e, fresh database (all 129 migrations from zero + seed) | 164 / 164 suites, 1987 / 1987 tests |
+| Backend e2e, identity/auth suites on the stage-2 schema (representative 52,727-user database) | 48 / 48 suites, 533 / 533 tests |
+| Frontend unit | 1178 / 1178 |
+| Lint + typecheck + build | clean (backend and frontend) |
+| Real browser, cookie session (Chromium over HTTPS through Caddy) | 20 / 20 |
+| Real browser, enforced CSP sweep (24 pages: public, signed-in, custom-domain academy; EN/AR; desktop/mobile) | 24 / 24, 0 violations |
+
+**Migrations:**
+- **Fresh database:** stage 1 applied from zero. The seeded passwords land only in `user_credentials`.
+- **Representative database:** stage 1 moved 35,245 Argon2 hashes (the count guard passed), left 0 non-NULL values in the old column and 0 non-Argon credentials. Stage 2 then dropped the column.
+- **Drift:** `prisma migrate diff` against the schema is empty.
+
+### 19.5 Production
+
+- **Stage 1 release** (backend `e53dc97`, frontend `4a3f5f6`): Deploy #225 with the `production-migrations` approval.
+  - A pre-migration backup was taken (`atlas-20260929T005543Z.sql.gz`, gzip-verified, contains `users`).
+  - Migration applied; backend healthy.
+  - The frontend deployed afterwards (#127).
+- **Google verify #15–#17 (production):**
+  - **Credentials:** `directory_rows_with_credential = 0`; 145 accounts hold a password credential.
+  - **RLS:** all 8 identity tables have ENABLE + FORCE RLS. No permissive policy. 7 resolvers, `atlas_app`-only. `atlas_app` has no BYPASSRLS.
+  - **CSP:** the platform host and the allowlisted academy host **enforce** the CSP, still report, and load exactly 1 same-origin script with 0 inline or foreign. The report endpoint returns 204. 0 violation reports since the new backend started.
+  - **Logs:** no JWT, Google token, client secret, handoff or setup token, raw OAuth code/state or raw webhook secret.
+  - **Webhooks:** 2 accepted, 0 refused.
+  - **Google:** the flow probes, data integrity and browser checks (EN desktop and AR mobile) all pass.
+- **Launch verify #15 (production, all 5 jobs pass):**
+  - **Cookie session:**
+    - the sign-in body carries no refresh token;
+    - `__Host-atlas_session` is HttpOnly, Secure, SameSite=Strict, `Path=/`, host-only;
+    - refresh from another academy's origin → 403, and nothing rotates;
+    - refresh with no Origin → 403;
+    - same-origin refresh rotates;
+    - a replayed rotated cookie → 401 and cleared.
+  - **Existing checks (A1–A6, all pass):** surface and tenancy refusals, per-academy OTP and trusted devices, password change ending every session, Smart Member Invite and academy join (password verification now through `user_credentials`), and the browser journeys in EN, AR/RTL, desktop and mobile.
+- **Stage 2 release** (`20261023000000_drop_users_password_hash`): drops the now always-NULL `users.password_hash` column and the stage-1 capture triggers, with a fail-closed guard. Released through the same gated pipeline after stage 1 was verified; the result is recorded below.
