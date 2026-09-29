@@ -783,4 +783,8 @@ The credential lookup is a primary-key read under the caller's own RLS context. 
     - same-origin refresh rotates;
     - a replayed rotated cookie → 401 and cleared.
   - **Existing checks (A1–A6, all pass):** surface and tenancy refusals, per-academy OTP and trusted devices, password change ending every session, Smart Member Invite and academy join (password verification now through `user_credentials`), and the browser journeys in EN, AR/RTL, desktop and mobile.
-- **Stage 2 release** (`20261023000000_drop_users_password_hash`): drops the now always-NULL `users.password_hash` column and the stage-1 capture triggers, with a fail-closed guard. Released through the same gated pipeline after stage 1 was verified; the result is recorded below.
+- **Stage 2 release** (`20261023000000_drop_users_password_hash`, backend `9ed8892`): drops the now always-NULL `users.password_hash` column and the stage-1 capture triggers, with a fail-closed guard.
+  - Deploy #227 with the `production-migrations` approval, after a fresh pre-migration backup (`atlas-20260929T013837Z.sql.gz`, gzip-verified). Migration applied; backend healthy.
+  - **Launch verify #16, all 5 jobs pass:** sign-in, cookie session, A1–A6, Smart Member Invite, and the browser journeys, all verifying passwords through `user_credentials` only.
+  - **Google verify #18:** every check passes except one tooling fault. The security query referenced the dropped column inside a `CASE`, and Postgres rejects that at plan time.
+  - The query was fixed to test the column's existence first. It now reports `column_dropped` (verified on the stage-2 database), and the re-run is recorded below.
