@@ -788,3 +788,11 @@ The credential lookup is a primary-key read under the caller's own RLS context. 
   - **Launch verify #16, all 5 jobs pass:** sign-in, cookie session, A1–A6, Smart Member Invite, and the browser journeys, all verifying passwords through `user_credentials` only.
   - **Google verify #18:** every check passes except one tooling fault. The security query referenced the dropped column inside a `CASE`, and Postgres rejects that at plan time.
   - The query was fixed to test the column's existence first. It now reports `column_dropped` (verified on the stage-2 database), and the re-run is recorded below.
+  - **Google verify #19 (`117c158`, checks=all, including the browser job): every check passes.**
+    - `directory_rows_with_credential = column_dropped`;
+    - 8 identity tables with FORCE RLS;
+    - CSP enforced on both hosts, with 0 violations;
+    - no secrets in the logs;
+    - Google flows and data integrity pass;
+    - browser EN desktop and AR mobile pass.
+  - Deploy #228 green.
