@@ -306,6 +306,22 @@ export class WebsiteGenerationService {
       );
     }
 
+    // Theme 1 plan §D.2 — record which template first generated this
+    // website. Only when this call created pages and nothing is recorded
+    // yet: a retried or later generation never rewrites provenance.
+    if (pagesCreated > 0) {
+      const configuration = await this.websiteConfigurationRepository.findByAcademyId(
+        tx,
+        academyId,
+      );
+      if (configuration && !configuration.templateKey) {
+        await this.websiteConfigurationRepository.update(tx, academyId, {
+          templateKey: themeKey,
+          templateVersion: template.version ?? 1,
+        });
+      }
+    }
+
     await this.generateNavigation(tx, academyId, pageIdByCoreType);
     if (mode === 'complete') {
       await this.generateFooterAndHeaderCta(tx, academyId, context, pageIdByCoreType);

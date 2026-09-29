@@ -74,5 +74,12 @@ export interface WebsiteTemplatePage {
 
 export interface WebsiteTemplateDefinition {
   readonly themeKey: WebsiteTemplateThemeKey;
+  /**
+   * Theme 1 plan §D.2 — the starter content's own version, recorded on the
+   * configuration when it generates a website (`template_version`). Bump it
+   * whenever what a new Academy receives changes. Absent means 1 (every
+   * template before Theme 1 v2).
+   */
+  readonly version?: number;
   readonly pages: readonly WebsiteTemplatePage[];
 }
