@@ -13,6 +13,7 @@ import {
   Post,
   Req,
   Res,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
@@ -30,6 +31,7 @@ import type {
   TokenRefreshResponseContract,
 } from '../dto/contracts';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../guards/optional-jwt-auth.guard';
 import { CurrentAuthContext } from '../decorators/auth-context.decorator';
 import type { AuthContext } from '../guards/jwt-auth.guard';
 import { SignInRateLimitGuard } from '../guards/signin-rate-limit.guard';
@@ -49,6 +51,11 @@ import {
 } from '../utils/request-metadata.util';
 import type { UserSessionResponse } from '../dto/user-session.contract';
 import { deviceCookieOptions, readCookie } from '../../common/http/cookies.util';
+import {
+  assertSameOriginCookieRequest,
+  clearSessionCookie,
+  readSessionCookie,
+} from '../session-cookie/session-cookie';
 import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
 import { TRUST_COOKIE_NAME } from '../services/trusted-device.service';
 import { assertSessionServesHostAcademy } from '../../learning/dto/learning-request.util';
@@ -180,23 +187,59 @@ export class AuthController {
     });
   }
 
+  /**
+   * Rotates the session. The refresh token comes from the HttpOnly session
+   * cookie (same-origin requests only); the new one goes back into it via
+   * `SessionCookieInterceptor`, and only the short-lived access token is in
+   * the body. A failed refresh clears the cookie, so a dead session does not
+   * keep being presented.
+   */
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(
     @Body() dto: RefreshTokenDto,
     @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
   ): Promise<TokenRefreshResponseContract> {
-    // Re-read on every refresh so `lastUsedAt` tracks genuine session
-    // activity rather than only the original sign-in.
-    return this.authService.refresh(dto.refreshToken, sessionContext(request));
+    const fromCookie = readSessionCookie(request);
+    if (fromCookie) assertSameOriginCookieRequest(request);
+    const presented = fromCookie ?? dto.refreshToken;
+    if (!presented) {
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
+    }
+    try {
+      // Re-read on every refresh so `lastUsedAt` tracks genuine session
+      // activity rather than only the original sign-in.
+      return await this.authService.refresh(presented, sessionContext(request));
+    } catch (error) {
+      if (fromCookie) clearSessionCookie(request, response);
+      throw error;
+    }
   }
 
-  /** Matches `authenticationService.signOut` — no body; the session to revoke comes from the access token's `sid` claim. See `AccessTokenService`'s doc comment. */
+  /**
+   * Ends the session. Identified by the access token's `sid` when one is
+   * presented, otherwise by the session cookie (same-origin only) — so a
+   * browser whose in-memory access token has lapsed can still sign out
+   * properly. The cookie is always cleared, and the answer is always 200:
+   * signing out of something already gone is not an error.
+   */
   @Post('sign-out')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(JwtAuthGuard)
-  async signOut(@CurrentAuthContext() auth: AuthContext): Promise<void> {
-    await this.authService.signOut(auth.userId, auth.sessionId);
+  @UseGuards(OptionalJwtAuthGuard)
+  async signOut(
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<void> {
+    const auth = request.authContext;
+    const fromCookie = readSessionCookie(request);
+    if (auth) {
+      await this.authService.signOut(auth.userId, auth.sessionId);
+    } else if (fromCookie) {
+      assertSameOriginCookieRequest(request);
+      await this.authService.signOutByRefreshToken(fromCookie);
+    }
+    clearSessionCookie(request, response);
   }
 
   /**

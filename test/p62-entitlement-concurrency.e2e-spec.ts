@@ -265,7 +265,6 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
         data: {
           name: `p62 staff ${i}`,
           email: uniqueTestEmail(`p62-staff-${i}`),
-          passwordHash: 'not-a-real-hash-never-used-for-sign-in',
         },
       });
       await seedAcademyMember(admin, academyId, user.id, 'staff');

@@ -12,6 +12,8 @@
 #   remote.sh data                 -> flow retention, identity integrity, session auth_method, audit/outbox counts
 #   remote.sh logs <hours>         -> callback log lines and every way a credential could have leaked into logs
 #   remote.sh metrics              -> atlas_google_auth_total by stage/result (Prometheus)
+#   remote.sh csp <hours>          -> CSP violation reports, normalised (directive, kind, origin, page HOST
+#                                     only) and counted, plus atlas_csp_violations_total
 #   remote.sh backup               -> the latest database backup: name, age, size, gzip integrity
 #   remote.sh user <email> <local> -> non-secret facts about ONE test account of the owner's own mailbox
 #
@@ -107,13 +109,17 @@ case "$cmd" in
   security)
     # Authentication audit — identity-table RLS and the resolver surface, as
     # the database itself reports them. Read-only catalogue queries.
-    sql "select 'identity_tables_force_rls', count(*) from pg_class where relkind='r' and relname in ('users','refresh_tokens','password_reset_tokens','email_verification_tokens','user_two_factor','two_factor_recovery_codes','user_auth_identities') and relrowsecurity and relforcerowsecurity"
-    sql "select 'identity_permissive_true_policies', count(*) from pg_policies where tablename in ('users','refresh_tokens','password_reset_tokens','email_verification_tokens','user_two_factor','two_factor_recovery_codes','user_auth_identities') and (qual='true' or with_check='true')"
+    sql "select 'identity_tables_force_rls', count(*) from pg_class where relkind='r' and relname in ('users','refresh_tokens','password_reset_tokens','email_verification_tokens','user_two_factor','two_factor_recovery_codes','user_auth_identities','user_credentials') and relrowsecurity and relforcerowsecurity"
+    sql "select 'identity_permissive_true_policies', count(*) from pg_policies where tablename in ('users','refresh_tokens','password_reset_tokens','email_verification_tokens','user_two_factor','two_factor_recovery_codes','user_auth_identities','user_credentials') and (qual='true' or with_check='true')"
     sql "select 'resolver_functions', count(*) from pg_proc where prosecdef and proname in ('auth_user_id_by_email','auth_refresh_token_owner','auth_password_reset_token_owner','auth_email_verification_token_owner','auth_identity_owner','platform_owner_user_id','academy_student_session_count') and not has_function_privilege('public', oid, 'EXECUTE') and has_function_privilege('atlas_app', oid, 'EXECUTE')"
     sql "select 'app_role_bypass', count(*) from pg_roles where rolname='atlas_app' and (rolsuper or rolbypassrls)"
     sql "select 'app_role_can_update_platform_owner', case when has_column_privilege('atlas_app','users','is_platform_owner','UPDATE') then 1 else 0 end"
     sql "select 'deletion_challenges_force_rls', count(*) from pg_class where relname='account_deletion_challenges' and relrowsecurity and relforcerowsecurity"
     sql "select 'audit_migrations_applied', count(*) from _prisma_migrations where finished_at is not null and rolled_back_at is null and migration_name in ('20261020000000_account_deletion_challenges','20261021000000_identity_tables_rls')"
+    # Production-readiness pass — the credential is not on the directory row
+    # (the column is dropped by a later migration; until then it must be NULL).
+    sql "select 'directory_rows_with_credential', case when exists(select 1 from information_schema.columns where table_name='users' and column_name='password_hash') then (select count(*) from users where password_hash is not null)::text else 'column_dropped' end"
+    sql "select 'accounts_with_password', count(*) from user_credentials"
     sql "select 'sessions_since_release', count(*) from refresh_tokens where created_at > (select finished_at from _prisma_migrations where migration_name='20261021000000_identity_tables_rls')"
     ;;
   recent)
@@ -121,7 +127,7 @@ case "$cmd" in
     # every address masked (first two characters + domain). For following a
     # real-Google test without typing its address anywhere.
     mask="(left(%s, 2) || '***' || substr(%s, strpos(%s, '@')))"
-    sql "select 'identity', i.user_id, $(printf "$mask" i.email_at_link i.email_at_link i.email_at_link), $(printf "$mask" u.email u.email u.email), u.status, (u.password_hash not like 'nopassword:%'), u.email_verified_at is not null, i.linked_at, coalesce(i.last_used_at::text,'-')
+    sql "select 'identity', i.user_id, $(printf "$mask" i.email_at_link i.email_at_link i.email_at_link), $(printf "$mask" u.email u.email u.email), u.status, exists(select 1 from user_credentials c where c.user_id=u.id), u.email_verified_at is not null, i.linked_at, coalesce(i.last_used_at::text,'-')
          from user_auth_identities i join users u on u.id=i.user_id order by i.linked_at desc limit 20"
     sql "select 'member_of', s.user_id, s.academy_id, s.status, s.source, s.joined_at from academy_students s
          where s.user_id in (select user_id from user_auth_identities order by linked_at desc limit 20) order by s.joined_at"
@@ -169,6 +175,24 @@ case "$cmd" in
     echo "webhook_refused_since_start|$(printf '%s\n' "$since_start" | grep -Ec 'webhooks/email/[a-z]+[^ ]* -> (401|403)')"
     echo "google_retention_sweep_failures|$(printf '%s\n' "$logs" | grep -c 'Google flow retention sweep failed')"
     ;;
+  csp)
+    hours="${2:-24}"
+    printf '%s' "$hours" | grep -Eq '^[0-9]{1,4}$' || { echo "refused: hours" >&2; exit 2; }
+    started=$(docker inspect -f '{{.State.StartedAt}}' "$(docker compose ps -q backend)" 2>/dev/null)
+    echo "backend_started|$started"
+    # The backend already reduced each report to closed fields; the page is cut
+    # to its host here so no path can surface either. The verify probe is left out.
+    docker compose logs --no-color --since "${hours}h" backend 2>/dev/null \
+      | grep 'Content-Security-Policy violation reported' \
+      | grep -v 'verify-probe.invalid' \
+      | grep -o '"csp":{[^}]*}' \
+      | sed -E 's#"documentPath":"([^/"]*)[^"]*"#"page":"\1"#; s#,"line":[^,}]*##; s#,"sourceOrigin":null##' \
+      | sort | uniq -c | sort -rn | head -60 \
+      | awk '{n=$1; $1=""; sub(/^ /,""); print "violation|" n "|" $0}'
+    echo "violation_lines|$(docker compose logs --no-color --since "${hours}h" backend 2>/dev/null | grep 'Content-Security-Policy violation reported' | grep -vc 'verify-probe.invalid')"
+    docker compose exec -T prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=sum%20by%20(directive%2Cblocked%2Cdisposition)%20(atlas_csp_violations_total)' 2>/dev/null \
+      | docker compose exec -T backend node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{try{const d=JSON.parse(s);for(const r of d.data.result)console.log('metric|'+Object.entries(r.metric).map(([k,v])=>k+'='+v).join(',')+'|'+r.value[1])}catch{console.log('metric|unavailable')}})"
+    ;;
   metrics)
     q() {
       docker compose exec -T prometheus wget -qO- "http://localhost:9090/api/v1/query?query=$1" 2>/dev/null \
@@ -195,7 +219,7 @@ case "$cmd" in
     printf '%s' "$email" | grep -Eq "^${local_part//./\\.}(\+[a-z0-9._-]+)?@gmail\.com$" \
       || { echo "refused: not the owner's own mailbox" >&2; exit 2; }
     U="(select id from users where lower(email)=lower('$email'))"
-    sql "select 'user', count(*), coalesce(max(status::text),'-'), coalesce(bool_or(password_hash not like 'nopassword:%'),false), coalesce(bool_or(email_verified_at is not null),false) from users where lower(email)=lower('$email')"
+    sql "select 'user', count(*), coalesce(max(status::text),'-'), coalesce(bool_or(exists(select 1 from user_credentials c where c.user_id=users.id)),false), coalesce(bool_or(email_verified_at is not null),false) from users where lower(email)=lower('$email')"
     sql "select 'google_identities', count(*), coalesce(max(linked_at)::text,'-'), coalesce(max(last_used_at)::text,'-') from user_auth_identities where user_id=$U"
     sql "select 'learner_of', academy_id, status, source from academy_students where user_id=$U order by joined_at"
     sql "select 'member_of', academy_id, role from academy_members where user_id=$U order by academy_id"

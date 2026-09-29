@@ -76,7 +76,6 @@ describe('Announcement fan-out (e2e, real queue)', () => {
       id: randomUUID(),
       email: `fanout-learner-${i}-${randomUUID()}@example.test`,
       name: `Learner ${i}`,
-      passwordHash: 'not-a-real-hash',
     }));
     await admin.user.createMany({ data: learners });
     await admin.academyStudent.createMany({

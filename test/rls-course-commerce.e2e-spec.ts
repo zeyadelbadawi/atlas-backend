@@ -35,7 +35,6 @@ describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_e
     return fixtureUsers().create({
       data: {
         email: uniqueTestEmail(label),
-        passwordHash: 'x',
         name: label,
         isPlatformOwner,
       },

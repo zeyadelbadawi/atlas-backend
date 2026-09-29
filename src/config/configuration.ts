@@ -534,7 +534,12 @@ export default () => {
     signupOrganizationMode: (env.FLAG_SIGNUP_ORGANIZATION_MODE ??
       'off') as SignupOrganizationMode,
     emailDeliverabilityCheckEnabled:
-      env.EMAIL_DELIVERABILITY_CHECK_ENABLED ?? nodeEnv !== 'test',
+      // `process.env` holds the raw string here (the validated boolean is not
+      // written back), so 'false' must be compared, not coalesced — a bare
+      // `??` read 'false' as truthy and the switch could never turn it off.
+      env.EMAIL_DELIVERABILITY_CHECK_ENABLED === undefined
+        ? nodeEnv !== 'test'
+        : (env.EMAIL_DELIVERABILITY_CHECK_ENABLED as unknown as string) === 'true',
     signInRateLimit: {
       max: Number(env.AUTH_SIGNIN_RATE_LIMIT_MAX ?? 10),
       windowSeconds: Number(env.AUTH_SIGNIN_RATE_LIMIT_WINDOW_SECONDS ?? 900),

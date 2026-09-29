@@ -279,7 +279,6 @@ describe('Registration does not enumerate accounts (e2e)', () => {
       data: {
         email: invitedEmail,
         name: 'Invited',
-        passwordHash: 'x',
         status: 'invited',
       },
     });
@@ -288,7 +287,6 @@ describe('Registration does not enumerate accounts (e2e)', () => {
       data: {
         email: googleEmail,
         name: 'Google',
-        passwordHash: 'nopassword:enum05',
         emailVerifiedAt: new Date(),
       },
     });

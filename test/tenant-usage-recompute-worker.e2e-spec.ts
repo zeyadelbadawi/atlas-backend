@@ -41,7 +41,6 @@ describe('tenant-usage-recompute worker (e2e) — real BullMQ/Redis', () => {
     const owner = await admin.user.create({
       data: {
         email: `worker-owner-${Date.now()}@test.local`,
-        passwordHash: 'x',
         name: 'Worker Owner',
       },
     });
@@ -69,7 +68,6 @@ describe('tenant-usage-recompute worker (e2e) — real BullMQ/Redis', () => {
     const owner = await admin.user.create({
       data: {
         email: `worker-redelivery-${Date.now()}@test.local`,
-        passwordHash: 'x',
         name: 'Redelivery Owner',
       },
     });
@@ -113,14 +111,12 @@ describe('tenant-usage-recompute worker (e2e) — real BullMQ/Redis', () => {
     const ownerA = await admin.user.create({
       data: {
         email: `worker-multiA-${Date.now()}@test.local`,
-        passwordHash: 'x',
         name: 'Multi Owner A',
       },
     });
     const ownerB = await admin.user.create({
       data: {
         email: `worker-multiB-${Date.now()}@test.local`,
-        passwordHash: 'x',
         name: 'Multi Owner B',
       },
     });

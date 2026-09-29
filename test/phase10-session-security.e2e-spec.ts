@@ -27,6 +27,7 @@
  * kept working for its full 15-minute lifetime — precisely the hole this
  * phase exists to close. 005 asserts the access token itself is refused.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -88,7 +89,7 @@ describe('Phase 10 session security (e2e) — P10-SEC-001..014', () => {
     return {
       userId: response.body.user.id,
       accessToken: response.body.accessToken,
-      refreshToken: response.body.refreshToken,
+      refreshToken: sessionTokenFrom(response) as string,
     };
   }
 
@@ -296,7 +297,7 @@ describe('Phase 10 session security (e2e) — P10-SEC-001..014', () => {
       .send({ email, password: PASSWORD })
       .expect(200);
     expect(signIn.body.accessToken).toBeTruthy();
-    expect(signIn.body.refreshToken).toBeTruthy();
+    expect(sessionTokenFrom(signIn)).toBeTruthy();
     expect(signIn.body.user.id).toBeTruthy();
 
     await request(app.getHttpServer())

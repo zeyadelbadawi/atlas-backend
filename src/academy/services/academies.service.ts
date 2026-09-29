@@ -18,7 +18,6 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type { AcademyMember, AcademyMemberRole } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -32,7 +31,6 @@ import {
   ORGANIZATION_MANAGER_PERMISSIONS,
 } from '../../tenancy/constants/organization-permissions.constants';
 import { UsersRepository } from '../../identity/repositories/users.repository';
-import { PasswordHasherService } from '../../identity/services/password-hasher.service';
 import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { AcademiesRepository } from '../repositories/academies.repository';
@@ -226,7 +224,6 @@ export class AcademiesService {
     private readonly organizationsRepository: OrganizationsRepository,
     private readonly organizationMembershipsRepository: OrganizationMembershipsRepository,
     private readonly usersRepository: UsersRepository,
-    private readonly passwordHasherService: PasswordHasherService,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly entitlementEnforcementService: EntitlementEnforcementService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
@@ -414,8 +411,7 @@ export class AcademiesService {
 
   /**
    * Launch Stabilization A2 (D2) — an account somebody else creates is
-   * `invited`, with a password hash NOBODY knows (a random secret, hashed
-   * and discarded). Identity is global: a password chosen by the staff
+   * `invited`, with NO password credential at all. Identity is global: a password chosen by the staff
    * member who created the account would let them sign in as that person
    * anywhere, for as long as the person had not set their own. The person
    * sets it through the emailed setup link (`AccountSetupService`), which
@@ -426,13 +422,9 @@ export class AcademiesService {
     name: string,
     tx: Prisma.TransactionClient,
   ): Promise<User> {
-    const passwordHash = await this.passwordHasherService.hash(
-      randomBytes(48).toString('base64url'),
-    );
-    return this.usersRepository.create(
-      { email, passwordHash, name, status: 'invited' },
-      tx,
-    );
+    // No credential at all: an invited account has no password until its
+    // owner sets one through the setup link.
+    return this.usersRepository.create({ email, name, status: 'invited' }, tx);
   }
 
   /** The deprecated staff-chosen `password` field is accepted for compatibility and never used. */

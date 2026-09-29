@@ -342,3 +342,56 @@ groups:
           description: "{{ $value }} request(s) in 15m were refused because the session was minted for another surface or academy. Search the logs for event=auth.surface.denied to see the user, session and route."
           threshold: "any refusal in 15m"
           current_value: '{{ $value | humanize }}'
+      # Production-readiness pass — authentication abuse, from the ONE
+      # central refusal counter (the global exception filter records every
+      # errors.auth.* refusal by key) and the session-revocation counter.
+      - alert: AtlasAuthBruteForce
+        expr: |
+          sum(increase(atlas_auth_refusals_total{key=~"invalidCredentials|rateLimited"}[10m])) > 50
+        for: 0m
+        labels: { severity: warning, team: atlas, service: auth }
+        annotations:
+          summary: "Password sign-in refusals are surging (possible brute force / credential stuffing)"
+          description: "{{ $value }} sign-ins in 10m were refused as invalid credentials or rate-limited. Per-IP and per-account limits are holding; check the Request failed warn logs for the source IPs and whether one account or many are targeted."
+          threshold: "> 50 in 10m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasAuthRefreshTokenReuse
+        expr: |
+          sum(increase(atlas_auth_sessions_revoked_total{trigger="refresh_token_reuse"}[30m])) > 0
+        for: 0m
+        labels: { severity: warning, team: atlas, service: auth }
+        annotations:
+          summary: "A rotated refresh token was replayed and its session ended (possible session theft)"
+          description: "{{ $value }} session famil(ies) in 30m were ended because a refresh token that had already been rotated was presented again after the multi-tab grace. Search the logs for event=auth.refresh.reuse_detected for the user; the audit log carries auth.sessions.revoked with trigger refresh_token_reuse."
+          threshold: "any in 30m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasAuthCrossOriginSession
+        expr: |
+          sum(increase(atlas_auth_refusals_total{key="crossOriginSession"}[15m])) > 10
+        for: 0m
+        labels: { severity: warning, team: atlas, service: auth }
+        annotations:
+          summary: "Session-cookie requests are arriving from foreign origins (possible CSRF attempts)"
+          description: "{{ $value }} refresh/sign-out requests in 15m carried the session cookie but an Origin other than the host's own; all were refused. A few can be a stale tab after a host move; a surge is someone framing or scripting against Atlas hosts."
+          threshold: "> 10 in 15m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasAuthSecondFactorGuessing
+        expr: |
+          sum(increase(atlas_auth_refusals_total{key=~"invalidTwoFactorCode|otpInvalid|otpAttemptsExceeded"}[15m])) > 25
+        for: 0m
+        labels: { severity: warning, team: atlas, service: auth }
+        annotations:
+          summary: "Many wrong second-factor codes (TOTP / emailed code)"
+          description: "{{ $value }} TOTP or emailed-code attempts in 15m were wrong. Each challenge locks after its attempt limit; a surge means someone holds passwords and is guessing the second factor."
+          threshold: "> 25 in 15m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasAuthResetLinkAbuse
+        expr: |
+          sum(increase(atlas_auth_refusals_total{key=~"invalidResetToken|invalidVerificationToken"}[30m])) > 20
+        for: 0m
+        labels: { severity: warning, team: atlas, service: auth }
+        annotations:
+          summary: "Many invalid password-reset / verification links"
+          description: "{{ $value }} reset or verification tokens in 30m were unknown, spent or expired. Real users hit this occasionally (an old email); a surge is token guessing or link replay."
+          threshold: "> 20 in 30m"
+          current_value: '{{ $value | humanize }}'

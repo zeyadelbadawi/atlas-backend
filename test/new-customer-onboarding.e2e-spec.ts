@@ -410,7 +410,6 @@ describe('New Customer Onboarding (e2e)', () => {
           await admin.user.create({
             data: {
               email: uniqueTestEmail('onb-acad-owner'),
-              passwordHash: 'x',
               name: 'o',
             },
           })

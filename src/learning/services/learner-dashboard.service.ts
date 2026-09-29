@@ -43,9 +43,7 @@ const DEADLINE_HORIZON_DAYS = 30;
 
 @Injectable()
 export class LearnerDashboardService {
-  constructor(
-    private readonly tenancyContextService: TenancyContextService,
-  ) {}
+  constructor(private readonly tenancyContextService: TenancyContextService) {}
 
   async getOverview(userId: string, academyId: string): Promise<LearnerOverviewResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {

@@ -13,6 +13,7 @@
  * follow-up step classification (nothing is ever created or linked by an
  * email match), and the `auth_method` of sessions.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { PrismaClient } from '@prisma/client';
@@ -593,7 +594,7 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
       const consumerInvited = uniqueTestEmail('done-invited-consumer');
       for (const email of [gmailInvited, workspaceInvited, consumerInvited]) {
         await admin.user.create({
-          data: { email, name: 'Invited', passwordHash: 'x', status: 'invited' },
+          data: { email, name: 'Invited', status: 'invited' },
         });
       }
       const gmail = await throughGoogle(PLATFORM, { sub: newSub(), email: gmailInvited });
@@ -646,7 +647,7 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
       const refreshed = await http()
         .post('/auth/refresh')
         .set('Host', PLATFORM)
-        .send({ refreshToken: res.body.refreshToken })
+        .send({ refreshToken: sessionTokenFrom(res) })
         .expect(200);
       expect(refreshed.body.accessToken).toEqual(expect.any(String));
       expect((await latestSessionMethod(staff.userId)).authMethod).toBe('google');
@@ -988,7 +989,7 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
 
       const user = await admin.user.findUniqueOrThrow({ where: { email } });
       expect(user.emailVerifiedAt).not.toBeNull();
-      expect(user.passwordHash.startsWith('nopassword:')).toBe(true);
+      expect(await admin.userCredential.count({ where: { userId: user.id } })).toBe(0);
       expect(user.name).toBe('Nour G');
       expect(
         await admin.userAuthIdentity.count({
@@ -1161,7 +1162,7 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
     it('GID-INV-01 — Google activates an invited Gmail account: active, verified, no password, setup links spent', async () => {
       const email = `gid-inv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@gmail.com`;
       const invited = await admin.user.create({
-        data: { email, name: 'Invited', passwordHash: 'x', status: 'invited' },
+        data: { email, name: 'Invited', status: 'invited' },
       });
       await admin.passwordResetToken.create({
         data: {
@@ -1179,7 +1180,7 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
       const user = await admin.user.findUniqueOrThrow({ where: { id: invited.id } });
       expect(user.status).toBe('active');
       expect(user.emailVerifiedAt).not.toBeNull();
-      expect(user.passwordHash.startsWith('nopassword:')).toBe(true);
+      expect(await admin.userCredential.count({ where: { userId: user.id } })).toBe(0);
       expect(
         await admin.passwordResetToken.count({
           where: { userId: invited.id, usedAt: null },
@@ -1193,7 +1194,7 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
     it('GID-INV-02 — the setup page: the setup token proves the mailbox, any verified Google account becomes the sign-in', async () => {
       const email = uniqueTestEmail('inv-setup');
       const invited = await admin.user.create({
-        data: { email, name: 'Setup', passwordHash: 'x', status: 'invited' },
+        data: { email, name: 'Setup', status: 'invited' },
       });
       const raw = `setup-${invited.id}`;
       await admin.passwordResetToken.create({

@@ -2,6 +2,7 @@
  * `POST /auth/sign-out` e2e — this file's checklist item E: sign-out
  * revokes the current session only, another device's session survives.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
@@ -44,27 +45,23 @@ describe('POST /auth/sign-out (e2e)', () => {
     // Device A's refresh token is now dead.
     await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken: deviceA.body.refreshToken })
+      .send({ refreshToken: sessionTokenFrom(deviceA) })
       .expect(401);
 
     // Device B's session is completely unaffected.
     await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken: deviceB.body.refreshToken })
+      .send({ refreshToken: sessionTokenFrom(deviceB) })
       .expect(200);
   });
 
-  it('signing out twice is safe: the second attempt is refused, never a partial state', async () => {
-    // REWRITTEN FOR PHASE 10. This previously asserted a second sign-out
-    // returns 200. That was true before `JwtAuthGuard` started checking
-    // the session-revocation denylist; now the first sign-out genuinely
-    // kills the session, so presenting the same access token again is an
-    // authentication failure — which is the WHOLE POINT of revocation and
-    // must not be relaxed back to 200 to make a test green.
-    //
-    // The property that actually matters is preserved and still asserted:
-    // a repeated sign-out never errors in a way that leaves the session
-    // half-revoked. It is refused cleanly, and the session stays dead.
+  it('signing out twice is safe: the second is a no-op, the session stays dead', async () => {
+    // Production-readiness pass — sign-out is idempotent. It identifies the
+    // session by a VALID access token or by the HttpOnly session cookie; a
+    // revoked access token is neither, so the second call authenticates
+    // nothing and ends nothing — it only clears this browser's cookie. The
+    // property that matters is unchanged and asserted below: the session the
+    // first call ended stays dead everywhere.
     const email = uniqueTestEmail('signout-twice');
     const password = 'correct-horse-battery';
     await request(app.getHttpServer())
@@ -81,11 +78,15 @@ describe('POST /auth/sign-out (e2e)', () => {
       .set('Authorization', `Bearer ${signIn.body.accessToken}`)
       .expect(200);
 
-    // The session is genuinely gone, so the same token no longer
-    // authenticates anything — sign-out included.
+    // Signing out again is a harmless no-op.
     await request(app.getHttpServer())
       .post('/auth/sign-out')
       .set('Authorization', `Bearer ${signIn.body.accessToken}`)
+      .expect(200);
+    // Its refresh token is dead too.
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: sessionTokenFrom(signIn) })
       .expect(401);
 
     // And it stays dead: no partial revocation, no route that still
@@ -96,7 +97,9 @@ describe('POST /auth/sign-out (e2e)', () => {
       .expect(401);
   });
 
-  it('rejects sign-out without an access token', async () => {
-    await request(app.getHttpServer()).post('/auth/sign-out').expect(401);
+  it('sign-out without any session is a no-op that only clears the cookie', async () => {
+    const res = await request(app.getHttpServer()).post('/auth/sign-out').expect(200);
+    const cleared = ([] as string[]).concat(res.headers['set-cookie'] ?? []);
+    expect(cleared.some((c) => /^atlas_session=;/.test(c))).toBe(true);
   });
 });

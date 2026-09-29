@@ -377,7 +377,9 @@ describe('Smart member invitation + academy join (e2e)', () => {
       const { owner, academy: a } = await freshAcademy('add-existing');
       const { academy: other } = await freshAcademy('add-existing-other');
       const person = await learnerAt(other, 'add-existing-person', 'Real Name');
-      const before = await admin.user.findUniqueOrThrow({ where: { id: person.userId } });
+      const before = await admin.userCredential.findUniqueOrThrow({
+        where: { userId: person.userId },
+      });
       const orgsBefore = await admin.organizationMembership.count({
         where: { userId: person.userId },
       });
@@ -391,7 +393,10 @@ describe('Smart member invitation + academy join (e2e)', () => {
 
       const after = await admin.user.findUniqueOrThrow({ where: { id: person.userId } });
       expect(after.name).toBe('Real Name');
-      expect(after.passwordHash).toBe(before.passwordHash);
+      const credentialAfter = await admin.userCredential.findUniqueOrThrow({
+        where: { userId: person.userId },
+      });
+      expect(credentialAfter.passwordHash).toBe(before.passwordHash);
       expect(after.status).toBe('active');
       expect(
         await admin.organizationMembership.count({ where: { userId: person.userId } }),

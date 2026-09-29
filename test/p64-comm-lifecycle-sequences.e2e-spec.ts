@@ -127,7 +127,6 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
     await admin.user.create({
       data: {
         email: uniqueTestEmail('lifecycle-platform-owner'),
-        passwordHash: 'x',
         name: 'lifecycle platform owner',
         isPlatformOwner: true,
       },
@@ -188,7 +187,6 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
     const user = await admin.user.create({
       data: {
         email,
-        passwordHash: 'x',
         name: `${label} owner`,
         ...(owner.preferences ? { preferences: owner.preferences as never } : {}),
       },

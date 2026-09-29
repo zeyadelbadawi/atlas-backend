@@ -1,6 +1,7 @@
 /**
  * Guard/401 behavior + no-secret-logging — this file's checklist item K.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -104,7 +105,7 @@ describe('Auth guard / security (e2e)', () => {
         .send({ email, password })
         .expect(200);
       accessToken = signIn.body.accessToken;
-      refreshToken = signIn.body.refreshToken;
+      refreshToken = sessionTokenFrom(signIn) as string;
 
       await request(app.getHttpServer())
         .post('/auth/password-reset/request')

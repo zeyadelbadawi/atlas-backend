@@ -255,7 +255,9 @@ async function main() {
   if (want('security')) {
     const f = facts('security');
     printFacts('security', Object.entries(f).map(([k, v]) => `${k}|${v}`).join('\n'));
-    check('all 7 identity tables have ENABLE + FORCE row-level security', f.identity_tables_force_rls === '7', f.identity_tables_force_rls);
+    check('all 8 identity tables (credentials included) have ENABLE + FORCE row-level security', f.identity_tables_force_rls === '8', f.identity_tables_force_rls);
+    check('no password credential on the users directory row', ['0', 'column_dropped'].includes(f.directory_rows_with_credential), f.directory_rows_with_credential);
+    info(`accounts with a password credential: ${f.accounts_with_password}`);
     check('no permissive USING/WITH CHECK (true) policy on an identity table', f.identity_permissive_true_policies === '0', f.identity_permissive_true_policies);
     check('7 SECURITY DEFINER resolvers, atlas_app-only (not PUBLIC)', f.resolver_functions === '7', f.resolver_functions);
     check('atlas_app is neither SUPERUSER nor BYPASSRLS', f.app_role_bypass === '0');
@@ -264,14 +266,20 @@ async function main() {
     check('both audit migrations applied', f.audit_migrations_applied === '2', f.audit_migrations_applied);
     info(`sessions minted since the RLS migration: ${f.sessions_since_release}`);
 
-    // CSP (Decision 4) — Report-Only on every document, and the report endpoint.
+    // CSP — ENFORCED on every document (production-readiness pass), with reporting kept on.
     const docHosts = [PLATFORM, academyHost].filter(Boolean);
     for (const host of docHosts) {
       const res = await fetch(`${SCHEME}://${host}${PORT}/auth/sign-in`, { redirect: 'manual' }).catch(() => null);
-      const csp = res?.headers.get('content-security-policy-report-only') ?? '';
-      check(`${host} documents carry Content-Security-Policy-Report-Only`, res?.status === 200 && csp.includes("script-src 'self'") && csp.includes('report-uri /api/v1/security/csp-reports'), `${res?.status ?? 'no response'}`);
-      check(`${host} documents carry Reporting-Endpoints`, (res?.headers.get('reporting-endpoints') ?? '').includes('/api/v1/security/csp-reports'));
-      check(`${host} does not ENFORCE a CSP on documents yet (staged rollout)`, !res?.headers.get('content-security-policy'));
+      const csp = res?.headers.get('content-security-policy') ?? '';
+      check(`${host} documents ENFORCE Content-Security-Policy (script-src 'self', no unsafe-inline/eval for scripts)`,
+        res?.status === 200 && /script-src 'self';/.test(csp) && !/script-src[^;]*unsafe-(inline|eval)/.test(csp) && csp.includes("object-src 'none'") && csp.includes("frame-ancestors 'self'"),
+        `${res?.status ?? 'no response'}`);
+      check(`${host} CSP still reports violations`, csp.includes('report-uri /api/v1/security/csp-reports') && (res?.headers.get('reporting-endpoints') ?? '').includes('/api/v1/security/csp-reports'));
+      // Every script the served document loads is same-origin (nothing injected at the edge).
+      const html = res?.status === 200 ? await res.text() : '';
+      const scripts = [...html.matchAll(/<script\b([^>]*)>/gi)].map((m) => m[1]);
+      const foreign = scripts.filter((a) => /src=["']?(https?:)?\/\//i.test(a) || (!/src=/i.test(a) && !/type=["']?application\/(ld\+)?json/i.test(a)));
+      check(`${host} document loads only same-origin scripts (no inline, no third-party)`, html.length > 0 && foreign.length === 0, `${scripts.length} script tag(s), ${foreign.length} foreign/inline`);
     }
     const report = await fetch(`${SCHEME}://${PLATFORM}${PORT}/api/v1/security/csp-reports`, {
       method: 'POST',
@@ -279,6 +287,12 @@ async function main() {
       body: JSON.stringify({ 'csp-report': { 'document-uri': `https://${PLATFORM}/google-verify-probe`, 'effective-directive': 'img-src', 'blocked-uri': 'https://verify-probe.invalid/x.png', disposition: 'report' } }),
     }).catch(() => null);
     check('CSP report endpoint accepts a report (204)', report?.status === 204, `${report?.status ?? 'no response'}`);
+  }
+  if (CHECKS.includes('csp')) {
+    // Production evidence for CSP enforcement: every report the browsers sent,
+    // already normalised by the backend (no query, no path here).
+    const text = remote('csp', process.env.LOG_HOURS || '24');
+    for (const [k, ...v] of lines(text)) info(`csp ${k}: ${v.join(' | ')}`);
   }
   if (CHECKS.includes('recent')) {
     printFacts('recent', remote('recent'));

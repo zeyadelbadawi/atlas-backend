@@ -21,6 +21,7 @@
  * deleted and the memberships survived. P106-DEL-004 exists specifically
  * so that cannot regress unnoticed.
  */
+import { sessionTokenFrom } from './utils/session-cookie';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
@@ -165,9 +166,9 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     expect(user.name).toBe('Deleted account');
     expect(user.avatarUrl).toBeNull();
     expect(user.emailVerifiedAt).toBeNull();
-    // No password can produce this, so authentication is impossible even
-    // if a future code path forgot the status check.
-    expect(user.passwordHash.startsWith('deleted:')).toBe(true);
+    // The credential is gone, so no password can authenticate this account
+    // even if a future code path forgot the status check.
+    expect(await admin.userCredential.count({ where: { userId: user.id } })).toBe(0);
   });
 
   it('P106-DEL-004 — deletion actually removes memberships (the silent-RLS regression guard)', async () => {
@@ -212,7 +213,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
       .expect(401);
     await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken: second.body.refreshToken })
+      .send({ refreshToken: sessionTokenFrom(second) })
       .expect(401);
     await request(app.getHttpServer())
       .post('/auth/sign-in')

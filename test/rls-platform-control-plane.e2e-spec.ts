@@ -38,7 +38,6 @@ describe('Row-Level Security — Platform Owner Control Plane (direct, no guards
     return fixtureUsers().create({
       data: {
         email: uniqueTestEmail(label),
-        passwordHash: 'x',
         name: label,
         isPlatformOwner,
       },

@@ -1,29 +1,29 @@
-# Content-Security-Policy and browser token storage
+# Content-Security-Policy and browser session storage
 
-Authentication audit, **Decision 4**. Two linked concerns:
+Authentication audit **Decision 4**, completed in the production-readiness
+pass (29 Sep 2026). Both parts are **done**:
 
-1. **CSP**: stage a Content-Security-Policy as `Report-Only`, fix what it
-   reports, and enforce it only on evidence.
-2. **Token storage**: move the session out of `localStorage`. This is a
-   scoped follow-up, not part of this release.
+1. **CSP is enforced** on every document Atlas serves (platform, academy
+   subdomains, custom domains), with violation reporting kept on.
+2. **No credential lives in Web Storage.** The refresh token is an HttpOnly
+   `__Host-` cookie; the access token lives only in page memory.
 
-CSP comes first because it is the control that makes the current storage
-defensible. A token in `localStorage` is only as safe as the guarantee that no
-foreign script ever runs on the origin.
+Together they close the token-theft path the audit identified: an injected
+script can no longer run (`script-src 'self'`), and even if one did, there is
+no refresh token for it to read.
 
 ---
 
 ## 1. Content-Security-Policy
 
-### 1.1 What ships in this release
+### 1.1 The policy (enforced)
 
-The frontend `Caddyfile` has a `(csp_report_only)` snippet, imported on both
-site blocks (the platform domain with its subdomains, and connected custom
-domains). It sends two headers on every document and asset Caddy serves:
+The frontend `Caddyfile` has a `(csp)` snippet, imported on both site blocks
+(the platform domain with its subdomains, and connected custom domains):
 
 ```
 Reporting-Endpoints: csp-endpoint="/api/v1/security/csp-reports"
-Content-Security-Policy-Report-Only:
+Content-Security-Policy:
   default-src 'self';
   script-src 'self';
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
@@ -31,7 +31,7 @@ Content-Security-Policy-Report-Only:
   img-src 'self' data: blob: https:;
   media-src 'self' blob: https:;
   connect-src 'self' https:;
-  frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com;
+  frame-src 'self' blob: https://www.youtube-nocookie.com https://www.youtube.com;
   worker-src 'self' blob:;
   manifest-src 'self';
   object-src 'none';
@@ -42,9 +42,12 @@ Content-Security-Policy-Report-Only:
   report-to csp-endpoint
 ```
 
-`/api/*` responses keep helmet's own (enforcing) API policy. The two layers
-stay separate, for the same reason the other security headers do (see the
-Caddyfile header comment).
+The only change from the Report-Only policy is `blob:` in `frame-src`. The
+certificate template editor previews the server-rendered PDF in an iframe
+through an object URL. The Report-Only policy flagged it, and enforcement
+would have blocked it (reproduced in Chromium, then fixed).
+
+`/api/*` responses keep helmet's own (enforcing) API policy.
 
 The backend receives reports at `POST /api/v1/security/csp-reports`
 (`src/security-reports/`):
@@ -57,16 +60,16 @@ The backend receives reports at `POST /api/v1/security/csp-reports`
   - blocked resources are reduced to a kind (`inline`, `eval`, `data`, `blob`,
     `self`, `external`) plus an origin;
   - the page is reduced to host and path;
-  - no query string, fragment or free text survives, because report URLs can
-    carry reset tokens or signed media URLs.
-- **Logged and counted:** each violation is logged at warn level and counted in
-  `atlas_csp_violations_total{directive, blocked, disposition}`. The labels are
-  closed vocabularies, so a hostile reporter cannot grow the series.
+  - no query string, fragment or free text survives.
+- **Logged and counted:** `atlas_csp_violations_total{directive, blocked,
+  disposition}`, where `disposition` is now `enforce`.
 - **Always answers 204.**
 
-Tests:
-- `src/security-reports/csp-report.util.spec.ts` (parser, redaction, bounds);
-- `test/csp-reports.e2e-spec.ts` (CSP-01..04).
+Production evidence tooling: `Google verify` with `checks=csp` prints a
+normalised histogram of every report in the log window (page host only) plus
+the metric. `checks=security` asserts that every document ENFORCES the policy,
+still reports, and loads only same-origin scripts, so nothing is injected at
+the edge.
 
 ### 1.2 How the policy was derived
 
@@ -98,40 +101,43 @@ From the code:
   host set; the enforcement step below covers that.
 - **Workers:** hls.js may use a `blob:` worker.
 
-### 1.3 Browser compatibility assessment
+### 1.3 Why enforcement is safe (evidence)
 
-See section 1.5. Summary: **zero violations on 25 page loads**, covering:
-- platform public pages, auth pages, signed-in dashboard pages and an academy
-  site;
-- EN and AR (RTL);
-- desktop and mobile widths.
+- **Bundle:** the built SPA has no inline `<script>`, no `eval` or
+  `new Function`, and no third-party script host. The only `<script>` in
+  `index.html` is the hashed same-origin module.
+- **No native form posts and no plugins.** Google and Zoom sign-in use an XHR
+  followed by a top-level navigation, which CSP does not govern.
+- **Dynamic sources, probed under the exact enforced policy in Chromium, all
+  with 0 violations:**
+  - certificate PDF preview (`blob:` frame; Chromium's PDF viewer is unaffected
+    by `object-src 'none'`);
+  - the website builder's `srcdoc` preview with injected styles;
+  - hls.js's `blob:` worker;
+  - a YouTube embed;
+  - a direct-to-storage `PUT`.
+- **Page sweep under the enforced policy, 24/24 pages, 0 violations:**
+  - platform public pages;
+  - Platform Owner dashboard pages (signed in through the cookie session);
+  - an academy on a connected custom domain;
+  - EN and AR (RTL), desktop and mobile.
+- **Production:** zero reports from real traffic while Report-Only ran (the
+  window covers the current backend container's logs).
 
-A positive control proves the detector works. Real-browser report delivery
-was confirmed end to end for both reporting mechanisms.
+### 1.4 Operating it
 
-### 1.4 Enforcement plan (evidence-gated)
+- **A new report is a real, blocked request.** Watch
+  `atlas_csp_violations_total{disposition="enforce"}` and the warn log. Fix the
+  page, or widen the policy precisely; never re-add `unsafe-inline` or
+  `unsafe-eval` to `script-src`.
+- **Tightening, next iteration:** `img-src`, `media-src` and `connect-src`
+  still allow `https:`. Academy media hosts are configuration, so replacing
+  `https:` with the observed storage/CDN hosts is safe only once the
+  histogram shows the full host set.
+- **Browser extensions** (`chrome-extension:` and similar) are noise and are
+  never reported as `external`.
 
-1. **Observe, at least 14 days in production, Report-Only:**
-   - watch `atlas_csp_violations_total` and the warn logs;
-   - classify every `(directive, blocked)` pair as either *legitimate* (fix the
-     page or widen the policy precisely) or *noise* (browser extensions:
-     `chrome-extension:` and `moz-extension:` sources, which never reach this
-     endpoint as `external`).
-2. **Tighten from the evidence:** replace `https:` in `img-src`, `media-src`
-   and `connect-src` with the storage/CDN hosts actually observed.
-3. **Enforce:** rename the header to `Content-Security-Policy`, keeping
-   `report-uri` and `report-to`. Keep a `Report-Only` copy of the next, tighter
-   policy running alongside for the following iteration.
-4. **Exit criteria for step 3:**
-   - 7 consecutive days with zero `script-src*` or `frame-src` reports of kind
-     `external`, `inline` or `eval` from real pages;
-   - every remaining report class understood and documented.
-
-`script-src 'self'` with no `unsafe-inline` or `unsafe-eval` is the part that
-matters for token theft. It can be enforced before the media directives are
-tightened.
-
-### 1.5 Assessment evidence
+### 1.5 Report-Only assessment evidence (28 Sep 2026)
 
 **Setup** (28 Sep 2026):
 - the production frontend build (`pnpm build`), served by **Caddy 2.10.2**
@@ -190,102 +196,105 @@ These are exactly the directives kept broad (`frame-src`, `worker-src`, and
 
 ---
 
-## 2. Token storage: follow-up (not in this release)
+## 2. Session storage: HttpOnly cookie (implemented)
 
-### 2.1 Today
+### 2.1 The model
 
-`src/services/identity/token.service.ts` (frontend) keeps
-`{accessToken, refreshToken, expiresAt}` in `localStorage`. The access token
-goes in an `Authorization: Bearer` header. `/auth/refresh` takes the refresh
-token in its JSON body. The only cookie in use is the httpOnly trusted-device
-marker set by `email-otp.controller`.
+- **Refresh token** (30 days, rotating): only in
+  `__Host-atlas_session=<opaque>; HttpOnly; Secure; SameSite=Strict; Path=/`.
+  - It has no `Domain`, so it is bound to the exact host. Every Atlas host
+    (the platform, each academy subdomain, each custom domain) serves the SPA
+    and `/api` from one origin behind Caddy, so each host holds its own
+    session, matching the per-surface and per-academy binding the refresh rows
+    already carry.
+  - Plain HTTP (local dev, e2e) uses `atlas_session` without `Secure`.
+  - `__Host-` requires `Path=/`.
+- **Access token** (15 minutes): returned in the JSON body and kept in the
+  page's memory only (`token.service.ts`). A reload re-obtains it with one
+  cookie refresh.
+- **`localStorage`** holds only a non-secret `atlas:session = '1'` hint, so
+  anonymous page loads don't call `/auth/refresh` for nothing.
 
-### 2.2 Risk
+### 2.2 One place the token leaves the server
 
-Any script that runs on the origin can read both tokens and replay them from
-anywhere:
-- an XSS;
-- a compromised dependency;
-- an injected third-party script.
+`SessionCookieInterceptor` is a global `APP_INTERCEPTOR`. Every endpoint that
+mints or rotates a session builds its response through
+`AuthService.issueSession`/`refresh`. The interceptor takes `refreshToken` off
+any response body and sets the cookie instead:
+- for every route, including future ones;
+- with no "keep it in the body" mode. A client-selectable switch would let an
+  injected script call `/auth/refresh` and read the next token.
 
-The refresh token is the serious part. It lives for 30 days and, until reuse
-detection trips, keeps minting sessions. The audit added:
-- refresh-token reuse detection (the family is revoked when a rotated token is
-  replayed after the 60-second grace);
-- surface binding;
-- the sid denylist.
+### 2.3 CSRF
 
-These bound the damage but do not stop the theft. Not an exposure today:
-- CSRF: nothing authenticates by cookie;
-- clickjacking: `X-Frame-Options` and `frame-ancestors`.
+Only `POST /auth/refresh` and `POST /auth/sign-out` read the cookie. Both
+require `assertSameOriginCookieRequest`: the `Origin` header's scheme and
+hostname must equal the request's own (`request.protocol`,
+`request.hostname`). Those are the trusted-proxy-aware values that every
+tenancy decision uses.
 
-### 2.3 Target
+- `SameSite=Strict` stops cross-site requests.
+- The Origin check also stops cross-origin requests within the site: another
+  academy's subdomain addressing this host. `SameSite` alone would allow those,
+  and CORS (credentials allowed for platform subdomains) would let such a page
+  read the response.
+- A missing, opaque (`null`) or malformed Origin is refused.
+- Every other route authenticates with the `Authorization: Bearer` access
+  token, which a browser never attaches on its own.
 
-A backend-for-frontend (BFF) cookie model on the same origin. It is achievable
-because Caddy already serves the SPA and `/api/*` from one origin on every
-host, custom domains included.
+### 2.4 Multi-tab and legacy sessions
 
-- **Refresh token:**
-  - `__Host-atlas_rt` cookie, `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth`;
-  - rotated exactly as today;
-  - never visible to JavaScript.
-- **Access token:** held in memory only, in the http-client module. It is
-  re-obtained on page load with a single cookie-authenticated
-  `POST /auth/refresh`.
-- **CSRF, for the cookie-authenticated routes** (`/auth/refresh`,
-  `/auth/sign-out`) only:
-  - `SameSite=Strict`;
-  - a required custom header (`X-Atlas-CSRF: 1`, which forces a preflight
-    cross-origin);
-  - an `Origin` allowlist check (reuse `isPlatformOrigin`).
-- **Per-host isolation:** a `__Host-` cookie is host-bound, so each academy
-  subdomain and custom domain keeps its own session. This matches today's
-  per-surface session binding.
+- **Multi-tab:** each tab holds its own access token. Refreshes are
+  single-flight within a tab and serialised across tabs with the Web Locks API
+  (`atlas:session-refresh`), with one retry where Locks are unavailable. The
+  server's 60-second reuse grace tolerates any remaining race. Verified in a
+  real browser: two tabs loading concurrently both stay signed in.
+- **Legacy sessions:** a build that predates this change left
+  `{accessToken, refreshToken}` in `localStorage` under `atlas:auth-tokens`.
+  The first load of the new build reads that refresh token once, deletes it,
+  and presents it in the body of `/auth/refresh`; the response sets the
+  cookie. Verified in a real browser.
+  - Body refresh exists only for that conversion. Tokens minted since the
+    change never appear in a body, so every body-carried token is pre-cookie
+    and expires within one refresh lifetime (30 days).
+  - After that the body path can be deleted outright. This is tracked in the
+    audit report as a clean-up, not a risk: a body token is not ambient, so it
+    is not CSRF-able.
 
-### 2.4 Approach (phased, backwards compatible)
+### 2.5 Deploy order
 
-1. **Backend dual-mode.** `/auth/refresh` and `/auth/sign-out` accept the
-   refresh token from the cookie or the body (cookie wins). Every endpoint that
-   issues a session also sets the cookie. That covers:
-   - sign-in and its OTP, 2FA and Google completions;
-   - registration auto-sign-in;
-   - refresh.
+Backend first, then frontend. A tab still running the old frontend after the
+backend switch receives no refresh token in bodies, so it signs out when its
+access token lapses (at most 15 minutes). There is no data loss and no
+security impact; sign-in works immediately.
 
-   Nothing changes for existing clients.
-2. **Frontend.**
-   - stop persisting `refreshToken`;
-   - keep the access token in memory;
-   - bootstrap with a cookie refresh;
-   - send `X-Atlas-CSRF`;
-   - on the first load after the upgrade, migrate once: use the stored refresh
-     token, then delete it.
-3. **Backend cutover.** Once the old frontend build is out of circulation
-   (after one refresh-token lifetime, 30 days), reject body-supplied refresh
-   tokens for browser surfaces.
-4. **Clean-up.** Remove `authTokens` from `STORAGE_KEYS` and add a test that
-   fails if any token is written to Web Storage.
+### 2.6 Verification
 
-### 2.5 Compatibility notes
-
-- **Multi-tab:** the in-memory access token is per tab. Each tab refreshes
-  independently, and rotation already tolerates concurrent refreshes through
-  the 60-second reuse grace. A `BroadcastChannel` can share the access token
-  later.
-- **Sign-out everywhere:** unchanged (server-side family revocation plus the
-  sid denylist).
-- **Mobile or non-browser clients** (none today) keep the body mode behind an
-  explicit client type.
-- **Local development over plain HTTP:** `__Host-` requires `Secure`. Use
-  `atlas_rt` without the prefix when `NODE_ENV !== 'production'`, as the
-  trusted-device cookie already does.
-
-### 2.6 Rollout and verification
-
-- Behind a flag (`FLAG_AUTH_COOKIE_SESSION`), per environment.
-- Verification:
-  - Playwright proves no token appears in `localStorage`, `sessionStorage` or
-    IndexedDB after sign-in, OTP, 2FA and Google;
-  - a cross-origin `POST /auth/refresh` without the header is refused;
-  - refresh-reuse and surface-binding e2e suites pass in cookie mode.
-- **Rollback:** the flag off returns to body mode. The dual-mode backend makes
-  that safe at any point before step 3.
+- **Backend e2e** (`test/session-cookie.e2e-spec.ts`, SC-01..06):
+  - no token in any body; cookie attributes;
+  - rotation;
+  - foreign-origin, sibling-subdomain and Origin-less refusal;
+  - sign-out by cookie alone;
+  - a failed refresh clears the cookie;
+  - legacy conversion.
+- **Backend unit** (`session-cookie.spec.ts`): the Origin gate against sibling
+  academies, look-alike suffixes, scheme downgrade and malformed origins.
+- **Frontend unit:**
+  - `token-storage.test.ts`: nothing but the hint in Web Storage; legacy
+    conversion is one-shot;
+  - `session-refresh-singleflight.test.ts`: single-flight, no token from
+    script, cross-tab lock.
+- **Real browser** (Chromium, over HTTPS with Caddy), 20/20:
+  - `__Host-` cookie attributes; no JWT in any storage; `document.cookie`
+    cannot see it;
+  - reload keeps the session and rotates it;
+  - two concurrent tabs;
+  - foreign-origin refusal;
+  - sign-out;
+  - legacy conversion;
+  - mobile AR (RTL) restore.
+- **Production** (`Launch verify`):
+  - sign-in body has no refresh token; cookie attributes;
+  - cross-origin and Origin-less refresh refused;
+  - same-origin rotation;
+  - replay refused and cleared.

@@ -27,7 +27,9 @@ describe('sensitive query redaction', () => {
     expect(redactUrlQuery('/api/v1/webhooks/email/brevo?secret=s3cr3t-value')).toBe(
       '/api/v1/webhooks/email/brevo?secret=[REDACTED]',
     );
-    expect(redactQueryObject({ secret: 's3cr3t-value' })).toEqual({ secret: '[REDACTED]' });
+    expect(redactQueryObject({ secret: 's3cr3t-value' })).toEqual({
+      secret: '[REDACTED]',
+    });
     expect(redactUrlQuery('/x?api_key=a&key=k&sig=s&signature=g&password=p')).toBe(
       '/x?api_key=[REDACTED]&key=[REDACTED]&sig=[REDACTED]&signature=[REDACTED]&password=[REDACTED]',
     );

@@ -30,7 +30,7 @@ import {
   type UserSessionResponse,
 } from '../dto/user-session.contract';
 import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
-import { PasswordHasherService } from './password-hasher.service';
+import { PasswordCredentialsService } from './password-credentials.service';
 import { AuthRateLimiterService } from './auth-rate-limiter.service';
 import { AccessTokenService } from './access-token.service';
 import { SIGNUP_ORGANIZATION_PORT } from './signup-organization.port';
@@ -77,25 +77,7 @@ import { AcademyStaffRecipientsService } from '../../communications/services/aca
 import { TrustedDeviceService } from './trusted-device.service';
 import type { EmailOtpChallengeContract } from '../dto/contracts';
 import type { SignInSurface } from '../dto/sign-in.dto';
-
-/** A value nobody can ever sign in with — see `getDummyHash()`. */
-const DUMMY_PASSWORD = 'atlas-p1-dummy-password-for-timing-safety-only';
-
-/**
- * Google Identity — the `password_hash` of an account that has no password
- * (created through an external identity). Not an argon2 hash, so no input
- * ever verifies against it (`PasswordHasherService.verify` answers false for
- * a foreign format, exactly as for the `deleted:` sentinel).
- */
-export const NO_PASSWORD_PREFIX = 'nopassword:';
-
-/** Whether the account has a password its owner can actually use. */
-export function hasUsablePassword(user: Pick<User, 'passwordHash'>): boolean {
-  return (
-    !user.passwordHash.startsWith(NO_PASSWORD_PREFIX) &&
-    !user.passwordHash.startsWith('deleted:')
-  );
-}
+import { recordSessionsRevoked } from '../../observability/metrics/auth-security-metrics';
 
 /**
  * Real request metadata for the session being created or refreshed —
@@ -203,27 +185,11 @@ export interface SessionSurfaceSelection {
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
-  /**
-   * Lazily computed, cached Argon2id hash of a value nobody can sign in
-   * with. Verified against on every "user not found" sign-in attempt so
-   * the response time for "no such account" and "wrong password" stays
-   * statistically similar — a standard defense against
-   * account-enumeration-by-timing. Computed at runtime (not a hand-written
-   * literal) so it's guaranteed to be a real, correctly-formatted Argon2id
-   * hash that costs the same CPU time to verify as a genuine one.
-   */
-  private dummyHash: Promise<string> | undefined;
-
-  private getDummyHash(): Promise<string> {
-    this.dummyHash ??= this.passwordHasher.hash(DUMMY_PASSWORD);
-    return this.dummyHash;
-  }
-
   constructor(
     private readonly usersRepository: UsersRepository,
     private readonly refreshTokensRepository: RefreshTokensRepository,
     private readonly passwordResetTokensRepository: PasswordResetTokensRepository,
-    private readonly passwordHasher: PasswordHasherService,
+    private readonly passwordCredentials: PasswordCredentialsService,
     private readonly accessTokenService: AccessTokenService,
     private readonly configService: ConfigService,
     private readonly passwordResetEmailProducer: PasswordResetEmailProducer,
@@ -553,7 +519,7 @@ export class AuthService {
           email,
         );
       }
-      await this.passwordHasher.hash(input.password || randomUUID());
+      await this.passwordCredentials.hashDecoy(input.password || randomUUID());
       await this.noticeSignupAttempt(existing, academyId ?? undefined);
       return { account: 'new' };
     }
@@ -569,9 +535,10 @@ export class AuthService {
         )
       : undefined;
 
+    // An external (Google) account has no password: no credential row.
     const passwordHash = external
-      ? `${NO_PASSWORD_PREFIX}${randomUUID()}`
-      : await this.passwordHasher.hash(input.password);
+      ? null
+      : await this.passwordCredentials.hashNew(input.password);
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     // The verification link is sent only where it is the ONLY proof of
     // mailbox control this account will give. When the sign-in surface it
@@ -605,12 +572,14 @@ export class AuthService {
             data: {
               id: userId,
               email,
-              passwordHash,
               name: input.name,
               // Google Identity — only an authoritative provider proves the mailbox.
               ...(external?.emailVerified ? { emailVerifiedAt: new Date() } : {}),
             },
           });
+          if (passwordHash) {
+            await this.passwordCredentials.storeHashed(tx, userId, passwordHash);
+          }
           if (external) {
             await tx.userAuthIdentity.create({
               data: {
@@ -872,10 +841,7 @@ export class AuthService {
     email: string,
     input: Parameters<AuthService['register']>[0],
   ): Promise<RegistrationResult | null> {
-    const passwordValid = await this.passwordHasher.verify(
-      user.passwordHash,
-      input.password,
-    );
+    const passwordValid = await this.passwordCredentials.verify(user.id, input.password);
     // Not proven (a wrong password, or an invited/deleted account that
     // cannot be joined to anything): the caller answers exactly as for a
     // new address and emails the owner — nothing is disclosed here.
@@ -916,14 +882,11 @@ export class AuthService {
     const email = normalizeEmail(input.email);
     const user = await this.usersRepository.findByEmail(email);
     if (!user) {
-      await this.passwordHasher.verify(await this.getDummyHash(), input.password);
+      await this.passwordCredentials.verifyForUnknownAccount(input.password);
       recordAcademyJoin('invalid_credentials');
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
-    const passwordValid = await this.passwordHasher.verify(
-      user.passwordHash,
-      input.password,
-    );
+    const passwordValid = await this.passwordCredentials.verify(user.id, input.password);
     if (!passwordValid || user.status === 'deleted' || user.status === 'invited') {
       recordAcademyJoin('invalid_credentials');
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
@@ -1234,14 +1197,11 @@ export class AuthService {
     const user = await this.usersRepository.findByEmail(email);
 
     if (!user) {
-      await this.passwordHasher.verify(await this.getDummyHash(), input.password);
+      await this.passwordCredentials.verifyForUnknownAccount(input.password);
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
 
-    const passwordValid = await this.passwordHasher.verify(
-      user.passwordHash,
-      input.password,
-    );
+    const passwordValid = await this.passwordCredentials.verify(user.id, input.password);
     if (!passwordValid) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
@@ -1689,6 +1649,7 @@ export class AuthService {
           reused.userId,
         );
         await this.sessionRevocationService.markRevoked(reused.sessionId);
+        recordSessionsRevoked('refresh_token_reuse', revoked > 0 ? 1 : 0);
         this.logger.warn(
           { event: 'auth.refresh.reuse_detected', userId: reused.userId, revoked },
           'A rotated refresh token was presented again; its session was ended.',
@@ -1822,6 +1783,26 @@ export class AuthService {
   }
 
   /**
+   * Sign-out when the page no longer holds a valid access token: the
+   * session is identified by the refresh token in its HttpOnly cookie. The
+   * owner is found by the token's hash (never from the request), the whole
+   * rotation family is revoked and its access tokens denied. An unknown or
+   * already-revoked token is a silent no-op — signing out of nothing is not
+   * an error.
+   */
+  async signOutByRefreshToken(rawRefreshToken: string): Promise<void> {
+    const session = await this.refreshTokensRepository.findSessionOfToken(
+      hashOpaqueToken(rawRefreshToken),
+    );
+    if (!session) return;
+    await this.refreshTokensRepository.revokeSessionForUser(
+      session.sessionId,
+      session.userId,
+    );
+    await this.sessionRevocationService.markRevoked(session.sessionId);
+  }
+
+  /**
    * Backs `GET /auth/validate` (`authenticationService.validateSession`).
    * Reaching this method at all means the auth guard already verified the
    * access token — there's nothing further to check or return.
@@ -1878,7 +1859,7 @@ export class AuthService {
     if (!(await this.passwordResetTokensRepository.findValidByHash(tokenHash))) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidResetToken' });
     }
-    const passwordHash = await this.passwordHasher.hash(newPassword);
+    const passwordHash = await this.passwordCredentials.hashNew(newPassword);
     // Then ONE conditional write consumes it: a link confirmed twice
     // concurrently is honoured once, never twice.
     const resetToken =
@@ -1892,7 +1873,9 @@ export class AuthService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidResetToken' });
     }
 
-    await this.usersRepository.updatePasswordHash(resetToken.userId, passwordHash);
+    await this.tenancyContextService.runInUserContext(resetToken.userId, (tx) =>
+      this.passwordCredentials.storeHashed(tx, resetToken.userId, passwordHash),
+    );
     // Any other outstanding reset/setup link for this account dies with it.
     await this.passwordResetTokensRepository.spendAllForUser(resetToken.userId);
     // Launch Stabilization A2 (D2) — the setup link for an account staff

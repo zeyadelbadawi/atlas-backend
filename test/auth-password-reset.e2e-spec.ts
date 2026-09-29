@@ -1,3 +1,4 @@
+import { sessionTokenFrom } from './utils/session-cookie';
 import type { PrismaClient } from '@prisma/client';
 import { createAdminPrisma } from './utils/db-admin';
 /**
@@ -109,7 +110,7 @@ describe('Password reset (e2e)', () => {
     // The refresh token from before the reset is dead.
     await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken: signIn.body.refreshToken })
+      .send({ refreshToken: sessionTokenFrom(signIn) })
       .expect(401);
   }, 15000);
 

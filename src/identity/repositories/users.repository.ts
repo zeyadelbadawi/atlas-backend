@@ -23,7 +23,6 @@ import { IdentityResolver } from './identity-resolver';
 
 export interface CreateUserInput {
   readonly email: string;
-  readonly passwordHash: string;
   readonly name: string;
   /**
    * Launch Stabilization A2 (D2) — `invited` for an account somebody else
@@ -80,7 +79,6 @@ export class UsersRepository {
         data: {
           id,
           email: normalizeEmail(input.email),
-          passwordHash: input.passwordHash,
           name: input.name,
           // `status` defaults to 'active' per the schema. Launch Stabilization
           // A2 writes `invited` for staff-created accounts.
@@ -99,12 +97,6 @@ export class UsersRepository {
           ...(input.avatarUrl !== undefined ? { avatarUrl: input.avatarUrl } : {}),
         },
       }),
-    );
-  }
-
-  updatePasswordHash(id: string, passwordHash: string): Promise<User> {
-    return this.asUser(id, (tx) =>
-      tx.user.update({ where: { id }, data: { passwordHash } }),
     );
   }
 

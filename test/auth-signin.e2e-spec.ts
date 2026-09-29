@@ -1,3 +1,4 @@
+import { sessionTokenFrom } from './utils/session-cookie';
 import type { PrismaClient } from '@prisma/client';
 import { createAdminPrisma } from './utils/db-admin';
 /**
@@ -47,7 +48,7 @@ describe('POST /auth/sign-in (e2e)', () => {
       .expect(200);
 
     expect(typeof response.body.accessToken).toBe('string');
-    expect(typeof response.body.refreshToken).toBe('string');
+    expect(typeof sessionTokenFrom(response)).toBe('string');
     expect(typeof response.body.expiresIn).toBe('number');
     expect(response.body.user.email).toBe(email);
     expect(response.body.user).not.toHaveProperty('passwordHash');
@@ -61,7 +62,7 @@ describe('POST /auth/sign-in (e2e)', () => {
       where: { userId: dbUser.id },
     });
     expect(storedTokens).toHaveLength(1);
-    expect(storedTokens[0].tokenHash).not.toBe(response.body.refreshToken);
+    expect(storedTokens[0].tokenHash).not.toBe(sessionTokenFrom(response));
   });
 
   it('rejects an unknown email with a generic invalid-credentials error', async () => {

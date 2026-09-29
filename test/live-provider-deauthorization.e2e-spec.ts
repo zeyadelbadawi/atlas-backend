@@ -46,7 +46,6 @@ describe('Zoom deauthorization (real Postgres, RLS enforced)', () => {
         data: {
           email: uniqueTestEmail('deauth-platform-owner'),
           name: 'Deauth Platform Owner',
-          passwordHash: 'x',
           isPlatformOwner: true,
           emailVerifiedAt: new Date(),
         },
@@ -67,7 +66,6 @@ describe('Zoom deauthorization (real Postgres, RLS enforced)', () => {
       data: {
         email: uniqueTestEmail(`${label}-owner`),
         name: `${label} owner`,
-        passwordHash: 'x',
         emailVerifiedAt: new Date(),
       },
     });

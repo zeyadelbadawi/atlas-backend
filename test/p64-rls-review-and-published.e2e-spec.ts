@@ -40,7 +40,7 @@ describe('P64 Phase 1 — RLS with published+public fixtures and the review tier
 
   async function createUser(label: string) {
     return fixtureUsers().create({
-      data: { email: uniqueTestEmail(label), passwordHash: 'x', name: label },
+      data: { email: uniqueTestEmail(label), name: label },
     });
   }
 

@@ -145,7 +145,13 @@ async function seedUsers(prisma: PrismaClient, passwordHash: string): Promise<Se
   const upsertUser = (email: string, name: string, isPlatformOwner = false) =>
     prisma.user.upsert({
       where: { email },
-      create: { email, name, passwordHash, isPlatformOwner, status: 'active' },
+      create: {
+        email,
+        name,
+        isPlatformOwner,
+        status: 'active',
+        credential: { create: { passwordHash } },
+      },
       update: { name, isPlatformOwner },
     });
 
@@ -1156,7 +1162,12 @@ async function upsertLesson(
 async function seedStudent(prisma: PrismaClient, passwordHash: string): Promise<{ id: string }> {
   return prisma.user.upsert({
     where: { email: 'alex.morgan@student.dev' },
-    create: { email: 'alex.morgan@student.dev', name: 'Alex Morgan', passwordHash, status: 'active' },
+    create: {
+      email: 'alex.morgan@student.dev',
+      name: 'Alex Morgan',
+      status: 'active',
+      credential: { create: { passwordHash } },
+    },
     update: { name: 'Alex Morgan' },
   });
 }

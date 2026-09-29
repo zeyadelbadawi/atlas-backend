@@ -86,14 +86,20 @@ async function main(): Promise<void> {
       create: {
         email,
         name: 'Platform QA Owner',
-        passwordHash,
         isPlatformOwner: true,
         status: 'active',
       },
       // For an existing platform-owner test account: rotate the password,
       // ensure the flag and active status. No other fields touched.
-      update: { passwordHash, isPlatformOwner: true, status: 'active' },
+      update: { isPlatformOwner: true, status: 'active' },
       select: { id: true, isPlatformOwner: true, status: true },
+    });
+    // The credential lives in `user_credentials` (never on the directory
+    // row); written on the same owner connection.
+    await prisma.userCredential.upsert({
+      where: { userId: user.id },
+      create: { userId: user.id, passwordHash },
+      update: { passwordHash },
     });
 
     // Non-secret confirmation only — never the password or the hash.

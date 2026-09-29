@@ -203,7 +203,6 @@ describe('P61 granted entitlements (e2e) — P61-GRANT-001..018', () => {
         data: {
           name: `p61 seeded student ${i}`,
           email: uniqueTestEmail(`p61-seeded-${i}`),
-          passwordHash: 'not-a-real-hash-never-used-for-sign-in',
         },
       });
       ids.push(user.id);

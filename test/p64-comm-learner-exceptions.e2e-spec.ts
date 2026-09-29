@@ -124,7 +124,6 @@ describe('P64 W-EXC — learner exception notifications (e2e)', () => {
     await admin.user.create({
       data: {
         email: uniqueTestEmail('exc-platform-owner'),
-        passwordHash: 'x',
         name: 'exception platform owner',
         isPlatformOwner: true,
       },

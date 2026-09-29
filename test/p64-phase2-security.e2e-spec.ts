@@ -101,7 +101,7 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
 
   async function createUser(label: string, status: 'active' | 'suspended' = 'active') {
     return admin.user.create({
-      data: { email: uniqueTestEmail(label), passwordHash: 'x', name: label, status },
+      data: { email: uniqueTestEmail(label), name: label, status },
     });
   }
 

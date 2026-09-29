@@ -49,7 +49,6 @@ describe('Platform Add-ons Management (real Postgres, RLS enforced)', () => {
           data: {
             email: uniqueTestEmail('addon-mgmt-po'),
             name: 'Add-ons Mgmt Platform Owner',
-            passwordHash: 'x',
             isPlatformOwner: true,
             emailVerifiedAt: new Date(),
           },
@@ -98,7 +97,6 @@ describe('Platform Add-ons Management (real Postgres, RLS enforced)', () => {
         data: {
           email: uniqueTestEmail(`${suite}-${label}`),
           name: `${suite} ${label}`,
-          passwordHash: 'x',
           emailVerifiedAt: new Date(),
         },
       });
@@ -275,7 +273,6 @@ describe('Platform Add-ons Management (real Postgres, RLS enforced)', () => {
       data: {
         email: uniqueTestEmail(`${suite}-outsider`),
         name: 'outsider',
-        passwordHash: 'x',
         emailVerifiedAt: new Date(),
       },
     });

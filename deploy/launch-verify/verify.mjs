@@ -84,22 +84,30 @@ const check = (name, ok, detail = '') => {
 const info = (msg) => console.log(`INFO  [${MODE}] ${msg}`);
 
 // --- HTTP against the public hosts --------------------------------------------
-async function call(host, method, p, { body, token, cookie } = {}) {
+async function call(host, method, p, { body, token, cookie, session, origin } = {}) {
   const headers = { 'content-type': 'application/json' };
   if (token) headers.authorization = `Bearer ${token}`;
-  if (cookie) headers.cookie = `atlas_trust=${encodeURIComponent(cookie)}`;
+  const cookies = [];
+  if (cookie) cookies.push(`atlas_trust=${encodeURIComponent(cookie)}`);
+  if (session) cookies.push(`__Host-atlas_session=${session}`);
+  if (cookies.length) headers.cookie = cookies.join('; ');
+  if (origin) headers.origin = origin;
   const r = await fetch(`${ORIGIN(host)}/api/v1${p}`, {
     method, headers, body: body ? JSON.stringify(body) : undefined, redirect: 'manual',
   });
   const text = await r.text();
   let json = null;
   try { json = JSON.parse(text); } catch { /* not json */ }
-  const trust = (r.headers.getSetCookie?.() ?? [])
-    .find((c) => c.startsWith('atlas_trust='));
+  const setCookies = r.headers.getSetCookie?.() ?? [];
+  const trust = setCookies.find((c) => c.startsWith('atlas_trust='));
+  // The refresh token travels ONLY in this HttpOnly cookie (production-readiness pass).
+  const sessionSet = setCookies.find((c) => c.startsWith('__Host-atlas_session='));
   return {
     status: r.status,
     body: json,
     key: json?.error?.messageKey ?? '',
+    sessionSetCookie: sessionSet ?? null,
+    session: sessionSet ? sessionSet.split(';')[0].slice('__Host-atlas_session='.length) || null : null,
     trustCookie: trust ? decodeURIComponent(trust.split(';')[0].slice('atlas_trust='.length)) : null,
   };
 }
@@ -151,6 +159,26 @@ async function apiMode() {
   r = await signIn(A.host, L, pw, { surface: 'academy', academyId: A.id }, trustA);
   f = facts('user', L, A.id, B.id);
   check('A6 remembered browser skips the code on the SAME academy', r.status === 200 && !!r.body?.accessToken && Number(f.otp_outbox) === otpBefore, `${r.status} otp ${otpBefore}→${f.otp_outbox}`);
+
+  // ---- Session cookie: the refresh token never reaches JavaScript ------------
+  const sc = r.sessionSetCookie ?? '';
+  check('SESSION sign-in returns no refresh token in the body', !!r.body && !('refreshToken' in r.body));
+  check('SESSION __Host-atlas_session is HttpOnly; Secure; SameSite=Strict; Path=/; host-only',
+    !!r.session && /;\s*HttpOnly/i.test(sc) && /;\s*Secure/i.test(sc) && /;\s*SameSite=Strict/i.test(sc) && /;\s*Path=\/(;|$)/i.test(sc) && !/;\s*Domain=/i.test(sc));
+  const s1 = r.session;
+  let rr = await call(A.host, 'POST', '/auth/refresh', { session: s1, origin: ORIGIN(B.host), body: {} });
+  check("SESSION refresh from another academy's origin is refused (403, nothing rotates)", rr.status === 403 && rr.key === 'errors.auth.crossOriginSession' && !rr.session, `${rr.status} ${rr.key}`);
+  rr = await call(A.host, 'POST', '/auth/refresh', { session: s1, body: {} });
+  check('SESSION refresh with no Origin is refused (403)', rr.status === 403, `${rr.status}`);
+  rr = await call(A.host, 'POST', '/auth/refresh', { session: s1, origin: ORIGIN(A.host), body: {} });
+  const s2 = rr.session;
+  check('SESSION same-origin refresh rotates the cookie; no refresh token in the body', rr.status === 200 && !!rr.body?.accessToken && !('refreshToken' in (rr.body ?? {})) && !!s2 && s2 !== s1, `${rr.status}`);
+  rr = await call(A.host, 'POST', '/auth/refresh', { session: s1, origin: ORIGIN(A.host), body: {} });
+  check('SESSION replaying the rotated cookie is refused (401) and clears it', rr.status === 401 && /^__Host-atlas_session=;/.test(rr.sessionSetCookie ?? ''), `${rr.status}`);
+  rr = await call(A.host, 'POST', '/auth/refresh', { session: s2, origin: ORIGIN(A.host), body: {} });
+  // Inside REFRESH_REUSE_GRACE_MS (two tabs racing) a replay only fails; the
+  // family-ending path for a LATER replay is covered by the e2e suite.
+  check('SESSION the rotated-to cookie keeps working after a replay inside the multi-tab grace', rr.status === 200 && !!rr.session, `${rr.status}`);
 
   // ---- A4: the same person joins Academy B with the same password -------------
   r = await call(B.host, 'POST', '/auth/register', { body: { name: 'Launch Verify', email: L, password: pw, academyId: B.id } });

@@ -843,7 +843,7 @@ describe('Google Identity — Phase 4 hardening (e2e)', () => {
         .send({ pending: step.body.pending, name: 'Google Only' })
         .expect(201);
       const user = await admin.user.findUniqueOrThrow({ where: { email } });
-      expect(user.passwordHash.startsWith('nopassword:')).toBe(true);
+      expect(await admin.userCredential.count({ where: { userId: user.id } })).toBe(0);
       // A password sign-in with anything is refused.
       await http()
         .post('/auth/sign-in')
