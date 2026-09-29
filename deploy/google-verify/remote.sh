@@ -118,7 +118,13 @@ case "$cmd" in
     sql "select 'audit_migrations_applied', count(*) from _prisma_migrations where finished_at is not null and rolled_back_at is null and migration_name in ('20261020000000_account_deletion_challenges','20261021000000_identity_tables_rls')"
     # Production-readiness pass — the credential is not on the directory row
     # (the column is dropped by a later migration; until then it must be NULL).
-    sql "select 'directory_rows_with_credential', case when exists(select 1 from information_schema.columns where table_name='users' and column_name='password_hash') then (select count(*) from users where password_hash is not null)::text else 'column_dropped' end"
+    # Postgres resolves every column at plan time, so the column's existence is
+    # checked first; after the credential split's stage 2 it no longer exists.
+    if [ "$(sql "select count(*) from information_schema.columns where table_schema='public' and table_name='users' and column_name='password_hash'")" = "0" ]; then
+      echo "directory_rows_with_credential|column_dropped"
+    else
+      sql "select 'directory_rows_with_credential', count(*) from users where password_hash is not null"
+    fi
     sql "select 'accounts_with_password', count(*) from user_credentials"
     sql "select 'sessions_since_release', count(*) from refresh_tokens where created_at > (select finished_at from _prisma_migrations where migration_name='20261021000000_identity_tables_rls')"
     ;;
