@@ -123,13 +123,18 @@ export const MIN_COURSE_CATEGORIES = 2;
 
 /**
  * What an image field may hold (Theme 1 plan §E.4): a theme asset
- * reference (`theme-asset:<theme>/<key>`), an http(s) URL (MediaAsset/R2
- * public URLs; http only matters for local/CI object stores), a LEGACY
+ * reference (`theme-asset:<theme>/<key>`), an Atlas MediaAsset URL (the
+ * RELATIVE `/api/v1/public/media/<storageKey>` that `toMediaAssetUrl`
+ * returns — what the media library and direct uploads store), an absolute
+ * http(s) URL (http only matters for local/CI object stores), a LEGACY
  * inline upload (`data:image/...;base64,` — the only types uploads ever
  * accepted), or empty. Anything else — `javascript:`, `data:text/html`,
- * `blob:`, relative paths — is rejected.
+ * `blob:`, any other relative path — is rejected.
  */
 export const THEME_ASSET_REFERENCE_PATTERN = /^theme-asset:[a-z0-9-]+\/[a-z0-9-]+$/;
+/** No `.` before the extension, so no `..` segment can appear. */
+export const MEDIA_ASSET_PATH_PATTERN =
+  /^\/api\/v1\/public\/media\/[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)*\.[a-z0-9]+$/;
 export const LEGACY_DATA_IMAGE_PATTERN =
   /^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 

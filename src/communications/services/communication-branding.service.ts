@@ -43,6 +43,22 @@ export class CommunicationBrandingService {
     };
   }
 
+  /**
+   * An uploaded logo is a MediaAsset, stored as the app-RELATIVE
+   * `/api/v1/public/media/…` path (see `toMediaAssetUrl`). A relative
+   * `<img src>` means nothing inside an email, so it is resolved against
+   * the academy's own host (which serves that path), else the platform.
+   * Absolute URLs and legacy values pass through unchanged.
+   */
+  private absoluteLogoUrl(
+    logoUrl: string | null,
+    host: string | null,
+  ): string | undefined {
+    if (!logoUrl) return undefined;
+    if (!logoUrl.startsWith('/') || logoUrl.startsWith('//')) return logoUrl;
+    return host ? `https://${host}${logoUrl}` : this.links.platform(logoUrl);
+  }
+
   async resolve(
     tx: Prisma.TransactionClient,
     mode: 'academy' | 'platform',
@@ -65,7 +81,7 @@ export class CommunicationBrandingService {
     return {
       branding: {
         academyName: academy.name,
-        academyLogoUrl: academy.logoUrl ?? undefined,
+        academyLogoUrl: this.absoluteLogoUrl(academy.logoUrl, host),
         academyHost: host ?? undefined,
         platformName: this.platformName,
         platformUrl: this.links.platform('/'),
