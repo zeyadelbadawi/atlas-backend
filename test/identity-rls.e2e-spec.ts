@@ -26,9 +26,9 @@
  *             resolves to nothing
  *   IDRLS-07  the roster's session count answers only a viewer allowed to see
  *             that learner, and never exposes a row
- *   IDRLS-08  the password credential is not on the directory row: every
- *             `users.password_hash` is NULL, and a legacy write to it (the
- *             previous release during a deploy) lands in `user_credentials`
+ *   IDRLS-08  the password credential is not on the directory row at all:
+ *             `users.password_hash` and its stage-1 capture triggers are gone,
+ *             and `user_credentials` accepts only Argon2 hashes
  */
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -421,51 +421,17 @@ describe('Identity tables — row-level security (e2e)', () => {
     expect(fn).toEqual({ result: 'integer', public_exec: false });
   });
 
-  it('IDRLS-08 — the directory holds no credential; a legacy write is captured into user_credentials', async () => {
-    const [left] = await admin.$queryRaw<{ n: number }[]>`
-      SELECT count(*)::int AS n FROM "users" WHERE "password_hash" IS NOT NULL`;
-    expect(left.n).toBe(0);
-    // A directory read inside a context carries no credential column at all.
-    const row = await asUser<Record<string, unknown>[]>(
-      alice.userId,
-      (tx) =>
-        tx.$queryRaw`SELECT "password_hash" FROM "users" WHERE "id" = ${bob.userId}`,
-    );
-    expect(row[0].password_hash ?? null).toBeNull();
-
-    // The previous release (during the seconds of a deploy) still writes the
-    // column: an UPDATE lands in user_credentials and the column stays NULL.
-    const legacy = '$argon2id$v=19$m=19456,t=2,p=1$bGVnYWN5$bGVnYWN5aGFzaA';
-    await asUser(
-      alice.userId,
-      (tx) =>
-        tx.$executeRaw`UPDATE "users" SET "password_hash" = ${legacy} WHERE "id" = ${alice.userId}`,
-    );
-    expect(
-      (await admin.userCredential.findUniqueOrThrow({ where: { userId: alice.userId } }))
-        .passwordHash,
-    ).toBe(legacy);
-    const [after] = await admin.$queryRaw<{ h: string | null }[]>`
-      SELECT "password_hash" AS h FROM "users" WHERE "id" = ${alice.userId}`;
-    expect(after.h).toBeNull();
-
-    // A legacy INSERT (a registration by the previous release) likewise.
-    const id = randomUUID();
-    await asUser(
-      id,
-      (tx) =>
-        tx.$executeRaw`
-        INSERT INTO "users" ("id", "email", "password_hash", "name", "updated_at")
-        VALUES (${id}, ${uniqueTestEmail('idrls-legacy')}, ${legacy}, 'Legacy', now())`,
-    );
-    expect(
-      (await admin.userCredential.findUniqueOrThrow({ where: { userId: id } }))
-        .passwordHash,
-    ).toBe(legacy);
-    const [inserted] = await admin.$queryRaw<{ h: string | null }[]>`
-      SELECT "password_hash" AS h FROM "users" WHERE "id" = ${id}`;
-    expect(inserted.h).toBeNull();
-    await admin.user.delete({ where: { id } });
+  it('IDRLS-08 — the directory has no credential column; user_credentials holds only Argon2 hashes', async () => {
+    const [column] = await admin.$queryRaw<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'password_hash'`;
+    expect(column.n).toBe(0);
+    const [leftovers] = await admin.$queryRaw<{ n: number }[]>`
+      SELECT (
+        (SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'users_capture_legacy_password_hash%')
+        + (SELECT count(*) FROM pg_proc WHERE proname LIKE 'users_capture_legacy_password_hash%')
+      )::int AS n`;
+    expect(leftovers.n).toBe(0);
 
     // The credential table refuses anything that is not an Argon2 hash.
     await expect(
