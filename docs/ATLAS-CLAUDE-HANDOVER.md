@@ -2,6 +2,20 @@
 
 Written 30 Sep 2026. **The full handover is in the frontend repo: `zeyadelbadawi/atlas` → `docs/ATLAS-CLAUDE-HANDOVER.md`** (project context, phase status, findings, images, continuation plan). This file records the backend-specific state. Verify every claim against the repository.
 
+## ★ Status update — continuation session (30 Sep 2026)
+
+Since the first handover (branch `claude/practical-wozniak-pjcdhe`, nothing on `main`, no migrations added):
+
+| Commit | Item |
+|---|---|
+| `f7cb5a5` | S-1 certificate SSRF fixed (`CertificateImageLoader`), S-3 fixed |
+| `3ff090e` | GEN-1 generation matrix test |
+| `bec84be` | OPS-1 BullMQ connection from the full `REDIS_URL` |
+| `9b2d406`, `5dd37f6` | J-ENV: `npm run e2e:prepare-journeys` (local/CI only) |
+| `5264331` | Checkout commission resolved in the Organization's tenant context (pre-existing bug found by J5; e2e 10b) |
+
+Verified on the final code: unit 155 suites / 4,186 tests; e2e 166/166 suites (fresh DB, migrate + seed, MinIO); lint 0 errors; format and typecheck clean. Remaining backend item: M-1 (gated production migration, Owner). Full status: frontend `docs/ATLAS-CLAUDE-HANDOVER.md` (★ section) and plan §V.
+
 ## Git state at handover
 
 - Branch: `claude/practical-wozniak-pjcdhe` (tracks `origin/claude/practical-wozniak-pjcdhe`). **Continue here; never push to `main`.**
