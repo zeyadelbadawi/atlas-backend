@@ -242,15 +242,15 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .send({
         academyName: 'Themed Academy',
         requestedSubdomain: subdomain,
-        selectedThemeKey: 'bold-creative',
+        selectedThemeKey: 'modern-education',
         idempotencyKey: `themed-idem-${subdomain}`,
       })
       .expect(201);
-    expect(created.body.selectedThemeKey).toBe('bold-creative');
+    expect(created.body.selectedThemeKey).toBe('modern-education');
 
     const final = await waitForTerminal(owner, org.id, created.body.id);
     expect(final.status).toBe('ready');
-    expect(final.selectedThemeKey).toBe('bold-creative');
+    expect(final.selectedThemeKey).toBe('modern-education');
 
     const themeStep = final.steps.find((s: { key: string }) => s.key === 'theme');
     expect(themeStep.status).toBe('completed');
@@ -261,7 +261,10 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     const websiteConfig = await admin.websiteConfiguration.findUnique({
       where: { academyId: final.academyId },
     });
-    expect(websiteConfig?.themeKey).toBe('bold-creative');
+    expect(websiteConfig?.themeKey).toBe('modern-education');
+    // Theme 1 is also the bootstrap default, so what proves the step ran is
+    // the provenance only generation stamps.
+    expect(websiteConfig?.templateKey).toBe('modern-education');
 
     // Reachable through the real, ordinary Website Configuration read
     // endpoint too — not just visible via a direct DB read.
@@ -269,7 +272,22 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .get(`/academies/${final.academyId}/website/configuration`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(200);
-    expect(configRes.body.themeKey).toBe('bold-creative');
+    expect(configRes.body.themeKey).toBe('modern-education');
+  });
+
+  it('3b-retired: Themes 2–5 are retired from selection and are refused', async () => {
+    const { owner, org } = await arrangeOrg('retired-theme');
+    const subdomain = uniqueSubdomain('retired-theme');
+    await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        academyName: 'Retired Theme Academy',
+        requestedSubdomain: subdomain,
+        selectedThemeKey: 'bold-creative',
+        idempotencyKey: `retired-theme-idem-${subdomain}`,
+      })
+      .expect(400);
   });
 
   // --- 3c. Phase 6 — Complete Website generation -----------------------------
@@ -358,7 +376,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .send({
         academyName: 'Empty Gen Academy',
         requestedSubdomain: subdomain,
-        selectedThemeKey: 'minimal-editorial',
+        selectedThemeKey: 'modern-education',
         idempotencyKey: `empty-gen-idem-${subdomain}`,
       })
       .expect(201);
@@ -395,7 +413,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .send({
         academyName: 'Idempotent Gen Academy',
         requestedSubdomain: subdomain,
-        selectedThemeKey: 'premium-academy',
+        selectedThemeKey: 'modern-education',
         websiteSetupMode: 'complete',
         idempotencyKey: `idempotent-gen-idem-${subdomain}`,
       })
@@ -433,7 +451,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     // context, not plain tenant context (see `executeThemeStep`'s own
     // updated doc comment).
     await tenancyContextService.runInTenantAndUserContext(org.id, owner.userId, (tx) =>
-      websiteGenerationService.generate(tx, academyId, 'premium-academy', 'complete'),
+      websiteGenerationService.generate(tx, academyId, 'modern-education', 'complete'),
     );
 
     const afterRegeneration = await admin.websitePage.findFirst({

@@ -149,14 +149,43 @@ export const COURSE_CATALOG_SORT_VALUES = [
   'priceDesc',
 ] as const;
 
-/** Matches `WEBSITE_THEME_KEYS` (`website-theme.types.ts`) exactly — a client-side, code-registered catalog; the backend only records which key was picked, never validates against a server-side theme table (master plan §21 P9: "only implement what the frontend already defines"). */
-export const WEBSITE_THEME_KEYS = [
-  'modern-education',
+/**
+ * The themes an Owner (or a provisioning request) may select. Matches
+ * `SELECTABLE_WEBSITE_THEME_KEYS` (`website-theme.types.ts`) exactly. A
+ * future theme is added here and to both template/theme registries.
+ */
+export const SELECTABLE_WEBSITE_THEME_KEYS = ['modern-education'] as const;
+
+/**
+ * Themes 2–5, retired from selection (frontend repo, Reports/THEMES_2_5_RETIREMENT.md).
+ * Their code stays until every website on them has been moved to
+ * `RETIRED_WEBSITE_THEME_REPLACEMENT` (`npm run db:retire-website-themes`)
+ * and verified, so a website still on one keeps rendering as it does.
+ */
+export const RETIRED_WEBSITE_THEME_KEYS = [
   'premium-academy',
   'corporate-learning',
   'minimal-editorial',
   'bold-creative',
 ] as const;
+
+/** What a retired theme is replaced with, by the migration and by provisioning. */
+export const RETIRED_WEBSITE_THEME_REPLACEMENT = 'modern-education' as const;
+
+/** Every theme key the code knows (selectable or retired). Matches `WEBSITE_THEME_KEYS` (`website-theme.types.ts`) exactly — a client-side, code-registered catalog; the backend only records which key was picked, never validates against a server-side theme table (master plan §21 P9: "only implement what the frontend already defines"). */
+export const WEBSITE_THEME_KEYS = [
+  ...SELECTABLE_WEBSITE_THEME_KEYS,
+  ...RETIRED_WEBSITE_THEME_KEYS,
+] as const;
+
+/** A retired key's replacement; any other key unchanged. */
+export function selectableWebsiteThemeKey(
+  key: (typeof WEBSITE_THEME_KEYS)[number],
+): (typeof SELECTABLE_WEBSITE_THEME_KEYS)[number] {
+  return (RETIRED_WEBSITE_THEME_KEYS as readonly string[]).includes(key)
+    ? RETIRED_WEBSITE_THEME_REPLACEMENT
+    : (key as (typeof SELECTABLE_WEBSITE_THEME_KEYS)[number]);
+}
 
 /** Sensible, schema-conformant bootstrap default — overwritten the first time an Academy Owner actually configures their brand colors. Not derived from any theme's real `defaultPrimary`/`defaultSecondary`/`defaultAccent` token (that registry is frontend-only, code-level, never exposed to the backend by any real contract). */
 export const DEFAULT_BRAND_COLOR = '221 83% 53%';

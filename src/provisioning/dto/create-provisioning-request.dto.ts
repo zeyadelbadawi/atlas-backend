@@ -15,8 +15,8 @@ import {
   SUBDOMAIN_REGEX,
 } from './provisioning.constants';
 import {
+  SELECTABLE_WEBSITE_THEME_KEYS,
   WEBSITE_SETUP_MODES,
-  WEBSITE_THEME_KEYS,
 } from '../../website/constants/website.constants';
 
 export class CreateProvisioningRequestDto {
@@ -36,10 +36,10 @@ export class CreateProvisioningRequestDto {
   @IsString()
   readonly triggeringPaymentId?: string;
 
-  /** Phase P19 — see `provisioning.constants.ts`'s `PROVISIONING_STEP_ORDER`'s own 'theme' step. Matches `WEBSITE_THEME_KEYS` exactly, the same real registry `UpdateWebsiteConfigurationDto` already validates against — never a second theme catalog. */
+  /** Phase P19 — see `provisioning.constants.ts`'s `PROVISIONING_STEP_ORDER`'s own 'theme' step. Matches `SELECTABLE_WEBSITE_THEME_KEYS` exactly, the same real registry `UpdateWebsiteConfigurationDto` already validates against — never a second theme catalog. */
   @IsOptional()
-  @IsIn(WEBSITE_THEME_KEYS)
-  readonly selectedThemeKey?: (typeof WEBSITE_THEME_KEYS)[number];
+  @IsIn(SELECTABLE_WEBSITE_THEME_KEYS)
+  readonly selectedThemeKey?: (typeof SELECTABLE_WEBSITE_THEME_KEYS)[number];
 
   /**
    * Phase 6 (Bilingual Academy Websites) — how the generated website
