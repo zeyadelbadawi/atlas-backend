@@ -71,6 +71,10 @@ services:
     # that file reaches this container's environment.
     environment:
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      # Phase 8 — server-rendered public Academy pages. `on` routes Academy
+      # page requests to the `ssr` service below; anything else (the
+      # default) keeps every request on the route it took before.
+      ATLAS_SSR: ${ATLAS_SSR:-off}
     ports:
       - '80:80'
       - '443:443'
@@ -88,6 +92,30 @@ services:
       timeout: 5s
       retries: 6
       start_period: 30s
+
+  # --- Public website server renderer (Phase 8) ----------------------------
+  # Renders the anonymous public Academy pages for Caddy (frontend repo:
+  # Reports/SSR_ARCHITECTURE_ANALYSIS.md). Profile-gated: `deploy.sh`
+  # enables the `ssr` profile only when ATLAS_SSR=on in .env, the same
+  # switch Caddy reads.
+  #   * No published port and no env_file: it holds no secret at all. It
+  #     calls only the public website API, anonymously, over the compose
+  #     network, and forwards no cookie or credential.
+  #   * Caddy does NOT depend on it: if it is stopped, slow or failing,
+  #     Caddy serves the single-page app exactly as before.
+  ssr:
+    image: ghcr.io/zeyadelbadawi/atlas-frontend-ssr:latest
+    profiles: ['ssr']
+    restart: unless-stopped
+    read_only: true
+    environment:
+      SSR_API_ORIGIN: http://backend:3000
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3100/__ssr/health']
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
   # --- Observability Center ----------------------------------------------
   # Profile-gated: `deploy.sh` enables `monitoring` whenever METRICS_SCRAPE_TOKEN

@@ -8,10 +8,11 @@
 #   deploy.sh                 full deploy (pull both images, migrate, roll)
 #   deploy.sh --sync-env      full deploy, first upserting the base64 env
 #                             fragment read from stdin into /opt/atlas/.env
-#   deploy.sh --frontend-only pull and roll ONLY the Caddy/SPA image; no
-#                             migration, no backend recreate (P63g — a
+#   deploy.sh --frontend-only pull and roll ONLY the Caddy/SPA image (and
+#                             the public website renderer when ATLAS_SSR=on);
+#                             no migration, no backend recreate (P63g — a
 #                             frontend push must never migrate the DB)
-#   deploy.sh --rollback      re-pin both images to the digests recorded
+#   deploy.sh --rollback      re-pin the images to the digests recorded
 #                             by the last successful deploy and roll
 #   deploy.sh --preflight     P64 Phase 1 — take a VERIFIED backup and
 #                             record the pre-migration counts, then stop.
@@ -124,6 +125,26 @@ fi
 
 set -a; source .env; set +a
 
+# --- Phase 8: public website server renderer (the `ssr` service) ----------
+# ATLAS_SSR=on in .env is the one switch: Caddy reads the same value and
+# routes Academy pages to the renderer only when it is on. Off (the
+# default) leaves every request on its previous route, and the renderer
+# container is stopped. Caddy never depends on the renderer, so a renderer
+# that fails to start costs server rendering, never the website.
+COMPOSE_PROFILES=${COMPOSE_PROFILES:-}
+add_compose_profile() {
+  case ",${COMPOSE_PROFILES}," in
+    *",$1,"*) ;;
+    *) COMPOSE_PROFILES=${COMPOSE_PROFILES:+${COMPOSE_PROFILES},}$1 ;;
+  esac
+  export COMPOSE_PROFILES
+}
+SSR_ENABLED=0
+if [ "${ATLAS_SSR:-off}" = "on" ]; then
+  SSR_ENABLED=1
+  add_compose_profile ssr
+fi
+
 # --- Observability Center: the internal scrape credential -----------------
 # Generated ON THE HOST the first time it is missing, appended to .env and
 # never printed; it never leaves the VPS. The backend (env_file) and the
@@ -148,6 +169,9 @@ record_last_good() {
   {
     echo "BACKEND_IMAGE=$(docker inspect --format='{{index .RepoDigests 0}}' "$(docker compose ps -q backend)" 2>/dev/null || true)"
     echo "CADDY_IMAGE=$(docker inspect --format='{{index .RepoDigests 0}}' "$(docker compose ps -q caddy)" 2>/dev/null || true)"
+    if [ "$SSR_ENABLED" = "1" ]; then
+      echo "SSR_IMAGE=$(docker inspect --format='{{index .RepoDigests 0}}' "$(docker compose ps -q ssr)" 2>/dev/null || true)"
+    fi
     echo "RECORDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > /opt/atlas/.last-good.tmp && mv /opt/atlas/.last-good.tmp /opt/atlas/.last-good
 }
@@ -303,6 +327,28 @@ wait_healthy() {
   return 0
 }
 
+# The renderer's own health. A warning, never a failed deploy: while it is
+# unhealthy Caddy serves the single-page app, exactly as with ATLAS_SSR=off.
+check_ssr() {
+  if [ "$SSR_ENABLED" != "1" ]; then
+    # Switched off: make sure no renderer keeps running unrouted.
+    docker compose --profile ssr stop ssr >/dev/null 2>&1 || true
+    return 0
+  fi
+  echo "==> Waiting for the public website renderer (non-fatal)"
+  for i in $(seq 1 20); do
+    status=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$(docker compose ps -q ssr)" 2>/dev/null || echo none)
+    if [ "$status" = "healthy" ]; then
+      echo "Renderer healthy."
+      return 0
+    fi
+    sleep 3
+  done
+  echo "WARNING: the renderer is not healthy; Academy pages are served by the single-page app until it is." >&2
+  docker compose logs --tail=40 ssr >&2 || true
+  return 0
+}
+
 if [ "$MODE" = "rollback" ]; then
   if [ ! -f /opt/atlas/.last-good ]; then
     echo "==> No .last-good record exists; nothing to roll back to." >&2
@@ -313,17 +359,32 @@ if [ "$MODE" = "rollback" ]; then
   echo "==> Rolling back to the images recorded at ${RECORDED_AT:-unknown}"
   [ -n "${BACKEND_IMAGE:-}" ] && docker pull "$BACKEND_IMAGE" && docker tag "$BACKEND_IMAGE" ghcr.io/zeyadelbadawi/atlas-backend:latest
   [ -n "${CADDY_IMAGE:-}" ] && docker pull "$CADDY_IMAGE" && docker tag "$CADDY_IMAGE" ghcr.io/zeyadelbadawi/atlas-frontend:latest
+  if [ "$SSR_ENABLED" = "1" ] && [ -n "${SSR_IMAGE:-}" ]; then
+    docker pull "$SSR_IMAGE" && docker tag "$SSR_IMAGE" ghcr.io/zeyadelbadawi/atlas-frontend-ssr:latest
+    docker compose up -d --no-deps ssr
+  fi
   docker compose up -d --no-deps backend caddy
-  wait_healthy && exit 0
+  if wait_healthy; then
+    check_ssr
+    exit 0
+  fi
   exit 1
 fi
 
 if [ "$MODE" = "frontend-only" ]; then
   echo "==> Frontend-only deploy: pulling the Caddy/SPA image"
   docker compose pull caddy
+  if [ "$SSR_ENABLED" = "1" ]; then
+    # The renderer first: during the few seconds between the two, pages it
+    # renders reference chunks the old Caddy image lacks, and Caddy fetches
+    # those from the renderer's own build.
+    docker compose pull ssr
+    docker compose up -d --no-deps ssr
+  fi
   echo "==> Rolling Caddy only (no migration, backend untouched)"
   docker compose up -d --no-deps caddy
   if wait_healthy; then
+    check_ssr
     record_last_good
     exit 0
   fi
@@ -427,7 +488,7 @@ prepare_monitoring() {
     cp "$mon/alertmanager.none.yml" "$mon/alertmanager.yml"
     echo "==> Monitoring enabled WITHOUT Slack: ALERT_SLACK_WEBHOOK_URL is not set"
   fi
-  export COMPOSE_PROFILES=monitoring
+  add_compose_profile monitoring
   export OBS_PROMETHEUS_URL=http://prometheus:9090
   export OBS_ALERTMANAGER_URL=http://alertmanager:9093
 }
@@ -455,6 +516,7 @@ if [ "${ENV_SYNCED:-0}" = "1" ]; then
 fi
 
 if wait_healthy; then
+  check_ssr
   record_last_good
   echo "==> Deploy complete; last-good digests recorded (use --rollback to revert)."
   exit 0
