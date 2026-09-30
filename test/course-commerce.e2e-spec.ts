@@ -425,6 +425,57 @@ describe('Course Commerce — P13 (e2e)', () => {
     void academy; // fixture retained for symmetry with other scenarios; not directly asserted here.
   });
 
+  // --- 10b. The Organization's rate applies at checkout -------------------
+
+  it("10b: a learner's payment is charged the Organization's own commission, not the global default", async () => {
+    // Checkout runs as the learner, where RLS hides the Organization's
+    // override: it used to fall through to the global default.
+    await setGlobalCommission(1000);
+    const fixture = await arrangePaidCourse('org-rate-checkout', 10000);
+    await setAtlasPaymentsMode(fixture.org.id, fixture.owner.accessToken);
+    const method = await seedPaymentMethod(admin, 'org-rate-checkout-method');
+    const platformOwner = await signUpAndSignIn(app, 'org-rate-checkout-admin');
+    await makePlatformOwner(admin, platformOwner.userId);
+    await request(app.getHttpServer())
+      .patch(`/platform-commission/organizations/${fixture.org.id}`)
+      .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+      .send({ commissionMode: 'custom', customPercentageBasisPoints: 500 })
+      .expect(200);
+
+    const order = await request(app.getHttpServer())
+      .post(`/courses/${fixture.course.id}/course-orders`)
+      .set('Authorization', `Bearer ${fixture.student.accessToken}`)
+      .send({ idempotencyKey: 'org-rate-checkout-order' })
+      .expect(201);
+    // The learner is offered Atlas Payments (the listing resolves the rate too).
+    const methods = await request(app.getHttpServer())
+      .get(`/course-orders/${order.body.id}/payment-methods`)
+      .set('Authorization', `Bearer ${fixture.student.accessToken}`)
+      .expect(200);
+    expect(
+      ((methods.body.items ?? methods.body) as { key: string }[]).map((m) => m.key),
+    ).toContain(method.key);
+    const payment = await request(app.getHttpServer())
+      .post(`/course-orders/${order.body.id}/payments`)
+      .set('Authorization', `Bearer ${fixture.student.accessToken}`)
+      .send({ methodKey: method.key })
+      .expect(201);
+    await request(app.getHttpServer())
+      .patch(`/course-orders/${order.body.id}/payments/${payment.body.id}/proof`)
+      .set('Authorization', `Bearer ${fixture.student.accessToken}`)
+      .send({ fileData: PROOF_DATA_URL, fileName: 'proof.png' })
+      .expect(200);
+    const approved = await request(app.getHttpServer())
+      .post(`/platform-course-order-payments/${payment.body.id}/approve`)
+      .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+      .send({})
+      .expect(201);
+    expect(approved.body.commission).toMatchObject({
+      rateBasisPoints: 500,
+      amountMinorUnits: 500,
+    });
+  });
+
   // --- 11. Commission snapshot immutability --------------------------------
 
   it('11: a Payment already created keeps its frozen commission snapshot even after the global default changes', async () => {
