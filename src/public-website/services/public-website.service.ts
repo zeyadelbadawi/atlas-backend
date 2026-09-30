@@ -43,7 +43,10 @@ import {
   extractSubdomainLabel,
   normalizeHostname,
 } from '../utils/hostname-normalization.util';
-import type { HostnameResolutionResponse } from '../dto/hostname-resolution.contract';
+import type {
+  HostnamePresentation,
+  HostnameResolutionResponse,
+} from '../dto/hostname-resolution.contract';
 import { PlatformDomainService } from '../../domain/services/platform-domain.service';
 import { resolveCanonicalHost } from '../../domain/utils/canonical-host.util';
 // Phase 6 additions — see this file's own header comment.
@@ -150,15 +153,49 @@ export class PublicWebsiteService {
       subdomainLabel: resolved.subdomain,
       baseDomain,
     });
+    const presentation = await this.findPresentation(resolved.academyId);
     const response: HostnameResolutionResponse = {
       academyId: resolved.academyId,
       academyName: resolved.academyName,
       academySlug: resolved.academySlug,
       academyLogo: resolved.academyLogoUrl ?? undefined,
       canonicalHost: canonical?.host,
+      ...(presentation ? { presentation } : {}),
     };
     await this.cacheService.setHostnameResolution(normalized, response);
     return response;
+  }
+
+  /**
+   * Theme 1 plan Phase 6 — the Academy's theme key and public brand colours,
+   * whatever the website's publication state, so Coming Soon can wear them.
+   * Read through `resolve_public_presentation` (an unpublished configuration
+   * is invisible to anonymous tenant reads by design) and reduced to exactly
+   * the colour fields a published website already exposes: no content, no
+   * draft data, no palette provenance.
+   */
+  private async findPresentation(
+    academyId: string,
+  ): Promise<HostnamePresentation | undefined> {
+    const presentation =
+      await this.publicHostnameResolutionRepository.resolvePresentation(academyId);
+    if (!presentation) return undefined;
+    const brand = toPublicBrand(presentation.brand);
+    const colour = (key: string) =>
+      typeof brand[key] === 'string' ? (brand[key] as string) : undefined;
+    const palette =
+      brand.palette && typeof brand.palette === 'object'
+        ? (brand.palette as Record<string, unknown>)
+        : undefined;
+    return {
+      themeKey: presentation.themeKey,
+      brand: {
+        primaryColor: colour('primaryColor'),
+        secondaryColor: colour('secondaryColor'),
+        accentColor: colour('accentColor'),
+        ...(palette ? { palette } : {}),
+      },
+    };
   }
 
   /**

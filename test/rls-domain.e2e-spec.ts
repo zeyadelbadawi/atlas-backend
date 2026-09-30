@@ -424,5 +424,79 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
       );
       expect(rows).toHaveLength(0);
     });
+
+    it('resolve_public_presentation returns only the theme key and colour fields of an UNPUBLISHED configuration, with NO session variable set', async () => {
+      const owner = await createUser('rls-fn-presentation-owner');
+      const org = await createOrgOwnedBy(owner.id, 'rls-fn-presentation-org');
+      const academy = await createAcademyFor(org.id, 'rls-fn-presentation-academy');
+      await admin.websiteConfiguration.create({
+        data: {
+          academyId: academy.id,
+          themeKey: 'modern-education',
+          themeVersion: 1,
+          status: 'draft',
+          brand: {
+            primaryColor: '262 70% 50%',
+            logoUrl: 'https://cdn.example/private-logo.png',
+            palette: { status: 'confirmed', confirmedBy: 'owner-user-id' },
+          },
+          seo: { title: 'Private draft title' },
+          navigation: [],
+          header: {},
+          footer: {},
+        },
+      });
+
+      // An ordinary anonymous read sees no draft configuration at all.
+      const plain = await prisma.websiteConfiguration.findMany({
+        where: { academyId: academy.id },
+      });
+      expect(plain).toHaveLength(0);
+
+      const rows = await prisma.$queryRaw<
+        { theme_key: string; brand: Record<string, unknown> }[]
+      >(Prisma.sql`SELECT * FROM resolve_public_presentation(${academy.id})`);
+      expect(rows).toHaveLength(1);
+      expect(Object.keys(rows[0]).sort()).toEqual(['brand', 'theme_key']);
+      expect(rows[0].theme_key).toBe('modern-education');
+      // The colour fields only (palette provenance is stripped by the
+      // caller, `toPublicBrand`) — never the logo, SEO or anything else.
+      expect(Object.keys(rows[0].brand).sort()).toEqual(['palette', 'primaryColor']);
+      expect(JSON.stringify(rows[0])).not.toContain('Private draft title');
+    });
+
+    it('resolve_public_presentation returns nothing for an archived Academy or a fabricated id', async () => {
+      const owner = await createUser('rls-fn-presentation-archived-owner');
+      const org = await createOrgOwnedBy(owner.id, 'rls-fn-presentation-archived-org');
+      const academy = await createAcademyFor(
+        org.id,
+        'rls-fn-presentation-archived-academy',
+      );
+      await admin.websiteConfiguration.create({
+        data: {
+          academyId: academy.id,
+          themeKey: 'modern-education',
+          themeVersion: 1,
+          brand: { primaryColor: '262 70% 50%' },
+          seo: {},
+          navigation: [],
+          header: {},
+          footer: {},
+        },
+      });
+      await admin.academy.update({
+        where: { id: academy.id },
+        data: { status: 'archived' },
+      });
+
+      const archived = await prisma.$queryRaw<{ theme_key: string }[]>(
+        Prisma.sql`SELECT * FROM resolve_public_presentation(${academy.id})`,
+      );
+      expect(archived).toHaveLength(0);
+      const fabricated = await prisma.$queryRaw<{ theme_key: string }[]>(
+        Prisma.sql`SELECT * FROM resolve_public_presentation(${'00000000-0000-0000-0000-000000000000'})`,
+      );
+      expect(fabricated).toHaveLength(0);
+    });
   });
 });

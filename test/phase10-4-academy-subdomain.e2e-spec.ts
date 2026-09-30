@@ -190,7 +190,15 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
     // Exactly the fields the public runtime needs to bootstrap a site.
     // P63 added `canonicalHost` — the public address the site advertises,
     // present only when a base domain (or connected custom domain) exists.
-    const allowed = ['academyId', 'academyName', 'academySlug', 'canonicalHost'];
+    // Theme 1 plan Phase 6 added `presentation` — the theme key and public
+    // colours (P104-SUB-009 pins its exact shape).
+    const allowed = [
+      'academyId',
+      'academyName',
+      'academySlug',
+      'canonicalHost',
+      'presentation',
+    ];
     expect(Object.keys(resolved.body).every((key) => allowed.includes(key))).toBe(true);
     expect(Object.keys(resolved.body)).toEqual(
       expect.arrayContaining(['academyId', 'academyName', 'academySlug']),
@@ -198,6 +206,59 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
     const serialised = JSON.stringify(resolved.body);
     expect(serialised).not.toContain('organizationId');
     expect(serialised).not.toContain('@atlas.test');
+  });
+
+  it('P104-SUB-009 — an unpublished Academy resolves with its theme and public colours only', async () => {
+    const { token, organizationId } = await seedOwnerWithOrganization('p104-009');
+    const slug = `p104nine${Date.now()}`;
+    const academy = await createAcademy(token, organizationId, slug);
+    // The configuration row is created on the website surface's first read.
+    await request(app.getHttpServer())
+      .get(`/academies/${academy.body.id}/website/configuration`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    // A confirmed palette carrying the private provenance fields a public
+    // payload must never include.
+    const configuration = await admin.websiteConfiguration.findUniqueOrThrow({
+      where: { academyId: academy.body.id },
+    });
+    const brand = (configuration.brand ?? {}) as Record<string, unknown>;
+    await admin.websiteConfiguration.update({
+      where: { academyId: academy.body.id },
+      data: {
+        brand: {
+          ...brand,
+          primaryColor: '262 70% 50%',
+          palette: {
+            algorithmVersion: 'bp-1',
+            status: 'confirmed',
+            confirmedBy: 'owner-user-id',
+            confirmedAt: '2026-09-30T00:00:00.000Z',
+            extraction: { logoFingerprint: 'abc' },
+          },
+        },
+      },
+    });
+
+    const resolved = await resolve(slug).expect(200);
+    const presentation = resolved.body.presentation;
+    expect(presentation.themeKey).toBe(configuration.themeKey);
+    expect(Object.keys(presentation).sort()).toEqual(['brand', 'themeKey']);
+    expect(
+      Object.keys(presentation.brand).every((key) =>
+        ['primaryColor', 'secondaryColor', 'accentColor', 'palette'].includes(key),
+      ),
+    ).toBe(true);
+    expect(presentation.brand.primaryColor).toBe('262 70% 50%');
+    expect(presentation.brand.palette).toMatchObject({ status: 'confirmed' });
+    const serialised = JSON.stringify(presentation);
+    expect(serialised).not.toContain('confirmedBy');
+    expect(serialised).not.toContain('confirmedAt');
+    expect(serialised).not.toContain('extraction');
+    // Nothing about the (unpublished) site's content.
+    expect(serialised).not.toContain('navigation');
+    expect(serialised).not.toContain('sections');
   });
 
   it('P104-SUB-007 — the base-domain suffix strip extracts exactly one label', async () => {
