@@ -2,6 +2,7 @@ import {
   CertificateRendererService,
   reorderMixedRtl,
 } from './certificate-renderer.service';
+import { CertificateImageLoader } from './certificate-image-loader.service';
 import type { CertificateSnapshot } from '../dto/certificate.contract';
 import { DEFAULT_WORDING } from '../dto/certificate.contract';
 
@@ -30,7 +31,13 @@ const snapshot = (over: Partial<CertificateSnapshot> = {}): CertificateSnapshot 
 describe('CertificateRendererService', () => {
   // Font parsing and the image fetch time-out take longer than jest's 5 s default under a parallel run.
   jest.setTimeout(30_000);
-  const renderer = new CertificateRendererService();
+  const storage = {
+    putObject: jest.fn(),
+    getObject: jest.fn().mockRejectedValue(new Error('NoSuchKey')),
+    deleteObject: jest.fn(),
+    objectExists: jest.fn(),
+  };
+  const renderer = new CertificateRendererService(new CertificateImageLoader(storage));
 
   it('embeds the vendored fonts', () => {
     expect(renderer.fontsAvailable).toBe(true);
