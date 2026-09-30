@@ -75,12 +75,51 @@ describe('theme retirement plan', () => {
       visiblePages: 1,
       sectionsByType: { hero: 2, about: 1 },
       unmappableSections: [],
+      hiddenUntilContent: [],
       brand: {
         primaryColor: '222 47% 25%',
         hasDarkLogo: true,
         hasPalette: false,
       },
     });
+  });
+
+  it('lists sections Theme 1 hides until they have content', () => {
+    const section = (id: string, type: string, config: unknown) => ({ id, type, config });
+    const entry = planThemeRetirement(
+      website({
+        pages: [
+          {
+            id: 'p1',
+            slug: 'home',
+            pageType: 'core',
+            coreType: 'home',
+            visible: true,
+            seo: {},
+            version: 1,
+            sections: [
+              section('t-empty', 'testimonials', {
+                title: { en: 'Voices', ar: 'أصوات' },
+                items: [],
+              }),
+              section('t-sample', 'testimonials', {
+                items: [{ quote: { en: 'Great', ar: 'رائع' }, sample: true }],
+              }),
+              section('t-real', 'testimonials', {
+                items: [{ quote: { en: '', ar: 'رائع' }, sample: false }],
+              }),
+              section('g-empty', 'gallery', { images: [] }),
+              section('g-full', 'gallery', { images: [{ src: 'x' }] }),
+            ],
+          },
+        ],
+      }),
+    )!;
+    expect(entry.hiddenUntilContent).toEqual([
+      { pageSlug: 'home', sectionId: 't-empty', type: 'testimonials' },
+      { pageSlug: 'home', sectionId: 't-sample', type: 'testimonials' },
+      { pageSlug: 'home', sectionId: 'g-empty', type: 'gallery' },
+    ]);
   });
 
   it('classifies a key no code knows as unknown', () => {
@@ -179,6 +218,7 @@ describe('theme retirement plan', () => {
       byTheme: { 'premium-academy': 1, 'bold-creative': 1 },
       published: 1,
       withUnmappableSections: 0,
+      withSectionsHiddenUntilContent: 0,
       withoutStoredColours: 1,
     });
   });

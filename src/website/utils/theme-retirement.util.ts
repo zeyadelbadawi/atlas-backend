@@ -60,6 +60,20 @@ export interface UnmappableSection {
   readonly reason: 'unknownSectionType' | 'malformedSections';
 }
 
+/**
+ * A section Theme 1 does not draw on the public site until it has content
+ * (plan §D.4): testimonials without a real, non-sample quote, a gallery
+ * without images. Themes 2–5 drew its heading over nothing. Nothing is
+ * lost — the section stays stored and appears once it has content — but
+ * the Owner sees it before the move. (Statistics and instructors follow
+ * the same rule on live data, which a dry run can't know.)
+ */
+export interface HiddenUntilContentSection {
+  readonly pageSlug: string;
+  readonly sectionId: string | null;
+  readonly type: 'testimonials' | 'gallery';
+}
+
 export interface ThemeRetirementPlanEntry {
   readonly academyId: string;
   readonly organizationId: string;
@@ -77,6 +91,7 @@ export interface ThemeRetirementPlanEntry {
   readonly visiblePages: number;
   readonly sectionsByType: Readonly<Record<string, number>>;
   readonly unmappableSections: readonly UnmappableSection[];
+  readonly hiddenUntilContent: readonly HiddenUntilContentSection[];
   readonly brand: {
     readonly primaryColor: string | null;
     readonly secondaryColor: string | null;
@@ -135,6 +150,24 @@ export function websiteContentFingerprint(website: ThemeRetirementWebsite): stri
   return createHash('sha256').update(canonicalJson(content)).digest('hex');
 }
 
+function hasText(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  return Object.values(value as Record<string, unknown>).some(
+    (text) => typeof text === 'string' && text.trim().length > 0,
+  );
+}
+
+function isEmptyForTheme1(type: 'testimonials' | 'gallery', config: unknown): boolean {
+  const record = (config ?? {}) as { items?: unknown; images?: unknown };
+  if (type === 'gallery')
+    return !Array.isArray(record.images) || record.images.length === 0;
+  const items = Array.isArray(record.items) ? record.items : [];
+  return !items.some((item) => {
+    const quote = item as { quote?: unknown; sample?: unknown };
+    return quote.sample !== true && hasText(quote.quote);
+  });
+}
+
 /** Null when the website is already on a selectable theme (nothing to do). */
 export function planThemeRetirement(
   website: ThemeRetirementWebsite,
@@ -143,6 +176,7 @@ export function planThemeRetirement(
 
   const sectionsByType: Record<string, number> = {};
   const unmappableSections: UnmappableSection[] = [];
+  const hiddenUntilContent: HiddenUntilContentSection[] = [];
   for (const page of website.pages) {
     if (!Array.isArray(page.sections)) {
       unmappableSections.push({
@@ -154,7 +188,11 @@ export function planThemeRetirement(
       continue;
     }
     for (const section of page.sections as unknown[]) {
-      const record = (section ?? {}) as { id?: unknown; type?: unknown };
+      const record = (section ?? {}) as {
+        id?: unknown;
+        type?: unknown;
+        config?: unknown;
+      };
       const type = typeof record.type === 'string' ? record.type : null;
       const id = typeof record.id === 'string' ? record.id : null;
       if (type) sectionsByType[type] = (sectionsByType[type] ?? 0) + 1;
@@ -165,6 +203,12 @@ export function planThemeRetirement(
           type,
           reason: 'unknownSectionType',
         });
+      }
+      if (
+        (type === 'testimonials' || type === 'gallery') &&
+        isEmptyForTheme1(type, record.config)
+      ) {
+        hiddenUntilContent.push({ pageSlug: page.slug, sectionId: id, type });
       }
     }
   }
@@ -189,6 +233,7 @@ export function planThemeRetirement(
     visiblePages: website.pages.filter((page) => page.visible).length,
     sectionsByType,
     unmappableSections,
+    hiddenUntilContent,
     brand: {
       primaryColor: colour(brand.primaryColor),
       secondaryColor: colour(brand.secondaryColor),
@@ -210,6 +255,7 @@ export function summariseThemeRetirement(
   readonly byTheme: Readonly<Record<string, number>>;
   readonly published: number;
   readonly withUnmappableSections: number;
+  readonly withSectionsHiddenUntilContent: number;
   readonly withoutStoredColours: number;
 } {
   const byTheme: Record<string, number> = {};
@@ -223,6 +269,9 @@ export function summariseThemeRetirement(
     published: entries.filter((entry) => entry.status === 'published').length,
     withUnmappableSections: entries.filter((entry) => entry.unmappableSections.length > 0)
       .length,
+    withSectionsHiddenUntilContent: entries.filter(
+      (entry) => entry.hiddenUntilContent.length > 0,
+    ).length,
     // A website with no stored colours takes its theme's defaults, so its
     // colours WOULD change on the move; the schema requires them, so this
     // is expected to be 0 and is reported rather than assumed.
