@@ -33,7 +33,8 @@
     "db:backfill-nav-ar-labels": "ts-node -r tsconfig-paths/register scripts/backfill-nav-footer-ar-labels.ts",
     "audit:deps": "npm audit --omit=dev",
     "loadtest": "ts-node -r tsconfig-paths/register scripts/load-test.ts",
-    "fixtures:website-templates": "ts-node -r tsconfig-paths/register scripts/export-website-template-fixtures.ts"
+    "fixtures:website-templates": "ts-node -r tsconfig-paths/register scripts/export-website-template-fixtures.ts",
+    "e2e:prepare-journeys": "ts-node -r tsconfig-paths/register scripts/prepare-journey-fixtures.ts"
   },
   "prisma": {
     "seed": "ts-node -r tsconfig-paths/register prisma/seed.ts"
