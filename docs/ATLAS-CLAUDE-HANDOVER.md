@@ -2,6 +2,21 @@
 
 Written 30 Sep 2026. **The full handover is in the frontend repo: `zeyadelbadawi/atlas` → `docs/ATLAS-CLAUDE-HANDOVER.md`** (project context, phase status, findings, images, continuation plan). This file records the backend-specific state. Verify every claim against the repository.
 
+## ★★ Status update — Phase 8 decisions session (30 Sep 2026)
+
+| Commit | Item |
+|---|---|
+| `20cb0bf` | Themes 2–5 retired from selection: `SELECTABLE_WEBSITE_THEME_KEYS` / `RETIRED_WEBSITE_THEME_KEYS`; both DTOs refuse retired keys; provisioning maps a pre-retirement request to Theme 1; `npm run db:retire-website-themes` (gated dry run → `--apply --plan` → `--rollback`) |
+| `4b4cbde` | The dry run lists sections Theme 1 hides until they have content |
+
+Verified:
+- the migration tool on a copy of the dev database (plan, apply, idempotent re-apply, rollback, content byte-identical);
+- unit 156 suites / 4,194 tests (the two cross-repo suites with `ATLAS_FRONTEND_ROOT=/home/user/atlas`);
+- e2e provisioning + website 50/50;
+- tsc and lint clean.
+
+**Not run in production:** the retirement migration (Owner, gated; frontend `Reports/THEMES_2_5_RETIREMENT.md` §5) and M-1. No migration was added.
+
 ## ★ Status update — continuation session (30 Sep 2026)
 
 Since the first handover (branch `claude/practical-wozniak-pjcdhe`, nothing on `main`, no migrations added):
