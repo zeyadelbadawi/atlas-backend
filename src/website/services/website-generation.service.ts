@@ -115,7 +115,22 @@ const EMPTY_MODE_MINIMUMS: Partial<Record<SectionType, Record<string, unknown>>>
     title: lt('Get Started', 'ابدأ الآن'),
     cta: { label: lt('Learn More', 'اعرف المزيد') },
   },
+  // Theme 1 plan §D.2 — the v2 section types with a required title.
+  // (`pageHeader` takes its own page's title — see `emptyModeMinimum`.)
+  featureSplit: { title: lt('Why {{academyName}}', 'لماذا {{academyName}}') },
 };
+
+/** The empty-mode minimum for one section: a page hero is titled with its own page's name (the one honest title it can have); every other type uses `EMPTY_MODE_MINIMUMS`. */
+function emptyModeMinimum(
+  type: SectionType,
+  coreType: WebsiteTemplateCorePageType,
+): Record<string, unknown> | undefined {
+  if (type === 'pageHeader') {
+    const page = CORE_PAGE_DEFAULTS[coreType];
+    return { title: lt(page.title, page.titleAr) };
+  }
+  return EMPTY_MODE_MINIMUMS[type];
+}
 
 /**
  * A schema-required key ALWAYS needs to be present, in every mode, even
@@ -130,6 +145,9 @@ const SECTION_BASE_DEFAULTS: Partial<Record<SectionType, Record<string, unknown>
   testimonials: { items: [] },
   faq: { items: [] },
   gallery: { images: [] },
+  // Theme 1 plan §D.2 — the v2 types with a required list.
+  steps: { items: [] },
+  featureSplit: { items: [] },
 };
 
 export interface WebsiteGenerationResult {
@@ -153,10 +171,13 @@ export class WebsiteGenerationService {
     section: WebsiteTemplateSection,
     mode: WebsiteSetupMode,
     context: TemplateInterpolationContext,
+    coreType: WebsiteTemplateCorePageType,
   ): Record<string, unknown> {
     const base = {
       ...(SECTION_BASE_DEFAULTS[section.type] ?? {}),
       ...(section.dynamicDefaults ?? {}),
+      // Theme images are part of the look, not starter copy: both modes.
+      ...(section.assets ?? {}),
     };
 
     if (mode === 'complete' && section.starterContent) {
@@ -166,7 +187,7 @@ export class WebsiteGenerationService {
       };
     }
 
-    const minimal = EMPTY_MODE_MINIMUMS[section.type];
+    const minimal = emptyModeMinimum(section.type, coreType);
     if (minimal) {
       return {
         ...base,
@@ -243,7 +264,12 @@ export class WebsiteGenerationService {
         type: templateSection.type,
         enabled: true,
         visibility: { desktop: true, tablet: true, mobile: true },
-        config: this.buildSectionConfig(templateSection, mode, context),
+        config: this.buildSectionConfig(
+          templateSection,
+          mode,
+          context,
+          templatePage.coreType,
+        ),
       }));
 
       // Defensive: a template-authoring mistake must fail loudly at

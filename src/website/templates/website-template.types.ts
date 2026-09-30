@@ -52,6 +52,15 @@ export interface WebsiteTemplateSection {
    */
   readonly starterContent?: Record<string, unknown>;
   /**
+   * Theme 1 plan §D.2 — the theme's own image references
+   * (`theme-asset:<theme>/<key>`), applied in BOTH modes: the images are
+   * part of the theme's look, not starter copy, so an "Empty Academy" gets
+   * the same composition. The public runtime shows a neutral placeholder
+   * for any asset not yet released (§E.6). Every value is a replaceable
+   * image field the Owner can change.
+   */
+  readonly assets?: Record<string, unknown>;
+  /**
    * A template is authored before any real `WebsitePage` id exists, so a
    * CTA can't carry a real `pageId` directly — this declares INTENT
    * instead ("this section's primary CTA should point at the Courses

@@ -791,6 +791,88 @@
         ]
       },
       "valid": true
+    },
+    {
+      "name": "statistics: live metric with no authored value (Theme 1 v2 starter content)",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "label": {
+              "en": "Courses",
+              "ar": "دورة"
+            },
+            "value": {
+              "en": "",
+              "ar": ""
+            },
+            "metric": "courses"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "statistics: legacy hand-typed value without metric",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "label": {
+              "en": "Courses",
+              "ar": "دورة"
+            },
+            "value": {
+              "en": "500+",
+              "ar": "٥٠٠+"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "statistics: legacy v1 generated metric with value 0",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "label": {
+              "en": "Courses",
+              "ar": "دورة"
+            },
+            "value": {
+              "en": "0",
+              "ar": ""
+            },
+            "metric": "students"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "statistics: no metric and no value is refused",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "label": {
+              "en": "Courses",
+              "ar": "دورة"
+            },
+            "value": {
+              "en": "",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
     }
   ]
 }

@@ -202,14 +202,23 @@ export const courseCatalogSectionSchema = z.object({
   showSort: z.boolean(),
 });
 
-const statisticItemSchema = z.object({
-  id: z.string(),
-  /** Deliberately localized, not just numeral-formatted: an Owner may want distinct copy per language (e.g. "500+" vs "٥٠٠+", or a differently-worded suffix), not a locale-conversion of one authored value. */
-  value: localizedRequired(20),
-  label: localizedRequired(MAX_SHORT_TEXT),
-  /** Present only when generated (§1.4/§6.2 of the specification) — resolves a real, live, Academy-scoped count instead of the static `value` above. Absent means "use the authored `value` as-is," matching today's manually-authored behavior exactly. */
-  metric: z.enum(['courses', 'students', 'instructors']).optional(),
-});
+const statisticItemSchema = z
+  .object({
+    id: z.string(),
+    /**
+     * Deliberately localized, not just numeral-formatted: an Owner may want distinct copy per language (e.g. "500+" vs "٥٠٠+", or a differently-worded suffix), not a locale-conversion of one authored value.
+     *
+     * Theme 1 plan §D.4 — may be empty when `metric` is set: a live item's number is resolved at render time, so starter content never carries a hand-typed one. Without `metric` the value IS the item and stays required.
+     */
+    value: localizedOptional(20),
+    label: localizedRequired(MAX_SHORT_TEXT),
+    /** Present only when generated (§1.4/§6.2 of the specification) — resolves a real, live, Academy-scoped count instead of the static `value` above. Absent means "use the authored `value` as-is," matching today's manually-authored behavior exactly. */
+    metric: z.enum(['courses', 'students', 'instructors']).optional(),
+  })
+  .refine((item) => !!item.metric || item.value.en.trim().length > 0, {
+    message: 'validation:required',
+    path: ['value', 'en'],
+  });
 
 export const statisticsSectionSchema = z.object({
   title: localizedOptional(MAX_SHORT_TEXT).optional(),
