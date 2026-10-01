@@ -135,3 +135,19 @@ jobs:
 
       - name: E2E tests — run 2 (repeat, same convention this project's manual verification always uses — catches ordering/flake issues a single run can hide)
         run: npm run test:e2e
+
+  # deploy/deploy.sh end to end: the real script and the real production
+  # compose file against a throwaway Docker stack and a local registry
+  # (rollback digests, postgres/redis never recreated on tag drift, init
+  # on caddy/ssr). Never touches a remote host.
+  deploy-script:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: deploy.sh — syntax
+        run: bash -n deploy/deploy.sh && bash -n deploy/test/deploy-script.test.sh
+
+      - name: deploy.sh — end-to-end tests
+        run: bash deploy/test/deploy-script.test.sh
