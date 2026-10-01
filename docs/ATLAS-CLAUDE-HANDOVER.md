@@ -2,6 +2,31 @@
 
 Written 30 Sep 2026. **The full handover is in the frontend repo: `zeyadelbadawi/atlas` → `docs/ATLAS-CLAUDE-HANDOVER.md`** (project context, phase status, findings, images, continuation plan). This file records the backend-specific state. Verify every claim against the repository.
 
+## ★★★★★ Status update — production deployment and closure remediation (1 Oct 2026). Read this first.
+
+Full record: frontend `Reports/THEME_1_ACADEMY_WEBSITE_PLAN.md` §Z. The sections below this one describe earlier states and are kept as history.
+
+**In production (verified by the Owner's read-only VPS output and the GitHub API):**
+- **Gate B:** `zeyadelbadawi/atlas-backend#16` merged; `main` = `3053b3b` (tree = `742071b`).
+- **Gate C:** deploy run #231 (`migrate-and-deploy`, `apply_migrations=true`) applied `20261024000000_website_template_provenance` and `20261030000000_public_website_presentation` (132 applied, 0 unfinished). Backups: `atlas-20261001T070325Z.sql.gz` (Gate A) and `atlas-20261001T105333Z.sql.gz` (Gate C). Backend image `atlas-backend@sha256:5f49760b…`.
+- **Gate E (frontend, Caddy only):** this backend was not touched. `.last-good` now = backend `5f49760b…` + caddy `cb1d0469…`; the post-Gate-C record is preserved as `.last-good.after-gate-c` (caddy `814cfcc3…`).
+- `ATLAS_SSR` unset (off); no `ssr` container.
+
+**Corrections to the sections below:**
+- The deploy-script harness has **60** checks, not 48 (`504df08` added `--check-rollback-record`, `742071b` rollback without the registry).
+- It runs in `.github/workflows/deploy-script.yml`, not `ci.yml` (`d2c198c`), because `ci.yml` is `disabled_manually`.
+- S-1, GEN-1 and J-ENV, listed as open further down, were implemented before Gate B and are on `main`.
+
+**Closure remediation on `claude/practical-wozniak-pjcdhe` — uncommitted, not merged, not deployed:**
+- **F-8**, the public contact route (`POST public/websites/:academyId/contact`):
+  - `@Throttle` limit of 5 per 10 minutes per client IP;
+  - an optional `company` honeypot, which, when filled, is discarded with the same success response;
+  - accepted only when the website is published (otherwise 404).
+- **F-11:** the public student count counts only active, unblocked students (`countActiveForAcademy`). The admin dashboard count is unchanged. Pre-merge check (OWNER-RUN, read-only): exactly 1 published Academy's public number will drop.
+- **F-13:** neutral Theme 1 starter copy in EN/AR. It affects only newly generated websites; stored content is untouched, and a spec bans the old claims.
+- Verification: the focused specs pass 58/58; `npx jest` with `ATLAS_FRONTEND_ROOT=/home/user/atlas` gives 160/160 suites and 4217/4217 tests; tsc reports 0 errors; eslint on the changed files is clean.
+- No migration, schema, deploy or CI change.
+
 ## ★★★★ Status update — H1–H4 remediation (1 Oct 2026)
 
 | Commit | Item |

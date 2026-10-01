@@ -93,8 +93,20 @@ export class AcademyStudentsRepository {
     return rows[0]?.organization_id ?? null;
   }
 
-  /** Phase 6 — the public statistics endpoint's real, live student count. */
-  countForAcademy(tx: Prisma.TransactionClient, academyId: string): Promise<number> {
-    return tx.academyStudent.count({ where: { academyId } });
+  /**
+   * Phase 6 — the public statistics endpoint's real, live student count.
+   * Counts only students who currently have access: `status: 'active'` and
+   * not blocked — the same pair `assertActiveEnrollment`, the roster's
+   * "active" filter and announcement fan-out use, and the public twin of
+   * the instructor count's `status: 'active'`. A blocked, inactive or
+   * pending membership is not advertised as a student.
+   */
+  countActiveForAcademy(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+  ): Promise<number> {
+    return tx.academyStudent.count({
+      where: { academyId, status: 'active', blockedAt: null },
+    });
   }
 }

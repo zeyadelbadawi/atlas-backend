@@ -27,6 +27,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { PublicWebsiteService } from '../services/public-website.service';
 import { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
 import { CourseListQueryDto } from '../../course/dto/course-list-query.dto';
@@ -196,8 +197,16 @@ export class PublicWebsiteController {
     return result;
   }
 
-  /** Phase 6 — the real backend destination for the public Contact section's form. See `PublicWebsiteService.submitContactMessage`'s own doc comment. */
+  /**
+   * Phase 6 — the real backend destination for the public Contact
+   * section's form. See `PublicWebsiteService.submitContactMessage`'s own
+   * doc comment. 5 submissions per 10 minutes per client IP — overrides
+   * the global `default` throttler (120/min, keyed by
+   * `ClientIpThrottlerGuard`) for this route only; excess requests get the
+   * guard's normal 429.
+   */
   @Post(':academyId/contact')
+  @Throttle({ default: { limit: 5, ttl: 600_000 } })
   @HttpCode(201)
   async submitContactMessage(
     @Param('academyId') academyId: string,
