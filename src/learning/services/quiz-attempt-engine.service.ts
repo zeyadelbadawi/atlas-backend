@@ -55,6 +55,7 @@ import {
   canStartAttempt,
   computeDeadline,
   decideIntegrity,
+  sanitizeEventPayload,
   isPassing,
   isPastGrace,
   remainingSeconds,
@@ -287,7 +288,13 @@ export class QuizAttemptEngineService {
           showExplanations: quizRow.showExplanations,
           integrityMode: engineV2 && integrityOn ? quizRow.integrityMode : 'off',
           maxViolations: quizRow.maxViolations,
-          requireFullscreen: engineV2 && integrityOn && quizRow.requireFullscreen,
+          // Full screen is part of integrity: with integrity off the stored
+          // switch (hidden in the editor) must not reach the attempt.
+          requireFullscreen:
+            engineV2 &&
+            integrityOn &&
+            quizRow.integrityMode !== 'off' &&
+            quizRow.requireFullscreen,
           hideTimer: quizRow.hideTimer,
           passingScore: quizRow.passingScore,
           maxAttempts: quizRow.maxAttempts,
@@ -665,7 +672,7 @@ export class QuizAttemptEngineService {
         events: dto.events.map((event) => ({
           type: event.type,
           clientAt: event.clientAt ? new Date(event.clientAt) : null,
-          payload: event.payload ?? null,
+          payload: sanitizeEventPayload(event.type, event.payload),
         })),
       });
       const recorded = await this.attempts.createEvents(
@@ -676,7 +683,7 @@ export class QuizAttemptEngineService {
           counted: decision.counted[index] ?? false,
           clientAt: event.clientAt ? new Date(event.clientAt) : null,
           serverAt: now,
-          payload: (event.payload as Prisma.InputJsonValue | undefined) ?? null,
+          payload: sanitizeEventPayload(event.type, event.payload),
         })),
       );
       for (const event of dto.events) this.metrics.recordIntegrityEvent(event.type);

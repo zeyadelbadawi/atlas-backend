@@ -4,6 +4,7 @@ import {
   canStartAttempt,
   computeDeadline,
   decideIntegrity,
+  sanitizeEventPayload,
   isPastGrace,
   mulberry32,
   normalizeShortAnswer,
@@ -469,5 +470,23 @@ describe('quiz engine — integrity escalation', () => {
     const d = decide([ev('heartbeat')], { mode: 'strict', violationCount: 2 });
     expect(d.counted).toEqual([false]);
     expect(d.action).toBe('none');
+  });
+});
+
+describe('sanitizeEventPayload', () => {
+  it('keeps only allow-listed keys and values for the event type', () => {
+    expect(
+      sanitizeEventPayload('fullscreen_unavailable', {
+        reason: 'refused',
+        userAgent: 'Mozilla/5.0',
+      }),
+    ).toEqual({ reason: 'refused' });
+  });
+
+  it('drops unknown values, non-strings, and every payload on types with no allowlist', () => {
+    expect(sanitizeEventPayload('fullscreen_unavailable', { reason: 'gpu' })).toBeNull();
+    expect(sanitizeEventPayload('fullscreen_unavailable', { reason: 1 })).toBeNull();
+    expect(sanitizeEventPayload('copy', { text: 'the answer' })).toBeNull();
+    expect(sanitizeEventPayload('blur', undefined)).toBeNull();
   });
 });
