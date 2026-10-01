@@ -160,6 +160,86 @@ describe('Theme 1 template v2 — the template', () => {
     }
   });
 
+  it('starter copy makes no claim an Academy may not be able to keep (EN and AR)', () => {
+    // Sample testimonials are preview-only (§D.4) and never served, so they
+    // are not starter claims; every other authored string is.
+    const strings = collect(
+      modernEducationTemplate.pages.map((page) =>
+        page.sections.map((section) => ({
+          ...section,
+          starterContent: {
+            ...section.starterContent,
+            items: Array.isArray(section.starterContent?.items)
+              ? (section.starterContent.items as Row[]).filter((item) => !item.sample)
+              : section.starterContent?.items,
+          },
+        })),
+      ),
+      (key, value) => (key === 'en' || key === 'ar') && typeof value === 'string',
+    ) as string[];
+    expect(strings.length).toBeGreaterThan(50);
+
+    const banned = [
+      // pricing / free access
+      /some courses are free/i,
+      /free (preview|account|course)/i,
+      /pay securely/i,
+      /بعض الدورات مجانية/,
+      /مجاني/,
+      /بأمان عبر الإنترنت/,
+      // previews
+      /preview lessons\. open/i,
+      /دروس معاينة مجانية/,
+      // response times / who answers
+      /get back to you/i,
+      /we will reply/i,
+      /answered by the instructor/i,
+      /point you to the right course/i,
+      /سيعود إليك|سنعود إليك|وسنردّ عليك|وسنرشدك/,
+      /يجيب المدرّب/,
+      // availability
+      /enrolment is open/i,
+      /start any time/i,
+      /whenever you need them/i,
+      /التسجيل مفتوح/,
+      /ابدأ في أي وقت/,
+      // instructor quality / support claims
+      /real instructors/i,
+      /expert(-led)?\b/i,
+      /experienced instructors/i,
+      /real support/i,
+      /practitioners/i,
+      /review your projects/i,
+      /مدرّبين حقيقيين|مدرّبون خبراء|يقدّمها خبراء|يقوده خبراء|ذوو خبرة/,
+      /دعم حقيقي/,
+      /يراجع المدرّبون/,
+      // projects, outcomes, careers, social proof
+      /every course ends with/i,
+      /finish every course able/i,
+      /career/i,
+      /at work/i,
+      /learners recommend/i,
+      /learners choose us/i,
+      /ask us most/i,
+      /مسيرتك المهنية/,
+      /يوصي بها متعلّمونا/,
+      /يختارنا المتعلّمون/,
+      /في العمل/,
+      // certificates, refunds, guarantees
+      /certificat/i,
+      /refund/i,
+      /guarantee/i,
+      /شهاد/,
+      /استرداد/,
+      /ضمان/,
+    ];
+    for (const text of strings) {
+      for (const pattern of banned) {
+        expect({ text, matches: pattern.test(text) }).toEqual({ text, matches: false });
+      }
+    }
+  });
+
   it('copy interpolates only {{academyName}}', () => {
     const tokens = JSON.stringify(modernEducationTemplate).match(/\{\{\w+\}\}/g) ?? [];
     expect(new Set(tokens)).toEqual(new Set(['{{academyName}}']));

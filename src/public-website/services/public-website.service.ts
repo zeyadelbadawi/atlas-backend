@@ -23,6 +23,7 @@
  * imports the exact same `WebsiteConfiguration`/`WebsitePage` types from
  * `@types`), never a second, parallel public projection.
  */
+import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import type { CourseWithRelations } from '../../course/repositories/courses.repository';
 import { Injectable } from '@nestjs/common';
@@ -339,7 +340,7 @@ export class PublicWebsiteService {
       await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
         Promise.all([
           this.coursesRepository.countPublished(tx, academyId),
-          this.academyStudentsRepository.countForAcademy(tx, academyId),
+          this.academyStudentsRepository.countActiveForAcademy(tx, academyId),
           this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
         ]),
       );
@@ -734,6 +735,12 @@ export class PublicWebsiteService {
    * `WITH CHECK` actually verifies against (see that policy's own doc
    * comment, P27 migration) — a request naming an academyId that does not
    * resolve to a real organization never reaches the insert at all.
+   *
+   * Only a PUBLISHED website accepts messages (the same
+   * `findPublishedByAcademyId` condition every public read uses); an
+   * unpublished one gets the same `null` → 404 as an unknown Academy. A
+   * filled honeypot (`company`) is checked only after those, so a bot
+   * learns nothing a person would not, and is then discarded silently.
    */
   async submitContactMessage(
     academyId: string,
@@ -741,6 +748,16 @@ export class PublicWebsiteService {
   ): Promise<ContactSubmissionResponse | null> {
     const organizationId = await this.resolveOrganizationId(academyId);
     if (!organizationId) return null;
+
+    const configuration = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.websiteConfigurationRepository.findPublishedByAcademyId(tx, academyId),
+    );
+    if (!configuration) return null;
+
+    if ((payload.company ?? '').trim().length > 0) {
+      return this.toDiscardedSubmissionResponse(academyId, payload);
+    }
 
     const created = await this.tenancyContextService.runInTenantContext(
       organizationId,
@@ -753,5 +770,27 @@ export class PublicWebsiteService {
         }),
     );
     return toContactSubmissionResponse(created);
+  }
+
+  /**
+   * The success response for a honeypot-discarded submission: the same
+   * shape and status a stored one gets, so a bot cannot tell them apart.
+   * Every field echoes only what the caller sent or a fresh value — the
+   * `id` is a random UUID (the same format a real row's id has) that
+   * refers to nothing, and no stored data is read or exposed.
+   */
+  private toDiscardedSubmissionResponse(
+    academyId: string,
+    payload: SubmitContactMessageDto,
+  ): ContactSubmissionResponse {
+    return {
+      id: randomUUID(),
+      academyId,
+      name: payload.name,
+      email: payload.email,
+      message: payload.message,
+      status: 'new', // the column default a stored row starts with
+      createdAt: new Date().toISOString(),
+    };
   }
 }
