@@ -66,8 +66,13 @@ function servingKey(organizationId: string): string {
   return `public:serving:v1:${organizationId}`;
 }
 
-function pagesKey(academyId: string, configVersion: number): string {
-  return `public:pages:v1:${academyId}:${configVersion}`;
+/**
+ * v2: the payload carries expanded content-library entries, and the key
+ * carries the Academy's library revision (`WebsiteLibraryRevisionService`)
+ * so a library edit is a new key rather than a 5-minute-stale one.
+ */
+function pagesKey(academyId: string, configVersion: number, libraryRevision: number): string {
+  return `public:pages:v2:${academyId}:${configVersion}:${libraryRevision}`;
 }
 
 @Injectable()
@@ -138,12 +143,25 @@ export class PublicWebsiteCacheService {
     await this.setJson(configKey(academyId, configVersion), value, CONTENT_TTL_SECONDS);
   }
 
-  async getPages<T>(academyId: string, configVersion: number): Promise<T | undefined> {
-    return this.getJson<T>(pagesKey(academyId, configVersion));
+  async getPages<T>(
+    academyId: string,
+    configVersion: number,
+    libraryRevision: number,
+  ): Promise<T | undefined> {
+    return this.getJson<T>(pagesKey(academyId, configVersion, libraryRevision));
   }
 
-  async setPages<T>(academyId: string, configVersion: number, value: T): Promise<void> {
-    await this.setJson(pagesKey(academyId, configVersion), value, CONTENT_TTL_SECONDS);
+  async setPages<T>(
+    academyId: string,
+    configVersion: number,
+    libraryRevision: number,
+    value: T,
+  ): Promise<void> {
+    await this.setJson(
+      pagesKey(academyId, configVersion, libraryRevision),
+      value,
+      CONTENT_TTL_SECONDS,
+    );
   }
 
   private async getJson<T>(key: string): Promise<T | undefined> {

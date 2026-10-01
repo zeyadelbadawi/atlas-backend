@@ -67,6 +67,7 @@ import { parseOrThrow } from '../../common/validation/zod-violations.util';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
+import { WebsiteLibraryRevisionService } from './website-library-revision.service';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
@@ -77,6 +78,8 @@ export class WebsiteContentService {
     private readonly websiteFaqEntriesRepository: WebsiteFaqEntriesRepository,
     private readonly websiteTestimonialEntriesRepository: WebsiteTestimonialEntriesRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    // After a committed write — the public pages cache keys on it.
+    private readonly libraryRevisionService: WebsiteLibraryRevisionService,
   ) {}
 
   private async assertCanManage(
@@ -165,7 +168,7 @@ export class WebsiteContentService {
     userId: string,
     payload: CreateWebsiteFaqEntryDto,
   ): Promise<WebsiteFaqEntryResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -182,6 +185,8 @@ export class WebsiteContentService {
         return toWebsiteFaqEntryResponse(created);
       },
     );
+    await this.libraryRevisionService.bump(academyId);
+    return result;
   }
 
   async updateFaqEntry(
@@ -191,7 +196,7 @@ export class WebsiteContentService {
     entryId: string,
     payload: UpdateWebsiteFaqEntryDto,
   ): Promise<WebsiteFaqEntryResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -214,6 +219,8 @@ export class WebsiteContentService {
         return toWebsiteFaqEntryResponse(updated);
       },
     );
+    await this.libraryRevisionService.bump(academyId);
+    return result;
   }
 
   async publishFaqEntry(
@@ -222,7 +229,7 @@ export class WebsiteContentService {
     userId: string,
     entryId: string,
   ): Promise<WebsiteFaqEntryResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -243,6 +250,8 @@ export class WebsiteContentService {
         return toWebsiteFaqEntryResponse(updated);
       },
     );
+    await this.libraryRevisionService.bump(academyId);
+    return result;
   }
 
   async archiveFaqEntry(
@@ -251,7 +260,7 @@ export class WebsiteContentService {
     userId: string,
     entryId: string,
   ): Promise<WebsiteFaqEntryResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -272,6 +281,8 @@ export class WebsiteContentService {
         return toWebsiteFaqEntryResponse(updated);
       },
     );
+    await this.libraryRevisionService.bump(academyId);
+    return result;
   }
 
   /* --------------------------- Testimonial -------------------------- */
@@ -333,7 +344,7 @@ export class WebsiteContentService {
     userId: string,
     payload: CreateWebsiteTestimonialEntryDto,
   ): Promise<WebsiteTestimonialEntryResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -355,6 +366,8 @@ export class WebsiteContentService {
         return toWebsiteTestimonialEntryResponse(created);
       },
     );
+    await this.libraryRevisionService.bump(academyId);
+    return result;
   }
 
   async updateTestimonialEntry(
@@ -364,7 +377,7 @@ export class WebsiteContentService {
     entryId: string,
     payload: UpdateWebsiteTestimonialEntryDto,
   ): Promise<WebsiteTestimonialEntryResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -393,6 +406,8 @@ export class WebsiteContentService {
         return toWebsiteTestimonialEntryResponse(updated);
       },
     );
+    await this.libraryRevisionService.bump(academyId);
+    return result;
   }
 
   async publishTestimonialEntry(
@@ -401,7 +416,7 @@ export class WebsiteContentService {
     userId: string,
     entryId: string,
   ): Promise<WebsiteTestimonialEntryResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -426,6 +441,8 @@ export class WebsiteContentService {
         return toWebsiteTestimonialEntryResponse(updated);
       },
     );
+    await this.libraryRevisionService.bump(academyId);
+    return result;
   }
 
   async archiveTestimonialEntry(
@@ -434,7 +451,7 @@ export class WebsiteContentService {
     userId: string,
     entryId: string,
   ): Promise<WebsiteTestimonialEntryResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -459,5 +476,7 @@ export class WebsiteContentService {
         return toWebsiteTestimonialEntryResponse(updated);
       },
     );
+    await this.libraryRevisionService.bump(academyId);
+    return result;
   }
 }
