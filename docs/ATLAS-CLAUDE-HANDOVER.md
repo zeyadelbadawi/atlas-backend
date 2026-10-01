@@ -2,6 +2,19 @@
 
 Written 30 Sep 2026. **The full handover is in the frontend repo: `zeyadelbadawi/atlas` → `docs/ATLAS-CLAUDE-HANDOVER.md`** (project context, phase status, findings, images, continuation plan). This file records the backend-specific state. Verify every claim against the repository.
 
+## ★★★★ Status update — H1–H4 remediation (1 Oct 2026)
+
+| Commit | Item |
+|---|---|
+| `1b0d3e5` | **`deploy/deploy.sh`:**<br>• `.last-good` records `<repo>@sha256:<digest>` resolved from each running container's image, and keeps the previous record if one cannot be resolved (it used to be always empty).<br>• `--rollback` validates, pulls first, re-tags and verifies the running digests.<br>• A full deploy pulls only application services, starts postgres/redis with `--no-recreate`, rolls application services with `--no-deps`, and logs stateful tag drift.<br>• The monitoring SIGHUP reload is fixed for `COMPOSE_PROFILES=ssr,monitoring`.<br>• `ATLAS_DIR` (default `/opt/atlas`) exists for the harness.<br>**`deploy/docker-compose.prod.yml`:** `init: true` on caddy and ssr; ssr `mem_limit`/`memswap_limit` 384m and `NODE_OPTIONS=--max-old-space-size=256`.<br>**`deploy/test/deploy-script.test.sh`:** 48 checks against a throwaway stack and a local registry.<br>**`ci.yml`:** new job `deploy-script`. |
+
+Verified:
+- the harness passes 48/48;
+- with the old behaviour put back, 16 checks fail;
+- `docker compose config` renders `init` and the limits.
+
+Not run in production. Operational note: upgrading postgres or redis is now an explicit operator step. A deploy only logs `NOTE: postgres runs …; postgres:16-alpine now names …`.
+
 ## ★★★ Status update — Phase 8 SSR session (1 Oct 2026)
 
 | Commit | Item |
