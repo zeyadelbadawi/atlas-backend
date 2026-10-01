@@ -2,6 +2,19 @@
 
 Written 30 Sep 2026. **The full handover is in the frontend repo: `zeyadelbadawi/atlas` → `docs/ATLAS-CLAUDE-HANDOVER.md`** (project context, phase status, findings, images, continuation plan). This file records the backend-specific state. Verify every claim against the repository.
 
+## ★★★ Status update — Phase 8 SSR session (1 Oct 2026)
+
+| Commit | Item |
+|---|---|
+| `73d620a` | `deploy/docker-compose.prod.yml`: `ssr` service (image `atlas-frontend-ssr`, profile `ssr`, no port, no `env_file`, read-only, health check); Caddy gets `ATLAS_SSR` (default `off`). `deploy/deploy.sh`: `ATLAS_SSR=on` in `.env` enables the profile (profiles compose with `monitoring`); `--frontend-only` rolls `ssr` before Caddy; `SSR_IMAGE` in `.last-good` / `--rollback`; renderer health is non-fatal; off → renderer stopped |
+
+Verified:
+- `bash -n`;
+- the profile helper in isolation;
+- `docker compose config` (the `ssr` service appears only with the profile; `ATLAS_SSR` defaults to `off`).
+
+**No backend application code changed**: the renderer uses the existing public website API unchanged. Not run in production. Enabling it is the Owner's step (frontend `Reports/SSR_ARCHITECTURE_ANALYSIS.md` §14). The Themes 2–5 production migration and M-1 remain pending: BLOCKED here, as there is no production access.
+
 ## ★★ Status update — Phase 8 decisions session (30 Sep 2026)
 
 | Commit | Item |
