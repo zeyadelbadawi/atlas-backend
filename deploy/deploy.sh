@@ -14,6 +14,13 @@
 #                             frontend push must never migrate the DB)
 #   deploy.sh --rollback      re-pin the images to the digests recorded
 #                             by the last successful deploy and roll
+#   deploy.sh --check-rollback-record
+#                             READ-ONLY: validates .last-good exactly as
+#                             --rollback would (same code), confirms every
+#                             recorded image is present locally or readable
+#                             in the registry, and reports whether it is
+#                             what runs now. Pulls, tags, starts, stops and
+#                             writes nothing.
 #   deploy.sh --preflight     P64 Phase 1 — take a VERIFIED backup and
 #                             record the pre-migration counts, then stop.
 #                             Rolls nothing, migrates nothing; this is how
@@ -66,6 +73,7 @@ for arg in "$@"; do
     --frontend-only) MODE="frontend-only" ;;
     --rollback) MODE="rollback" ;;
     --preflight) MODE="preflight" ;;
+    --check-rollback-record) MODE="check-rollback-record" ;;
     --with-migrations) WITH_MIGRATIONS=1 ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
@@ -154,7 +162,7 @@ fi
 # never printed; it never leaves the VPS. The backend (env_file) and the
 # internal Prometheus (a 0444 file in a 0700 dir, see prepare_monitoring)
 # are its only consumers.
-if [ -z "${METRICS_SCRAPE_TOKEN:-}" ]; then
+if [ -z "${METRICS_SCRAPE_TOKEN:-}" ] && [ "$MODE" != "check-rollback-record" ]; then
   echo "==> METRICS_SCRAPE_TOKEN missing — generating it on the host (value never printed)"
   if command -v openssl >/dev/null 2>&1; then
     generated_token=$(openssl rand -hex 32)
@@ -499,7 +507,15 @@ pin_service_image() {
   echo "    $service: $ref -> $digest"
 }
 
-if [ "$MODE" = "rollback" ]; then
+# Reads and validates the WHOLE rollback record before anything is touched
+# (a rollback that silently skips an image is the failure this replaces).
+# Sets BACKEND_IMAGE, CADDY_IMAGE, SSR_IMAGE, RECORDED_AT and
+# rollback_services — the services whose images are rollback state:
+# backend and caddy always; ssr only while ATLAS_SSR=on. Shared by
+# --rollback and --check-rollback-record, so the check proves exactly what
+# the rollback would accept. Exits non-zero, having changed nothing.
+validate_rollback_record() {
+  local pair service digest
   if [ ! -f "$ATLAS_DIR/.last-good" ]; then
     echo "==> No .last-good record exists; nothing to roll back to." >&2
     exit 1
@@ -508,9 +524,6 @@ if [ "$MODE" = "rollback" ]; then
   CADDY_IMAGE=$(last_good_value CADDY_IMAGE)
   SSR_IMAGE=$(last_good_value SSR_IMAGE)
   RECORDED_AT=$(last_good_value RECORDED_AT)
-
-  # Validate the WHOLE record before touching anything: a rollback that
-  # silently skips an image is the failure this replaces.
   rollback_services="backend caddy"
   for pair in "backend:$BACKEND_IMAGE" "caddy:$CADDY_IMAGE"; do
     if ! is_pinned_digest "${pair#*:}"; then
@@ -528,16 +541,54 @@ if [ "$MODE" = "rollback" ]; then
     rollback_services="ssr $rollback_services"
   fi
   for service in $rollback_services; do
-    case "$service" in
-      backend) digest=$BACKEND_IMAGE ;;
-      caddy) digest=$CADDY_IMAGE ;;
-      ssr) digest=$SSR_IMAGE ;;
-    esac
+    digest=$(recorded_digest "$service")
     if [ "$(image_repository "$digest")" != "$(image_repository "$(service_image_ref "$service")")" ]; then
       echo "==> Refusing to roll back: the recorded $service image is not from the repository the compose file uses." >&2
       exit 1
     fi
   done
+}
+
+# The recorded digest for a rollback service (after validate_rollback_record).
+recorded_digest() {
+  case "$1" in
+    backend) printf '%s\n' "$BACKEND_IMAGE" ;;
+    caddy) printf '%s\n' "$CADDY_IMAGE" ;;
+    ssr) printf '%s\n' "$SSR_IMAGE" ;;
+  esac
+}
+
+if [ "$MODE" = "check-rollback-record" ]; then
+  validate_rollback_record
+  echo "==> .last-good is valid for --rollback (recorded ${RECORDED_AT:-unknown}; ATLAS_SSR=${ATLAS_SSR:-off})"
+  check_failed=0
+  for service in $rollback_services; do
+    digest=$(recorded_digest "$service")
+    if docker image inspect "$digest" >/dev/null 2>&1; then
+      where="present on this host"
+    elif docker manifest inspect "$digest" >/dev/null 2>&1; then
+      where="not on this host, readable in the registry"
+    else
+      where="NOT AVAILABLE (neither on this host nor readable in the registry)"
+      check_failed=1
+    fi
+    running=$(running_image_digest "$service" || true)
+    if [ "$running" = "$digest" ]; then now="it is what runs now"; else now="runs now: ${running:-unknown}"; fi
+    echo "    $service: $digest"
+    echo "      $where; $now"
+  done
+  if [ "$SSR_ENABLED" != "1" ] && [ -n "$SSR_IMAGE" ]; then
+    echo "    ssr: recorded but NOT rollback state while ATLAS_SSR is off (never pulled or started)"
+  fi
+  if [ "$check_failed" = 1 ]; then
+    echo "==> A recorded image cannot be obtained; --rollback would fail before changing anything." >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+if [ "$MODE" = "rollback" ]; then
+  validate_rollback_record
 
   echo "==> Rolling back to the images recorded at ${RECORDED_AT:-unknown}"
   # Every image is fetched before any container changes, so a missing
@@ -557,11 +608,7 @@ if [ "$MODE" = "rollback" ]; then
 
   # Prove the containers now run exactly the recorded images.
   for service in $rollback_services; do
-    case "$service" in
-      backend) want=$BACKEND_IMAGE ;;
-      caddy) want=$CADDY_IMAGE ;;
-      ssr) want=$SSR_IMAGE ;;
-    esac
+    want=$(recorded_digest "$service")
     have=$(running_image_digest "$service" || true)
     if [ "$have" != "$want" ]; then
       echo "==> Rollback did not take effect: $service runs ${have:-an unknown image}, expected $want." >&2

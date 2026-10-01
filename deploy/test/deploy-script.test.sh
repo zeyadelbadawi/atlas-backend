@@ -121,11 +121,9 @@ docker tag postgres:16-alpine "$REG/postgres:16-alpine" && docker push -q "$REG/
 docker tag redis:7-alpine "$REG/redis:7-alpine" && docker push -q "$REG/redis:7-alpine" >/dev/null
 build_push atlas-backend:latest "$B/backend" --build-arg VERSION=v1 --build-arg "MIGRATIONS=20260101000000_m1 20260201000000_m2"
 build_push atlas-frontend:latest "$B/caddy" --build-arg VERSION=v1
-build_push atlas-frontend-ssr:latest "$B/ssr" --build-arg VERSION=v1
 build_push prom:test "$B/idle"
 BACKEND_V1=$(registry_digest atlas-backend latest)
 CADDY_V1=$(registry_digest atlas-frontend latest)
-SSR_V1=$(registry_digest atlas-frontend-ssr latest)
 
 # --- the deployment directory: real script + real compose + test override ---
 cp "$REPO/deploy/deploy.sh" "$W/deploy.sh"
@@ -239,24 +237,47 @@ check "control: a plain 'compose up -d postgres' (the old flow) recreates it" \
 dc up -d --wait postgres redis >/dev/null 2>&1
 
 # =============================================================================
-echo "# 3. a failed deploy, then --rollback (H1)"
-cp "$W/.last-good" "$W/last-good.v2"
-PG_CID=$(cid postgres)
+echo "# 3. first-deploy bootstrap record, a failed deploy, then --rollback (H1)"
+cp "$W/.last-good" "$W/last-good.v2" # what record_last_good wrote after deploy 2
+PG_CID=$(cid postgres); BACKEND_CID=$(cid backend); CADDY_CID=$(cid caddy)
+started() { docker inspect --format '{{.State.StartedAt}}' "$(cid "$1")"; }
+STARTS="$(started backend)|$(started caddy)|$(started postgres)|$(started redis)"
+# Production's state: the empty record every previous deploy wrote.
+printf 'BACKEND_IMAGE=\nCADDY_IMAGE=\nRECORDED_AT=2026-09-29T02:02:29Z\n' >"$W/.last-good"
+check "check mode rejects production's empty record" \
+  bash -c "! ATLAS_DIR='$W' bash '$W/deploy.sh' --check-rollback-record >'$W/log3a' 2>&1"
+# The bootstrap exactly as the production procedure writes it: the audited
+# running digests, written atomically, nothing else touched.
+AUDIT_BACKEND="$REG/atlas-backend@$BACKEND_V2"
+AUDIT_CADDY="$REG/atlas-frontend@$CADDY_V2"
+printf 'BACKEND_IMAGE=%s\nCADDY_IMAGE=%s\nRECORDED_AT=%s\n' \
+  "$AUDIT_BACKEND" "$AUDIT_CADDY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$W/.last-good.tmp"
+mv "$W/.last-good.tmp" "$W/.last-good"
+cp "$W/.last-good" "$W/last-good.bootstrap"
+check "the bootstrap record names exactly what record_last_good records" \
+  eq "$(grep -v '^RECORDED_AT=' "$W/.last-good")" "$(grep -v '^RECORDED_AT=' "$W/last-good.v2")"
+ENV_SUM=$(sha256sum <"$W/.env")
+check "check mode accepts the bootstrap record" run_deploy "$W/log3b" --check-rollback-record
+check "check mode confirms both recorded images are what runs now" \
+  bash -c "[ \"\$(grep -c 'it is what runs now' '$W/log3b')\" = 2 ]"
+check "check mode changed nothing: same containers, start times, .env and record" \
+  eq "$(cid backend)|$(cid caddy)|$(cid postgres)|$STARTS|$(sha256sum <"$W/.env")|$(sha256sum <"$W/.last-good")" \
+  "$BACKEND_CID|$CADDY_CID|$PG_CID|$(started backend)|$(started caddy)|$(started postgres)|$(started redis)|$ENV_SUM|$(sha256sum <"$W/last-good.bootstrap")"
 build_push atlas-backend:latest "$B/backend" --build-arg VERSION=v3 --build-arg HEALTHY=0 \
   --build-arg "MIGRATIONS=20260101000000_m1 20260201000000_m2 20260301000000_m3"
 build_push atlas-frontend:latest "$B/caddy" --build-arg VERSION=v3
 check "an unhealthy release fails the deploy" bash -c "! ATLAS_DIR='$W' bash '$W/deploy.sh' >'$W/log3' 2>&1"
-check "the failed deploy left .last-good untouched" cmp -s "$W/.last-good" "$W/last-good.v2"
-check "rollback succeeds" run_deploy "$W/log4" --rollback
-check "the backend runs exactly the recorded v2 digest" \
-  eq "$(running_image backend)" "$(docker image inspect -f '{{.Id}}' "$REG/atlas-backend@$BACKEND_V2")"
-check "caddy runs exactly the recorded v2 digest" \
-  eq "$(running_image caddy)" "$(docker image inspect -f '{{.Id}}' "$REG/atlas-frontend@$CADDY_V2")"
+check "the failed deploy left the bootstrap record untouched" cmp -s "$W/.last-good" "$W/last-good.bootstrap"
+check "rollback from the bootstrap record succeeds" run_deploy "$W/log4" --rollback
+check "the backend runs exactly the bootstrapped digest" \
+  eq "$(running_image backend)" "$(docker image inspect -f '{{.Id}}' "$AUDIT_BACKEND")"
+check "caddy runs exactly the bootstrapped digest" \
+  eq "$(running_image caddy)" "$(docker image inspect -f '{{.Id}}' "$AUDIT_CADDY")"
 check "rollback verified the running images itself" log_has "$W/log4" "Running images match the record."
 check "neither the failed deploy nor the rollback touched postgres" eq "$(cid postgres)" "$PG_CID"
 
 # =============================================================================
-echo "# 4. rollback refuses an unusable record and changes nothing"
+echo "# 4. rollback refuses an unusable record and changes nothing; SSR off never touches the renderer"
 BACKEND_CID=$(cid backend); CADDY_CID=$(cid caddy)
 printf 'BACKEND_IMAGE=\nCADDY_IMAGE=\nRECORDED_AT=2026-09-29T02:02:29Z\n' >"$W/.last-good" # production's record
 check "rollback with production's empty record fails" bash -c "! ATLAS_DIR='$W' bash '$W/deploy.sh' --rollback >'$W/log5' 2>&1"
@@ -265,10 +286,23 @@ check "nothing was rolled (same backend and caddy containers)" eq "$(cid backend
 printf 'BACKEND_IMAGE=%s\nCADDY_IMAGE=%s\n' "$REG/atlas-frontend@$CADDY_V2" "$REG/atlas-frontend@$CADDY_V2" >"$W/.last-good"
 check "rollback refuses a digest from another repository" bash -c "! ATLAS_DIR='$W' bash '$W/deploy.sh' --rollback >'$W/log6' 2>&1"
 check "nothing was rolled" eq "$(cid backend)|$(cid caddy)" "$BACKEND_CID|$CADDY_CID"
-cp "$W/last-good.v2" "$W/.last-good"
+# SSR off: a recorded renderer digest that exists NOWHERE (the renderer image
+# has not even been published yet) must be ignored, never pulled or started.
+MISSING_SSR="$REG/atlas-frontend-ssr@sha256:$(printf '0%.0s' $(seq 1 64))"
+{ cat "$W/last-good.bootstrap"; echo "SSR_IMAGE=$MISSING_SSR"; } >"$W/.last-good"
+check "precondition: no renderer image exists in the registry or on the host" \
+  bash -c "! docker manifest inspect --insecure '$REG/atlas-frontend-ssr:latest' >/dev/null 2>&1 && ! docker image inspect '$MISSING_SSR' >/dev/null 2>&1"
+check "SSR off: check mode accepts the record and says the renderer is not rollback state" \
+  bash -c "ATLAS_DIR='$W' bash '$W/deploy.sh' --check-rollback-record >'$W/log6b' 2>&1 && grep -q 'NOT rollback state while ATLAS_SSR is off' '$W/log6b'"
+check "SSR off: rollback succeeds without the renderer image" run_deploy "$W/log6c" --rollback
+check "SSR off: rollback never pulled, tagged or started the renderer" \
+  bash -c "! grep -qE 'ssr' '$W/log6c' && [ -z \"\$(cd '$W' && docker compose --profile ssr ps -aq ssr)\" ]"
+cp "$W/last-good.bootstrap" "$W/.last-good"
 
 # =============================================================================
 echo "# 5. ATLAS_SSR=on: renderer digest recorded; init and memory limit applied (H1, H3, H4)"
+build_push atlas-frontend-ssr:latest "$B/ssr" --build-arg VERSION=v1
+SSR_V1=$(registry_digest atlas-frontend-ssr latest)
 echo "ATLAS_SSR=on" >>"$W/.env"
 build_push atlas-backend:latest "$B/backend" --build-arg VERSION=v4 \
   --build-arg "MIGRATIONS=20260101000000_m1 20260201000000_m2 20260301000000_m3"
@@ -284,6 +318,8 @@ check "caddy is healthy behind its healthcheck" eq "$(docker inspect -f '{{.Stat
 check "ssr is healthy behind its healthcheck" eq "$(docker inspect -f '{{.State.Health.Status}}' "$(cid ssr)")" "healthy"
 check "monitoring is still reloaded with ssr on (COMPOSE_PROFILES=ssr,monitoring)" \
   log_has "$W/log7" "Reloading Prometheus/Alertmanager configuration"
+check "SSR on: check mode lists the renderer as rollback state" \
+  bash -c "ATLAS_DIR='$W' bash '$W/deploy.sh' --check-rollback-record >'$W/log7b' 2>&1 && grep -q '    ssr: $REG/atlas-frontend-ssr@$SSR_V1' '$W/log7b'"
 sed -i '/^SSR_IMAGE=/d' "$W/.last-good"
 check "rollback refuses a record without a renderer while ATLAS_SSR=on" \
   bash -c "! ATLAS_DIR='$W' bash '$W/deploy.sh' --rollback >'$W/log8' 2>&1 && grep -q 'predates server rendering' '$W/log8'"
