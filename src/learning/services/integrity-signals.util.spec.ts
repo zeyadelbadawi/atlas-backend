@@ -61,6 +61,7 @@ describe('deriveIntegritySignals', () => {
       {
         key: 'time_away',
         level: 'review',
+        category: 'behaviour',
         occurrences: 1,
         totalSeconds: AWAY_REVIEW_TOTAL_SECONDS,
         longestSeconds: AWAY_REVIEW_TOTAL_SECONDS,
@@ -117,13 +118,30 @@ describe('deriveIntegritySignals', () => {
     ]);
   });
 
+  it('technical interruptions are categorised apart from behaviour', () => {
+    const signals = derive(
+      [ev(0, 'fullscreen_unavailable', { payload: { reason: 'refused' } }), ev(100, 'print')],
+      { requireFullscreen: true, end: 600 },
+    );
+    expect(signals.map((s) => [s.key, s.category])).toEqual([
+      ['fullscreen_unavailable', 'technical'],
+      ['print', 'behaviour'],
+    ]);
+  });
+
   it('silence: a long stretch with no batch is context (never worth a look on its own)', () => {
     const signals = derive([ev(60, 'heartbeat'), ev(400, 'heartbeat')], {
       end: 460,
       silent: true,
     });
     expect(signals).toEqual([
-      expect.objectContaining({ key: 'connection_gap', level: 'info', occurrences: 1, totalSeconds: 340 }),
+      expect.objectContaining({
+        key: 'connection_gap',
+        level: 'info',
+        category: 'technical',
+        occurrences: 1,
+        totalSeconds: 340,
+      }),
     ]);
   });
 });

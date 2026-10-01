@@ -87,6 +87,24 @@ highlight its evidence rows in the timeline.
 | `print` | print started | always | Ctrl+P by mistake |
 | `connection_gap` | no batch for ≥ 180 s | never (context) | offline, sleep, closed tab |
 
+Each signal also carries a **category**: `technical` (`connection_gap`,
+`fullscreen_unavailable` — interruptions and browser limits) or
+`behaviour`. The reviewer UI shows three groups — "Worth a look",
+"Technical interruptions", "For context" — and opens with the policy the
+attempt ran under (mode, event limit, full screen required or not), read
+from the attempt's own snapshot.
+
+**Historical attempts need no migration**: signals are derived on read
+from the stored events, so every past attempt gets them as is. The
+previous counted-violation fields (`violationCount`, `integrityFlagged`,
+strict-mode auto-submit) are unchanged; the signals sit beside them.
+
+**Not built, and why**: answer-timing and answer-change patterns (too
+easily misread — fast typists, prepared students — without real data to
+calibrate on); `second_session` and `device_change` exist as event
+types but nothing produces them today (no detector; listed so the gap is
+visible, not implied as coverage).
+
 Durations use server time; two events in the same batch are measured with
 the client clock (the only measure of that gap). The client clock is never
 used for order or escalation (`decideIntegrity` is unchanged).

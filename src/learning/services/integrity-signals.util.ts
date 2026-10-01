@@ -56,10 +56,22 @@ export type IntegritySignalKey =
   | 'print'
   | 'connection_gap';
 
+/**
+ * Technical interruptions (the connection, the browser's abilities) are
+ * kept apart from behaviour, so a reviewer never reads a dropped Wi-Fi or
+ * an iPhone as conduct.
+ */
+const TECHNICAL_SIGNALS: ReadonlySet<IntegritySignalKey> = new Set<IntegritySignalKey>([
+  'connection_gap',
+  'fullscreen_unavailable',
+]);
+
 export interface IntegritySignal {
   readonly key: IntegritySignalKey;
   /** `review`: worth a reviewer's look. `info`: context. Never a verdict. */
   readonly level: 'review' | 'info';
+  /** `technical`: an interruption or browser limit, not conduct. */
+  readonly category: 'behaviour' | 'technical';
   readonly occurrences: number;
   /** Total and longest interval, for duration signals. */
   readonly totalSeconds?: number;
@@ -131,7 +143,7 @@ function durationSignal(
   key: IntegritySignalKey,
   found: readonly Interval[],
   review: (total: number, occurrences: number) => boolean,
-): IntegritySignal | null {
+): Omit<IntegritySignal, 'category'> | null {
   if (found.length === 0) return null;
   const total = Math.round(found.reduce((sum, interval) => sum + interval.seconds, 0));
   const longest = Math.round(Math.max(...found.map((interval) => interval.seconds)));
@@ -161,12 +173,19 @@ function overlapsHidden(
 }
 
 export function deriveIntegritySignals(input: SignalInput): IntegritySignal[] {
+  return deriveSignals(input).map((signal) => ({
+    ...signal,
+    category: TECHNICAL_SIGNALS.has(signal.key) ? 'technical' : 'behaviour',
+  }));
+}
+
+function deriveSignals(input: SignalInput): Omit<IntegritySignal, 'category'>[] {
   if (input.integrityMode === 'off') return [];
   const events = [...input.events].sort(
     (a, b) => a.serverAt.getTime() - b.serverAt.getTime(),
   );
-  const signals: IntegritySignal[] = [];
-  const push = (signal: IntegritySignal | null) => {
+  const signals: Omit<IntegritySignal, 'category'>[] = [];
+  const push = (signal: Omit<IntegritySignal, 'category'> | null) => {
     if (signal) signals.push(signal);
   };
 

@@ -73,12 +73,22 @@ export interface QuizAttemptReviewResponse extends QuizAttemptResponse {
   readonly integrityMode: 'off' | 'monitor' | 'warn' | 'strict';
   /** Whether this attempt required full screen (its settings snapshot). */
   readonly requireFullscreen: boolean;
+  /** The event limit in force for this attempt (its settings snapshot). */
+  readonly maxViolations: number;
   /**
    * P5 — the explainable signals derived from `events`
    * (`deriveIntegritySignals`): facts worth a look, with their evidence.
    * Never a score or a verdict.
    */
   readonly signals: readonly IntegritySignal[];
+}
+
+function snapshotMaxViolations(snapshot: PrismaQuizAttempt['settingsSnapshot']): number {
+  const value =
+    snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+      ? (snapshot as Record<string, unknown>).maxViolations
+      : undefined;
+  return typeof value === 'number' ? value : 0;
 }
 
 function snapshotRequiresFullscreen(snapshot: PrismaQuizAttempt['settingsSnapshot']): boolean {
@@ -195,6 +205,7 @@ export function toAttemptReviewResponse(
     invalidatedByName: names.invalidatedBy,
     integrityMode,
     requireFullscreen,
+    maxViolations: snapshotMaxViolations(attempt.settingsSnapshot),
     signals: deriveIntegritySignals({
       events,
       startedAt: started,

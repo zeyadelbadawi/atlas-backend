@@ -5,6 +5,7 @@
 #   scripts/e2e-local-stack.sh env     # print the env file path (for sourcing)
 #   scripts/e2e-local-stack.sh start   # restart services on the existing data (after a reboot)
 #   scripts/e2e-local-stack.sh serve   # build + run the API (:3000) and the Vite app (:3001)
+#   scripts/e2e-local-stack.sh stop    # stop the API and the app (by port), keep the data
 #   scripts/e2e-local-stack.sh down    # stop and DELETE the cluster and data
 #
 # Everything lives under $E2E_STACK_DIR (default /tmp/atlas-e2e-stack): a
@@ -120,7 +121,17 @@ serve() {
   echo "servers did not become ready; see $STACK_DIR/*.log" >&2; return 1
 }
 
+stop_servers() {
+  # By port: the pid files hold `npx`, whose child is the real server.
+  for port in 3000 3001; do
+    pids="$(lsof -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    [ -n "$pids" ] && kill $pids 2>/dev/null || true
+  done
+  echo "servers stopped"
+}
+
 down() {
+  stop_servers >/dev/null 2>&1 || true
   [ -d "$STACK_DIR/pg" ] && as_pg "$PG_BIN/pg_ctl" -D "$STACK_DIR/pg" -m fast stop >/dev/null 2>&1 || true
   [ -f "$STACK_DIR/s3.pid" ] && kill "$(cat "$STACK_DIR/s3.pid")" 2>/dev/null || true
   redis-cli -h 127.0.0.1 -p "$REDIS_PORT" shutdown nosave >/dev/null 2>&1 || true
@@ -132,6 +143,7 @@ case "${1:-}" in
   up) up ;;
   start) start_services ;;
   serve) serve ;;
+  stop) stop_servers ;;
   down) down ;;
   env) echo "$ENV_FILE" ;;
   *) echo "usage: $0 up|start|serve|down|env" >&2; exit 64 ;;

@@ -38,6 +38,7 @@ import { HealthModule } from './health/health.module';
 import { SecurityReportsModule } from './security-reports/security-reports.module';
 import { SessionCookieInterceptor } from './identity/session-cookie/session-cookie.interceptor';
 import { MetricsModule } from './observability/metrics/metrics.module';
+import { RumModule } from './observability/rum/rum.module';
 import { IdentityModule } from './identity/identity.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { AcademyModule } from './academy/academy.module';
@@ -161,6 +162,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     SecurityReportsModule,
     // P64 Phase 2 §U — the first metrics registry in the codebase.
     MetricsModule,
+    RumModule,
     ObservabilityModule,
     // New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md.
     OnboardingModule,
