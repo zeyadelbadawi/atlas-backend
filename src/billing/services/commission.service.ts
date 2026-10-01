@@ -249,6 +249,23 @@ export class CommissionService {
   // --- Phase P13 entry point: snapshot-time resolution -------------------
 
   /**
+   * The effective commission for `organizationId`, resolved in THAT
+   * Organization's own tenant context. Checkout runs as the learner
+   * (`runInUserContext`), where RLS hides the Organization's override and
+   * subscription: resolving on the learner's transaction ignored a custom
+   * or plan rate — refusing payment when no global default existed, and
+   * charging the global default instead of the Organization's rate when
+   * one did. Callers without the Organization's context use this.
+   */
+  async resolveEffectiveCommissionInOrganizationContext(
+    organizationId: string,
+  ): Promise<EffectiveCommissionResolution> {
+    return this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+      this.resolveEffectiveCommissionForOrganization(tx, organizationId),
+    );
+  }
+
+  /**
    * The ONE place Course Commerce resolves "what commission rate applies
    * to this Organization right now" — called exactly once, at Payment
    * creation, by `CourseOrderPaymentsService`, whose caller freezes the

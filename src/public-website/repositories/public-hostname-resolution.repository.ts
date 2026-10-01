@@ -78,4 +78,22 @@ export class PublicHostnameResolutionRepository {
     );
     return rows[0]?.organization_id ?? null;
   }
+
+  /**
+   * Theme 1 plan Phase 6 — the Academy's theme key and brand colour fields,
+   * whatever the website's publication state, for Coming Soon. Through
+   * `resolve_public_presentation`, the narrow `SECURITY DEFINER` read in
+   * the Phase 6 migration: tenant RLS lets an anonymous request see only a
+   * published configuration, and this returns nothing but those fields.
+   */
+  async resolvePresentation(
+    academyId: string,
+  ): Promise<{ themeKey: string; brand: Record<string, unknown> } | null> {
+    const rows = await this.prisma.$queryRaw<
+      { theme_key: string; brand: Record<string, unknown> | null }[]
+    >(Prisma.sql`SELECT * FROM resolve_public_presentation(${academyId})`);
+    const row = rows[0];
+    if (!row) return null;
+    return { themeKey: row.theme_key, brand: row.brand ?? {} };
+  }
 }

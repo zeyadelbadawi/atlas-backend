@@ -92,6 +92,8 @@ export const websiteBrandSchema = z.object({
   primaryColor: hslColor,
   secondaryColor: hslColor,
   accentColor: hslColor,
+  /** Theme 1 plan §D.2 — the semantic Brand Palette; produced and validated by `resolveBrandUpdate`, never stored from raw input. */
+  palette: z.record(z.unknown()).optional(),
 });
 
 /** The incoming PATCH shape — matches `Partial<WebsiteBrandConfig>` exactly; every field optional, each individually bound the same as the full schema. */
@@ -100,6 +102,8 @@ export const websiteBrandPatchSchema = z.object({
   primaryColor: hslColor.optional(),
   secondaryColor: hslColor.optional(),
   accentColor: hslColor.optional(),
+  /** Palette INPUTS, or `null` to remove it — parsed and re-derived by `resolveBrandUpdate`. */
+  palette: z.unknown().optional(),
 });
 
 const navigationItemSchema = z.object({

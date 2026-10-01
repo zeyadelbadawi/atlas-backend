@@ -1,0 +1,878 @@
+{
+  "description": "Theme 1 plan §D.2 section-contract parity cases. Byte-identical in atlas (src/features/website/schemas/__parity__) and atlas-backend (src/website/validation/__parity__); both schema suites must return `valid` for every case.",
+  "cases": [
+    {
+      "name": "legacy hero",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "legacy hero with inline image and cta",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": "تعلم"
+        },
+        "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "cta": {
+          "label": {
+            "en": "Go",
+            "ar": ""
+          },
+          "pageId": "p1"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "legacy testimonials",
+      "type": "testimonials",
+      "config": {
+        "title": {
+          "en": "Said",
+          "ar": ""
+        },
+        "items": []
+      },
+      "valid": true
+    },
+    {
+      "name": "legacy cta",
+      "type": "cta",
+      "config": {
+        "title": {
+          "en": "Join",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Sign up",
+            "ar": ""
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "legacy faq",
+      "type": "faq",
+      "config": {
+        "items": []
+      },
+      "valid": true
+    },
+    {
+      "name": "legacy features",
+      "type": "features",
+      "config": {
+        "items": []
+      },
+      "valid": true
+    },
+    {
+      "name": "legacy gallery url",
+      "type": "gallery",
+      "config": {
+        "images": [
+          {
+            "id": "i",
+            "image": "https://cdn.example/x.webp"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "hero extensions",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn something new",
+          "ar": ""
+        },
+        "highlight": {
+          "en": "something new",
+          "ar": ""
+        },
+        "highlights": [
+          {
+            "id": "c1",
+            "label": {
+              "en": "Certificates",
+              "ar": ""
+            }
+          }
+        ],
+        "showSearch": true,
+        "image": "theme-asset:modern-education/home-hero"
+      },
+      "valid": true
+    },
+    {
+      "name": "hero too many highlights",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "highlights": [
+          {
+            "id": "0",
+            "label": {
+              "en": "h",
+              "ar": ""
+            }
+          },
+          {
+            "id": "1",
+            "label": {
+              "en": "h",
+              "ar": ""
+            }
+          },
+          {
+            "id": "2",
+            "label": {
+              "en": "h",
+              "ar": ""
+            }
+          },
+          {
+            "id": "3",
+            "label": {
+              "en": "h",
+              "ar": ""
+            }
+          },
+          {
+            "id": "4",
+            "label": {
+              "en": "h",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "features strip",
+      "type": "features",
+      "config": {
+        "items": [],
+        "layout": "strip"
+      },
+      "valid": true
+    },
+    {
+      "name": "features unknown layout",
+      "type": "features",
+      "config": {
+        "items": [],
+        "layout": "masonry"
+      },
+      "valid": false
+    },
+    {
+      "name": "faq teaser",
+      "type": "faq",
+      "config": {
+        "items": [],
+        "maxItems": 4,
+        "cta": {
+          "label": {
+            "en": "All questions",
+            "ar": ""
+          },
+          "pageId": "p2"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "faq maxItems zero",
+      "type": "faq",
+      "config": {
+        "items": [],
+        "maxItems": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "cta extensions",
+      "type": "cta",
+      "config": {
+        "title": {
+          "en": "Ready?",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Start",
+            "ar": ""
+          }
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "Contact us",
+            "ar": ""
+          }
+        },
+        "image": "theme-asset:modern-education/home-cta",
+        "imageAlt": {
+          "en": "A learner",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "testimonial rating and sample",
+      "type": "testimonials",
+      "config": {
+        "items": [
+          {
+            "id": "q",
+            "quote": {
+              "en": "Great",
+              "ar": ""
+            },
+            "authorName": "A. B.",
+            "rating": 5,
+            "sample": true
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "testimonial rating 6",
+      "type": "testimonials",
+      "config": {
+        "items": [
+          {
+            "id": "q",
+            "quote": {
+              "en": "x",
+              "ar": ""
+            },
+            "authorName": "A",
+            "rating": 6
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "testimonial rating 0",
+      "type": "testimonials",
+      "config": {
+        "items": [
+          {
+            "id": "q",
+            "quote": {
+              "en": "x",
+              "ar": ""
+            },
+            "authorName": "A",
+            "rating": 0
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "pageHeader",
+      "type": "pageHeader",
+      "config": {
+        "title": {
+          "en": "Courses",
+          "ar": ""
+        },
+        "search": "courses"
+      },
+      "valid": true
+    },
+    {
+      "name": "pageHeader unknown search",
+      "type": "pageHeader",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "search": "everything"
+      },
+      "valid": false
+    },
+    {
+      "name": "pageHeader without title",
+      "type": "pageHeader",
+      "config": {},
+      "valid": false
+    },
+    {
+      "name": "courseCategories",
+      "type": "courseCategories",
+      "config": {
+        "title": {
+          "en": "Explore",
+          "ar": ""
+        },
+        "maxItems": 8,
+        "showCounts": true
+      },
+      "valid": true
+    },
+    {
+      "name": "courseCategories one",
+      "type": "courseCategories",
+      "config": {
+        "maxItems": 1,
+        "showCounts": true
+      },
+      "valid": false
+    },
+    {
+      "name": "steps",
+      "type": "steps",
+      "config": {
+        "items": [
+          {
+            "id": "1",
+            "title": {
+              "en": "Sign up",
+              "ar": ""
+            }
+          },
+          {
+            "id": "2",
+            "title": {
+              "en": "Learn",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "steps seven",
+      "type": "steps",
+      "config": {
+        "items": [
+          {
+            "id": "0",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            }
+          },
+          {
+            "id": "1",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            }
+          },
+          {
+            "id": "2",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            }
+          },
+          {
+            "id": "3",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            }
+          },
+          {
+            "id": "4",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            }
+          },
+          {
+            "id": "5",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            }
+          },
+          {
+            "id": "6",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "featureSplit",
+      "type": "featureSplit",
+      "config": {
+        "title": {
+          "en": "Why us",
+          "ar": ""
+        },
+        "imagePosition": "end",
+        "items": [
+          {
+            "id": "1",
+            "title": {
+              "en": "Mentors",
+              "ar": ""
+            }
+          }
+        ],
+        "image": "theme-asset:modern-education/home-benefit"
+      },
+      "valid": true
+    },
+    {
+      "name": "featureSplit bad position",
+      "type": "featureSplit",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "imagePosition": "left",
+        "items": []
+      },
+      "valid": false
+    },
+    {
+      "name": "featureSplit seven items",
+      "type": "featureSplit",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "imagePosition": "start",
+        "items": [
+          {
+            "id": "0",
+            "title": {
+              "en": "b",
+              "ar": ""
+            }
+          },
+          {
+            "id": "1",
+            "title": {
+              "en": "b",
+              "ar": ""
+            }
+          },
+          {
+            "id": "2",
+            "title": {
+              "en": "b",
+              "ar": ""
+            }
+          },
+          {
+            "id": "3",
+            "title": {
+              "en": "b",
+              "ar": ""
+            }
+          },
+          {
+            "id": "4",
+            "title": {
+              "en": "b",
+              "ar": ""
+            }
+          },
+          {
+            "id": "5",
+            "title": {
+              "en": "b",
+              "ar": ""
+            }
+          },
+          {
+            "id": "6",
+            "title": {
+              "en": "b",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image ''",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": ""
+      },
+      "valid": true
+    },
+    {
+      "name": "hero image 'theme-asset:modern-education/home-hero'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "theme-asset:modern-education/home-hero"
+      },
+      "valid": true
+    },
+    {
+      "name": "hero image 'https://media.example.com/a/b.webp'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "https://media.example.com/a/b.webp"
+      },
+      "valid": true
+    },
+    {
+      "name": "hero image 'http://localhost:9000/atlas-media-ci/x.p'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "http://localhost:9000/atlas-media-ci/x.png"
+      },
+      "valid": true
+    },
+    {
+      "name": "hero image 'data:image/png;base64,iVBORw0KGgoAAAANSU'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+      },
+      "valid": true
+    },
+    {
+      "name": "hero image 'javascript:alert(1)'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "javascript:alert(1)"
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image 'data:text/html;base64,PHNjcmlwdD4='",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "data:text/html;base64,PHNjcmlwdD4="
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image 'data:image/svg+xml;base64,PHN2Zz4='",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "data:image/svg+xml;base64,PHN2Zz4="
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image 'data:image/png;base64,<script>'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "data:image/png;base64,<script>"
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image 'blob:https://x/1'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "blob:https://x/1"
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image '/relative/path.png'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "/relative/path.png"
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image 'mailto:a@b.c'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "mailto:a@b.c"
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image 'theme-asset:../../etc/passwd'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "theme-asset:../../etc/passwd"
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image 'theme-asset:Modern/HERO'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "theme-asset:Modern/HERO"
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image '/api/v1/public/media/academies/2f0c9a4e-'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "/api/v1/public/media/academies/2f0c9a4e-1b2c-4d5e-8f90-123456789abc/7d1e2f3a-4b5c-4d6e-9f01-abcdef012345.webp"
+      },
+      "valid": true
+    },
+    {
+      "name": "hero image '/api/v1/public/media/academies/../other/'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "/api/v1/public/media/academies/../other/x.png"
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image '/api/v1/public/media/'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "/api/v1/public/media/"
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image '/api/v1/public/media/academies/a/b.png?x'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "/api/v1/public/media/academies/a/b.png?x=1"
+      },
+      "valid": false
+    },
+    {
+      "name": "hero image '//evil.example/x.png'",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": ""
+        },
+        "image": "//evil.example/x.png"
+      },
+      "valid": false
+    },
+    {
+      "name": "gallery empty image",
+      "type": "gallery",
+      "config": {
+        "images": [
+          {
+            "id": "i",
+            "image": ""
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "testimonial avatar javascript",
+      "type": "testimonials",
+      "config": {
+        "items": [
+          {
+            "id": "q",
+            "quote": {
+              "en": "x",
+              "ar": ""
+            },
+            "authorName": "A",
+            "avatar": "javascript:x"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "gallery media asset",
+      "type": "gallery",
+      "config": {
+        "images": [
+          {
+            "id": "i",
+            "image": "/api/v1/public/media/academies/a1/b2.png"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "statistics: live metric with no authored value (Theme 1 v2 starter content)",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "label": {
+              "en": "Courses",
+              "ar": "دورة"
+            },
+            "value": {
+              "en": "",
+              "ar": ""
+            },
+            "metric": "courses"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "statistics: legacy hand-typed value without metric",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "label": {
+              "en": "Courses",
+              "ar": "دورة"
+            },
+            "value": {
+              "en": "500+",
+              "ar": "٥٠٠+"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "statistics: legacy v1 generated metric with value 0",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "label": {
+              "en": "Courses",
+              "ar": "دورة"
+            },
+            "value": {
+              "en": "0",
+              "ar": ""
+            },
+            "metric": "students"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "statistics: no metric and no value is refused",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "label": {
+              "en": "Courses",
+              "ar": "دورة"
+            },
+            "value": {
+              "en": "",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    }
+  ]
+}

@@ -157,6 +157,27 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .expect(400);
   });
 
+  it('refuses a retired theme (Themes 2–5) and keeps the current one', async () => {
+    const { owner, academy } = await seedManagedAcademy('theme-retired');
+    for (const themeKey of [
+      'premium-academy',
+      'corporate-learning',
+      'minimal-editorial',
+      'bold-creative',
+    ]) {
+      await request(app.getHttpServer())
+        .patch(`/academies/${academy.id}/website/configuration`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ themeKey })
+        .expect(400);
+    }
+    const current = await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(current.body.themeKey).toBe('modern-education');
+  });
+
   it('navigation referencing a real page id succeeds; referencing a fabricated page id is rejected', async () => {
     const { owner, academy } = await seedManagedAcademy('nav-ref');
     const pages = await request(app.getHttpServer())
@@ -905,7 +926,7 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/website/configuration`)
       .set('Authorization', `Bearer ${plainMember.accessToken}`)
-      .send({ themeKey: 'bold-creative' })
+      .send({ themeKey: 'modern-education' })
       .expect(403);
 
     await request(app.getHttpServer())

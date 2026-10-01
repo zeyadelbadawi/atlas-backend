@@ -80,11 +80,16 @@ function collectSectionReferences(
         break;
       case 'cta':
         addCta(section.config.cta);
+        addCta(section.config.secondaryCta);
+        break;
+      case 'featureSplit':
+        addCta(section.config.cta);
         break;
       case 'faq':
         (section.config.libraryEntryIds ?? []).forEach((id: string) =>
           faqEntryIds.add(id),
         );
+        addCta(section.config.cta);
         break;
       case 'testimonials':
         (section.config.libraryEntryIds ?? []).forEach((id: string) =>

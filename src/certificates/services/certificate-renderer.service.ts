@@ -21,6 +21,7 @@ import QRCode from 'qrcode';
 import sharp from 'sharp';
 import type { CertificateSnapshot } from '../dto/certificate.contract';
 import { deriveRenderPalette, type RenderPalette } from '../certificate-palette.util';
+import { CertificateImageLoader } from './certificate-image-loader.service';
 
 export interface RenderInput {
   readonly snapshot: CertificateSnapshot;
@@ -47,8 +48,6 @@ const FONT_DIR_CANDIDATES = [
 const ARABIC_RANGE = new RegExp(
   '[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]',
 );
-const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
-const IMAGE_TIMEOUT_MS = 5_000;
 
 const ARABIC_LETTER = new RegExp(
   '[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]',
@@ -138,7 +137,7 @@ export class CertificateRendererService {
   private readonly logger = new Logger(CertificateRendererService.name);
   private readonly fontDir: string | null;
 
-  constructor() {
+  constructor(private readonly images: CertificateImageLoader) {
     this.fontDir =
       FONT_DIR_CANDIDATES.find((dir) =>
         existsSync(resolve(dir, 'NotoSans-Regular.ttf')),
@@ -729,39 +728,13 @@ export class CertificateRendererService {
     label: string,
     warnings: string[],
   ): Promise<Buffer | null> {
-    if (!url) return null;
+    // Own media, data URIs and vetted external hosts only — see
+    // CertificateImageLoader for the SSRF rules.
+    const bytes = await this.images.load(url, label, warnings);
+    if (!bytes) return null;
     try {
-      const parsed = new URL(url);
-      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-        warnings.push(`${label}: unsupported URL scheme`);
-        return null;
-      }
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
-      try {
-        const response = await fetch(parsed, {
-          signal: controller.signal,
-          redirect: 'follow',
-        });
-        if (!response.ok) {
-          warnings.push(`${label}: HTTP ${response.status}`);
-          return null;
-        }
-        const length = Number(response.headers.get('content-length') ?? 0);
-        if (length > MAX_IMAGE_BYTES) {
-          warnings.push(`${label}: too large`);
-          return null;
-        }
-        const bytes = Buffer.from(await response.arrayBuffer());
-        if (bytes.length > MAX_IMAGE_BYTES) {
-          warnings.push(`${label}: too large`);
-          return null;
-        }
-        // Normalise through sharp: rejects non-images, converts webp/gif/svg-less to PNG.
-        return await sharp(bytes, { limitInputPixels: 20_000_000 }).png().toBuffer();
-      } finally {
-        clearTimeout(timer);
-      }
+      // Normalise through sharp: rejects non-images, converts webp/gif/svg-less to PNG.
+      return await sharp(bytes, { limitInputPixels: 20_000_000 }).png().toBuffer();
     } catch (error) {
       warnings.push(
         `${label}: ${error instanceof Error ? error.message : String(error)}`,

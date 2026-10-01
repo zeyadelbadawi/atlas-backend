@@ -16,6 +16,7 @@
  * genuinely nonexistent resource. No draft title, SEO, section, or id
  * ever appears in any response body this controller can produce.
  */
+import type { PublicCourseCategoryResponse } from '../dto/public-categories.contract';
 import {
   Body,
   Controller,
@@ -103,6 +104,16 @@ export class PublicWebsiteController {
     const statistics = await this.publicWebsiteService.getPublicStatistics(academyId);
     if (!statistics) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return statistics;
+  }
+
+  /** Theme 1 plan §D.2 — categories with published, public courses. See `PublicWebsiteService.getPublicCategories`. */
+  @Get(':academyId/categories')
+  async getCategories(
+    @Param('academyId') academyId: string,
+  ): Promise<PublicCourseCategoryResponse[]> {
+    const categories = await this.publicWebsiteService.getPublicCategories(academyId);
+    if (!categories) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return categories;
   }
 
   /** `FeaturedCoursesSection`/`InstructorsSection`'s real, live, published course list. See `PublicWebsiteService.getPublicCourses`'s own doc comment. */

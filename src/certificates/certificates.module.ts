@@ -20,6 +20,7 @@ import { FlagsModule } from '../common/flags/flags.module';
 import { CertificatesRepository } from './certificates.repository';
 import { CertificatesService } from './services/certificates.service';
 import { CertificateRendererService } from './services/certificate-renderer.service';
+import { CertificateImageLoader } from './services/certificate-image-loader.service';
 import { CertificateJobsProcessor } from './queue/certificate-jobs.processor';
 import { CERTIFICATE_JOBS_QUEUE } from './queue/certificate-jobs.types';
 import {
@@ -47,6 +48,7 @@ import {
     CertificatesRepository,
     CertificatesService,
     CertificateRendererService,
+    CertificateImageLoader,
     CertificateJobsProcessor,
   ],
   exports: [CertificatesService],

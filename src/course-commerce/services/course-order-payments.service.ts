@@ -174,8 +174,7 @@ export class CourseOrderPaymentsService {
         // `commissionNotConfigured`, so offering a method here would be
         // offering one that cannot be paid.
         const resolution =
-          await this.commissionService.resolveEffectiveCommissionForOrganization(
-            tx,
+          await this.commissionService.resolveEffectiveCommissionInOrganizationContext(
             order.organizationId,
           );
         if (!resolution.resolved) return [];
@@ -328,8 +327,7 @@ export class CourseOrderPaymentsService {
         providerKey = method.provider;
 
         const resolution =
-          await this.commissionService.resolveEffectiveCommissionForOrganization(
-            tx,
+          await this.commissionService.resolveEffectiveCommissionInOrganizationContext(
             order.organizationId,
           );
         if (!resolution.resolved) {

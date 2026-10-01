@@ -43,7 +43,10 @@ import {
   extractSubdomainLabel,
   normalizeHostname,
 } from '../utils/hostname-normalization.util';
-import type { HostnameResolutionResponse } from '../dto/hostname-resolution.contract';
+import type {
+  HostnamePresentation,
+  HostnameResolutionResponse,
+} from '../dto/hostname-resolution.contract';
 import { PlatformDomainService } from '../../domain/services/platform-domain.service';
 import { resolveCanonicalHost } from '../../domain/utils/canonical-host.util';
 // Phase 6 additions — see this file's own header comment.
@@ -80,6 +83,10 @@ import {
   type ContactSubmissionResponse,
 } from '../../academy/dto/contact-submission.contract';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
+import { CourseCategoriesRepository } from '../../course/repositories/course-categories.repository';
+import type { PublicCourseCategoryResponse } from '../dto/public-categories.contract';
+import { stripSampleContent } from '../../website/utils/sample-content.util';
+import { toPublicBrand } from '../../website/brand/brand-palette-update';
 
 @Injectable()
 export class PublicWebsiteService {
@@ -101,6 +108,8 @@ export class PublicWebsiteService {
     private readonly subscriptionAccessService: SubscriptionAccessService,
     private readonly platformDomainService: PlatformDomainService,
     private readonly metrics: LearningMetricsService,
+    // Theme 1 plan Phase 2 — the public category listing.
+    private readonly courseCategoriesRepository: CourseCategoriesRepository,
   ) {}
 
   /** P63g — the effective base domain (environment first, then the configured row), never only the env var. */
@@ -144,15 +153,49 @@ export class PublicWebsiteService {
       subdomainLabel: resolved.subdomain,
       baseDomain,
     });
+    const presentation = await this.findPresentation(resolved.academyId);
     const response: HostnameResolutionResponse = {
       academyId: resolved.academyId,
       academyName: resolved.academyName,
       academySlug: resolved.academySlug,
       academyLogo: resolved.academyLogoUrl ?? undefined,
       canonicalHost: canonical?.host,
+      ...(presentation ? { presentation } : {}),
     };
     await this.cacheService.setHostnameResolution(normalized, response);
     return response;
+  }
+
+  /**
+   * Theme 1 plan Phase 6 — the Academy's theme key and public brand colours,
+   * whatever the website's publication state, so Coming Soon can wear them.
+   * Read through `resolve_public_presentation` (an unpublished configuration
+   * is invisible to anonymous tenant reads by design) and reduced to exactly
+   * the colour fields a published website already exposes: no content, no
+   * draft data, no palette provenance.
+   */
+  private async findPresentation(
+    academyId: string,
+  ): Promise<HostnamePresentation | undefined> {
+    const presentation =
+      await this.publicHostnameResolutionRepository.resolvePresentation(academyId);
+    if (!presentation) return undefined;
+    const brand = toPublicBrand(presentation.brand);
+    const colour = (key: string) =>
+      typeof brand[key] === 'string' ? (brand[key] as string) : undefined;
+    const palette =
+      brand.palette && typeof brand.palette === 'object'
+        ? (brand.palette as Record<string, unknown>)
+        : undefined;
+    return {
+      themeKey: presentation.themeKey,
+      brand: {
+        primaryColor: colour('primaryColor'),
+        secondaryColor: colour('secondaryColor'),
+        accentColor: colour('accentColor'),
+        ...(palette ? { palette } : {}),
+      },
+    };
   }
 
   /**
@@ -213,7 +256,13 @@ export class PublicWebsiteService {
     );
     if (!configuration) return null;
 
-    const response = toWebsiteConfigurationResponse(configuration);
+    const configurationResponse = toWebsiteConfigurationResponse(configuration);
+    // Theme 1 plan §D.2 — the palette's colours are public; who confirmed it,
+    // when, and the logo analysis are not.
+    const response: WebsiteConfigurationResponse = {
+      ...configurationResponse,
+      brand: toPublicBrand(configurationResponse.brand),
+    };
     const cached = await this.cacheService.getConfiguration<WebsiteConfigurationResponse>(
       academyId,
       configuration.configVersion,
@@ -249,7 +298,12 @@ export class PublicWebsiteService {
       organizationId,
       (tx) => this.websitePagesRepository.findAllPublished(tx, academyId),
     );
-    const response = pages.map(toWebsitePageResponse);
+    // Theme 1 plan §D.4 — sample testimonials are preview-only: removed
+    // here, before caching, so they never reach a visitor's browser.
+    const response = pages.map((page) => {
+      const mapped = toWebsitePageResponse(page);
+      return { ...mapped, sections: stripSampleContent(mapped.sections) };
+    });
     await this.cacheService.setPages(academyId, configuration.configVersion, response);
     return response;
   }
@@ -291,6 +345,45 @@ export class PublicWebsiteService {
       );
 
     return { courses, students, instructors };
+  }
+
+  /**
+   * Theme 1 plan §D.2 — the "Explore by category" section's live data: this
+   * Academy's categories that hold at least one published, public course,
+   * with that count, alphabetically. Same `resolveOrganizationId` +
+   * `runInTenantContext` shape as `getPublicCourses` (RLS-scoped to the
+   * Academy's organisation; no user identity). A category with only draft
+   * or private courses is omitted, so the listing can't reveal them.
+   */
+  async getPublicCategories(
+    academyId: string,
+  ): Promise<PublicCourseCategoryResponse[] | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+
+    const [categories, counts] = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) =>
+        Promise.all([
+          this.courseCategoriesRepository.findManyForAcademy(tx, academyId),
+          this.courseCategoriesRepository.countPublishedPublicCoursesByCategory(
+            tx,
+            academyId,
+          ),
+        ]),
+    );
+    const countByCategory = new Map(
+      counts.map((row) => [row.categoryId, row._count.categoryId] as const),
+    );
+    return categories
+      .map((category) => ({
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+        ...(category.description ? { description: category.description } : {}),
+        courseCount: countByCategory.get(category.id) ?? 0,
+      }))
+      .filter((category) => category.courseCount > 0);
   }
 
   /**

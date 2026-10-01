@@ -13,6 +13,10 @@
 import { INestApplication } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import request from 'supertest';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import type { PrismaClient } from '@prisma/client';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { deletionCodeFor } from './utils/account-deletion';
@@ -36,6 +40,10 @@ import { FeatureFlagsService } from '../src/common/flags/feature-flags.service';
 import type { LearningFeatureFlags } from '../src/config/configuration';
 import { QuizAttemptEngineService } from '../src/learning/services/quiz-attempt-engine.service';
 import { CertificatesService } from '../src/certificates/services/certificates.service';
+import {
+  MEDIA_STORAGE_PROVIDER,
+  type MediaStorageProvider,
+} from '../src/media/storage/media-storage.interface';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { getQueueToken } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
@@ -1667,6 +1675,69 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
           throw new Error(`expected 403/404, got ${res.status}`);
         }
       });
+  });
+
+  it('S-1: the certificate renderer never requests internal addresses and reads uploaded media from storage', async () => {
+    const w = await world('s1-cert-ssrf');
+    const previewPath = `/academies/${w.academy.id}/certificate-template/preview`;
+    const imageCount = (pdf: Buffer) =>
+      pdf.toString('latin1').split('/Subtype /Image').length - 1;
+    const preview = async (body: Record<string, unknown>) => {
+      const res = await http()
+        .post(`${previewPath}?locale=en`)
+        .set(auth(w.owner.token))
+        .buffer(true)
+        .parse((response, done) => {
+          const chunks: Buffer[] = [];
+          response.on('data', (chunk: Buffer) => chunks.push(chunk));
+          response.on('end', () => done(null, Buffer.concat(chunks)));
+        })
+        .send(body)
+        .expect(200);
+      return res.body as Buffer;
+    };
+
+    // An internal listener stands in for loopback / metadata services.
+    const hits: string[] = [];
+    const internal = createServer((req, res) => {
+      hits.push(req.url ?? '');
+      res.writeHead(302, { location: 'http://169.254.169.254/latest/meta-data/' });
+      res.end();
+    });
+    await new Promise<void>((resolve) => internal.listen(0, '127.0.0.1', resolve));
+    const { port } = internal.address() as AddressInfo;
+    try {
+      const baseline = imageCount(await preview({})); // the QR only
+      const pdf = await preview({
+        logoUrl: `http://127.0.0.1:${port}/logo.png`,
+        signatureUrl: `http://localhost:${port}/signature.png`,
+      });
+      expect(pdf.subarray(0, 4).toString('latin1')).toBe('%PDF');
+      expect(imageCount(pdf)).toBe(baseline);
+      expect(hits).toEqual([]);
+
+      // An uploaded logo is read straight from the media store (no HTTP):
+      // it appears in the PDF even though no server answers for it.
+      const storage = app.get<MediaStorageProvider>(MEDIA_STORAGE_PROVIDER);
+      const objectId = randomUUID();
+      const png = await sharp({
+        create: { width: 8, height: 8, channels: 3, background: '#1f4e5f' },
+      })
+        .png()
+        .toBuffer();
+      await storage.putObject(
+        `academies/${w.academy.id}/${objectId}.png`,
+        png,
+        'image/png',
+      );
+      const withLogo = await preview({
+        logoUrl: `/api/v1/public/media/academies/${w.academy.id}/${objectId}.png`,
+      });
+      expect(imageCount(withLogo)).toBe(baseline + 1);
+      await storage.deleteObject(`academies/${w.academy.id}/${objectId}.png`);
+    } finally {
+      await new Promise<void>((resolve) => internal.close(() => resolve()));
+    }
   });
 
   it('P4 Issue F: a configured course issues a certificate even when the certificates feature flag does NOT enable the academy', async () => {

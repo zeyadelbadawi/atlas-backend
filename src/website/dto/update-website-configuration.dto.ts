@@ -7,12 +7,13 @@
  * comment for why deep validation happens in the service, not here.
  */
 import { IsArray, IsIn, IsObject, IsOptional } from 'class-validator';
-import { WEBSITE_THEME_KEYS } from '../constants/website.constants';
+import { SELECTABLE_WEBSITE_THEME_KEYS } from '../constants/website.constants';
 
 export class UpdateWebsiteConfigurationDto {
+  /** Only a selectable theme; Themes 2–5 are retired (`RETIRED_WEBSITE_THEME_KEYS`). */
   @IsOptional()
-  @IsIn(WEBSITE_THEME_KEYS)
-  readonly themeKey?: (typeof WEBSITE_THEME_KEYS)[number];
+  @IsIn(SELECTABLE_WEBSITE_THEME_KEYS)
+  readonly themeKey?: (typeof SELECTABLE_WEBSITE_THEME_KEYS)[number];
 
   @IsOptional()
   @IsObject()

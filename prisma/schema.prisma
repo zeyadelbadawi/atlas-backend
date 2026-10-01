@@ -3243,6 +3243,11 @@ model WebsiteConfiguration {
   themeKey         String               @map("theme_key")
   themeVersion     Int                  @map("theme_version")
   configVersion    Int                  @default(1) @map("config_version")
+  /// Theme 1 plan §D.2 — which template (and version) first generated this
+  /// website's starter pages. NULL = not recorded (created before this
+  /// column, or never generated). Stamped once by `WebsiteGenerationService`.
+  templateKey      String?              @map("template_key")
+  templateVersion  Int?                 @map("template_version")
   brand            Json
   seo              Json
   navigation       Json

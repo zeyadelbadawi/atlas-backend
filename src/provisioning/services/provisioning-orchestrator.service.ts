@@ -57,7 +57,10 @@ import { CommunicationService } from '../../communications/services/communicatio
 import type { EmitResult } from '../../communications/services/communication.service';
 import { WebsiteConfigurationService } from '../../website/services/website-configuration.service';
 import { WebsiteGenerationService } from '../../website/services/website-generation.service';
-import { WEBSITE_THEME_KEYS } from '../../website/constants/website.constants';
+import {
+  WEBSITE_THEME_KEYS,
+  selectableWebsiteThemeKey,
+} from '../../website/constants/website.constants';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { SupportCasesRepository } from '../../platform/repositories/support-cases.repository';
@@ -656,7 +659,7 @@ export class ProvisioningOrchestratorService {
     request: ProvisioningRequest,
     organizationId: string,
   ): Promise<StepOutcome> {
-    const themeKey = request.selectedThemeKey;
+    const selectedThemeKey = request.selectedThemeKey;
     const isKnownTheme = (value: string): value is (typeof WEBSITE_THEME_KEYS)[number] =>
       (WEBSITE_THEME_KEYS as readonly string[]).includes(value);
 
@@ -664,7 +667,11 @@ export class ProvisioningOrchestratorService {
     // request-time DTO already validates against this exact list, so this
     // is unreachable in normal operation; treated as "nothing to change,"
     // never a failed step, consistent with this method's own doc comment.
-    if (!themeKey || !isKnownTheme(themeKey)) return { result: 'completed' };
+    if (!selectedThemeKey || !isKnownTheme(selectedThemeKey))
+      return { result: 'completed' };
+    // A request made before Themes 2–5 were retired gets their replacement,
+    // exactly as the retirement migration moves existing websites.
+    const themeKey = selectableWebsiteThemeKey(selectedThemeKey);
 
     await this.websiteConfigurationService.updateConfiguration(
       request.academyId!,

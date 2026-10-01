@@ -61,6 +61,13 @@ services:
   caddy:
     image: ghcr.io/zeyadelbadawi/atlas-frontend:latest
     restart: unless-stopped
+    # Docker's init (tini) as PID 1, so orphaned processes are reaped. Without
+    # it every healthcheck left a zombie: BusyBox wget forks an ssl_client
+    # helper for https://, the helper is re-parented to PID 1, and Caddy
+    # never waits on children it did not start (12,196 zombies under
+    # atlas-caddy-1 on 1 Oct 2026, one per 15 s healthcheck). tini forwards
+    # SIGTERM to Caddy, so shutdown is unchanged.
+    init: true
     # Least privilege: the edge needs exactly ONE secret — the Cloudflare
     # token the Caddyfile's DNS-01 challenge reads as
     # `{env.CLOUDFLARE_API_TOKEN}` (the only `{env.*}` it references). It
@@ -71,6 +78,10 @@ services:
     # that file reaches this container's environment.
     environment:
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      # Phase 8 — server-rendered public Academy pages. `on` routes Academy
+      # page requests to the `ssr` service below; anything else (the
+      # default) keeps every request on the route it took before.
+      ATLAS_SSR: ${ATLAS_SSR:-off}
     ports:
       - '80:80'
       - '443:443'
@@ -88,6 +99,46 @@ services:
       timeout: 5s
       retries: 6
       start_period: 30s
+
+  # --- Public website server renderer (Phase 8) ----------------------------
+  # Renders the anonymous public Academy pages for Caddy (frontend repo:
+  # Reports/SSR_ARCHITECTURE_ANALYSIS.md). Profile-gated: `deploy.sh`
+  # enables the `ssr` profile only when ATLAS_SSR=on in .env, the same
+  # switch Caddy reads.
+  #   * No published port and no env_file: it holds no secret at all. It
+  #     calls only the public website API, anonymously, over the compose
+  #     network, and forwards no cookie or credential.
+  #   * Caddy does NOT depend on it: if it is stopped, slow or failing,
+  #     Caddy serves the single-page app exactly as before.
+  #   * Bounded memory. Pages over the HTML budget (1 MiB; frontend
+  #     server/ssr/handler.mjs) pass to the single-page app before they are
+  #     rendered, and the page cache is capped at 64 MiB of heap. Measured
+  #     with the frontend's tools/ssr-memory/measure.mjs (node:20-alpine,
+  #     720 distinct pages, inline-logo and oversized Academies): peak
+  #     185 MiB at 16 concurrent requests, 213 MiB at 64. The limit is about
+  #     twice the measured peak; V8's old space is capped below it so the
+  #     heap is collected before the kernel would kill the process. If it
+  #     is ever exceeded, the container restarts and Caddy serves the
+  #     single-page app meanwhile.
+  #   * init: true — tini as PID 1 reaps orphaned processes (see caddy) and
+  #     forwards SIGTERM to the server, which closes gracefully.
+  ssr:
+    image: ghcr.io/zeyadelbadawi/atlas-frontend-ssr:latest
+    profiles: ['ssr']
+    restart: unless-stopped
+    read_only: true
+    init: true
+    mem_limit: 384m
+    memswap_limit: 384m
+    environment:
+      SSR_API_ORIGIN: http://backend:3000
+      NODE_OPTIONS: --max-old-space-size=256
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3100/__ssr/health']
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
   # --- Observability Center ----------------------------------------------
   # Profile-gated: `deploy.sh` enables `monitoring` whenever METRICS_SCRAPE_TOKEN

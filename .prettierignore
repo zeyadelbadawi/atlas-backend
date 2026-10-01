@@ -1,0 +1,5 @@
+
+# Generated brand-engine golden vectors: byte-identical copy of the frontend file
+src/website/brand-engine/__golden__
+# Section-contract parity cases: byte-identical copy of the frontend file
+src/website/validation/__parity__

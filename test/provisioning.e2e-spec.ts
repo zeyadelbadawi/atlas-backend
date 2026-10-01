@@ -242,15 +242,15 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .send({
         academyName: 'Themed Academy',
         requestedSubdomain: subdomain,
-        selectedThemeKey: 'bold-creative',
+        selectedThemeKey: 'modern-education',
         idempotencyKey: `themed-idem-${subdomain}`,
       })
       .expect(201);
-    expect(created.body.selectedThemeKey).toBe('bold-creative');
+    expect(created.body.selectedThemeKey).toBe('modern-education');
 
     const final = await waitForTerminal(owner, org.id, created.body.id);
     expect(final.status).toBe('ready');
-    expect(final.selectedThemeKey).toBe('bold-creative');
+    expect(final.selectedThemeKey).toBe('modern-education');
 
     const themeStep = final.steps.find((s: { key: string }) => s.key === 'theme');
     expect(themeStep.status).toBe('completed');
@@ -261,7 +261,10 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     const websiteConfig = await admin.websiteConfiguration.findUnique({
       where: { academyId: final.academyId },
     });
-    expect(websiteConfig?.themeKey).toBe('bold-creative');
+    expect(websiteConfig?.themeKey).toBe('modern-education');
+    // Theme 1 is also the bootstrap default, so what proves the step ran is
+    // the provenance only generation stamps.
+    expect(websiteConfig?.templateKey).toBe('modern-education');
 
     // Reachable through the real, ordinary Website Configuration read
     // endpoint too — not just visible via a direct DB read.
@@ -269,7 +272,22 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .get(`/academies/${final.academyId}/website/configuration`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(200);
-    expect(configRes.body.themeKey).toBe('bold-creative');
+    expect(configRes.body.themeKey).toBe('modern-education');
+  });
+
+  it('3b-retired: Themes 2–5 are retired from selection and are refused', async () => {
+    const { owner, org } = await arrangeOrg('retired-theme');
+    const subdomain = uniqueSubdomain('retired-theme');
+    await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        academyName: 'Retired Theme Academy',
+        requestedSubdomain: subdomain,
+        selectedThemeKey: 'bold-creative',
+        idempotencyKey: `retired-theme-idem-${subdomain}`,
+      })
+      .expect(400);
   });
 
   // --- 3c. Phase 6 — Complete Website generation -----------------------------
@@ -312,11 +330,16 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     const hero = homeSections.find((section) => section.type === 'hero');
     expect(hero).toBeTruthy();
     const heroTitle = hero!.config.title as { en: string; ar: string };
-    // Real, interpolated, bilingual — never blank, never a raw `{{academyName}}` token left unresolved.
-    expect(heroTitle.en).toContain('Complete Gen Academy');
-    expect(heroTitle.en).not.toContain('{{');
+    expect(heroTitle.en.trim()).not.toBe('');
     expect(heroTitle.ar.trim()).not.toBe('');
-    expect(heroTitle.ar).not.toContain('{{');
+    // Real, interpolated, bilingual — never blank, never a raw
+    // `{{academyName}}` token left unresolved. (Theme 1 template v2 names
+    // the Academy in its "Why {{academyName}}" split, not the hero.)
+    const split = homeSections.find((section) => section.type === 'featureSplit');
+    const eyebrow = split!.config.eyebrow as { en: string; ar: string };
+    expect(eyebrow.en).toBe('Why Complete Gen Academy');
+    expect(eyebrow.ar).toBe('لماذا Complete Gen Academy');
+    expect(JSON.stringify(homeSections)).not.toContain('{{');
 
     // Statistics is generated with a LIVE metric, never a hardcoded number — a brand-new Academy has 0 courses/students/instructors.
     const statistics = homeSections.find((section) => section.type === 'statistics');
@@ -353,7 +376,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .send({
         academyName: 'Empty Gen Academy',
         requestedSubdomain: subdomain,
-        selectedThemeKey: 'minimal-editorial',
+        selectedThemeKey: 'modern-education',
         idempotencyKey: `empty-gen-idem-${subdomain}`,
       })
       .expect(201);
@@ -390,7 +413,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .send({
         academyName: 'Idempotent Gen Academy',
         requestedSubdomain: subdomain,
-        selectedThemeKey: 'premium-academy',
+        selectedThemeKey: 'modern-education',
         websiteSetupMode: 'complete',
         idempotencyKey: `idempotent-gen-idem-${subdomain}`,
       })
@@ -428,7 +451,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     // context, not plain tenant context (see `executeThemeStep`'s own
     // updated doc comment).
     await tenancyContextService.runInTenantAndUserContext(org.id, owner.userId, (tx) =>
-      websiteGenerationService.generate(tx, academyId, 'premium-academy', 'complete'),
+      websiteGenerationService.generate(tx, academyId, 'modern-education', 'complete'),
     );
 
     const afterRegeneration = await admin.websitePage.findFirst({
@@ -449,6 +472,180 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       where: { academyId, coreType: 'home' },
     });
     expect(homePagesCount).toBe(1);
+  });
+
+  // --- 3f. Theme 1 plan Phase 7 — template v2, end to end ----------------------
+
+  it('3f: Theme 1 provisioning creates the v2 website; re-generation is idempotent and keeps Owner edits; samples stay private until confirmed', async () => {
+    type Section = { id: string; type: string; config: Record<string, unknown> };
+    const { owner, org } = await arrangeOrg('theme1-v2');
+    const subdomain = uniqueSubdomain('theme1-v2');
+    const created = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        academyName: 'Cedar Academy',
+        requestedSubdomain: subdomain,
+        selectedThemeKey: 'modern-education',
+        websiteSetupMode: 'complete',
+        idempotencyKey: `theme1-v2-idem-${subdomain}`,
+      })
+      .expect(201);
+    const final = await waitForTerminal(owner, org.id, created.body.id);
+    expect(final.status).toBe('ready');
+    const academyId = final.academyId as string;
+
+    const readPages = async () => {
+      const rows = await admin.websitePage.findMany({ where: { academyId } });
+      return Object.fromEntries(rows.map((row) => [row.coreType, row]));
+    };
+    const sectionsOf = (row: { sections: unknown }) => row.sections as Section[];
+
+    // 1. Composition: §C.1 Home, a page hero first on every inner page.
+    let pages = await readPages();
+    expect(sectionsOf(pages.home!).map((section) => section.type)).toEqual([
+      'hero',
+      'features',
+      'courseCategories',
+      'featuredCourses',
+      'featureSplit',
+      'steps',
+      'instructors',
+      'statistics',
+      'testimonials',
+      'faq',
+      'cta',
+    ]);
+    for (const coreType of ['about', 'courses', 'faqs', 'contact']) {
+      expect(sectionsOf(pages[coreType]!)[0].type).toBe('pageHeader');
+    }
+    const aboutHero = sectionsOf(pages.about!)[0].config;
+    expect(aboutHero.eyebrow).toEqual({
+      en: 'About Cedar Academy',
+      ar: 'عن Cedar Academy',
+    });
+    expect(aboutHero.image).toBe('theme-asset:modern-education/about-header');
+
+    // Samples and live data (§D.4): three sample testimonials; metric-only numbers.
+    const testimonials = sectionsOf(pages.home!).find(
+      (section) => section.type === 'testimonials',
+    )!;
+    const sampleItems = testimonials.config.items as Array<Record<string, unknown>>;
+    expect(sampleItems.map((item) => item.sample)).toEqual([true, true, true]);
+    for (const coreType of ['home', 'about']) {
+      const stats = sectionsOf(pages[coreType]!).find(
+        (section) => section.type === 'statistics',
+      )!;
+      for (const item of stats.config.items as Array<Record<string, unknown>>) {
+        expect(item.metric).toBeDefined();
+        expect(item.value).toEqual({ en: '', ar: '' });
+      }
+    }
+    // CTA intents resolved to this Academy's own pages.
+    const hero = sectionsOf(pages.home!)[0].config;
+    expect(hero.cta).toMatchObject({ pageId: pages.courses!.id });
+    expect(hero.secondaryCta).toMatchObject({ pageId: pages.contact!.id });
+
+    const configuration = await admin.websiteConfiguration.findUnique({
+      where: { academyId },
+    });
+    expect(configuration).toMatchObject({
+      themeKey: 'modern-education',
+      templateKey: 'modern-education',
+      templateVersion: 2,
+    });
+
+    // 2. Idempotent, and an Owner's edit survives a re-run.
+    const aboutSections = sectionsOf(pages.about!).map((section, index) =>
+      index === 0
+        ? {
+            ...section,
+            config: { ...section.config, title: { en: 'Our own title', ar: 'عنواننا' } },
+          }
+        : section,
+    );
+    await admin.websitePage.update({
+      where: { id: pages.about!.id },
+      data: { sections: aboutSections as unknown as Prisma.InputJsonValue },
+    });
+    const before = JSON.stringify(await readPages());
+    const rerun = await tenancyContextService.runInTenantAndUserContext(
+      org.id,
+      owner.userId,
+      (tx) =>
+        websiteGenerationService.generate(tx, academyId, 'modern-education', 'complete'),
+    );
+    expect(rerun.pagesCreated).toBe(0);
+    expect(JSON.stringify(await readPages())).toBe(before);
+    pages = await readPages();
+    expect(sectionsOf(pages.about!)[0].config.title).toEqual({
+      en: 'Our own title',
+      ar: 'عنواننا',
+    });
+    // No duplicate page either: one row per core page.
+    const rows = await admin.websitePage.findMany({ where: { academyId } });
+    expect(new Set(rows.map((row) => row.coreType)).size).toBe(rows.length);
+
+    // 3. The sample chain: publish lists the samples; none reach visitors.
+    const published = await request(app.getHttpServer())
+      .post(`/academies/${academyId}/website/publish`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(201);
+    expect(published.body.sampleContent).toEqual([
+      {
+        pageId: pages.home!.id,
+        pageTitle: 'Home',
+        sectionId: testimonials.id,
+        sectionType: 'testimonials',
+        sampleItems: 3,
+      },
+    ]);
+    const publicHome = async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/public/websites/${academyId}/pages`)
+        .expect(200);
+      const home = res.body.find(
+        (page: { coreType: string }) => page.coreType === 'home',
+      );
+      return home.sections.find((section: Section) => section.type === 'testimonials') as
+        Section | undefined;
+    };
+    const hidden = await publicHome();
+    expect(hidden?.config.items ?? []).toEqual([]);
+
+    // Confirming exactly one ("This is a real testimonial") makes exactly that one public.
+    const homeView = await request(app.getHttpServer())
+      .get(`/academies/${academyId}/website/pages/${pages.home!.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    const confirmed = (homeView.body.sections as Section[]).map((section) =>
+      section.id === testimonials.id
+        ? {
+            ...section,
+            config: {
+              ...section.config,
+              items: (section.config.items as Array<Record<string, unknown>>).map(
+                (item, index) => (index === 0 ? { ...item, sample: false } : item),
+              ),
+            },
+          }
+        : section,
+    );
+    await request(app.getHttpServer())
+      .patch(`/academies/${academyId}/website/pages/${pages.home!.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ sections: confirmed, expectedVersion: homeView.body.version })
+      .expect(200);
+    const republished = await request(app.getHttpServer())
+      .post(`/academies/${academyId}/website/publish`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(201);
+    expect(republished.body.sampleContent[0].sampleItems).toBe(2);
+    const visible = await publicHome();
+    expect(
+      (visible!.config.items as Array<{ id: string }>).map((item) => item.id),
+    ).toEqual(['sample-testimonial-1']);
+    expect(JSON.stringify(visible)).not.toContain('"sample":true');
   });
 
   // --- 4. Step/request bookkeeping persistence ------------------------------

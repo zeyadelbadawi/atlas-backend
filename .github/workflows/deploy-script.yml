@@ -1,0 +1,36 @@
+name: Deploy script tests
+
+# deploy/deploy.sh end to end: the real script and the real production
+# compose file against a throwaway Docker stack on the runner, with a local
+# registry standing in for GHCR (rollback digests, the first-deploy
+# bootstrap record, postgres/redis never recreated on tag drift, SSR off
+# never touching the renderer, init on caddy/ssr).
+#
+# Its own workflow, not a ci.yml job: ci.yml is disabled in this repository,
+# and these tests must run whenever the deploy path changes. It holds no
+# secret, no SSH key and no write permission, and never contacts the VPS.
+on:
+  pull_request:
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/deploy-script.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-script:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: deploy.sh — syntax
+        run: bash -n deploy/deploy.sh && bash -n deploy/test/deploy-script.test.sh
+
+      - name: Docker and Compose versions
+        run: docker version --format 'docker {{.Server.Version}}' && docker compose version
+
+      - name: deploy.sh — end-to-end tests
+        run: bash deploy/test/deploy-script.test.sh
