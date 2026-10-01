@@ -591,12 +591,19 @@ if [ "$MODE" = "rollback" ]; then
   validate_rollback_record
 
   echo "==> Rolling back to the images recorded at ${RECORDED_AT:-unknown}"
-  # Every image is fetched before any container changes, so a missing
-  # digest leaves the running stack exactly as it was.
+  # Every image is obtained before any container changes, so a missing
+  # digest leaves the running stack exactly as it was. A digest already on
+  # the host is immutable content and is used as is: a rollback must not
+  # depend on the registry being reachable.
   rollback_digests="$BACKEND_IMAGE $CADDY_IMAGE"
   [ "$SSR_ENABLED" = "1" ] && rollback_digests="$rollback_digests $SSR_IMAGE"
   for digest in $rollback_digests; do
-    docker pull -q "$digest" >/dev/null
+    if docker image inspect "$digest" >/dev/null 2>&1; then
+      echo "    $digest: present on this host"
+    else
+      docker pull -q "$digest" >/dev/null
+      echo "    $digest: pulled"
+    fi
   done
   pin_service_image backend "$BACKEND_IMAGE"
   pin_service_image caddy "$CADDY_IMAGE"

@@ -274,6 +274,8 @@ check "the backend runs exactly the bootstrapped digest" \
 check "caddy runs exactly the bootstrapped digest" \
   eq "$(running_image caddy)" "$(docker image inspect -f '{{.Id}}' "$AUDIT_CADDY")"
 check "rollback verified the running images itself" log_has "$W/log4" "Running images match the record."
+check "rollback obtained both recorded images before changing anything" \
+  bash -c "[ \"\$(grep -cE '@sha256:[0-9a-f]{64}: (present on this host|pulled)$' '$W/log4')\" = 2 ]"
 check "neither the failed deploy nor the rollback touched postgres" eq "$(cid postgres)" "$PG_CID"
 
 # =============================================================================
@@ -297,6 +299,10 @@ check "SSR off: check mode accepts the record and says the renderer is not rollb
 check "SSR off: rollback succeeds without the renderer image" run_deploy "$W/log6c" --rollback
 check "SSR off: rollback never pulled, tagged or started the renderer" \
   bash -c "! grep -qE 'ssr' '$W/log6c' && [ -z \"\$(cd '$W' && docker compose --profile ssr ps -aq ssr)\" ]"
+docker stop "$REG_NAME" >/dev/null
+check "rollback works with the registry unreachable (digests on the host)" run_deploy "$W/log6d" --rollback
+docker start "$REG_NAME" >/dev/null
+for _ in $(seq 1 50); do curl -fsS "http://${REG}/v2/" >/dev/null 2>&1 && break; sleep 0.2; done
 cp "$W/last-good.bootstrap" "$W/.last-good"
 
 # =============================================================================
