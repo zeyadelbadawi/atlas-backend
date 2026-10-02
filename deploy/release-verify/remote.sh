@@ -53,6 +53,68 @@ case "${1:-}" in
     logs=$(docker compose logs --no-color --since 30m backend 2>/dev/null)
     info "backend error lines (30 min): $(printf '%s\n' "$logs" | grep -c '"level":50') fatal: $(printf '%s\n' "$logs" | grep -c '"level":60')"
 
+    # Sanitized: time, message, error type/code/status and the request's
+    # method + path (no query, no body, no headers); long token-like
+    # strings are redacted. Errors and warnings from the last 6 hours.
+    echo "== Recent backend errors + payment-proof storage warnings (24 h, sanitized, last 10)"
+    docker compose logs --no-color --no-log-prefix --since 24h backend 2>/dev/null \
+      | grep -E '"level":(50|60)|CreateBucket|payment-proofs' | tail -10 \
+      | docker compose exec -T backend node -e '
+          const red = (v) => String(v ?? "").replace(/[A-Za-z0-9+\/=_-]{24,}/g, "<redacted>").slice(0, 300);
+          let buf = ""; process.stdin.on("data", (c) => (buf += c)).on("end", () => {
+            for (const line of buf.split("\n")) {
+              const i = line.indexOf("{"); if (i < 0) continue;
+              let j; try { j = JSON.parse(line.slice(i)); } catch { continue; }
+              const e = j.err || j.error || {};
+              // AllExceptionsFilter logs { requestId, status, exception: <stack> }.
+              const st = typeof j.exception === "string" ? j.exception.split("\n") : [];
+              const head = st.length ? "exception=" + red(st[0]) : "";
+              const frames = st.slice(1, 5).map((f) => f.trim().replace(/\(.*\/(dist|node_modules)\//, "($1/").slice(0, 160)).join(" | ");
+              const req = j.req || {};
+              const path = String(req.url || j.url || "").split("?")[0];
+              console.log(["INFO ", new Date(j.time || Date.now()).toISOString(), "level=" + j.level,
+                j.context ? "ctx=" + red(j.context) : "", "msg=" + red(j.msg),
+                e.type || e.name ? "err=" + red(e.type || e.name) : "", e.code || e.Code ? "code=" + red(e.code || e.Code) : "",
+                e.message ? "errmsg=" + red(e.message) : "", e.$metadata && e.$metadata.httpStatusCode ? "s3status=" + e.$metadata.httpStatusCode : "",
+                j.status ? "status=" + j.status : "", head, frames ? "at " + frames : "",
+                req.method ? req.method + " " + path.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/gi, ":id").replace(/[^\/]{24,}/g, "<redacted>") : ""].filter(Boolean).join(" "));
+            }
+          });' 2>/dev/null || info "could not read backend logs"
+
+    # Read-only: can the app's own credentials reach each bucket? One
+    # GetObject on a key that never exists, per bucket from inside the backend container;
+    # only the role and the outcome are printed, never a name or a key.
+    echo "== Object storage access (app credentials, read-only probe)"
+    storage=$(docker compose exec -T backend node -e '
+      const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+      const e = process.env;
+      const client = (id, secret) => new S3Client({ region: e.R2_REGION, endpoint: e.R2_ENDPOINT,
+        forcePathStyle: e.R2_FORCE_PATH_STYLE !== "false",
+        credentials: { accessKeyId: id, secretAccessKey: secret } });
+      const main = client(e.R2_ACCESS_KEY_ID, e.R2_SECRET_ACCESS_KEY);
+      const prot = client(e.R2_PROTECTED_ACCESS_KEY_ID || e.R2_ACCESS_KEY_ID, e.R2_PROTECTED_SECRET_ACCESS_KEY || e.R2_SECRET_ACCESS_KEY);
+      const checks = [
+        ["media (public)", main, e.R2_BUCKET],
+        ["payment-proofs (private)", main, e.R2_BUCKET + "-payment-proofs"],
+        ["protected media (private)", prot, e.R2_PROTECTED_BUCKET || e.R2_BUCKET + "-protected"],
+      ];
+      (async () => {
+        for (const [role, c, bucket] of checks) {
+          // A key that never exists: NoSuchKey = the credential reaches the
+          // bucket; NoSuchBucket / AccessDenied = it does not (R2 answers
+          // AccessDenied for a bucket outside the token scope).
+          try { await c.send(new GetObjectCommand({ Bucket: bucket, Key: "release-verify/probe-never-exists" }));
+            console.log((role.startsWith("payment") ? "PASS  " : "INFO  ") + role + " bucket: reachable");
+          } catch (err) {
+            const st = err.$metadata && err.$metadata.httpStatusCode;
+            if (err.name === "NoSuchKey") { console.log((role.startsWith("payment") ? "PASS  " : "INFO  ") + role + " bucket: reachable"); continue; }
+            console.log((role.startsWith("payment") ? "FAIL  " : "INFO  ") + role + " bucket: " + (err.name && err.name !== "Error" ? err.name : err.code || "Error") + (st ? " (" + st + ")" : ""));
+          }
+        }
+      })();' 2>/dev/null) || storage="FAIL  storage check could not run"
+    printf '%s\n' "$storage"
+    FAILS=$((FAILS + $(printf '%s\n' "$storage" | grep -c '^FAIL')))
+
     echo "== Runtime flags (non-secret values)"
     for k in ATLAS_SSR RUM_ENABLED SSR_CACHE_TTL_MS SSR_CACHE_MAX; do
       v=$(env_value "$k"); info "$k=${v:-<unset>}"
@@ -96,19 +158,26 @@ case "${1:-}" in
     [ "$FAILS" = 0 ]
     ;;
   hosts)
-    base=$(sql "select base_domain from platform_domain_configuration where configured limit 1")
-    sql "select coalesce(s.full_host, s.subdomain || '.' || '$base')
+    # The app's base domain is PLATFORM_BASE_DOMAIN (env); the DB row is a
+    # fallback only. Without one, a subdomain is not a host: print nothing.
+    base=$(env_value PLATFORM_BASE_DOMAIN)
+    [ -n "$base" ] || base=$(docker compose exec -T backend printenv PLATFORM_BASE_DOMAIN 2>/dev/null | tr -d '\r')
+    [ -n "$base" ] || base=$(sql "select base_domain from platform_domain_configuration where configured and base_domain is not null limit 1")
+    sql "select coalesce(s.full_host, case when '$base' <> '' then s.subdomain || '.' || '$base' end)
          from academies a
          join subdomain_allocations s on s.academy_id=a.id and s.status='assigned'
          join website_configurations w on w.academy_id=a.id and w.status='published'
          where a.archived_at is null and a.status='active'
-         order by a.created_at limit 2" | sed 's/^/host|/'
+         order by (coalesce(a.favicon_url,'') <> '') desc, a.created_at limit 2" | { grep -v '^$' || true; } | sed 's/^/host|/'
     ;;
   rum)
-    total=$(prom '/api/v1/query?query=sum(atlas_rum_lcp_seconds_count)%2Bsum(atlas_rum_inp_seconds_count)%2Bsum(atlas_rum_cls_count)' \
-      | count_json "d.data.result.length?d.data.result[0].value[1]:0" 2>/dev/null)
-    lcp=$(prom '/api/v1/query?query=sum(atlas_rum_lcp_seconds_count)' | count_json "d.data.result.length?d.data.result[0].value[1]:0" 2>/dev/null)
-    echo "rum|${total:-0}|lcp=${lcp:-0}"
+    # One selector over the three histograms: `sum(a)+sum(b)` is EMPTY when
+    # any one has no series yet (INP needs an interaction), which read as 0.
+    q='/api/v1/query?query=sum(%7B__name__%3D~%22atlas_rum_(lcp_seconds%7Cinp_seconds%7Ccls)_count%22%7D)'
+    total=$(prom "$q" | count_json "d.data.result.length?d.data.result[0].value[1]:0" 2>/dev/null)
+    per=$(prom '/api/v1/query?query=sum%20by%20(__name__)(%7B__name__%3D~%22atlas_rum_(lcp_seconds%7Cinp_seconds%7Ccls)_count%22%7D)' \
+      | count_json "d.data.result.map(r=>r.metric.__name__.replace('atlas_rum_','').replace('_count','')+'='+r.value[1]).join(',')||'none'" 2>/dev/null)
+    echo "rum|${total:-0}|${per:-none}"
     ;;
   *) echo "usage: remote.sh facts|hosts|rum" >&2; exit 2 ;;
 esac
