@@ -193,10 +193,16 @@ if (HOSTS[0]) {
     if (sent > 0) sampledVisits += 1;
     await context.close();
   }
-  info(`visits measured: ${sampledVisits}; beacons sent: ${beacons}; answered 204: ${accepted}`);
-  check(beacons > 0, 'at least one real visit sent RUM samples');
-  check(beacons > 0 && accepted === beacons, `every beacon answered 204 (${accepted}/${beacons})`);
-  check(clean, 'beacons carry only metric, value, route and device (no URL, id or user)');
+  if (RUM_VISITS === 0) {
+    // `rum_visits: 0` is a deliberate "no RUM visits" run (e.g. a storage
+    // or server-facts check), not a failed measurement.
+    info('RUM not measured (rum_visits=0)');
+  } else {
+    info(`visits measured: ${sampledVisits}; beacons sent: ${beacons}; answered 204: ${accepted}`);
+    check(beacons > 0, 'at least one real visit sent RUM samples');
+    check(beacons > 0 && accepted === beacons, `every beacon answered 204 (${accepted}/${beacons})`);
+    check(clean, 'beacons carry only metric, value, route and device (no URL, id or user)');
+  }
 }
 await browser.close();
 
