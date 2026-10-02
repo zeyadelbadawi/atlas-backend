@@ -109,6 +109,15 @@ inputs:
     required: false
     default: ''
     description: Zoom webhook secret token, synced into the VPS .env.
+  atlas_ssr:
+    required: false
+    default: ''
+    description: >-
+      Public website server rendering switch (`on` / `off`), synced into the
+      VPS .env as ATLAS_SSR — the one value Caddy's routing and deploy.sh's
+      `ssr` compose profile both read (frontend
+      Reports/SSR_ARCHITECTURE_ANALYSIS.md §14). Empty leaves the host value
+      untouched; any other value is ignored.
   rum_enabled:
     required: false
     default: ''
@@ -161,6 +170,7 @@ runs:
         ALERT_SLACK_WEBHOOK_URL: ${{ inputs.alert_slack_webhook_url }}
         PLATFORM_WEB_URL: ${{ inputs.platform_web_url }}
         RUM_ENABLED: ${{ inputs.rum_enabled }}
+        ATLAS_SSR: ${{ inputs.atlas_ssr }}
         FEATURE_FLAGS: ${{ inputs.feature_flags }}
       run: |
         set -euo pipefail
@@ -203,6 +213,9 @@ runs:
         # is a real write rather than a dropped empty value.
         if os.environ.get('RUM_ENABLED') in ('true', 'false'):
             lines.append(f"RUM_ENABLED={os.environ['RUM_ENABLED']}")
+        # Server rendering: exactly `on` or `off`, for the same reason.
+        if os.environ.get('ATLAS_SSR') in ('on', 'off'):
+            lines.append(f"ATLAS_SSR={os.environ['ATLAS_SSR']}")
         # P64 feature flags: FLAG_* keys only; values limited to what a mode
         # or a comma-separated list of academy ids can contain.
         import re

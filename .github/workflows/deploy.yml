@@ -149,6 +149,10 @@ jobs:
           # Real-user monitoring is on unless the repository variable says
           # otherwise (set RUM_ENABLED=false to switch it off at the next deploy).
           rum_enabled: ${{ vars.RUM_ENABLED || 'true' }}
+          # Server rendering of public Academy pages is on unless the
+          # repository variable ATLAS_SSR says `off` (instant rollback: set it
+          # and redeploy, or `docker compose stop ssr` on the host).
+          atlas_ssr: ${{ vars.ATLAS_SSR || 'on' }}
           # P64 rollout flags come from repository VARIABLES (Settings →
           # Variables), one per line; unset ones are dropped by the action.
           feature_flags: |
@@ -233,6 +237,10 @@ jobs:
           # Real-user monitoring is on unless the repository variable says
           # otherwise (set RUM_ENABLED=false to switch it off at the next deploy).
           rum_enabled: ${{ vars.RUM_ENABLED || 'true' }}
+          # Server rendering of public Academy pages is on unless the
+          # repository variable ATLAS_SSR says `off` (instant rollback: set it
+          # and redeploy, or `docker compose stop ssr` on the host).
+          atlas_ssr: ${{ vars.ATLAS_SSR || 'on' }}
           # P64 rollout flags come from repository VARIABLES (Settings →
           # Variables), one per line; unset ones are dropped by the action.
           feature_flags: |
