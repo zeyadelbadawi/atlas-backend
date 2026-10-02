@@ -160,7 +160,26 @@ export class CheckoutService {
       amount?: number;
       currency?: string;
       billingCycle?: 'monthly' | 'yearly';
+      yearlyAmount?: number;
     } | null;
+
+    // A monthly catalog entry may also carry a Platform-Owner-set price for
+    // a whole year: a yearly request is then charged THAT amount, from the
+    // catalog, never from the client.
+    if (
+      requestedBillingCycle === 'yearly' &&
+      parsed?.billingCycle === 'monthly' &&
+      typeof parsed.yearlyAmount === 'number' &&
+      Number.isFinite(parsed.yearlyAmount) &&
+      parsed.yearlyAmount >= 0 &&
+      !!parsed.currency
+    ) {
+      return {
+        amount: parsed.yearlyAmount,
+        currency: parsed.currency,
+        billingCycle: 'yearly',
+      };
+    }
 
     const hasUsablePrice =
       parsed?.amount !== undefined && parsed.amount !== null && !!parsed.currency;

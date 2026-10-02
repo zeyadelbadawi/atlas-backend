@@ -67,7 +67,15 @@ const PAGE_RESOLUTION_FILE = resolve(
 const available = [ROUTE_PATHS_FILE, PUBLIC_ROUTER_FILE, PAGE_RESOLUTION_FILE].every(
   (file) => existsSync(file),
 );
-const describeIfAvailable = available ? describe : describe.skip;
+// `describe.skip` still RUNS its body to collect the tests, so the file
+// reads inside would throw without the frontend checkout (CI has none).
+// Skipping must not call the real body at all.
+const describeIfAvailable = available
+  ? describe
+  : (name: string, _body: () => void) =>
+      describe.skip(name, () => {
+        it('needs the frontend checkout (sibling atlas-front or ATLAS_FRONTEND_ROOT)', () => {});
+      });
 
 /** Placeholder ids, so a generated path can never accidentally equal a literal route segment. */
 const ID = '__ID__';

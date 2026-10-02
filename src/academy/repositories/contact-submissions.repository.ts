@@ -43,22 +43,78 @@ export class ContactSubmissionsRepository {
     return tx.contactSubmission.create({ data });
   }
 
+  /**
+   * One page of an Academy's messages, filtered and sorted in the
+   * database. Every filter is ANDed onto `academyId`, so no combination of
+   * them can reach another Academy's rows (RLS is the backstop). Ties are
+   * broken by `id`, so paging is stable.
+   */
   async findManyForAcademy(
     tx: Prisma.TransactionClient,
     academyId: string,
-    options: { skip: number; take: number },
+    options: {
+      readonly skip: number;
+      readonly take: number;
+      readonly search?: string;
+      readonly status?: ContactSubmissionStatus;
+      readonly from?: Date;
+      readonly toExclusive?: Date;
+      readonly sortBy?: 'createdAt' | 'name' | 'email';
+      readonly sortDirection?: 'asc' | 'desc';
+    },
   ): Promise<{ items: ContactSubmission[]; totalItems: number }> {
-    const where: Prisma.ContactSubmissionWhereInput = { academyId };
+    const search = options.search?.trim();
+    const where: Prisma.ContactSubmissionWhereInput = {
+      academyId,
+      ...(options.status ? { status: options.status } : {}),
+      ...(options.from || options.toExclusive
+        ? {
+            createdAt: {
+              ...(options.from ? { gte: options.from } : {}),
+              ...(options.toExclusive ? { lt: options.toExclusive } : {}),
+            },
+          }
+        : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' } },
+              { email: { contains: search, mode: 'insensitive' } },
+              { message: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+    const direction = options.sortDirection ?? 'desc';
     const [items, totalItems] = await Promise.all([
       tx.contactSubmission.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ [options.sortBy ?? 'createdAt']: direction }, { id: direction }],
         skip: options.skip,
         take: options.take,
       }),
       tx.contactSubmission.count({ where }),
     ]);
     return { items, totalItems };
+  }
+
+  /** Message counts per status for one Academy (the Messages page's tabs). */
+  async countByStatus(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+  ): Promise<Record<ContactSubmissionStatus, number>> {
+    const rows = await tx.contactSubmission.groupBy({
+      by: ['status'],
+      where: { academyId },
+      _count: { _all: true },
+    });
+    const counts: Record<ContactSubmissionStatus, number> = {
+      new: 0,
+      read: 0,
+      archived: 0,
+    };
+    for (const row of rows) counts[row.status] = row._count._all;
+    return counts;
   }
 
   findById(tx: Prisma.TransactionClient, id: string): Promise<ContactSubmission | null> {

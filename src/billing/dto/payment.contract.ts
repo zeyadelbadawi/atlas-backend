@@ -4,6 +4,7 @@
  * manual and gateway payments (frontend's own governing rule) — nothing
  * here branches on `methodType`.
  */
+import type { ManualPaymentInstructionsResponse } from './payment-method.contract';
 import type {
   Payment as PrismaPayment,
   PaymentAttempt as PrismaPaymentAttempt,
@@ -130,6 +131,8 @@ export interface PaymentResponse {
   readonly failureReason?: string;
   readonly reviewNotes?: string;
   readonly nextAction?: PaymentNextActionResponse;
+  /** The manual-transfer instructions shown when this payment was created. */
+  readonly instructions?: ManualPaymentInstructionsResponse;
   readonly providerReference?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -177,6 +180,9 @@ export function toPaymentResponse(
     reviewNotes: payment.reviewNotes ?? undefined,
     nextAction:
       (payment.nextAction as unknown as PaymentNextActionResponse | null) ?? undefined,
+    instructions:
+      (payment.instructionsSnapshot as unknown as ManualPaymentInstructionsResponse | null) ??
+      undefined,
     providerReference: payment.providerReference ?? undefined,
     createdAt: payment.createdAt.toISOString(),
     updatedAt: payment.updatedAt.toISOString(),

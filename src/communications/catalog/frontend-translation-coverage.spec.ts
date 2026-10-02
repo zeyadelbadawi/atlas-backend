@@ -57,7 +57,15 @@ function eventName(key: string): string | null {
   return match ? match[1] : null;
 }
 
-const describeIfAvailable = available ? describe : describe.skip;
+// `describe.skip` still RUNS its body to collect the tests, so the file
+// reads inside would throw without the frontend checkout (CI has none).
+// Skipping must not call the real body at all.
+const describeIfAvailable = available
+  ? describe
+  : (name: string, _body: () => void) =>
+      describe.skip(name, () => {
+        it('needs the frontend checkout (sibling atlas-front or ATLAS_FRONTEND_ROOT)', () => {});
+      });
 
 describeIfAvailable('catalogue keys have frontend translations', () => {
   const events = Object.values(COMMUNICATION_CATALOG);

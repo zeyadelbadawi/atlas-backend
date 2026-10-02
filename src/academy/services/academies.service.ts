@@ -60,8 +60,10 @@ import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
 import {
   toContactSubmissionResponse,
   type ContactSubmissionResponse,
+  type ContactSubmissionSummaryResponse,
 } from '../dto/contact-submission.contract';
 import type { UpdateContactSubmissionStatusDto } from '../dto/update-contact-submission-status.dto';
+import type { ContactSubmissionQueryDto } from '../dto/contact-submission-query.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../dto/list-query.dto';
@@ -698,20 +700,66 @@ export class AcademiesService {
     userId: string,
     payload: UpdateAcademyBrandingDto,
   ): Promise<AcademyResponse> {
-    const academy = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+    const { academy, allocation, customHostname } =
+      await this.tenancyContextService.runInTenantAndUserContext(
+        organizationId,
+        userId,
+        async (tx) => {
+          await this.assertCanManage(tx, academyId, userId);
 
-        return this.academiesRepository.update(tx, academyId, {
-          name: payload.name,
-          logoUrl: payload.logo,
-          faviconUrl: payload.favicon,
-        });
-      },
-    );
+          const updated = await this.academiesRepository.update(tx, academyId, {
+            name: payload.name,
+            logoUrl: payload.logo,
+            faviconUrl: payload.favicon,
+          });
+          const [allocation, connection] = await Promise.all([
+            this.subdomainAllocationsRepository.findByAcademyId(tx, academyId),
+            this.domainConnectionsRepository.findByAcademyId(tx, academyId),
+          ]);
+          return {
+            academy: updated,
+            allocation,
+            customHostname: connection?.hostname ?? null,
+          };
+        },
+      );
+
+    // The public site reads the name, logo and favicon version from the
+    // cached hostname resolution (60 s): drop it, so a new favicon or logo
+    // shows on the next page load rather than up to a minute later.
+    await this.invalidatePublicHostnames(academy.slug, allocation, customHostname);
 
     return toAcademyResponse(academy);
+  }
+
+  /**
+   * Drops every cached hostname resolution that could answer for this
+   * Academy (P63g): the allocation's label, its stored full host, the
+   * effective full host, the slug forms and the connected custom hostname.
+   */
+  private async invalidatePublicHostnames(
+    slug: string,
+    allocation: { readonly subdomain: string; readonly fullHost: string | null } | null,
+    customHostname: string | null,
+  ): Promise<void> {
+    const platformDomain =
+      await this.platformDomainConfigurationRepository.findSingleton();
+    const { baseDomain } = resolveEffectiveBaseDomain(
+      this.environmentBaseDomain,
+      platformDomain,
+    );
+    const hosts = new Set<string>([slug]);
+    if (allocation) {
+      hosts.add(allocation.subdomain);
+      if (allocation.fullHost) hosts.add(allocation.fullHost);
+      const full = buildFullHost(allocation.subdomain, baseDomain);
+      if (full) hosts.add(full);
+    }
+    const slugFull = buildFullHost(slug, baseDomain);
+    if (slugFull) hosts.add(slugFull);
+    if (platformDomain.baseDomain) hosts.add(`${slug}.${platformDomain.baseDomain}`);
+    if (customHostname) hosts.add(customHostname);
+    await this.publicWebsiteCacheService.invalidateHostnameResolution([...hosts]);
   }
 
   /** `DELETE /academies/:id` — soft-archive via status transition, never a SQL DELETE (no DELETE RLS policy exists on `academies` at all). */
@@ -811,25 +859,7 @@ export class AcademiesService {
           };
         },
       );
-    const platformDomain =
-      await this.platformDomainConfigurationRepository.findSingleton();
-    const { baseDomain } = resolveEffectiveBaseDomain(
-      this.environmentBaseDomain,
-      platformDomain,
-    );
-    const hosts = new Set<string>([archived.slug]);
-    if (allocation) {
-      hosts.add(allocation.subdomain);
-      if (allocation.fullHost) hosts.add(allocation.fullHost);
-      const full = buildFullHost(allocation.subdomain, baseDomain);
-      if (full) hosts.add(full);
-    }
-    const slugFull = buildFullHost(archived.slug, baseDomain);
-    if (slugFull) hosts.add(slugFull);
-    if (platformDomain.baseDomain)
-      hosts.add(`${archived.slug}.${platformDomain.baseDomain}`);
-    if (previousHostname) hosts.add(previousHostname);
-    await this.publicWebsiteCacheService.invalidateHostnameResolution([...hosts]);
+    await this.invalidatePublicHostnames(archived.slug, allocation, previousHostname);
     if (releaseId) {
       await this.domainReleaseAfterCommit(releaseId);
     }
@@ -1325,7 +1355,7 @@ export class AcademiesService {
     academyId: string,
     organizationId: string,
     userId: string,
-    query: CollectionQueryDto,
+    query: ContactSubmissionQueryDto,
   ): Promise<PaginatedResult<ContactSubmissionResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
@@ -1343,6 +1373,15 @@ export class AcademiesService {
           await this.contactSubmissionsRepository.findManyForAcademy(tx, academyId, {
             skip: (page - 1) * pageSize,
             take: pageSize,
+            search: query.search,
+            status: query.status,
+            from: query.from ? new Date(`${query.from}T00:00:00.000Z`) : undefined,
+            // Inclusive `to`: everything before the start of the next day.
+            toExclusive: query.to
+              ? new Date(Date.parse(`${query.to}T00:00:00.000Z`) + 86_400_000)
+              : undefined,
+            sortBy: query.sortBy,
+            sortDirection: query.sortDirection,
           });
         return {
           items: items.map(toContactSubmissionResponse),
@@ -1352,7 +1391,27 @@ export class AcademiesService {
     );
   }
 
-  /** Phase 6 — staff triage (mark read/archived); never re-opens the public write path. */
+  /** Message counts per status for the Owner's Messages page (same access as the list). */
+  async getContactSubmissionSummary(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+  ): Promise<ContactSubmissionSummaryResponse> {
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const counts = await this.contactSubmissionsRepository.countByStatus(
+          tx,
+          academyId,
+        );
+        return { ...counts, total: counts.new + counts.read + counts.archived };
+      },
+    );
+  }
+
+  /** Phase 6 — staff triage (mark new/read/archived); never re-opens the public write path. */
   async updateContactSubmissionStatus(
     academyId: string,
     organizationId: string,

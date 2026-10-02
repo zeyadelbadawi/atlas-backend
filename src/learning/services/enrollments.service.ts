@@ -310,10 +310,19 @@ export class EnrollmentsService {
         .map((lesson) => ({ id: lesson.id, sectionId: section.id })),
     );
 
+    // The whole sequence from the first moment, so a quiz-only course's
+    // card reads "0 of 2" rather than "0 of 0" before the first recompute.
+    const [publishedQuizzes, publishedAssignments] = await Promise.all([
+      tx.quiz.count({ where: { courseId: course.id, status: 'published' } }),
+      tx.assignment.count({ where: { courseId: course.id, status: 'published' } }),
+    ]);
+
     await this.courseProgressRepository.createCourseProgress(tx, {
       enrollment: { connect: { id: enrollment.id } },
       totalLessons: publishedLessons.length,
       completedLessons: 0,
+      totalItems: publishedLessons.length + publishedQuizzes + publishedAssignments,
+      completedItems: 0,
       percentage: 0,
       currentLessonId: publishedLessons[0]?.id,
       completionState: deriveCompletionState(0, publishedLessons.length),

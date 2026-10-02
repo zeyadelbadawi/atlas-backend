@@ -45,6 +45,13 @@ export interface CourseStatsResponse {
   /** Mean of APPROVED reviews, 0 when there are none. */
   readonly averageRating?: number;
   readonly totalReviews?: number;
+  /**
+   * Published quizzes and assignments — a course can be quizzes only, and
+   * "0 lessons" alone would describe it as empty. Present on the public
+   * catalog and course details reads.
+   */
+  readonly totalQuizzes?: number;
+  readonly totalAssignments?: number;
 }
 
 export interface CourseResponse {

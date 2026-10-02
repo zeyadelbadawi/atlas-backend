@@ -40,6 +40,8 @@ export type AnalyticsEnrollmentRow = {
   progress: {
     completedLessons: number;
     totalLessons: number;
+    completedItems: number;
+    totalItems: number;
     completionState: string;
     updatedAt: Date;
   } | null;
@@ -114,6 +116,8 @@ export class StudentAnalyticsRepository {
           select: {
             completedLessons: true,
             totalLessons: true,
+            completedItems: true,
+            totalItems: true,
             completionState: true,
             updatedAt: true,
           },

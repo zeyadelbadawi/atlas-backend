@@ -127,7 +127,17 @@ export class PlatformPaymentService {
           paymentId,
         );
         if (!fresh) throw new NotFoundException({ messageKey: 'errors.notFound' });
-        if (fresh.reviewStatus !== 'pending') {
+        // The claim comes first and is conditional: only one approval (or
+        // rejection) of a pending payment can ever match, so a double click
+        // or two reviewers can never apply a subscription twice.
+        if (
+          !(await this.paymentsRepository.claimPendingReview(
+            tx,
+            paymentId,
+            'approved',
+            payload.notes,
+          ))
+        ) {
           throw new ConflictException({ messageKey: 'errors.payment.notPendingReview' });
         }
 
@@ -136,10 +146,6 @@ export class PlatformPaymentService {
           status: 'approved',
           reviewer: { connect: { id: reviewerId } },
           notes: payload.notes,
-        });
-        await this.paymentsRepository.update(tx, paymentId, {
-          reviewStatus: 'approved',
-          reviewNotes: payload.notes,
         });
 
         const reloaded = await this.paymentsRepository.findByIdAnyOrganization(
@@ -246,7 +252,14 @@ export class PlatformPaymentService {
           paymentId,
         );
         if (!fresh) throw new NotFoundException({ messageKey: 'errors.notFound' });
-        if (fresh.reviewStatus !== 'pending') {
+        if (
+          !(await this.paymentsRepository.claimPendingReview(
+            tx,
+            paymentId,
+            'rejected',
+            payload.notes,
+          ))
+        ) {
           throw new ConflictException({ messageKey: 'errors.payment.notPendingReview' });
         }
 
@@ -255,10 +268,6 @@ export class PlatformPaymentService {
           status: 'rejected',
           reviewer: { connect: { id: reviewerId } },
           notes: payload.notes,
-        });
-        await this.paymentsRepository.update(tx, paymentId, {
-          reviewStatus: 'rejected',
-          reviewNotes: payload.notes,
         });
         await this.paymentApplicationService.applyFailedPayment(
           tx,

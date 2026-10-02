@@ -15,6 +15,10 @@ export interface WebsitePageResponse {
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** Management responses only: when this page was last published (absent = never). */
+  readonly publishedAt?: string;
+  /** Management responses only: the working copy differs from what visitors see. */
+  readonly hasUnpublishedChanges?: boolean;
 }
 
 export function toWebsitePageResponse(page: PrismaWebsitePage): WebsitePageResponse {
@@ -31,5 +35,16 @@ export function toWebsitePageResponse(page: PrismaWebsitePage): WebsitePageRespo
     version: page.version,
     createdAt: page.createdAt.toISOString(),
     updatedAt: page.updatedAt.toISOString(),
+  };
+}
+
+/** The dashboard's view of a page: the working copy plus its publication state. Never used for public responses. */
+export function toManagedWebsitePageResponse(
+  page: PrismaWebsitePage,
+): WebsitePageResponse {
+  return {
+    ...toWebsitePageResponse(page),
+    publishedAt: page.publishedAt?.toISOString(),
+    hasUnpublishedChanges: page.publishedVersion !== page.version,
   };
 }

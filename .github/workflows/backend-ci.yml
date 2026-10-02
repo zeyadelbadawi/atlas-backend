@@ -1,0 +1,192 @@
+name: Backend CI
+
+# The merge gate for this repository, and the trigger for production
+# deploys (deploy.yml runs only after this workflow succeeds on `main`).
+#
+# Replaces `ci.yml`, which had been `disabled_manually` on GitHub since
+# 2026-09-23 (its lint step was red on `main`; that is fixed). A new
+# workflow file is enabled by default, so the gate cannot silently stay off.
+#
+#   static  lint, typecheck, migrations-vs-schema drift, unit tests, build
+#   e2e     the database e2e suites against real PostgreSQL + Redis + S3 (SeaweedFS),
+#           in 3 shards; each shard runs its suites TWICE on the same
+#           database, which is how ordering and leftover-state bugs show
+#   passed  one job that needs both: the single required status check
+#
+# Nothing here can reach production: every service is a local container
+# and every credential below is a CI-only placeholder, not a secret.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  NODE_ENV: test
+  # The shared runner's PostgreSQL is slow enough that the seed-heavy suites
+  # trip Prisma's 5 s interactive-transaction default and answer 500 where a
+  # real outcome is expected. Production keeps the default.
+  PRISMA_INTERACTIVE_TX_TIMEOUT_MS: '20000'
+  PRISMA_INTERACTIVE_TX_MAX_WAIT_MS: '10000'
+  # connection_limit: Prisma's default pool is CPU-derived (cores * 2 + 1),
+  # which on this runner is 3 connections — the e2e suites then time out
+  # "fetching a new connection from the pool" while the app's own queues
+  # (tenant-usage recompute runs at concurrency 4, sized for a 9-connection
+  # pool; see tenant-usage-recompute.types.ts) hold them. 9 is the pool the
+  # code was benchmarked against.
+  DATABASE_URL: postgresql://atlas:atlas_ci_password@localhost:5432/atlas_ci?schema=public&connection_limit=9
+  # Created with this fixed, committed password by migration
+  # 20260823183500_p2_app_role_rls_enforcement — not a secret.
+  APP_DATABASE_URL: postgresql://atlas_app:atlas_app_dev_password@localhost:5432/atlas_ci?schema=public&connection_limit=9
+  REDIS_URL: redis://localhost:6379
+  CORS_ALLOWED_ORIGINS: http://localhost:5173
+  JWT_ACCESS_SECRET: ci-only-placeholder-jwt-secret-not-a-real-secret-32c
+  PAYMENT_WEBHOOK_SECRET: ci-only-placeholder-webhook-secret-not-real-32ch
+  PAYMENT_CREDENTIALS_ENCRYPTION_KEY: 'abababababababababababababababababababababababababababababababab'
+  # Local, disposable SeaweedFS S3 standing in for Cloudflare R2. Not s3rver:
+  # p64-phase2-security asserts that an unsigned read of a protected object
+  # is refused by the real store, and s3rver serves it. Not MinIO: its
+  # images are no longer published on Docker Hub (the pull is denied) and
+  # quay.io refuses anonymous pulls. The backend creates its buckets at boot.
+  # Placeholder credentials for this throwaway container.
+  R2_ENDPOINT: http://127.0.0.1:9000
+  R2_REGION: us-east-1
+  R2_ACCESS_KEY_ID: atlas_media_ci
+  R2_SECRET_ACCESS_KEY: atlas_media_ci_password
+  R2_BUCKET: atlas-media-ci
+  R2_PUBLIC_URL_BASE: http://127.0.0.1:9000/atlas-media-ci
+  R2_FORCE_PATH_STYLE: 'true'
+
+jobs:
+  static:
+    name: Lint, typecheck, migrations, unit tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas_ci_password
+          POSTGRES_DB: atlas_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U atlas -d atlas_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies (lockfile)
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Prisma — generate client
+        run: npm run prisma:generate
+      - name: Migrations apply cleanly to an empty database
+        run: npm run prisma:migrate:deploy
+      - name: Migrations and schema.prisma describe the same database (no drift)
+        run: |
+          PGPASSWORD=atlas_ci_password psql -h localhost -U atlas -d atlas_ci -c 'CREATE DATABASE atlas_shadow'
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url postgresql://atlas:atlas_ci_password@localhost:5432/atlas_shadow \
+            --exit-code
+      - name: Unit tests
+        run: npm run test -- --ci
+      - name: Build
+        run: npm run build
+      - name: Dependency audit (production dependencies; informational — known, accepted, transitive findings)
+        run: npm audit --omit=dev
+        continue-on-error: true
+
+  e2e:
+    name: Database e2e (shard ${{ matrix.shard }}/3, run twice)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas_ci_password
+          POSTGRES_DB: atlas_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U atlas -d atlas_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Start SeaweedFS S3 (pinned release; enforces request signatures)
+        run: |
+          mkdir -p "$RUNNER_TEMP/s3"
+          cat > "$RUNNER_TEMP/s3/s3.json" <<JSON
+          {"identities":[{"name":"ci","credentials":[{"accessKey":"$R2_ACCESS_KEY_ID","secretKey":"$R2_SECRET_ACCESS_KEY"}],"actions":["Admin","Read","List","Tagging","Write"]}]}
+          JSON
+          docker run -d --name s3 -p 9000:9000 -v "$RUNNER_TEMP/s3:/etc/s3:ro" \
+            docker.io/chrislusf/seaweedfs:4.47 \
+            server -dir=/data -master.volumeSizeLimitMB=64 -volume.max=0 \
+            -s3 -s3.port=9000 -s3.config=/etc/s3/s3.json
+          # Signed-in only: an anonymous request is refused with 403.
+          for i in $(seq 1 30); do
+            test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9000/)" = 403 && exit 0
+            sleep 2
+          done
+          docker logs s3; exit 1
+      - name: Install dependencies (lockfile)
+        run: npm ci
+      - name: Prisma — generate, migrate, seed (the fixtures the e2e suites read)
+        run: |
+          npm run prisma:generate
+          npm run prisma:migrate:deploy
+          npx prisma db seed
+      - name: E2E — run 1
+        run: npx jest --config ./test/jest-e2e.json --ci --shard=${{ matrix.shard }}/3 --logHeapUsage 2>&1 | tee e2e-run1.log; exit ${PIPESTATUS[0]}
+      - name: E2E — run 2 (same database, same suites — leftover state or ordering bugs fail here)
+        run: npx jest --config ./test/jest-e2e.json --ci --shard=${{ matrix.shard }}/3 --logHeapUsage 2>&1 | tee e2e-run2.log; exit ${PIPESTATUS[0]}
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-shard-${{ matrix.shard }}
+          path: e2e-run*.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+  passed:
+    name: Backend CI passed
+    if: always()
+    needs: [static, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded
+        run: |
+          echo "static=${{ needs.static.result }} e2e=${{ needs.e2e.result }}"
+          test "${{ needs.static.result }}" = success && test "${{ needs.e2e.result }}" = success

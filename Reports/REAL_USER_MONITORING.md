@@ -1,9 +1,14 @@
 # Real-user monitoring (RUM) — Core Web Vitals
 
-Status: implemented on `claude/practical-wozniak-pjcdhe`; **off by
-default**; not merged, not deployed. Free and self-hosted: the
-`web-vitals` library (Apache-2.0, bundled), Atlas's own API, the
-Prometheus already in `docker-compose.prod.yml`. No third-party service.
+Status (2 Oct 2026): **enabled by configuration**, pending deploy.
+`deploy.yml` passes `RUM_ENABLED=${{ vars.RUM_ENABLED || 'true' }}` to
+the VPS `.env` on every deploy (repository variable `RUM_ENABLED=false`
+turns it off at the next deploy); the frontend builds with
+`VITE_RUM_SAMPLE_RATE=0.1` (`.env.production`). The privacy policy (§3,
+§4, legitimate interests, §10 retention) and the cookie dialog disclose it
+in English and Arabic. Free and self-hosted: the `web-vitals` library
+(Apache-2.0, bundled), Atlas's own API, the Prometheus already in
+`docker-compose.prod.yml`. No third-party service.
 
 ## What it measures and sends
 
@@ -59,29 +64,26 @@ metric series or carry data (there is no free-text field).
   `GET /api/v1/platform-observability/web-vitals?range=7d` (Platform
   Owner only).
 
-## Enabling (needs your approval — production configuration)
+## Enabling (done 2 Oct 2026)
 
-1. **Disclosure first.** The cookie dialog says today (`legal.json`,
-   `dialogBody`): "Atlas uses no analytics, advertising or third-party
-   tracking technologies."  RUM is not tracking (no identifiers, no device
-   storage), but it is measurement and should be disclosed before it is
-   turned on. Suggested sentence for the privacy policy: "We measure page
-   speed for a sample of visits — only the type of page, whether the
-   screen is phone-sized, and three timing values. No account, address or
-   identifier is collected, and browsers that send Global Privacy Control
-   or Do Not Track are never measured." (Legal copy is your decision; not
-   changed here.)
-2. Backend environment: `RUM_ENABLED=true`.
-3. Frontend build: `VITE_RUM_SAMPLE_RATE=0.1` (10 % of visits; 0–1).
-   Build-time: changing it means a frontend rebuild/deploy.
-4. Prometheus must be running (`monitoring` compose profile) and
-   scraping the API (already configured for the other metrics).
+1. Disclosure: privacy policy §3 "Page performance measurements", §4
+   (not a cookie or tracking technology; GPC/DNT skipped), legitimate
+   interests, §10 retention (15 days); cookie dialog body — EN and AR.
+2. Backend: `RUM_ENABLED=true` via the deploy workflow (`vars.RUM_ENABLED`
+   overrides; `false` switches it off).
+3. Frontend: `VITE_RUM_SAMPLE_RATE=0.1` — a tenth of visits. Chosen as the
+   smallest share that still produces figures over days; raise it only
+   with a frontend rebuild.
+4. Prometheus (`monitoring` profile) scrapes the API as before.
 
 ## Disabling
 
-- Immediately: `RUM_ENABLED=false` (or unset) on the backend and restart
-  the API — samples are dropped on arrival.
-- Fully: build the frontend with `VITE_RUM_SAMPLE_RATE` unset or `0` —
+- At the next deploy: repository variable `RUM_ENABLED=false` (Settings →
+  Secrets and variables → Actions → Variables), then run the deploy.
+- Immediately, on the host: set `RUM_ENABLED=false` in `/opt/atlas/.env`
+  and restart the API — samples are dropped on arrival. (The next deploy
+  rewrites it from the repository variable.)
+- Fully: build the frontend with `VITE_RUM_SAMPLE_RATE` removed or `0` —
   no RUM code is downloaded by anyone.
 - Existing data ages out with Prometheus retention (15 days).
 

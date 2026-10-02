@@ -17,8 +17,12 @@
  * Cache-isolation strategy (master plan §17 "Cache Isolation"): every key
  * embeds the Academy id AND the resolved `WebsiteConfiguration.
  * configVersion` at read time. `configVersion` is incremented on every
- * real publish (`WebsiteConfigurationService.publishConfiguration`, P9,
- * unmodified) — a stale cache entry (keyed by the OLD version) is simply
+ * real publish — the whole site (`WebsiteConfigurationService.
+ * publishConfiguration`) or one page (`WebsitePagesService.publish`) — and
+ * on nothing else: saving a draft never changes what is cached, because
+ * what is cached is the PUBLISHED copy (`published_snapshot` and the page
+ * `published_*` columns, 2 Oct 2026), which only a publish writes. A stale
+ * cache entry (keyed by the OLD version) is simply
  * never looked up again once a new publish happens; a fresh key is
  * computed and misses, populating a new entry. This makes the cache
  * self-invalidating by construction, with zero explicit invalidation call
@@ -59,7 +63,7 @@ function hostnameKey(hostname: string): string {
 }
 
 function configKey(academyId: string, configVersion: number): string {
-  return `public:config:v1:${academyId}:${configVersion}`;
+  return `public:config:v2:${academyId}:${configVersion}`;
 }
 
 function servingKey(organizationId: string): string {
@@ -70,13 +74,15 @@ function servingKey(organizationId: string): string {
  * v2: the payload carries expanded content-library entries, and the key
  * carries the Academy's library revision (`WebsiteLibraryRevisionService`)
  * so a library edit is a new key rather than a 5-minute-stale one.
+ * v3 (and config v2): built from the published copy, not the working copy —
+ * a new prefix so no entry written before that change is ever read again.
  */
 function pagesKey(
   academyId: string,
   configVersion: number,
   libraryRevision: number,
 ): string {
-  return `public:pages:v2:${academyId}:${configVersion}:${libraryRevision}`;
+  return `public:pages:v3:${academyId}:${configVersion}:${libraryRevision}`;
 }
 
 @Injectable()

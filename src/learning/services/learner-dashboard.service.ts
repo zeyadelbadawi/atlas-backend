@@ -80,7 +80,7 @@ export class LearnerDashboardService {
       // read-only here from batched counts so `/me` is correct immediately
       // for every enrollment, including ones whose materialised figure
       // predates this fix; `recompute` keeps the stored value in step.
-      const percentageByCourseId = await this.computeItemPercentages(
+      const itemsByCourseId = await this.computeItemProgressByCourse(
         tx,
         userId,
         enrollments,
@@ -102,10 +102,12 @@ export class LearnerDashboardService {
           courseTitle: row.course.title,
           courseThumbnailUrl: row.course.thumbnailUrl,
           percentage:
-            percentageByCourseId.get(row.courseId) ??
+            itemsByCourseId.get(row.courseId)?.percentage ??
             Number(row.progress?.percentage ?? 0),
           completedLessons: row.progress?.completedLessons ?? 0,
           totalLessons: row.progress?.totalLessons ?? 0,
+          completedItems: itemsByCourseId.get(row.courseId)?.completed ?? 0,
+          totalItems: itemsByCourseId.get(row.courseId)?.total ?? 0,
           nextItemId: row.progress?.currentLessonId ?? null,
           nextItemTitle: null,
           lastActivityAt: row.progress?.lastActivityAt?.toISOString() ?? null,
@@ -302,14 +304,14 @@ export class LearnerDashboardService {
    * from the already-materialised progress row; quiz and assignment state is
    * read fresh so the figure is right even before the next `recompute`.
    */
-  private async computeItemPercentages(
+  private async computeItemProgressByCourse(
     tx: Prisma.TransactionClient,
     userId: string,
     enrollments: readonly {
       courseId: string;
       progress: { completedLessons: number; totalLessons: number } | null;
     }[],
-  ): Promise<Map<string, number>> {
+  ): Promise<Map<string, { completed: number; total: number; percentage: number }>> {
     const courseIds = enrollments.map((row) => row.courseId);
     if (courseIds.length === 0) return new Map();
 
@@ -351,7 +353,10 @@ export class LearnerDashboardService {
       ).push(assignment);
     }
 
-    const percentages = new Map<string, number>();
+    const progressByCourse = new Map<
+      string,
+      { completed: number; total: number; percentage: number }
+    >();
     for (const enrollment of enrollments) {
       const lessons = {
         total: enrollment.progress?.totalLessons ?? 0,
@@ -376,16 +381,16 @@ export class LearnerDashboardService {
           };
         },
       );
-      percentages.set(
+      progressByCourse.set(
         enrollment.courseId,
         computeItemProgress({
           lessons,
           quizzes: courseQuizzes,
           assignments: courseAssignments,
-        }).percentage,
+        }),
       );
     }
-    return percentages;
+    return progressByCourse;
   }
 
   private async upcomingDeadlines(

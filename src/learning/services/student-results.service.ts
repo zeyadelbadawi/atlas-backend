@@ -124,6 +124,8 @@ export class StudentResultsService {
             ? {
                 completedLessons: progress.completedLessons,
                 totalLessons: progress.totalLessons,
+                completedItems: progress.completedItems,
+                totalItems: progress.totalItems,
                 percentage: Number(progress.percentage),
                 completionState: progress.completionState,
               }

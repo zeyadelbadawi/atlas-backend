@@ -36,9 +36,14 @@ import {
 } from '../utils/sample-content.util';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { WebsiteConfiguration } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
-import { WebsiteConfigurationRepository } from '../repositories/website-configuration.repository';
+import {
+  WebsiteConfigurationRepository,
+  buildPublishedSnapshot,
+  hasUnpublishedConfigurationChanges,
+} from '../repositories/website-configuration.repository';
 import { WebsiteBootstrapService } from './website-bootstrap.service';
 import { SectionReferenceValidatorService } from './section-reference-validator.service';
 import {
@@ -120,6 +125,24 @@ export class WebsiteConfigurationService {
     }
   }
 
+  /** The dashboard's view: the working copy plus what is not yet published. */
+  private async toManagedResponse(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    configuration: WebsiteConfiguration,
+  ): Promise<WebsiteConfigurationResponse> {
+    return {
+      ...toWebsiteConfigurationResponse(configuration),
+      unpublishedChanges: {
+        configuration: hasUnpublishedConfigurationChanges(configuration),
+        pages: await this.websitePagesRepository.countWithUnpublishedChanges(
+          tx,
+          academyId,
+        ),
+      },
+    };
+  }
+
   async getConfiguration(
     academyId: string,
     organizationId: string,
@@ -130,10 +153,11 @@ export class WebsiteConfigurationService {
       userId,
       async (tx) => {
         await this.assertIsMember(tx, academyId, userId);
-        return this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+        const row = await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+        return this.toManagedResponse(tx, academyId, row);
       },
     );
-    return toWebsiteConfigurationResponse(configuration);
+    return configuration;
   }
 
   async updateConfiguration(
@@ -210,7 +234,7 @@ export class WebsiteConfigurationService {
           academyId,
           data,
         );
-        return toWebsiteConfigurationResponse(updated);
+        return this.toManagedResponse(tx, academyId, updated);
       },
     );
   }
@@ -226,12 +250,23 @@ export class WebsiteConfigurationService {
       async (tx) => {
         await this.assertCanManage(tx, academyId, userId);
         await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+        await this.websiteConfigurationRepository.lockForPublish(tx, academyId);
+        const current = await this.websiteBootstrapService.ensureConfiguration(
+          tx,
+          academyId,
+        );
 
+        // Publishing the website publishes everything: every page's working
+        // copy and the site-wide settings become what visitors see. The
+        // `configVersion` bump changes every public cache key (Redis and the
+        // SSR render cache), so the new content is served on the next request.
+        await this.websitePagesRepository.publish(tx, academyId);
         const updated = await this.websiteConfigurationRepository.update(tx, academyId, {
           status: 'published',
           publishedAt: new Date(),
           lastPublishError: Prisma.JsonNull,
           configVersion: { increment: 1 },
+          publishedSnapshot: buildPublishedSnapshot(current),
         });
         // Theme 1 plan §D.4 — a warning, never a block: which visible
         // sections still hold sample testimonials (stripped from the public
@@ -241,7 +276,7 @@ export class WebsiteConfigurationService {
           academyId,
         );
         return {
-          ...toWebsiteConfigurationResponse(updated),
+          ...(await this.toManagedResponse(tx, academyId, updated)),
           sampleContent: collectSampleContent(
             visiblePages.map((page) => ({
               id: page.id,
@@ -289,7 +324,7 @@ export class WebsiteConfigurationService {
           lastPublishError: Prisma.JsonNull,
           configVersion: { increment: 1 },
         });
-        return toWebsiteConfigurationResponse(updated);
+        return this.toManagedResponse(tx, academyId, updated);
       },
     );
   }

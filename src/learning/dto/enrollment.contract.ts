@@ -25,6 +25,9 @@ import { isEnrollmentActive } from '../services/learning-access.util';
 export interface EnrollmentProgressSummary {
   readonly totalLessons: number;
   readonly completedLessons: number;
+  /** Lessons, quizzes and assignments together — what `percentage` is computed from. */
+  readonly totalItems: number;
+  readonly completedItems: number;
   readonly percentage: number;
   readonly currentLessonId?: string;
   readonly completionState: PrismaCourseProgress['completionState'];
@@ -99,6 +102,8 @@ export function toEnrollmentResponse(
       ? {
           totalLessons: progress.totalLessons,
           completedLessons: progress.completedLessons,
+          totalItems: progress.totalItems,
+          completedItems: progress.completedItems,
           percentage: Number(progress.percentage),
           currentLessonId: progress.currentLessonId ?? undefined,
           completionState: progress.completionState,

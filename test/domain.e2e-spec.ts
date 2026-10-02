@@ -264,28 +264,43 @@ describe('Domain management (e2e)', () => {
         .get(ConfigService)
         .get<PlatformDomainRuntimeConfig>('platformDomain')
         ?.baseDomain?.toLowerCase();
-
-      const response = await request(app.getHttpServer())
-        .patch('/platform-domain')
-        .set('Authorization', `Bearer ${owner.accessToken}`)
-        .send({ baseDomain: `atlas-test-${Date.now()}.dev` })
-        .expect(envBaseDomain ? 409 : 200);
-      if (envBaseDomain) {
-        expect(response.body.error.messageKey).toBe(
-          'errors.domain.baseDomainManagedByEnvironment',
-        );
-        const current = await request(app.getHttpServer())
-          .get('/platform-domain')
+      // This test changes a platform-wide singleton. Put it back afterwards:
+      // left behind, every later suite on this database sees a base domain
+      // it did not configure (P63's subdomain expectations failed that way).
+      const before = await admin.platformDomainConfiguration.findMany();
+      try {
+        const response = await request(app.getHttpServer())
+          .patch('/platform-domain')
           .set('Authorization', `Bearer ${owner.accessToken}`)
-          .expect(200);
-        expect(current.body).toMatchObject({
-          baseDomain: envBaseDomain,
-          source: 'environment',
+          .send({ baseDomain: `atlas-test-${Date.now()}.dev` })
+          .expect(envBaseDomain ? 409 : 200);
+        if (envBaseDomain) {
+          expect(response.body.error.messageKey).toBe(
+            'errors.domain.baseDomainManagedByEnvironment',
+          );
+          const current = await request(app.getHttpServer())
+            .get('/platform-domain')
+            .set('Authorization', `Bearer ${owner.accessToken}`)
+            .expect(200);
+          expect(current.body).toMatchObject({
+            baseDomain: envBaseDomain,
+            source: 'environment',
+          });
+        } else {
+          expect(response.body.configured).toBe(true);
+          expect(response.body.baseDomain).toEqual(expect.any(String));
+          expect(response.body.source).toBe('database');
+        }
+      } finally {
+        await admin.platformDomainConfiguration.deleteMany({
+          where: { id: { notIn: before.map((row) => row.id) } },
         });
-      } else {
-        expect(response.body.configured).toBe(true);
-        expect(response.body.baseDomain).toEqual(expect.any(String));
-        expect(response.body.source).toBe('database');
+        for (const row of before) {
+          await admin.platformDomainConfiguration.update({
+            where: { id: row.id },
+            data: { baseDomain: row.baseDomain, configured: row.configured },
+          });
+        }
       }
     });
   });

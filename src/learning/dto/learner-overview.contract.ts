@@ -21,6 +21,9 @@ export interface ContinueLearningItem {
   readonly percentage: number;
   readonly completedLessons: number;
   readonly totalLessons: number;
+  /** Lessons, quizzes and assignments together — what `percentage` is computed from. */
+  readonly completedItems: number;
+  readonly totalItems: number;
   /** Where "Continue" goes. Null when the course has nothing left to resume. */
   readonly nextItemId: string | null;
   readonly nextItemTitle: string | null;

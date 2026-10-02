@@ -44,6 +44,7 @@ import {
   seedCourseSection,
   seedOrganizationWithOwner,
   seedPaymentMethod,
+  seedOrganizationCommission,
   seedQuiz,
   seedQuizQuestion,
   seedQuizQuestionOption,
@@ -690,6 +691,7 @@ describe('P64 Communications C3 (second pass) — devices, commerce, learning, a
         .set(w.owner.auth)
         .send({ paymentCollectionMode: 'atlas_payments' })
         .expect(200);
+      await seedOrganizationCommission(admin, w.org.id);
       const student = await account('evt2-d1-student');
 
       const order = await request(server)
@@ -721,6 +723,7 @@ describe('P64 Communications C3 (second pass) — devices, commerce, learning, a
         .set(w.owner.auth)
         .send({ paymentCollectionMode: 'atlas_payments' })
         .expect(200);
+      await seedOrganizationCommission(admin, w.org.id);
       const method = await seedPaymentMethod(admin, 'evt2-d2-method');
       const student = await account('evt2-d2-student');
 

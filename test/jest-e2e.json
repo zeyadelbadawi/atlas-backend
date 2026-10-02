@@ -5,10 +5,15 @@
     "ts"
   ],
   "rootDir": ".",
-  "testEnvironment": "node",
+  "testEnvironment": "<rootDir>/utils/e2e-environment.js",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
+    "^.+\\.(t|j)s$": [
+      "ts-jest",
+      {
+        "tsconfig": "<rootDir>/../tsconfig.e2e.json"
+      }
+    ]
   },
   "maxWorkers": 1,
   "transformIgnorePatterns": [

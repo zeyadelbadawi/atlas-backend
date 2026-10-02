@@ -49,7 +49,11 @@ import {
 } from '../dto/academy-member-lookup.dto';
 import type { AcademyStatsResponse } from '../dto/academy-stats.contract';
 import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
-import type { ContactSubmissionResponse } from '../dto/contact-submission.contract';
+import type {
+  ContactSubmissionResponse,
+  ContactSubmissionSummaryResponse,
+} from '../dto/contact-submission.contract';
+import { ContactSubmissionQueryDto } from '../dto/contact-submission-query.dto';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('academies')
@@ -289,7 +293,7 @@ export class AcademiesController {
   @UseGuards(AcademyScopeGuard)
   async getContactSubmissions(
     @Req() request: Request,
-    @Query() query: CollectionQueryDto,
+    @Query() query: ContactSubmissionQueryDto,
   ): Promise<PaginatedResult<ContactSubmissionResponse>> {
     const { academyId, organizationId } = request.academyContext!;
     return this.academiesService.getContactSubmissions(
@@ -297,6 +301,20 @@ export class AcademiesController {
       organizationId,
       request.authContext!.userId,
       query,
+    );
+  }
+
+  /** Message counts per status, for the Messages page's filters. */
+  @Get(':id/contact-submissions/summary')
+  @UseGuards(AcademyScopeGuard)
+  async getContactSubmissionSummary(
+    @Req() request: Request,
+  ): Promise<ContactSubmissionSummaryResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.academiesService.getContactSubmissionSummary(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
     );
   }
 

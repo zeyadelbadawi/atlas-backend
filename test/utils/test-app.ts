@@ -154,6 +154,13 @@ export async function createTestApp(
    * is wanted.
    */
   await app.init();
+  // Bound once, here. Given a server that is not listening, supertest
+  // calls `listen(0)` itself for EVERY request and `close()`s the server
+  // when that request ends — so concurrent requests in one test (a
+  // `Promise.all` race) shared one server that the first to finish shut
+  // down under the others: `ECONNRESET` / `EPIPE`, intermittently. A
+  // listening server is used as-is and closed only by `app.close()`.
+  await app.listen(0, '127.0.0.1');
 
   await flushTestQueues(moduleRef.get(RedisService));
 

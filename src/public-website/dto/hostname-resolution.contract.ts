@@ -13,6 +13,13 @@ export interface HostnameResolutionResponse {
    */
   readonly canonicalHost?: string;
   /**
+   * The Academy's own favicon, when it has one: the public runtime links
+   * `public/websites/:academyId/favicon?v=<faviconVersion>`. A hash of the
+   * stored favicon, so it changes exactly when the favicon does. Absent:
+   * the platform's default icon stays.
+   */
+  readonly faviconVersion?: string;
+  /**
    * Theme 1 plan Phase 6 (§C.0, Owner decision 30 Sep 2026) — how the
    * Academy's website looks, so a page that renders before anything is
    * published (Coming Soon) can wear the Academy's theme and colours. Only

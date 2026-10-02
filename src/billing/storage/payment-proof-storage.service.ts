@@ -18,7 +18,7 @@
  * only from `PaymentService`/`PlatformPaymentService`'s own
  * guard-protected download methods, never exposed as a direct URL.
  */
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   CreateBucketCommand,
@@ -32,7 +32,7 @@ import type { MediaStorageConfig } from '../../config/configuration';
 const bucketsEnsured = new Set<string>();
 
 @Injectable()
-export class PaymentProofStorageService implements OnModuleInit {
+export class PaymentProofStorageService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PaymentProofStorageService.name);
   private readonly client: S3Client;
   private readonly bucket: string;
@@ -49,6 +49,11 @@ export class PaymentProofStorageService implements OnModuleInit {
         secretAccessKey: media.secretAccessKey,
       },
     });
+  }
+
+  /** Closes the client's keep-alive sockets when the application shuts down. */
+  onModuleDestroy(): void {
+    this.client.destroy();
   }
 
   async onModuleInit(): Promise<void> {

@@ -66,6 +66,8 @@ export interface RosterEnrollmentResponse {
   readonly progress?: {
     readonly completedLessons: number;
     readonly totalLessons: number;
+    readonly completedItems: number;
+    readonly totalItems: number;
     readonly percentage: number;
     readonly completionState: string;
     readonly certificateStatus: string;
@@ -94,6 +96,8 @@ export function toRosterEnrollmentResponse(
       ? {
           completedLessons: row.progress.completedLessons,
           totalLessons: row.progress.totalLessons,
+          completedItems: row.progress.completedItems,
+          totalItems: row.progress.totalItems,
           percentage: Number(row.progress.percentage),
           completionState: row.progress.completionState,
           certificateStatus: row.progress.certificateStatus,

@@ -20,6 +20,7 @@ import {
   MEDIA_ASSET_PATH_PATTERN,
 } from '../../website/constants/website.constants';
 import { MAX_ACADEMY_NAME_LENGTH } from './create-academy.dto';
+import { isFaviconReference } from '../../public-website/utils/favicon.util';
 
 /**
  * Theme 1 plan Phase 8 — the logo is rendered on the public website, in
@@ -55,6 +56,24 @@ function IsLogoReference(options?: ValidationOptions) {
   };
 }
 
+/**
+ * The favicon is served to the public website (`favicon.util.ts`): a PNG
+ * or ICO data URL as the branding form stores it, or an http(s) URL. It
+ * was a free string before, so anything could be stored and then never
+ * shown; an empty value still clears it.
+ */
+function IsFaviconReference(options?: ValidationOptions) {
+  return function (object: object, propertyName: string): void {
+    registerDecorator({
+      name: 'isFaviconReference',
+      target: object.constructor,
+      propertyName,
+      options: { message: 'validation:invalidUrl', ...options },
+      validator: { validate: (value: unknown) => isFaviconReference(value) },
+    });
+  };
+}
+
 export class UpdateAcademyBrandingDto {
   @IsOptional()
   @IsString()
@@ -63,6 +82,7 @@ export class UpdateAcademyBrandingDto {
 
   @IsOptional()
   @IsString()
+  @IsFaviconReference()
   readonly favicon?: string;
 
   @IsOptional()

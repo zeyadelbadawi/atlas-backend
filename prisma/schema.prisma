@@ -1767,6 +1767,14 @@ model CourseProgress {
   completedAt  DateTime? @map("completed_at")
   overallScore Decimal?  @map("overall_score") @db.Decimal(5, 2)
 
+  /// The whole sequence the learner works through — published lessons,
+  /// quizzes and assignments — and how many are finished (a completed
+  /// lesson, a passed or awaiting-grade quiz, a submitted assignment). What
+  /// `percentage` is computed from; lesson counts alone say "0 of 0" for a
+  /// quiz-only course.
+  totalItems     Int @default(0) @map("total_items")
+  completedItems Int @default(0) @map("completed_items")
+
   @@map("course_progress")
 }
 
@@ -3241,28 +3249,33 @@ enum WebsiteCorePageType {
 /// against the same Zod shapes the frontend's `website.schemas.ts` already
 /// enforces before being persisted.
 model WebsiteConfiguration {
-  academyId        String               @id @map("academy_id")
-  academy          Academy              @relation(fields: [academyId], references: [id], onDelete: Cascade)
-  themeKey         String               @map("theme_key")
-  themeVersion     Int                  @map("theme_version")
-  configVersion    Int                  @default(1) @map("config_version")
+  academyId         String               @id @map("academy_id")
+  academy           Academy              @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  themeKey          String               @map("theme_key")
+  themeVersion      Int                  @map("theme_version")
+  configVersion     Int                  @default(1) @map("config_version")
   /// Theme 1 plan §D.2 — which template (and version) first generated this
   /// website's starter pages. NULL = not recorded (created before this
   /// column, or never generated). Stamped once by `WebsiteGenerationService`.
-  templateKey      String?              @map("template_key")
-  templateVersion  Int?                 @map("template_version")
-  brand            Json
-  seo              Json
-  navigation       Json
-  header           Json
-  footer           Json
-  status           WebsitePublishStatus @default(draft)
-  publishedAt      DateTime?            @map("published_at")
+  templateKey       String?              @map("template_key")
+  templateVersion   Int?                 @map("template_version")
+  brand             Json
+  seo               Json
+  navigation        Json
+  header            Json
+  footer            Json
+  status            WebsitePublishStatus @default(draft)
+  publishedAt       DateTime?            @map("published_at")
   /// Mirrors `WebsitePublishError` (`{messageKey, detail?}`) — only ever
   /// set when `status = 'failed'`.
-  lastPublishError Json?                @map("last_publish_error")
-  createdAt        DateTime             @default(now()) @map("created_at")
-  updatedAt        DateTime             @updatedAt @map("updated_at")
+  lastPublishError  Json?                @map("last_publish_error")
+  /// What visitors see: `{themeKey, themeVersion, brand, seo, navigation,
+  /// header, footer}` copied from the working copy above at the last
+  /// publish. The public runtime reads ONLY this, so saving the working
+  /// copy never changes the live site until the owner publishes.
+  publishedSnapshot Json?                @map("published_snapshot")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
 
   @@map("website_configurations")
 }
@@ -3271,31 +3284,42 @@ model WebsiteConfiguration {
 /// is the full `SectionInstance[]` array, validated server-side (see this
 /// file's own doc comment above) before every write.
 model WebsitePage {
-  id          String               @id @default(uuid())
-  academyId   String               @map("academy_id")
-  academy     Academy              @relation(fields: [academyId], references: [id], onDelete: Cascade)
-  pageType    WebsitePageType      @map("page_type")
+  id                String               @id @default(uuid())
+  academyId         String               @map("academy_id")
+  academy           Academy              @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  pageType          WebsitePageType      @map("page_type")
   /// Present only when `pageType = 'core'` — matches `WebsitePage.coreType`
   /// (`readonly coreType?: WebsiteCorePageType`) exactly.
-  coreType    WebsiteCorePageType? @map("core_type")
-  title       String
-  slug        String
-  visible     Boolean              @default(true)
-  seo         Json
-  sections    Json
+  coreType          WebsiteCorePageType? @map("core_type")
+  title             String
+  slug              String
+  visible           Boolean              @default(true)
+  seo               Json
+  sections          Json
   /// Optimistic-concurrency token. Incremented on every write and compared
   /// on every update — a save carrying a stale value is refused rather than
   /// silently overwriting whoever saved in between. Mirrors
   /// `website_configurations.config_version`, deliberately.
-  version     Int                  @default(1)
+  version           Int                  @default(1)
+  /// The published copy of this page (title, slug, visibility, SEO and
+  /// sections at its last publish). Null = never published: the page is
+  /// not on the public site. `publishedVersion` is the `version` that was
+  /// published, so `publishedVersion != version` means unpublished edits.
+  publishedTitle    String?              @map("published_title")
+  publishedSlug     String?              @map("published_slug")
+  publishedVisible  Boolean?             @map("published_visible")
+  publishedSeo      Json?                @map("published_seo")
+  publishedSections Json?                @map("published_sections")
+  publishedVersion  Int?                 @map("published_version")
+  publishedAt       DateTime?            @map("published_at")
   /// Who saved this page last — so a save conflict can name them instead of
   /// telling the loser of the race to go hunting. Nullable: rows that
   /// predate the column have no honest value, and NULL renders as the
   /// neutral wording rather than attributing the change to nobody.
-  updatedById String?              @map("updated_by_id")
-  updatedBy   User?                @relation("WebsitePageUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
-  createdAt   DateTime             @default(now()) @map("created_at")
-  updatedAt   DateTime             @updatedAt @map("updated_at")
+  updatedById       String?              @map("updated_by_id")
+  updatedBy         User?                @relation("WebsitePageUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
 
   @@unique([academyId, slug])
   @@index([academyId, pageType])
@@ -3661,6 +3685,8 @@ enum CheckoutStatus {
 enum PaymentMethodType {
   manual_bank_transfer
   manual_wallet_transfer
+  /// InstaPay transfer to an InstaPay address (2 Oct 2026).
+  manual_instapay
   gateway
 
   @@map("payment_method_type")
@@ -3802,6 +3828,10 @@ model Payment {
   reviewNotes                       String?                @map("review_notes")
   /// Mirrors `PaymentNextAction` — a discriminated union, validated server-side, not schema-enforced.
   nextAction                        Json?                  @map("next_action")
+  /// The manual-transfer instructions the payer was shown when this payment
+  /// was created — kept with the payment so a later edit or disabling of
+  /// the method never changes what this payer was asked to do.
+  instructionsSnapshot              Json?                  @map("instructions_snapshot")
   providerReference                 String?                @map("provider_reference")
   expiresAt                         DateTime?              @map("expires_at")
   /// §4.1 snapshot — which payment-collection mode was effective for the

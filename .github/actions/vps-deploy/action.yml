@@ -109,6 +109,22 @@ inputs:
     required: false
     default: ''
     description: Zoom webhook secret token, synced into the VPS .env.
+  atlas_ssr:
+    required: false
+    default: ''
+    description: >-
+      Public website server rendering switch (`on` / `off`), synced into the
+      VPS .env as ATLAS_SSR — the one value Caddy's routing and deploy.sh's
+      `ssr` compose profile both read (frontend
+      Reports/SSR_ARCHITECTURE_ANALYSIS.md §14). Empty leaves the host value
+      untouched; any other value is ignored.
+  rum_enabled:
+    required: false
+    default: ''
+    description: >-
+      Real-user monitoring kill switch (`true` / `false`), synced into the
+      VPS .env as RUM_ENABLED. Empty leaves the host value untouched; any
+      other value than the two is ignored.
   # Google Identity (docs/GOOGLE_IDENTITY.md). The one Atlas OAuth client;
   # the redirect URI is the central platform callback, byte-for-byte as
   # registered with Google. Empty values are dropped like every other key,
@@ -153,6 +169,8 @@ runs:
         RESEND_WEBHOOK_SECRET: ${{ inputs.resend_webhook_secret }}
         ALERT_SLACK_WEBHOOK_URL: ${{ inputs.alert_slack_webhook_url }}
         PLATFORM_WEB_URL: ${{ inputs.platform_web_url }}
+        RUM_ENABLED: ${{ inputs.rum_enabled }}
+        ATLAS_SSR: ${{ inputs.atlas_ssr }}
         FEATURE_FLAGS: ${{ inputs.feature_flags }}
       run: |
         set -euo pipefail
@@ -191,6 +209,13 @@ runs:
           'GOOGLE_OAUTH_REDIRECT_URI',
         ]
         lines = [f"{k}={os.environ[k]}" for k in keys if os.environ.get(k)]
+        # Real-user monitoring: exactly `true` or `false`, so turning it off
+        # is a real write rather than a dropped empty value.
+        if os.environ.get('RUM_ENABLED') in ('true', 'false'):
+            lines.append(f"RUM_ENABLED={os.environ['RUM_ENABLED']}")
+        # Server rendering: exactly `on` or `off`, for the same reason.
+        if os.environ.get('ATLAS_SSR') in ('on', 'off'):
+            lines.append(f"ATLAS_SSR={os.environ['ATLAS_SSR']}")
         # P64 feature flags: FLAG_* keys only; values limited to what a mode
         # or a comma-separated list of academy ids can contain.
         import re
