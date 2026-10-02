@@ -308,13 +308,18 @@ describe('D-2 regression — an upload ticket carries a URL that can actually be
     const spy = storageSpy();
     const before = Date.now();
     const created = await fakeProviderWith(spy).createDirectUpload(UPLOAD_INPUT);
-    const lifetimeSeconds = (created.expiresAt.getTime() - before) / 1000;
+    const after = Date.now();
+    // The provider reads the clock somewhere between `before` and `after`,
+    // so the ceiling is measured from `after` and the floor from `before`
+    // (measuring both from `before` failed whenever a millisecond passed).
+    const longestSeconds = (created.expiresAt.getTime() - after) / 1000;
+    const shortestSeconds = (created.expiresAt.getTime() - before) / 1000;
 
     // Same honesty rule as D-3, applied to the upload half: a ticket that
     // claims thirty minutes for a ten-minute presign sends the browser
     // back to a dead URL mid-upload.
-    expect(lifetimeSeconds).toBeLessThanOrEqual(STORE_MAX_TTL_SECONDS);
-    expect(lifetimeSeconds).toBeGreaterThan(STORE_MAX_TTL_SECONDS - 5);
+    expect(longestSeconds).toBeLessThanOrEqual(STORE_MAX_TTL_SECONDS);
+    expect(shortestSeconds).toBeGreaterThan(STORE_MAX_TTL_SECONDS - 5);
   });
 });
 
