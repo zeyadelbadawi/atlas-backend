@@ -3324,8 +3324,9 @@ scope to redesign course RLS; recorded here rather than worked around.
 
 ## P1–P8 — Remediation, assessment integrity, production-readiness validation (2026-10-02)
 
-On `claude/practical-wozniak-pjcdhe`; not merged or deployed. Full record:
-frontend `Reports/P1_P8_REMEDIATION_REPORT.md`.
+Merged and deployed 2 Oct 2026 (#18 → `336891d`, migrations in deploy run
+#234; follow-up #19 → `3d00417`). Full record: frontend
+`Reports/P1_P8_REMEDIATION_REPORT.md` §G.
 
 - P1: `scripts/e2e-local-stack.sh` — disposable PostgreSQL 16 / Redis /
   s3rver on 127.0.0.1 (refuses any other database or Redis URL); stale
