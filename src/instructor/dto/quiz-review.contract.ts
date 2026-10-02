@@ -19,6 +19,10 @@ import type {
   QuestionScore,
   AttemptAnswer,
 } from '../../learning/services/quiz-engine.util';
+import {
+  deriveIntegritySignals,
+  type IntegritySignal,
+} from '../../learning/services/integrity-signals.util';
 
 export interface ReviewAnswerResponse {
   readonly questionId: string;
@@ -67,6 +71,35 @@ export interface QuizAttemptReviewResponse extends QuizAttemptResponse {
    * whole feature being broken.
    */
   readonly integrityMode: 'off' | 'monitor' | 'warn' | 'strict';
+  /** Whether this attempt required full screen (its settings snapshot). */
+  readonly requireFullscreen: boolean;
+  /** The event limit in force for this attempt (its settings snapshot). */
+  readonly maxViolations: number;
+  /**
+   * P5 — the explainable signals derived from `events`
+   * (`deriveIntegritySignals`): facts worth a look, with their evidence.
+   * Never a score or a verdict.
+   */
+  readonly signals: readonly IntegritySignal[];
+}
+
+function snapshotMaxViolations(snapshot: PrismaQuizAttempt['settingsSnapshot']): number {
+  const value =
+    snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+      ? (snapshot as Record<string, unknown>).maxViolations
+      : undefined;
+  return typeof value === 'number' ? value : 0;
+}
+
+function snapshotRequiresFullscreen(
+  snapshot: PrismaQuizAttempt['settingsSnapshot'],
+): boolean {
+  return (
+    !!snapshot &&
+    typeof snapshot === 'object' &&
+    !Array.isArray(snapshot) &&
+    (snapshot as Record<string, unknown>).requireFullscreen === true
+  );
 }
 
 /** Reads the effective integrity mode from an attempt's frozen settings snapshot. */
@@ -148,8 +181,11 @@ export function toAttemptReviewResponse(
   questions: readonly ReviewAnswerResponse[],
   events: readonly PrismaQuizAttemptEvent[],
   names: { gradedBy: string | null; invalidatedBy: string | null },
+  now: Date = new Date(),
 ): QuizAttemptReviewResponse {
   const started = attempt.startedAt ?? attempt.createdAt;
+  const integrityMode = snapshotIntegrityMode(attempt.settingsSnapshot);
+  const requireFullscreen = snapshotRequiresFullscreen(attempt.settingsSnapshot);
   const duration = attempt.submittedAt
     ? Math.max(0, Math.round((attempt.submittedAt.getTime() - started.getTime()) / 1000))
     : null;
@@ -169,7 +205,16 @@ export function toAttemptReviewResponse(
     })),
     gradedByName: names.gradedBy,
     invalidatedByName: names.invalidatedBy,
-    integrityMode: snapshotIntegrityMode(attempt.settingsSnapshot),
+    integrityMode,
+    requireFullscreen,
+    maxViolations: snapshotMaxViolations(attempt.settingsSnapshot),
+    signals: deriveIntegritySignals({
+      events,
+      startedAt: started,
+      endedAt: attempt.submittedAt ?? now,
+      integrityMode,
+      requireFullscreen,
+    }),
   };
 }
 
@@ -201,6 +246,7 @@ export function integrityCsvRow(
     eventCounts.print ?? 0,
     eventCounts.second_session ?? 0,
     eventCounts.device_change ?? 0,
+    eventCounts.fullscreen_unavailable ?? 0,
   ];
   return cells.map(csvCell).join(',');
 }
@@ -226,6 +272,7 @@ export const INTEGRITY_CSV_HEADER = [
   'print',
   'second_session',
   'device_change',
+  'fullscreen_unavailable',
 ].join(',');
 
 /** Quotes every cell and neutralises spreadsheet formula injection (`=`, `+`, `-`, `@`). */

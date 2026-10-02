@@ -26,7 +26,13 @@ import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import { ObservabilityService } from './observability.service';
-import { AlertsQueryDto, ArmSyntheticAlertDto, RangeQueryDto } from './observability.dto';
+import { WebVitalsService, type WebVitalsResponse } from './web-vitals.service';
+import {
+  AlertsQueryDto,
+  ArmSyntheticAlertDto,
+  RangeQueryDto,
+  WebVitalsQueryDto,
+} from './observability.dto';
 import { ParseRuleNamePipe, ParseMetricIdPipe } from './observability.pipes';
 import type {
   AlertRuleDetailResponse,
@@ -41,7 +47,16 @@ import type {
 @Controller('platform-observability')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
 export class ObservabilityController {
-  constructor(private readonly observability: ObservabilityService) {}
+  constructor(
+    private readonly observability: ObservabilityService,
+    private readonly webVitals: WebVitalsService,
+  ) {}
+
+  /** P6 — real-user Core Web Vitals, p75 by route template and device class. */
+  @Get('web-vitals')
+  webVitalsSummary(@Query() query: WebVitalsQueryDto): Promise<WebVitalsResponse> {
+    return this.webVitals.aggregate(query.range ?? '7d');
+  }
 
   @Get('health')
   health(@CurrentAuthContext() auth: AuthContext): Promise<SystemHealthResponse> {

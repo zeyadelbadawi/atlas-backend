@@ -263,10 +263,11 @@ const testimonialItemSchema = z.object({
 export const testimonialsSectionSchema = z.object({
   title: localizedOptional(MAX_SHORT_TEXT).optional(),
   items: z.array(testimonialItemSchema).max(MAX_SECTION_ITEMS),
-  // `libraryEntryIds` references the Prompt 10 CMS content library, which
-  // does not exist yet in this phase — accepted structurally (matching the
-  // frontend's own optional `string[]` field) but never resolved against
-  // anything, since there is nothing to resolve against until P10.
+  // `libraryEntryIds` references the CMS content library: existence in this
+  // Academy is checked on write (`SectionReferenceValidatorService`), and
+  // the public pages payload expands them (published + visible only) into
+  // `libraryEntries` (`PublicWebsiteService`). A client-sent
+  // `libraryEntries` is not part of this schema, so it is stripped.
   libraryEntryIds: z.array(z.string()).max(MAX_SECTION_ITEMS).optional(),
 });
 

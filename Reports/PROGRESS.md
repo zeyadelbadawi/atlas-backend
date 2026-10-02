@@ -3322,6 +3322,25 @@ My Learning already had this constraint and My Results inherits it. If a
 course is unpublished after enrolment, both pages lose it. Out of Phase 9
 scope to redesign course RLS; recorded here rather than worked around.
 
+## P1–P8 — Remediation, assessment integrity, production-readiness validation (2026-10-02)
+
+On `claude/practical-wozniak-pjcdhe`; not merged or deployed. Full record:
+frontend `Reports/P1_P8_REMEDIATION_REPORT.md`.
+
+- P1: `scripts/e2e-local-stack.sh` — disposable PostgreSQL 16 / Redis /
+  s3rver on 127.0.0.1 (refuses any other database or Redis URL); stale
+  contact e2e fixed (posted to an unpublished site).
+- P3: public pages resolve FAQ/testimonial library picks server-side;
+  migration `20261101000000_public_content_library_read`; cache key v2
+  with a per-Academy library revision.
+- P4: full screen required only with integrity on; event
+  `fullscreen_unavailable` (migration `20261101000100`); event payloads
+  allow-listed.
+- P5: `deriveIntegritySignals` (facts with evidence, review/info,
+  technical/behaviour); 29-scenario evaluation; `Reports/ASSESSMENT_INTEGRITY.md`.
+- P6: RUM ingestion (`RUM_ENABLED`), Prometheus histograms, Platform
+  Owner web-vitals view; `Reports/REAL_USER_MONITORING.md`.
+
 ## Next phase
 
 Phase 10 (Session Security & Hardening) per

@@ -88,6 +88,17 @@ import { CourseCategoriesRepository } from '../../course/repositories/course-cat
 import type { PublicCourseCategoryResponse } from '../dto/public-categories.contract';
 import { stripSampleContent } from '../../website/utils/sample-content.util';
 import { toPublicBrand } from '../../website/brand/brand-palette-update';
+import { WebsiteFaqEntriesRepository } from '../../website/repositories/website-faq-entries.repository';
+import { WebsiteTestimonialEntriesRepository } from '../../website/repositories/website-testimonial-entries.repository';
+import { WebsiteLibraryRevisionService } from '../../website/services/website-library-revision.service';
+import {
+  toPublicFaqLibraryEntry,
+  toPublicTestimonialLibraryEntry,
+} from '../dto/public-library-entry.contract';
+import {
+  collectLibraryEntryIds,
+  expandLibraryEntries,
+} from '../utils/library-entries.util';
 
 @Injectable()
 export class PublicWebsiteService {
@@ -111,6 +122,10 @@ export class PublicWebsiteService {
     private readonly metrics: LearningMetricsService,
     // Theme 1 plan Phase 2 — the public category listing.
     private readonly courseCategoriesRepository: CourseCategoriesRepository,
+    // FAQ & testimonial content library, expanded into the public pages.
+    private readonly websiteFaqEntriesRepository: WebsiteFaqEntriesRepository,
+    private readonly websiteTestimonialEntriesRepository: WebsiteTestimonialEntriesRepository,
+    private readonly libraryRevisionService: WebsiteLibraryRevisionService,
   ) {}
 
   /** P63g — the effective base domain (environment first, then the configured row), never only the env var. */
@@ -289,23 +304,63 @@ export class PublicWebsiteService {
     );
     if (!configuration) return null;
 
+    const libraryRevision = await this.libraryRevisionService.get(academyId);
     const cached = await this.cacheService.getPages<WebsitePageResponse[]>(
       academyId,
       configuration.configVersion,
+      libraryRevision,
     );
     if (cached) return cached;
 
-    const pages = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) => this.websitePagesRepository.findAllPublished(tx, academyId),
+    const { pages, faqEntries, testimonialEntries } =
+      await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+        const pages = (
+          await this.websitePagesRepository.findAllPublished(tx, academyId)
+        ).map(toWebsitePageResponse);
+        // Content library: only the referenced entries that are published,
+        // visible and this Academy's — the repository's query is the gate.
+        const ids = collectLibraryEntryIds(pages);
+        const [faqEntries, testimonialEntries] = await Promise.all([
+          this.websiteFaqEntriesRepository.findPublishedVisibleByIds(
+            tx,
+            academyId,
+            ids.faq,
+          ),
+          this.websiteTestimonialEntriesRepository.findPublishedVisibleByIds(
+            tx,
+            academyId,
+            ids.testimonials,
+          ),
+        ]);
+        return { pages, faqEntries, testimonialEntries };
+      });
+    const faqById = new Map(
+      faqEntries.map((entry) => [entry.id, toPublicFaqLibraryEntry(entry)]),
+    );
+    const testimonialById = new Map(
+      testimonialEntries.map((entry) => [
+        entry.id,
+        toPublicTestimonialLibraryEntry(entry),
+      ]),
     );
     // Theme 1 plan §D.4 — sample testimonials are preview-only: removed
     // here, before caching, so they never reach a visitor's browser.
-    const response = pages.map((page) => {
-      const mapped = toWebsitePageResponse(page);
-      return { ...mapped, sections: stripSampleContent(mapped.sections) };
+    const response = pages.map((mapped) => {
+      return {
+        ...mapped,
+        sections: expandLibraryEntries(
+          stripSampleContent(mapped.sections),
+          faqById,
+          testimonialById,
+        ),
+      };
     });
-    await this.cacheService.setPages(academyId, configuration.configVersion, response);
+    await this.cacheService.setPages(
+      academyId,
+      configuration.configVersion,
+      libraryRevision,
+      response,
+    );
     return response;
   }
 

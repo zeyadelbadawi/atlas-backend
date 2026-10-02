@@ -2410,6 +2410,9 @@ enum QuizAttemptEventType {
   focus
   fullscreen_exit
   fullscreen_enter
+  /// The browser could not go full screen (no API, or the request was
+  /// refused). Context for the reviewer, never a violation.
+  fullscreen_unavailable
   copy
   paste
   cut

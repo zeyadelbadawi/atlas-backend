@@ -97,7 +97,8 @@ export function toQuizLearnerSettingsResponse(
     showAnswers: quiz.showAnswers,
     integrityMode: quiz.integrityMode,
     maxViolations: quiz.maxViolations,
-    requireFullscreen: quiz.requireFullscreen,
+    // Same rule as the attempt snapshot: no full screen without integrity.
+    requireFullscreen: quiz.integrityMode !== 'off' && quiz.requireFullscreen,
     requiredToProgress: quiz.requiredToProgress,
     requiredForCompletion: quiz.requiredForCompletion,
     hideTimer: quiz.hideTimer,

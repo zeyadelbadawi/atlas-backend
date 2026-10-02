@@ -2,7 +2,21 @@
 
 Written 30 Sep 2026. **The full handover is in the frontend repo: `zeyadelbadawi/atlas` → `docs/ATLAS-CLAUDE-HANDOVER.md`** (project context, phase status, findings, images, continuation plan). This file records the backend-specific state. Verify every claim against the repository.
 
-## ★★★★★ Status update — production deployment and closure remediation (1 Oct 2026). Read this first.
+## ★★★★★★ Status update — P1–P8 on the feature branch (2 Oct 2026). Read this first.
+
+Full record: frontend `Reports/P1_P8_REMEDIATION_REPORT.md`. Backend-specific:
+
+- **Production `main` = `dafa461`** (tree `a45fd17`, [atlas-backend#17](https://github.com/zeyadelbadawi/atlas-backend/pull/17)): the closure remediation below (F-8, F-11, F-13) is merged and deployed (run #232, no migrations, backend `13a1da70…`).
+- **On `claude/practical-wozniak-pjcdhe`, NOT merged or deployed:**
+  - `scripts/e2e-local-stack.sh` — disposable PostgreSQL/Redis/S3 stack on 127.0.0.1 only (refuses anything else); `up/start/serve/stop/down/env`; a second stack via `E2E_STACK_DIR` + ports.
+  - P3: public pages expand library picks server-side; migration `20261101000000_public_content_library_read` (RLS SELECT anonymous branch for published + visible entries); pages cache key v2 with a library revision.
+  - P4: attempt snapshot requires full screen only with integrity on; event `fullscreen_unavailable` (migration `20261101000100_quiz_event_fullscreen_unavailable`, additive enum value); event payloads allow-listed.
+  - P5: `deriveIntegritySignals` + `integrity-eval/` + `scripts/integrity-eval.ts`; `Reports/ASSESSMENT_INTEGRITY.md`.
+  - P6: `POST /api/v1/rum/vitals` (needs `RUM_ENABLED=true`), Prometheus histograms, `GET /api/v1/platform-observability/web-vitals`; `Reports/REAL_USER_MONITORING.md`.
+- **Deploying it needs** `apply_migrations=true` and the `production-migrations` approval, after the read-only impact queries in the report §D.
+- **Backend CI (`ci.yml`) is still `disabled_manually`**; the evidence for this branch is local (report §B).
+
+## ★★★★★ Status update — production deployment and closure remediation (1 Oct 2026) — remediation since merged and deployed, see above.
 
 Full record: frontend `Reports/THEME_1_ACADEMY_WEBSITE_PLAN.md` §Z. The sections below this one describe earlier states and are kept as history.
 

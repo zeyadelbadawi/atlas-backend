@@ -9,6 +9,7 @@ import { MonitoringSourcesClient } from './monitoring-sources.client';
 import { SystemProbesService } from './system-probes.service';
 import { HttpMetricsMiddleware } from './http-metrics.middleware';
 
+import { WebVitalsService } from './web-vitals.service';
 /**
  * Platform Owner Observability Center. Imports its dependencies directly —
  * Nest resolves providers per module graph at BOOT, and a missing export
@@ -17,7 +18,12 @@ import { HttpMetricsMiddleware } from './http-metrics.middleware';
 @Module({
   imports: [AuthCoreModule, IdentityModule, TenancyModule, MediaModule],
   controllers: [ObservabilityController],
-  providers: [ObservabilityService, MonitoringSourcesClient, SystemProbesService],
+  providers: [
+    ObservabilityService,
+    MonitoringSourcesClient,
+    SystemProbesService,
+    WebVitalsService,
+  ],
 })
 export class ObservabilityModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

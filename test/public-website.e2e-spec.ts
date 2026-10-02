@@ -436,6 +436,8 @@ describe('Public Website Runtime (e2e)', () => {
       await seedManagedAcademy('pub-contact-a');
     const { owner: ownerB, academy: academyB } =
       await seedManagedAcademy('pub-contact-b');
+    // F-8: the contact form accepts messages only for a published website.
+    await createPublishedPage(ownerA, academyA.id, 'contact-a');
 
     const submitted = await request(app.getHttpServer())
       .post(`/public/websites/${academyA.id}/contact`)

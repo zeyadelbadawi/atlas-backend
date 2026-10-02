@@ -34,6 +34,23 @@ export class WebsiteFaqEntriesRepository {
     return tx.websiteFaqEntry.findMany({ where: { academyId } });
   }
 
+  /**
+   * The entries a PUBLIC page may show: these ids, in this Academy, published
+   * and visible. Any other id (another Academy's, a draft, an archived or a
+   * hidden entry, a deleted one) is simply not returned. Order is the
+   * caller's to apply — it is the order the Owner picked in the section.
+   */
+  findPublishedVisibleByIds(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    ids: readonly string[],
+  ): Promise<WebsiteFaqEntry[]> {
+    if (ids.length === 0) return Promise.resolve([]);
+    return tx.websiteFaqEntry.findMany({
+      where: { academyId, id: { in: [...ids] }, status: 'published', visible: true },
+    });
+  }
+
   async findManyForAcademy(
     tx: Prisma.TransactionClient,
     academyId: string,

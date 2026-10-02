@@ -39,6 +39,7 @@ import { WebsitePagesRepository } from './repositories/website-pages.repository'
 import { WebsiteFaqEntriesRepository } from './repositories/website-faq-entries.repository';
 import { WebsiteTestimonialEntriesRepository } from './repositories/website-testimonial-entries.repository';
 
+import { WebsiteLibraryRevisionService } from './services/website-library-revision.service';
 @Module({
   imports: [
     AuthCoreModule,
@@ -53,6 +54,7 @@ import { WebsiteTestimonialEntriesRepository } from './repositories/website-test
     WebsitePagesService,
     WebsiteContentService,
     WebsiteBootstrapService,
+    WebsiteLibraryRevisionService,
     WebsiteGenerationService,
     SectionReferenceValidatorService,
     WebsiteConfigurationRepository,
@@ -71,6 +73,9 @@ import { WebsiteTestimonialEntriesRepository } from './repositories/website-test
   // `WebsiteGenerationService` exported as of Phase 6, same reasoning —
   // the orchestrator's extended theme step calls it directly.
   exports: [
+    WebsiteFaqEntriesRepository,
+    WebsiteTestimonialEntriesRepository,
+    WebsiteLibraryRevisionService,
     WebsiteConfigurationRepository,
     WebsitePagesRepository,
     WebsiteConfigurationService,

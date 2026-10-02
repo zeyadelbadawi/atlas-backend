@@ -10,6 +10,12 @@ export class RangeQueryDto {
   readonly range?: MetricRange;
 }
 
+export class WebVitalsQueryDto {
+  @IsOptional()
+  @IsIn(['24h', '7d'])
+  readonly range?: '24h' | '7d';
+}
+
 export class AlertsQueryDto extends RangeQueryDto {
   @IsOptional()
   @IsIn(['all', 'active', 'resolved'])

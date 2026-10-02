@@ -595,6 +595,32 @@ const VIOLATION_TYPES: ReadonlySet<QuizAttemptEventType> = new Set<QuizAttemptEv
   'device_change',
 ]);
 
+/**
+ * What a browser may attach to an integrity event: a per-type allowlist of
+ * keys and values. Anything else a client sends is dropped before it is
+ * stored or read — the timeline holds the event, not whatever a modified
+ * client chose to put next to it (no device or browsing data, by design).
+ */
+const EVENT_PAYLOAD_ALLOWLIST: Partial<
+  Record<QuizAttemptEventType, Readonly<Record<string, readonly string[]>>>
+> = {
+  fullscreen_unavailable: { reason: ['unsupported', 'refused'] },
+};
+
+export function sanitizeEventPayload(
+  type: QuizAttemptEventType,
+  payload: Record<string, unknown> | null | undefined,
+): Record<string, string> | null {
+  const allowed = EVENT_PAYLOAD_ALLOWLIST[type];
+  if (!allowed || !payload) return null;
+  const kept: Record<string, string> = {};
+  for (const [key, values] of Object.entries(allowed)) {
+    const value = payload[key];
+    if (typeof value === 'string' && values.includes(value)) kept[key] = value;
+  }
+  return Object.keys(kept).length > 0 ? kept : null;
+}
+
 export function decideIntegrity(input: IntegrityDecisionInput): IntegrityDecision {
   const counted: boolean[] = [];
   let violationCount = input.violationCount;
