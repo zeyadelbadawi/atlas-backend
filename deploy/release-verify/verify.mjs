@@ -36,11 +36,17 @@ const info = (m) => console.log(`INFO  ${m}`);
 const check = (ok, m) => (ok ? pass(m) : fail(m));
 
 async function get(url) {
-  const res = await fetch(url, {
-    headers: { Accept: 'text/html,application/xhtml+xml' },
-    redirect: 'manual',
-  });
-  return { status: res.status, headers: res.headers, body: await res.text() };
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: 'text/html,application/xhtml+xml' },
+      redirect: 'manual',
+    });
+    return { status: res.status, headers: res.headers, body: await res.text() };
+  } catch (error) {
+    // One unreachable host is a failing check, not the end of the run.
+    fail(`${url} could not be fetched (${error.cause?.code ?? error.message})`);
+    return { status: 0, headers: new Headers(), body: '' };
+  }
 }
 
 // ---- caching -------------------------------------------------------------

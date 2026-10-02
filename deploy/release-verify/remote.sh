@@ -96,13 +96,17 @@ case "${1:-}" in
     [ "$FAILS" = 0 ]
     ;;
   hosts)
-    base=$(sql "select base_domain from platform_domain_configuration where configured limit 1")
-    sql "select coalesce(s.full_host, s.subdomain || '.' || '$base')
+    # The app's base domain is PLATFORM_BASE_DOMAIN (env); the DB row is a
+    # fallback only. Without one, a subdomain is not a host: print nothing.
+    base=$(env_value PLATFORM_BASE_DOMAIN)
+    [ -n "$base" ] || base=$(docker compose exec -T backend printenv PLATFORM_BASE_DOMAIN 2>/dev/null | tr -d '\r')
+    [ -n "$base" ] || base=$(sql "select base_domain from platform_domain_configuration where configured and base_domain is not null limit 1")
+    sql "select coalesce(s.full_host, case when '$base' <> '' then s.subdomain || '.' || '$base' end)
          from academies a
          join subdomain_allocations s on s.academy_id=a.id and s.status='assigned'
          join website_configurations w on w.academy_id=a.id and w.status='published'
          where a.archived_at is null and a.status='active'
-         order by a.created_at limit 2" | sed 's/^/host|/'
+         order by a.created_at limit 2" | { grep -v '^$' || true; } | sed 's/^/host|/'
     ;;
   rum)
     total=$(prom '/api/v1/query?query=sum(atlas_rum_lcp_seconds_count)%2Bsum(atlas_rum_inp_seconds_count)%2Bsum(atlas_rum_cls_count)' \
