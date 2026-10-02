@@ -26,6 +26,19 @@ import {
   seedQuizQuestionOption,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import type { ConfigService } from '@nestjs/config';
+import { FeatureFlagsService } from '../src/common/flags/feature-flags.service';
+import type { LearningFeatureFlags } from '../src/config/configuration';
+
+/** Engine v2 and integrity on for every Academy, whatever the environment says (CI sets none). */
+const ON = { mode: 'on' as const, academyIds: [] as string[] };
+const FLAGS: LearningFeatureFlags = {
+  contentProtected: ON,
+  videoNormal: ON,
+  videoPremium: ON,
+  quizEngineV2: ON,
+  quizIntegrity: ON,
+};
 
 describe('Full-screen exams (e2e)', () => {
   let app: INestApplication;
@@ -33,7 +46,14 @@ describe('Full-screen exams (e2e)', () => {
   let flushRateLimitKeys: () => Promise<void>;
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    const testApp = await createTestApp({
+      overrides: (builder) =>
+        builder
+          .overrideProvider(FeatureFlagsService)
+          .useValue(
+            new FeatureFlagsService({ get: () => FLAGS } as unknown as ConfigService),
+          ),
+    });
     app = testApp.app;
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
@@ -59,12 +79,18 @@ describe('Full-screen exams (e2e)', () => {
       .post('/auth/sign-in')
       .send({ email, password })
       .expect(200);
-    return { userId: signIn.body.user.id as string, token: signIn.body.accessToken as string };
+    return {
+      userId: signIn.body.user.id as string,
+      token: signIn.body.accessToken as string,
+    };
   }
 
   async function seedQuizForStudent(
     label: string,
-    settings: { integrityMode: 'off' | 'monitor' | 'warn' | 'strict'; requireFullscreen: boolean },
+    settings: {
+      integrityMode: 'off' | 'monitor' | 'warn' | 'strict';
+      requireFullscreen: boolean;
+    },
   ) {
     const owner = await signUpAndSignIn(`${label}-owner`);
     const org = await seedOrganizationWithOwner(admin, owner.userId, `${label}-org`);
@@ -76,7 +102,9 @@ describe('Full-screen exams (e2e)', () => {
       visibility: 'public',
       pricingType: 'free',
     });
-    const quiz = await seedQuiz(admin, course.id, `${label} quiz`, { status: 'published' });
+    const quiz = await seedQuiz(admin, course.id, `${label} quiz`, {
+      status: 'published',
+    });
     await admin.quiz.update({
       where: { id: quiz.id },
       data: { ...settings, maxViolations: 5 },
@@ -94,7 +122,9 @@ describe('Full-screen exams (e2e)', () => {
       .expect(201);
     const base = `/courses/${course.id}/quizzes/${quiz.id}`;
     const as = (method: 'get' | 'post', url: string) =>
-      request(app.getHttpServer())[method](url).set('Authorization', `Bearer ${student.token}`);
+      request(app.getHttpServer())
+        [method](url)
+        .set('Authorization', `Bearer ${student.token}`);
     const asOwner = (url: string) =>
       request(app.getHttpServer()).get(url).set('Authorization', `Bearer ${owner.token}`);
     return { base, as, asOwner, courseId: course.id, quizId: quiz.id };
@@ -147,10 +177,13 @@ describe('Full-screen exams (e2e)', () => {
   });
 
   it('P5: the reviewer sees explainable signals with their evidence; the learner cannot reach the review', async () => {
-    const { base, as, asOwner, courseId, quizId } = await seedQuizForStudent('fs-signals', {
-      integrityMode: 'warn',
-      requireFullscreen: true,
-    });
+    const { base, as, asOwner, courseId, quizId } = await seedQuizForStudent(
+      'fs-signals',
+      {
+        integrityMode: 'warn',
+        requireFullscreen: true,
+      },
+    );
     const attempt = await as('post', `${base}/attempts`).send({}).expect(201);
     await as('post', `${base}/attempts/${attempt.body.id}/events`)
       .send({ events: [{ type: 'paste' }, { type: 'print' }] })
@@ -161,12 +194,17 @@ describe('Full-screen exams (e2e)', () => {
     const review = await asOwner(reviewUrl).expect(200);
     expect(review.body.requireFullscreen).toBe(true);
     const byKey = Object.fromEntries(
-      (review.body.signals as { key: string; level: string; eventIds: string[] }[]).map((s) => [s.key, s]),
+      (review.body.signals as { key: string; level: string; eventIds: string[] }[]).map(
+        (s) => [s.key, s],
+      ),
     );
     const ids = Object.fromEntries(
       (review.body.events as { id: string; type: string }[]).map((e) => [e.type, e.id]),
     );
-    expect(byKey.paste_without_copy).toMatchObject({ level: 'review', eventIds: [ids.paste] });
+    expect(byKey.paste_without_copy).toMatchObject({
+      level: 'review',
+      eventIds: [ids.paste],
+    });
     expect(byKey.print).toMatchObject({ level: 'review', eventIds: [ids.print] });
     expect(byKey.fullscreen_never_entered).toMatchObject({ level: 'review' });
     expect(JSON.stringify(review.body.signals)).not.toMatch(/score|probab|cheat/i);
@@ -192,9 +230,13 @@ describe('Full-screen exams (e2e)', () => {
     });
     const attempt = await as('post', `${base}/attempts`).send({}).expect(201);
     await as('post', `${base}/attempts/${attempt.body.id}/events`)
-      .send({ events: [{ type: 'fullscreen_unavailable', payload: { reason: 'my-gpu-is-x' } }] })
+      .send({
+        events: [{ type: 'fullscreen_unavailable', payload: { reason: 'my-gpu-is-x' } }],
+      })
       .expect(200);
-    const [event] = await admin.quizAttemptEvent.findMany({ where: { attemptId: attempt.body.id } });
+    const [event] = await admin.quizAttemptEvent.findMany({
+      where: { attemptId: attempt.body.id },
+    });
     expect(event.payload).toBeNull();
   });
 });

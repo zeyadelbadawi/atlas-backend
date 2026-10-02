@@ -55,6 +55,13 @@ up() {
   redis-server --port "$REDIS_PORT" --bind 127.0.0.1 --save '' --appendonly no --daemonize yes \
     --dir "$STACK_DIR/redis" --logfile "$STACK_DIR/redis.log" >/dev/null
 
+  # The seed writes to S3: wait until the mock and Redis answer.
+  for _ in $(seq 1 30); do
+    curl -s -o /dev/null "http://127.0.0.1:$S3_PORT/" &&
+      redis-cli -h 127.0.0.1 -p "$REDIS_PORT" ping >/dev/null 2>&1 && break
+    sleep 1
+  done
+
   local key webhook jwt
   key="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   webhook="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
@@ -115,7 +122,7 @@ serve() {
   ( cd "${E2E_FRONTEND_DIR:-$ROOT/../atlas}" && nohup npx vite --port 3001 --strictPort \
       >"$STACK_DIR/frontend.log" 2>&1 & echo $! > "$STACK_DIR/frontend.pid" )
   for _ in $(seq 1 60); do
-    curl -sf -o /dev/null http://127.0.0.1:3000/health && curl -sf -o /dev/null http://127.0.0.1:3001/ && { echo "serving: api :3000, app :3001"; return 0; }
+    curl -sf -o /dev/null http://127.0.0.1:3000/health && curl -sf -o /dev/null http://127.0.0.1:3001/ && { touch "$STACK_DIR/serving"; echo "serving: api :3000, app :3001"; return 0; }
     sleep 2
   done
   echo "servers did not become ready; see $STACK_DIR/*.log" >&2; return 1
@@ -127,13 +134,18 @@ stop_servers() {
     pids="$(lsof -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
     [ -n "$pids" ] && kill $pids 2>/dev/null || true
   done
+  rm -f "$STACK_DIR/serving"
   echo "servers stopped"
 }
 
 down() {
-  stop_servers >/dev/null 2>&1 || true
+  # Only the servers THIS stack started (another stack may be serving).
+  [ -f "$STACK_DIR/serving" ] && { stop_servers >/dev/null 2>&1 || true; }
   [ -d "$STACK_DIR/pg" ] && as_pg "$PG_BIN/pg_ctl" -D "$STACK_DIR/pg" -m fast stop >/dev/null 2>&1 || true
   [ -f "$STACK_DIR/s3.pid" ] && kill "$(cat "$STACK_DIR/s3.pid")" 2>/dev/null || true
+  # The recorded pid can be a wrapper; free this stack's S3 port itself.
+  s3pids="$(lsof -t -iTCP:"$S3_PORT" -sTCP:LISTEN 2>/dev/null || true)"
+  [ -n "$s3pids" ] && kill $s3pids 2>/dev/null || true
   redis-cli -h 127.0.0.1 -p "$REDIS_PORT" shutdown nosave >/dev/null 2>&1 || true
   rm -rf "$STACK_DIR"
   echo "stack removed"

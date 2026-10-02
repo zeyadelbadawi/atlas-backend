@@ -14,5 +14,6 @@
   "transformIgnorePatterns": [
     "node_modules/(?!(otplib|@otplib|@scure|@noble)/)"
   ],
-  "testTimeout": 60000
+  "testTimeout": 60000,
+  "workerIdleMemoryLimit": "1GB"
 }
