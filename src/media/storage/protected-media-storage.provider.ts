@@ -67,6 +67,13 @@ export class ProtectedMediaStorage implements OnModuleInit, OnModuleDestroy {
         accessKeyId: protectedMedia.accessKeyId,
         secretAccessKey: protectedMedia.secretAccessKey,
       },
+      // Checksums only where an operation requires one (Cloudflare's
+      // documented setting for this SDK with R2). The SDK's default since
+      // 3.729 signs `x-amz-checksum-crc32` into a PRESIGNED PutObject URL
+      // — the CRC32 of the empty body it had at signing time — so a store
+      // that checks it refuses the real upload with 400 BadDigest.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     });
   }
 
