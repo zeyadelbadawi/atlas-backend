@@ -11,6 +11,8 @@
  * there because they operate on the same `courses` table P5 already owns.
  */
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { CoursesRepository } from '../../course/repositories/courses.repository';
 import { toCourseResponse } from '../../course/dto/course.contract';
@@ -25,6 +27,7 @@ export class CourseDiscoveryService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly coursesRepository: CoursesRepository,
+    private readonly prisma: PrismaService,
   ) {}
 
   async discoverCourses(
@@ -87,6 +90,34 @@ export class CourseDiscoveryService {
         return { course: row, totalSections: sections, totalLessons: lessons };
       });
 
-    return toCourseResponse(course, { totalSections, totalLessons });
+    // Quizzes and assignments are tenant-scoped rows: a learner's user
+    // context cannot see them, so counting there would always say 0. Count
+    // in the course's own Academy tenant context instead (the same
+    // `resolve_academy_organization` lookup the public site uses), and only
+    // what is published.
+    const organizationId = await this.resolveOrganizationId(course.academyId);
+    const assessments = organizationId
+      ? await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+          this.coursesRepository.countPublishedAssessmentsBatch(tx, [course.id]),
+        )
+      : null;
+
+    return toCourseResponse(course, {
+      totalSections,
+      totalLessons,
+      ...(assessments
+        ? {
+            totalQuizzes: assessments.quizCounts.get(course.id) ?? 0,
+            totalAssignments: assessments.assignmentCounts.get(course.id) ?? 0,
+          }
+        : {}),
+    });
+  }
+
+  private async resolveOrganizationId(academyId: string): Promise<string | null> {
+    const rows = await this.prisma.$queryRaw<{ organization_id: string }[]>(
+      Prisma.sql`SELECT * FROM resolve_academy_organization(${academyId})`,
+    );
+    return rows[0]?.organization_id ?? null;
   }
 }

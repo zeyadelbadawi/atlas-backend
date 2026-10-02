@@ -239,6 +239,14 @@ describe('Course item progress (e2e)', () => {
       totalQuizzes: 2,
       totalAssignments: 0,
     });
+    // …and so does the signed-in course details read (a learner's user
+    // context cannot see quiz rows; the count comes from the Academy's).
+    const discovered = await get(student.token, `/courses/${course.id}`).expect(200);
+    expect(discovered.body.stats).toMatchObject({
+      totalLessons: 0,
+      totalQuizzes: 2,
+      totalAssignments: 0,
+    });
   });
 
   it('a mixed course counts its quiz, but an optional quiz does not decide completion', async () => {
