@@ -139,9 +139,15 @@ function intervals(
       current = null;
     }
   }
+  const closed = result.filter(
+    (interval) => interval.seconds >= SIGNAL_MIN_INTERVAL_SECONDS,
+  );
+  // Still open when the attempt ended: the learner never came back (in
+  // strict mode this exit is often what submitted the attempt), so it is
+  // not a blip and is kept however short.
   if (current)
-    result.push({ seconds: secondsBetween(current, endedAt), eventIds: [current.id] });
-  return result.filter((interval) => interval.seconds >= SIGNAL_MIN_INTERVAL_SECONDS);
+    closed.push({ seconds: secondsBetween(current, endedAt), eventIds: [current.id] });
+  return closed;
 }
 
 function durationSignal(
