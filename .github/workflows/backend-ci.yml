@@ -8,7 +8,7 @@ name: Backend CI
 # workflow file is enabled by default, so the gate cannot silently stay off.
 #
 #   static  lint, typecheck, migrations-vs-schema drift, unit tests, build
-#   e2e     the database e2e suites against real PostgreSQL + Redis + s3rver,
+#   e2e     the database e2e suites against real PostgreSQL + Redis + MinIO,
 #           in 3 shards; each shard runs its suites TWICE on the same
 #           database, which is how ordering and leftover-state bugs show
 #   passed  one job that needs both: the single required status check
@@ -51,14 +51,15 @@ env:
   JWT_ACCESS_SECRET: ci-only-placeholder-jwt-secret-not-a-real-secret-32c
   PAYMENT_WEBHOOK_SECRET: ci-only-placeholder-webhook-secret-not-real-32ch
   PAYMENT_CREDENTIALS_ENCRYPTION_KEY: 'abababababababababababababababababababababababababababababababab'
-  # Local, disposable s3rver standing in for Cloudflare R2 (S3-compatible),
-  # the same store scripts/e2e-local-stack.sh runs. S3RVER/S3RVER is its
-  # built-in development key pair, not a credential. The backend creates its
-  # buckets at boot.
+  # Local, disposable MinIO standing in for Cloudflare R2 (S3-compatible).
+  # MinIO, not s3rver: it enforces request signatures as R2 does, and
+  # p64-phase2-security asserts that an unsigned read of a protected object
+  # is refused by the real store (s3rver serves it). The backend creates its
+  # buckets at boot. Placeholder credentials for this throwaway container.
   R2_ENDPOINT: http://127.0.0.1:9000
   R2_REGION: us-east-1
-  R2_ACCESS_KEY_ID: S3RVER
-  R2_SECRET_ACCESS_KEY: S3RVER
+  R2_ACCESS_KEY_ID: atlas_media_ci
+  R2_SECRET_ACCESS_KEY: atlas_media_ci_password
   R2_BUCKET: atlas-media-ci
   R2_PUBLIC_URL_BASE: http://127.0.0.1:9000/atlas-media-ci
   R2_FORCE_PATH_STYLE: 'true'
@@ -142,13 +143,14 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-      - name: Start s3rver (the store scripts/e2e-local-stack.sh runs; pinned)
+      - name: Start MinIO (pinned release from Docker Hub; services cannot pass its `server` argument)
         run: |
-          mkdir -p "$RUNNER_TEMP/s3"
-          nohup npx --yes s3rver@3.7.1 --address 127.0.0.1 --port 9000 \
-            --directory "$RUNNER_TEMP/s3" --silent > "$RUNNER_TEMP/s3rver.log" 2>&1 &
-          for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:9000/ && exit 0; sleep 2; done
-          cat "$RUNNER_TEMP/s3rver.log"; exit 1
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=atlas_media_ci \
+            -e MINIO_ROOT_PASSWORD=atlas_media_ci_password \
+            docker.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:9000/minio/health/live && exit 0; sleep 2; done
+          docker logs minio; exit 1
       - name: Install dependencies (lockfile)
         run: npm ci
       - name: Prisma — generate, migrate, seed (the fixtures the e2e suites read)
