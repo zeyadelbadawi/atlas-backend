@@ -53,6 +53,29 @@ case "${1:-}" in
     logs=$(docker compose logs --no-color --since 30m backend 2>/dev/null)
     info "backend error lines (30 min): $(printf '%s\n' "$logs" | grep -c '"level":50') fatal: $(printf '%s\n' "$logs" | grep -c '"level":60')"
 
+    # Sanitized: time, message, error type/code/status and the request's
+    # method + path (no query, no body, no headers); long token-like
+    # strings are redacted. Errors and warnings from the last 6 hours.
+    echo "== Recent backend errors and warnings (6 h, sanitized, last 15)"
+    docker compose logs --no-color --no-log-prefix --since 6h backend 2>/dev/null \
+      | grep -E '"level":(40|50|60)' | tail -15 \
+      | docker compose exec -T backend node -e '
+          const red = (v) => String(v ?? "").replace(/[A-Za-z0-9+\/=_-]{24,}/g, "<redacted>").slice(0, 300);
+          let buf = ""; process.stdin.on("data", (c) => (buf += c)).on("end", () => {
+            for (const line of buf.split("\n")) {
+              const i = line.indexOf("{"); if (i < 0) continue;
+              let j; try { j = JSON.parse(line.slice(i)); } catch { continue; }
+              const e = j.err || j.error || {};
+              const req = j.req || {};
+              const path = String(req.url || j.url || "").split("?")[0];
+              console.log(["INFO ", new Date(j.time || Date.now()).toISOString(), "level=" + j.level,
+                j.context ? "ctx=" + red(j.context) : "", "msg=" + red(j.msg),
+                e.type || e.name ? "err=" + red(e.type || e.name) : "", e.code || e.Code ? "code=" + red(e.code || e.Code) : "",
+                e.message ? "errmsg=" + red(e.message) : "", e.$metadata && e.$metadata.httpStatusCode ? "s3status=" + e.$metadata.httpStatusCode : "",
+                req.method ? req.method + " " + path.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/gi, ":id").replace(/[^\/]{24,}/g, "<redacted>") : ""].filter(Boolean).join(" "));
+            }
+          });' 2>/dev/null || info "could not read backend logs"
+
     echo "== Runtime flags (non-secret values)"
     for k in ATLAS_SSR RUM_ENABLED SSR_CACHE_TTL_MS SSR_CACHE_MAX; do
       v=$(env_value "$k"); info "$k=${v:-<unset>}"
