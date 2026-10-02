@@ -66,12 +66,17 @@ case "${1:-}" in
               const i = line.indexOf("{"); if (i < 0) continue;
               let j; try { j = JSON.parse(line.slice(i)); } catch { continue; }
               const e = j.err || j.error || {};
+              // AllExceptionsFilter logs { requestId, status, exception: <stack> }.
+              const st = typeof j.exception === "string" ? j.exception.split("\n") : [];
+              const head = st.length ? "exception=" + red(st[0]) : "";
+              const frames = st.slice(1, 5).map((f) => f.trim().replace(/\(.*\/(dist|node_modules)\//, "($1/").slice(0, 160)).join(" | ");
               const req = j.req || {};
               const path = String(req.url || j.url || "").split("?")[0];
               console.log(["INFO ", new Date(j.time || Date.now()).toISOString(), "level=" + j.level,
                 j.context ? "ctx=" + red(j.context) : "", "msg=" + red(j.msg),
                 e.type || e.name ? "err=" + red(e.type || e.name) : "", e.code || e.Code ? "code=" + red(e.code || e.Code) : "",
                 e.message ? "errmsg=" + red(e.message) : "", e.$metadata && e.$metadata.httpStatusCode ? "s3status=" + e.$metadata.httpStatusCode : "",
+                j.status ? "status=" + j.status : "", head, frames ? "at " + frames : "",
                 req.method ? req.method + " " + path.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/gi, ":id").replace(/[^\/]{24,}/g, "<redacted>") : ""].filter(Boolean).join(" "));
             }
           });' 2>/dev/null || info "could not read backend logs"
