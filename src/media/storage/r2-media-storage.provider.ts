@@ -30,7 +30,7 @@
  * root cause, not by loosening that test's timeout.
  */
 const bucketsEnsured = new Set<string>();
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   CreateBucketCommand,
@@ -45,7 +45,9 @@ import type { MediaStorageConfig } from '../../config/configuration';
 import type { MediaStorageProvider, PutObjectResult } from './media-storage.interface';
 
 @Injectable()
-export class R2StorageProvider implements MediaStorageProvider, OnModuleInit {
+export class R2StorageProvider
+  implements MediaStorageProvider, OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger(R2StorageProvider.name);
   private readonly client: S3Client;
   private readonly config: MediaStorageConfig;
@@ -61,6 +63,11 @@ export class R2StorageProvider implements MediaStorageProvider, OnModuleInit {
         secretAccessKey: this.config.secretAccessKey,
       },
     });
+  }
+
+  /** Closes the client's keep-alive sockets when the application shuts down. */
+  onModuleDestroy(): void {
+    this.client.destroy();
   }
 
   async onModuleInit(): Promise<void> {

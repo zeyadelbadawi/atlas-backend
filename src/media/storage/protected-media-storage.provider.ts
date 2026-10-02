@@ -20,7 +20,7 @@
  * production, the local MinIO container in development — so this is real
  * protocol code in every environment, never a stub.
  */
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   CreateBucketCommand,
@@ -40,7 +40,7 @@ import type {
 const bucketsEnsured = new Set<string>();
 
 @Injectable()
-export class ProtectedMediaStorage implements OnModuleInit {
+export class ProtectedMediaStorage implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ProtectedMediaStorage.name);
   private readonly client: S3Client;
   private readonly bucket: string;
@@ -68,6 +68,11 @@ export class ProtectedMediaStorage implements OnModuleInit {
         secretAccessKey: protectedMedia.secretAccessKey,
       },
     });
+  }
+
+  /** Closes the client's keep-alive sockets when the application shuts down. */
+  onModuleDestroy(): void {
+    this.client.destroy();
   }
 
   /**
