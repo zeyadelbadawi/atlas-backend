@@ -45,7 +45,7 @@ describe('Bank Transfer (e2e)', () => {
   let app: INestApplication;
   let admin: PrismaClient;
   let flushRateLimitKeys: () => Promise<void>;
-  let platform: { userId: string; token: string };
+  let platform: { email: string; userId: string; token: string };
 
   beforeAll(async () => {
     const testApp = await createTestApp();

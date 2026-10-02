@@ -8,7 +8,7 @@ name: Backend CI
 # workflow file is enabled by default, so the gate cannot silently stay off.
 #
 #   static  lint, typecheck, migrations-vs-schema drift, unit tests, build
-#   e2e     the database e2e suites against real PostgreSQL + Redis + MinIO,
+#   e2e     the database e2e suites against real PostgreSQL + Redis + S3 (SeaweedFS),
 #           in 3 shards; each shard runs its suites TWICE on the same
 #           database, which is how ordering and leftover-state bugs show
 #   passed  one job that needs both: the single required status check
@@ -51,11 +51,12 @@ env:
   JWT_ACCESS_SECRET: ci-only-placeholder-jwt-secret-not-a-real-secret-32c
   PAYMENT_WEBHOOK_SECRET: ci-only-placeholder-webhook-secret-not-real-32ch
   PAYMENT_CREDENTIALS_ENCRYPTION_KEY: 'abababababababababababababababababababababababababababababababab'
-  # Local, disposable MinIO standing in for Cloudflare R2 (S3-compatible).
-  # MinIO, not s3rver: it enforces request signatures as R2 does, and
+  # Local, disposable SeaweedFS S3 standing in for Cloudflare R2. Not s3rver:
   # p64-phase2-security asserts that an unsigned read of a protected object
-  # is refused by the real store (s3rver serves it). The backend creates its
-  # buckets at boot. Placeholder credentials for this throwaway container.
+  # is refused by the real store, and s3rver serves it. Not MinIO: its
+  # images are no longer published on Docker Hub (the pull is denied) and
+  # quay.io refuses anonymous pulls. The backend creates its buckets at boot.
+  # Placeholder credentials for this throwaway container.
   R2_ENDPOINT: http://127.0.0.1:9000
   R2_REGION: us-east-1
   R2_ACCESS_KEY_ID: atlas_media_ci
@@ -143,14 +144,22 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-      - name: Start MinIO (pinned release from Docker Hub; services cannot pass its `server` argument)
+      - name: Start SeaweedFS S3 (pinned release; enforces request signatures)
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=atlas_media_ci \
-            -e MINIO_ROOT_PASSWORD=atlas_media_ci_password \
-            docker.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:9000/minio/health/live && exit 0; sleep 2; done
-          docker logs minio; exit 1
+          mkdir -p "$RUNNER_TEMP/s3"
+          cat > "$RUNNER_TEMP/s3/s3.json" <<JSON
+          {"identities":[{"name":"ci","credentials":[{"accessKey":"$R2_ACCESS_KEY_ID","secretKey":"$R2_SECRET_ACCESS_KEY"}],"actions":["Admin","Read","List","Tagging","Write"]}]}
+          JSON
+          docker run -d --name s3 -p 9000:9000 -v "$RUNNER_TEMP/s3:/etc/s3:ro" \
+            docker.io/chrislusf/seaweedfs:4.47 \
+            server -dir=/data -master.volumeSizeLimitMB=64 -volume.max=0 \
+            -s3 -s3.port=9000 -s3.config=/etc/s3/s3.json
+          # Signed-in only: an anonymous request is refused with 403.
+          for i in $(seq 1 30); do
+            test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9000/)" = 403 && exit 0
+            sleep 2
+          done
+          docker logs s3; exit 1
       - name: Install dependencies (lockfile)
         run: npm ci
       - name: Prisma — generate, migrate, seed (the fixtures the e2e suites read)
