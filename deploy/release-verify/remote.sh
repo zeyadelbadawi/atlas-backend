@@ -56,9 +56,9 @@ case "${1:-}" in
     # Sanitized: time, message, error type/code/status and the request's
     # method + path (no query, no body, no headers); long token-like
     # strings are redacted. Errors and warnings from the last 6 hours.
-    echo "== Recent backend errors and warnings (6 h, sanitized, last 15)"
-    docker compose logs --no-color --no-log-prefix --since 6h backend 2>/dev/null \
-      | grep -E '"level":(40|50|60)' | tail -15 \
+    echo "== Recent backend errors + payment-proof storage warnings (24 h, sanitized, last 10)"
+    docker compose logs --no-color --no-log-prefix --since 24h backend 2>/dev/null \
+      | grep -E '"level":(50|60)|CreateBucket|payment-proofs' | tail -10 \
       | docker compose exec -T backend node -e '
           const red = (v) => String(v ?? "").replace(/[A-Za-z0-9+\/=_-]{24,}/g, "<redacted>").slice(0, 300);
           let buf = ""; process.stdin.on("data", (c) => (buf += c)).on("end", () => {
