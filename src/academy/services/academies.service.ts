@@ -60,8 +60,10 @@ import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
 import {
   toContactSubmissionResponse,
   type ContactSubmissionResponse,
+  type ContactSubmissionSummaryResponse,
 } from '../dto/contact-submission.contract';
 import type { UpdateContactSubmissionStatusDto } from '../dto/update-contact-submission-status.dto';
+import type { ContactSubmissionQueryDto } from '../dto/contact-submission-query.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../dto/list-query.dto';
@@ -1353,7 +1355,7 @@ export class AcademiesService {
     academyId: string,
     organizationId: string,
     userId: string,
-    query: CollectionQueryDto,
+    query: ContactSubmissionQueryDto,
   ): Promise<PaginatedResult<ContactSubmissionResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
@@ -1371,6 +1373,15 @@ export class AcademiesService {
           await this.contactSubmissionsRepository.findManyForAcademy(tx, academyId, {
             skip: (page - 1) * pageSize,
             take: pageSize,
+            search: query.search,
+            status: query.status,
+            from: query.from ? new Date(`${query.from}T00:00:00.000Z`) : undefined,
+            // Inclusive `to`: everything before the start of the next day.
+            toExclusive: query.to
+              ? new Date(Date.parse(`${query.to}T00:00:00.000Z`) + 86_400_000)
+              : undefined,
+            sortBy: query.sortBy,
+            sortDirection: query.sortDirection,
           });
         return {
           items: items.map(toContactSubmissionResponse),
@@ -1380,7 +1391,27 @@ export class AcademiesService {
     );
   }
 
-  /** Phase 6 — staff triage (mark read/archived); never re-opens the public write path. */
+  /** Message counts per status for the Owner's Messages page (same access as the list). */
+  async getContactSubmissionSummary(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+  ): Promise<ContactSubmissionSummaryResponse> {
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const counts = await this.contactSubmissionsRepository.countByStatus(
+          tx,
+          academyId,
+        );
+        return { ...counts, total: counts.new + counts.read + counts.archived };
+      },
+    );
+  }
+
+  /** Phase 6 — staff triage (mark new/read/archived); never re-opens the public write path. */
   async updateContactSubmissionStatus(
     academyId: string,
     organizationId: string,

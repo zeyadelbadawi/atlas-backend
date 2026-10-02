@@ -11,6 +11,14 @@ export interface ContactSubmissionResponse {
   readonly createdAt: string;
 }
 
+/** `GET academies/:id/contact-submissions/summary` — message counts per status. */
+export interface ContactSubmissionSummaryResponse {
+  readonly total: number;
+  readonly new: number;
+  readonly read: number;
+  readonly archived: number;
+}
+
 export function toContactSubmissionResponse(
   submission: PrismaContactSubmission,
 ): ContactSubmissionResponse {
