@@ -79,6 +79,30 @@ describe('deriveIntegritySignals', () => {
     expect(signal).toMatchObject({ key: 'time_away', totalSeconds: 40 });
   });
 
+  it('the exit the attempt ended in counts even when it is short (strict auto-submit)', () => {
+    // Two exits; the second auto-submits the attempt 0.3 s later. It is not
+    // a blip the learner came back from, so it is reported with the first.
+    const signals = derive(
+      [
+        ev(1, 'fullscreen_enter'),
+        ev(10, 'fullscreen_exit'),
+        ev(14, 'fullscreen_enter'),
+        ev(20, 'fullscreen_exit'),
+      ],
+      { requireFullscreen: true, end: 20.3, silent: true },
+    );
+    expect(signals.find((s) => s.key === 'fullscreen_left')).toMatchObject({
+      occurrences: 2,
+      level: 'review',
+    });
+    // A short exit the learner came back from is still not reported.
+    const blip = derive(
+      [ev(1, 'fullscreen_enter'), ev(10, 'fullscreen_exit'), ev(11, 'fullscreen_enter')],
+      { requireFullscreen: true, end: 60, silent: true },
+    );
+    expect(blip.find((s) => s.key === 'fullscreen_left')).toBeUndefined();
+  });
+
   it('within one batch (same server time) the client clock measures the gap', () => {
     const hidden = ev(100, 'visibility_hidden', { clientAt: at(90) });
     const visible = ev(100, 'visibility_visible', { clientAt: at(98) });

@@ -87,6 +87,13 @@ highlight its evidence rows in the timeline.
 | `print` | print started | always | Ctrl+P by mistake |
 | `connection_gap` | no batch for ≥ 180 s | never (context) | offline, sleep, closed tab |
 
+Intervals shorter than 2 s are not reported, with one exception: an
+interval still open when the attempt ended (the learner never came back —
+in strict mode, typically the exit that submitted the attempt) is always
+kept. Found in the real-browser strict-mode run (J9): before the fix the
+reviewer saw "left full screen 1 time" for an attempt auto-submitted after
+two exits.
+
 Each signal also carries a **category**: `technical` (`connection_gap`,
 `fullscreen_unavailable` — interruptions and browser limits) or
 `behaviour`. The reviewer UI shows three groups — "Worth a look",
