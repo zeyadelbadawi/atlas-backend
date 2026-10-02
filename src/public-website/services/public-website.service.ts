@@ -39,6 +39,7 @@ import {
   type WebsitePageResponse,
 } from '../../website/dto/website-page.contract';
 import { PublicHostnameResolutionRepository } from '../repositories/public-hostname-resolution.repository';
+import { faviconVersion, parseFavicon, type FaviconSource } from '../utils/favicon.util';
 import { PublicWebsiteCacheService } from './public-website-cache.service';
 import {
   extractSubdomainLabel,
@@ -169,17 +170,58 @@ export class PublicWebsiteService {
       subdomainLabel: resolved.subdomain,
       baseDomain,
     });
-    const presentation = await this.findPresentation(resolved.academyId);
+    const [presentation, favicon] = await Promise.all([
+      this.findPresentation(resolved.academyId),
+      this.findFaviconVersion(resolved.academyId),
+    ]);
     const response: HostnameResolutionResponse = {
       academyId: resolved.academyId,
       academyName: resolved.academyName,
       academySlug: resolved.academySlug,
       academyLogo: resolved.academyLogoUrl ?? undefined,
       canonicalHost: canonical?.host,
+      ...(favicon ? { faviconVersion: favicon } : {}),
       ...(presentation ? { presentation } : {}),
     };
     await this.cacheService.setHostnameResolution(normalized, response);
     return response;
+  }
+
+  /**
+   * The version of this Academy's favicon (`favicon.util.ts`), when it has
+   * one the public site can serve — the public runtime links
+   * `public/websites/:academyId/favicon?v=<version>`, so a new upload is a
+   * new URL. Same gate as the favicon read itself, so the link is never
+   * advertised for a favicon that read would refuse.
+   */
+  private async findFaviconVersion(academyId: string): Promise<string | undefined> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return undefined;
+    const academy = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.academiesRepository.findById(tx, academyId),
+    );
+    const stored = academy?.faviconUrl;
+    return stored && parseFavicon(stored) ? faviconVersion(stored) : undefined;
+  }
+
+  /**
+   * `GET public/websites/:academyId/favicon` — the Academy's own favicon,
+   * gated exactly like the identity read (an Academy whose site must not be
+   * served has none here either). `null` when there is nothing to serve.
+   */
+  async getFavicon(
+    academyId: string,
+  ): Promise<{ readonly source: FaviconSource; readonly version: string } | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+    const academy = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.academiesRepository.findById(tx, academyId),
+    );
+    const stored = academy?.faviconUrl;
+    const source = parseFavicon(stored);
+    return stored && source ? { source, version: faviconVersion(stored) } : null;
   }
 
   /**
@@ -706,15 +748,19 @@ export class PublicWebsiteService {
         course.categoryId ?? null,
         limit,
       );
-      const { sectionCounts, lessonCounts } =
-        await this.coursesRepository.countSectionsAndLessonsBatch(
-          tx,
-          recommendations.map((c) => c.id),
-        );
+      const ids = recommendations.map((c) => c.id);
+      const [{ sectionCounts, lessonCounts }, { quizCounts, assignmentCounts }] =
+        await Promise.all([
+          this.coursesRepository.countSectionsAndLessonsBatch(tx, ids),
+          this.coursesRepository.countPublishedAssessmentsBatch(tx, ids),
+        ]);
       return recommendations.map((c) =>
         toCourseResponse(c, {
           totalSections: sectionCounts.get(c.id) ?? 0,
           totalLessons: lessonCounts.get(c.id) ?? 0,
+          // A quiz-only course's card says what it holds, as the catalog does.
+          totalQuizzes: quizCounts.get(c.id) ?? 0,
+          totalAssignments: assignmentCounts.get(c.id) ?? 0,
         }),
       );
     });

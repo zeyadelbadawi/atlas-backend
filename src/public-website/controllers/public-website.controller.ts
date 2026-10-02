@@ -26,7 +26,9 @@ import {
   Param,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { PublicWebsiteService } from '../services/public-website.service';
 import { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
@@ -85,6 +87,35 @@ export class PublicWebsiteController {
     const page = await this.publicWebsiteService.getPublishedPage(academyId, slug);
     if (!page) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return page;
+  }
+
+  /**
+   * The Academy's own favicon (`favicon.util.ts`): the stored PNG/ICO
+   * bytes, or a redirect to its http(s) URL. The public site links it with
+   * `?v=<faviconVersion>`; that exact version is immutable for a year, any
+   * other (an old page still open after a change) only briefly cached.
+   */
+  @Get(':academyId/favicon')
+  async getFavicon(
+    @Param('academyId') academyId: string,
+    @Query('v') version: string | undefined,
+    @Res() response: Response,
+  ): Promise<void> {
+    const favicon = await this.publicWebsiteService.getFavicon(academyId);
+    if (!favicon) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    response.setHeader(
+      'Cache-Control',
+      version === favicon.version
+        ? 'public, max-age=31536000, immutable'
+        : 'public, max-age=60',
+    );
+    if (favicon.source.kind === 'remote') {
+      response.redirect(302, favicon.source.url);
+      return;
+    }
+    response.setHeader('Content-Type', favicon.source.contentType);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.status(200).end(favicon.source.bytes);
   }
 
   /** Phase 6 — the combined Academy Identity/Branding read, reused by the public site, the LMS, and the dashboard. See `PublicWebsiteService.getPublicIdentity`'s own doc comment. */

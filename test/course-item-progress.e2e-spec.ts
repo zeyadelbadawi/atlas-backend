@@ -239,6 +239,24 @@ describe('Course item progress (e2e)', () => {
       totalQuizzes: 2,
       totalAssignments: 0,
     });
+    // …and so does a "related courses" card for it on another course's page.
+    const sibling = await seedCourse(
+      admin,
+      academy.id,
+      `items-quiz-sibling-${Date.now()}`,
+      {
+        status: 'published',
+        visibility: 'public',
+        pricingType: 'free',
+      },
+    );
+    const related = await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}/courses/${sibling.id}/recommendations`)
+      .expect(200);
+    const relatedCard = (related.body as { id: string; stats: object }[]).find(
+      (row) => row.id === course.id,
+    );
+    expect(relatedCard?.stats).toMatchObject({ totalLessons: 0, totalQuizzes: 2 });
     // …and so does the signed-in course details read (a learner's user
     // context cannot see quiz rows; the count comes from the Academy's).
     const discovered = await get(student.token, `/courses/${course.id}`).expect(200);
