@@ -80,7 +80,10 @@ export function parseVitalsBeacon(body: unknown): VitalSample[] {
   return result;
 }
 
-export function rateVital(metric: RumMetric, value: number): 'good' | 'needs-improvement' | 'poor' {
+export function rateVital(
+  metric: RumMetric,
+  value: number,
+): 'good' | 'needs-improvement' | 'poor' {
   const { good, poor } = RUM_THRESHOLDS[metric];
   if (value <= good) return 'good';
   if (value <= poor) return 'needs-improvement';

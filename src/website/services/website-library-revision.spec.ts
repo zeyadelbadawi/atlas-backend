@@ -21,12 +21,28 @@ function build(role: string | null = 'owner') {
     ),
   };
   const faqRow = {
-    id: 'f1', academyId: ACADEMY_ID, question: { en: 'Q', ar: 'س' }, answer: { en: 'A', ar: 'ج' },
-    order: 0, visible: true, status: 'draft', createdAt: at, updatedAt: at,
+    id: 'f1',
+    academyId: ACADEMY_ID,
+    question: { en: 'Q', ar: 'س' },
+    answer: { en: 'A', ar: 'ج' },
+    order: 0,
+    visible: true,
+    status: 'draft',
+    createdAt: at,
+    updatedAt: at,
   };
   const testimonialRow = {
-    id: 't1', academyId: ACADEMY_ID, quote: { en: 'Q', ar: 'س' }, authorName: 'Lina',
-    authorRole: null, avatar: null, order: 0, visible: true, status: 'draft', createdAt: at, updatedAt: at,
+    id: 't1',
+    academyId: ACADEMY_ID,
+    quote: { en: 'Q', ar: 'س' },
+    authorName: 'Lina',
+    authorRole: null,
+    avatar: null,
+    order: 0,
+    visible: true,
+    status: 'draft',
+    createdAt: at,
+    updatedAt: at,
   };
   const repo = <T>(row: T) => ({
     findById: jest.fn(async () => row),
@@ -55,22 +71,47 @@ const testimonial = { quote: { en: 'Q', ar: 'س' }, authorName: 'Lina' };
 
 describe('WebsiteContentService — library revision', () => {
   const writes: [string, (s: WebsiteContentService) => Promise<unknown>][] = [
-    ['createFaqEntry', (s) => s.createFaqEntry(ACADEMY_ID, ORG_ID, USER_ID, faq as never)],
-    ['updateFaqEntry', (s) => s.updateFaqEntry(ACADEMY_ID, ORG_ID, USER_ID, 'f1', { visible: false } as never)],
+    [
+      'createFaqEntry',
+      (s) => s.createFaqEntry(ACADEMY_ID, ORG_ID, USER_ID, faq as never),
+    ],
+    [
+      'updateFaqEntry',
+      (s) =>
+        s.updateFaqEntry(ACADEMY_ID, ORG_ID, USER_ID, 'f1', { visible: false } as never),
+    ],
     ['publishFaqEntry', (s) => s.publishFaqEntry(ACADEMY_ID, ORG_ID, USER_ID, 'f1')],
     ['archiveFaqEntry', (s) => s.archiveFaqEntry(ACADEMY_ID, ORG_ID, USER_ID, 'f1')],
-    ['createTestimonialEntry', (s) => s.createTestimonialEntry(ACADEMY_ID, ORG_ID, USER_ID, testimonial as never)],
-    ['updateTestimonialEntry', (s) => s.updateTestimonialEntry(ACADEMY_ID, ORG_ID, USER_ID, 't1', { visible: false } as never)],
-    ['publishTestimonialEntry', (s) => s.publishTestimonialEntry(ACADEMY_ID, ORG_ID, USER_ID, 't1')],
-    ['archiveTestimonialEntry', (s) => s.archiveTestimonialEntry(ACADEMY_ID, ORG_ID, USER_ID, 't1')],
+    [
+      'createTestimonialEntry',
+      (s) => s.createTestimonialEntry(ACADEMY_ID, ORG_ID, USER_ID, testimonial as never),
+    ],
+    [
+      'updateTestimonialEntry',
+      (s) =>
+        s.updateTestimonialEntry(ACADEMY_ID, ORG_ID, USER_ID, 't1', {
+          visible: false,
+        } as never),
+    ],
+    [
+      'publishTestimonialEntry',
+      (s) => s.publishTestimonialEntry(ACADEMY_ID, ORG_ID, USER_ID, 't1'),
+    ],
+    [
+      'archiveTestimonialEntry',
+      (s) => s.archiveTestimonialEntry(ACADEMY_ID, ORG_ID, USER_ID, 't1'),
+    ],
   ];
 
-  it.each(writes)('%s bumps the Academy’s revision once, after the write', async (_name, write) => {
-    const { service, libraryRevisionService } = build();
-    await write(service);
-    expect(libraryRevisionService.bump).toHaveBeenCalledTimes(1);
-    expect(libraryRevisionService.bump).toHaveBeenCalledWith(ACADEMY_ID);
-  });
+  it.each(writes)(
+    '%s bumps the Academy’s revision once, after the write',
+    async (_name, write) => {
+      const { service, libraryRevisionService } = build();
+      await write(service);
+      expect(libraryRevisionService.bump).toHaveBeenCalledTimes(1);
+      expect(libraryRevisionService.bump).toHaveBeenCalledWith(ACADEMY_ID);
+    },
+  );
 
   it.each(writes)('%s refused (Instructor) does not bump', async (_name, write) => {
     const { service, libraryRevisionService } = build('instructor');
@@ -96,8 +137,12 @@ describe('WebsiteLibraryRevisionService', () => {
 
   it('degrades to 0 / no-op when Redis fails, never throwing into a request', async () => {
     const broken = {
-      get: async () => { throw new Error('down'); },
-      incr: async () => { throw new Error('down'); },
+      get: async () => {
+        throw new Error('down');
+      },
+      incr: async () => {
+        throw new Error('down');
+      },
     };
     await expect(service(broken).get(ACADEMY_ID)).resolves.toBe(0);
     await expect(service(broken).bump(ACADEMY_ID)).resolves.toBeUndefined();

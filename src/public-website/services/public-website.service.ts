@@ -95,7 +95,10 @@ import {
   toPublicFaqLibraryEntry,
   toPublicTestimonialLibraryEntry,
 } from '../dto/public-library-entry.contract';
-import { collectLibraryEntryIds, expandLibraryEntries } from '../utils/library-entries.util';
+import {
+  collectLibraryEntryIds,
+  expandLibraryEntries,
+} from '../utils/library-entries.util';
 
 @Injectable()
 export class PublicWebsiteService {
@@ -311,14 +314,18 @@ export class PublicWebsiteService {
 
     const { pages, faqEntries, testimonialEntries } =
       await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-        const pages = (await this.websitePagesRepository.findAllPublished(tx, academyId)).map(
-          toWebsitePageResponse,
-        );
+        const pages = (
+          await this.websitePagesRepository.findAllPublished(tx, academyId)
+        ).map(toWebsitePageResponse);
         // Content library: only the referenced entries that are published,
         // visible and this Academy's — the repository's query is the gate.
         const ids = collectLibraryEntryIds(pages);
         const [faqEntries, testimonialEntries] = await Promise.all([
-          this.websiteFaqEntriesRepository.findPublishedVisibleByIds(tx, academyId, ids.faq),
+          this.websiteFaqEntriesRepository.findPublishedVisibleByIds(
+            tx,
+            academyId,
+            ids.faq,
+          ),
           this.websiteTestimonialEntriesRepository.findPublishedVisibleByIds(
             tx,
             academyId,
@@ -327,9 +334,14 @@ export class PublicWebsiteService {
         ]);
         return { pages, faqEntries, testimonialEntries };
       });
-    const faqById = new Map(faqEntries.map((entry) => [entry.id, toPublicFaqLibraryEntry(entry)]));
+    const faqById = new Map(
+      faqEntries.map((entry) => [entry.id, toPublicFaqLibraryEntry(entry)]),
+    );
     const testimonialById = new Map(
-      testimonialEntries.map((entry) => [entry.id, toPublicTestimonialLibraryEntry(entry)]),
+      testimonialEntries.map((entry) => [
+        entry.id,
+        toPublicTestimonialLibraryEntry(entry),
+      ]),
     );
     // Theme 1 plan §D.4 — sample testimonials are preview-only: removed
     // here, before caching, so they never reach a visitor's browser.

@@ -14,7 +14,11 @@ import { evaluateIntegritySignals } from './integrity-eval/evaluate';
 const T0 = new Date('2026-01-01T09:00:00.000Z');
 const at = (s: number) => new Date(T0.getTime() + s * 1000);
 let n = 0;
-const ev = (s: number, type: SignalEvent['type'], extra: Partial<SignalEvent> = {}): SignalEvent => ({
+const ev = (
+  s: number,
+  type: SignalEvent['type'],
+  extra: Partial<SignalEvent> = {},
+): SignalEvent => ({
   id: `e${(n += 1)}`,
   type,
   serverAt: at(s),
@@ -78,7 +82,11 @@ describe('deriveIntegritySignals', () => {
   it('within one batch (same server time) the client clock measures the gap', () => {
     const hidden = ev(100, 'visibility_hidden', { clientAt: at(90) });
     const visible = ev(100, 'visibility_visible', { clientAt: at(98) });
-    expect(derive([hidden, visible])[0]).toMatchObject({ key: 'time_away', totalSeconds: 8, level: 'info' });
+    expect(derive([hidden, visible])[0]).toMatchObject({
+      key: 'time_away',
+      totalSeconds: 8,
+      level: 'info',
+    });
   });
 
   it('a blur that becomes a hidden tab is reported once, as time away', () => {
@@ -100,7 +108,11 @@ describe('deriveIntegritySignals', () => {
       { requireFullscreen: true },
     );
     expect(unavailable).toEqual([
-      expect.objectContaining({ key: 'fullscreen_unavailable', level: 'info', reasons: ['unsupported'] }),
+      expect.objectContaining({
+        key: 'fullscreen_unavailable',
+        level: 'info',
+        reasons: ['unsupported'],
+      }),
     ]);
     // Not required → full-screen events are not signals.
     expect(derive([ev(10, 'fullscreen_exit')])).toEqual([]);
@@ -120,7 +132,10 @@ describe('deriveIntegritySignals', () => {
 
   it('technical interruptions are categorised apart from behaviour', () => {
     const signals = derive(
-      [ev(0, 'fullscreen_unavailable', { payload: { reason: 'refused' } }), ev(100, 'print')],
+      [
+        ev(0, 'fullscreen_unavailable', { payload: { reason: 'refused' } }),
+        ev(100, 'print'),
+      ],
       { requireFullscreen: true, end: 600 },
     );
     expect(signals.map((s) => [s.key, s.category])).toEqual([
@@ -151,7 +166,18 @@ describe('labelled-scenario evaluation', () => {
   const out = (id: string) => evaluation.outputs.find((o) => o.id === id)!;
 
   it('no honest scenario among the common ones is flagged (notifications, a short call, own paste, Esc, iPhone, Wi-Fi)', () => {
-    for (const id of ['H01', 'H02', 'H03', 'H04', 'H05', 'H06', 'H07', 'H08', 'H09', 'H14']) {
+    for (const id of [
+      'H01',
+      'H02',
+      'H03',
+      'H04',
+      'H05',
+      'H06',
+      'H07',
+      'H08',
+      'H09',
+      'H14',
+    ]) {
       expect([id, out(id).review]).toEqual([id, []]);
     }
   });
@@ -161,7 +187,13 @@ describe('labelled-scenario evaluation', () => {
   });
 
   it('known false negatives include what no browser signal can see (a phone, another person)', () => {
-    expect(evaluation.attempt.falseNegatives).toEqual(['D04', 'D08', 'D09', 'D12', 'D15']);
+    expect(evaluation.attempt.falseNegatives).toEqual([
+      'D04',
+      'D08',
+      'D09',
+      'D12',
+      'D15',
+    ]);
   });
 
   it('a rate with nothing to measure is n/a, never 0 or 100%', () => {

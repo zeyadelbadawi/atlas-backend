@@ -22,7 +22,10 @@ function histogram(name: string, help: string, buckets: number[]): Histogram {
   );
 }
 
-const HISTOGRAMS: Record<RumMetric, { readonly metric: Histogram; readonly scale: number }> = {
+const HISTOGRAMS: Record<
+  RumMetric,
+  { readonly metric: Histogram; readonly scale: number }
+> = {
   LCP: {
     metric: histogram(
       'atlas_rum_lcp_seconds',
@@ -56,7 +59,11 @@ export const RUM_HISTOGRAM_NAMES: Record<RumMetric, string> = {
   CLS: 'atlas_rum_cls',
 };
 /** Multiply a Prometheus value by this to get the metric's own unit (ms for LCP/INP). */
-export const RUM_DISPLAY_SCALE: Record<RumMetric, number> = { LCP: 1000, INP: 1000, CLS: 1 };
+export const RUM_DISPLAY_SCALE: Record<RumMetric, number> = {
+  LCP: 1000,
+  INP: 1000,
+  CLS: 1,
+};
 
 export function recordVital(sample: VitalSample): void {
   const { metric, scale } = HISTOGRAMS[sample.metric];

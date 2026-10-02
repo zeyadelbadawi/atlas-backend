@@ -6,7 +6,10 @@
 import { METRICS_REGISTRY } from '../metrics/learning-metrics.service';
 import { RumController } from './rum.controller';
 import { MAX_SAMPLES_PER_BEACON, parseVitalsBeacon, rateVital } from './web-vitals.util';
-import { WebVitalsService, RUM_MIN_SAMPLES_FOR_RATING } from '../platform/web-vitals.service';
+import {
+  WebVitalsService,
+  RUM_MIN_SAMPLES_FOR_RATING,
+} from '../platform/web-vitals.service';
 
 const ok = { route: 'public:home', device: 'mobile' };
 
@@ -27,7 +30,14 @@ describe('parseVitalsBeacon', () => {
 
   it('never lets a URL, id or free text become a label: unknown routes collapse to app:other', () => {
     const [sample] = parseVitalsBeacon({
-      samples: [{ metric: 'INP', value: 120, route: '/my/courses/123?email=a@b.c', device: 'desktop' }],
+      samples: [
+        {
+          metric: 'INP',
+          value: 120,
+          route: '/my/courses/123?email=a@b.c',
+          device: 'desktop',
+        },
+      ],
     });
     expect(sample.route).toBe('app:other');
   });
@@ -54,17 +64,22 @@ describe('parseVitalsBeacon', () => {
   });
 
   it(`reads at most ${MAX_SAMPLES_PER_BEACON} samples, and nothing from a malformed body`, () => {
-    const many = ['LCP', 'INP', 'CLS', 'LCP'].map((metric) => ({ metric, value: 1, ...ok }));
+    const many = ['LCP', 'INP', 'CLS', 'LCP'].map((metric) => ({
+      metric,
+      value: 1,
+      ...ok,
+    }));
     expect(parseVitalsBeacon({ samples: many })).toHaveLength(3);
-    for (const body of [null, 'x', 42, {}, { samples: 'no' }]) expect(parseVitalsBeacon(body)).toEqual([]);
+    for (const body of [null, 'x', 42, {}, { samples: 'no' }])
+      expect(parseVitalsBeacon(body)).toEqual([]);
   });
 
   it('rates against the published thresholds', () => {
-    expect([rateVital('LCP', 2500), rateVital('LCP', 2501), rateVital('LCP', 4001)]).toEqual([
-      'good',
-      'needs-improvement',
-      'poor',
-    ]);
+    expect([
+      rateVital('LCP', 2500),
+      rateVital('LCP', 2501),
+      rateVital('LCP', 4001),
+    ]).toEqual(['good', 'needs-improvement', 'poor']);
     expect([rateVital('INP', 200), rateVital('CLS', 0.26)]).toEqual(['good', 'poor']);
   });
 });
@@ -82,7 +97,9 @@ describe('RumController', () => {
   };
   const controller = (enabled: string | undefined) =>
     new RumController({ get: () => enabled } as never);
-  const beacon = { samples: [{ metric: 'LCP', value: 2100, route: 'public:course', device: 'desktop' }] };
+  const beacon = {
+    samples: [{ metric: 'LCP', value: 2100, route: 'public:course', device: 'desktop' }],
+  };
 
   it('records nothing unless RUM_ENABLED is exactly "true"', async () => {
     const before = await lcpCount();
@@ -98,7 +115,10 @@ describe('RumController', () => {
 describe('WebVitalsService.aggregate', () => {
   const vector = (rows: [Record<string, string>, number][]) => ({
     state: 'ok' as const,
-    data: rows.map(([metric, value]) => ({ metric, value: [0, String(value)] as [number, string] })),
+    data: rows.map(([metric, value]) => ({
+      metric,
+      value: [0, String(value)] as [number, string],
+    })),
   });
 
   it('p75 in the metric’s unit, with samples and rating; thin samples are not rated; foreign labels ignored', async () => {
@@ -119,7 +139,10 @@ describe('WebVitalsService.aggregate', () => {
         lcp
           ? [
               [{ route: 'public:home', device: 'mobile' }, 240],
-              [{ route: 'public:home', device: 'desktop' }, RUM_MIN_SAMPLES_FOR_RATING - 1],
+              [
+                { route: 'public:home', device: 'desktop' },
+                RUM_MIN_SAMPLES_FOR_RATING - 1,
+              ],
             ]
           : [],
       );
@@ -128,8 +151,22 @@ describe('WebVitalsService.aggregate', () => {
     const result = await service.aggregate('7d');
     expect(result.state).toBe('ok');
     expect(result.rows).toEqual([
-      { metric: 'LCP', route: 'public:home', device: 'desktop', p75: 1200, samples: 19, rating: 'too-few-samples' },
-      { metric: 'LCP', route: 'public:home', device: 'mobile', p75: 3100, samples: 240, rating: 'needs-improvement' },
+      {
+        metric: 'LCP',
+        route: 'public:home',
+        device: 'desktop',
+        p75: 1200,
+        samples: 19,
+        rating: 'too-few-samples',
+      },
+      {
+        metric: 'LCP',
+        route: 'public:home',
+        device: 'mobile',
+        p75: 3100,
+        samples: 240,
+        rating: 'needs-improvement',
+      },
     ]);
     expect(instant.mock.calls[0][0]).toContain('[7d]');
   });

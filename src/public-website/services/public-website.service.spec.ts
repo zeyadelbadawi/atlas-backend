@@ -267,7 +267,11 @@ describe('PublicWebsiteService.getPublishedPages — content library', () => {
     const { service, tx, websiteFaqEntriesRepository } = build({
       pages: [
         page([
-          { id: 's1', type: 'faq', config: { items: [], libraryEntryIds: ['f2', 'gone', 'f1', 'f2'] } },
+          {
+            id: 's1',
+            type: 'faq',
+            config: { items: [], libraryEntryIds: ['f2', 'gone', 'f1', 'f2'] },
+          },
           { id: 's2', type: 'hero', config: { title: { en: 'Hi' } } },
         ]),
       ],
@@ -294,17 +298,41 @@ describe('PublicWebsiteService.getPublishedPages — content library', () => {
 
   it('projects testimonials to quote/author/role/avatar and omits absent optional fields', async () => {
     const { service } = build({
-      pages: [page([{ id: 's1', type: 'testimonials', config: { items: [], libraryEntryIds: ['t1', 't2'] } }])],
+      pages: [
+        page([
+          {
+            id: 's1',
+            type: 'testimonials',
+            config: { items: [], libraryEntryIds: ['t1', 't2'] },
+          },
+        ]),
+      ],
       testimonialEntries: [
         {
-          id: 't1', academyId: ACADEMY_ID, quote: { en: 'Great' }, authorName: 'Lina',
-          authorRole: { en: 'Student' }, avatar: 'https://cdn.example/a.png',
-          order: 0, visible: true, status: 'published', createdAt: at, updatedAt: at,
+          id: 't1',
+          academyId: ACADEMY_ID,
+          quote: { en: 'Great' },
+          authorName: 'Lina',
+          authorRole: { en: 'Student' },
+          avatar: 'https://cdn.example/a.png',
+          order: 0,
+          visible: true,
+          status: 'published',
+          createdAt: at,
+          updatedAt: at,
         },
         {
-          id: 't2', academyId: ACADEMY_ID, quote: { en: 'Good' }, authorName: 'Omar',
-          authorRole: null, avatar: null,
-          order: 1, visible: true, status: 'published', createdAt: at, updatedAt: at,
+          id: 't2',
+          academyId: ACADEMY_ID,
+          quote: { en: 'Good' },
+          authorName: 'Omar',
+          authorRole: null,
+          avatar: null,
+          order: 1,
+          visible: true,
+          status: 'published',
+          createdAt: at,
+          updatedAt: at,
         },
       ],
     });
@@ -312,7 +340,13 @@ describe('PublicWebsiteService.getPublishedPages — content library', () => {
     const [result] = (await service.getPublishedPages(ACADEMY_ID))!;
     const [section] = result.sections as { config: Record<string, unknown> }[];
     expect(section.config.libraryEntries).toEqual([
-      { id: 't1', quote: { en: 'Great' }, authorName: 'Lina', authorRole: { en: 'Student' }, avatar: 'https://cdn.example/a.png' },
+      {
+        id: 't1',
+        quote: { en: 'Great' },
+        authorName: 'Lina',
+        authorRole: { en: 'Student' },
+        avatar: 'https://cdn.example/a.png',
+      },
       { id: 't2', quote: { en: 'Good' }, authorName: 'Omar' },
     ]);
   });
@@ -324,7 +358,12 @@ describe('PublicWebsiteService.getPublishedPages — content library', () => {
     });
     await service.getPublishedPages(ACADEMY_ID);
     expect(cacheService.getPages).toHaveBeenCalledWith(ACADEMY_ID, 1, 4);
-    expect(cacheService.setPages).toHaveBeenCalledWith(ACADEMY_ID, 1, 4, expect.any(Array));
+    expect(cacheService.setPages).toHaveBeenCalledWith(
+      ACADEMY_ID,
+      1,
+      4,
+      expect.any(Array),
+    );
 
     const hit = build({ cachedPages: ['cached'], libraryRevision: 4 });
     await expect(hit.service.getPublishedPages(ACADEMY_ID)).resolves.toEqual(['cached']);
@@ -342,6 +381,8 @@ describe('PublicWebsiteService.getPublishedPages — content library', () => {
       ACADEMY_ID,
       [],
     );
-    expect((result.sections[0] as { config: object }).config).not.toHaveProperty('libraryEntries');
+    expect((result.sections[0] as { config: object }).config).not.toHaveProperty(
+      'libraryEntries',
+    );
   });
 });

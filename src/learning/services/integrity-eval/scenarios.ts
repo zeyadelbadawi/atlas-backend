@@ -322,7 +322,8 @@ export const INTEGRITY_SCENARIOS: readonly IntegrityScenario[] = [
   },
   {
     id: 'D06',
-    description: 'Copies the question, asks an assistant in another tab (45 s), pastes the reply.',
+    description:
+      'Copies the question, asks an assistant in another tab (45 s), pastes the reply.',
     dishonest: true,
     footprint: ['time_away', 'paste_without_copy'],
     requireFullscreen: false,
@@ -412,7 +413,8 @@ export const INTEGRITY_SCENARIOS: readonly IntegrityScenario[] = [
   },
   {
     id: 'D14',
-    description: 'Claims full screen is unavailable (modified client), then searches 60 s in another tab.',
+    description:
+      'Claims full screen is unavailable (modified client), then searches 60 s in another tab.',
     dishonest: true,
     footprint: ['time_away'],
     requireFullscreen: true,

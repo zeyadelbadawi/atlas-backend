@@ -56,12 +56,17 @@ export class WebVitalsService {
         this.sources.instant(
           `histogram_quantile(0.75, sum by (le, route, device) (increase(${name}_bucket[${range}])))`,
         ),
-        this.sources.instant(`sum by (route, device) (increase(${name}_count[${range}]))`),
+        this.sources.instant(
+          `sum by (route, device) (increase(${name}_count[${range}]))`,
+        ),
       ]);
       if (quantiles.state !== 'ok') return { state: quantiles.state, range, rows: [] };
       if (counts.state !== 'ok') return { state: counts.state, range, rows: [] };
       const countOf = new Map(
-        counts.data.map((s) => [`${s.metric.route}|${s.metric.device}`, Number(s.value[1])]),
+        counts.data.map((s) => [
+          `${s.metric.route}|${s.metric.device}`,
+          Number(s.value[1]),
+        ]),
       );
       for (const series of quantiles.data) {
         const { route, device } = series.metric;
@@ -76,7 +81,10 @@ export class WebVitalsService {
           device,
           p75: metric === 'CLS' ? Math.round(p75 * 1000) / 1000 : Math.round(p75),
           samples,
-          rating: samples < RUM_MIN_SAMPLES_FOR_RATING ? 'too-few-samples' : rateVital(metric, p75),
+          rating:
+            samples < RUM_MIN_SAMPLES_FOR_RATING
+              ? 'too-few-samples'
+              : rateVital(metric, p75),
         });
       }
     }

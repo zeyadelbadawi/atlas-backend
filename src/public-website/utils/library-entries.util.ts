@@ -26,8 +26,11 @@ export interface LibraryEntryIds {
 }
 
 function referencedIds(section: SectionLike): readonly string[] {
-  const ids = (section.config as { libraryEntryIds?: unknown } | undefined)?.libraryEntryIds;
-  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+  const ids = (section.config as { libraryEntryIds?: unknown } | undefined)
+    ?.libraryEntryIds;
+  return Array.isArray(ids)
+    ? ids.filter((id): id is string => typeof id === 'string')
+    : [];
 }
 
 /** Every distinct library id referenced by `faq` and by `testimonials` sections, across all pages. */

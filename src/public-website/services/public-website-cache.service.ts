@@ -71,7 +71,11 @@ function servingKey(organizationId: string): string {
  * carries the Academy's library revision (`WebsiteLibraryRevisionService`)
  * so a library edit is a new key rather than a 5-minute-stale one.
  */
-function pagesKey(academyId: string, configVersion: number, libraryRevision: number): string {
+function pagesKey(
+  academyId: string,
+  configVersion: number,
+  libraryRevision: number,
+): string {
   return `public:pages:v2:${academyId}:${configVersion}:${libraryRevision}`;
 }
 

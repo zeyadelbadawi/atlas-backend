@@ -59,7 +59,10 @@ describe('Content library on the public website (e2e)', () => {
       .post('/auth/sign-in')
       .send({ email, password })
       .expect(200);
-    return { userId: signIn.body.user.id as string, token: signIn.body.accessToken as string };
+    return {
+      userId: signIn.body.user.id as string,
+      token: signIn.body.accessToken as string,
+    };
   }
 
   async function seedManagedAcademy(label: string) {
@@ -72,14 +75,25 @@ describe('Content library on the public website (e2e)', () => {
 
   const api = (token: string) => ({
     post: (url: string, body: object = {}) =>
-      request(app.getHttpServer()).post(url).set('Authorization', `Bearer ${token}`).send(body),
+      request(app.getHttpServer())
+        .post(url)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body),
     patch: (url: string, body: object) =>
-      request(app.getHttpServer()).patch(url).set('Authorization', `Bearer ${token}`).send(body),
+      request(app.getHttpServer())
+        .patch(url)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body),
     get: (url: string) =>
       request(app.getHttpServer()).get(url).set('Authorization', `Bearer ${token}`),
   });
 
-  async function faqEntry(token: string, academyId: string, label: string, publish = true) {
+  async function faqEntry(
+    token: string,
+    academyId: string,
+    label: string,
+    publish = true,
+  ) {
     const created = await api(token)
       .post(`/academies/${academyId}/website/faq-entries`, {
         question: lt(`Q ${label}`),
@@ -98,8 +112,12 @@ describe('Content library on the public website (e2e)', () => {
     const pages = await request(app.getHttpServer())
       .get(`/public/websites/${academyId}/pages`)
       .expect(200);
-    const page = (pages.body as { slug: string; sections: { id: string; config: Record<string, unknown> }[] }[])
-      .find((p) => p.slug === 'library');
+    const page = (
+      pages.body as {
+        slug: string;
+        sections: { id: string; config: Record<string, unknown> }[];
+      }[]
+    ).find((p) => p.slug === 'library');
     return Object.fromEntries(page!.sections.map((s) => [s.id, s.config]));
   }
 
@@ -111,7 +129,9 @@ describe('Content library on the public website (e2e)', () => {
     const shown = await faqEntry(owner.token, academy.id, 'shown');
     const second = await faqEntry(owner.token, academy.id, 'second');
     const hidden = await faqEntry(owner.token, academy.id, 'hidden');
-    await api(owner.token).patch(`${base}/faq-entries/${hidden}`, { visible: false }).expect(200);
+    await api(owner.token)
+      .patch(`${base}/faq-entries/${hidden}`, { visible: false })
+      .expect(200);
     const draft = await faqEntry(owner.token, academy.id, 'draft', false);
     const archived = await faqEntry(owner.token, academy.id, 'archived');
     await api(owner.token).post(`${base}/faq-entries/${archived}/archive`).expect(201);
@@ -131,18 +151,28 @@ describe('Content library on the public website (e2e)', () => {
     const page = await api(owner.token)
       .post(`${base}/pages`, { title: 'Library', slug: 'library' })
       .expect(201);
-    const version = (await api(owner.token).get(`${base}/pages/${page.body.id}`)).body.version;
+    const version = (await api(owner.token).get(`${base}/pages/${page.body.id}`)).body
+      .version;
     await api(owner.token)
       .patch(`${base}/pages/${page.body.id}`, {
         visible: true,
         expectedVersion: version,
         sections: [
           {
-            id: 'faq', type: 'faq', enabled: true, visibility,
-            config: { items: [], libraryEntryIds: [second, hidden, draft, shown, archived] },
+            id: 'faq',
+            type: 'faq',
+            enabled: true,
+            visibility,
+            config: {
+              items: [],
+              libraryEntryIds: [second, hidden, draft, shown, archived],
+            },
           },
           {
-            id: 'quotes', type: 'testimonials', enabled: true, visibility,
+            id: 'quotes',
+            type: 'testimonials',
+            enabled: true,
+            visibility,
             config: { items: [], libraryEntryIds: [testimonial.body.id] },
           },
         ],
@@ -151,8 +181,13 @@ describe('Content library on the public website (e2e)', () => {
     // Write-time validation refuses another Academy's id (covered by the
     // tenant-isolation suite); plant one in the stored row to prove the
     // public read is its own gate.
-    const stored = await admin.websitePage.findUniqueOrThrow({ where: { id: page.body.id } });
-    const sections = stored.sections as { id: string; config: { libraryEntryIds: string[] } }[];
+    const stored = await admin.websitePage.findUniqueOrThrow({
+      where: { id: page.body.id },
+    });
+    const sections = stored.sections as {
+      id: string;
+      config: { libraryEntryIds: string[] };
+    }[];
     sections[0].config.libraryEntryIds.push(foreign);
     await admin.websitePage.update({ where: { id: page.body.id }, data: { sections } });
     await api(owner.token).post(`${base}/publish`).expect(201);
@@ -163,10 +198,23 @@ describe('Content library on the public website (e2e)', () => {
       { id: shown, question: lt('Q shown'), answer: lt('A shown') },
     ]);
     expect(configs.quotes.libraryEntries).toEqual([
-      { id: testimonial.body.id, quote: lt('Great course'), authorName: 'Lina', authorRole: lt('Student') },
+      {
+        id: testimonial.body.id,
+        quote: lt('Great course'),
+        authorName: 'Lina',
+        authorRole: lt('Student'),
+      },
     ]);
     const publicText = JSON.stringify(configs);
-    for (const leak of ['Q hidden', 'Q draft', 'Q archived', 'Q foreign', '"status"', '"visible"', '"order"']) {
+    for (const leak of [
+      'Q hidden',
+      'Q draft',
+      'Q archived',
+      'Q foreign',
+      '"status"',
+      '"visible"',
+      '"order"',
+    ]) {
       expect(publicText).not.toContain(leak);
     }
 
@@ -180,7 +228,9 @@ describe('Content library on the public website (e2e)', () => {
     );
 
     // Nor a hide, nor an archive.
-    await api(owner.token).patch(`${base}/faq-entries/${shown}`, { visible: false }).expect(200);
+    await api(owner.token)
+      .patch(`${base}/faq-entries/${shown}`, { visible: false })
+      .expect(200);
     await api(owner.token).post(`${base}/faq-entries/${second}/archive`).expect(201);
     configs = await publicSections(academy.id);
     expect(configs.faq.libraryEntries).toEqual([]);

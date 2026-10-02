@@ -29,7 +29,8 @@ export function scenarioSignals(scenario: IntegrityScenario): IntegritySignal[] 
   const all: [number, SignalEvent['type'], Record<string, string> | undefined][] =
     scenario.events.map(([seconds, type, payload]) => [seconds, type, payload]);
   if (!scenario.silent) {
-    for (let s = 60; s < scenario.durationSeconds; s += 60) all.push([s, 'heartbeat', undefined]);
+    for (let s = 60; s < scenario.durationSeconds; s += 60)
+      all.push([s, 'heartbeat', undefined]);
   }
   all
     .sort((a, b) => a[0] - b[0])
@@ -80,7 +81,9 @@ function ratio(numerator: number, denominator: number): number | null {
   return denominator === 0 ? null : numerator / denominator;
 }
 
-function confusion(cases: readonly { id: string; actual: boolean; predicted: boolean }[]): Confusion {
+function confusion(
+  cases: readonly { id: string; actual: boolean; predicted: boolean }[],
+): Confusion {
   const tp = cases.filter((c) => c.actual && c.predicted);
   const fp = cases.filter((c) => !c.actual && c.predicted);
   const fn = cases.filter((c) => c.actual && !c.predicted);
@@ -157,7 +160,8 @@ export function evaluateIntegritySignals(
   };
 }
 
-const pct = (value: number | null) => (value === null ? 'n/a' : `${Math.round(value * 100)}%`);
+const pct = (value: number | null) =>
+  value === null ? 'n/a' : `${Math.round(value * 100)}%`;
 
 /** The evaluation as Markdown tables (for the report). */
 export function renderEvaluationMarkdown(evaluation: IntegrityEvaluation): string {

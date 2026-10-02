@@ -110,7 +110,8 @@ interface Interval {
  * only measure of the gap between them — used for that one purpose.
  */
 function secondsBetween(from: SignalEvent, to: SignalEvent | Date): number {
-  if (to instanceof Date) return Math.max(0, (to.getTime() - from.serverAt.getTime()) / 1000);
+  if (to instanceof Date)
+    return Math.max(0, (to.getTime() - from.serverAt.getTime()) / 1000);
   const server = (to.serverAt.getTime() - from.serverAt.getTime()) / 1000;
   if (server > 0) return server;
   if (from.clientAt && to.clientAt) {
@@ -131,11 +132,15 @@ function intervals(
   for (const event of events) {
     if (event.type === open && !current) current = event;
     else if (event.type === close && current) {
-      result.push({ seconds: secondsBetween(current, event), eventIds: [current.id, event.id] });
+      result.push({
+        seconds: secondsBetween(current, event),
+        eventIds: [current.id, event.id],
+      });
       current = null;
     }
   }
-  if (current) result.push({ seconds: secondsBetween(current, endedAt), eventIds: [current.id] });
+  if (current)
+    result.push({ seconds: secondsBetween(current, endedAt), eventIds: [current.id] });
   return result.filter((interval) => interval.seconds >= SIGNAL_MIN_INTERVAL_SECONDS);
 }
 
@@ -158,10 +163,7 @@ function durationSignal(
 }
 
 /** Was this blur followed by the tab being hidden before focus came back? */
-function overlapsHidden(
-  blur: SignalEvent,
-  events: readonly SignalEvent[],
-): boolean {
+function overlapsHidden(blur: SignalEvent, events: readonly SignalEvent[]): boolean {
   // A blur immediately followed (before its focus) by the tab being hidden
   // is the same moment as "time away", which already reports it.
   const index = events.indexOf(blur);
@@ -194,7 +196,8 @@ function deriveSignals(input: SignalInput): Omit<IntegritySignal, 'category'>[] 
     durationSignal(
       'time_away',
       intervals(events, 'visibility_hidden', 'visibility_visible', input.endedAt),
-      (total, count) => total >= AWAY_REVIEW_TOTAL_SECONDS || count >= AWAY_REVIEW_OCCURRENCES,
+      (total, count) =>
+        total >= AWAY_REVIEW_TOTAL_SECONDS || count >= AWAY_REVIEW_OCCURRENCES,
     ),
   );
 
@@ -218,7 +221,8 @@ function deriveSignals(input: SignalInput): Omit<IntegritySignal, 'category'>[] 
         'fullscreen_left',
         intervals(events, 'fullscreen_exit', 'fullscreen_enter', input.endedAt),
         (total, count) =>
-          total >= FULLSCREEN_REVIEW_TOTAL_SECONDS || count >= FULLSCREEN_REVIEW_OCCURRENCES,
+          total >= FULLSCREEN_REVIEW_TOTAL_SECONDS ||
+          count >= FULLSCREEN_REVIEW_OCCURRENCES,
       ),
     );
     if (unavailable.length > 0) {

@@ -91,7 +91,9 @@ function snapshotMaxViolations(snapshot: PrismaQuizAttempt['settingsSnapshot']):
   return typeof value === 'number' ? value : 0;
 }
 
-function snapshotRequiresFullscreen(snapshot: PrismaQuizAttempt['settingsSnapshot']): boolean {
+function snapshotRequiresFullscreen(
+  snapshot: PrismaQuizAttempt['settingsSnapshot'],
+): boolean {
   return (
     !!snapshot &&
     typeof snapshot === 'object' &&
