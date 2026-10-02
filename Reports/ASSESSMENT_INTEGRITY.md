@@ -197,7 +197,31 @@ Scenarios: 29 (14 honest, 15 dishonest). Designed scenarios, not real learners �
 
 ## 5. Real-browser verification
 
-The P7 journeys drive these behaviours in Chromium against the local
-stack (full screen on Start, exit → gate → return, tab switches, paste)
-and read the reviewer's signals back through the API; see the P7 report
-section for results.
+Chromium against the disposable local stack (Vite → Nest → PostgreSQL,
+Redis), signals read back through the reviewer API:
+
+- **J9** (`atlas/e2e/j9-fullscreen-integrity.spec.ts`, 3 tests): Start
+  enters full screen inside the click; leaving (browser API) hides the
+  questions behind the gate; the gate's button restores them; a real
+  Ctrl+V of text copied outside the quiz reaches the reviewer as
+  `paste_without_copy` at review level; `fullscreen_left` and
+  `time_away` appear with evidence. Unsupported and refused full screen
+  (emulated by removing/refusing the API, as on iPhone Safari or a frame
+  without `allowfullscreen`) give the learner a notice and the reviewer
+  `fullscreen_unavailable` with its reason, never `fullscreen_never_entered`.
+- **J11** (`atlas/e2e/j11-quiz-lifecycle-roles.spec.ts`, 6 tests): the
+  Instructor authors the exam with full screen required; the setting
+  survives reload and edit; an Arabic-language Student takes it (exit and
+  return, an answer changed offline and recovered, reload, submit); a
+  repeated submit is idempotent; an invalid event payload, the learner
+  changing the quiz's rules or reading the review, and a stale token are
+  refused; the Instructor and the Manager both read
+  `requireFullscreen: true`, `fullscreen_left` and the raw events; an
+  Owner of another organization reads and changes nothing.
+
+**Not produced by a real browser here:** a real tab switch or window
+blur. Automated Chromium in this sandbox (headless, or headed under Xvfb
+without a window manager) never changes page visibility, so J9
+dispatches the `visibilitychange` the browser would fire — it proves
+listener → server → signal, not the browser's own event. The manual plan
+in `atlas/Reports/ACCESSIBILITY_AUDIT.md` §4 (J-A2 step 6) covers it.

@@ -112,3 +112,9 @@ metric series or carry data (there is no free-text field).
   stack with RUM on — LCP, CLS and INP from a Chromium visit recorded by
   the API with only template and device; phone-sized → `mobile`; GPC →
   nothing downloaded or sent; a hostile beacon creates no labels.
+- Harness note: J10 reads the LCP beacon's body through a Playwright
+  route interceptor and detaches it before leaving the page. Measured
+  in this sandbox, an attached interceptor loses beacons sent during
+  unload (CLS 0 of 5 visits, INP 2 of 5; 10 of 10 without it), so the
+  API's counters are the witness for CLS and INP. Real browsers have no
+  interceptor; this was a test artefact, not a product defect.
