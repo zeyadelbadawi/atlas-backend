@@ -81,6 +81,40 @@ case "${1:-}" in
             }
           });' 2>/dev/null || info "could not read backend logs"
 
+    # Read-only: can the app's own credentials reach each bucket? One
+    # GetObject on a key that never exists, per bucket from inside the backend container;
+    # only the role and the outcome are printed, never a name or a key.
+    echo "== Object storage access (app credentials, read-only probe)"
+    storage=$(docker compose exec -T backend node -e '
+      const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+      const e = process.env;
+      const client = (id, secret) => new S3Client({ region: e.R2_REGION, endpoint: e.R2_ENDPOINT,
+        forcePathStyle: e.R2_FORCE_PATH_STYLE !== "false",
+        credentials: { accessKeyId: id, secretAccessKey: secret } });
+      const main = client(e.R2_ACCESS_KEY_ID, e.R2_SECRET_ACCESS_KEY);
+      const prot = client(e.R2_PROTECTED_ACCESS_KEY_ID || e.R2_ACCESS_KEY_ID, e.R2_PROTECTED_SECRET_ACCESS_KEY || e.R2_SECRET_ACCESS_KEY);
+      const checks = [
+        ["media (public)", main, e.R2_BUCKET],
+        ["payment-proofs (private)", main, e.R2_BUCKET + "-payment-proofs"],
+        ["protected media (private)", prot, e.R2_PROTECTED_BUCKET || e.R2_BUCKET + "-protected"],
+      ];
+      (async () => {
+        for (const [role, c, bucket] of checks) {
+          // A key that never exists: NoSuchKey = the credential reaches the
+          // bucket; NoSuchBucket / AccessDenied = it does not (R2 answers
+          // AccessDenied for a bucket outside the token scope).
+          try { await c.send(new GetObjectCommand({ Bucket: bucket, Key: "release-verify/probe-never-exists" }));
+            console.log((role.startsWith("payment") ? "PASS  " : "INFO  ") + role + " bucket: reachable");
+          } catch (err) {
+            const st = err.$metadata && err.$metadata.httpStatusCode;
+            if (err.name === "NoSuchKey") { console.log((role.startsWith("payment") ? "PASS  " : "INFO  ") + role + " bucket: reachable"); continue; }
+            console.log((role.startsWith("payment") ? "FAIL  " : "INFO  ") + role + " bucket: " + (err.name && err.name !== "Error" ? err.name : err.code || "Error") + (st ? " (" + st + ")" : ""));
+          }
+        }
+      })();' 2>/dev/null) || storage="FAIL  storage check could not run"
+    printf '%s\n' "$storage"
+    FAILS=$((FAILS + $(printf '%s\n' "$storage" | grep -c '^FAIL')))
+
     echo "== Runtime flags (non-secret values)"
     for k in ATLAS_SSR RUM_ENABLED SSR_CACHE_TTL_MS SSR_CACHE_MAX; do
       v=$(env_value "$k"); info "$k=${v:-<unset>}"
