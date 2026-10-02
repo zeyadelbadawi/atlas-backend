@@ -61,8 +61,17 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
   const run = Date.now();
   /** `PLATFORM_BASE_DOMAIN` may or may not be set where this runs (CI: unset; a developer's `.env` may set it). Every expectation about "the Atlas subdomain host" is phrased for both. */
   let envBaseDomain: string | undefined;
+  /**
+   * The base domain the app actually uses: the environment's, else the one
+   * stored in the database (a Platform Owner may have saved one). Deriving
+   * expectations from the environment alone made this suite depend on
+   * whatever an earlier suite left in `platform_domain_configuration`.
+   */
+  let effectiveBaseDomain: string | undefined;
   const subdomainHostFor = (slug: string) =>
-    envBaseDomain ? { host: `${slug}.${envBaseDomain}`, source: 'subdomain' } : undefined;
+    effectiveBaseDomain
+      ? { host: `${slug}.${effectiveBaseDomain}`, source: 'subdomain' }
+      : undefined;
 
   beforeAll(async () => {
     const testApp = await createTestApp({
@@ -80,6 +89,9 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
       .get(ConfigService)
       .get<PlatformDomainRuntimeConfig>('platformDomain')
       ?.baseDomain?.toLowerCase();
+    effectiveBaseDomain =
+      (await app.get(PlatformDomainService, { strict: false }).getEffectiveBaseDomain())
+        .baseDomain ?? undefined;
   });
 
   afterAll(async () => {
@@ -93,6 +105,20 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     probe.reset();
     app.get(PlatformDomainService, { strict: false }).invalidateZoneFacts();
   });
+
+  /**
+   * The sweep is global and takes at most 200 rows per tick, never-checked
+   * rows first. On a shared test database earlier suites (and earlier runs)
+   * leave many never-checked rows, which sort ahead of this suite's rows and
+   * can push them out of a tick. Marking every OTHER row as just checked
+   * makes the tick's candidate set exactly the rows this test is about.
+   */
+  async function isolateSweepTo(...academyIds: string[]) {
+    await admin.domainConnection.updateMany({
+      where: { academyId: { notIn: academyIds }, hostname: { not: null } },
+      data: { lastCheckedAt: new Date() },
+    });
+  }
 
   async function seedManagedAcademy(label: string) {
     const owner = await signUpAndSignIn(app, `${label}-owner`);
@@ -110,7 +136,9 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
         academyId: seeded.academy.id,
         subdomain: seeded.academy.slug,
         status: 'assigned',
-        fullHost: envBaseDomain ? `${seeded.academy.slug}.${envBaseDomain}` : null,
+        fullHost: effectiveBaseDomain
+          ? `${seeded.academy.slug}.${effectiveBaseDomain}`
+          : null,
       },
     });
     return seeded;
@@ -662,14 +690,15 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     const hostname = `learn-${run}-018.example.com`;
     cloudflare.registrationRefusal = { code: 10000, category: 'permission' };
     await addDomain(academy.id, owner.accessToken, hostname).expect(201);
-    // Oldest-first: the shared dev database holds hundreds of stale rows
-    // from earlier runs, and the sweep caps each tick at 200 — an ancient
-    // timestamp puts this row at the head of the queue instead of behind them.
+    // Due (an old check) — and, via isolateSweepTo, the only due row: never-
+    // checked rows sort first, so an old timestamp alone does not put this
+    // row ahead of other suites' leftovers.
     await admin.domainConnection.update({
       where: { academyId: academy.id },
       data: { lastCheckedAt: new Date('2000-01-01T00:00:00Z') },
     });
     cloudflare.registrationRefusal = null;
+    await isolateSweepTo(academy.id);
     await sweep.run();
     const row = await admin.domainConnection.findUniqueOrThrow({
       where: { academyId: academy.id },
@@ -794,6 +823,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     });
     cloudflare.setState(hostname, 'active', 'active');
     const sweep = app.get(DomainVerificationSweepService, { strict: false });
+    await isolateSweepTo(academy.id);
     const result = await sweep.run();
     expect(result.skipped).toBeNull();
     const row = await admin.domainConnection.findUniqueOrThrow({
@@ -815,6 +845,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     const before = (
       await admin.domainConnection.findUniqueOrThrow({ where: { academyId: academy.id } })
     ).updatedAt;
+    await isolateSweepTo(academy.id);
     await sweep.run();
     const after = await admin.domainConnection.findUniqueOrThrow({
       where: { academyId: academy.id },
@@ -863,6 +894,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     });
     cloudflare.setState(hostname, 'active', 'active');
     const sweep = app.get(DomainVerificationSweepService, { strict: false });
+    await isolateSweepTo(academy.id);
     const result = await sweep.run();
     expect(result.skipped).toBeNull();
     const row = await admin.domainConnection.findUniqueOrThrow({
@@ -938,6 +970,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
       data: { lastAttemptedAt: new Date('2000-01-01T00:00:00Z') },
     });
     const sweep = app.get(DomainVerificationSweepService, { strict: false });
+    await isolateSweepTo(academy.id);
     const result = await sweep.run();
     expect(result.releasesProcessed).toBeGreaterThanOrEqual(1);
     expect(cloudflare.has(first)).toBe(false);
@@ -961,14 +994,16 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     expect(target.body.error?.messageKey ?? target.body.messageKey).toBe(
       'errors.domain.hostnameReserved',
     );
-    if (envBaseDomain) {
-      await addDomain(academy.id, owner.accessToken, envBaseDomain).expect(400);
+    if (effectiveBaseDomain) {
+      await addDomain(academy.id, owner.accessToken, effectiveBaseDomain).expect(400);
       await addDomain(
         academy.id,
         owner.accessToken,
-        `someone-else.${envBaseDomain}`,
+        `someone-else.${effectiveBaseDomain}`,
       ).expect(400);
-      await addDomain(academy.id, owner.accessToken, `a.b.${envBaseDomain}`).expect(400);
+      await addDomain(academy.id, owner.accessToken, `a.b.${effectiveBaseDomain}`).expect(
+        400,
+      );
     }
     expect(cloudflare.calls.filter((c) => c.startsWith('create:'))).toHaveLength(0);
     const config = await request(app.getHttpServer())
@@ -999,6 +1034,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
     const createsBefore = cloudflare.calls.filter(
       (c) => c === `create:${hostname}`,
     ).length;
+    await isolateSweepTo(academy.id);
     await sweep.run();
     expect(cloudflare.calls.filter((c) => c === `create:${hostname}`).length).toBe(
       createsBefore,
@@ -1009,6 +1045,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
       where: { academyId: academy.id },
       data: { lastCheckedAt: new Date('2000-01-01T00:00:00Z') },
     });
+    await isolateSweepTo(academy.id);
     await sweep.run();
     row = await admin.domainConnection.findUniqueOrThrow({
       where: { academyId: academy.id },
@@ -1382,6 +1419,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
         data: { lastCheckedAt: new Date(Date.now() - 60 * 60 * 1000) },
       });
 
+      await isolateSweepTo(stale.academy.id, fresh.academy.id);
       const first = await sweep.run();
       expect(first.skipped).toBeNull();
       expect(first.checked).toBeGreaterThanOrEqual(1);
@@ -1397,6 +1435,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
 
       // Now connected, the stale row is no longer a sweep candidate: running again changes nothing for it.
       const before = staleRow.updatedAt;
+      await isolateSweepTo(stale.academy.id, fresh.academy.id);
       await sweep.run();
       const after = await admin.domainConnection.findUniqueOrThrow({
         where: { academyId: stale.academy.id },
@@ -1413,6 +1452,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
       await verify(tenant.academy.id, tenant.owner.accessToken).expect(201);
 
       // Checked just now: not due on either cadence.
+      await isolateSweepTo(tenant.academy.id);
       await sweep.run();
       let row = await admin.domainConnection.findUniqueOrThrow({
         where: { academyId: tenant.academy.id },
@@ -1425,6 +1465,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
         data: { lastCheckedAt: new Date(Date.now() - 7 * 60 * 60 * 1000) },
       });
       cloudflare.forget(hostname);
+      await isolateSweepTo(tenant.academy.id);
       await sweep.run();
       row = await admin.domainConnection.findUniqueOrThrow({
         where: { academyId: tenant.academy.id },
@@ -1449,6 +1490,7 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
         },
       });
       cloudflare.connected = false;
+      await isolateSweepTo(tenant.academy.id);
       const result = await sweep.run();
       expect(result.skipped).toBe('provider_unavailable');
       const row = await admin.domainConnection.findUniqueOrThrow({
