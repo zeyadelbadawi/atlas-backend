@@ -32,7 +32,7 @@ describe('Session cookie (e2e)', () => {
     const testApp = await createTestApp();
     app = testApp.app;
     flush = testApp.flushRateLimitKeys;
-    await app.listen(0);
+    // Already listening on 127.0.0.1 (createTestApp binds it once).
     const { port } = app.getHttpServer().address() as AddressInfo;
     origin = `http://127.0.0.1:${port}`;
   });
