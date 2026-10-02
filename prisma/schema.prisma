@@ -3685,6 +3685,8 @@ enum CheckoutStatus {
 enum PaymentMethodType {
   manual_bank_transfer
   manual_wallet_transfer
+  /// InstaPay transfer to an InstaPay address (2 Oct 2026).
+  manual_instapay
   gateway
 
   @@map("payment_method_type")

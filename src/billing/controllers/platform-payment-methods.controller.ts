@@ -1,4 +1,4 @@
-/** Platform Owner configuration of manual bank-transfer methods — see `PlatformPaymentMethodsService`. */
+/** Platform Owner configuration of the manual payment methods (bank transfer, mobile wallets, InstaPay) — see `PlatformPaymentMethodsService`. */
 import {
   Body,
   Controller,
@@ -20,6 +20,8 @@ import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { PlatformPaymentMethodsService } from '../services/platform-payment-methods.service';
 import {
   CreatePlatformBankTransferMethodDto,
+  CreatePlatformInstapayMethodDto,
+  CreatePlatformWalletMethodDto,
   UpdatePlatformPaymentMethodDto,
 } from '../dto/platform-payment-method.dto';
 import type { PlatformPaymentMethodResponse } from '../dto/payment-method.contract';
@@ -42,6 +44,22 @@ export class PlatformPaymentMethodsController {
     @Body() payload: CreatePlatformBankTransferMethodDto,
   ): Promise<PlatformPaymentMethodResponse> {
     return this.service.createBankTransfer(auth.userId, payload);
+  }
+
+  @Post('wallet')
+  async createWallet(
+    @CurrentAuthContext() auth: AuthContext,
+    @Body() payload: CreatePlatformWalletMethodDto,
+  ): Promise<PlatformPaymentMethodResponse> {
+    return this.service.createWallet(auth.userId, payload);
+  }
+
+  @Post('instapay')
+  async createInstapay(
+    @CurrentAuthContext() auth: AuthContext,
+    @Body() payload: CreatePlatformInstapayMethodDto,
+  ): Promise<PlatformPaymentMethodResponse> {
+    return this.service.createInstapay(auth.userId, payload);
   }
 
   @Patch(':id')

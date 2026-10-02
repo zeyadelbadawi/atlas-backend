@@ -15,6 +15,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { ConfigService } from '@nestjs/config';
+import type { AppConfig } from '../../config/configuration';
 import { Prisma } from '@prisma/client';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -87,6 +89,7 @@ export class PaymentService {
     // no confirmation of an upload that did not happen.
     private readonly communicationService: CommunicationService,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -142,6 +145,17 @@ export class PaymentService {
       const method = await this.paymentMethodsRepository.findByKey(payload.methodKey);
       if (!method || !method.enabled) {
         throw new NotFoundException({ messageKey: 'errors.payment.methodNotFound' });
+      }
+      // Placeholder details (not a real destination yet) are never paid in
+      // production, even if such a method were somehow enabled there.
+      if (
+        this.configService.getOrThrow<AppConfig>('app').isProduction &&
+        (method.manualInstructions as { placeholder?: unknown } | null)?.placeholder ===
+          true
+      ) {
+        throw new ConflictException({
+          messageKey: 'errors.paymentMethod.placeholderDetails',
+        });
       }
 
       // Idempotent: an open payment for this checkout with the same method
