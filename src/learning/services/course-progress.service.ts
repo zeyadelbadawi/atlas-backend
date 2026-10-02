@@ -101,6 +101,9 @@ export class CourseProgressService {
             existingRows.find((row) => row.status !== 'completed')?.lessonId ?? null,
           completionState,
         });
+        // The lesson figures above are a seed; the full-sequence counts,
+        // percentage and completion come from the rule evaluator.
+        await this.courseCompletionService.recompute(tx, enrollment);
       }
       return;
     }
@@ -144,6 +147,11 @@ export class CourseProgressService {
       currentLessonId: currentLesson?.lessonId ?? null,
       completionState,
     });
+    // A new lesson changes the item counts and percentage too (lessons,
+    // quizzes and assignments), not just the lesson counts written above —
+    // and a caller may return without recomputing (re-completing a done
+    // lesson), so bring the whole rollup up to date here.
+    await this.courseCompletionService.recompute(tx, enrollment);
   }
 
   async getCourseProgress(

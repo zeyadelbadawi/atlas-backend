@@ -1,0 +1,99 @@
+name: Release verify
+
+# Read-only production verification of the Final Completion release
+# (2 Oct 2026). On the VPS, over the same restricted `deploy` SSH identity
+# as Deploy (deploy/release-verify/remote.sh): the release's migrations,
+# health, runtime flags, renderer, data backfills and Bank Transfer
+# configuration STATE — never a secret, a bank detail or a sign-in code.
+# On the runner (deploy/release-verify/verify.mjs): anonymous requests and
+# a real Chromium against production — cache headers, server rendering in
+# EN/AR, and RUM beacons from real visits — then Prometheus is asked
+# whether the samples were stored.
+#
+# No account is created and nothing is signed in to; the only writes are
+# the RUM samples the visits themselves send.
+on:
+  workflow_dispatch:
+    inputs:
+      rum_visits:
+        description: Fresh visits to try for RUM samples (the build samples 10%)
+        required: false
+        default: '40'
+        type: choice
+        options: ['0', '40', '80']
+
+concurrency:
+  group: release-verify
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_URL: https://atlass.dpdns.org
+      OUT: ${{ github.workspace }}/release-verify-out
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright (Chromium)
+        working-directory: deploy/release-verify
+        run: |
+          npm init -y >/dev/null
+          npm install --no-save --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Verify
+        working-directory: deploy/release-verify
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          RUM_VISITS: ${{ inputs.rum_visits }}
+        run: |
+          set -uo pipefail
+          # The script travels over stdin into a temp file (not `bash -s`:
+          # `docker compose exec -T` inside it would read the rest of it).
+          remote() {
+            ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" $1 </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh
+          }
+          rc=0
+          echo "== Server facts"
+          facts=$(remote facts) || rc=1
+          printf '%s\n' "$facts"
+          EXPECT_SSR=$(printf '%s\n' "$facts" | sed -n 's/^INFO  ATLAS_SSR=//p' | head -1)
+          ACADEMY_HOSTS=$(remote hosts | sed -n 's/^host|//p' | paste -sd, -)
+          echo "INFO  checking ${ACADEMY_HOSTS:+$(printf '%s' "$ACADEMY_HOSTS" | tr ',' '\n' | grep -c .)} published Academy host(s)"
+          before=$(remote rum | cut -d'|' -f2)
+          EXPECT_SSR="$EXPECT_SSR" ACADEMY_HOSTS="$ACADEMY_HOSTS" node verify.mjs || rc=1
+          if [ "${RUM_VISITS}" != "0" ]; then
+            # Prometheus scrapes every 30 s; give it two intervals.
+            sleep 70
+            after=$(remote rum | cut -d'|' -f2)
+            echo "INFO  RUM samples in Prometheus: before=${before:-0} after=${after:-0}"
+            if awk -v a="${after:-0}" -v b="${before:-0}" 'BEGIN{exit !(a>b)}'; then
+              echo "PASS  the visits' RUM samples were received and stored (Prometheus, 15-day retention)"
+            else
+              echo "FAIL  no new RUM samples in Prometheus"; rc=1
+            fi
+          fi
+          exit $rc
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verify
+          path: ${{ env.OUT }}
+          retention-days: 14
+          if-no-files-found: ignore

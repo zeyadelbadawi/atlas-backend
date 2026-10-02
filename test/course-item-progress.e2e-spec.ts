@@ -264,6 +264,37 @@ describe('Course item progress (e2e)', () => {
     expect(enrollment.progress!.completionState).not.toBe('completed');
   });
 
+  it('a lesson published after enrollment updates the item counts, not just the lesson counts', async () => {
+    const { course, quizzes, student } = await seedCourseWith('items-added', 1, 1);
+    const firstLesson = await admin.courseLesson.findFirstOrThrow({
+      where: { courseId: course.id },
+    });
+    await post(student.token, `/courses/${course.id}/progress/complete-lesson`, {
+      lessonId: firstLesson.id,
+    }).expect(201);
+    await pass(student.token, course.id, quizzes[0]);
+    let enrollment = await myEnrollment(student.token, course.id);
+    expect(enrollment.progress).toMatchObject({ totalItems: 2, completedItems: 2 });
+
+    // The author publishes a second lesson; the learner's next progress
+    // write (re-completing a done lesson is a no-op) materialises it.
+    await seedCourseLesson(admin, firstLesson.sectionId, course.id, 'Lesson 2', 1, {
+      status: 'published',
+    });
+    await post(student.token, `/courses/${course.id}/progress/complete-lesson`, {
+      lessonId: firstLesson.id,
+    }).expect(201);
+    enrollment = await myEnrollment(student.token, course.id);
+    expect(enrollment.progress).toMatchObject({
+      totalLessons: 2,
+      completedLessons: 1,
+      totalItems: 3,
+      completedItems: 2,
+      percentage: expect.closeTo(66.67, 1),
+    });
+    expect(enrollment.progress!.completionState).not.toBe('completed');
+  });
+
   it('a lesson-only course is unchanged: items are its lessons', async () => {
     const { academy, course, student } = await seedCourseWith('items-lessons', 3, 0);
     const enrollment = await myEnrollment(student.token, course.id);
