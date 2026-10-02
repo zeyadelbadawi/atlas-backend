@@ -146,6 +146,9 @@ jobs:
           resend_webhook_secret: ${{ secrets.RESEND_WEBHOOK_SECRET }}
           alert_slack_webhook_url: ${{ secrets.ALERT_SLACK_WEBHOOK_URL }}
           platform_web_url: ${{ vars.PLATFORM_WEB_URL }}
+          # Real-user monitoring is on unless the repository variable says
+          # otherwise (set RUM_ENABLED=false to switch it off at the next deploy).
+          rum_enabled: ${{ vars.RUM_ENABLED || 'true' }}
           # P64 rollout flags come from repository VARIABLES (Settings →
           # Variables), one per line; unset ones are dropped by the action.
           feature_flags: |
@@ -227,6 +230,9 @@ jobs:
           resend_webhook_secret: ${{ secrets.RESEND_WEBHOOK_SECRET }}
           alert_slack_webhook_url: ${{ secrets.ALERT_SLACK_WEBHOOK_URL }}
           platform_web_url: ${{ vars.PLATFORM_WEB_URL }}
+          # Real-user monitoring is on unless the repository variable says
+          # otherwise (set RUM_ENABLED=false to switch it off at the next deploy).
+          rum_enabled: ${{ vars.RUM_ENABLED || 'true' }}
           # P64 rollout flags come from repository VARIABLES (Settings →
           # Variables), one per line; unset ones are dropped by the action.
           feature_flags: |
