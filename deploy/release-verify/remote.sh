@@ -32,7 +32,7 @@ count_json() { docker compose exec -T backend node -e "let s='';process.stdin.on
 case "${1:-}" in
   facts)
     echo "== Migrations"
-    for m in 20261102000000_website_published_snapshots 20261102000100_course_progress_item_counts 20261102000200_payment_instructions_snapshot; do
+    for m in 20261102000000_website_published_snapshots 20261102000100_course_progress_item_counts 20261102000200_payment_instructions_snapshot 20261102000300_payment_method_instapay 20261102000400_egypt_manual_payment_placeholders; do
       state=$(sql "select coalesce((select case when finished_at is not null and rolled_back_at is null then 'applied' else 'unfinished' end from _prisma_migrations where migration_name='$m'), 'absent')")
       if [ "$state" = applied ]; then pass "$m applied"; else fail "$m $state"; fi
     done
@@ -78,10 +78,19 @@ case "${1:-}" in
     echo "== Bank Transfer (configuration state only)"
     IFS='|' read -r _ all en conf <<< "$(sql "select 'bank_methods', count(*), count(*) filter (where enabled), count(*) filter (where enabled and manual_instructions is not null) from payment_methods where type='manual_bank_transfer'")"
     info "bank transfer methods: $all, enabled: $en, enabled with instructions: $conf"
+    IFS='|' read -r _ ph phen <<< "$(sql "select 'placeholders', count(*), count(*) filter (where enabled) from payment_methods where manual_instructions->>'placeholder' = 'true'")"
+    if [ "${phen:-1}" = 0 ]; then pass "placeholder payment methods: $ph, none enabled"; else fail "placeholder payment methods enabled: $phen of $ph"; fi
+    sql "select 'manual_methods', type, count(*), count(*) filter (where enabled) from payment_methods where type::text like 'manual_%' group by type order by type" | while IFS='|' read -r _ t n e; do info "$t: $n configured, $e enabled"; done
     IFS='|' read -r _ y all <<< "$(sql "select 'plans_yearly', count(*) filter (where pricing ? 'yearlyAmount'), count(*) from plans")"
     info "plans with a yearly price: $y of $all"
     IFS='|' read -r _ s all <<< "$(sql "select 'payments_snapshot', count(*) filter (where instructions_snapshot is not null), count(*) from payments")"
     info "payments with an instructions snapshot: $s of $all"
+
+    echo "== Website messages and favicons (counts only)"
+    IFS='|' read -r _ msgs newmsgs <<< "$(sql "select 'contact', count(*), count(*) filter (where status='new') from contact_submissions")"
+    info "contact submissions stored: $msgs (new: $newmsgs)"
+    IFS='|' read -r _ fav <<< "$(sql "select 'favicons', count(*) from academies where coalesce(favicon_url,'') <> '' and archived_at is null")"
+    info "academies with a favicon: $fav"
 
     echo "== Result: $FAILS failing check(s)"
     [ "$FAILS" = 0 ]

@@ -80,7 +80,14 @@ for (const host of HOSTS) {
     const cc = res.headers.get('cache-control') ?? '';
     const dir = res.body.match(/<html[^>]*\sdir="(rtl|ltr)"/)?.[1];
     check(res.status === 200, `${url} -> ${res.status}`);
+    // Never the platform's title or description on an Academy's site.
+    const title = res.body.match(/<title>([^<]*)<\/title>/)?.[1] ?? '';
     if (EXPECT_SSR) {
+      check(title && title !== 'Atlas', `${url} server title "${title}" is the Academy's`);
+      check(
+        !res.body.includes('The operating system for education businesses.'),
+        `${url} server HTML carries no Atlas description`
+      );
       check(ssr === 'render' || ssr === 'hit', `${url} X-Atlas-SSR: ${ssr ?? '<none>'}`);
       check(/private/.test(cc) && /no-cache/.test(cc), `${url} rendered page Cache-Control "${cc}"`);
       check(
@@ -125,6 +132,20 @@ if (HOSTS[0]) {
     check(res?.status() === 200, `${locale.toUpperCase()} page loads (${res?.status()})`);
     check(dir === (locale === 'ar' ? 'rtl' : 'ltr'), `${locale.toUpperCase()} html dir="${dir}"`);
     check(errors.length === 0, `${locale.toUpperCase()} no uncaught page errors (${errors.length})`);
+    const docTitle = await page.title();
+    check(docTitle !== 'Atlas', `${locale.toUpperCase()} browser title "${docTitle}" is the Academy's`);
+    const icons = await page
+      .locator('head link[rel~="icon"]')
+      .evaluateAll((links) => links.map((l) => l.getAttribute('href')));
+    info(`${locale.toUpperCase()} icon links: ${JSON.stringify(icons)}`);
+    check(icons.length === 1, `${locale.toUpperCase()} exactly one favicon link`);
+    if (icons[0]?.includes('/favicon?v=')) {
+      const icon = await page.request.get(new URL(icons[0], page.url()).toString());
+      check(
+        icon.status() === 200 && /^image\//.test(icon.headers()['content-type'] ?? ''),
+        `${locale.toUpperCase()} Academy favicon served (${icon.status()} ${icon.headers()['content-type']})`
+      );
+    }
     await page.screenshot({ path: `${OUT}/public-${locale}.png`, fullPage: true });
     await context.close();
   }
