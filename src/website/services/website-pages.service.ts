@@ -35,6 +35,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { WebsiteConfigurationRepository } from '../repositories/website-configuration.repository';
 import { WebsitePagesRepository } from '../repositories/website-pages.repository';
 import { WebsiteBootstrapService } from './website-bootstrap.service';
 import { SectionReferenceValidatorService } from './section-reference-validator.service';
@@ -42,7 +43,7 @@ import { StaleResourceVersionException } from '../../concurrency/errors/stale-re
 import { EditingPresenceService } from '../../concurrency/services/editing-presence.service';
 import type { EditingParticipant } from '../../concurrency/services/editing-presence.service';
 import {
-  toWebsitePageResponse,
+  toManagedWebsitePageResponse,
   type WebsitePageResponse,
 } from '../dto/website-page.contract';
 import type { CreateWebsitePageDto } from '../dto/create-website-page.dto';
@@ -75,6 +76,7 @@ export class WebsitePagesService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly sectionReferenceValidatorService: SectionReferenceValidatorService,
     private readonly editingPresenceService: EditingPresenceService,
+    private readonly websiteConfigurationRepository: WebsiteConfigurationRepository,
   ) {}
 
   private async assertCanManage(
@@ -139,7 +141,7 @@ export class WebsitePagesService {
       );
 
     return {
-      items: items.map(toWebsitePageResponse),
+      items: items.map(toManagedWebsitePageResponse),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
     };
   }
@@ -160,7 +162,7 @@ export class WebsitePagesService {
       },
     );
     if (!page) throw new NotFoundException({ messageKey: 'errors.notFound' });
-    return toWebsitePageResponse(page);
+    return toManagedWebsitePageResponse(page);
   }
 
   async create(
@@ -189,7 +191,7 @@ export class WebsitePagesService {
             seo: {},
             sections: [],
           });
-          return toWebsitePageResponse(created);
+          return toManagedWebsitePageResponse(created);
         } catch (error) {
           if (isUniqueConstraintViolation(error)) {
             throw new ConflictException({ messageKey: 'errors.website.slugTaken' });
@@ -365,7 +367,7 @@ export class WebsitePagesService {
             });
           }
 
-          return toWebsitePageResponse(updated);
+          return toManagedWebsitePageResponse(updated);
         } catch (error) {
           if (isUniqueConstraintViolation(error)) {
             throw new ConflictException({ messageKey: 'errors.website.slugTaken' });
@@ -514,8 +516,77 @@ export class WebsitePagesService {
 
         const updated = await this.websitePagesRepository.update(tx, pageId, {
           sections: reordered as unknown as Prisma.InputJsonValue,
+          // A reorder is an edit like any other: it must count as an
+          // unpublished change and invalidate a stale editor's version.
+          version: { increment: 1 },
         });
-        return toWebsitePageResponse(updated);
+        return toManagedWebsitePageResponse(updated);
+      },
+    );
+  }
+
+  /**
+   * Publish ONE page: its working copy becomes what visitors see, without
+   * republishing the rest of the website. Same authorization as publishing
+   * the whole website. The `configVersion` bump changes every public cache
+   * key (Redis, SSR render cache), so the published page is served on the
+   * next request — not after a cache TTL.
+   *
+   * On a website that is not published yet this only records the page's
+   * published copy; nothing becomes public until the website is published.
+   */
+  async publish(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    pageId: string,
+  ): Promise<WebsitePageResponse> {
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+        await this.websiteConfigurationRepository.lockForPublish(tx, academyId);
+        const existing = await this.websitePagesRepository.findById(
+          tx,
+          academyId,
+          pageId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        const clash = await this.websitePagesRepository.findPublishedSlugClash(
+          tx,
+          academyId,
+          pageId,
+          existing.slug,
+        );
+        if (clash) {
+          throw new ConflictException({
+            messageKey: 'errors.website.publishedSlugTaken',
+            details: { pageId: clash.id, title: clash.title },
+          });
+        }
+
+        const copied = await this.websitePagesRepository.publish(tx, academyId, {
+          id: pageId,
+          slug: existing.slug,
+          version: existing.version,
+        });
+        if (copied === 0) {
+          // Saved by someone else between the read above and the copy.
+          throw new ConflictException({
+            messageKey: 'errors.website.pageChangedDuringPublish',
+          });
+        }
+        await this.websiteConfigurationRepository.update(tx, academyId, {
+          configVersion: { increment: 1 },
+        });
+        const published = await this.websitePagesRepository.findById(
+          tx,
+          academyId,
+          pageId,
+        );
+        return toManagedWebsitePageResponse(published!);
       },
     );
   }

@@ -5,7 +5,8 @@
  * always explicit, never inferred (master plan §24).
  */
 import { Injectable } from '@nestjs/common';
-import type { Prisma, WebsiteCorePageType, WebsitePage } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { WebsiteCorePageType, WebsitePage } from '@prisma/client';
 
 export interface WebsitePageListFilter {
   readonly search?: string;
@@ -52,20 +53,99 @@ export class WebsitePagesRepository {
    * calling this — a page's own `visible` flag is independent of, and
    * insufficient on its own to prove, whole-website publication.
    */
-  findAllPublished(
+  async findAllPublished(
     tx: Prisma.TransactionClient,
     academyId: string,
   ): Promise<WebsitePage[]> {
-    return tx.websitePage.findMany({ where: { academyId, visible: true } });
+    const rows = await tx.websitePage.findMany({
+      where: {
+        academyId,
+        publishedVisible: true,
+        publishedSections: { not: Prisma.DbNull },
+      },
+    });
+    return rows.map(asPublishedPage);
   }
 
   /** The public runtime's single-page eligibility query — same `visible: true` WHERE-clause discipline as `findAllPublished`. `null` for a hidden page exactly the same way as a nonexistent slug — see that method's own doc comment. */
-  findPublishedBySlug(
+  async findPublishedBySlug(
     tx: Prisma.TransactionClient,
     academyId: string,
     slug: string,
   ): Promise<WebsitePage | null> {
-    return tx.websitePage.findFirst({ where: { academyId, slug, visible: true } });
+    const row = await tx.websitePage.findFirst({
+      where: {
+        academyId,
+        publishedSlug: slug,
+        publishedVisible: true,
+        publishedSections: { not: Prisma.DbNull },
+      },
+    });
+    return row ? asPublishedPage(row) : null;
+  }
+
+  /**
+   * Publish one page, or (no `pageId`) every page of the Academy: copy the
+   * working copy into the published columns in one statement.
+   */
+  /**
+   * Copies the working copy into the published columns — every page of the
+   * Academy, or one page. For one page, `expected` pins the slug and version
+   * the caller checked: an edit saved in between makes this a no-op (0),
+   * never a publish of something nobody checked.
+   */
+  async publish(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    page?: { readonly id: string; readonly slug: string; readonly version: number },
+  ): Promise<number> {
+    return page
+      ? tx.$executeRaw`
+          UPDATE "website_pages" SET
+            "published_title" = "title", "published_slug" = "slug",
+            "published_visible" = "visible", "published_seo" = "seo",
+            "published_sections" = "sections", "published_version" = "version",
+            "published_at" = CURRENT_TIMESTAMP
+          WHERE "academy_id" = ${academyId} AND "id" = ${page.id}
+            AND "slug" = ${page.slug} AND "version" = ${page.version}`
+      : tx.$executeRaw`
+          UPDATE "website_pages" SET
+            "published_title" = "title", "published_slug" = "slug",
+            "published_visible" = "visible", "published_seo" = "seo",
+            "published_sections" = "sections", "published_version" = "version",
+            "published_at" = CURRENT_TIMESTAMP
+          WHERE "academy_id" = ${academyId}`;
+  }
+
+  /**
+   * Another page already live at `slug`. Draft slugs are unique, published
+   * ones are only unique if pages are published together — renaming page A
+   * away from a slug and giving it to page B, then publishing only B, would
+   * otherwise put two live pages on one address.
+   */
+  findPublishedSlugClash(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    pageId: string,
+    slug: string,
+  ): Promise<{ id: string; title: string } | null> {
+    return tx.websitePage.findFirst({
+      where: { academyId, id: { not: pageId }, publishedSlug: slug },
+      select: { id: true, title: true },
+    });
+  }
+
+  /** Pages whose working copy differs from what is published. */
+  countWithUnpublishedChanges(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+  ): Promise<number> {
+    return tx.websitePage
+      .findMany({
+        where: { academyId },
+        select: { version: true, publishedVersion: true },
+      })
+      .then((rows) => rows.filter((row) => row.publishedVersion !== row.version).length);
   }
 
   /** Every page for an Academy, unpaginated — used for reference validation (navigation/CTA `pageId` existence checks) where a full in-memory id set is the simplest correct approach. */
@@ -150,4 +230,16 @@ export class WebsitePagesRepository {
   delete(tx: Prisma.TransactionClient, id: string): Promise<WebsitePage> {
     return tx.websitePage.delete({ where: { id } });
   }
+}
+
+/** The page as the public sees it: its published copy in place of the working copy. */
+export function asPublishedPage(row: WebsitePage): WebsitePage {
+  return {
+    ...row,
+    title: row.publishedTitle ?? row.title,
+    slug: row.publishedSlug ?? row.slug,
+    visible: row.publishedVisible ?? false,
+    seo: (row.publishedSeo ?? row.seo) as Prisma.JsonValue,
+    sections: (row.publishedSections ?? row.sections) as Prisma.JsonValue,
+  };
 }
