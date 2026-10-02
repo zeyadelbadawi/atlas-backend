@@ -416,6 +416,27 @@ export async function seedQuizQuestionOption(
 }
 
 /** P12 — `payment_methods` is a platform-owned catalog table (mirrors `seedPlan`/`seedAddOn`'s exact precedent) — no write endpoint exists. */
+/**
+ * Gives ONE Organization its own commission rate, so a suite that takes an
+ * Atlas Payments payment does not depend on the platform-wide default — a
+ * global value only some other suite sets (and a fresh database lacks).
+ */
+export async function seedOrganizationCommission(
+  admin: PrismaClient,
+  organizationId: string,
+  basisPoints = 1000,
+) {
+  return admin.organizationCommissionSettings.upsert({
+    where: { organizationId },
+    create: {
+      organizationId,
+      commissionMode: 'custom',
+      customPercentageBasisPoints: basisPoints,
+    },
+    update: { commissionMode: 'custom', customPercentageBasisPoints: basisPoints },
+  });
+}
+
 export async function seedPaymentMethod(
   admin: PrismaClient,
   keyLabel: string,

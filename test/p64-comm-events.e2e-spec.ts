@@ -42,6 +42,7 @@ import {
   seedEnrollment,
   seedOrganizationWithOwner,
   seedPaymentMethod,
+  seedOrganizationCommission,
 } from './utils/db-admin';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { CommunicationService } from '../src/communications/services/communication.service';
@@ -605,6 +606,7 @@ describe('P64 Communications C3 — new transactional events and digests (e2e)',
         .set(owner.auth)
         .send({ paymentCollectionMode: 'atlas_payments' })
         .expect(200);
+      await seedOrganizationCommission(admin, org.id);
       const method = await seedPaymentMethod(admin, 'c3-proof-method');
       const student = await account('c3-proof-student');
 
