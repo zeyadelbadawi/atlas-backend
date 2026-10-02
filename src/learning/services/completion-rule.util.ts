@@ -9,6 +9,15 @@
  * The default rule is exactly the pre-Phase-3 behaviour: every lesson
  * completed and nothing else — because no quiz or assignment is marked
  * `required_for_completion` until an author says so.
+ *
+ * A COURSE WITH NO LESSONS (2 Oct 2026). "Every lesson and nothing else"
+ * left a quiz-only or assignment-only course impossible to complete — no
+ * lessons, nothing required, and a course with nothing required is never
+ * complete. When a course has no lessons and its author marked nothing as
+ * required, its published quizzes and assignments ARE the course: each
+ * must be passed / graded, exactly as if marked required. The rule's own
+ * switches still apply (`requiredQuizzes: false` leaves quizzes out), and
+ * the moment anything is marked required, only the marked items count.
  */
 
 export interface CompletionRule {
@@ -131,9 +140,16 @@ export function evaluateCompletion(
     });
   }
 
+  // Nothing marked required in a course without lessons: every published
+  // quiz and assignment is what completing it means (see the header).
+  const nothingMarked =
+    !quizzes.some((quiz) => quiz.required) &&
+    !assignments.some((assignment) => assignment.required);
+  const implicitItems = lessons.total === 0 && nothingMarked;
+
   // Required quizzes.
   const requiredQuizzes = rule.requiredQuizzes
-    ? quizzes.filter((quiz) => quiz.required)
+    ? quizzes.filter((quiz) => quiz.required || implicitItems)
     : [];
   for (const quiz of requiredQuizzes) {
     if (quiz.passed) continue;
@@ -147,7 +163,7 @@ export function evaluateCompletion(
 
   // Required assignments.
   const requiredAssignments = rule.requiredAssignments
-    ? assignments.filter((assignment) => assignment.required)
+    ? assignments.filter((assignment) => assignment.required || implicitItems)
     : [];
   for (const assignment of requiredAssignments) {
     if (assignment.graded) continue;

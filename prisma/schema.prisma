@@ -1767,6 +1767,14 @@ model CourseProgress {
   completedAt  DateTime? @map("completed_at")
   overallScore Decimal?  @map("overall_score") @db.Decimal(5, 2)
 
+  /// The whole sequence the learner works through — published lessons,
+  /// quizzes and assignments — and how many are finished (a completed
+  /// lesson, a passed or awaiting-grade quiz, a submitted assignment). What
+  /// `percentage` is computed from; lesson counts alone say "0 of 0" for a
+  /// quiz-only course.
+  totalItems     Int @default(0) @map("total_items")
+  completedItems Int @default(0) @map("completed_items")
+
   @@map("course_progress")
 }
 

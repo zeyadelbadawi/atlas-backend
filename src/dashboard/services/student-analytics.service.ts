@@ -132,7 +132,7 @@ export class StudentAnalyticsService {
     let started = 0;
     let completed = 0;
     for (const enrollment of enrollments) {
-      if ((enrollment.progress?.completedLessons ?? 0) > 0) started += 1;
+      if ((enrollment.progress?.completedItems ?? 0) > 0) started += 1;
       if (enrollment.progress?.completionState === 'completed') completed += 1;
     }
     return { enrolled: enrollments.length, started, completed };
@@ -207,9 +207,10 @@ export class StudentAnalyticsService {
 
       const reasons: AtRiskReason[] = [];
       const completedLessons = enrollment.progress?.completedLessons ?? 0;
+      const completedItems = enrollment.progress?.completedItems ?? 0;
       const lastProgressAt = enrollment.progress?.updatedAt ?? null;
 
-      if (completedLessons === 0) {
+      if (completedItems === 0) {
         // Nothing finished yet — only a concern once they have had time.
         if (enrollment.enrolledAt && enrollment.enrolledAt < cutoff) {
           reasons.push('no_progress');
@@ -232,6 +233,8 @@ export class StudentAnalyticsService {
         academyId: enrollment.academyId,
         completedLessons,
         totalLessons: enrollment.progress?.totalLessons ?? 0,
+        completedItems,
+        totalItems: enrollment.progress?.totalItems ?? 0,
         lastProgressAt: lastProgressAt?.toISOString() ?? null,
         reasons,
       });

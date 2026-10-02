@@ -304,6 +304,10 @@ export class CourseCompletionService {
       // so every recompute (lesson complete, quiz finalize, assignment submit
       // or grade) keeps it live.
       percentage: evaluated.itemProgress.percentage,
+      // …and the counts it is computed from, so no surface has to show a
+      // percentage beside lesson-only counts ("0 of 0" for a quiz course).
+      totalItems: evaluated.itemProgress.total,
+      completedItems: evaluated.itemProgress.completed,
     };
     const updated = await tx.courseProgress.updateMany({
       where: { enrollmentId: enrollment.id },

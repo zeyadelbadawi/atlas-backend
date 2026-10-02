@@ -109,6 +109,87 @@ describe('completion rule — evaluator', () => {
     expect(result.completed).toBe(true);
   });
 
+  describe('a course with no lessons (quiz-only / assignment-only)', () => {
+    const none = { total: 0, completed: 0 };
+
+    it('with nothing marked required, every published quiz must be passed', () => {
+      const quizzes = [
+        quiz({ quizId: 'q1', required: false, passed: true, effectiveScore: 90 }),
+        quiz({ quizId: 'q2', required: false }),
+      ];
+      const open = evaluateCompletion(DEFAULT_COMPLETION_RULE, none, quizzes, []);
+      expect(open.completed).toBe(false);
+      expect(open.missing).toEqual([
+        { kind: 'quiz_not_passed', id: 'q2', title: 'Quiz 1.2', detail: null },
+      ]);
+      const done = evaluateCompletion(
+        DEFAULT_COMPLETION_RULE,
+        none,
+        [
+          quizzes[0],
+          quiz({ quizId: 'q2', required: false, passed: true, effectiveScore: 70 }),
+        ],
+        [],
+      );
+      expect(done.completed).toBe(true);
+      expect(done.overallScore).toBe(80);
+    });
+
+    it('with nothing marked required, every published assignment must be graded', () => {
+      const submitted = evaluateCompletion(
+        DEFAULT_COMPLETION_RULE,
+        none,
+        [],
+        [assignment({ required: false, submitted: true })],
+      );
+      expect(submitted.completed).toBe(false);
+      expect(submitted.missing[0].kind).toBe('assignment_not_graded');
+      expect(
+        evaluateCompletion(
+          DEFAULT_COMPLETION_RULE,
+          none,
+          [],
+          [assignment({ required: false, submitted: true, graded: true, score: 60 })],
+        ).completed,
+      ).toBe(true);
+    });
+
+    it('once anything is marked required, only the marked items count', () => {
+      const result = evaluateCompletion(
+        DEFAULT_COMPLETION_RULE,
+        none,
+        [
+          quiz({ quizId: 'q1', required: true, passed: true }),
+          quiz({ quizId: 'q2', required: false }),
+        ],
+        [],
+      );
+      expect(result.completed).toBe(true);
+    });
+
+    it("respects the rule's own switch: requiredQuizzes off leaves quizzes out", () => {
+      const result = evaluateCompletion(
+        { ...DEFAULT_COMPLETION_RULE, requiredQuizzes: false },
+        none,
+        [quiz({ required: false, passed: true })],
+        [],
+      );
+      // Nothing left that the rule counts: an empty course is never complete.
+      expect(result.completed).toBe(false);
+    });
+
+    it('a course with lessons keeps optional quizzes optional', () => {
+      expect(
+        evaluateCompletion(
+          DEFAULT_COMPLETION_RULE,
+          { total: 2, completed: 2 },
+          [quiz({ required: false })],
+          [],
+        ).completed,
+      ).toBe(true);
+    });
+  });
+
   it('a required assignment must be graded; the overall score averages required items', () => {
     const notSubmitted = evaluateCompletion(
       DEFAULT_COMPLETION_RULE,

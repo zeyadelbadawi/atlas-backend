@@ -498,13 +498,17 @@ export class PublicWebsiteService {
     );
 
     const ids = items.map((course) => course.id);
-    const [{ sectionCounts, lessonCounts }, aggregates] =
-      await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
-        Promise.all([
-          this.coursesRepository.countSectionsAndLessonsBatch(tx, ids),
-          this.coursesRepository.catalogAggregatesBatch(tx, ids),
-        ]),
-      );
+    const [
+      { sectionCounts, lessonCounts },
+      aggregates,
+      { quizCounts, assignmentCounts },
+    ] = await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+      Promise.all([
+        this.coursesRepository.countSectionsAndLessonsBatch(tx, ids),
+        this.coursesRepository.catalogAggregatesBatch(tx, ids),
+        this.coursesRepository.countPublishedAssessmentsBatch(tx, ids),
+      ]),
+    );
     const withStats = items.map((course) =>
       toCourseResponse(course, {
         totalSections: sectionCounts.get(course.id) ?? 0,
@@ -513,6 +517,8 @@ export class PublicWebsiteService {
         hasPreview: aggregates.hasPreview.has(course.id),
         averageRating: aggregates.ratings.get(course.id)?.average ?? 0,
         totalReviews: aggregates.ratings.get(course.id)?.total ?? 0,
+        totalQuizzes: quizCounts.get(course.id) ?? 0,
+        totalAssignments: assignmentCounts.get(course.id) ?? 0,
       }),
     );
 
@@ -553,12 +559,13 @@ export class PublicWebsiteService {
           courseId,
         );
         if (!course) return null;
-        const [totalSections, totalLessons, aggregates] = await Promise.all([
+        const [totalSections, totalLessons, aggregates, assessments] = await Promise.all([
           this.coursesRepository.countSections(tx, course.id),
           this.coursesRepository.countLessons(tx, course.id),
           this.coursesRepository.catalogAggregatesBatch(tx, [course.id]),
+          this.coursesRepository.countPublishedAssessmentsBatch(tx, [course.id]),
         ]);
-        return { course, totalSections, totalLessons, aggregates };
+        return { course, totalSections, totalLessons, aggregates, assessments };
       },
     );
     if (!result) return null;
@@ -571,6 +578,8 @@ export class PublicWebsiteService {
       hasPreview: aggregates.hasPreview.has(course.id),
       averageRating: aggregates.ratings.get(course.id)?.average ?? 0,
       totalReviews: aggregates.ratings.get(course.id)?.total ?? 0,
+      totalQuizzes: result.assessments.quizCounts.get(course.id) ?? 0,
+      totalAssignments: result.assessments.assignmentCounts.get(course.id) ?? 0,
     });
   }
 

@@ -29,6 +29,9 @@ export interface CourseProgressResponse {
   readonly courseId: string;
   readonly totalLessons: number;
   readonly completedLessons: number;
+  /** Lessons, quizzes and assignments together — what `percentage` is computed from. */
+  readonly totalItems: number;
+  readonly completedItems: number;
   readonly percentage: number;
   readonly currentLessonId?: string;
   readonly sections: readonly SectionProgressResponse[];
@@ -83,6 +86,8 @@ export function toCourseProgressResponse(
     courseId,
     totalLessons: courseProgress.totalLessons,
     completedLessons: courseProgress.completedLessons,
+    totalItems: courseProgress.totalItems,
+    completedItems: courseProgress.completedItems,
     percentage: Number(courseProgress.percentage),
     currentLessonId: courseProgress.currentLessonId ?? undefined,
     sections: toSectionProgressResponses(lessonProgressRows),

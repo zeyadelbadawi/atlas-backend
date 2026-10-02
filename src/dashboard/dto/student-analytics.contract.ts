@@ -15,8 +15,10 @@
  *               (i.e. a real seat; `available`/`pending`/`unavailable`
  *               are not enrolments a student actually holds).
  *   started   = of those, the ones whose materialized `CourseProgress`
- *               reports `completedLessons > 0`. "Started" deliberately
- *               means a completed lesson, not merely opening the course:
+ *               reports `completedItems > 0` — a completed lesson, a passed
+ *               (or awaiting-grade) quiz or a submitted assignment, so a
+ *               quiz-only course counts too. "Started" deliberately means
+ *               finishing something, not merely opening the course:
  *               opening is not recorded anywhere, so any other definition
  *               would be invented.
  *   completed = of those, `CourseProgress.completionState = 'completed'`.
@@ -35,7 +37,7 @@
  * a heuristic. An enrolment is at risk when it is genuinely in progress
  * (status `enrolled`, `completionState` not `completed`) AND at least one
  * of these is true:
- *   'no_progress'  — `completedLessons = 0` and the enrolment is older
+ *   'no_progress'  — `completedItems = 0` and the enrolment is older
  *                    than `AT_RISK_INACTIVITY_DAYS`. The student took a
  *                    seat and has finished nothing since.
  *   'stalled'      — some progress exists, but `CourseProgress.updatedAt`
@@ -81,6 +83,9 @@ export interface AtRiskStudentResponse {
   readonly academyId: string;
   readonly completedLessons: number;
   readonly totalLessons: number;
+  /** Lessons, quizzes and assignments together. */
+  readonly completedItems: number;
+  readonly totalItems: number;
   /** Last time this enrolment's progress actually changed; `null` when no progress row exists yet. */
   readonly lastProgressAt: string | null;
   readonly reasons: readonly AtRiskReason[];

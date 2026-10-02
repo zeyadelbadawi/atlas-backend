@@ -406,6 +406,30 @@ export class CoursesRepository {
     };
   }
 
+  /** Published quizzes and assignments per course, in two grouped queries for a whole page. */
+  async countPublishedAssessmentsBatch(
+    tx: Prisma.TransactionClient,
+    courseIds: readonly string[],
+  ): Promise<{ quizCounts: Map<string, number>; assignmentCounts: Map<string, number> }> {
+    if (courseIds.length === 0) {
+      return { quizCounts: new Map(), assignmentCounts: new Map() };
+    }
+    const where = {
+      courseId: { in: courseIds as string[] },
+      status: 'published' as const,
+    };
+    const [quizGroups, assignmentGroups] = await Promise.all([
+      tx.quiz.groupBy({ by: ['courseId'], where, _count: { _all: true } }),
+      tx.assignment.groupBy({ by: ['courseId'], where, _count: { _all: true } }),
+    ]);
+    return {
+      quizCounts: new Map(quizGroups.map((group) => [group.courseId, group._count._all])),
+      assignmentCounts: new Map(
+        assignmentGroups.map((group) => [group.courseId, group._count._all]),
+      ),
+    };
+  }
+
   async countSectionsAndLessonsBatch(
     tx: Prisma.TransactionClient,
     courseIds: readonly string[],
