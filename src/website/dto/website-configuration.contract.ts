@@ -16,6 +16,14 @@ export interface WebsiteConfigurationResponse {
   readonly publishedAt?: string;
   readonly lastPublishError?: Record<string, unknown>;
   readonly updatedAt: string;
+  /**
+   * Management responses only: what is saved but not yet visible to
+   * visitors — the site-wide settings, and how many pages.
+   */
+  readonly unpublishedChanges?: {
+    readonly configuration: boolean;
+    readonly pages: number;
+  };
 }
 
 /**

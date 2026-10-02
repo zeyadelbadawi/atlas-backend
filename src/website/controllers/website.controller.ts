@@ -153,6 +153,21 @@ export class WebsiteController {
     );
   }
 
+  /** Publish one page's saved changes without republishing the whole website. */
+  @Post(':id/website/pages/:pageId/publish')
+  async publishPage(
+    @Req() request: Request,
+    @Param('pageId') pageId: string,
+  ): Promise<WebsitePageResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.websitePagesService.publish(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      pageId,
+    );
+  }
+
   /*
     Editing presence. A POST because it WRITES a session record and
     refreshes a TTL — it is not a cacheable read, and modelling it as a GET
