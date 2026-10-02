@@ -80,8 +80,9 @@ jobs:
           if [ "${RUM_VISITS}" != "0" ]; then
             # Prometheus scrapes every 30 s; give it two intervals.
             sleep 70
-            after=$(remote rum | cut -d'|' -f2)
-            echo "INFO  RUM samples in Prometheus: before=${before:-0} after=${after:-0}"
+            rum_after=$(remote rum)
+            after=$(printf '%s' "$rum_after" | cut -d'|' -f2)
+            echo "INFO  RUM samples in Prometheus: before=${before:-0} after=${after:-0} ($(printf '%s' "$rum_after" | cut -d'|' -f3))"
             if awk -v a="${after:-0}" -v b="${before:-0}" 'BEGIN{exit !(a>b)}'; then
               echo "PASS  the visits' RUM samples were received and stored (Prometheus, 15-day retention)"
             else

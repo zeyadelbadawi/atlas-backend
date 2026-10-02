@@ -106,13 +106,16 @@ case "${1:-}" in
          join subdomain_allocations s on s.academy_id=a.id and s.status='assigned'
          join website_configurations w on w.academy_id=a.id and w.status='published'
          where a.archived_at is null and a.status='active'
-         order by a.created_at limit 2" | { grep -v '^$' || true; } | sed 's/^/host|/'
+         order by (coalesce(a.favicon_url,'') <> '') desc, a.created_at limit 2" | { grep -v '^$' || true; } | sed 's/^/host|/'
     ;;
   rum)
-    total=$(prom '/api/v1/query?query=sum(atlas_rum_lcp_seconds_count)%2Bsum(atlas_rum_inp_seconds_count)%2Bsum(atlas_rum_cls_count)' \
-      | count_json "d.data.result.length?d.data.result[0].value[1]:0" 2>/dev/null)
-    lcp=$(prom '/api/v1/query?query=sum(atlas_rum_lcp_seconds_count)' | count_json "d.data.result.length?d.data.result[0].value[1]:0" 2>/dev/null)
-    echo "rum|${total:-0}|lcp=${lcp:-0}"
+    # One selector over the three histograms: `sum(a)+sum(b)` is EMPTY when
+    # any one has no series yet (INP needs an interaction), which read as 0.
+    q='/api/v1/query?query=sum(%7B__name__%3D~%22atlas_rum_(lcp_seconds%7Cinp_seconds%7Ccls)_count%22%7D)'
+    total=$(prom "$q" | count_json "d.data.result.length?d.data.result[0].value[1]:0" 2>/dev/null)
+    per=$(prom '/api/v1/query?query=sum%20by%20(__name__)(%7B__name__%3D~%22atlas_rum_(lcp_seconds%7Cinp_seconds%7Ccls)_count%22%7D)' \
+      | count_json "d.data.result.map(r=>r.metric.__name__.replace('atlas_rum_','').replace('_count','')+'='+r.value[1]).join(',')||'none'" 2>/dev/null)
+    echo "rum|${total:-0}|${per:-none}"
     ;;
   *) echo "usage: remote.sh facts|hosts|rum" >&2; exit 2 ;;
 esac
