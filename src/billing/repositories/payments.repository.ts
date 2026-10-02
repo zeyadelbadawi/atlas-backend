@@ -202,6 +202,47 @@ export class PaymentsRepository {
     return tx.payment.update({ where: { id }, data });
   }
 
+  /** Open (not yet settled) payments for one subscription checkout. */
+  findOpenForCheckout(
+    tx: Prisma.TransactionClient,
+    checkoutId: string,
+  ): Promise<Payment[]> {
+    return tx.payment.findMany({
+      where: {
+        checkoutId,
+        status: {
+          in: [
+            'created',
+            'pending',
+            'processing',
+            'requires_action',
+            'requires_confirmation',
+          ],
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /**
+   * Moves a payment out of `pending` review in ONE conditional write — the
+   * claim that makes a review happen once. Two reviewers (or a double
+   * click) approving at the same moment both read `pending`; only one of
+   * these updates matches, the other gets 0 and must refuse.
+   */
+  async claimPendingReview(
+    tx: Prisma.TransactionClient,
+    id: string,
+    reviewStatus: 'approved' | 'rejected',
+    reviewNotes: string | undefined,
+  ): Promise<boolean> {
+    const result = await tx.payment.updateMany({
+      where: { id, reviewStatus: 'pending' },
+      data: { reviewStatus, reviewNotes },
+    });
+    return result.count === 1;
+  }
+
   /** Phase P13 — the succeeded Payment for a CourseOrder, if one exists. A CourseOrder may have more than one Payment row (retried attempts after an earlier failure/rejection, mirroring `Checkout`'s own precedent) — this resolves the one that actually succeeded, needed by `CourseOrderRefundsService` to attach a refund to the correct Payment. */
   findSucceededForCourseOrder(
     tx: Prisma.TransactionClient,

@@ -14,6 +14,8 @@ export interface PlanPricingMetadataResponse {
   readonly amount?: number;
   readonly currency?: string;
   readonly billingCycle?: 'monthly' | 'yearly';
+  /** A whole year's price beside a monthly `amount`; absent when the plan has no yearly option. */
+  readonly yearlyAmount?: number;
 }
 
 /**

@@ -65,6 +65,18 @@ export class PlanPricingDto {
 
   @IsIn(['monthly', 'yearly'])
   readonly billingCycle!: 'monthly' | 'yearly';
+
+  /**
+   * Optional price for a whole year, offered beside a MONTHLY price (2 Oct
+   * 2026). Absent means the plan has no yearly option — the checkout then
+   * refuses a yearly request, exactly as before. Set only by the Platform
+   * Owner; a client never sends a price at checkout.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(10_000_000)
+  readonly yearlyAmount?: number;
 }
 
 /**

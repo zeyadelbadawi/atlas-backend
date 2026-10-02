@@ -1,6 +1,6 @@
 /** PaymentMethodsRepository — `payment_methods` is a PLATFORM-owned catalog table, no RLS, no tenant context (mirrors `PlansRepository`'s established precedent exactly). */
 import { Injectable } from '@nestjs/common';
-import type { PaymentMethod } from '@prisma/client';
+import type { PaymentMethod, Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 
 @Injectable()
@@ -66,5 +66,40 @@ export class PaymentMethodsRepository {
 
   findByKey(key: string): Promise<PaymentMethod | null> {
     return this.prisma.paymentMethod.findUnique({ where: { key } });
+  }
+
+  /** Every method, enabled or not — the Platform Owner's configuration list. */
+  async findManyPaginated(
+    skip: number,
+    take: number,
+  ): Promise<{ items: PaymentMethod[]; totalItems: number }> {
+    const [items, totalItems] = await Promise.all([
+      this.prisma.paymentMethod.findMany({
+        orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+        skip,
+        take,
+      }),
+      this.prisma.paymentMethod.count(),
+    ]);
+    return { items, totalItems };
+  }
+
+  findById(id: string): Promise<PaymentMethod | null> {
+    return this.prisma.paymentMethod.findUnique({ where: { id } });
+  }
+
+  create(
+    tx: Prisma.TransactionClient,
+    data: Prisma.PaymentMethodCreateInput,
+  ): Promise<PaymentMethod> {
+    return tx.paymentMethod.create({ data });
+  }
+
+  update(
+    tx: Prisma.TransactionClient,
+    id: string,
+    data: Prisma.PaymentMethodUpdateInput,
+  ): Promise<PaymentMethod> {
+    return tx.paymentMethod.update({ where: { id }, data });
   }
 }

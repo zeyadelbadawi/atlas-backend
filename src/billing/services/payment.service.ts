@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { CheckoutsRepository } from '../repositories/checkouts.repository';
 import { PaymentsRepository } from '../repositories/payments.repository';
@@ -85,6 +86,7 @@ export class PaymentService {
     // same transaction that records the proof, so a failed upload leaves
     // no confirmation of an upload that did not happen.
     private readonly communicationService: CommunicationService,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   /**
@@ -113,6 +115,13 @@ export class PaymentService {
     payload: CreatePaymentDto,
   ): Promise<PaymentResponse> {
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      // Serialize payment creation per checkout: a double click or two tabs
+      // must not create two open payments for one purchase.
+      await this.checkoutsRepository.lockForPayment(
+        tx,
+        organizationId,
+        payload.checkoutId,
+      );
       const checkout = await this.checkoutsRepository.findById(
         tx,
         organizationId,
@@ -133,6 +142,31 @@ export class PaymentService {
       const method = await this.paymentMethodsRepository.findByKey(payload.methodKey);
       if (!method || !method.enabled) {
         throw new NotFoundException({ messageKey: 'errors.payment.methodNotFound' });
+      }
+
+      // Idempotent: an open payment for this checkout with the same method
+      // IS the answer to a repeated request. One already awaiting review is
+      // never replaced; an open one with another method and no proof yet is
+      // cancelled in favour of the new choice.
+      const open = await this.paymentsRepository.findOpenForCheckout(tx, checkout.id);
+      for (const existing of open) {
+        if (existing.methodKey === method.key) {
+          const withRelations = await this.paymentsRepository.findById(
+            tx,
+            organizationId,
+            existing.id,
+          );
+          return toPaymentResponse(withRelations!);
+        }
+        if (existing.reviewStatus === 'pending') {
+          throw new ConflictException({
+            messageKey: 'errors.payment.alreadyUnderReview',
+            details: { paymentId: existing.id },
+          });
+        }
+      }
+      for (const existing of open) {
+        await this.paymentsRepository.update(tx, existing.id, { status: 'cancelled' });
       }
 
       const snapshot = checkout.snapshot as unknown as CheckoutSnapshotResponse;
@@ -159,6 +193,8 @@ export class PaymentService {
         reviewStatus: 'not_required',
         nextAction:
           (initialNextAction as Prisma.InputJsonValue | null) ?? Prisma.JsonNull,
+        instructionsSnapshot:
+          (method.manualInstructions as Prisma.InputJsonValue | null) ?? Prisma.JsonNull,
       });
 
       await this.paymentAttemptsRepository.create(tx, {
@@ -215,6 +251,7 @@ export class PaymentService {
     organizationId: string,
     paymentId: string,
     payload: SubmitPaymentProofDto,
+    actorUserId: string,
   ): Promise<PaymentResponse> {
     const { buffer } = parseDataUrl(payload.fileData, MAX_PAYMENT_PROOF_FILE_SIZE);
     const kind = detectFileKind(buffer);
@@ -270,6 +307,17 @@ export class PaymentService {
         await this.paymentsRepository.update(tx, paymentId, {
           reviewStatus: 'pending',
           nextAction: { type: 'awaiting_manual_review' },
+        });
+
+        // Who handed over which receipt, in the same transaction — the
+        // review trail starts here, not at the approval.
+        await this.auditLogWriterService.write(tx, {
+          actorUserId,
+          organizationId,
+          action: 'payment.proof_submitted',
+          targetType: 'payment',
+          targetId: paymentId,
+          context: { proofId: id, mimeType: kind.mimeType },
         });
 
         /*

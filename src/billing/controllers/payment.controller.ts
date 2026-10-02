@@ -22,6 +22,8 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
+import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
+import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { PaymentService } from '../services/payment.service';
@@ -72,11 +74,17 @@ export class PaymentController {
 
   @Patch(':id/payments/:paymentId/proof')
   async submitProof(
+    @CurrentAuthContext() auth: AuthContext,
     @Param('id') organizationId: string,
     @Param('paymentId') paymentId: string,
     @Body() payload: SubmitPaymentProofDto,
   ): Promise<PaymentResponse> {
-    return this.paymentService.submitProof(organizationId, paymentId, payload);
+    return this.paymentService.submitProof(
+      organizationId,
+      paymentId,
+      payload,
+      auth.userId,
+    );
   }
 
   @Post(':id/payments/:paymentId/cancel')

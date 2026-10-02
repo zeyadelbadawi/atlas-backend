@@ -3826,6 +3826,10 @@ model Payment {
   reviewNotes                       String?                @map("review_notes")
   /// Mirrors `PaymentNextAction` — a discriminated union, validated server-side, not schema-enforced.
   nextAction                        Json?                  @map("next_action")
+  /// The manual-transfer instructions the payer was shown when this payment
+  /// was created — kept with the payment so a later edit or disabling of
+  /// the method never changes what this payer was asked to do.
+  instructionsSnapshot              Json?                  @map("instructions_snapshot")
   providerReference                 String?                @map("provider_reference")
   expiresAt                         DateTime?              @map("expires_at")
   /// §4.1 snapshot — which payment-collection mode was effective for the

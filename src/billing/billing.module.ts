@@ -52,6 +52,8 @@ import { CheckoutController } from './controllers/checkout.controller';
 import { PaymentMethodsController } from './controllers/payment-methods.controller';
 import { PaymentController } from './controllers/payment.controller';
 import { PlatformPaymentController } from './controllers/platform-payment.controller';
+import { PlatformPaymentMethodsController } from './controllers/platform-payment-methods.controller';
+import { PlatformPaymentMethodsService } from './services/platform-payment-methods.service';
 import { PaymentWebhookController } from './controllers/payment-webhook.controller';
 import { OrganizationPaymentSettingsController } from './controllers/organization-payment-settings.controller';
 import { PlatformCommissionController } from './controllers/platform-commission.controller';
@@ -103,6 +105,7 @@ import { PublicWebsiteCacheService } from '../public-website/services/public-web
     PaymentMethodsController,
     PaymentController,
     PlatformPaymentController,
+    PlatformPaymentMethodsController,
     PaymentWebhookController,
     OrganizationPaymentSettingsController,
     PlatformCommissionController,
@@ -115,6 +118,7 @@ import { PublicWebsiteCacheService } from '../public-website/services/public-web
     CheckoutService,
     PaymentService,
     PlatformPaymentService,
+    PlatformPaymentMethodsService,
     PaymentApplicationService,
     PaymentWebhookService,
     OrganizationPaymentSettingsService,

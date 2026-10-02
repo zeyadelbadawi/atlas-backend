@@ -26,6 +26,7 @@ export type ManualPaymentInstructionsResponse =
       readonly accountName: string;
       readonly accountNumber: string;
       readonly iban?: string;
+      readonly swiftCode?: string;
       readonly instructions: string;
       readonly referenceInstructions: string;
     }
@@ -65,5 +66,23 @@ export function toPaymentMethodResponse(
     manualInstructions:
       (method.manualInstructions as unknown as ManualPaymentInstructionsResponse | null) ??
       undefined,
+  };
+}
+
+/** The Platform Owner's view: every method, enabled or not, with its ordering and timestamps. */
+export interface PlatformPaymentMethodResponse extends PaymentMethodResponse {
+  readonly displayOrder: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export function toPlatformPaymentMethodResponse(
+  method: PrismaPaymentMethod,
+): PlatformPaymentMethodResponse {
+  return {
+    ...toPaymentMethodResponse(method),
+    displayOrder: method.displayOrder,
+    createdAt: method.createdAt.toISOString(),
+    updatedAt: method.updatedAt.toISOString(),
   };
 }

@@ -12,6 +12,18 @@ export class CheckoutsRepository {
     return tx.checkout.findFirst({ where: { id, organizationId } });
   }
 
+  /** Row lock held to the end of the transaction — serializes payment creation for one checkout. */
+  async lockForPayment(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    id: string,
+  ): Promise<void> {
+    await tx.$queryRaw`
+      SELECT 1 FROM "checkouts"
+      WHERE "id" = ${id} AND "organization_id" = ${organizationId}
+      FOR UPDATE`;
+  }
+
   /** The exact lookup `createCheckout`'s idempotency-key replay safety depends on. */
   findByIdempotencyKey(
     tx: Prisma.TransactionClient,
