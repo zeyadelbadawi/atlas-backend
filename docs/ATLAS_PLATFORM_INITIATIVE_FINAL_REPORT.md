@@ -306,6 +306,8 @@ Checked and **not** caused by this initiative: an intermittent theme-baseline fa
 - **Curriculum reorder:** optional `expectedOrderedIds` returns 409 `stale_resource_version`; arrays capped at 1000.
 
 **Database.** Two additive migrations; no data rewritten or deleted.
+
+The migration IDs begin `20261103…`, which reads as 3 November 2026. They are ordering prefixes that continue after the previous release's `20261102…` migrations. Both were written, and applied in production, on **3 October 2026** (Deploy run 37126744365). The IDs are kept as applied.
 - `20261103000000_tenant_course_order_read_rls`: SELECT-only policies.
 - `20261103000100_platform_contact_submissions`: new table, two enums, two indexes, FORCE RLS.
 
