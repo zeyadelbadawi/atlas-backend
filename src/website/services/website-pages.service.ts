@@ -540,6 +540,7 @@ export class WebsitePagesService {
     organizationId: string,
     userId: string,
     pageId: string,
+    expectedVersion?: number,
   ): Promise<WebsitePageResponse> {
     return this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
@@ -554,6 +555,22 @@ export class WebsitePagesService {
           pageId,
         );
         if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        // Pinned publish (Task H): the publisher saw `expectedVersion`; a
+        // later save by someone else must not go live unseen.
+        if (expectedVersion !== undefined && expectedVersion !== existing.version) {
+          const editor = existing.updatedById
+            ? await tx.user.findUnique({
+                where: { id: existing.updatedById },
+                select: { name: true },
+              })
+            : null;
+          throw new StaleResourceVersionException({
+            submittedVersion: expectedVersion,
+            currentVersion: existing.version,
+            lastEditedByName: editor?.name,
+            lastEditedAt: existing.updatedAt.toISOString(),
+          });
+        }
         const clash = await this.websitePagesRepository.findPublishedSlugClash(
           tx,
           academyId,

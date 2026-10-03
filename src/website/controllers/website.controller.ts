@@ -29,6 +29,7 @@ import { WebsitePagesService } from '../services/website-pages.service';
 import type { EditingParticipant } from '../../concurrency/services/editing-presence.service';
 import { UpdateWebsiteConfigurationDto } from '../dto/update-website-configuration.dto';
 import { CreateWebsitePageDto } from '../dto/create-website-page.dto';
+import { PublishWebsitePageDto } from '../dto/publish-website-page.dto';
 import { UpdateWebsitePageDto } from '../dto/update-website-page.dto';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import { ReorderItemsDto } from '../../course/dto/reorder-items.dto';
@@ -158,6 +159,7 @@ export class WebsiteController {
   async publishPage(
     @Req() request: Request,
     @Param('pageId') pageId: string,
+    @Body() body: PublishWebsitePageDto,
   ): Promise<WebsitePageResponse> {
     const { academyId, organizationId } = request.academyContext!;
     return this.websitePagesService.publish(
@@ -165,6 +167,7 @@ export class WebsiteController {
       organizationId,
       request.authContext!.userId,
       pageId,
+      body?.expectedVersion,
     );
   }
 

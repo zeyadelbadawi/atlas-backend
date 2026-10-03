@@ -223,6 +223,52 @@ describe('Concurrent CMS editing (e2e)', () => {
    * nothing but the HTTP route reaches the service, and every Atlas caller
    * sends it.
    */
+  // --- G. Pinned publish (Task H) ------------------------------------------
+
+  it("G: a pinned publish refuses a colleague's later save instead of putting it live unseen", async () => {
+    const { owner, manager, academy, page } =
+      await seedSharedAcademy('cc-pinned-publish');
+    const loaded = await loadPage(academy.id, page.id, owner.accessToken);
+    const seenVersion = loaded.body.version;
+
+    // The manager saves after the owner loaded the page.
+    await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/pages/${page.id}`)
+      .set('Authorization', `Bearer ${manager.accessToken}`)
+      .send({ title: 'Manager edition', expectedVersion: seenVersion })
+      .expect(200);
+
+    const conflict = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/website/pages/${page.id}/publish`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ expectedVersion: seenVersion })
+      .expect(409);
+    expect(conflict.body.error.code).toBe('stale_resource_version');
+    expect(conflict.body.error.details.currentVersion).toBe(seenVersion + 1);
+
+    // Nothing was published by the refused request.
+    const after = await loadPage(academy.id, page.id, owner.accessToken);
+    expect(after.body.hasUnpublishedChanges).toBe(true);
+
+    // Publishing the version actually seen now succeeds and is pinned to it.
+    const published = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/website/pages/${page.id}/publish`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ expectedVersion: seenVersion + 1 })
+      .expect(201);
+    expect(published.body.hasUnpublishedChanges).toBe(false);
+    expect(published.body.version).toBe(seenVersion + 1);
+  });
+
+  it('G2: a publish without expectedVersion keeps its previous behaviour', async () => {
+    const { owner, academy, page } = await seedSharedAcademy('cc-unpinned-publish');
+    const published = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/website/pages/${page.id}/publish`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(201);
+    expect(published.body.hasUnpublishedChanges).toBe(false);
+  });
+
   it('a save that omits expectedVersion is refused, not silently applied', async () => {
     const { owner, academy, page } = await seedSharedAcademy('cc-legacy');
 
