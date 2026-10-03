@@ -34,7 +34,8 @@ import {
   collectSampleContent,
   type SampleContentEntry,
 } from '../utils/sample-content.util';
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { STALE_RESOURCE_VERSION_CODE } from '../../concurrency/errors/stale-resource-version.exception';
 import { Prisma } from '@prisma/client';
 import type { WebsiteConfiguration } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -171,10 +172,26 @@ export class WebsiteConfigurationService {
       userId,
       async (tx) => {
         await this.assertCanManage(tx, academyId, userId);
+        if (payload.expectedUpdatedAt !== undefined) {
+          // Held until commit, so two saves based on the same copy cannot
+          // both pass the check below.
+          await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+          await this.websiteConfigurationRepository.lockForPublish(tx, academyId);
+        }
         const current = await this.websiteBootstrapService.ensureConfiguration(
           tx,
           academyId,
         );
+        if (
+          payload.expectedUpdatedAt !== undefined &&
+          Date.parse(payload.expectedUpdatedAt) !== current.updatedAt.getTime()
+        ) {
+          throw new ConflictException({
+            code: STALE_RESOURCE_VERSION_CODE,
+            messageKey: 'errors.concurrency.staleVersion',
+            details: { currentUpdatedAt: current.updatedAt.toISOString() },
+          });
+        }
 
         const data: Prisma.WebsiteConfigurationUpdateInput = {};
 

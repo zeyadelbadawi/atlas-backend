@@ -269,6 +269,47 @@ describe('Concurrent CMS editing (e2e)', () => {
     expect(published.body.hasUnpublishedChanges).toBe(false);
   });
 
+  it("G3: a settings save based on an older copy is refused instead of replacing a colleague's navigation", async () => {
+    const { owner, manager, academy } = await seedSharedAcademy('cc-config-stale');
+    const configPath = `/academies/${academy.id}/website/configuration`;
+    const loaded = await request(app.getHttpServer())
+      .get(configPath)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    const seenAt: string = loaded.body.updatedAt;
+
+    // The manager changes the copyright line after the owner loaded the settings.
+    const managerSave = await request(app.getHttpServer())
+      .patch(configPath)
+      .set('Authorization', `Bearer ${manager.accessToken}`)
+      .send({
+        footer: { ...loaded.body.footer, copyrightText: { en: 'Manager', ar: '' } },
+        expectedUpdatedAt: seenAt,
+      })
+      .expect(200);
+
+    const stale = await request(app.getHttpServer())
+      .patch(configPath)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ footer: loaded.body.footer, expectedUpdatedAt: seenAt })
+      .expect(409);
+    expect(stale.body.error.code).toBe('stale_resource_version');
+    expect(stale.body.error.details.currentUpdatedAt).toBe(managerSave.body.updatedAt);
+
+    const after = await request(app.getHttpServer())
+      .get(configPath)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(after.body.footer.copyrightText.en).toBe('Manager');
+
+    // Based on the current copy, the save goes through.
+    await request(app.getHttpServer())
+      .patch(configPath)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ footer: after.body.footer, expectedUpdatedAt: after.body.updatedAt })
+      .expect(200);
+  });
+
   it('a save that omits expectedVersion is refused, not silently applied', async () => {
     const { owner, academy, page } = await seedSharedAcademy('cc-legacy');
 
