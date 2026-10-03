@@ -21,6 +21,7 @@
  * academy filter and RLS agree: the filter narrows to one academy, RLS
  * independently refuses anything that is not theirs.
  */
+import { deriveLearningState } from '../utils/learning-state.util';
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -111,6 +112,14 @@ export class LearnerDashboardService {
           nextItemId: row.progress?.currentLessonId ?? null,
           nextItemTitle: null,
           lastActivityAt: row.progress?.lastActivityAt?.toISOString() ?? null,
+          learningState: deriveLearningState(
+            row.progress
+              ? {
+                  ...row.progress,
+                  completedItems: itemsByCourseId.get(row.courseId)?.completed,
+                }
+              : null,
+          ),
         }));
 
       // The titles for the "Next: …" labels, in one query rather than one

@@ -93,10 +93,27 @@ export class EnrollmentsService {
     userId: string,
     courseId: string,
   ): Promise<EnrollmentResponse | null> {
-    const enrollment = await this.tenancyContextService.runInUserContext(userId, (tx) =>
-      this.enrollmentsRepository.findByStudentAndCourse(tx, userId, courseId),
+    // With its progress (one keyed read), so a course page can say Start,
+    // Continue or Completed without a second request (Task E).
+    const found = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const enrollment = await this.enrollmentsRepository.findByStudentAndCourse(
+          tx,
+          userId,
+          courseId,
+        );
+        if (!enrollment) return null;
+        const progress = await this.courseProgressRepository.findByEnrollmentId(
+          tx,
+          enrollment.id,
+        );
+        return { enrollment, progress };
+      },
     );
-    return enrollment ? toEnrollmentResponse(enrollment) : null;
+    return found
+      ? toEnrollmentResponse(found.enrollment, found.progress ?? undefined)
+      : null;
   }
 
   async createEnrollment(
