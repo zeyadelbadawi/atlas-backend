@@ -22,13 +22,19 @@
 --     acting user, so the backup tables are the record).
 --
 -- THE GATE
---   Renaming customer-visible names needs a human decision. If any org or
---   academy would be renamed, the migration RAISES unless the operator has
---   opted in for this deployment:
---       ALTER DATABASE <db> SET atlas.w4_rename_duplicates = 'on';
---   (and RESETs it afterwards). With no duplicates — a fresh database, CI —
---   it is a no-op and needs no opt-in. Learner exemptions change nothing
---   anyone sees and need no opt-in.
+--   Renaming customer-visible names needs a human decision. Per the product
+--   owner's decision (3 Oct 2026), that decision is the protected
+--   `production-migrations` environment approval, given after the read-only
+--   duplicate report (`Release verify` -> "W4 duplicate-name report", counts
+--   only) has been reviewed. On 3 Oct 2026 production held 18 organization
+--   and 4 academy rows to rename (and 104 learner rows to exempt) out of 60
+--   organizations / 35 academies.
+--   A database-setting opt-in was replaced: a RAISE here leaves a failed
+--   migration row that deploy.sh refuses on every later deploy.
+--   Backstop against an unexpected mass rename: the migration RAISES, before
+--   changing anything, if more than 100 organization or 100 academy rows
+--   would be renamed. With no duplicates (a fresh database, CI) it is a
+--   no-op. Learner exemptions change nothing anyone sees.
 --
 -- RECOVERY: docs/W4_UNIQUENESS_REMEDIATION.md §4 (restores names and flags
 -- from the backup tables; only rows still holding the value written here).
@@ -106,10 +112,9 @@ BEGIN
   SELECT coalesce(sum(c - 1), 0) INTO v_acad_dups
     FROM (SELECT count(*) c FROM "academies" GROUP BY "name_key" HAVING count(*) > 1) g;
 
-  IF (v_org_dups + v_acad_dups) > 0
-     AND coalesce(current_setting('atlas.w4_rename_duplicates', true), '') <> 'on' THEN
+  IF v_org_dups > 100 OR v_acad_dups > 100 THEN
     RAISE EXCEPTION
-      'w4_duplicate_name_remediation: % organization(s) and % academy(ies) would be renamed. Review the report (docs/W4_UNIQUENESS_REMEDIATION.md §2), then opt in with ALTER DATABASE <db> SET atlas.w4_rename_duplicates = ''on'' and redeploy.',
+      'w4_duplicate_name_remediation: % organization(s) and % academy(ies) would be renamed, above the 100-row backstop. Review the report (docs/W4_UNIQUENESS_REMEDIATION.md §2) before raising it.',
       v_org_dups, v_acad_dups;
   END IF;
 

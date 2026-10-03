@@ -30,11 +30,18 @@ Changing a default:
   `src/common/name-uniqueness/name-key.ts` (the parity test fails otherwise), then
   run §2 again before re-creating the indexes (the stored keys change).
 
-Learners are never renamed. Interactive admissions (registration, academy
-join, staff add) get a 409 the person can act on. Automatic admissions
-(sign-in auto-join, purchase/payment application) never fail: the row is
-inserted with `name_unique_exempt = true` and an
-`academy.student.name_clash_exempted` audit entry is written. A profile rename
+Learners are never renamed. Interactive admissions (an existing account's
+password-proven academy join, staff add) get a 409 the person can act on.
+Automatic admissions (new-account registration, sign-in auto-join,
+purchase/payment application) never fail: the row is inserted with
+`name_unique_exempt = true` and an `academy.student.name_clash_exempted` audit
+entry is written. New-account registration is automatic since the security
+review (finding 2): a 409 there told any unauthenticated caller whether a
+named person studies at an academy. The clash surfaces only to the signed-in
+account with a verified address (`academies[].nameChangeSuggested` on
+`/users/me`, a "choose a different display name" prompt on the profile); a
+rename to a free name releases the exemption (trigger, M5). Renames are
+limited to 10 an hour per account. Deleted accounts are always exempt (M5). A profile rename
 that clashes in any of the user's academies is refused with
 `errors.profile.nameTakenInAcademy`, listing only the user's own academies.
 
@@ -46,6 +53,7 @@ that clashes in any of the user's academies is refused with
 | `20261104000310_w4_duplicate_name_remediation` (M2) | **gated** rename of duplicate org/academy names, learner exemptions, backups | renames `name` only |
 | `20261104000320_w4_name_unique_indexes` (M3) | refuses if duplicates remain, then creates the three unique indexes | none |
 | `20261104000330_w4_backups_out_of_public` (M4) | moves the backup tables to `atlas_migration_backups` (outside Prisma's drift check, like W8) | none |
+| `20261104000340_w4_deleted_learner_name_exemption` (M5) | deleted accounts' learner rows always `name_unique_exempt` (trigger + backfill, backup in `atlas_migration_backups.w4_backup_deleted_learner_exemptions`); a rename releases an exemption the new name no longer needs | flags only |
 
 Before deploying, confirm the ICU collation exists in the target database:
 
@@ -58,23 +66,23 @@ SUPERUSER nor BYPASSRLS.
 
 ### The gate
 
-M2 renames customer-visible names, so it RAISES (and the deploy stops at the
-migration gate, previous release intact) when any organization or academy
-would be renamed, unless the operator opted in for this deployment:
+M2 renames customer-visible names. The product owner decided (3 Oct 2026)
+that the human decision is the protected `production-migrations`
+environment approval, given after reviewing the read-only duplicate report
+(`Release verify` → "W4 duplicate-name report", counts only). On 3 Oct 2026
+production held 18 organization and 4 academy rows to rename, and 104 learner
+rows to exempt, out of 60 organizations and 35 academies.
 
-```sql
-ALTER DATABASE <db> SET atlas.w4_rename_duplicates = 'on';
--- npx prisma migrate deploy
-ALTER DATABASE <db> RESET atlas.w4_rename_duplicates;
-```
+An earlier database-setting opt-in (`atlas.w4_rename_duplicates`) was
+replaced. When M2 RAISED without it, Prisma recorded M2 as failed, and
+`deploy.sh` refuses every later deploy while any migration row is unfinished
+or rolled back.
 
-With no duplicates (a fresh database, CI) M2 is a no-op and needs no opt-in.
-Learner exemptions change nothing anyone sees and need no opt-in.
-
-If a deploy stopped at the gate, Prisma records M2 as failed. After review:
-`npx prisma migrate resolve --rolled-back 20261104000310_w4_duplicate_name_remediation`,
-set the opt-in, and deploy again. (M2 runs in one transaction; a refusal
-leaves nothing half-done.)
+Backstop: M2 RAISES, before changing anything, if more than 100 organization
+or 100 academy rows would be renamed. That would mean the data changed a lot
+since the report, so re-run the report and review before raising the limit.
+With no duplicates (a fresh database, CI) M2 is a no-op. M2 runs in one
+transaction, so a refusal leaves nothing half-done.
 
 ## 3. Before the run: the duplicate report
 
@@ -145,7 +153,6 @@ rolled-back transaction:
 
 ```sql
 BEGIN;
-SET LOCAL atlas.w4_rename_duplicates = 'on';
 \i prisma/migrations/20261104000310_w4_duplicate_name_remediation/migration.sql
 SELECT name AS old_name, new_name, group_rank FROM public.w4_backup_organization_names ORDER BY name_key, group_rank;
 SELECT name AS old_name, new_name, group_rank FROM public.w4_backup_academy_names ORDER BY name_key, group_rank;
