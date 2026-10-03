@@ -60,7 +60,12 @@ import type { RejectPaymentDto } from '../../billing/dto/reject-payment.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
-import type { PaymentListQueryDto } from '../../billing/dto/payment-list-query.dto';
+import type { PlatformPaymentListQueryDto } from '../../billing/dto/payment-list-query.dto';
+import {
+  toPlatformCourseOrderPaymentDetailResponse,
+  toPlatformCourseOrderPaymentListItemResponse,
+  type PlatformCourseOrderPaymentResponse,
+} from '../dto/platform-course-order-payment-list.contract';
 
 /** `CourseOrder.snapshot` is the frozen `{course: {id, title}, price: {...}}` shape (§4.2/§23) — the one place this class needs the course's display title for a notification/email, never a live join back to `courses` (matches the snapshot's own "written once, never recomputed" discipline). */
 function extractCourseTitle(snapshot: unknown): string {
@@ -86,8 +91,8 @@ export class PlatformCourseOrderPaymentsService {
 
   async getPayments(
     reviewerId: string,
-    query: PaymentListQueryDto,
-  ): Promise<PaginatedResult<CourseOrderPaymentResponse>> {
+    query: PlatformPaymentListQueryDto,
+  ): Promise<PaginatedResult<PlatformCourseOrderPaymentResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
@@ -97,13 +102,19 @@ export class PlatformCourseOrderPaymentsService {
         this.paymentsRepository.findManyAnyOrganizationCourseOrders(tx, {
           search: query.search,
           reviewStatus: query.reviewStatus,
+          status: query.status,
+          methodType: query.methodType,
+          from: query.from,
+          to: query.to,
+          sortBy: query.sortBy,
+          sortDirection: query.sortDirection,
           skip: (page - 1) * pageSize,
           take: pageSize,
         }),
     );
 
     return {
-      items: items.map((p) => toCourseOrderPaymentResponse(p)),
+      items: items.map((p) => toPlatformCourseOrderPaymentListItemResponse(p)),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
     };
   }
@@ -111,14 +122,14 @@ export class PlatformCourseOrderPaymentsService {
   async getPayment(
     reviewerId: string,
     paymentId: string,
-  ): Promise<CourseOrderPaymentResponse> {
+  ): Promise<PlatformCourseOrderPaymentResponse> {
     const payment = await this.tenancyContextService.runInUserContext(reviewerId, (tx) =>
-      this.paymentsRepository.findByIdAnyOrganization(tx, paymentId),
+      this.paymentsRepository.findByIdAnyOrganizationWithCourseContext(tx, paymentId),
     );
     if (!payment || !payment.courseOrderId) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
-    return toCourseOrderPaymentResponse(payment);
+    return toPlatformCourseOrderPaymentDetailResponse(payment);
   }
 
   async approvePayment(
