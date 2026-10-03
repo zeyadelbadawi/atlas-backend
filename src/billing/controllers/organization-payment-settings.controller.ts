@@ -29,6 +29,8 @@ import {
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
+import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
+import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { OrganizationPaymentSettingsService } from '../services/organization-payment-settings.service';
 import { OrganizationGatewayCredentialsService } from '../services/organization-gateway-credentials.service';
 import { OrganizationConnectedAccountService } from '../services/organization-connected-account.service';
@@ -64,10 +66,12 @@ export class OrganizationPaymentSettingsController {
   async update(
     @Param('id') organizationId: string,
     @Body() payload: UpdateOrganizationPaymentSettingsDto,
+    @CurrentAuthContext() auth: AuthContext,
   ): Promise<OrganizationPaymentSettingsResponse> {
     return this.organizationPaymentSettingsService.updatePaymentSettings(
       organizationId,
       payload,
+      auth.userId,
     );
   }
 
@@ -87,32 +91,48 @@ export class OrganizationPaymentSettingsController {
   async saveGatewayCredential(
     @Param('id') organizationId: string,
     @Body() payload: SaveOrganizationGatewayCredentialDto,
+    @CurrentAuthContext() auth: AuthContext,
   ): Promise<OrganizationGatewayCredentialResponse> {
     return this.organizationGatewayCredentialsService.saveCredential(
       organizationId,
       payload,
+      auth.userId,
     );
   }
 
   @Post(':id/payment-settings/gateway-credentials/test-connection')
   async testGatewayConnection(
     @Param('id') organizationId: string,
+    @CurrentAuthContext() auth: AuthContext,
   ): Promise<OrganizationGatewayCredentialResponse> {
-    return this.organizationGatewayCredentialsService.testConnection(organizationId);
+    return this.organizationGatewayCredentialsService.testConnection(
+      organizationId,
+      auth.userId,
+    );
   }
 
   @Post(':id/payment-settings/gateway-credentials/enable')
   async enableGateway(
     @Param('id') organizationId: string,
+    @CurrentAuthContext() auth: AuthContext,
   ): Promise<OrganizationGatewayCredentialResponse> {
-    return this.organizationGatewayCredentialsService.setEnabled(organizationId, true);
+    return this.organizationGatewayCredentialsService.setEnabled(
+      organizationId,
+      true,
+      auth.userId,
+    );
   }
 
   @Post(':id/payment-settings/gateway-credentials/disable')
   async disableGateway(
     @Param('id') organizationId: string,
+    @CurrentAuthContext() auth: AuthContext,
   ): Promise<OrganizationGatewayCredentialResponse> {
-    return this.organizationGatewayCredentialsService.setEnabled(organizationId, false);
+    return this.organizationGatewayCredentialsService.setEnabled(
+      organizationId,
+      false,
+      auth.userId,
+    );
   }
 
   @Get(':id/payment-settings/connected-account')

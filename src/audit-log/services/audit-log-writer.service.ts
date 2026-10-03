@@ -19,8 +19,20 @@
  * every log statement elsewhere never to print one.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { AuditLogEntriesRepository } from '../repositories/audit-log-entries.repository';
+import {
+  getAuditEventDefinition,
+  type AuditAction,
+  type AuditEventDefinition,
+} from '../catalog/audit-event-catalog';
+import {
+  maskEmailsInValue,
+  sanitizeAuditContext,
+  sanitizeTargetLabel,
+  type AuditContextValue,
+} from '../utils/audit-sanitize.util';
+import { computeAuditChanges, type AuditSnapshot } from '../utils/audit-diff.util';
 
 export interface AuditLogWriteInput {
   readonly actorUserId: string;
@@ -46,7 +58,13 @@ export interface AuditLogWriteInput {
   readonly targetType: string;
   readonly targetId: string;
   readonly targetLabel?: string;
-  readonly context?: Record<string, string | number | boolean | null>;
+  /**
+   * Filtered at write time against the action's catalogue allowlist
+   * (`audit-event-catalog.ts`); keys outside it are dropped, and
+   * tenant-visible rows lose any email/IP value. `undefined` values are
+   * omitted.
+   */
+  readonly context?: Readonly<Record<string, AuditContextValue | undefined>>;
   /**
    * P58 — a structured `{field: {from, to}}` diff of what this mutation
    * changed.
@@ -81,6 +99,47 @@ export interface AuditRequestContext {
   readonly method?: string;
   readonly route?: string;
   readonly outcome?: 'succeeded' | 'failed';
+}
+
+/**
+ * Input to `AuditLogWriterService.record` — the preferred entry point for
+ * new call sites. Compared with `write`:
+ *   - `action` is the typed catalogue union, so a typo is a compile error;
+ *   - `targetType` defaults to the catalogue's;
+ *   - `organizationId` and `role` may be omitted when `academyId` is given —
+ *     they are resolved inside the caller's transaction with ONE query, and
+ *     only when missing (callers that already hold them pay nothing);
+ *   - `before`/`after` snapshots are diffed over the catalogue's
+ *     `diffFields` (or `diffFields` here) into `changes`.
+ * Context should carry related entity NAMES (`courseTitle`,
+ * `sectionTitle`, `studentName`...) — never emails.
+ */
+export interface AuditRecordInput {
+  readonly actorUserId: string;
+  readonly action: AuditAction;
+  readonly targetId: string;
+  readonly targetType?: string;
+  readonly targetLabel?: string | null;
+  readonly academyId?: string | null;
+  readonly organizationId?: string | null;
+  readonly role?: string | null;
+  readonly context?: Readonly<Record<string, AuditContextValue | undefined>>;
+  readonly before?: AuditSnapshot | null;
+  readonly after?: AuditSnapshot | null;
+  readonly diffFields?: readonly string[];
+  /** Explicit changes, merged over (and winning against) the computed diff. */
+  readonly changes?: Record<string, AuditFieldChange>;
+  readonly requestContext?: AuditRequestContext;
+}
+
+/** Thrown in non-production for an action missing from the catalogue, so a new event cannot ship without its visibility decision. */
+export class UnknownAuditActionError extends Error {
+  constructor(action: string) {
+    super(
+      `Audit action "${action}" is not in the audit event catalogue (src/audit-log/catalog/audit-event-catalog.ts).`,
+    );
+    this.name = 'UnknownAuditActionError';
+  }
 }
 
 /**
@@ -157,8 +216,38 @@ export class AuditLogWriterService {
 
   constructor(private readonly auditLogEntriesRepository: AuditLogEntriesRepository) {}
 
-  /** The real write — part of the caller's own transaction. Throws like any other write in that transaction would (the caller's own transaction rolls back with it, matching every other write in this codebase). */
+  /**
+   * The real write — part of the caller's own transaction. Throws like any
+   * other write in that transaction would (the caller's own transaction
+   * rolls back with it, matching every other write in this codebase).
+   *
+   * Every row is checked against the event catalogue here, at the single
+   * choke point: an unknown action throws outside production (so it is
+   * caught by tests before it ships) and is logged — but still written,
+   * never failing a customer's committed action — in production. `context`
+   * is reduced to the action's allowlist and, like `targetLabel` and
+   * `changes`, stripped of emails when the row is tenant-visible.
+   */
   async write(tx: Prisma.TransactionClient, input: AuditLogWriteInput): Promise<void> {
+    const definition = this.resolveDefinition(input.action);
+    const { context, dropped } = sanitizeAuditContext(definition, input.context);
+    if (dropped.length > 0 && process.env.NODE_ENV !== 'production') {
+      this.logger.debug(
+        { action: input.action, dropped },
+        'Audit context keys outside the catalogue allowlist were not stored.',
+      );
+    }
+
+    let changes = input.changes ? redactChanges(input.changes) : undefined;
+    if (changes && definition?.visibleToTenant) {
+      changes = Object.fromEntries(
+        Object.entries(changes).map(([field, change]) => [
+          field,
+          { from: maskEmailsInValue(change.from), to: maskEmailsInValue(change.to) },
+        ]),
+      );
+    }
+
     await this.auditLogEntriesRepository.create(tx, {
       actorUserId: input.actorUserId,
       organizationId: input.organizationId,
@@ -167,18 +256,119 @@ export class AuditLogWriterService {
       action: input.action,
       targetType: input.targetType,
       targetId: input.targetId,
-      targetLabel: input.targetLabel,
-      context: (input.context as Prisma.InputJsonValue | undefined) ?? undefined,
+      targetLabel: sanitizeTargetLabel(definition, input.targetLabel),
+      context: (context as Prisma.InputJsonValue | undefined) ?? undefined,
       // Scrubbed here, at the single choke point every mutation in the
       // backend already funnels through — never at the call sites, which
       // would make the guarantee only as strong as the least careful one.
-      changes: input.changes
-        ? (redactChanges(input.changes) as unknown as Prisma.InputJsonValue)
-        : undefined,
+      changes: changes ? (changes as unknown as Prisma.InputJsonValue) : undefined,
       requestContext:
         (input.requestContext as unknown as Prisma.InputJsonValue | undefined) ??
         undefined,
     });
+  }
+
+  /**
+   * The preferred entry point for new call sites — see `AuditRecordInput`.
+   * Resolves the missing organization id and actor role from the academy in
+   * the caller's own transaction (one query, only when something is
+   * missing), computes `changes` from before/after over an allowlist, then
+   * delegates to `write` so every guarantee above still applies.
+   *
+   * A mutation that changed nothing auditable still records the event (the
+   * person did press save); the row simply carries no `changes`.
+   */
+  async record(tx: Prisma.TransactionClient, input: AuditRecordInput): Promise<void> {
+    const definition = this.resolveDefinition(input.action);
+
+    let organizationId = input.organizationId ?? undefined;
+    let role = input.role ?? undefined;
+    if (input.academyId && (!organizationId || !role)) {
+      const resolved = await this.resolveAttribution(
+        tx,
+        input.academyId,
+        input.actorUserId,
+      );
+      organizationId = organizationId ?? resolved.organizationId;
+      role = role ?? resolved.role;
+    }
+
+    const diffFields = input.diffFields ?? definition?.diffFields ?? [];
+    const computed =
+      input.before !== undefined || input.after !== undefined
+        ? computeAuditChanges(input.before, input.after, diffFields)
+        : undefined;
+    const changes =
+      computed || input.changes
+        ? { ...(computed ?? {}), ...(input.changes ?? {}) }
+        : undefined;
+
+    await this.write(tx, {
+      actorUserId: input.actorUserId,
+      organizationId,
+      academyId: input.academyId ?? undefined,
+      role,
+      action: input.action,
+      targetType: input.targetType ?? definition?.targetType ?? 'unknown',
+      targetId: input.targetId,
+      targetLabel: input.targetLabel ?? undefined,
+      context: input.context,
+      changes,
+      requestContext: input.requestContext,
+    });
+  }
+
+  private resolveDefinition(action: string): AuditEventDefinition | undefined {
+    const definition = getAuditEventDefinition(action);
+    if (!definition) {
+      if (process.env.NODE_ENV !== 'production') {
+        throw new UnknownAuditActionError(action);
+      }
+      this.logger.error(
+        { action },
+        'Audit action is not in the event catalogue — written without visibility rules (hidden from tenants).',
+      );
+    }
+    return definition;
+  }
+
+  /**
+   * One read in the caller's transaction: the academy's organization, the
+   * actor's academy role, or `'owner'` when the actor owns the organization
+   * without an academy-member row. Under RLS the row may be invisible to the
+   * caller's context (e.g. a learner); both fields then stay undefined,
+   * exactly as if the caller had not passed them — never an error, because
+   * a SELECT that RLS filters returns no rows rather than failing the
+   * transaction.
+   */
+  private async resolveAttribution(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    actorUserId: string,
+  ): Promise<{ organizationId?: string; role?: string }> {
+    const rows = await tx.$queryRaw<
+      {
+        organization_id: string;
+        member_role: string | null;
+        owner_user_id: string | null;
+      }[]
+    >(Prisma.sql`
+      SELECT a."organization_id" AS organization_id,
+             m."role"::text AS member_role,
+             o."owner_user_id" AS owner_user_id
+      FROM "academies" a
+      LEFT JOIN "academy_members" m
+        ON m."academy_id" = a."id" AND m."user_id" = ${actorUserId}
+      LEFT JOIN "organizations" o ON o."id" = a."organization_id"
+      WHERE a."id" = ${academyId}
+      LIMIT 1
+    `);
+    const row = rows[0];
+    if (!row) return {};
+    return {
+      organizationId: row.organization_id,
+      role: row.member_role ?? (row.owner_user_id === actorUserId ? 'owner' : undefined),
+    };
   }
 
   /**

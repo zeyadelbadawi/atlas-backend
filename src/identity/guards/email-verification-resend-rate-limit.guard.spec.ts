@@ -98,4 +98,23 @@ describe('EmailVerificationResendRateLimitGuard', () => {
     }
     await expect429(guard.canActivate(contextFor('user-99', '198.51.100.9')));
   });
+  it('an IP already over its limit is refused without spending the account budget', async () => {
+    const { limiter, calls } = fakeLimiter();
+    const guard = new EmailVerificationResendRateLimitGuard(limiter, config);
+    const ip = '198.51.100.9';
+    // Five different accounts use up the shared address's budget.
+    for (const user of ['a', 'b', 'c', 'd', 'e']) {
+      await expect(guard.canActivate(contextFor(user, ip))).resolves.toBe(true);
+    }
+    await expect429(guard.canActivate(contextFor('victim', ip)));
+    expect(calls.some((call) => call.key === 'email-verification-resend:user:victim')).toBe(
+      false,
+    );
+    // The victim still has all three resends from their own address.
+    for (let i = 0; i < 3; i += 1) {
+      await expect(guard.canActivate(contextFor('victim', '203.0.113.50'))).resolves.toBe(
+        true,
+      );
+    }
+  });
 });

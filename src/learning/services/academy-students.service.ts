@@ -454,7 +454,10 @@ export class AcademyStudentsService {
           action,
           targetType: 'user',
           targetId: studentUserId,
-          targetLabel: membership.user.email,
+          // Task 3 — the learner's NAME: this row is shown to the academy
+          // owner, and an email address is not activity-log vocabulary.
+          targetLabel: membership.user.name,
+          context: { studentName: membership.user.name },
         });
 
         const academy = await this.academiesRepository.findById(tx, academyId);
@@ -583,7 +586,14 @@ export class AcademyStudentsService {
           action: 'enrollment.granted',
           targetType: 'enrollment',
           targetId: enrollmentId,
-          targetLabel: `${membership.user.email} → ${course.title}`,
+          targetLabel: course.title,
+          context: {
+            studentId: studentUserId,
+            studentName: membership.user.name,
+            courseId: course.id,
+            courseTitle: course.title,
+            expiresAt: expiresAt ? expiresAt.toISOString() : null,
+          },
         });
 
         // P64 Communications C3 (plan §8 C2) — the learner was never told
@@ -659,9 +669,16 @@ export class AcademyStudentsService {
             action: 'enrollment.revoked',
             targetType: 'enrollment',
             targetId: enrollment.id,
-            targetLabel: `${student?.user.email ?? enrollment.studentId} → ${
-              course?.title ?? enrollment.courseId
-            } · ${reason}`,
+            // Task 3 — names and the reason as structured context rather
+            // than an email-bearing composite label.
+            targetLabel: course?.title ?? undefined,
+            context: {
+              studentId: enrollment.studentId,
+              studentName: student?.user.name ?? null,
+              courseId: enrollment.courseId,
+              courseTitle: course?.title ?? null,
+              reason,
+            },
           });
 
           // P64 Communications C3 (plan §8 C3, §10 "access change must
@@ -771,6 +788,12 @@ export class AcademyStudentsService {
           throw new BadRequestException({ messageKey: 'errors.enrollment.expiryInPast' });
         }
         await this.enrollmentsRepository.update(tx, enrollment.id, { expiresAt });
+        // Read before the audit row so it can name the course (the
+        // communication below reuses the same rows).
+        const [academy, course] = await Promise.all([
+          this.academiesRepository.findById(tx, academyId),
+          this.coursesRepository.findById(tx, enrollment.courseId),
+        ]);
         await this.auditLogWriterService.write(tx, {
           actorUserId: actingUserId,
           organizationId,
@@ -779,16 +802,24 @@ export class AcademyStudentsService {
           action: 'enrollment.expiry_updated',
           targetType: 'enrollment',
           targetId: enrollment.id,
-          targetLabel: expiresAt ? expiresAt.toISOString() : 'cleared',
+          targetLabel: course?.title,
+          context: {
+            studentId: enrollment.studentId,
+            courseId: enrollment.courseId,
+            courseTitle: course?.title ?? null,
+            expiresAt: expiresAt ? expiresAt.toISOString() : null,
+          },
+          changes: {
+            expiresAt: {
+              from: enrollment.expiresAt ? enrollment.expiresAt.toISOString() : null,
+              to: expiresAt ? expiresAt.toISOString() : null,
+            },
+          },
         });
 
         // P64 Communications C3 (plan §8 C4). The dedupe key is the new
         // expiry itself, so re-saving the SAME date tells nobody twice
         // while moving it always does.
-        const [academy, course] = await Promise.all([
-          this.academiesRepository.findById(tx, academyId),
-          this.coursesRepository.findById(tx, enrollment.courseId),
-        ]);
         emitted = await this.communicationService.emit(tx, {
           key: 'enrollment.expiry_changed',
           recipientUserId: enrollment.studentId,
@@ -863,9 +894,11 @@ export class AcademyStudentsService {
           academyId,
           userId,
         );
+        const before = await this.academiesRepository.findById(tx, academyId);
         const academy = await this.academiesRepository.update(tx, academyId, {
           registrationPolicy: payload.registrationPolicy,
         });
+        // Task 3 — the policy's before/after rather than only its new value.
         await this.auditLogWriterService.write(tx, {
           actorUserId: userId,
           organizationId,
@@ -874,7 +907,17 @@ export class AcademyStudentsService {
           action: 'academy.registration_policy.updated',
           targetType: 'academy',
           targetId: academyId,
-          targetLabel: payload.registrationPolicy,
+          targetLabel: academy.name,
+          context: { registrationPolicy: academy.registrationPolicy },
+          changes:
+            before && before.registrationPolicy !== academy.registrationPolicy
+              ? {
+                  registrationPolicy: {
+                    from: before.registrationPolicy,
+                    to: academy.registrationPolicy,
+                  },
+                }
+              : undefined,
         });
         return { academyId, registrationPolicy: academy.registrationPolicy };
       },
@@ -961,7 +1004,9 @@ export class AcademyStudentsService {
           action: 'academy.invite.created',
           targetType: 'academy_invite',
           targetId: row.id,
-          targetLabel: payload.email ?? `${row.maxUses} uses`,
+          // Task 3 — never the invitee's email on this tenant-visible row;
+          // whether it was an email invite is recorded as a flag.
+          context: { maxUses: row.maxUses, emailInvite: Boolean(payload.email) },
         });
         return toAcademyInviteResponse(row, rawToken);
       },

@@ -53,8 +53,147 @@ export interface AuditLogEntryListFilter {
   readonly occurredTo?: Date;
 }
 
+/** Keyset position: the last row of the previous page, ordered `(occurred_at DESC, id DESC)`. */
+export interface AuditLogCursor {
+  readonly occurredAt: Date;
+  readonly id: string;
+}
+
+/**
+ * Cursor-paginated feed filter, shared by the Academy activity log (tenant
+ * context) and the Platform audit feed (platform context). No `count()` is
+ * ever run: the caller asks for `take + 1` rows and treats the extra one as
+ * "there is a next page", which keeps every page an index range scan on
+ * `(academy_id, occurred_at DESC)` / `(organization_id, occurred_at DESC)` /
+ * `(occurred_at DESC)` regardless of how large the log grows.
+ */
+export interface AuditLogFeedFilter {
+  readonly academyId?: string;
+  readonly organizationId?: string;
+  /** Restricts to these actions (the tenant visibility list, or a category's expansion). */
+  readonly actions?: readonly string[];
+  readonly actorUserId?: string;
+  readonly targetType?: string;
+  readonly occurredFrom?: Date;
+  readonly occurredTo?: Date;
+  /** Case-insensitive match on the target label or the actor's name. */
+  readonly search?: string;
+  readonly cursor?: AuditLogCursor;
+  readonly take: number;
+}
+
+/** Names the formatter needs but older rows (and other modules' writes) only carry ids for. */
+export interface AuditReferenceNames {
+  readonly courses: ReadonlyMap<string, string>;
+  readonly sections: ReadonlyMap<string, string>;
+}
+
 @Injectable()
 export class AuditLogEntriesRepository {
+  /** See `AuditLogFeedFilter`. Returns up to `take + 1` rows. */
+  findFeedPage(
+    tx: Prisma.TransactionClient,
+    filter: AuditLogFeedFilter,
+  ): Promise<AuditLogEntryWithRelations[]> {
+    const conditions: Prisma.AuditLogEntryWhereInput[] = [];
+    if (filter.academyId) conditions.push({ academyId: filter.academyId });
+    if (filter.organizationId) conditions.push({ organizationId: filter.organizationId });
+    if (filter.actions) conditions.push({ action: { in: [...filter.actions] } });
+    if (filter.actorUserId) conditions.push({ actorUserId: filter.actorUserId });
+    if (filter.targetType) conditions.push({ targetType: filter.targetType });
+    if (filter.occurredFrom || filter.occurredTo) {
+      conditions.push({
+        occurredAt: {
+          ...(filter.occurredFrom ? { gte: filter.occurredFrom } : {}),
+          ...(filter.occurredTo ? { lte: filter.occurredTo } : {}),
+        },
+      });
+    }
+    if (filter.search) {
+      conditions.push({
+        OR: [
+          { targetLabel: { contains: filter.search, mode: 'insensitive' as const } },
+          { actor: { name: { contains: filter.search, mode: 'insensitive' as const } } },
+        ],
+      });
+    }
+    if (filter.cursor) {
+      conditions.push({
+        OR: [
+          { occurredAt: { lt: filter.cursor.occurredAt } },
+          { occurredAt: filter.cursor.occurredAt, id: { lt: filter.cursor.id } },
+        ],
+      });
+    }
+
+    return tx.auditLogEntry.findMany({
+      where: conditions.length > 0 ? { AND: conditions } : {},
+      include: WITH_RELATIONS,
+      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+      take: filter.take + 1,
+    });
+  }
+
+  /** One entry by id, constrained by the same scope/visibility a feed would apply. */
+  findScopedById(
+    tx: Prisma.TransactionClient,
+    id: string,
+    scope: { readonly academyId: string; readonly actions: readonly string[] },
+  ): Promise<AuditLogEntryWithRelations | null> {
+    return tx.auditLogEntry.findFirst({
+      where: { id, academyId: scope.academyId, action: { in: [...scope.actions] } },
+      include: WITH_RELATIONS,
+    });
+  }
+
+  /**
+   * Batch-resolves course and section titles referenced by id in a page of
+   * entries' `context` (two queries per page, never per row). Used only
+   * when the row did not already store the name. Rows invisible to the
+   * caller's RLS context — or deleted since — simply stay unresolved.
+   */
+  async loadReferenceNames(
+    tx: Prisma.TransactionClient,
+    entries: readonly { context: Prisma.JsonValue | null }[],
+  ): Promise<AuditReferenceNames> {
+    const courseIds = new Set<string>();
+    const sectionIds = new Set<string>();
+    for (const entry of entries) {
+      const context = entry.context as Record<string, unknown> | null;
+      if (!context) continue;
+      if (
+        typeof context.courseId === 'string' &&
+        typeof context.courseTitle !== 'string'
+      ) {
+        courseIds.add(context.courseId);
+      }
+      if (
+        typeof context.sectionId === 'string' &&
+        typeof context.sectionTitle !== 'string'
+      ) {
+        sectionIds.add(context.sectionId);
+      }
+    }
+    const [courses, sections] = await Promise.all([
+      courseIds.size > 0
+        ? tx.course.findMany({
+            where: { id: { in: [...courseIds] } },
+            select: { id: true, title: true },
+          })
+        : Promise.resolve([]),
+      sectionIds.size > 0
+        ? tx.courseSection.findMany({
+            where: { id: { in: [...sectionIds] } },
+            select: { id: true, title: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    return {
+      courses: new Map(courses.map((row) => [row.id, row.title])),
+      sections: new Map(sections.map((row) => [row.id, row.title])),
+    };
+  }
+
   /**
    * The one write path for this table — see
    * `AuditLogWriterService`'s own doc comment for the atomicity

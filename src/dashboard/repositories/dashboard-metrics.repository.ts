@@ -22,6 +22,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { TENANT_VISIBLE_AUDIT_ACTIONS } from '../../audit-log/catalog/audit-event-catalog';
 
 /** Narrows every aggregation below to one Academy, or to every Academy under one Organization. */
 export interface DashboardScopeFilter {
@@ -38,11 +39,14 @@ export type DashboardActivityRow = {
   id: string;
   action: string;
   targetType: string;
+  targetId: string;
   targetLabel: string | null;
   academyId: string | null;
   role: string | null;
   occurredAt: Date;
-  actor: { name: string };
+  context: Prisma.JsonValue | null;
+  changes: Prisma.JsonValue | null;
+  actor: { id: string; name: string };
 };
 
 @Injectable()
@@ -133,16 +137,23 @@ export class DashboardMetricsRepository {
       where: {
         organizationId: scope.organizationId,
         ...(scope.academyId ? { academyId: scope.academyId } : {}),
+        // Task 3 — only catalogue actions a tenant may read: sign-in/OTP
+        // telemetry and platform-operator actions carry this organization's
+        // id too, and are not this feed's to show.
+        action: { in: [...TENANT_VISIBLE_AUDIT_ACTIONS] },
       },
       select: {
         id: true,
         action: true,
         targetType: true,
+        targetId: true,
         targetLabel: true,
         academyId: true,
         role: true,
         occurredAt: true,
-        actor: { select: { name: true } },
+        context: true,
+        changes: true,
+        actor: { select: { id: true, name: true } },
       },
       orderBy: { occurredAt: 'desc' },
       take,

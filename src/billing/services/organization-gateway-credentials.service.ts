@@ -26,6 +26,7 @@ import {
   type OrganizationGatewayCredentialResponse,
 } from '../dto/organization-gateway-credential.contract';
 import type { SaveOrganizationGatewayCredentialDto } from '../dto/save-organization-gateway-credential.dto';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 
 @Injectable()
 export class OrganizationGatewayCredentialsService {
@@ -34,6 +35,7 @@ export class OrganizationGatewayCredentialsService {
     private readonly organizationGatewayCredentialsRepository: OrganizationGatewayCredentialsRepository,
     private readonly paymentProviderRegistry: PaymentProviderRegistry,
     private readonly credentialEncryptionService: CredentialEncryptionService,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   listAvailableProviders(): readonly AvailablePaymentProviderResponse[] {
@@ -51,9 +53,15 @@ export class OrganizationGatewayCredentialsService {
     return toOrganizationGatewayCredentialResponse(organizationId, credential);
   }
 
+  /**
+   * Task 3 — the audit row records THAT credentials were saved and for which
+   * provider. Never the config, encrypted or not: `context` carries only
+   * `providerKey` (the catalogue allowlist enforces it at the writer too).
+   */
   async saveCredential(
     organizationId: string,
     payload: SaveOrganizationGatewayCredentialDto,
+    actorUserId: string,
   ): Promise<OrganizationGatewayCredentialResponse> {
     const available = this.paymentProviderRegistry.listAvailableForOrganizationGateway();
     if (!available.some((provider) => provider.providerKey === payload.providerKey)) {
@@ -66,17 +74,32 @@ export class OrganizationGatewayCredentialsService {
 
     const credential = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) =>
-        this.organizationGatewayCredentialsRepository.upsert(tx, organizationId, {
-          providerKey: payload.providerKey,
-          encryptedConfig,
-        }),
+      async (tx) => {
+        const saved = await this.organizationGatewayCredentialsRepository.upsert(
+          tx,
+          organizationId,
+          {
+            providerKey: payload.providerKey,
+            encryptedConfig,
+          },
+        );
+        await this.auditLogWriterService.record(tx, {
+          actorUserId,
+          organizationId,
+          action: 'organization.payment_gateway.credentials_saved',
+          targetId: organizationId,
+          targetLabel: payload.providerKey,
+          context: { providerKey: payload.providerKey },
+        });
+        return saved;
+      },
     );
     return toOrganizationGatewayCredentialResponse(organizationId, credential);
   }
 
   async testConnection(
     organizationId: string,
+    actorUserId: string,
   ): Promise<OrganizationGatewayCredentialResponse> {
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
       const credential =
@@ -105,6 +128,16 @@ export class OrganizationGatewayCredentialsService {
           organizationId,
           result,
         );
+      // The provider's message is NOT recorded: it is free text from a
+      // third party and may echo configuration back.
+      await this.auditLogWriterService.record(tx, {
+        actorUserId,
+        organizationId,
+        action: 'organization.payment_gateway.connection_tested',
+        targetId: organizationId,
+        targetLabel: credential.providerKey,
+        context: { providerKey: credential.providerKey, success: result.success },
+      });
       return toOrganizationGatewayCredentialResponse(organizationId, updated);
     });
   }
@@ -112,6 +145,7 @@ export class OrganizationGatewayCredentialsService {
   async setEnabled(
     organizationId: string,
     enabled: boolean,
+    actorUserId: string,
   ): Promise<OrganizationGatewayCredentialResponse> {
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
       const credential =
@@ -133,6 +167,16 @@ export class OrganizationGatewayCredentialsService {
         organizationId,
         enabled,
       );
+      await this.auditLogWriterService.record(tx, {
+        actorUserId,
+        organizationId,
+        action: enabled
+          ? 'organization.payment_gateway.enabled'
+          : 'organization.payment_gateway.disabled',
+        targetId: organizationId,
+        targetLabel: credential.providerKey,
+        context: { providerKey: credential.providerKey },
+      });
       return toOrganizationGatewayCredentialResponse(organizationId, updated);
     });
   }

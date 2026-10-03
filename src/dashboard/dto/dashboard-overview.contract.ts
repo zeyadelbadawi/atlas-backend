@@ -72,8 +72,17 @@ export interface DashboardRevenueResponse {
 export interface DashboardActivityItemResponse {
   readonly id: string;
   readonly action: string;
+  /** Task 3 — catalogue category (`'other'` for pre-catalogue actions). */
+  readonly category: string;
   readonly targetType: string;
+  readonly targetId: string;
   readonly targetLabel?: string;
+  /** Task 3 — allowlisted, email-free context (names such as `courseTitle`) the sentence formatter reads. */
+  readonly context?: Record<string, string | number | boolean | null>;
+  /** Task 3 — which fields changed (values only in the activity log's detail). */
+  readonly changedFields?: readonly string[];
+  /** `true` when an Atlas operator did this — the name is then not shown to the tenant. */
+  readonly actorIsPlatformStaff: boolean;
   readonly actorName: string;
   /** The actor's real role at the time of the action — `null` for entries written before Phase 8 added the column. */
   readonly actorRole?: string;

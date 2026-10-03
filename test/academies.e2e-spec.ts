@@ -205,6 +205,21 @@ describe('Academy Management (e2e) — functional/contract', () => {
     expect(stillActive.status).toBe('active');
     expect(stillActive.archivedAt).toBeNull();
 
+    // A platform suspension is not lifted by the owner's PATCH either; other
+    // edits still go through.
+    await admin.academy.update({ where: { id: academyId }, data: { status: 'suspended' } });
+    for (const status of ['active', 'draft']) {
+      await request(app.getHttpServer())
+        .patch(`/academies/${academyId}`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ status })
+        .expect(409);
+    }
+    expect(
+      (await admin.academy.findUniqueOrThrow({ where: { id: academyId } })).status,
+    ).toBe('suspended');
+    await admin.academy.update({ where: { id: academyId }, data: { status: 'active' } });
+
     const branded = await request(app.getHttpServer())
       .patch(`/academies/${academyId}/branding`)
       .set('Authorization', `Bearer ${user.accessToken}`)
@@ -229,6 +244,19 @@ describe('Academy Management (e2e) — functional/contract', () => {
 
     const row = await admin.academy.findUniqueOrThrow({ where: { id: academyId } });
     expect(row.status).toBe('archived');
+
+    // Task 1: an archived academy cannot be revived (or edited) by PATCH —
+    // that would get past the plan's academy limit, which archiving freed.
+    for (const body of [{ status: 'active' }, { status: 'draft' }, { name: 'Back again' }]) {
+      await request(app.getHttpServer())
+        .patch(`/academies/${academyId}`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send(body)
+        .expect(409);
+    }
+    const stillArchived = await admin.academy.findUniqueOrThrow({ where: { id: academyId } });
+    expect(stillArchived.status).toBe('archived');
+    expect(stillArchived.name).toBe('Renamed Academy');
   });
 
   it('creating an academy auto-creates an owner-role academy_member row for the creator', async () => {
@@ -391,7 +419,10 @@ describe('Academy Management (e2e) — functional/contract', () => {
     });
   });
 
-  it('GET /academies/:id/activity returns a real, honestly-empty paginated page', async () => {
+  // Task 3 — the endpoint is now the real Academy activity log (cursor
+  // feed over this academy's tenant-visible audit rows); provisioning
+  // itself is the first recorded event.
+  it('GET /academies/:id/activity returns the academy’s real activity as a cursor page', async () => {
     const user = await signUpAndSignIn(app, 'academy-activity');
     const org = await seedOrganizationWithOwner(
       admin,
@@ -412,10 +443,15 @@ describe('Academy Management (e2e) — functional/contract', () => {
       .get(`/academies/${created.body.id}/activity`)
       .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(200);
-    expect(activity.body).toEqual({
-      items: [],
-      pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 1 },
-    });
+    expect(activity.body.nextCursor).toBeNull();
+    expect(activity.body.items).toEqual([
+      expect.objectContaining({
+        action: 'academy.created',
+        category: 'academy',
+        academyId: created.body.id,
+        actor: { id: user.userId, name: 'academy-activity', isPlatformStaff: false },
+      }),
+    ]);
   });
 
   it('POST /academies/:id/students creates a real, Academy-scoped academy_students membership (Phase 1, Extended Scope, dependency D) — not just a global user', async () => {

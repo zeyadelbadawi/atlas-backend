@@ -17,6 +17,7 @@ import {
   Get,
   HttpCode,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -48,7 +49,15 @@ import {
   type AcademyMemberLookupResponse,
 } from '../dto/academy-member-lookup.dto';
 import type { AcademyStatsResponse } from '../dto/academy-stats.contract';
-import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
+import type {
+  AcademyActivityDetailResponse,
+  AcademyActivityPageResponse,
+  AcademyActivityResponse,
+} from '../dto/academy-activity.contract';
+import { AuditFeedQueryDto } from '../../audit-log/dto/audit-feed-query.dto';
+
+/** The owner-exclusive organization permission (see `DashboardController`) — marks the organization owner for the activity log. */
+const ACTIVITY_LOG_OWNER_PERMISSION = 'tenant.dashboard.view';
 import type {
   ContactSubmissionResponse,
   ContactSubmissionSummaryResponse,
@@ -271,14 +280,45 @@ export class AcademiesController {
     return this.academiesService.getStats(academyId, organizationId);
   }
 
+  /**
+   * Task 3 — the Academy activity log (cursor feed) and one entry's detail.
+   * Owner-only in practice: the organization owner (`tenant.dashboard.view`,
+   * the same owner marker the dashboard routes use) or an owner/
+   * administrator academy member — enforced in
+   * `AcademiesService.assertCanViewActivity`, never by this guard alone.
+   */
   @Get(':id/activity')
   @UseGuards(AcademyScopeGuard)
   async getActivity(
     @Req() request: Request,
-    @Query() query: CollectionQueryDto,
-  ): Promise<PaginatedResult<AcademyActivityResponse>> {
-    const { academyId } = request.academyContext!;
-    return this.academiesService.getActivity(academyId, query);
+    @Query() query: AuditFeedQueryDto,
+  ): Promise<AcademyActivityPageResponse<AcademyActivityResponse>> {
+    const { academyId, organizationId, organizationPermissions } =
+      request.academyContext!;
+    return this.academiesService.getActivity(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      organizationPermissions.includes(ACTIVITY_LOG_OWNER_PERMISSION),
+      query,
+    );
+  }
+
+  @Get(':id/activity/:entryId')
+  @UseGuards(AcademyScopeGuard)
+  async getActivityEntry(
+    @Req() request: Request,
+    @Param('entryId', new ParseUUIDPipe()) entryId: string,
+  ): Promise<AcademyActivityDetailResponse> {
+    const { academyId, organizationId, organizationPermissions } =
+      request.academyContext!;
+    return this.academiesService.getActivityEntry(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      organizationPermissions.includes(ACTIVITY_LOG_OWNER_PERMISSION),
+      entryId,
+    );
   }
 
   // -------------------------------------------------------------------

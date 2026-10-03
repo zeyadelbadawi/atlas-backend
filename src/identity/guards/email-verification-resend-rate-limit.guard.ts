@@ -43,13 +43,17 @@ export class EmailVerificationResendRateLimitGuard implements CanActivate {
     );
 
     const userId = request.authContext?.userId;
-    const accountCheck = userId
-      ? await this.rateLimiter.consume(
-          `email-verification-resend:user:${userId}`,
-          max,
-          windowSeconds,
-        )
-      : { allowed: true, retryAfterSeconds: 0 };
+    // An IP already over its limit is refused without also charging the
+    // account's counter, so a shared/abusive address cannot use up a real
+    // user's quota.
+    const accountCheck =
+      ipCheck.allowed && userId
+        ? await this.rateLimiter.consume(
+            `email-verification-resend:user:${userId}`,
+            max,
+            windowSeconds,
+          )
+        : { allowed: true, retryAfterSeconds: 0 };
 
     if (!ipCheck.allowed || !accountCheck.allowed) {
       throw new HttpException(

@@ -11,6 +11,7 @@
  * instead of silently overwriting a concurrent reorder.
  */
 import {
+  ArrayMaxSize,
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
@@ -18,15 +19,20 @@ import {
   IsString,
 } from 'class-validator';
 
+/** Far above any real section or unit; bounds the permutation check's work. */
+const REORDER_MAX_ITEMS = 1000;
+
 export class ReorderItemsDto {
   @IsArray()
   @ArrayNotEmpty()
+  @ArrayMaxSize(REORDER_MAX_ITEMS)
   @ArrayUnique()
   @IsString({ each: true })
   readonly orderedIds!: string[];
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(REORDER_MAX_ITEMS)
   @ArrayUnique()
   @IsString({ each: true })
   readonly expectedOrderedIds?: string[];
