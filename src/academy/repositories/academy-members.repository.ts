@@ -31,6 +31,55 @@ export class AcademyMembersRepository {
   }
 
   /**
+   * `AcademyScopeGuard`'s organization-owner rule, for the service-level
+   * checks: the OWNER of the academy's organization is the implicit owner
+   * of every academy in it, with or without an `academy_members` row (a
+   * seeded academy, or one created before the owner's row existed, has
+   * none). Only `organization_memberships.role = 'owner'` counts, never an
+   * organization manager or member. Readable in the tenant context (and in
+   * the user context, through the `_self_select` policy), like the guard's
+   * own lookup.
+   */
+  async isOrganizationOwnerOfAcademy(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const academy = await tx.academy.findUnique({
+      where: { id: academyId },
+      select: { organizationId: true },
+    });
+    if (!academy) return false;
+    const ownerMembership = await tx.organizationMembership.findFirst({
+      where: { organizationId: academy.organizationId, userId, role: 'owner' },
+      select: { id: true },
+    });
+    return ownerMembership !== null;
+  }
+
+  /**
+   * The caller's effective MANAGING role in this academy, by the guard's
+   * rule: their active staff row's role when it is one of `managingRoles`,
+   * otherwise `owner` when they own the academy's organization, otherwise
+   * `null`. Every service-level "can manage this academy" check uses this,
+   * so the guard and the services can no longer disagree about the
+   * organization owner.
+   */
+  async findManagingRole(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+    managingRoles: ReadonlySet<string>,
+  ): Promise<AcademyMemberRole | null> {
+    const membership = await this.findForUserInAcademy(tx, academyId, userId);
+    if (membership && managingRoles.has(membership.role)) return membership.role;
+    if (managingRoles.has('owner')) {
+      if (await this.isOrganizationOwnerOfAcademy(tx, academyId, userId)) return 'owner';
+    }
+    return null;
+  }
+
+  /**
    * The user's staff row in this academy WHATEVER its status — only for
    * "is there already a row?" questions (adding a member, the member
    * lookup), never for authorization.

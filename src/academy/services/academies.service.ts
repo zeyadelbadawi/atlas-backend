@@ -414,12 +414,13 @@ export class AcademiesService {
     actingUserId: string,
     role: MemberAddRole,
   ): Promise<{ readonly academyName: string }> {
-    const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
+    const actingRole = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       actingUserId,
+      GRANTS_MANAGER_ROLES,
     );
-    if (!actingMembership || !GRANTS_MANAGER_ROLES.has(actingMembership.role)) {
+    if (!actingRole) {
       throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
     }
     if (role !== 'student') {
@@ -1852,17 +1853,20 @@ export class AcademiesService {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    // The organization owner manages every academy of the organization,
+    // with or without a staff row — `AcademyScopeGuard`'s own rule.
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
 
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
     }
     // Task 3 — returned so audit rows record the role without a re-read.
-    return membership.role;
+    return role;
   }
 
   /**

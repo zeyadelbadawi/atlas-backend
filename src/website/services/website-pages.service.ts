@@ -129,15 +129,16 @@ export class WebsitePagesService {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
-    return membership.role;
+    return role;
   }
 
   /** Phase 1 (Extended Scope, dependency A), narrowed to the managing tier in Phase 9 — see `WebsiteConfigurationService.assertIsMember`'s doc comment for both changes and why an Instructor must be refused here. */
@@ -146,12 +147,13 @@ export class WebsitePagesService {
     academyId: string,
     userId: string,
   ): Promise<void> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
   }

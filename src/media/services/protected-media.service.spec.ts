@@ -75,6 +75,7 @@ function harness(
     } as never,
     {
       findForUserInAcademy: () => Promise.resolve({ role: 'owner', status: 'active' }),
+      findManagingRole: () => Promise.resolve('owner'),
     } as never,
     // P64 Phase 3 — AcademyStudentsRepository (student attachment uploads; unused here)
     { findForUserInAcademy: () => Promise.resolve(null) } as never,

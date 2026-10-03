@@ -54,6 +54,14 @@ function build(role: string | null = 'owner') {
   const testimonialRepo = repo(testimonialRow);
   const academyMembersRepository = {
     findForUserInAcademy: jest.fn(async () => (role ? { role } : null)),
+    findManagingRole: jest.fn(
+      async (
+        _tx: unknown,
+        _academyId: string,
+        _userId: string,
+        roles: ReadonlySet<string>,
+      ) => (role && roles.has(role) ? role : null),
+    ),
   };
   const libraryRevisionService = { bump: jest.fn(async () => undefined) };
   const auditLogWriterService = { record: jest.fn(async () => undefined) };

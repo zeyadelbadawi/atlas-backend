@@ -717,15 +717,16 @@ export class CoursesService {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
     }
-    return membership.role;
+    return role;
   }
 
   /** Verifies the full ownership chain (course → academy) — a caller must not be able to reach a course by guessing its id under the wrong academy path. */

@@ -52,6 +52,13 @@ import {
   type CertificateIssueJobPayload,
 } from '../../certificates/queue/certificate-jobs.types';
 
+/** Who may edit a course's completion rule (the academy's managing tier). */
+const COURSE_RULE_MANAGING_ROLES: ReadonlySet<string> = new Set([
+  'owner',
+  'administrator',
+  'manager',
+]);
+
 /**
  * Overall course progress across the WHOLE unified sequence — lessons,
  * quizzes and assignments — not lessons alone.
@@ -501,15 +508,16 @@ export class CourseCompletionService {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      COURSE_RULE_MANAGING_ROLES,
     );
-    if (!membership || !['owner', 'administrator', 'manager'].includes(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
     }
-    return membership.role;
+    return role;
   }
 
   async staffView(

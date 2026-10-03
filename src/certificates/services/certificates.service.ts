@@ -1223,15 +1223,16 @@ export class CertificatesService {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.certificate.insufficientRole' });
     }
-    return membership.role;
+    return role;
   }
 
   private async roleOf(
@@ -1253,13 +1254,13 @@ export class CertificatesService {
     academyId: string,
     userId: string,
   ): Promise<StaffScope> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const managingRole = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (membership && MANAGING_ROLES.has(membership.role))
-      return { kind: 'academy', role: membership.role };
+    if (managingRole) return { kind: 'academy', role: managingRole };
     const taught = await tx.courseInstructor.findMany({
       where: { userId, course: { academyId } },
       select: { courseId: true },

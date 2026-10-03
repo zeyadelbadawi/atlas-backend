@@ -1788,7 +1788,27 @@ describe('Google Identity — flag gating (e2e)', () => {
 
   it('GID-FLAG-02 — allowlist: only the listed academies’ websites; management stays off', async () => {
     admin = createAdminPrisma();
-    const org = await admin.organization.findFirstOrThrow();
+    // Its OWN organization, removed again below — this used to add two
+    // academies to whichever organization came first (the seeded one) on
+    // every run, and never removed them.
+    const flagOwner = await admin.user.create({
+      data: {
+        email: uniqueTestEmail('gid-flag-owner'),
+        name: uniqueName('GID Flag Owner'),
+      },
+    });
+    const org = await seedOrganizationWithOwner(admin, flagOwner.id, 'gid-flag-org');
+    try {
+      await runFlagAllowlistScenario(org.id);
+    } finally {
+      // Cascades to the academies, their domain connections and the membership.
+      await admin.organization.delete({ where: { id: org.id } }).catch(() => undefined);
+      await admin.user.delete({ where: { id: flagOwner.id } }).catch(() => undefined);
+    }
+  });
+
+  async function runFlagAllowlistScenario(organizationId: string): Promise<void> {
+    const org = { id: organizationId };
     const listed = await seedAcademy(admin, org.id, `gid-flag-listed-${Date.now()}`);
     const other = await seedAcademy(admin, org.id, `gid-flag-other-${Date.now()}`);
     const hostFor = async (id: string, label: string) => {
@@ -1834,5 +1854,5 @@ describe('Google Identity — flag gating (e2e)', () => {
       .set('Host', PLATFORM)
       .send({ intent: 'sign_in' })
       .expect(404);
-  });
+  }
 });

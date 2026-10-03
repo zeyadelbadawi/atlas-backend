@@ -139,12 +139,13 @@ export class DomainService {
     academyId: string,
     userId: string,
   ): Promise<void> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.domain.insufficientRole' });
     }
   }
@@ -160,7 +161,14 @@ export class DomainService {
       academyId,
       userId,
     );
-    if (!membership) {
+    if (
+      !membership &&
+      !(await this.academyMembersRepository.isOrganizationOwnerOfAcademy(
+        tx,
+        academyId,
+        userId,
+      ))
+    ) {
       throw new ForbiddenException({ messageKey: 'errors.domain.insufficientRole' });
     }
   }

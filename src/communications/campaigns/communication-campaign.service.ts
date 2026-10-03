@@ -136,8 +136,8 @@ export class CommunicationCampaignService {
 
   /**
    * An academy sender is an ACTIVE `academy_members` row with role owner or
-   * administrator, on an ACTIVE academy, read inside the academy's own
-   * tenant. Organization membership alone (what `AcademyScopeGuard`
+   * administrator — or the organization owner, the implicit owner of every
+   * academy — on an ACTIVE academy, read inside the academy's own tenant. Organization membership alone (what `AcademyScopeGuard`
    * proves) is not enough, and `assertCanManage`'s missing status check is
    * not repeated here.
    */
@@ -160,11 +160,24 @@ export class CommunicationCampaignService {
       if (!academy || academy.organizationId !== organizationId) {
         throw new ForbiddenException({ messageKey: 'errors.tenancy.notAMember' });
       }
-      if (
-        !membership ||
-        membership.status !== 'active' ||
-        !ACADEMY_SENDER_ROLES.has(membership.role)
-      ) {
+      // The organization OWNER is the implicit owner of every academy in
+      // the organization (`AcademyScopeGuard`'s rule), with or without a
+      // staff row. Organization managers and members get no such pass.
+      const staffRole =
+        membership &&
+        membership.status === 'active' &&
+        ACADEMY_SENDER_ROLES.has(membership.role)
+          ? membership.role
+          : null;
+      const role =
+        staffRole ??
+        ((await tx.organizationMembership.findFirst({
+          where: { organizationId: academy.organizationId, userId, role: 'owner' },
+          select: { id: true },
+        }))
+          ? ('owner' as const)
+          : null);
+      if (!role) {
         throw new ForbiddenException({
           messageKey: 'errors.messaging.notAllowed',
           code: 'ACADEMY_MESSAGING_FORBIDDEN',
@@ -181,7 +194,7 @@ export class CommunicationCampaignService {
         actorUserId: userId,
         academyId,
         organizationId,
-        role: membership.role,
+        role,
       };
     });
   }
