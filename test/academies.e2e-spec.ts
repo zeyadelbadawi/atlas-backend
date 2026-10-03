@@ -201,13 +201,18 @@ describe('Academy Management (e2e) — functional/contract', () => {
         .send({ status })
         .expect(400);
     }
-    const stillActive = await admin.academy.findUniqueOrThrow({ where: { id: academyId } });
+    const stillActive = await admin.academy.findUniqueOrThrow({
+      where: { id: academyId },
+    });
     expect(stillActive.status).toBe('active');
     expect(stillActive.archivedAt).toBeNull();
 
     // A platform suspension is not lifted by the owner's PATCH either; other
     // edits still go through.
-    await admin.academy.update({ where: { id: academyId }, data: { status: 'suspended' } });
+    await admin.academy.update({
+      where: { id: academyId },
+      data: { status: 'suspended' },
+    });
     for (const status of ['active', 'draft']) {
       await request(app.getHttpServer())
         .patch(`/academies/${academyId}`)
@@ -247,14 +252,20 @@ describe('Academy Management (e2e) — functional/contract', () => {
 
     // Task 1: an archived academy cannot be revived (or edited) by PATCH —
     // that would get past the plan's academy limit, which archiving freed.
-    for (const body of [{ status: 'active' }, { status: 'draft' }, { name: 'Back again' }]) {
+    for (const body of [
+      { status: 'active' },
+      { status: 'draft' },
+      { name: 'Back again' },
+    ]) {
       await request(app.getHttpServer())
         .patch(`/academies/${academyId}`)
         .set('Authorization', `Bearer ${user.accessToken}`)
         .send(body)
         .expect(409);
     }
-    const stillArchived = await admin.academy.findUniqueOrThrow({ where: { id: academyId } });
+    const stillArchived = await admin.academy.findUniqueOrThrow({
+      where: { id: academyId },
+    });
     expect(stillArchived.status).toBe('archived');
     expect(stillArchived.name).toBe('Renamed Academy');
   });

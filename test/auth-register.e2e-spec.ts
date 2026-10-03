@@ -237,7 +237,11 @@ describe('POST /auth/register (e2e)', () => {
 
     const user = await prisma.user.findUniqueOrThrow({ where: { email } });
     const entry = await admin.auditLogEntry.findFirstOrThrow({
-      where: { action: 'academy.student.joined', targetId: user.id, academyId: academy.id },
+      where: {
+        action: 'academy.student.joined',
+        targetId: user.id,
+        academyId: academy.id,
+      },
     });
     // Without the organization the Academy's activity log never shows it.
     expect(entry.organizationId).toBe(academy.organizationId);

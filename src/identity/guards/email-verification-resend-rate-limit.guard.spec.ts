@@ -107,9 +107,9 @@ describe('EmailVerificationResendRateLimitGuard', () => {
       await expect(guard.canActivate(contextFor(user, ip))).resolves.toBe(true);
     }
     await expect429(guard.canActivate(contextFor('victim', ip)));
-    expect(calls.some((call) => call.key === 'email-verification-resend:user:victim')).toBe(
-      false,
-    );
+    expect(
+      calls.some((call) => call.key === 'email-verification-resend:user:victim'),
+    ).toBe(false);
     // The victim still has all three resends from their own address.
     for (let i = 0; i < 3; i += 1) {
       await expect(guard.canActivate(contextFor('victim', '203.0.113.50'))).resolves.toBe(

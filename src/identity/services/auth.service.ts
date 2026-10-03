@@ -1028,7 +1028,8 @@ export class AuthService {
     // Task 3 — the join must carry its organization, or the academy's
     // activity log (tenant-scoped by organization) never shows it.
     const organizationId =
-      (await this.academyStudentsRepository.resolveOrganizationId(academyId)) ?? undefined;
+      (await this.academyStudentsRepository.resolveOrganizationId(academyId)) ??
+      undefined;
 
     let outboxIds: (string | null)[] = [];
     try {
