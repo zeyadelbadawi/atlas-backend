@@ -346,7 +346,11 @@ describe('Course Management (e2e) — functional/contract', () => {
     expect(response.status).toBe(400);
   });
 
-  it('write operations are denied for an org member with no academy_members role; reads are still allowed', async () => {
+  // W5 (F12) — reads used to be allowed on organization membership alone,
+  // which let the staff of one academy read another academy's drafts. An
+  // organization member who is not staff of THIS academy is now refused
+  // reads too.
+  it('an org member with no academy_members role is denied writes AND reads', async () => {
     const owner = await signUpAndSignIn(app, 'course-write-owner');
     const orgMemberOnly = await signUpAndSignIn(app, 'course-write-member');
     const org = await seedOrganizationWithOwner(admin, owner.userId, 'course-write-org');
@@ -364,7 +368,7 @@ describe('Course Management (e2e) — functional/contract', () => {
     await request(app.getHttpServer())
       .get(`/academies/${academy.id}/courses/${course.id}`)
       .set('Authorization', `Bearer ${orgMemberOnly.accessToken}`)
-      .expect(200);
+      .expect(403);
 
     const patchResponse = await request(app.getHttpServer())
       .patch(`/academies/${academy.id}/courses/${course.id}`)

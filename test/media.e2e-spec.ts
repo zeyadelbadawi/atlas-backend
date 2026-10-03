@@ -253,7 +253,9 @@ describe('Media Library (e2e)', () => {
       .expect(201);
   });
 
-  it('a plain org member (no academy role) cannot upload, update, or archive media, but can still list it', async () => {
+  // W5 (F12) — listing used to be allowed on organization membership alone;
+  // an organization member who is not staff of THIS academy is now refused.
+  it('a plain org member (no academy role) can neither list nor upload media', async () => {
     const { academy, org } = await seedManagedAcademy('media-authz');
     const plainMember = await signUpAndSignIn(app, 'media-authz-member');
     // A plain organization member, deliberately with NO academy_members row.
@@ -264,7 +266,7 @@ describe('Media Library (e2e)', () => {
     await request(app.getHttpServer())
       .get(`/academies/${academy.id}/media`)
       .set('Authorization', `Bearer ${plainMember.accessToken}`)
-      .expect(200);
+      .expect(403);
 
     await request(app.getHttpServer())
       .post(`/academies/${academy.id}/media`)
