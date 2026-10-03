@@ -13,6 +13,11 @@
  *   RUM      fresh visits until the 10% sample measures some: each beacon
  *            is answered 204 and carries only metric/value/route/device
  *
+ *   initiative  (3 Oct 2026) the new protected APIs answer 401 to an
+ *            anonymous caller, the public contact and verify-email
+ *            endpoints reject an invalid body (400), and the homepage
+ *            contact form renders in EN and AR (never submitted)
+ *
  * No account is created, no sign-in is attempted, nothing is written except
  * the RUM samples a real visit sends. Prints PASS/FAIL/INFO lines.
  */
@@ -120,8 +125,77 @@ for (const host of HOSTS) {
   );
 }
 
+// ---- platform-wide initiative (3 Oct 2026) -------------------------------
+// Anonymous only: the new protected APIs refuse without a session, and the
+// public endpoints reject an invalid body before anything is stored. No
+// enquiry is sent and no token is ever valid, so nothing is written.
+console.log('== Platform-wide initiative (anonymous)');
+const API = `${BASE}/api/v1`;
+const NIL = '00000000-0000-4000-8000-000000000000';
+async function api(method, path, body) {
+  try {
+    const res = await fetch(`${API}/${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return res.status;
+  } catch (error) {
+    fail(`${method} /api/v1/${path} could not be fetched (${error.cause?.code ?? error.message})`);
+    return 0;
+  }
+}
+for (const path of [
+  'platform/contact-submissions',
+  `academies/${NIL}/course-orders`,
+  `academies/${NIL}/activity`,
+  'audit-log/feed',
+]) {
+  const status = await api('GET', path);
+  check(status === 401, `GET /api/v1/${path} without a session -> ${status} (401 expected)`);
+}
+{
+  const status = await api('POST', 'public/contact', {});
+  check(status === 400, `POST /api/v1/public/contact with an empty body -> ${status} (400, nothing stored)`);
+}
+{
+  const status = await api('POST', 'auth/verify-email', { token: 'not-a-token' });
+  check(status === 400, `POST /api/v1/auth/verify-email with a malformed token -> ${status} (400)`);
+}
+
 // ---- browser + RUM -------------------------------------------------------
 const browser = await chromium.launch();
+console.log('== Atlas homepage contact section (Chromium, not submitted)');
+for (const locale of ['en', 'ar']) {
+  const context = await browser.newContext({ locale });
+  await context.addInitScript((l) => {
+    try {
+      localStorage.setItem('atlas:language', JSON.stringify(l));
+    } catch {
+      /* storage blocked: the page falls back to the browser locale */
+    }
+  }, locale);
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const res = await page.goto(`${BASE}/#contact`, { waitUntil: 'load' });
+  const form = page.locator('#contact form');
+  const visible = await form
+    .waitFor({ state: 'visible', timeout: 30_000 })
+    .then(() => true)
+    .catch(() => false);
+  check(res?.status() === 200, `${locale.toUpperCase()} homepage loads (${res?.status()})`);
+  check(visible, `${locale.toUpperCase()} homepage contact form is shown`);
+  if (visible) {
+    const fields = await form.locator('input, textarea').count();
+    check(fields >= 3, `${locale.toUpperCase()} contact form has its fields (${fields})`);
+  }
+  const dir = await page.locator('html').getAttribute('dir');
+  check(dir === (locale === 'ar' ? 'rtl' : 'ltr'), `${locale.toUpperCase()} homepage html dir="${dir}"`);
+  check(errors.length === 0, `${locale.toUpperCase()} homepage has no uncaught page errors (${errors.length})`);
+  await page.screenshot({ path: `${OUT}/home-contact-${locale}.png`, fullPage: false });
+  await context.close();
+}
 if (HOSTS[0]) {
   console.log('== Browser (Chromium)');
   for (const [locale, path] of [

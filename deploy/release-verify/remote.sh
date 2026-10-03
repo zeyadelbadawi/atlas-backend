@@ -32,12 +32,25 @@ count_json() { docker compose exec -T backend node -e "let s='';process.stdin.on
 case "${1:-}" in
   facts)
     echo "== Migrations"
-    for m in 20261102000000_website_published_snapshots 20261102000100_course_progress_item_counts 20261102000200_payment_instructions_snapshot 20261102000300_payment_method_instapay 20261102000400_egypt_manual_payment_placeholders; do
+    for m in 20261102000000_website_published_snapshots 20261102000100_course_progress_item_counts 20261102000200_payment_instructions_snapshot 20261102000300_payment_method_instapay 20261102000400_egypt_manual_payment_placeholders 20261103000000_tenant_course_order_read_rls 20261103000100_platform_contact_submissions; do
       state=$(sql "select coalesce((select case when finished_at is not null and rolled_back_at is null then 'applied' else 'unfinished' end from _prisma_migrations where migration_name='$m'), 'absent')")
       if [ "$state" = applied ]; then pass "$m applied"; else fail "$m $state"; fi
     done
     pending=$(sql "select count(*) from _prisma_migrations where finished_at is null or rolled_back_at is not null")
     if [ "$pending" = 0 ]; then pass "no unfinished or rolled-back migration rows"; else fail "$pending unfinished/rolled-back migration rows"; fi
+
+    # Platform-wide initiative (3 Oct 2026): the marketing enquiries table
+    # is RLS-forced, and the tenant course-order read policies are SELECT
+    # only. Catalog reads, no row data.
+    rls=$(sql "select relrowsecurity::text || ',' || relforcerowsecurity::text from pg_class where relname='platform_contact_submissions'")
+    if [ "$rls" = "true,true" ]; then pass "platform_contact_submissions RLS enabled and forced"; else fail "platform_contact_submissions RLS state '$rls'"; fi
+    # Each expected policy must exist on its own table, in `public`, as a
+    # SELECT policy; a missing or misplaced one fails.
+    for expected in course_orders_tenant_select:course_orders payments_tenant_course_order_select:payments course_order_refunds_tenant_select:course_order_refunds checkouts_platform_select:checkouts; do
+      name=${expected%%:*}; table=${expected#*:}
+      cmd=$(sql "select coalesce((select cmd from pg_policies where schemaname='public' and tablename='$table' and policyname='$name'), 'absent')")
+      if [ "$cmd" = SELECT ]; then pass "policy $name on $table is SELECT-only"; else fail "policy $name on $table: $cmd"; fi
+    done
 
     echo "== Health"
     health=$(docker compose exec -T backend node -e "fetch('http://localhost:3000/health').then(async r=>console.log(r.status)).catch(()=>console.log('000'))")
