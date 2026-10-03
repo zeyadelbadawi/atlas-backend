@@ -60,7 +60,11 @@ describe('Row-Level Security — course_categories / courses / course_instructor
   async function createAcademyIn(organizationId: string, slugLabel: string) {
     return tenancyContext.runInTenantContext(organizationId, (tx) =>
       tx.academy.create({
-        data: { organizationId, name: uniqueName(slugLabel), slug: `${slugLabel}-${Date.now()}` },
+        data: {
+          organizationId,
+          name: uniqueName(slugLabel),
+          slug: `${slugLabel}-${Date.now()}`,
+        },
       }),
     );
   }

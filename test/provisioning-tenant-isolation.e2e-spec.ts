@@ -220,7 +220,11 @@ describe('Provisioning Orchestration — tenant isolation (e2e)', () => {
     const { org: blockerOrg } = await arrangeOrg('platform-write-blocker');
     const subdomain = uniqueSubdomain('platform-write');
     await admin.academy.create({
-      data: { organizationId: blockerOrg.id, name: uniqueName('Blocker Academy'), slug: subdomain },
+      data: {
+        organizationId: blockerOrg.id,
+        name: uniqueName('Blocker Academy'),
+        slug: subdomain,
+      },
     });
 
     const created = await request(app.getHttpServer())

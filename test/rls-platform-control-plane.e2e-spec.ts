@@ -68,7 +68,11 @@ describe('Row-Level Security — Platform Owner Control Plane (direct, no guards
   async function createAcademy(organizationId: string, slugLabel: string) {
     return tenancyContext.runInTenantContext(organizationId, (tx) =>
       tx.academy.create({
-        data: { organizationId, name: uniqueName(slugLabel), slug: `${slugLabel}-${Date.now()}` },
+        data: {
+          organizationId,
+          name: uniqueName(slugLabel),
+          slug: `${slugLabel}-${Date.now()}`,
+        },
       }),
     );
   }

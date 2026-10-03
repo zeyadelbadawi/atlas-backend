@@ -69,7 +69,11 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
     const org = await createOrgOwnedBy(owner.id, label);
     const academy = await tenancyContext.runInTenantContext(org.id, (tx) =>
       tx.academy.create({
-        data: { organizationId: org.id, name: uniqueName(label), slug: `${label}-${Date.now()}` },
+        data: {
+          organizationId: org.id,
+          name: uniqueName(label),
+          slug: `${label}-${Date.now()}`,
+        },
       }),
     );
     const course = await tenancyContext.runInTenantContext(org.id, (tx) =>

@@ -833,7 +833,11 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     // attempt" path correctly does NOT trigger — this is a genuine,
     // unrecoverable-until-fixed failure, not an idempotent replay.
     const blocker = await admin.academy.create({
-      data: { organizationId: blockerOrg.id, name: uniqueName('Blocker Academy'), slug: subdomain },
+      data: {
+        organizationId: blockerOrg.id,
+        name: uniqueName('Blocker Academy'),
+        slug: subdomain,
+      },
     });
 
     const created = await createRequest(owner, org.id, {

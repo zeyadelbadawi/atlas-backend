@@ -29,7 +29,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { SkipThrottle, Throttle } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import { EmailLogoService } from '../../communications/services/email-logo.service';
 import { PublicWebsiteService } from '../services/public-website.service';
 import { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
@@ -140,14 +140,17 @@ export class PublicWebsiteController {
    *  - `Cross-Origin-Resource-Policy: cross-origin` on THIS route only:
    *    webmail and preview panes embed it from another origin, which the
    *    global helmet default (`same-origin`) forbids.
-   *  - Exempt from the per-IP throttler: image proxies (Gmail, Outlook,
-   *    Apple MPP) fetch from a handful of shared IPs; the response is cached
-   *    in process and at the edge, so the exemption costs no repeated work.
+   *  - A generous per-IP ceiling (600/min) instead of the 120/min default:
+   *    image proxies (Gmail, Outlook, Apple MPP) fetch from a handful of
+   *    shared IPs, but fetch once and cache, so legitimate bursts fit; a
+   *    flood does not get unlimited work (security review finding 4). The
+   *    logo reference (unknown ids negatively) and the decode are cached in
+   *    process and de-duplicated in flight (`EmailLogoService.renderPublic`).
    *  - 404 for an unknown, archived, suspended or ineligible Academy, with
    *    the same body as every other not-found here — no tenant data at all.
    */
   @Get(':academyId/logo')
-  @SkipThrottle()
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
   async getEmailLogo(
     @Param('academyId') academyId: string,
     @Query('v') version: string | undefined,
@@ -156,8 +159,9 @@ export class PublicWebsiteController {
     if (!UUID_PATTERN.test(academyId)) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
-    const stored = await this.publicWebsiteService.getLogoReference(academyId);
-    const logo = stored ? await this.emailLogoService.render(academyId, stored) : null;
+    const logo = await this.emailLogoService.renderPublic(academyId, () =>
+      this.publicWebsiteService.getLogoReference(academyId),
+    );
     if (!logo) throw new NotFoundException({ messageKey: 'errors.notFound' });
     response.setHeader(
       'Cache-Control',

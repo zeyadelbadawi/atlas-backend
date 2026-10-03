@@ -459,38 +459,38 @@ model Organization {
   /// boolean definer check `organization_name_taken`.
   nameKey               String?                  @default(dbgenerated("atlas_name_key(name)")) @map("name_key")
 
-  memberships          OrganizationMembership[]
-  academies            Academy[]
-  subscription         TenantSubscription?
-  addOns               TenantAddOn[]
-  usage                TenantUsage?
-  checkouts            Checkout[]
-  payments             Payment[]
-  invoices             TenantInvoice[]
-  webhookEvents        PaymentWebhookEvent[]
-  paymentSettings      OrganizationPaymentSettings?
-  gatewayCredential    OrganizationGatewayCredential?
-  connectedAccount     OrganizationConnectedAccount?
-  commissionSettings   OrganizationCommissionSettings?
-  CourseOrder          CourseOrder[]
+  memberships            OrganizationMembership[]
+  academies              Academy[]
+  subscription           TenantSubscription?
+  addOns                 TenantAddOn[]
+  usage                  TenantUsage?
+  checkouts              Checkout[]
+  payments               Payment[]
+  invoices               TenantInvoice[]
+  webhookEvents          PaymentWebhookEvent[]
+  paymentSettings        OrganizationPaymentSettings?
+  gatewayCredential      OrganizationGatewayCredential?
+  connectedAccount       OrganizationConnectedAccount?
+  commissionSettings     OrganizationCommissionSettings?
+  CourseOrder            CourseOrder[]
   /// Phase P14 — Provisioning Orchestration (master plan §5.11/§21).
-  provisioningRequests ProvisioningRequest[]
+  provisioningRequests   ProvisioningRequest[]
   /// Phase 10.1 — Free-Trial anti-abuse. SetNull, never Cascade: deleting
   /// the organization must not erase the redemption it consumed.
-  trialRedemptions     TrialRedemption[]
+  trialRedemptions       TrialRedemption[]
   /// W8 — gifted-setup-day redemptions recorded against this organization. SetNull on delete.
-  paidGiftRedemptions  PaidGiftRedemption[]
+  paidGiftRedemptions    PaidGiftRedemption[]
   /// Phase 10.2 — trial/subscription cancellations for this organization.
-  cancellations        SubscriptionCancellation[]
+  cancellations          SubscriptionCancellation[]
   /// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21).
-  auditLogEntries      AuditLogEntry[]
-  supportCases         SupportCase[]
+  auditLogEntries        AuditLogEntry[]
+  supportCases           SupportCase[]
   /// P64 Communications C5/C6.
-  lifecycleState       TenantLifecycleState?
+  lifecycleState         TenantLifecycleState?
   /// W3-compose — academy campaigns and the monthly email quota.
   communicationCampaigns CommunicationCampaign[]
-  emailUsagePeriods    TenantEmailUsagePeriod[]
-  emailUsageLedger     TenantEmailUsageLedger[]
+  emailUsagePeriods      TenantEmailUsagePeriod[]
+  emailUsageLedger       TenantEmailUsageLedger[]
 
   @@unique([nameKey])
   @@index([status])
@@ -6153,8 +6153,8 @@ model CommunicationCampaign {
   recipients CampaignRecipient[]
 
   @@unique([idempotencyScope, idempotencyKey], map: "communication_campaigns_idempotency_key")
-  @@index([academyId, createdAt(sort: Desc), id(sort: Desc)])
-  @@index([scope, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([academyId, createdAt(sort: Desc), id(sort: Desc)], map: "communication_campaigns_academy_id_created_at_idx")
+  @@index([scope, createdAt(sort: Desc), id(sort: Desc)], map: "communication_campaigns_scope_created_at_idx")
   @@map("communication_campaigns")
 }
 

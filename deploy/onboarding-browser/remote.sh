@@ -4,7 +4,8 @@
 # restricted deploy identity, fed through stdin like onboarding-verify.sh.
 #
 #   remote.sh eligible <email>   -> "eligible=yes|no" (trial subject, via the app's own hash)
-#   remote.sh otp <email>        -> the latest sign-in code for THAT account only
+#   remote.sh otp <email>        -> the latest sign-in code for THAT account only, read from the email
+#                                   provider's copy of the delivered email (W3: the outbox no longer keeps it)
 #   remote.sh state <email>      -> non-personal facts about the signup's atomic state
 #   remote.sh final <email>      -> non-personal facts after the onboarding journey
 #
@@ -37,7 +38,54 @@ case "$cmd" in
     if [ "$used" = "0" ]; then echo "eligible=yes"; else echo "eligible=no"; fi
     ;;
   otp)
-    sql "select o.values->>'code' from communication_outbox o where o.recipient_user_id=$USER_ID_SQL and o.key='auth.email.otp' order by o.created_at desc limit 1"
+    # W3 (Large-Scale Initiative): the outbox no longer keeps the code. It is
+    # removed from communication_outbox.values in the SAME transaction that
+    # records the email delivery (and by the hourly prune), so it cannot be
+    # read back from the database. The code is read instead from the copy of
+    # the delivered email that the email provider already holds (Brevo's or
+    # Resend's transactional log), found by the provider message id of the
+    # latest sign-in-code email to THIS test account. Nothing new is stored
+    # anywhere, and the check now also proves the email was really sent.
+    # Prints the six digits only (or nothing; the runner polls).
+    row=$(sql "select coalesce(d.provider,''), coalesce(d.provider_message_id,'')
+               from communication_outbox o
+               join lateral (select x.provider, x.provider_message_id from communication_deliveries x
+                             where x.outbox_id=o.id and x.channel='email' and x.provider_message_id is not null
+                             order by x.created_at desc limit 1) d on true
+               where o.id=(select o2.id from communication_outbox o2 where o2.recipient_user_id=$USER_ID_SQL and o2.key='auth.email.otp' order by o2.created_at desc limit 1)")
+    provider="${row%%|*}"; msgid="${row#*|}"
+    case "$provider" in brevo|resend) ;; *) exit 0 ;; esac
+    printf '%s' "$msgid" | grep -Eq '^<?[A-Za-z0-9._@+=-]+>?$' || exit 0
+    docker compose exec -T -e MSG_ID="$msgid" -e MSG_PROVIDER="$provider" backend node -e '
+// The code is the only element (HTML) or line (text) that is exactly six
+// digits; anything else, or more than one distinct match, prints nothing.
+const pick = (body) => {
+  const s = String(body || "").replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, " ");
+  const found = new Set([
+    ...[...s.matchAll(/>\s*(\d{6})\s*</g)].map((m) => m[1]),
+    ...s.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^\d{6}$/.test(l)),
+  ]);
+  if (found.size === 1) process.stdout.write([...found][0] + "\n");
+};
+const id = String(process.env.MSG_ID || "");
+(async () => {
+  if (process.env.MSG_PROVIDER === "brevo") {
+    const key = process.env.BREVO_API_KEY;
+    if (!key) return;
+    const h = { headers: { "api-key": key, accept: "application/json" } };
+    const list = await (await fetch("https://api.brevo.com/v3/smtp/emails?limit=1&messageId=" + encodeURIComponent(id), h)).json();
+    const t = ((list && list.transactionalEmails) || [])[0];
+    if (!t) return;
+    const one = await (await fetch("https://api.brevo.com/v3/smtp/emails/" + encodeURIComponent(t.uuid), h)).json();
+    pick(one && one.body);
+  } else if (process.env.MSG_PROVIDER === "resend") {
+    const key = process.env.RESEND_API_KEY || process.env.EMAIL_API_KEY;
+    if (!key) return;
+    const one = await (await fetch("https://api.resend.com/emails/" + encodeURIComponent(id), { headers: { authorization: "Bearer " + key } })).json();
+    pick((one && (one.text || one.html)) || "");
+  }
+})().catch(() => {});
+'
     ;;
   state)
     sql "select 'users', count(*) from users where email='$email'"

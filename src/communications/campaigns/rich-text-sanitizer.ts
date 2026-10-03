@@ -169,7 +169,9 @@ function stripDangerousBlocks(input: string): string {
   let out = input
     .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
     .replace(/<!\[CDATA\[[\s\S]*?(?:\]\]>|$)/gi, '')
-    .replace(/<![^>]*>/g, '')
+    // `[^<>]`, not `[^>]`: an unterminated `<!` must not scan to the end of
+    // the input from every `<!` (quadratic on `<!<!<!…`).
+    .replace(/<![^<>]*>/g, '')
     .replace(/<\?[\s\S]*?(?:\?>|>|$)/g, '');
   for (const tag of DROP_WITH_CONTENT) {
     const block = new RegExp(`<${tag}\\b[\\s\\S]*?(?:<\\/${tag}\\s*>|$)`, 'gi');
@@ -185,18 +187,35 @@ function stripDangerousBlocks(input: string): string {
  */
 export function sanitizeRichText(input: string): SanitizedRichText {
   const source = stripDangerousBlocks(input ?? '');
-  const tagPattern = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:\s[^<>]*)?)\s*(\/?)>/g;
+  // One unambiguous attribute run (`\s[^<>]*`), then an optional `/`: the
+  // old `(\s[^<>]*)?\s*(\/?)>` let two quantifiers share the trailing
+  // whitespace, which backtracks quadratically on `<a` + many spaces.
+  const tagPattern = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)(\s[^<>]*)?\/?>/g;
   const htmlParts: string[] = [];
   const textParts: string[] = [];
   const stack: { name: string; href?: string }[] = [];
   const listCounters: number[] = [];
 
+  // The text twin's state, tracked incrementally (security review finding
+  // 3): re-joining every part per block made sanitising O(n²) — 20 KB of
+  // `<p>x` took ~1.5 s.
+  let textHasContent = false;
+  let trailingNewlines = 0;
+  const pushText = (part: string): void => {
+    if (!part) return;
+    textParts.push(part);
+    let newlines = 0;
+    while (newlines < part.length && part[part.length - 1 - newlines] === '\n') {
+      newlines += 1;
+    }
+    trailingNewlines = newlines === part.length ? trailingNewlines + newlines : newlines;
+    if (!textHasContent && part.trim().length > 0) textHasContent = true;
+  };
+
   /** Makes the text twin end with at least `count` line breaks (none at the very start). */
   const ensureBreak = (count: number): void => {
-    const joined = textParts.join('');
-    if (joined.trim().length === 0) return;
-    const trailing = /\n*$/.exec(joined)?.[0].length ?? 0;
-    if (trailing < count) textParts.push('\n'.repeat(count - trailing));
+    if (!textHasContent) return;
+    if (trailingNewlines < count) pushText('\n'.repeat(count - trailingNewlines));
   };
 
   const emitText = (raw: string): void => {
@@ -206,7 +225,7 @@ export function sanitizeRichText(input: string): SanitizedRichText {
     const collapsed = decoded.replace(/[\t\r\n ]+/g, ' ');
     if (!collapsed) return;
     htmlParts.push(escapeHtmlText(collapsed));
-    textParts.push(collapsed);
+    pushText(collapsed);
   };
 
   const close = (name: string): void => {
@@ -216,7 +235,7 @@ export function sanitizeRichText(input: string): SanitizedRichText {
       const entry = stack.pop()!;
       htmlParts.push(`</${entry.name}>`);
       if (entry.name === 'a' && entry.href) {
-        textParts.push(` (${entry.href})`);
+        pushText(` (${entry.href})`);
       }
       if (entry.name === 'ul' || entry.name === 'ol') listCounters.pop();
       if (BLOCK.has(entry.name)) ensureBreak(entry.name === 'li' ? 1 : 2);
@@ -239,7 +258,7 @@ export function sanitizeRichText(input: string): SanitizedRichText {
     }
     if (VOID.has(name)) {
       htmlParts.push('<br>');
-      textParts.push('\n');
+      pushText('\n');
       continue;
     }
     // A new paragraph-level block implicitly ends an open paragraph, like a browser.
@@ -273,10 +292,10 @@ export function sanitizeRichText(input: string): SanitizedRichText {
       const depth = listCounters.length;
       const counter = depth > 0 ? listCounters[depth - 1] : 0;
       if (counter > 0) {
-        textParts.push(`${counter}. `);
+        pushText(`${counter}. `);
         listCounters[depth - 1] = counter + 1;
       } else {
-        textParts.push('- ');
+        pushText('- ');
       }
     }
     stack.push({ name });
@@ -294,11 +313,23 @@ export function sanitizeRichText(input: string): SanitizedRichText {
   const text = textParts
     .join('')
     .replace(/\u00a0/g, ' ')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n[ \t]+/g, '\n')
+    // Blanks around line breaks, line by line: `/[ \t]+\n/g` restarts at
+    // every blank of a long run (adjacent text parts) and was quadratic.
+    .split('\n')
+    .map(trimBlanks)
+    .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return { html, text };
+}
+
+/** Strips spaces and tabs from both ends of one line, in linear time. */
+function trimBlanks(line: string): string {
+  let start = 0;
+  let end = line.length;
+  while (start < end && (line[start] === ' ' || line[start] === '\t')) start += 1;
+  while (end > start && (line[end - 1] === ' ' || line[end - 1] === '\t')) end -= 1;
+  return start === 0 && end === line.length ? line : line.slice(start, end);
 }
 
 /** Plain text → minimal paragraphs, for a body that arrived without markup. */

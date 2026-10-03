@@ -65,7 +65,11 @@ describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_e
   async function createAcademy(organizationId: string, slugLabel: string) {
     return tenancyContext.runInTenantContext(organizationId, (tx) =>
       tx.academy.create({
-        data: { organizationId, name: uniqueName(slugLabel), slug: `${slugLabel}-${Date.now()}` },
+        data: {
+          organizationId,
+          name: uniqueName(slugLabel),
+          slug: `${slugLabel}-${Date.now()}`,
+        },
       }),
     );
   }

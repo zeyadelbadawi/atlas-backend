@@ -10,7 +10,9 @@
  *   - `campaignSubject`       — plain text, already length-capped;
  *   - `campaignBodyHtml`      — allowlist HTML from `sanitizeRichText`. It
  *                               is sanitised AGAIN here: the render never
- *                               trusts what a database row says it is;
+ *                               trusts what a database row says it is
+ *                               (once per distinct body, memoised — see
+ *                               `campaignBodyEmailHtml`);
  *   - `campaignBodyText`      — the plain-text twin;
  *   - `campaignContentLocale` — the language the author wrote in, which sets the
  *                        body block's direction independently of the
@@ -73,6 +75,40 @@ export const CAMPAIGN_COPY: Readonly<
   },
 };
 
+/**
+ * The styled, re-sanitised body, rendered ONCE per campaign body rather than
+ * once per recipient (security review finding 3: a campaign renders the
+ * same body for every recipient, and re-sanitising it each time multiplied
+ * the work by the audience). Keyed by the stored body itself, so the
+ * "never trust the row" re-sanitisation is kept — it simply is not repeated
+ * for identical input. Nothing per-recipient is in the body (the
+ * unsubscribe link is added outside it). Bounded: a few recent bodies,
+ * oversized ones not cached.
+ */
+const BODY_CACHE_MAX_ENTRIES = 16;
+const BODY_CACHE_MAX_INPUT = 100_000;
+const bodyHtmlCache = new Map<string, string>();
+
+export function campaignBodyEmailHtml(rawBodyHtml: string): string {
+  const cached = bodyHtmlCache.get(rawBodyHtml);
+  if (cached !== undefined) {
+    // Refresh recency (Map iteration order is insertion order).
+    bodyHtmlCache.delete(rawBodyHtml);
+    bodyHtmlCache.set(rawBodyHtml, cached);
+    return cached;
+  }
+  const html = styleForEmail(sanitizeRichText(rawBodyHtml).html);
+  if (rawBodyHtml.length <= BODY_CACHE_MAX_INPUT) {
+    bodyHtmlCache.set(rawBodyHtml, html);
+    while (bodyHtmlCache.size > BODY_CACHE_MAX_ENTRIES) {
+      const oldest = bodyHtmlCache.keys().next().value;
+      if (oldest === undefined) break;
+      bodyHtmlCache.delete(oldest);
+    }
+  }
+  return html;
+}
+
 function brandOf(context: TemplateRenderContext): string {
   return context.branding.academyName ?? context.branding.platformName;
 }
@@ -82,7 +118,7 @@ function bodyBlock(
   locale: 'en' | 'ar',
   copy: CampaignCopy,
 ): string {
-  const html = styleForEmail(sanitizeRichText(str(values, 'campaignBodyHtml')).html);
+  const html = campaignBodyEmailHtml(str(values, 'campaignBodyHtml'));
   const contentLocale = str(values, 'campaignContentLocale') === 'ar' ? 'ar' : 'en';
   const dir = contentLocale === 'ar' ? 'rtl' : 'ltr';
   const unsubscribeUrl = str(values, 'unsubscribeUrl');

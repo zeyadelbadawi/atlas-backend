@@ -11,6 +11,7 @@ import { BadRequestException } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsByteLength,
   IsIn,
   IsInt,
   IsObject,
@@ -26,6 +27,7 @@ import {
 import type { AcademyMemberRole, TenantSubscriptionStatus } from '@prisma/client';
 import {
   CAMPAIGN_BODY_HTML_MAX,
+  CAMPAIGN_BODY_HTML_MAX_BYTES,
   CAMPAIGN_SUBJECT_MAX,
   MAX_COURSE_FILTER,
   MAX_PLAN_FILTER,
@@ -63,6 +65,7 @@ export class SendCampaignDto extends PreviewCampaignDto {
 
   @IsString()
   @MaxLength(CAMPAIGN_BODY_HTML_MAX)
+  @IsByteLength(0, CAMPAIGN_BODY_HTML_MAX_BYTES)
   readonly bodyHtml!: string;
 
   @IsOptional()

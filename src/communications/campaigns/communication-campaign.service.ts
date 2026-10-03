@@ -40,6 +40,7 @@ import { RedisService } from '../../redis/redis.service';
 import type { CommunicationsConfig } from '../../config/configuration';
 import {
   CAMPAIGN_BODY_HTML_MAX,
+  CAMPAIGN_BODY_HTML_MAX_BYTES,
   CAMPAIGN_BODY_TEXT_MAX,
   CAMPAIGN_KEY,
   CAMPAIGN_LARGE_AUDIENCE,
@@ -251,7 +252,10 @@ export class CommunicationCampaignService {
 
   async send(sender: SenderContext, input: SendInput): Promise<CampaignAcceptedResponse> {
     this.assertChannels(input.channels);
-    const content = this.sanitizeContent(input);
+    // Cheap checks only (subject, raw size) before the rate limit; the
+    // sanitiser — the expensive part — runs after it (security review
+    // finding 3), so a flood of oversized bodies is refused by the limiter.
+    this.assertRawContent(input);
     const idempotencyScope =
       sender.scope === 'academy' ? `academy:${sender.academyId}` : 'platform';
 
@@ -268,6 +272,7 @@ export class CommunicationCampaignService {
       rate.max,
       rate.windowSeconds,
     );
+    const content = this.sanitizeContent(input);
 
     const campaignId = randomUUID();
     try {
@@ -554,11 +559,8 @@ export class CommunicationCampaignService {
     }
   }
 
-  private sanitizeContent(input: SendInput): {
-    subject: string;
-    html: string;
-    text: string;
-  } {
+  /** Subject and raw body size — no parsing, safe to run before the rate limit. */
+  private assertRawContent(input: SendInput): string {
     // Control characters (CR/LF included) never belong in a subject line —
     // they are the classic header-injection vector.
     // eslint-disable-next-line no-control-regex
@@ -570,13 +572,25 @@ export class CommunicationCampaignService {
         details: { max: CAMPAIGN_SUBJECT_MAX },
       });
     }
-    if (input.bodyHtml.length > CAMPAIGN_BODY_HTML_MAX) {
+    if (
+      input.bodyHtml.length > CAMPAIGN_BODY_HTML_MAX ||
+      Buffer.byteLength(input.bodyHtml, 'utf8') > CAMPAIGN_BODY_HTML_MAX_BYTES
+    ) {
       throw new UnprocessableEntityException({
         messageKey: 'errors.messaging.bodyTooLong',
         code: 'CAMPAIGN_BODY_TOO_LONG',
         details: { max: CAMPAIGN_BODY_TEXT_MAX },
       });
     }
+    return subject;
+  }
+
+  private sanitizeContent(input: SendInput): {
+    subject: string;
+    html: string;
+    text: string;
+  } {
+    const subject = this.assertRawContent(input);
     const sanitized = sanitizeRichText(input.bodyHtml);
     if (!sanitized.text) {
       throw new UnprocessableEntityException({

@@ -41,6 +41,14 @@ export interface LearnerAcademyResponse {
   readonly host?: string;
   readonly membershipStatus: string;
   readonly blocked: boolean;
+  /**
+   * W4 / security review finding 2 — present (true) when this account was
+   * admitted here while another learner already used its display name (the
+   * row is `name_unique_exempt`) and that is still the case: the person is
+   * asked to choose a different display name. Only ever reported to the
+   * account itself, on `/users/me`, once its email address is verified.
+   */
+  readonly nameChangeSuggested?: true;
 }
 
 export interface CurrentUserResponse {

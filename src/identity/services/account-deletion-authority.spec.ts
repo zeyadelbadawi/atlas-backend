@@ -44,7 +44,7 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
     academy: { updateMany: async () => ({ count: 0 }) },
     organizationMembership: { findMany: async () => [], deleteMany: async () => ({}) },
     academyMember: { deleteMany: async () => ({}) },
-    academyStudent: { deleteMany: async () => ({}) },
+    academyStudent: { deleteMany: async () => ({}), count: async () => 0 },
     courseInstructor: { deleteMany: async () => ({}) },
     refreshToken: {
       findMany: async () => [{ sessionId: 's1' }],

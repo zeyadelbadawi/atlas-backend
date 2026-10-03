@@ -27,6 +27,7 @@ import {
   seedAcademyMember,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
+import { uniqueName } from './utils/unique-name';
 
 const ORANGE = { primary: '24 95% 53%', secondary: '199 89% 38%', accent: '43 96% 56%' };
 const GREEN = { primary: '142 71% 30%', secondary: '221 83% 40%', accent: '43 96% 56%' };
@@ -138,13 +139,16 @@ describe('Visual identity (e2e)', () => {
     expect(await publicPrimary(a.academy.id)).toBe(ORANGE.primary);
     expect((await resolve(a.host)).presentation?.brand.primaryColor).toBe(ORANGE.primary);
 
+    // W4 — academy names are unique platform-wide and this database
+    // persists between runs, so the new name must be unique too.
+    const renamed = uniqueName('Renamed Academy');
     const saved = await save(a.owner.token, a.academy.id, {
-      name: 'Renamed Academy',
+      name: renamed,
       logo: 'https://cdn.example.com/new-logo.png',
       brand: { palette: palette(GREEN) },
     }).expect(200);
     expect(saved.body.academy).toMatchObject({
-      name: 'Renamed Academy',
+      name: renamed,
       logo: 'https://cdn.example.com/new-logo.png',
     });
     expect(saved.body.configuration.configVersion).toBe(before.configVersion + 1);
@@ -154,7 +158,7 @@ describe('Visual identity (e2e)', () => {
     expect(await publicPrimary(a.academy.id)).toBe(GREEN.primary);
     const resolved = await resolve(a.host);
     expect(resolved.presentation?.brand.primaryColor).toBe(GREEN.primary);
-    expect(resolved.academyName).toBe('Renamed Academy');
+    expect(resolved.academyName).toBe(renamed);
     expect(resolved.academyLogo).toBe('https://cdn.example.com/new-logo.png');
   });
 
@@ -209,6 +213,30 @@ describe('Visual identity (e2e)', () => {
     expect((await resolve(a.host)).academyName).not.toBe('Should Not Stick');
     const after = await getConfig(a.owner.token, a.academy.id);
     expect(after.configVersion).toBe(before.configVersion);
+  });
+
+  // W4 — this form renames the academy, so it enforces the same
+  // platform-wide name rule as PATCH /academies/:id(/branding): another
+  // academy's name (any case/accents) is a 409, never a 500, and the whole
+  // save is refused. Re-saving its own name is not a conflict.
+  it('refuses a name another academy holds with 409 and saves nothing', async () => {
+    const a = await seedAcademyWithHost('vi-name-a');
+    const b = await seedAcademyWithHost('vi-name-b');
+    const before = await getConfig(a.owner.token, a.academy.id);
+
+    const taken = await save(a.owner.token, a.academy.id, {
+      name: `  ${b.academy.name.toUpperCase()} `,
+      brand: { palette: palette(GREEN) },
+    }).expect(409);
+    expect(taken.body.error).toMatchObject({
+      messageKey: 'errors.academy.nameTaken',
+      violations: [{ field: 'name' }],
+    });
+    const after = await getConfig(a.owner.token, a.academy.id);
+    expect(after.configVersion).toBe(before.configVersion);
+    expect((await resolve(a.host)).academyName).toBe(a.academy.name);
+
+    await save(a.owner.token, a.academy.id, { name: a.academy.name }).expect(200);
   });
 
   it('a save based on an older copy is refused and saves nothing', async () => {

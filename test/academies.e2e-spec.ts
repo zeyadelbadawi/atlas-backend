@@ -150,12 +150,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
     const crudName = uniqueName('CRUD Academy');
     const renamedName = uniqueName('Renamed Academy');
 
-    const created = await provisionAcademy(
-      user.accessToken,
-      org.id,
-      slug,
-      crudName,
-    );
+    const created = await provisionAcademy(user.accessToken, org.id, slug, crudName);
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({
       organizationId: org.id,
@@ -460,13 +455,37 @@ describe('Academy Management (e2e) — functional/contract', () => {
       `activity-${Date.now()}`,
     );
     expect(created.status).toBe(201);
+    // `provisionAcademy` returns once the Academy row exists, but the worker
+    // keeps going (theme → branding → subdomain). Read the feed only once the
+    // request has finished, so the rows it asserts on are all written.
+    let provisioningStatus: string | undefined;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const req = await admin.provisioningRequest.findFirst({
+        where: { academyId: created.body.id },
+        select: { status: true },
+      });
+      provisioningStatus = req?.status;
+      if (provisioningStatus === 'ready' || provisioningStatus === 'failed') break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    expect(provisioningStatus).toBe('ready');
 
     const activity = await request(app.getHttpServer())
       .get(`/academies/${created.body.id}/activity`)
       .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(200);
     expect(activity.body.nextCursor).toBeNull();
+    // Newest first. W2: provisioning always applies a theme (the platform
+    // default when none was picked) through the Website Settings write path,
+    // so that write is recorded right after the Academy itself.
     expect(activity.body.items).toEqual([
+      expect.objectContaining({
+        action: 'website.configuration.updated',
+        category: 'website',
+        academyId: created.body.id,
+        targetType: 'website_configuration',
+        actor: { id: user.userId, name: 'academy-activity', isPlatformStaff: false },
+      }),
       expect.objectContaining({
         action: 'academy.created',
         category: 'academy',

@@ -42,13 +42,21 @@ describe('Row-Level Security — P7 Instructor Operations & Community tables (di
   async function createFullCourseGraph(label: string) {
     const owner = await createUser(`${label}-owner`);
     const org = await admin.organization.create({
-      data: { name: uniqueName(label), slug: `${label}-${Date.now()}`, ownerUserId: owner.id },
+      data: {
+        name: uniqueName(label),
+        slug: `${label}-${Date.now()}`,
+        ownerUserId: owner.id,
+      },
     });
     await admin.organizationMembership.create({
       data: { organizationId: org.id, userId: owner.id, role: 'owner', isPrimary: true },
     });
     const academy = await admin.academy.create({
-      data: { organizationId: org.id, name: uniqueName(label), slug: `${label}-${Date.now()}` },
+      data: {
+        organizationId: org.id,
+        name: uniqueName(label),
+        slug: `${label}-${Date.now()}`,
+      },
     });
     // Phase 1 (Extended Scope, dependency A/B) — reproduces the real
     // `AcademiesService.create`'s auto-granted owner membership, which the

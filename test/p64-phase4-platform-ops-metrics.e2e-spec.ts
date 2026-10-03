@@ -156,11 +156,20 @@ describe('Platform ops metrics — commerce & delivery (e2e)', () => {
   it('commerce: a real purchase → approval / rejection / refund flow moves every count and the latency sample', async () => {
     const reviewer = await platformOwnerAccount('pom-reviewer');
 
-    const before = await request(app.getHttpServer())
+    const defaultWindow = await request(app.getHttpServer())
       .get('/platform-metrics/commerce')
       .set(reviewer.auth)
       .expect(200);
-    expect(before.body.windowDays).toBe(30);
+    expect(defaultWindow.body.windowDays).toBe(30);
+
+    // `before` and `after` must read the SAME window: a delta between a
+    // 30-day and a 7-day read goes negative as soon as the shared database
+    // holds any order 7–30 days old (other suites seed backdated orders).
+    const before = await request(app.getHttpServer())
+      .get('/platform-metrics/commerce?days=7')
+      .set(reviewer.auth)
+      .expect(200);
+    expect(before.body.windowDays).toBe(7);
 
     // A: approved and kept. B: approved, then refunded by the student.
     // C: rejected. D: proof uploaded, never reviewed (the backlog).

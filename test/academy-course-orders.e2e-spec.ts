@@ -99,6 +99,9 @@ describe('Academy course orders (e2e)', () => {
   let orgId: string;
   let otherOrgId: string;
   let academyId: string;
+  // W4 — `seedAcademy` appends a uniqueness suffix to the label (academy
+  // names are unique platform-wide), so assertions use the stored name.
+  let academyName: string;
   let siblingAcademyId: string;
   let courseAlgebraId: string;
   let courseBiologyId: string;
@@ -123,6 +126,7 @@ describe('Academy course orders (e2e)', () => {
     orgId = org.id;
     const academy = await seedAcademy(admin, orgId, `${marker}-academy`);
     academyId = academy.id;
+    academyName = academy.name;
     const sibling = await seedAcademy(admin, orgId, `${marker}-sibling`);
     siblingAcademyId = sibling.id;
 
@@ -830,7 +834,7 @@ describe('Academy course orders (e2e)', () => {
         (i: { courseOrderId: string }) => i.courseOrderId === o1,
       );
       expect(forO1).toMatchObject({
-        academy: { id: academyId, name: `${marker}-academy` },
+        academy: { id: academyId, name: academyName },
         course: { id: courseAlgebraId, title: `Alpha Algebra ${marker}` },
         courseOrderStatus: 'paid',
         refundStatus: 'succeeded',
@@ -884,7 +888,7 @@ describe('Academy course orders (e2e)', () => {
         `/platform-course-order-payments/${listRes.body.items[0].id}`,
         {},
       ).expect(200);
-      expect(detail.body.academy.name).toBe(`${marker}-academy`);
+      expect(detail.body.academy.name).toBe(academyName);
       expect(detail.body.refundStatus).toBe('succeeded');
       expect(detail.body.proof.note).toBe(SECRET_PROOF_NOTE);
     });

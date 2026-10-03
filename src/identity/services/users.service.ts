@@ -3,7 +3,14 @@
  * Phase P1, §5/§6/§7 of the P1 spec: profile, preferences, change-password;
  * extended in Phase P2 to populate real organization data — §20).
  */
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Prisma, User } from '@prisma/client';
 import {
   isLearnerNameTaken,
@@ -17,7 +24,11 @@ import { PasswordResetTokensRepository } from '../repositories/password-reset-to
 import { SessionRevocationService } from './session-revocation.service';
 import { PasswordCredentialsService } from './password-credentials.service';
 import { toCurrentUser } from '../dto/contracts';
-import type { CurrentUserResponse, UserPreferences } from '../dto/contracts';
+import type {
+  CurrentUserResponse,
+  LearnerAcademyResponse,
+  UserPreferences,
+} from '../dto/contracts';
 import { UserOrganizationsService } from '../../tenancy/services/user-organizations.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { CommunicationService } from '../../communications/services/communication.service';
@@ -27,9 +38,19 @@ import { SurfaceEnforcementService } from '../../tenancy/services/surface-enforc
 import { TrustedDeviceService } from './trusted-device.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import type { Principal } from '../../tenancy/services/principal-resolver.service';
+import { AuthRateLimiterService } from './auth-rate-limiter.service';
+
+/**
+ * W4 / security review finding 2 — a rename is the one place an
+ * authenticated account learns whether a name is held in its academies, so
+ * it is metered per account (fixed window, `ratelimit:` namespace).
+ */
+const PROFILE_RENAME_LIMIT = { max: 10, windowSeconds: 60 * 60 } as const;
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     private readonly usersRepository: UsersRepository,
     private readonly sessionRevocationService: SessionRevocationService,
@@ -42,6 +63,7 @@ export class UsersService {
     private readonly trustedDeviceService: TrustedDeviceService,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly passwordResetTokensRepository: PasswordResetTokensRepository,
+    private readonly rateLimiter: AuthRateLimiterService,
   ) {}
 
   /**
@@ -62,14 +84,91 @@ export class UsersService {
       this.userOrganizationsService.getMembershipsForUser(userId),
       this.principalResolver.resolve(userId),
     ]);
-    return toCurrentUser(user, organizationMemberships, this.withSurfaceState(principal));
+    return toCurrentUser(
+      user,
+      organizationMemberships,
+      await this.withNameReview(user, this.withSurfaceState(principal)),
+    );
+  }
+
+  /**
+   * W4 / security review finding 2 — marks each academy where this account
+   * was admitted `name_unique_exempt` and another (non-exempt) learner still
+   * holds its display name, so the learner area can ask for a different one.
+   *
+   * Registration no longer refuses a taken learner name (that answer went to
+   * anyone, unauthenticated); this is where the clash surfaces instead —
+   * only to the account itself, and only once its address is verified. Read
+   * under the account's own context (`academy_students_self_select`) plus
+   * the boolean definer check, so nothing about the other learner is read.
+   */
+  private async withNameReview<
+    P extends { readonly academies: readonly LearnerAcademyResponse[] },
+  >(user: User, principal: P): Promise<P> {
+    if (!user.emailVerifiedAt || principal.academies.length === 0) return principal;
+    const flagged = await this.tenancyContextService.runInUserContext(
+      user.id,
+      async (tx) => {
+        const exempt = await tx.academyStudent.findMany({
+          where: { userId: user.id, nameUniqueExempt: true },
+          select: { academyId: true, nameKey: true },
+        });
+        const academyIds = new Set<string>();
+        for (const row of exempt) {
+          if (
+            row.nameKey !== '' &&
+            (await isLearnerNameTaken(tx, row.academyId, row.nameKey, user.id))
+          ) {
+            academyIds.add(row.academyId);
+          }
+        }
+        return academyIds;
+      },
+    );
+    if (flagged.size === 0) return principal;
+    return {
+      ...principal,
+      academies: principal.academies.map((academy) =>
+        flagged.has(academy.academyId)
+          ? { ...academy, nameChangeSuggested: true as const }
+          : academy,
+      ),
+    };
+  }
+
+  /** Per-account rename budget; a Redis failure allows the rename (logged). */
+  private async consumeRenameBudget(userId: string): Promise<void> {
+    let allowed = true;
+    let retryAfterSeconds = 0;
+    try {
+      const check = await this.rateLimiter.consume(
+        `profile-rename:${userId}`,
+        PROFILE_RENAME_LIMIT.max,
+        PROFILE_RENAME_LIMIT.windowSeconds,
+      );
+      allowed = check.allowed;
+      retryAfterSeconds = check.retryAfterSeconds;
+    } catch (error) {
+      this.logger.warn(
+        { userId, error: error instanceof Error ? error.message : String(error) },
+        'Profile rename budget could not be checked; allowing this rename.',
+      );
+    }
+    if (!allowed) {
+      throw new HttpException(
+        { messageKey: 'errors.auth.rateLimited', details: { retryAfterSeconds } },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
   }
 
   async updateProfile(
     userId: string,
     input: { name?: string; avatar?: string },
   ): Promise<CurrentUserResponse> {
-    await this.requireUser(userId);
+    const current = await this.requireUser(userId);
+    const renaming = input.name !== undefined && input.name !== current.name;
+    if (renaming) await this.consumeRenameBudget(userId);
     const updated =
       input.name === undefined
         ? await this.usersRepository.updateProfile(userId, { avatarUrl: input.avatar })
@@ -79,7 +178,10 @@ export class UsersService {
     return toCurrentUser(
       updated,
       organizationMemberships,
-      this.withSurfaceState(await this.principalResolver.resolve(userId)),
+      await this.withNameReview(
+        updated,
+        this.withSurfaceState(await this.principalResolver.resolve(userId)),
+      ),
     );
   }
 
@@ -124,7 +226,17 @@ export class UsersService {
     }
   }
 
-  /** The user's academies (non-exempt rows only) where another learner holds `key`. */
+  /**
+   * The user's academies where another (non-exempt) learner holds `key`.
+   *
+   * A non-exempt row is always checked. An EXEMPT row (admitted while its
+   * name was taken — see `withNameReview`) is checked only when the rename
+   * actually changes its key: the person is choosing a new name there, and
+   * a taken one gets the same actionable 409; a cosmetic rename (same key)
+   * stays exempt. Every academy's lock is taken, in academy order, because
+   * the `users_learner_name_key_au` trigger releases an exemption the new
+   * name no longer needs and must not race an admission for that key.
+   */
   private async learnerNameClashes(
     tx: Prisma.TransactionClient,
     userId: string,
@@ -132,13 +244,14 @@ export class UsersService {
     lock: boolean,
   ): Promise<string[]> {
     const rows = await tx.academyStudent.findMany({
-      where: { userId, nameUniqueExempt: false },
-      select: { academyId: true },
+      where: { userId },
+      select: { academyId: true, nameUniqueExempt: true, nameKey: true },
       orderBy: { academyId: 'asc' },
     });
     const clashes: string[] = [];
-    for (const { academyId } of rows) {
+    for (const { academyId, nameUniqueExempt, nameKey } of rows) {
       if (lock) await lockLearnerName(tx, academyId, key);
+      if (nameUniqueExempt && nameKey === key) continue;
       if (await isLearnerNameTaken(tx, academyId, key, userId)) clashes.push(academyId);
     }
     return clashes;
@@ -172,7 +285,10 @@ export class UsersService {
     return toCurrentUser(
       updated,
       organizationMemberships,
-      this.withSurfaceState(await this.principalResolver.resolve(userId)),
+      await this.withNameReview(
+        updated,
+        this.withSurfaceState(await this.principalResolver.resolve(userId)),
+      ),
     );
   }
 

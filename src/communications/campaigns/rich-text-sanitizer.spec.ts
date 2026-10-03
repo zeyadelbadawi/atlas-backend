@@ -155,4 +155,57 @@ describe('helpers', () => {
     expect(excerpt('one two three four five', 12)).toBe('one two…');
     expect(excerpt('short', 12)).toBe('short');
   });
+
+  describe('linear time (security review finding 3)', () => {
+    // ~50 KB of each shape that used to be quadratic (text-twin re-joins per
+    // block, ambiguous tag-attribute quantifiers, `<!` and blank-run scans).
+    const SIZE = 50_000;
+    const ADVERSARIAL: Record<string, string> = {
+      paragraphs: '<p>x'.repeat(SIZE / 4),
+      listItems: '<ol>' + '<li>x'.repeat(SIZE / 5),
+      breaks: 'x<br>'.repeat(SIZE / 5),
+      closedParagraphs: '<p>x</p>'.repeat(SIZE / 8),
+      tagThenSpaces: '<a' + ' '.repeat(SIZE),
+      unterminatedBang: '<!x'.repeat(SIZE / 3),
+      blankRuns: ' <b>'.repeat(SIZE / 4),
+      quotes: '<a href=' + '"'.repeat(SIZE),
+      nestedLists: '<ul><li>'.repeat(SIZE / 8),
+    };
+
+    /** Best of three, so a GC pause on a shared runner is not a failure. */
+    function fastestMs(input: string): number {
+      let best = Infinity;
+      for (let i = 0; i < 3; i += 1) {
+        const started = performance.now();
+        sanitizeRichText(input);
+        best = Math.min(best, performance.now() - started);
+      }
+      return best;
+    }
+
+    beforeAll(() => {
+      sanitizeRichText('<p>warm-up</p>'.repeat(200));
+    });
+
+    it.each(Object.entries(ADVERSARIAL))(
+      '%s (~50 KB) sanitises in under 100 ms',
+      (_label, input) => {
+        expect(input.length).toBeGreaterThanOrEqual(SIZE * 0.99);
+        expect(fastestMs(input)).toBeLessThan(100);
+      },
+    );
+
+    it('re-sanitising stored output stays fast and idempotent', () => {
+      const first = sanitizeRichText('<p>x'.repeat(SIZE / 4));
+      expect(fastestMs(first.html)).toBeLessThan(100);
+      expect(sanitizeRichText(first.html).html).toBe(first.html);
+    });
+
+    it('keeps the text twin identical to the block structure', () => {
+      expect(sanitizeRichText('<p>a<p>b<ul><li>c<li>d</ul><p>e<br>f').text).toBe(
+        'a\n\nb\n\n- c\n- d\n\ne\nf',
+      );
+      expect(sanitizeRichText('<br/>x<br />y').html).toBe('<br>x<br>y');
+    });
+  });
 });

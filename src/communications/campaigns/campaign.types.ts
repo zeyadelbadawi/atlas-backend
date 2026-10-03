@@ -65,6 +65,12 @@ export type CampaignAudience = PlatformAudience | AcademyAudience;
 export const CAMPAIGN_SUBJECT_MAX = 150;
 /** Raw editor HTML accepted on the wire (before sanitising). */
 export const CAMPAIGN_BODY_HTML_MAX = 20_000;
+/**
+ * The same raw HTML in UTF-8 BYTES, enforced at the DTO before anything
+ * parses it (security review finding 3): 20 000 characters of Arabic or
+ * emoji is up to 80 KB, so the character cap alone does not bound the work.
+ */
+export const CAMPAIGN_BODY_HTML_MAX_BYTES = 50_000;
 /** Visible text after sanitising — what the reader actually gets. */
 export const CAMPAIGN_BODY_TEXT_MAX = 5_000;
 /** Recipients written / released per transaction — the announcement fan-out's precedent. */

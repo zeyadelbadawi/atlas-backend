@@ -92,4 +92,61 @@ describe('EmailLogoService', () => {
     // The remote URL was never fetched through storage either.
     expect(getObject).toHaveBeenCalledTimes(1);
   });
+
+  describe('public route caching (security review finding 4)', () => {
+    it('shares one decode among concurrent requests for one logo', async () => {
+      const key = `academies/${A}/${FILE}.png`;
+      const { service, getObject } = setup({ [key]: await image('png', 200, 100) });
+      const url = `/api/v1/public/media/academies/${A}/${FILE}.png`;
+      const results = await Promise.all(
+        Array.from({ length: 20 }, () => service.render(A, url)),
+      );
+      expect(results.every((logo) => logo !== null && logo === results[0])).toBe(true);
+      expect(getObject).toHaveBeenCalledTimes(1);
+    });
+
+    it('looks an academy up once per window and once for a concurrent burst', async () => {
+      const key = `academies/${A}/${FILE}.png`;
+      const { service } = setup({ [key]: await image('png', 200, 100) });
+      const load = jest.fn(async () => `/api/v1/public/media/academies/${A}/${FILE}.png`);
+      const burst = await Promise.all(
+        Array.from({ length: 10 }, () => service.renderPublic(A, load)),
+      );
+      expect(burst.every((logo) => logo !== null)).toBe(true);
+      await service.renderPublic(A, load);
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+
+    it('caches unknown academy ids negatively, in a bounded map', async () => {
+      const { service } = setup();
+      const load = jest.fn(async () => null);
+      const unknown = '22222222-2222-4222-8222-222222222222';
+      expect(await service.renderPublic(unknown, load)).toBeNull();
+      expect(await service.renderPublic(unknown, load)).toBeNull();
+      expect(load).toHaveBeenCalledTimes(1);
+
+      // Flood with distinct random ids: the map stays bounded, so the first
+      // id is eventually evicted and looked up again.
+      for (let i = 0; i < 1_100; i += 1) {
+        await service.renderPublic(`id-${i}`, load);
+      }
+      const references = (service as unknown as { references: Map<string, unknown> })
+        .references;
+      expect(references.size).toBeLessThanOrEqual(1_000);
+      load.mockClear();
+      await service.renderPublic(unknown, load);
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a failed lookup as no logo and does not cache it', async () => {
+      const { service } = setup();
+      const load = jest
+        .fn<Promise<string | null>, []>()
+        .mockRejectedValueOnce(new Error('db down'))
+        .mockResolvedValueOnce(null);
+      expect(await service.renderPublic(A, load)).toBeNull();
+      expect(await service.renderPublic(A, load)).toBeNull();
+      expect(load).toHaveBeenCalledTimes(2);
+    });
+  });
 });

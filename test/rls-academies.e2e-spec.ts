@@ -83,7 +83,11 @@ describe('Row-Level Security — academies / academy_members (direct, no guards)
   ) {
     return tenancyContext.runInTenantContext(organizationId, async (tx) => {
       const academy = await tx.academy.create({
-        data: { organizationId, name: uniqueName(slugLabel), slug: `${slugLabel}-${Date.now()}` },
+        data: {
+          organizationId,
+          name: uniqueName(slugLabel),
+          slug: `${slugLabel}-${Date.now()}`,
+        },
       });
       await tx.academyMember.create({
         data: { academyId: academy.id, userId: ownerId, role: 'owner' },
