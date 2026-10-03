@@ -13,11 +13,18 @@
  * record and the change commit or roll back together. The audit entry
  * carries the enquiry's id and status only (the catalogue's allowlist for
  * these actions) — never the visitor's name, address or message.
+ *
+ * A delete also takes back the copies the new-enquiry notification made
+ * (`CommunicationService.forgetEntity`), in the same transaction: the
+ * outbox rows for this enquiry lose the visitor's details, and any email
+ * not yet sent is suppressed. The in-app rows never held them (the
+ * catalogue entry's `personalValues`).
  */
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { CommunicationService } from '../../communications/services/communication.service';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
@@ -32,6 +39,7 @@ import {
 import {
   PLATFORM_CONTACT_AUDIT_ACTIONS,
   PLATFORM_CONTACT_AUDIT_TARGET,
+  PLATFORM_CONTACT_NOTIFICATION,
 } from '../platform-contact.constants';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -42,6 +50,7 @@ export class PlatformContactSubmissionsService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly repository: PlatformContactSubmissionsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly communicationService: CommunicationService,
   ) {}
 
   async list(
@@ -136,6 +145,14 @@ export class PlatformContactSubmissionsService {
     await this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
       const current = await this.loadOrThrow(tx, id);
       await this.repository.delete(tx, id);
+      await this.communicationService.forgetEntity(
+        tx,
+        PLATFORM_CONTACT_NOTIFICATION.key,
+        {
+          type: PLATFORM_CONTACT_NOTIFICATION.entityType,
+          id,
+        },
+      );
       await this.auditLogWriterService.write(tx, {
         actorUserId: platformOwnerId,
         role: 'platform_owner',

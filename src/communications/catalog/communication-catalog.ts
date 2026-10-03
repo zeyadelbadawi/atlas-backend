@@ -121,6 +121,31 @@ export interface CommunicationCatalogEntry {
    * expired on its own (24h verification, 45m reset, 72h setup).
    */
   readonly credentialValues?: readonly string[];
+  /**
+   * `values` keys that hold personal data about someone OTHER than the
+   * recipient (a website visitor's name, address, message). They exist for
+   * the email body only:
+   *
+   *   - `CommunicationService.emit` leaves them out of the in-app
+   *     `notifications` row, which the recipient keeps for 180 days and no
+   *     one can retract on the subject's behalf (RLS lets only the
+   *     recipient touch it);
+   *   - the dispatcher strips them from the outbox row once the dispatch
+   *     settles, on exactly the `credentialValues` schedule above —
+   *     including the digest paths, which a non-security key can take;
+   *   - `CommunicationService.forgetEntity` strips them on demand when the
+   *     source record is deleted before the email has gone out.
+   *
+   * The in-app copy for such a key must therefore not interpolate them.
+   */
+  readonly personalValues?: readonly string[];
+}
+
+/** Every `values` key the outbox row must drop once its dispatch settles. */
+export function settleScrubKeys(
+  entry: Pick<CommunicationCatalogEntry, 'credentialValues' | 'personalValues'>,
+): readonly string[] {
+  return [...(entry.credentialValues ?? []), ...(entry.personalValues ?? [])];
 }
 
 /** The (titleKey, messageKey) pair this entry writes for one concrete event. */
@@ -2094,6 +2119,9 @@ const CATALOG = {
     titleKey: 'notifications:events.platformContactSubmissionReceived.title',
     messageKey: 'notifications:events.platformContactSubmissionReceived.message',
     actionUrl: () => '/dashboard/platform/contact-submissions',
+    // The visitor's details go to the owner's inbox by email only; the
+    // feed row keeps `topic` and nothing that identifies the visitor.
+    personalValues: ['name', 'email', 'organizationName', 'message'],
   },
 } as const satisfies Record<string, CommunicationCatalogEntry>;
 

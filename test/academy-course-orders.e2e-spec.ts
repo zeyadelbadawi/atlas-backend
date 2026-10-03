@@ -454,6 +454,20 @@ describe('Academy course orders (e2e)', () => {
   });
 
   describe('filters', () => {
+    /** The amount sort's full ascending order — every filtered result is a subsequence of it. */
+    const amountAsc = () => [o3, o1, o2];
+    /** The same filters under the amount sort (a raw query) select the same rows, in amount order. */
+    async function expectSameUnderAmountSort(
+      query: Record<string, string>,
+      expected: string[],
+    ) {
+      const res = await list({ ...query, sortBy: 'amount', sortDirection: 'asc' }).expect(
+        200,
+      );
+      expect(ids(res.body)).toEqual(amountAsc().filter((id) => expected.includes(id)));
+      expect(res.body.pagination.totalItems).toBe(expected.length);
+    }
+
     it.each<[Record<string, string>, () => string[]]>([
       [{ status: 'paid' }, () => [o1]],
       [{ status: 'expired' }, () => [o3]],
@@ -470,11 +484,34 @@ describe('Academy course orders (e2e)', () => {
       const res = await list(query).expect(200);
       expect(ids(res.body)).toEqual(expected());
       expect(res.body.pagination.totalItems).toBe(expected().length);
+      await expectSameUnderAmountSort(query, expected());
     });
 
     it('filters by course', async () => {
       const res = await list({ courseId: courseBiologyId }).expect(200);
       expect(ids(res.body)).toEqual([o3, o2]);
+      await expectSameUnderAmountSort({ courseId: courseBiologyId }, [o3, o2]);
+    });
+
+    it('combines filters with search under the amount sort, newest-first ties included', async () => {
+      await expectSameUnderAmountSort(
+        { courseId: courseBiologyId, refundStatus: 'none', search: 'beta biology' },
+        [o3, o2],
+      );
+      await expectSameUnderAmountSort({ search: `sara ${marker}`, status: 'paid' }, [o1]);
+      await expectSameUnderAmountSort({ search: `Omar-${marker}@Example.test` }, [o2]);
+      await expectSameUnderAmountSort({ search: `omar-${marker}@` }, []);
+      await expectSameUnderAmountSort({ search: o1, from: '2026-09-10' }, []);
+      await expectSameUnderAmountSort(
+        { reviewStatus: 'rejected', methodType: 'manual_instapay' },
+        [],
+      );
+      const desc = await list({
+        search: `sara ${marker}`,
+        sortBy: 'amount',
+        sortDirection: 'desc',
+      }).expect(200);
+      expect(ids(desc.body)).toEqual([o1, o3]);
     });
 
     it('two payment conditions must hold for the same payment', async () => {
@@ -492,9 +529,26 @@ describe('Academy course orders (e2e)', () => {
         o3,
         o1,
       ]);
-      expect(ids((await list({ search: `omar-${marker}@` }).expect(200)).body)).toEqual([
-        o2,
-      ]);
+      expect(
+        ids((await list({ search: `Omar-${marker}@Example.test` }).expect(200)).body),
+      ).toEqual([o2]);
+      // A partial address matches nothing: the email is masked in responses,
+      // so the search must not reveal it piece by piece.
+      expect(ids((await list({ search: `omar-${marker}@` }).expect(200)).body)).toEqual(
+        [],
+      );
+      // Nor may LIKE wildcards turn the exact match into a pattern, under
+      // either query path.
+      for (const search of [
+        `omar-${marker}@%`,
+        `%${marker}@example.test`,
+        `omar-${marker}@example.tes_`,
+      ]) {
+        expect(ids((await list({ search }).expect(200)).body)).toEqual([]);
+        expect(ids((await list({ search, sortBy: 'amount' }).expect(200)).body)).toEqual(
+          [],
+        );
+      }
       expect(ids((await list({ search: 'beta biology' }).expect(200)).body)).toEqual([
         o3,
         o2,

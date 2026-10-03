@@ -57,3 +57,9 @@ export const PLATFORM_CONTACT_AUDIT_ACTIONS = {
 } as const;
 
 export const PLATFORM_CONTACT_AUDIT_TARGET = 'platform_contact_submission';
+
+/** The communication entity the new-enquiry notification is emitted for (its id is the enquiry's). */
+export const PLATFORM_CONTACT_NOTIFICATION = {
+  key: 'platform.contact_submission.received',
+  entityType: 'platform_contact_submission',
+} as const;

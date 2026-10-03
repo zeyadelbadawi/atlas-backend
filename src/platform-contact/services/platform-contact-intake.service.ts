@@ -45,6 +45,7 @@ import {
   PLATFORM_CONTACT_DEDUPE_TTL_SECONDS,
   PLATFORM_CONTACT_LIMITS,
   PLATFORM_CONTACT_MIN_FILL_MS,
+  PLATFORM_CONTACT_NOTIFICATION,
 } from '../platform-contact.constants';
 
 export interface PlatformContactRequestMeta {
@@ -264,9 +265,12 @@ export class PlatformContactIntakeService implements OnApplicationShutdown {
               const ids: (string | null)[] = [];
               for (const recipientUserId of batch) {
                 const emitted = await this.communicationService.emit(tx, {
-                  key: 'platform.contact_submission.received',
+                  key: PLATFORM_CONTACT_NOTIFICATION.key,
                   recipientUserId,
-                  entity: { type: 'platform_contact_submission', id: submissionId },
+                  entity: {
+                    type: PLATFORM_CONTACT_NOTIFICATION.entityType,
+                    id: submissionId,
+                  },
                   values,
                 });
                 ids.push(emitted.outboxId);

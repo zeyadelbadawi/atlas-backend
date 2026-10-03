@@ -74,11 +74,23 @@ export type AcademyCourseOrderFilter = Pick<
   | 'sortDirection'
 >;
 
+/**
+ * `value` with LIKE's wildcards (`%`, `_`) and its escape character (`\`)
+ * escaped. Prisma sends `contains` and an insensitive `equals` to Postgres
+ * as `ILIKE` WITHOUT escaping them, so a raw search of `a%@x.test` would
+ * turn the "exact address" match into a pattern that confirms which
+ * addresses exist. Every search string goes through this first.
+ */
+export function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
 export function buildAcademyCourseOrderWhere(
   academyId: string,
   filter: AcademyCourseOrderFilter,
 ): Prisma.CourseOrderWhereInput {
   const search = filter.search?.trim();
+  const pattern = search ? escapeLikePattern(search) : undefined;
   const createdAt = toCreatedAtRange(filter.from, filter.to);
   const paymentMatch: Prisma.PaymentWhereInput = {
     ...(filter.paymentStatus ? { status: filter.paymentStatus } : {}),
@@ -103,13 +115,83 @@ export function buildAcademyCourseOrderWhere(
       ? {
           OR: [
             { id: search },
-            { course: { title: { contains: search, mode: 'insensitive' as const } } },
-            { student: { name: { contains: search, mode: 'insensitive' as const } } },
-            { student: { email: { contains: search, mode: 'insensitive' as const } } },
+            { course: { title: { contains: pattern, mode: 'insensitive' as const } } },
+            { student: { name: { contains: pattern, mode: 'insensitive' as const } } },
+            // Exact address only: responses mask the email, and a substring
+            // match would let the list confirm it one character at a time.
+            { student: { email: { equals: pattern, mode: 'insensitive' as const } } },
           ],
         }
       : {}),
   };
+}
+
+/**
+ * `buildAcademyCourseOrderWhere`, clause for clause, as a raw SQL
+ * condition over `course_orders o` LEFT JOINed to `courses c`, `users u`
+ * and `course_order_refunds r` — the same joins (and therefore the same
+ * RLS visibility) Prisma generates for that `where`. Used only by the
+ * amount sort, which Prisma cannot express. Every value is a bound
+ * parameter; enums are compared as text so no cast can fail.
+ *
+ * Keep the two in step: `academy-course-orders.e2e-spec.ts` runs the
+ * amount sort under each filter against the default sort's result set.
+ */
+function buildAcademyCourseOrderSqlCondition(
+  academyId: string,
+  filter: AcademyCourseOrderFilter,
+): Prisma.Sql {
+  const search = filter.search?.trim();
+  const createdAt = toCreatedAtRange(filter.from, filter.to);
+  const conditions: Prisma.Sql[] = [Prisma.sql`o."academy_id" = ${academyId}`];
+
+  if (filter.status) conditions.push(Prisma.sql`o."status"::text = ${filter.status}`);
+  if (filter.courseId) conditions.push(Prisma.sql`o."course_id" = ${filter.courseId}`);
+  // `created_at` is a UTC `timestamp`; a bound Date is a `timestamptz`.
+  // Converting the parameter, not the column, keeps the index usable and
+  // the result independent of the session time zone.
+  if (createdAt?.gte) {
+    conditions.push(Prisma.sql`o."created_at" >= (${createdAt.gte} AT TIME ZONE 'UTC')`);
+  }
+  if (createdAt?.lt) {
+    conditions.push(Prisma.sql`o."created_at" < (${createdAt.lt} AT TIME ZONE 'UTC')`);
+  }
+
+  const paymentConditions: Prisma.Sql[] = [];
+  if (filter.paymentStatus) {
+    paymentConditions.push(Prisma.sql`p."status"::text = ${filter.paymentStatus}`);
+  }
+  if (filter.reviewStatus) {
+    paymentConditions.push(Prisma.sql`p."review_status"::text = ${filter.reviewStatus}`);
+  }
+  if (filter.methodType) {
+    paymentConditions.push(Prisma.sql`p."method_type"::text = ${filter.methodType}`);
+  }
+  if (paymentConditions.length > 0) {
+    // All conditions on the SAME payment attempt, as the Prisma `some`.
+    conditions.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "payments" p
+       WHERE p."course_order_id" = o."id"
+         AND ${Prisma.join(paymentConditions, ' AND ')})`);
+  }
+
+  if (filter.refundStatus === 'none') {
+    conditions.push(Prisma.sql`r."course_order_id" IS NULL`);
+  } else if (filter.refundStatus) {
+    conditions.push(Prisma.sql`r."status"::text = ${filter.refundStatus}`);
+  }
+
+  if (search) {
+    const pattern = escapeLikePattern(search);
+    const contains = `%${pattern}%`;
+    conditions.push(Prisma.sql`(
+      o."id" = ${search}
+      OR c."title" ILIKE ${contains}
+      OR u."name" ILIKE ${contains}
+      OR u."email" ILIKE ${pattern})`);
+  }
+
+  return Prisma.join(conditions, ' AND ');
 }
 
 @Injectable()
@@ -124,7 +206,7 @@ export class AcademyCourseOrdersRepository {
     const select = orderSelect(1);
 
     if (filter.sortBy === 'amount') {
-      return this.findManyByAmount(tx, where, direction, filter.skip, filter.take);
+      return this.findManyByAmount(tx, academyId, filter, where, direction);
     }
 
     const orderBy: Prisma.CourseOrderOrderByWithRelationInput[] =
@@ -158,31 +240,33 @@ export class AcademyCourseOrdersRepository {
 
   /**
    * The order's price lives in its frozen JSON snapshot, which Prisma cannot
-   * order by. The filtered id set comes from the same Prisma `where` (so
-   * filters and RLS behave identically to the other sorts), and one raw
-   * query orders and pages it; the page is then loaded with the normal
-   * select and put back in that order.
+   * order by. The count uses the Prisma `where`; the page is ONE raw query
+   * with the same filters (`buildAcademyCourseOrderSqlCondition`) that the
+   * database orders and pages itself, so no id list is ever materialised
+   * here. Both run in the caller's tenant transaction, under the same RLS.
+   * The page is then loaded with the normal select and put back in order.
    */
   private async findManyByAmount(
     tx: Prisma.TransactionClient,
+    academyId: string,
+    filter: AcademyCourseOrderFilter & { readonly skip: number; readonly take: number },
     where: Prisma.CourseOrderWhereInput,
     direction: 'asc' | 'desc',
-    skip: number,
-    take: number,
   ): Promise<{ items: AcademyCourseOrderRow[]; totalItems: number }> {
-    const matching = await tx.courseOrder.findMany({ where, select: { id: true } });
-    const totalItems = matching.length;
-    if (totalItems === 0) return { items: [], totalItems };
-
-    const ids = matching.map((row) => row.id);
     const sortSql = direction === 'asc' ? Prisma.raw('ASC') : Prisma.raw('DESC');
-    const page = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "course_orders"
-      WHERE "id" = ANY(${ids}::text[])
-      ORDER BY COALESCE(("snapshot"->'price'->>'amountMinorUnits')::numeric, 0) ${sortSql},
-               "created_at" DESC, "id" ASC
-      OFFSET ${skip} LIMIT ${take}
-    `;
+    const [page, totalItems] = await Promise.all([
+      tx.$queryRaw<{ id: string }[]>`
+        SELECT o."id" FROM "course_orders" o
+          LEFT JOIN "courses" c ON c."id" = o."course_id"
+          LEFT JOIN "users" u ON u."id" = o."student_id"
+          LEFT JOIN "course_order_refunds" r ON r."course_order_id" = o."id"
+         WHERE ${buildAcademyCourseOrderSqlCondition(academyId, filter)}
+         ORDER BY COALESCE((o."snapshot"->'price'->>'amountMinorUnits')::numeric, 0) ${sortSql},
+                  o."created_at" DESC, o."id" ASC
+        OFFSET ${filter.skip} LIMIT ${filter.take}
+      `,
+      tx.courseOrder.count({ where }),
+    ]);
     if (page.length === 0) return { items: [], totalItems };
 
     const pageIds = page.map((row) => row.id);

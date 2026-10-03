@@ -40,6 +40,7 @@ import { RedisService } from '../../redis/redis.service';
 import {
   COMMUNICATION_CATALOG,
   isCommunicationEventKey,
+  settleScrubKeys,
   type CommunicationAudience,
   type CommunicationCatalogEntry,
   type CommunicationEventKey,
@@ -93,20 +94,22 @@ const ANONYMISED_EMAIL_DOMAIN = '@account.invalid';
 const CAP_EXEMPT_CATEGORIES: ReadonlySet<string> = new Set(['security', 'transactional']);
 
 /**
- * A settled row's `values` with the entry's `credentialValues` removed —
- * or `undefined` (leave the column untouched) when the entry declares none
- * or the row holds none of them. Exported for its unit test.
+ * A settled row's `values` with the entry's `credentialValues` and
+ * `personalValues` removed — or `undefined` (leave the column untouched)
+ * when the entry declares none or the row holds none of them. Exported for
+ * its unit test.
  *
  * Every entry that declares credentials is `security`, which is never
  * capped or digested, so the per-row settle paths here are the only ones
- * such a row can take.
+ * such a row can take. An entry with `personalValues` may be digested, so
+ * the digest settle paths scrub through `scrubSettledRows` as well.
  */
 export function withoutCredentials(
-  entry: Pick<CommunicationCatalogEntry, 'credentialValues'>,
+  entry: Pick<CommunicationCatalogEntry, 'credentialValues' | 'personalValues'>,
   values: Prisma.JsonValue | null,
 ): Prisma.InputJsonValue | undefined {
-  const keys = entry.credentialValues;
-  if (!keys?.length || !values || typeof values !== 'object' || Array.isArray(values)) {
+  const keys = settleScrubKeys(entry);
+  if (!keys.length || !values || typeof values !== 'object' || Array.isArray(values)) {
     return undefined;
   }
   const record = values as Prisma.JsonObject;
@@ -767,6 +770,7 @@ export class CommunicationDispatchService {
             where: { digestId, state: 'deferred' },
             data: { state: 'suppressed', lastError: 'recipient_unavailable' },
           });
+          await this.scrubSettledRows(tx, items);
           return this.closeEmptyDigest(tx, digestId);
         }
 
@@ -794,6 +798,7 @@ export class CommunicationDispatchService {
             silenced.map((item) => item.id),
             'preference_off',
           );
+          await this.scrubSettledRows(tx, silenced);
         }
         const included = known.filter((item) =>
           this.allowedByPreference(item.category, preferences),
@@ -856,6 +861,8 @@ export class CommunicationDispatchService {
           recipientUserId: digest.recipientUserId,
           rendered,
           itemIds: included.map((i) => i.id),
+          // Rendered above; what `scrubSettledRows` needs once the send lands.
+          items: included.map(({ id, key, values }) => ({ id, key, values })),
         };
       },
     );
@@ -901,6 +908,7 @@ export class CommunicationDispatchService {
         where: { id: { in: plan.itemIds } },
         data: { state: 'dispatched', dispatchedAt: sentAt },
       });
+      await this.scrubSettledRows(tx, plan.items);
       await tx.communicationDigest.update({
         where: { id: digestId },
         // `itemCount` was incremented optimistically at attach time; what
@@ -972,6 +980,26 @@ export class CommunicationDispatchService {
     if (category === 'operational')
       return preferences.categories.operational?.email ?? true;
     return true;
+  }
+
+  /**
+   * The digest settle paths' `withoutCredentials`: rows settled in bulk
+   * (`updateMany`) drop their scrub keys here, one UPDATE per row that
+   * actually holds one. A key the catalogue no longer knows is left alone.
+   */
+  private async scrubSettledRows(
+    tx: Prisma.TransactionClient,
+    rows: readonly Pick<CommunicationOutbox, 'id' | 'key' | 'values'>[],
+  ): Promise<void> {
+    for (const row of rows) {
+      if (!isCommunicationEventKey(row.key)) continue;
+      const scrubbed = withoutCredentials(COMMUNICATION_CATALOG[row.key], row.values);
+      if (scrubbed === undefined) continue;
+      await tx.communicationOutbox.update({
+        where: { id: row.id },
+        data: { values: scrubbed },
+      });
+    }
   }
 
   /** The in-app row was already delivered; only the email half is dropped. */

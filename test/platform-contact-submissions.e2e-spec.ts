@@ -16,11 +16,20 @@
  *     academy-website session is refused even for a Platform Owner;
  *   - list/detail/patch/delete work for the owner, and patch/delete write
  *     audit rows in the same transaction;
+ *   - the visitor's details never reach the in-app feed, leave the outbox
+ *     once the email is sent, and leave every outbox row of the enquiry
+ *     when it is deleted (`personalValues`);
  *   - RLS itself refuses tenant and anonymous contexts.
  *
  * Every request carries its own `X-Real-IP` (honoured from a loopback
  * peer, exactly like production behind Caddy), so throttle buckets are
  * independent per case.
+ *
+ * Delivery is driven by the test, not by a background worker: the
+ * communications producer, processor and scheduler are inert here, and
+ * the case that needs a sent email hands its row to the real
+ * `CommunicationDispatchService.dispatch` — same reasoning as
+ * `email-verification-link-security.e2e-spec.ts`.
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -36,10 +45,24 @@ import {
 } from './utils/db-admin';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { PlatformContactIntakeService } from '../src/platform-contact/services/platform-contact-intake.service';
+import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
+import { CommunicationsProducer } from '../src/communications/queue/communications.producer';
+import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
+import { CommunicationDispatchService } from '../src/communications/services/communication-dispatch.service';
+import { RedisService } from '../src/redis/redis.service';
 
 jest.setTimeout(120000);
 
 const PASSWORD = 'correct-horse-battery-contact';
+const NOTIFICATION_KEY = 'platform.contact_submission.received';
+
+class InertCommunicationsProcessor {}
+class InertCommunicationsScheduler {}
+class InertCommunicationsProducer {
+  async enqueueDispatch(): Promise<boolean> {
+    return true;
+  }
+}
 
 let ipCounter = 0;
 /** A fresh documentation-range address per call, so throttle buckets never collide. */
@@ -54,6 +77,8 @@ describe('Platform contact submissions (e2e)', () => {
   let admin: PrismaClient;
   let tenancy: TenancyContextService;
   let intake: PlatformContactIntakeService;
+  let dispatcher: CommunicationDispatchService;
+  let redis: ReturnType<RedisService['getClient']>;
   let flushRateLimitKeys: () => Promise<void>;
 
   let ownerToken: string;
@@ -65,11 +90,22 @@ describe('Platform contact submissions (e2e)', () => {
   const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    const testApp = await createTestApp({
+      overrides: (builder) =>
+        builder
+          .overrideProvider(CommunicationsProcessor)
+          .useClass(InertCommunicationsProcessor)
+          .overrideProvider(CommunicationsScheduler)
+          .useClass(InertCommunicationsScheduler)
+          .overrideProvider(CommunicationsProducer)
+          .useClass(InertCommunicationsProducer),
+    });
     app = testApp.app;
     admin = createAdminPrisma();
     tenancy = app.get(TenancyContextService, { strict: false });
     intake = app.get(PlatformContactIntakeService, { strict: false });
+    dispatcher = app.get(CommunicationDispatchService, { strict: false });
+    redis = app.get(RedisService, { strict: false }).getClient();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
 
     const owner = await seedPlatformOwner('contact-po');
@@ -497,6 +533,91 @@ describe('Platform contact submissions (e2e)', () => {
         .delete(`/platform/contact-submissions/${row.id}`)
         .set(bearer(ownerToken))
         .expect(404);
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // The visitor's personal data in the notification pipeline
+  // ---------------------------------------------------------------------
+
+  describe('visitor personal data', () => {
+    /** Rows in either table whose `values` mention `needle` anywhere. */
+    async function rowsMentioning(needle: string) {
+      const pattern = `%${needle}%`;
+      const [outbox, notifications] = await Promise.all([
+        admin.$queryRaw<{ id: string }[]>`
+          SELECT "id" FROM "communication_outbox" WHERE "values"::text ILIKE ${pattern}`,
+        admin.$queryRaw<{ id: string }[]>`
+          SELECT "id" FROM "notifications" WHERE "values"::text ILIKE ${pattern}`,
+      ]);
+      return { outbox: outbox.length, notifications: notifications.length };
+    }
+
+    it('stays out of the in-app feed, leaves the outbox once sent, and leaves every row on delete', async () => {
+      const emailTag = randomUUID();
+      const messageTag = randomUUID();
+      const body = enquiry({
+        email: `Visitor-${emailTag}@Example.test`,
+        message: `Please call me about pricing, reference ${messageTag}.`,
+      });
+      await submit(body).expect(201);
+      const [row] = await rowsFor(body.email as string);
+      expect(row).toBeDefined();
+      await intake.drainNotifications();
+
+      // In-app: one row per owner, the topic and nothing about the visitor.
+      const notified = await admin.notification.findMany({
+        where: { dedupeKey: `platform_contact_received:${row.id}` },
+      });
+      expect(notified.length).toBeGreaterThan(0);
+      for (const notification of notified) {
+        expect(notification.values).toEqual({ topic: 'sales' });
+      }
+      // Outbox: the email still needs the details until it is rendered.
+      const ownerRow = await admin.communicationOutbox.findFirstOrThrow({
+        where: { key: NOTIFICATION_KEY, entityId: row.id, recipientUserId: ownerUserId },
+      });
+      expect(JSON.stringify(ownerRow.values)).toContain(emailTag);
+      await expect(rowsMentioning(emailTag)).resolves.toMatchObject({ notifications: 0 });
+      await expect(rowsMentioning(messageTag)).resolves.toMatchObject({
+        notifications: 0,
+      });
+
+      // Earlier cases mailed this owner too; a reached daily cap would
+      // fold this email into a digest instead of sending it now.
+      await redis.del(`comm:cap:${ownerUserId}:${new Date().toISOString().slice(0, 10)}`);
+      await expect(dispatcher.dispatch(ownerRow.id, { made: 0, max: 6 })).resolves.toBe(
+        'sent',
+      );
+      const sent = await admin.communicationOutbox.findUniqueOrThrow({
+        where: { id: ownerRow.id },
+      });
+      expect(sent.state).toBe('dispatched');
+      expect(sent.values).toEqual({ topic: 'sales' });
+
+      // Delete: every outbox row of the enquiry is blanked, and the ones
+      // still waiting (other owners') are suppressed rather than mailed.
+      await http()
+        .delete(`/platform/contact-submissions/${row.id}`)
+        .set(bearer(ownerToken))
+        .expect(204);
+      const remaining = await admin.communicationOutbox.findMany({
+        where: { key: NOTIFICATION_KEY, entityId: row.id },
+      });
+      expect(remaining.length).toBe(notified.length);
+      for (const outboxRow of remaining) {
+        expect(outboxRow.values).toEqual({ topic: 'sales' });
+        expect(['pending', 'deferred']).not.toContain(outboxRow.state);
+      }
+      expect(remaining.find((r) => r.id === ownerRow.id)?.state).toBe('dispatched');
+      await expect(rowsMentioning(emailTag)).resolves.toEqual({
+        outbox: 0,
+        notifications: 0,
+      });
+      await expect(rowsMentioning(messageTag)).resolves.toEqual({
+        outbox: 0,
+        notifications: 0,
+      });
     });
   });
 
