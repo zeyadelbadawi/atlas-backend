@@ -221,6 +221,8 @@ export class QuizzesRepository {
       title: string;
       description?: string;
       sectionId?: string;
+      /** The shared unit ordinal (W7: the end of `sectionId`'s unit); omitted = the column default. */
+      order?: number;
       status?: 'draft' | 'published';
       passingScore?: number;
       maxAttempts?: number;
@@ -234,6 +236,7 @@ export class QuizzesRepository {
         title: data.title,
         description: data.description,
         section: data.sectionId ? { connect: { id: data.sectionId } } : undefined,
+        order: data.order,
         status: data.status,
         passingScore: data.passingScore,
         maxAttempts: data.maxAttempts,

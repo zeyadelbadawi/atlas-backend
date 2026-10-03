@@ -41,6 +41,7 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-que
 import type { CreateEnrollmentDto } from '../dto/create-enrollment.dto';
 import type { ListEnrollmentsQueryDto } from '../dto/list-enrollments-query.dto';
 import { deriveCompletionState } from './progress-computation.util';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { CommunicationService } from '../../communications/services/communication.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 
@@ -56,6 +57,7 @@ export class EnrollmentsService {
     private readonly entitlementEnforcementService: EntitlementEnforcementService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
     private readonly communicationService: CommunicationService,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   async list(
@@ -298,12 +300,37 @@ export class EnrollmentsService {
         studentId,
       );
       if (!membership) {
-        await this.academyStudentsRepository.create(tx, {
-          academyId: course.academyId,
-          userId: studentId,
-          status: 'active',
-          source: options.ensureMembership,
-        });
+        // W4 — a purchase is an AUTOMATIC admission: the payment is already
+        // taken, so a learner-name clash must never fail it. The row is
+        // inserted `name_unique_exempt` and the clash recorded. A staff grant
+        // is interactive: staff get the actionable 409 instead.
+        const { nameClashExempted } = await this.academyStudentsRepository.admit(
+          tx,
+          {
+            academyId: course.academyId,
+            userId: studentId,
+            status: 'active',
+            source: options.ensureMembership,
+          },
+          options.ensureMembership === 'purchase'
+            ? { mode: 'automatic' }
+            : { mode: 'interactive', field: 'email', variant: 'existingAccount' },
+        );
+        if (nameClashExempted) {
+          const organizationId =
+            (await this.academyStudentsRepository.resolveOrganizationId(
+              course.academyId,
+            )) ?? undefined;
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: studentId,
+            organizationId,
+            academyId: course.academyId,
+            action: 'academy.student.name_clash_exempted',
+            targetType: 'user',
+            targetId: studentId,
+            context: { source: options.ensureMembership },
+          });
+        }
       }
     }
 

@@ -135,4 +135,28 @@ export class EmailProviderError extends Error {
   }
 }
 
+/**
+ * W3-compose — thrown by the registry when NO provider could even be tried
+ * because every one of them had exhausted its budget for this category
+ * (daily, monthly or per-second line). It is a `transient` error, so any
+ * caller that only knows `EmailProviderError` keeps its old behaviour; the
+ * outbox dispatcher recognises it and DEFERS the row to `retryAt` instead of
+ * spending its retries against a cap that cannot reset for hours.
+ */
+export class EmailQuotaExhaustedError extends EmailProviderError {
+  constructor(
+    /** The earliest moment any provider's exhausted window resets. */
+    readonly retryAt: Date,
+    /** Which window bound first: `daily`, `monthly` or `rate`. */
+    readonly reason: 'daily' | 'monthly' | 'rate',
+  ) {
+    super(
+      'registry',
+      'transient',
+      'No email provider had quota available for this category.',
+    );
+    this.name = 'EmailQuotaExhaustedError';
+  }
+}
+
 export const EMAIL_PROVIDER = Symbol('EMAIL_PROVIDER');

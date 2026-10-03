@@ -10,6 +10,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
+import { uniqueName } from './utils/unique-name';
 import {
   createAdminPrisma,
   seedActiveSubscriptionForOrg,
@@ -130,7 +131,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${user.accessToken}`)
       .send({
-        academyName: 'Bad Slug',
+        academyName: uniqueName('Bad Slug'),
         requestedSubdomain: 'Not A Valid Slug!',
         idempotencyKey: `bad-slug-${Date.now()}`,
       });
@@ -145,17 +146,20 @@ describe('Academy Management (e2e) — functional/contract', () => {
     // Provisioning is entitlement-gated (see above).
     await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
     const slug = `academy-crud-${Date.now()}`;
+    // W4 — academy names are unique platform-wide; the e2e DB persists.
+    const crudName = uniqueName('CRUD Academy');
+    const renamedName = uniqueName('Renamed Academy');
 
     const created = await provisionAcademy(
       user.accessToken,
       org.id,
       slug,
-      'CRUD Academy',
+      crudName,
     );
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({
       organizationId: org.id,
-      name: 'CRUD Academy',
+      name: crudName,
       slug,
       status: 'draft',
       timezone: 'UTC',
@@ -186,9 +190,9 @@ describe('Academy Management (e2e) — functional/contract', () => {
     const updated = await request(app.getHttpServer())
       .patch(`/academies/${academyId}`)
       .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ name: 'Renamed Academy', status: 'active' })
+      .send({ name: renamedName, status: 'active' })
       .expect(200);
-    expect(updated.body.name).toBe('Renamed Academy');
+    expect(updated.body.name).toBe(renamedName);
     expect(updated.body.status).toBe('active');
     expect(updated.body.organizationId).toBe(org.id); // never reassignable.
 
@@ -268,7 +272,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       where: { id: academyId },
     });
     expect(stillArchived.status).toBe('archived');
-    expect(stillArchived.name).toBe('Renamed Academy');
+    expect(stillArchived.name).toBe(renamedName);
   });
 
   it('creating an academy auto-creates an owner-role academy_member row for the creator', async () => {
@@ -358,7 +362,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       .post(`/organizations/${firstOrg.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${firstOwner.accessToken}`)
       .send({
-        academyName: 'First Org Academy',
+        academyName: uniqueName('First Org Academy'),
         requestedSubdomain: slug,
         idempotencyKey: `cross-1-${slug}`,
       })
@@ -409,7 +413,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       user.accessToken,
       org.id,
       `stats-${Date.now()}`,
-      'Stats Academy',
+      uniqueName('Stats Academy'),
     );
     expect(created.status).toBe(201);
 
@@ -486,7 +490,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       owner.accessToken,
       org.id,
       `create-student-${Date.now()}`,
-      'Create Student Academy',
+      uniqueName('Create Student Academy'),
     );
     expect(academy.status).toBe(201);
 

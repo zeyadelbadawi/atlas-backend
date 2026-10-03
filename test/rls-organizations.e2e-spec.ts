@@ -24,6 +24,7 @@ import { fixtureUsers } from './utils/db-admin';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
+import { uniqueName } from './utils/unique-name';
 
 describe('Row-Level Security — organizations / organization_memberships (direct, no guards)', () => {
   let app: INestApplication;
@@ -59,7 +60,7 @@ describe('Row-Level Security — organizations / organization_memberships (direc
       const org = await tx.organization.create({
         data: {
           id,
-          name: slugLabel,
+          name: uniqueName(slugLabel),
           slug: `${slugLabel}-${Date.now()}`,
           ownerUserId: ownerId,
         },
@@ -102,7 +103,7 @@ describe('Row-Level Security — organizations / organization_memberships (direc
         await tx.$executeRaw`SELECT set_config('app.current_user_id', ${caller.id}, true)`;
         return tx.organization.create({
           data: {
-            name: 'Attacker Attempt',
+            name: uniqueName('Attacker Attempt'),
             slug: `rls-atk1-${Date.now()}`,
             ownerUserId: victim.id, // attacker-controlled — not the caller.
           },

@@ -20,6 +20,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Prisma } from '@prisma/client';
 import type {
   CommunicationsConfig,
+  IdentityConfig,
   PlatformDomainRuntimeConfig,
 } from '../../config/configuration';
 import type {
@@ -28,11 +29,15 @@ import type {
 } from '../catalog/communication-catalog';
 import { resolveCanonicalHost } from '../../domain/utils/canonical-host.util';
 import { PrismaService } from '../../database/prisma.service';
+import type { UnsubscribeCategory } from '../campaigns/campaign.types';
+import { signUnsubscribeToken, unsubscribeKey } from '../campaigns/unsubscribe-token';
 
 @Injectable()
 export class LinkBuilderService {
   private readonly platformWebUrl: string;
   private readonly environmentBaseDomain: string | undefined;
+  /** W3-compose — HMAC key of the one-click unsubscribe token (derived, never the raw secret). */
+  private readonly unsubscribeHmacKey: Buffer | null;
 
   constructor(
     configService: ConfigService,
@@ -44,6 +49,21 @@ export class LinkBuilderService {
     this.environmentBaseDomain =
       configService.get<PlatformDomainRuntimeConfig>('platformDomain')?.baseDomain ??
       undefined;
+    const jwtSecret = configService.get<IdentityConfig>('identity')?.jwtAccessSecret;
+    this.unsubscribeHmacKey = jwtSecret ? unsubscribeKey(jwtSecret) : null;
+  }
+
+  /**
+   * W3-compose — the one-click unsubscribe URL for one recipient and one
+   * preference category (RFC 8058). It points at the API through the
+   * platform host (`/api/v1`, the same origin the web app calls), because
+   * a mail client POSTs it directly. `null` when no signing key is
+   * configured: no link is better than a link that cannot be verified.
+   */
+  unsubscribe(userId: string, category: UnsubscribeCategory): string | null {
+    if (!this.unsubscribeHmacKey) return null;
+    const token = signUnsubscribeToken(this.unsubscribeHmacKey, userId, category);
+    return `${this.platformWebUrl}/api/v1/communications/unsubscribe?token=${encodeURIComponent(token)}`;
   }
 
   platform(path = '/'): string {

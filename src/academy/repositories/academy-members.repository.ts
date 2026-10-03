@@ -23,6 +23,19 @@ export class AcademyMembersRepository {
     return tx.academyMember.findFirst({ where: { academyId, userId } });
   }
 
+  /** W5 — the caller's ACTIVE staff rows among the given academies (the academy list's per-row role). */
+  findActiveForUserInAcademies(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    academyIds: readonly string[],
+  ): Promise<Pick<AcademyMember, 'academyId' | 'role'>[]> {
+    if (academyIds.length === 0) return Promise.resolve([]);
+    return tx.academyMember.findMany({
+      where: { userId, status: 'active', academyId: { in: [...academyIds] } },
+      select: { academyId: true, role: true },
+    });
+  }
+
   async findManyForAcademy(
     tx: Prisma.TransactionClient,
     academyId: string,

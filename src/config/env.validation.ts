@@ -495,6 +495,10 @@ const EnvSchema = z.object({
     .max(2 * 60 * 60)
     .default(2 * 60 * 60),
   LEARNING_LEASE_TTL_SECONDS: z.coerce.number().int().positive().max(600).default(60),
+  // W2 — how long a non-terminal provisioning request may go without any
+  // step starting, finishing or failing before the status endpoint reports
+  // it `stalled` (and the UI offers Retry). A real run takes seconds.
+  PROVISIONING_STALL_SECONDS: z.coerce.number().int().min(10).max(3600).default(120),
   LEARNING_LEASE_HEARTBEAT_SECONDS: z.coerce
     .number()
     .int()
@@ -649,6 +653,20 @@ const EnvSchema = z.object({
       /^[0-9a-fA-F]{64}$/,
       'PAYMENT_CREDENTIALS_ENCRYPTION_KEY must be a 64-character hex string (32 raw bytes).',
     ),
+
+  // W8 — optional dedicated key for the customer-identity HMAC (trial and
+  // gifted-days ledgers). When unset, the key is HKDF-derived from
+  // PAYMENT_CREDENTIALS_ENCRYPTION_KEY under a fixed label (the same
+  // derivation pattern as the TOTP/OTP ciphers). NEVER rotate whichever
+  // source is in use once v2 ledger rows exist: a changed key silently
+  // re-grants every trial and gift (see customer-identity-key.util.ts).
+  CUSTOMER_IDENTITY_HMAC_KEY: z
+    .string()
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'CUSTOMER_IDENTITY_HMAC_KEY must be a 64-character hex string (32 raw bytes).',
+    )
+    .optional(),
 
   // --- Phase P17 — Notifications, Email & Search (master plan §12
   // "Transactional email", §21 P17) ---

@@ -165,6 +165,8 @@ model User {
   /// Phase 10.1 — Free-Trial anti-abuse. SetNull, never Cascade: deleting
   /// the user must not erase the fact that a trial was consumed.
   trialRedemptions                              TrialRedemption[]                        @relation("TrialRedeemer")
+  /// W8 — gifted-setup-day redemptions this user (as organization owner) received. SetNull on delete.
+  paidGiftRedemptions                           PaidGiftRedemption[]                     @relation("PaidGiftRedeemer")
   /// Phase 10.2 — cancellations this user performed.
   subscriptionCancellations                     SubscriptionCancellation[]               @relation("SubscriptionCanceller")
   websitePagesLastEdited                        WebsitePage[]                            @relation("WebsitePageUpdatedBy")
@@ -182,6 +184,9 @@ model User {
   /// P64 Communications.
   communicationOutbox       CommunicationOutbox[]
   communicationDigests      CommunicationDigest[]
+  /// W3-compose — campaigns this person authored, and the ones they received.
+  communicationCampaigns    CommunicationCampaign[]
+  campaignRecipients        CampaignRecipient[]
   authEmailChallenges       AuthEmailChallenge[]
   accountDeletionChallenges AccountDeletionChallenge[]
   trustedDevices            TrustedDevice[]
@@ -443,6 +448,16 @@ model Organization {
   /// which broke `GET /search` in production). Never read through the
   /// Prisma Client; `SearchRepository` queries it by raw SQL.
   searchVector          Unsupported("tsvector")? @default(dbgenerated("(setweight(to_tsvector('english'::regconfig, COALESCE(name, ''::text)), 'A'::\"char\") || setweight(to_tsvector('english'::regconfig, COALESCE(slug, ''::text)), 'B'::\"char\"))")) @map("search_vector")
+  /// W4 — the uniqueness key of `name` (`atlas_name_key(name)`: NFKD, Latin
+  /// accents / Arabic harakat / tatweel / invisibles stripped, ICU lowercase,
+  /// NFKC, whitespace collapsed). A STORED GENERATED column, modelled with its
+  /// generation expression as a `dbgenerated` default — like `searchVector` —
+  /// so a schema diff knows it exists and never proposes dropping it (`text`
+  /// is a supported type, so `String?` is its exact shape). NEVER write it:
+  /// PostgreSQL rejects writes to a generated column. Unique platform-wide
+  /// across every status (`organizations_name_key_key`). Checked through the
+  /// boolean definer check `organization_name_taken`.
+  nameKey               String?                  @default(dbgenerated("atlas_name_key(name)")) @map("name_key")
 
   memberships          OrganizationMembership[]
   academies            Academy[]
@@ -463,6 +478,8 @@ model Organization {
   /// Phase 10.1 — Free-Trial anti-abuse. SetNull, never Cascade: deleting
   /// the organization must not erase the redemption it consumed.
   trialRedemptions     TrialRedemption[]
+  /// W8 — gifted-setup-day redemptions recorded against this organization. SetNull on delete.
+  paidGiftRedemptions  PaidGiftRedemption[]
   /// Phase 10.2 — trial/subscription cancellations for this organization.
   cancellations        SubscriptionCancellation[]
   /// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21).
@@ -470,7 +487,12 @@ model Organization {
   supportCases         SupportCase[]
   /// P64 Communications C5/C6.
   lifecycleState       TenantLifecycleState?
+  /// W3-compose — academy campaigns and the monthly email quota.
+  communicationCampaigns CommunicationCampaign[]
+  emailUsagePeriods    TenantEmailUsagePeriod[]
+  emailUsageLedger     TenantEmailUsageLedger[]
 
+  @@unique([nameKey])
   @@index([status])
   @@index([searchVector], type: Gin)
   @@map("organizations")
@@ -576,6 +598,10 @@ model Academy {
   /// which broke `GET /search` in production). Never read through the
   /// Prisma Client; `SearchRepository` queries it by raw SQL.
   searchVector   Unsupported("tsvector")? @default(dbgenerated("((setweight(to_tsvector('english'::regconfig, COALESCE(name, ''::text)), 'A'::\"char\") || setweight(to_tsvector('english'::regconfig, COALESCE(slug, ''::text)), 'B'::\"char\")) || setweight(to_tsvector('english'::regconfig, COALESCE(description, ''::text)), 'C'::\"char\"))")) @map("search_vector")
+  /// W4 — `atlas_name_key(name)`, STORED GENERATED (see `Organization.nameKey`).
+  /// Unique platform-wide across every status, archived included, like the
+  /// slug (`academies_name_key_key`). Checked through `academy_name_taken`.
+  nameKey        String?                  @default(dbgenerated("atlas_name_key(name)")) @map("name_key")
 
   /// Phase 10.6 — why the owner deleted this Academy. Atlas's delete IS
   /// archival (there is deliberately no DELETE RLS policy on this table),
@@ -653,6 +679,12 @@ model Academy {
   certificateSerialCounters CertificateSerialCounter[]
   accessPolicy              AccessPolicy?
 
+  /// W3-compose — academy Messages and the monthly email quota.
+  communicationCampaigns CommunicationCampaign[]
+  emailUsagePeriods      TenantEmailUsagePeriod[]
+  emailUsageLedger       TenantEmailUsageLedger[]
+
+  @@unique([nameKey])
   @@index([organizationId, status])
   @@index([searchVector], type: Gin)
   @@map("academies")
@@ -707,7 +739,20 @@ model AcademyStudent {
   blockedReason     String?              @map("blocked_reason")
   invitedBy         String?              @map("invited_by")
   lastActivityAt    DateTime?            @map("last_activity_at")
+  /// W4 — `atlas_name_key(users.name)`, copied from the account and kept in
+  /// step by SECURITY DEFINER triggers (`academy_students_name_key_biu` on
+  /// insert, `users_learner_name_key_au` on a rename). Never written by the
+  /// application: the trigger overwrites whatever is sent.
+  nameKey           String               @default("") @map("name_key")
+  /// W4 — true for a row allowed to share its key with another learner of
+  /// this academy: automatic admissions (sign-in auto-join, purchase) that
+  /// clashed, and legacy duplicates. Learners are never renamed.
+  nameUniqueExempt  Boolean              @default(false) @map("name_unique_exempt")
 
+  /// W4 — one NON-EXEMPT learner per name key per academy: the partial unique
+  /// index `academy_students_academy_id_name_key_key ON (academy_id, name_key)
+  /// WHERE NOT name_unique_exempt` lives in the migration SQL; Prisma cannot
+  /// express partial indexes.
   @@unique([academyId, userId])
   @@index([academyId])
   @@index([userId])
@@ -876,6 +921,13 @@ model Plan {
   /// exists so a future plan can offer a different-length trial without
   /// another migration or a second policy mechanism.
   trialDurationDays    Int?       @map("trial_duration_days")
+  /// W8 — gifted setup days granted in front of the FIRST paid period of a
+  /// customer's first-ever paid subscription, per billing cycle. NULL or 0
+  /// means no gift; otherwise 5..15 (DB CHECK `plans_gifted_days_*_range_chk`
+  /// and the plan-admin DTO). Catalog data edited by Platform Owners — the
+  /// 7/14 defaults are seeded by a separate migration, never hard-coded.
+  giftedDaysMonthly    Int?       @map("gifted_days_monthly")
+  giftedDaysYearly     Int?       @map("gifted_days_yearly")
   /// P57 — optimistic-concurrency token for Platform-Owner plan edits.
   /// Same column, same 409 `stale_resource_version` contract `website_pages`
   /// established and `add_ons` adopted in P51 — never a second mechanism.
@@ -978,6 +1030,16 @@ model TenantSubscription {
   /// Nullable — "a subscription can exist before any real Checkout ever
   /// set one" (`TenantSubscription.billingCycle`'s own doc comment).
   billingCycle       SubscriptionBillingCycle? @map("billing_cycle")
+  /// W8 — the gifted setup-day segment `[giftedStartsAt, giftedEndsAt)` granted
+  /// on this organization's first-ever paid subscription. The paid period
+  /// starts at `giftedEndsAt` (== `currentPeriodStart` of that purchase).
+  /// Written only by the gift-granting approval, never cleared by renewals,
+  /// plan changes or cancellation. All-or-nothing (DB CHECK
+  /// `tenant_subscriptions_gift_shape_chk`). `giftedPaymentId` is a plain id.
+  giftedDays         Int?                      @map("gifted_days")
+  giftedStartsAt     DateTime?                 @map("gifted_starts_at")
+  giftedEndsAt       DateTime?                 @map("gifted_ends_at")
+  giftedPaymentId    String?                   @map("gifted_payment_id")
   createdAt          DateTime                  @default(now()) @map("created_at")
   updatedAt          DateTime                  @updatedAt @map("updated_at")
 
@@ -1151,12 +1213,55 @@ model TrialRedemption {
   redeemedAt       DateTime      @default(now()) @map("redeemed_at")
   trialEndsAt      DateTime?     @map("trial_ends_at")
   /// Forensic signals only — never consulted by the eligibility decision.
+  /// Cleared after 180 days by the retention job (W8,
+  /// `scrub_trial_redemption_forensics`).
   ipAddress        String?       @map("ip_address")
   userAgent        String?       @map("user_agent")
+  /// W8 — 1 = legacy constant-salt SHA-256 (frozen, still checked);
+  /// 2 = HMAC-SHA256 under the server key (every new claim).
+  hashVersion      Int           @default(1) @map("hash_version") @db.SmallInt
+  /// W8 — provenance: 'claim' | 'backfill' | 'v1_upgrade' (DB CHECK).
+  source           String        @default("claim")
 
   @@index([organizationId])
   @@index([redeemedByUserId])
+  @@index([redeemedAt])
   @@map("trial_redemptions")
+}
+
+/// W8A — durable, append-only record that a customer identity has received
+/// its one-time gifted setup days (first-ever paid subscription).
+///
+/// `subjectHash` is the keyed HMAC (v2) of the organization OWNER's
+/// canonical email — the same canonicalization and key as the trial ledger.
+/// UNIQUE: the claim is INSERT ... ON CONFLICT DO NOTHING in the approval
+/// transaction, so concurrent first payments for one identity yield exactly
+/// one gift. FKs SetNull so account/org deletion never restores eligibility;
+/// `atlas_app` has no UPDATE/DELETE (refunds do not restore it). No RLS:
+/// platform-owned, reachable only via `PaidGiftEligibilityService`.
+model PaidGiftRedemption {
+  id               String                    @id @default(uuid())
+  subjectHash      String                    @unique @map("subject_hash")
+  hashVersion      Int                       @default(2) @map("hash_version") @db.SmallInt
+  organizationId   String?                   @map("organization_id")
+  organization     Organization?             @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  redeemedByUserId String?                   @map("redeemed_by_user_id")
+  redeemedByUser   User?                     @relation("PaidGiftRedeemer", fields: [redeemedByUserId], references: [id], onDelete: SetNull)
+  /// Plain id (no FK) — see the migration header.
+  paymentId        String?                   @map("payment_id")
+  planKey          String?                   @map("plan_key")
+  billingCycle     SubscriptionBillingCycle? @map("billing_cycle")
+  /// 5..15 for a real gift; 0/NULL for a backfilled "already a paying customer" row.
+  giftedDays       Int?                      @map("gifted_days")
+  giftedStartsAt   DateTime?                 @map("gifted_starts_at")
+  giftedEndsAt     DateTime?                 @map("gifted_ends_at")
+  /// 'approval' | 'gateway' | 'backfill' (DB CHECK).
+  source           String                    @default("approval")
+  redeemedAt       DateTime                  @default(now()) @map("redeemed_at")
+
+  @@index([organizationId])
+  @@index([redeemedByUserId])
+  @@map("paid_gift_redemptions")
 }
 
 /// What was cancelled — a trial or a paid subscription. Recorded
@@ -1203,7 +1308,12 @@ model SubscriptionCancellation {
   /// cancelling must never silently forfeit time the customer paid for.
   effectiveAt       DateTime                     @map("effective_at")
 
-  @@unique([organizationId, kind])
+  /// W8 D1 — idempotency is enforced by two PARTIAL unique indexes in the
+  /// migration SQL (Prisma cannot express them): a trial at most once per
+  /// organization, a paid cancellation at most once per (organization,
+  /// effective_at) — i.e. once per paid period, so a renewed subscription
+  /// can be cancelled again.
+  @@index([organizationId, kind])
   @@index([cancelledAt(sort: Desc)])
   @@map("subscription_cancellations")
 }
@@ -1408,6 +1518,8 @@ model Course {
   certificateTemplate     CertificateTemplate?     @relation(fields: [certificateTemplateId], references: [id], onDelete: SetNull)
   certificateMinScore     Int?                     @map("certificate_min_score")
   publishedAt             DateTime?                @map("published_at")
+  /// W6 — the optional client key a create was sent with (`CreateCourseDto.idempotencyKey`). A repeat create with the same key returns this course instead of making another. Unique per academy; NULL for every course created without one (Postgres unique indexes admit many NULLs). Never returned by the API.
+  creationIdempotencyKey  String?                  @map("creation_idempotency_key")
   createdAt               DateTime                 @default(now()) @map("created_at")
   updatedAt               DateTime                 @updatedAt @map("updated_at")
   /// Full-text search vector — a STORED GENERATED column maintained by
@@ -1441,6 +1553,7 @@ model Course {
   reviews         CourseReview[]
 
   @@unique([academyId, slug])
+  @@unique([academyId, creationIdempotencyKey])
   @@index([academyId, status, visibility])
   @@index([status, visibility])
   @@index([createdById])
@@ -4698,6 +4811,10 @@ model ProvisioningRequest {
   selectedThemeKey     String?             @map("selected_theme_key")
   /// Phase 6 (Bilingual Academy Websites) — `'empty' | 'complete'` (`WEBSITE_SETUP_MODES`). Meaningless without `selectedThemeKey`; `null` is treated as `'empty'` by `executeThemeStep`, matching every Academy provisioned before this column existed.
   websiteSetupMode     String?             @map("website_setup_mode")
+  /// W2 — the validated brand chosen in the setup form (`RequestedBrand`, `provisioning/dto/requested-brand.ts`): palette inputs, and the logo only ever as a media-asset reference once the Academy exists — never a data: URI. Applied by the orchestrator's `branding` step; `null` (every older request) keeps that step `skipped`.
+  requestedBrand       Json?               @map("requested_brand")
+  /// W2 — stamped whenever the orchestrator starts, finishes or fails a step. The status endpoint derives `stalled` from it (falling back to `startedAt`/`createdAt` on older rows).
+  lastProgressAt       DateTime?           @map("last_progress_at")
   idempotencyKey       String              @map("idempotency_key")
   attemptCount         Int                 @default(0) @map("attempt_count")
   /// Mirrors `ProvisioningError` (`{code, messageKey, detail?}`) — set only while `status = 'failed'`.
@@ -4723,6 +4840,7 @@ model ProvisioningRequest {
 
   @@unique([organizationId, idempotencyKey])
   @@index([organizationId, status])
+  @@index([organizationId, requestedSubdomain])
   @@map("provisioning_requests")
 }
 
@@ -5171,6 +5289,9 @@ model CommunicationOutbox {
   digest            CommunicationDigest?     @relation(fields: [digestId], references: [id], onDelete: SetNull)
   createdAt         DateTime                 @default(now()) @map("created_at")
   dispatchedAt      DateTime?                @map("dispatched_at")
+  /// W3-compose — the campaign this row was released by, if any.
+  /// Attribution only (no FK): the row stays the delivery record.
+  campaignId        String?                  @map("campaign_id")
 
   deliveries CommunicationDelivery[]
 
@@ -5298,6 +5419,56 @@ model AuthEmailChallenge {
   @@index([userId, createdAt(sort: Desc)])
   @@index([expiresAt])
   @@map("auth_email_challenges")
+}
+
+/// W3 — OTP & Security Monitoring event types (`security_events`).
+enum SecurityEventType {
+  otp_sent
+  otp_resent
+  otp_verified
+  otp_failed
+  otp_expired
+  otp_locked
+  otp_rate_limited
+  otp_suppressed
+  deletion_code_sent
+  deletion_code_verified
+  deletion_code_failed
+  deletion_code_locked
+  deletion_code_rate_limited
+  signin_rate_limited
+
+  @@map("security_event_type")
+}
+
+/// W3 — one authentication-security event for the Platform Owner's
+/// OTP & Security Monitoring page. Never holds a code, token, password,
+/// raw email or raw IP: the subject and the client address are keyed
+/// HMACs (`SecurityEventsService`). Platform-owner SELECT only (RLS);
+/// 90-day retention. Rate-limited events are folded per minute into one
+/// row (`bucketKey`, `occurrences`).
+model SecurityEvent {
+  id                String            @id @default(uuid())
+  eventType         SecurityEventType @map("event_type")
+  surface           String?           @db.VarChar(16)
+  userId            String?           @map("user_id")
+  subjectHash       String?           @map("subject_hash") @db.VarChar(64)
+  ipHash            String?           @map("ip_hash") @db.VarChar(64)
+  academyId         String?           @map("academy_id")
+  challengeId       String?           @map("challenge_id")
+  reason            String?           @db.VarChar(64)
+  attemptsRemaining Int?              @map("attempts_remaining") @db.SmallInt
+  occurrences       Int               @default(1)
+  bucketKey         String?           @unique @map("bucket_key") @db.VarChar(200)
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@index([eventType, createdAt(sort: Desc)])
+  @@index([academyId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([ipHash, createdAt(sort: Desc)])
+  @@index([subjectHash, createdAt(sort: Desc)])
+  @@map("security_events")
 }
 
 /// P64 Communications C4 — a browser this user has proven email ownership
@@ -5916,4 +6087,125 @@ model LiveProviderEvent {
   @@index([status, receivedAt])
   @@index([liveSessionId])
   @@map("live_provider_events")
+}
+
+// ---------------------------------------------------------------------------
+// W3-compose — person-authored messages (Platform Owner broadcasts and
+// academy Messages) and the per-academy monthly email quota. See
+// `prisma/migrations/20261104000100_communication_campaigns` for RLS.
+// ---------------------------------------------------------------------------
+
+enum CommunicationCampaignScope {
+  platform
+  academy
+
+  @@map("communication_campaign_scope")
+}
+
+enum CommunicationCampaignStatus {
+  queued
+  expanding
+  sending
+  completed
+  cancelled
+  failed
+
+  @@map("communication_campaign_status")
+}
+
+model CommunicationCampaign {
+  id                     String                      @id
+  scope                  CommunicationCampaignScope
+  organizationId         String?                     @map("organization_id")
+  organization           Organization?               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  academyId              String?                     @map("academy_id")
+  academy                Academy?                    @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  createdBy              String?                     @map("created_by")
+  author                 User?                       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  idempotencyScope       String                      @map("idempotency_scope") @db.VarChar(80)
+  idempotencyKey         String                      @map("idempotency_key") @db.VarChar(100)
+  key                    String                      @db.VarChar(100)
+  channels               Json
+  audience               Json
+  subject                String                      @db.VarChar(150)
+  bodyHtml               String                      @map("body_html")
+  bodyText               String                      @map("body_text")
+  contentLocale          String                      @default("en") @map("content_locale") @db.VarChar(8)
+  status                 CommunicationCampaignStatus @default(queued)
+  recipientCount         Int                         @default(0) @map("recipient_count")
+  expectedEmailCount     Int                         @default(0) @map("expected_email_count")
+  expansionCursor        String?                     @map("expansion_cursor")
+  expandedCount          Int                         @default(0) @map("expanded_count")
+  emailReleasedCount     Int                         @default(0) @map("email_released_count")
+  inAppReleasedCount     Int                         @default(0) @map("in_app_released_count")
+  excludedOptedOut       Int                         @default(0) @map("excluded_opted_out")
+  excludedSuppressed     Int                         @default(0) @map("excluded_suppressed")
+  excludedQuota          Int                         @default(0) @map("excluded_quota")
+  quotaPeriodStart       DateTime?                   @map("quota_period_start")
+  quotaReserved          Int                         @default(0) @map("quota_reserved")
+  largeAudienceConfirmed Boolean                     @default(false) @map("large_audience_confirmed")
+  lastError              String?                     @map("last_error") @db.VarChar(500)
+  startedAt              DateTime?                   @map("started_at")
+  completedAt            DateTime?                   @map("completed_at")
+  createdAt              DateTime                    @default(now()) @map("created_at")
+  updatedAt              DateTime                    @default(now()) @updatedAt @map("updated_at")
+
+  recipients CampaignRecipient[]
+
+  @@unique([idempotencyScope, idempotencyKey], map: "communication_campaigns_idempotency_key")
+  @@index([academyId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([scope, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("communication_campaigns")
+}
+
+model CampaignRecipient {
+  campaignId    String                @map("campaign_id")
+  campaign      CommunicationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId        String                @map("user_id")
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailEligible Boolean               @map("email_eligible")
+  exclusion     String?               @db.VarChar(32)
+  state         Int                   @default(0) @db.SmallInt
+  outboxId      String?               @map("outbox_id")
+  releasedAt    DateTime?             @map("released_at")
+
+  @@id([campaignId, userId])
+  @@index([campaignId, state, userId])
+  @@map("campaign_recipients")
+}
+
+model TenantEmailUsagePeriod {
+  academyId      String       @map("academy_id")
+  academy        Academy      @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  periodStart    DateTime     @map("period_start")
+  periodEnd      DateTime     @map("period_end")
+  /// The limit in force at the latest reservation; null = unlimited.
+  limitSnapshot  Int?         @map("limit_snapshot")
+  used           Int          @default(0)
+  updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at")
+
+  @@id([academyId, periodStart])
+  @@map("tenant_email_usage_periods")
+}
+
+model TenantEmailUsageLedger {
+  id             String       @id
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  academyId      String       @map("academy_id")
+  academy        Academy      @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  periodStart    DateTime     @map("period_start")
+  /// The campaign id.
+  messageId      String       @map("message_id")
+  /// `charge` | `release` | `refund`.
+  kind           String       @db.VarChar(16)
+  quantity       Int
+  createdBy      String?      @map("created_by")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@unique([messageId, kind])
+  @@index([academyId, periodStart])
+  @@map("tenant_email_usage_ledger")
 }

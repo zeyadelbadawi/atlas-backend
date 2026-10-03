@@ -27,10 +27,13 @@ export async function seedOrganizationWithOwner(
   ownerId: string,
   slugLabel: string,
 ) {
+  // W4 — organization names are unique platform-wide; the name carries the
+  // same unique suffix as the slug, so fixtures never collide across runs.
+  const unique = `${slugLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const org = await admin.organization.create({
     data: {
-      name: slugLabel,
-      slug: `${slugLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      name: unique,
+      slug: unique,
       ownerUserId: ownerId,
     },
   });
@@ -70,11 +73,13 @@ export async function seedAcademy(
   organizationId: string,
   slugLabel: string,
 ) {
+  // W4 — academy names are unique platform-wide (see `seedOrganizationWithOwner`).
+  const unique = `${slugLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return admin.academy.create({
     data: {
       organizationId,
-      name: slugLabel,
-      slug: `${slugLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      name: unique,
+      slug: unique,
     },
   });
 }

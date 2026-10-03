@@ -157,6 +157,14 @@ export const COURSE_CATALOG_SORT_VALUES = [
 export const SELECTABLE_WEBSITE_THEME_KEYS = ['modern-education'] as const;
 
 /**
+ * W2 — the platform's default theme: what `WebsiteBootstrapService` gives a
+ * new website configuration, and what provisioning applies (and generates
+ * starter pages for) when a request names no theme.
+ */
+export const DEFAULT_WEBSITE_THEME_KEY: (typeof SELECTABLE_WEBSITE_THEME_KEYS)[number] =
+  SELECTABLE_WEBSITE_THEME_KEYS[0];
+
+/**
  * Themes 2–5, retired from selection (frontend repo, Reports/THEMES_2_5_RETIREMENT.md).
  * Their code stays until every website on them has been moved to
  * `RETIRED_WEBSITE_THEME_REPLACEMENT` (`npm run db:retire-website-themes`)

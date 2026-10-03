@@ -31,6 +31,7 @@ import {
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
 import { METRICS_REGISTRY } from '../src/observability/metrics/learning-metrics.service';
+import { uniqueName } from './utils/unique-name';
 
 jest.setTimeout(120000);
 
@@ -136,14 +137,15 @@ describe('Smart member invitation + academy join (e2e)', () => {
     return { owner, academy: await academyOwnedBy(owner.userId, label, policy) };
   }
 
-  function registerAt(a: Academy, email: string, name = 'Learner') {
+  // W4 — learner names are unique per academy: each learner gets its own.
+  function registerAt(a: Academy, email: string, name = uniqueName('Learner')) {
     return http()
       .post('/auth/register')
       .set('Host', a.host)
       .send({ name, email, password: PASSWORD, academyId: a.id });
   }
 
-  async function learnerAt(a: Academy, label: string, name = 'Learner') {
+  async function learnerAt(a: Academy, label: string, name = uniqueName('Learner')) {
     const email = uniqueTestEmail(label);
     await registerAt(a, email, name).expect(201);
     const user = await admin.user.findUniqueOrThrow({ where: { email } });

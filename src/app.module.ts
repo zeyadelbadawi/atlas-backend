@@ -63,9 +63,12 @@ import { PlatformContactModule } from './platform-contact/platform-contact.modul
 import { AnalyticsModule } from './analytics/analytics.module';
 import { NotificationEventsModule } from './notification-events/notification-events.module';
 import { CommunicationsModule } from './communications/communications.module';
+import { CommunicationCampaignsModule } from './communications/campaigns/communication-campaigns.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SearchModule } from './search/search.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { SecurityEventsModule } from './security-events/security-events.module';
+import { SecurityMonitoringModule } from './security-events/security-monitoring.module';
 
 @Module({
   imports: [
@@ -158,7 +161,12 @@ import { DashboardModule } from './dashboard/dashboard.module';
     // `@Global()` — same reasoning as `AuditLogModule` immediately above,
     // for `NotificationFanoutService`/`NotificationsRepository` (P17).
     NotificationEventsModule,
+    // W3 — `@Global()` `security_events` writer (OTP & Security Monitoring),
+    // registered beside the other global leaves for the same reason.
+    SecurityEventsModule,
     CommunicationsModule,
+    // W3-compose — Platform Owner "Compose and send" and academy "Messages".
+    CommunicationCampaignsModule,
     HealthModule,
     SecurityReportsModule,
     // P64 Phase 2 §U — the first metrics registry in the codebase.
@@ -197,6 +205,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
     SearchModule,
     // Phase 8 — Support, Audit & Dashboards.
     DashboardModule,
+    // W3 — Platform Owner OTP & Security Monitoring + security retention sweep.
+    SecurityMonitoringModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

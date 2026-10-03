@@ -65,6 +65,17 @@ export function mediaPurgeAssetJobId(assetId: string): string {
   return `media-purge-${assetId}`;
 }
 
+/**
+ * W8B — trial-ledger forensic retention: clears `ip_address`/`user_agent`
+ * on `trial_redemptions` rows older than 180 days. Same queue, same ONE
+ * processor (see `TrialForensicsScrubService`). Daily is plenty: the window
+ * is measured in months.
+ */
+export const TRIAL_FORENSICS_SCRUB_JOB = 'trial-forensics-scrub';
+export const TRIAL_FORENSICS_SCRUB_REPEAT_JOB_ID = 'trial-forensics-scrub-repeat';
+export const TRIAL_FORENSICS_SCRUB_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const TRIAL_FORENSICS_RETENTION_DAYS = 180;
+
 export const VIDEO_RETENTION_SWEEP_REPEAT_JOB_ID = 'video-retention-sweep-repeat';
 
 /** The same cadence as the subscription sweep: §31's dates are days apart, not minutes. */

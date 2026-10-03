@@ -21,7 +21,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { QuizQuestionInputDto } from './quiz-question-input.dto';
-import { QuizSettingsFieldsDto } from './quiz-settings.dto';
+import { IsOptionalNotNull, QuizSettingsFieldsDto } from './quiz-settings.dto';
 import {
   MAX_QUIZ_DESCRIPTION_LENGTH,
   MAX_QUIZ_QUESTIONS,
@@ -42,11 +42,12 @@ export class CreateQuizDto extends QuizSettingsFieldsDto {
   @MaxLength(MAX_QUIZ_DESCRIPTION_LENGTH)
   readonly description?: string;
 
+  /** Optional unit placement. Must be a unit of THIS course; the quiz is appended at the unit's end (W7). */
   @IsOptional()
   @IsString()
   readonly sectionId?: string;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsIn(QUIZ_STATUS_VALUES)
   readonly status?: (typeof QUIZ_STATUS_VALUES)[number];
 

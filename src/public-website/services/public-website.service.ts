@@ -225,6 +225,23 @@ export class PublicWebsiteService {
   }
 
   /**
+   * W3 — the stored logo value behind `GET public/websites/:academyId/logo`,
+   * gated exactly like the favicon and the identity read: an unknown,
+   * archived, suspended or not-serving-eligible Academy has none (`null`).
+   * The value itself never leaves the server — the controller renders it
+   * into a bounded PNG through `EmailLogoService`.
+   */
+  async getLogoReference(academyId: string): Promise<string | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+    const academy = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.academiesRepository.findById(tx, academyId),
+    );
+    return academy?.logoUrl ?? null;
+  }
+
+  /**
    * Theme 1 plan Phase 6 — the Academy's theme key and public brand colours,
    * whatever the website's publication state, so Coming Soon can wear them.
    * Read through `resolve_public_presentation` (an unpublished configuration

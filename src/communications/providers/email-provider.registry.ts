@@ -19,6 +19,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   EmailProviderError,
+  EmailQuotaExhaustedError,
   type EmailProvider,
   type EmailProviderAdapter,
   type EmailProviderCapabilities,
@@ -28,7 +29,7 @@ import {
   type TransactionalEmailInput,
   type WebhookHeaders,
 } from '../../identity/services/email-provider.interface';
-import { EmailQuotaService } from '../services/email-quota.service';
+import { EmailQuotaService, type QuotaDecision } from '../services/email-quota.service';
 import { CommunicationMetricsService } from '../services/communication-metrics.service';
 import { STUB_PROVIDER_NAME } from './stub-email.provider';
 
@@ -61,6 +62,22 @@ export function buildProviderChain(
     chain.push(adapter);
   }
   return chain;
+}
+
+/**
+ * W3-compose — when an exhausted quota window resets: the next UTC day for
+ * a daily line, the first of next month (UTC) for a monthly line, the next
+ * second for the per-second limiter. Matches `EmailQuotaService`'s key
+ * windows (`d:{yyyymmdd}`, `m:{yyyymm}`, `rate:{epochSecond}`), which are UTC.
+ */
+export function quotaResetAt(reason: 'daily' | 'monthly' | 'rate', now: Date): Date {
+  if (reason === 'rate') return new Date(Math.floor(now.getTime() / 1000) * 1000 + 1000);
+  if (reason === 'daily') {
+    return new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1),
+    );
+  }
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
 }
 
 @Injectable()
@@ -136,11 +153,15 @@ export class EmailProviderRegistry implements EmailProvider {
   async send(input: EmailSendInput): Promise<EmailSendResult> {
     const category = input.category ?? 'transactional';
     let lastError: EmailProviderError | undefined;
+    // W3-compose — the reset instant of every quota line that refused, so
+    // "nobody had quota" can say WHEN somebody will.
+    const quotaRefusals: Extract<QuotaDecision, { ok: false }>['reason'][] = [];
 
     for (const provider of this.providers) {
       const capabilities = provider.capabilities();
       const decision = await this.quota.reserve(provider.name, category, capabilities);
       if (!decision.ok) {
+        quotaRefusals.push(decision.reason);
         this.metrics.recordSend(provider.name, category, 'quota_skipped');
         this.logger.warn(
           { provider: provider.name, category, reason: decision.reason },
@@ -185,13 +206,19 @@ export class EmailProviderRegistry implements EmailProvider {
       }
     }
 
-    throw (
-      lastError ??
-      new EmailProviderError(
-        this.name,
-        'transient',
-        'No email provider had quota available for this category.',
-      )
+    if (lastError) throw lastError;
+    // Every provider was skipped for quota and none was even tried: a
+    // distinct, still-transient error carrying the earliest reset, so the
+    // dispatcher can defer the row instead of burning its retries.
+    const now = new Date();
+    const resets = quotaRefusals.map((reason) => ({
+      reason,
+      at: quotaResetAt(reason, now),
+    }));
+    const earliest = resets.sort((a, b) => a.at.getTime() - b.at.getTime())[0];
+    throw new EmailQuotaExhaustedError(
+      earliest?.at ?? quotaResetAt('daily', now),
+      earliest?.reason ?? 'daily',
     );
   }
 

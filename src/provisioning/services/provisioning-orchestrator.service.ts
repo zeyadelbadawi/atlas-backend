@@ -43,6 +43,7 @@
  * respect whatever the OTHER concurrent execution already committed.
  */
 import { ConflictException, HttpException, Injectable, Logger } from '@nestjs/common';
+import { isNameConflict } from '../../common/name-uniqueness/name-uniqueness';
 import { Prisma } from '@prisma/client';
 import type { ProvisioningRequest, ProvisioningStepKey } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -58,6 +59,7 @@ import type { EmitResult } from '../../communications/services/communication.ser
 import { WebsiteConfigurationService } from '../../website/services/website-configuration.service';
 import { WebsiteGenerationService } from '../../website/services/website-generation.service';
 import {
+  DEFAULT_WEBSITE_THEME_KEY,
   WEBSITE_THEME_KEYS,
   selectableWebsiteThemeKey,
 } from '../../website/constants/website.constants';
@@ -71,6 +73,7 @@ import {
   STATUS_AFTER_STEP,
 } from '../dto/provisioning.constants';
 import type { ProvisioningErrorResponse } from '../dto/provisioning-step.contract';
+import { readRequestedBrand } from '../dto/requested-brand';
 
 function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
@@ -260,9 +263,11 @@ export class ProvisioningOrchestratorService {
       );
       if (!request) return null;
       if (isAbandoned(request.status)) return request;
+      const now = new Date();
       return this.provisioningRequestsRepository.update(tx, provisioningRequestId, {
         attemptCount: { increment: 1 },
-        startedAt: request.startedAt ?? new Date(),
+        startedAt: request.startedAt ?? now,
+        lastProgressAt: now,
       });
     });
     if (!bumped || isAbandoned(bumped.status)) return;
@@ -302,9 +307,16 @@ export class ProvisioningOrchestratorService {
       return stepKey !== 'finalization';
     }
 
-    await this.runTenant(organizationId, (tx) =>
-      this.provisioningStepsRepository.markRunning(tx, provisioningRequestId, stepKey),
-    );
+    await this.runTenant(organizationId, async (tx) => {
+      await this.provisioningStepsRepository.markRunning(
+        tx,
+        provisioningRequestId,
+        stepKey,
+      );
+      await this.provisioningRequestsRepository.update(tx, provisioningRequestId, {
+        lastProgressAt: new Date(),
+      });
+    });
 
     let outcome: StepOutcome;
     try {
@@ -322,19 +334,27 @@ export class ProvisioningOrchestratorService {
     }
 
     const isFinalizationStep = stepKey === 'finalization';
+    // W2 — a branding failure never blocks the Academy: the step is
+    // recorded `failed` (with its error, so the status page can say
+    // "branding could not be applied — Retry") and the request moves on to
+    // `ready`. `retryBrandingStep` re-runs just this step afterwards.
+    const isNonBlockingFailure =
+      outcome.result === 'failed' && NON_BLOCKING_STEPS.has(stepKey);
     const { shouldContinue, outboxId, shouldAutoCreateSupportCase } =
       await this.runTenant(organizationId, async (tx) => {
-        if (outcome.result === 'failed') {
+        if (outcome.result === 'failed' && !isNonBlockingFailure) {
           await this.provisioningStepsRepository.markFailed(
             tx,
             provisioningRequestId,
             stepKey,
             outcome.error as unknown as Prisma.InputJsonValue,
           );
+          const failedAt = new Date();
           await this.provisioningRequestsRepository.update(tx, provisioningRequestId, {
             status: 'failed',
             lastError: outcome.error as unknown as Prisma.InputJsonValue,
-            failedAt: new Date(),
+            failedAt,
+            lastProgressAt: failedAt,
           });
           // Same transaction as the state transition above — a rollback
           // here (e.g. a later statement in this block failing) leaves no
@@ -369,7 +389,14 @@ export class ProvisioningOrchestratorService {
           };
         }
 
-        if (outcome.result === 'skipped') {
+        if (outcome.result === 'failed') {
+          await this.provisioningStepsRepository.markFailed(
+            tx,
+            provisioningRequestId,
+            stepKey,
+            outcome.error as unknown as Prisma.InputJsonValue,
+          );
+        } else if (outcome.result === 'skipped') {
           await this.provisioningStepsRepository.markSkipped(
             tx,
             provisioningRequestId,
@@ -430,7 +457,11 @@ export class ProvisioningOrchestratorService {
     // turning a cosmetic "couldn't open a courtesy ticket" into a real
     // redelivery loop. Same reasoning, and the same
     // log-and-continue shape, as `AuditLogWriterService.writeBestEffort`.
-    if (outcome.result === 'failed' && shouldAutoCreateSupportCase) {
+    if (
+      outcome.result === 'failed' &&
+      !isNonBlockingFailure &&
+      shouldAutoCreateSupportCase
+    ) {
       try {
         await this.createAutoSupportCase(request, stepKey, outcome.error);
       } catch (error) {
@@ -539,10 +570,12 @@ export class ProvisioningOrchestratorService {
     const nextStepKey = PROVISIONING_STEP_ORDER[nextIndex] ?? stepKey;
     const isLastStep = stepKey === 'finalization';
 
+    const now = new Date();
     await this.provisioningRequestsRepository.update(tx, provisioningRequestId, {
       status: STATUS_AFTER_STEP[stepKey],
       currentStepKey: nextStepKey,
-      ...(isLastStep ? { completedAt: new Date() } : {}),
+      lastProgressAt: now,
+      ...(isLastStep ? { completedAt: now } : {}),
     });
   }
 
@@ -566,14 +599,12 @@ export class ProvisioningOrchestratorService {
         return this.executeThemeStep(request, organizationId);
 
       case 'branding':
+        return this.executeBrandingStep(request, organizationId);
+
       case 'domain':
-        // Still no branding/custom-domain data anywhere in
-        // `CreateProvisioningRequestPayload` — remain skipped, matching
-        // the deliberate decision that connecting a REAL custom domain
-        // stays the existing, separate `DomainService.addCustomDomain`
-        // flow (master plan §24: never fabricate a connected domain).
-        // `theme` (Phase P19) is no longer in this branch — see
-        // `executeThemeStep` below.
+        // Connecting a REAL custom domain stays the existing, separate
+        // `DomainService.addCustomDomain` flow (master plan §24: never
+        // fabricate a connected domain).
         return { result: 'skipped' };
 
       case 'subdomain':
@@ -606,11 +637,18 @@ export class ProvisioningOrchestratorService {
     if (request.academyId) return { result: 'completed' };
 
     try {
-      const academy = await this.academiesService.create(request.requestedByUserId, {
-        organizationId,
-        name: request.requestedAcademyName,
-        slug: request.requestedSubdomain,
-      });
+      // W4 — the worker must never fail on a name taken after the request
+      // was accepted (the request itself was checked): `suffix` takes the
+      // first free "<name> (2)", and the audit entry records the request.
+      const academy = await this.academiesService.create(
+        request.requestedByUserId,
+        {
+          organizationId,
+          name: request.requestedAcademyName,
+          slug: request.requestedSubdomain,
+        },
+        { onNameTaken: 'suffix' },
+      );
       await this.runTenant(organizationId, (tx) =>
         this.provisioningRequestsRepository.update(tx, request.id, {
           academyId: academy.id,
@@ -663,15 +701,17 @@ export class ProvisioningOrchestratorService {
     const isKnownTheme = (value: string): value is (typeof WEBSITE_THEME_KEYS)[number] =>
       (WEBSITE_THEME_KEYS as readonly string[]).includes(value);
 
-    // Not selected, or (defensively) no longer a real registry key — the
-    // request-time DTO already validates against this exact list, so this
-    // is unreachable in normal operation; treated as "nothing to change,"
-    // never a failed step, consistent with this method's own doc comment.
-    if (!selectedThemeKey || !isKnownTheme(selectedThemeKey))
-      return { result: 'completed' };
-    // A request made before Themes 2–5 were retired gets their replacement,
-    // exactly as the retirement migration moves existing websites.
-    const themeKey = selectableWebsiteThemeKey(selectedThemeKey);
+    // W2 — no theme picked (or, defensively, no longer a registry key) is
+    // the platform default theme, and the website is still built: this
+    // step used to return here without generating anything, so a request
+    // that never clicked the (only) theme card silently got no starter
+    // pages despite the pre-selected "complete" setup mode. A request made
+    // before Themes 2–5 were retired gets their replacement, exactly as
+    // the retirement migration moves existing websites.
+    const themeKey =
+      selectedThemeKey && isKnownTheme(selectedThemeKey)
+        ? selectableWebsiteThemeKey(selectedThemeKey)
+        : DEFAULT_WEBSITE_THEME_KEY;
 
     await this.websiteConfigurationService.updateConfiguration(
       request.academyId!,
@@ -691,6 +731,123 @@ export class ProvisioningOrchestratorService {
     );
 
     return { result: 'completed' };
+  }
+
+  /**
+   * W2 — applies the brand the owner chose in the setup form
+   * (`requested_brand`, validated at create — see `requested-brand.ts`):
+   * the palette, and the logo once it has been attached by media-asset
+   * reference, in ONE `saveVisualIdentity` transaction (never a logo saved
+   * with the old colours, or colours without the logo). Idempotent: it
+   * writes the same values again on a retry, and the palette is re-built
+   * and re-validated from its inputs by the same authority the Brand tab
+   * uses. Nothing chosen (every request created before W2, or a form left
+   * on the theme's default colours) is `skipped`, as before.
+   *
+   * Runs as the requester (the Organization owner, who holds the new
+   * Academy's owner membership since the `academy` step), the same
+   * identity every other website write in this orchestrator uses.
+   */
+  private async executeBrandingStep(
+    request: ProvisioningRequest,
+    organizationId: string,
+  ): Promise<StepOutcome> {
+    const brand = readRequestedBrand(request.requestedBrand);
+    const logoUrl = brand?.logo?.status === 'attached' ? brand.logo.url : undefined;
+    if (!brand?.palette && !logoUrl) return { result: 'skipped' };
+    if (!request.academyId) {
+      return {
+        result: 'failed',
+        error: {
+          code: 'academy_not_ready',
+          messageKey: 'errors.provisioning.academyNotReady',
+        },
+      };
+    }
+
+    await this.websiteConfigurationService.saveVisualIdentity(
+      request.academyId,
+      organizationId,
+      request.requestedByUserId,
+      {
+        ...(brand?.palette
+          ? { brand: { palette: brand.palette as unknown as Record<string, unknown> } }
+          : {}),
+        ...(logoUrl ? { logo: logoUrl } : {}),
+      },
+    );
+    return { result: 'completed' };
+  }
+
+  /**
+   * W2 — "Branding could not be applied — Retry". Re-runs ONLY the
+   * `branding` step of a request whose branding failed (non-blocking, so
+   * the request itself is usually already `ready`), synchronously — it is
+   * one transaction. Returns `false` when there is nothing to retry (the
+   * step is not `failed`, or the request was cancelled), so the caller can
+   * answer 409.
+   */
+  async retryBrandingStep(
+    provisioningRequestId: string,
+    organizationId: string,
+  ): Promise<boolean> {
+    const request = await this.runTenant(organizationId, (tx) =>
+      this.provisioningRequestsRepository.findById(tx, provisioningRequestId),
+    );
+    if (!request || request.status === 'cancelled') return false;
+    const step = await this.runTenant(organizationId, (tx) =>
+      this.provisioningStepsRepository.findByRequestAndKey(
+        tx,
+        provisioningRequestId,
+        'branding',
+      ),
+    );
+    if (step?.status !== 'failed') return false;
+
+    await this.runTenant(organizationId, async (tx) => {
+      await this.provisioningStepsRepository.markRunning(
+        tx,
+        provisioningRequestId,
+        'branding',
+      );
+      await this.provisioningRequestsRepository.update(tx, provisioningRequestId, {
+        lastProgressAt: new Date(),
+      });
+    });
+
+    let outcome: StepOutcome;
+    try {
+      outcome = await this.executeBrandingStep(request, organizationId);
+    } catch (error) {
+      outcome = { result: 'failed', error: toProvisioningError(error) };
+    }
+
+    await this.runTenant(organizationId, async (tx) => {
+      if (outcome.result === 'failed') {
+        await this.provisioningStepsRepository.markFailed(
+          tx,
+          provisioningRequestId,
+          'branding',
+          outcome.error as unknown as Prisma.InputJsonValue,
+        );
+      } else if (outcome.result === 'skipped') {
+        await this.provisioningStepsRepository.markSkipped(
+          tx,
+          provisioningRequestId,
+          'branding',
+        );
+      } else {
+        await this.provisioningStepsRepository.markCompleted(
+          tx,
+          provisioningRequestId,
+          'branding',
+        );
+      }
+      await this.provisioningRequestsRepository.update(tx, provisioningRequestId, {
+        lastProgressAt: new Date(),
+      });
+    });
+    return true;
   }
 
   /**
@@ -724,7 +881,9 @@ export class ProvisioningOrchestratorService {
     organizationId: string,
     error: unknown,
   ): Promise<boolean> {
-    const isCleanConflict = error instanceof ConflictException;
+    // W4 — a NAME conflict is never an interrupted attempt of ours: only a
+    // slug conflict may be adopted.
+    const isCleanConflict = error instanceof ConflictException && !isNameConflict(error);
     const isRawSlugConflict =
       error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
     if (!isCleanConflict && !isRawSlugConflict) return false;
@@ -733,6 +892,22 @@ export class ProvisioningOrchestratorService {
       this.academiesRepository.findBySlug(tx, request.requestedSubdomain),
     );
     if (!existing) return false;
+
+    // W2 — only OUR OWN interrupted attempt may be adopted. A second
+    // request for the same address in the same organization (two tabs,
+    // two idempotency keys, before the create-time check existed) used to
+    // adopt the FIRST request's Academy here and then die on
+    // `provisioning_requests.academy_id`'s unique constraint with a
+    // generic error and a retry loop. It is now a clear, typed failure.
+    const owner = await this.runTenant(organizationId, (tx) =>
+      this.provisioningRequestsRepository.findByAcademyIdAnyOrganization(tx, existing.id),
+    );
+    if (owner && owner.id !== request.id) {
+      throw new ConflictException({
+        messageKey: 'errors.provisioning.subdomainUnavailable',
+        code: 'subdomain_taken',
+      });
+    }
 
     await this.runTenant(organizationId, (tx) =>
       this.provisioningRequestsRepository.update(tx, request.id, {
@@ -842,6 +1017,9 @@ export class ProvisioningOrchestratorService {
  * `failed` must stay excluded: it is precisely the status a retry
  * resumes from, re-attempting the step recorded on `currentStepKey`.
  */
+/** W2 — steps whose failure is recorded but never stops the request reaching `ready` (product default: an Academy without its chosen colours is still an Academy; the status page offers "Retry"). */
+const NON_BLOCKING_STEPS: ReadonlySet<ProvisioningStepKey> = new Set(['branding']);
+
 function isAbandoned(status: ProvisioningRequest['status']): boolean {
   return status === 'ready' || status === 'cancelled';
 }

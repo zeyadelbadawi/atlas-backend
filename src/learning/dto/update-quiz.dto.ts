@@ -21,7 +21,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { QuizQuestionInputDto } from './quiz-question-input.dto';
-import { QuizSettingsFieldsDto } from './quiz-settings.dto';
+import { IsOptionalNotNull, QuizSettingsFieldsDto } from './quiz-settings.dto';
 import {
   MAX_QUIZ_DESCRIPTION_LENGTH,
   MAX_QUIZ_QUESTIONS,
@@ -32,36 +32,45 @@ import {
 const QUIZ_STATUS_VALUES = ['draft', 'published'] as const;
 
 export class UpdateQuizDto extends QuizSettingsFieldsDto {
-  @IsOptional()
+  /** NOT NULL — omit to keep; `null` is refused (400), never a 500. */
+  @IsOptionalNotNull()
   @IsString()
   @MaxLength(MAX_QUIZ_TITLE_LENGTH)
   readonly title?: string;
 
+  /** W7 — `null` (or `''`) clears the description; omit to keep it. */
   @IsOptional()
   @IsString()
   @MaxLength(MAX_QUIZ_DESCRIPTION_LENGTH)
-  readonly description?: string;
+  readonly description?: string | null;
 
+  /**
+   * The unit this quiz sits in. Must be a unit of THIS course (checked in
+   * `QuizzesService.updateQuiz`); moving to another unit appends the quiz at
+   * that unit's end. `null` detaches it (it stays course-level content).
+   */
   @IsOptional()
   @IsString()
-  readonly sectionId?: string;
+  readonly sectionId?: string | null;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsIn(QUIZ_STATUS_VALUES)
   readonly status?: (typeof QUIZ_STATUS_VALUES)[number];
 
+  /** W7 — `null` clears the passing threshold (every submitted attempt passes); omit to keep it. */
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(100)
-  readonly passingScore?: number;
+  readonly passingScore?: number | null;
 
+  /** W7 — `null` clears the limit (unlimited attempts); omit to keep it. */
   @IsOptional()
   @IsInt()
   @IsPositive()
-  readonly maxAttempts?: number;
+  readonly maxAttempts?: number | null;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @ArrayMinSize(MIN_QUIZ_QUESTIONS)
   @ArrayMaxSize(MAX_QUIZ_QUESTIONS)
   @ValidateNested({ each: true })

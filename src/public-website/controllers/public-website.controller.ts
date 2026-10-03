@@ -29,7 +29,8 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { Throttle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
+import { EmailLogoService } from '../../communications/services/email-logo.service';
 import { PublicWebsiteService } from '../services/public-website.service';
 import { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
 import { CourseListQueryDto } from '../../course/dto/course-list-query.dto';
@@ -48,9 +49,15 @@ import type { CourseResponse } from '../../course/dto/course.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import type { PublicCourseCurriculumSectionResponse } from '../dto/public-course-curriculum.contract';
 
+const UUID_PATTERN =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 @Controller('public/websites')
 export class PublicWebsiteController {
-  constructor(private readonly publicWebsiteService: PublicWebsiteService) {}
+  constructor(
+    private readonly publicWebsiteService: PublicWebsiteService,
+    private readonly emailLogoService: EmailLogoService,
+  ) {}
 
   @Get('resolve')
   async resolveHostname(
@@ -116,6 +123,53 @@ export class PublicWebsiteController {
     response.setHeader('Content-Type', favicon.source.contentType);
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.status(200).end(favicon.source.bytes);
+  }
+
+  /**
+   * W3 — the Academy's EMAIL logo: a bounded PNG rendered from its stored
+   * logo (`EmailLogoService`), linked from every academy-identity email as
+   * `https://<platform host>/api/v1/public/websites/:academyId/logo?v=<hash>`.
+   *
+   *  - PNG only, re-encoded (WebP/GIF rasterised, metadata stripped); a
+   *    remote URL, SVG or anything undecodable is a 404 and the email shows
+   *    the academy name as text instead.
+   *  - Read from the PUBLIC media store or the row's own data URI — never
+   *    the protected bucket, never a third-party fetch.
+   *  - `?v=` matching the stored value's hash → immutable for a year;
+   *    anything else (an old email after a logo change) → 5 minutes.
+   *  - `Cross-Origin-Resource-Policy: cross-origin` on THIS route only:
+   *    webmail and preview panes embed it from another origin, which the
+   *    global helmet default (`same-origin`) forbids.
+   *  - Exempt from the per-IP throttler: image proxies (Gmail, Outlook,
+   *    Apple MPP) fetch from a handful of shared IPs; the response is cached
+   *    in process and at the edge, so the exemption costs no repeated work.
+   *  - 404 for an unknown, archived, suspended or ineligible Academy, with
+   *    the same body as every other not-found here — no tenant data at all.
+   */
+  @Get(':academyId/logo')
+  @SkipThrottle()
+  async getEmailLogo(
+    @Param('academyId') academyId: string,
+    @Query('v') version: string | undefined,
+    @Res() response: Response,
+  ): Promise<void> {
+    if (!UUID_PATTERN.test(academyId)) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    const stored = await this.publicWebsiteService.getLogoReference(academyId);
+    const logo = stored ? await this.emailLogoService.render(academyId, stored) : null;
+    if (!logo) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    response.setHeader(
+      'Cache-Control',
+      version === logo.version
+        ? 'public, max-age=31536000, immutable'
+        : 'public, max-age=300',
+    );
+    response.setHeader('Content-Type', 'image/png');
+    response.setHeader('Content-Length', String(logo.png.length));
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    response.status(200).end(logo.png);
   }
 
   /** Phase 6 — the combined Academy Identity/Branding read, reused by the public site, the LMS, and the dashboard. See `PublicWebsiteService.getPublicIdentity`'s own doc comment. */

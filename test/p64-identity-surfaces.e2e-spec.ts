@@ -18,6 +18,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -179,7 +180,7 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
     const org2 = await request(app.getHttpServer())
       .post('/organizations')
       .set(auth)
-      .send({ name: 'Learner Org' });
+      .send({ name: uniqueName('Learner Org') });
     expect(org2.status).toBe(403);
   });
 

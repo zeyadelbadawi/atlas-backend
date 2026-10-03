@@ -25,12 +25,24 @@
  *      decision the database rubber-stamps, matching
  *      `OrganizationsService.getById`'s documented discipline.
  *
- * Read access to an Academy (this guard's only job) is governed by
- * ORGANIZATION membership — see the migration's doc comment for why this
- * does not "assume organization owner = automatic unrestricted Academy
- * Owner": that instruction is about WRITE authorization (owner/
- * administrator-only actions), enforced separately by
- * `AcademiesService.assertCanManage`, never by this guard.
+ * W5 (finding F12) — ACADEMY-level, not organization-level. Organization
+ * membership used to be sufficient here, which let the manager of academy
+ * A read academy B's courses, media, stats and live sessions in the same
+ * organization (an intra-organization IDOR: RLS is organization-scoped and
+ * cannot separate academies). The guard now resolves the caller's role IN
+ * THIS ACADEMY and refuses everyone else:
+ *   - the organization OWNER resolves to `owner` for every academy in the
+ *     organization (implicit, no `academy_members` row needed);
+ *   - anyone else needs an ACTIVE `academy_members` row for this academy,
+ *     whose role becomes `academyContext.academyRole`;
+ *   - an inactive/pending row, or no row, is the same 403 as "not a
+ *     member". Nothing is cached: every request re-reads both rows, so a
+ *     revoked membership is refused on the very next request.
+ * Routes that need a narrower tier declare it with `@AcademyRoles(...)`
+ * (`../decorators/academy-roles.decorator.ts`); a role outside that list
+ * gets `errors.academy.insufficientRole`. WRITE authorization is still
+ * re-checked by the services (`assertCanManage` & co.) — this guard is the
+ * first layer, not the only one.
  */
 import {
   CanActivate,
@@ -38,7 +50,10 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import type { AcademyMemberRole } from '@prisma/client';
 import type { Request } from 'express';
+import { ACADEMY_ROLES_KEY } from '../decorators/academy-roles.decorator';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
 import { AcademiesRepository } from '../repositories/academies.repository';
@@ -57,6 +72,14 @@ export interface AcademyContext {
    * `OrganizationMembershipGuard` has always put on `tenantContext`.
    */
   readonly organizationPermissions: readonly string[];
+  /**
+   * W5 — the caller's role IN THIS ACADEMY. `owner` for the organization
+   * owner (implicit), otherwise the role of their ACTIVE `academy_members`
+   * row. Never derived from the organization role of a non-owner.
+   */
+  readonly academyRole: AcademyMemberRole;
+  /** Why `academyRole` holds: the organization-owner rule, or a real active academy membership row. */
+  readonly academyRoleSource: 'organization_owner' | 'academy_membership';
 }
 
 declare module 'express-serve-static-core' {
@@ -73,6 +96,7 @@ export class AcademyScopeGuard implements CanActivate {
     private readonly academiesRepository: AcademiesRepository,
     private readonly membershipsRepository: OrganizationMembershipsRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -93,43 +117,68 @@ export class AcademyScopeGuard implements CanActivate {
     }
 
     const organizationId = bootstrapped.organizationId;
-    const membership = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) =>
-        this.membershipsRepository.findForUserInOrganization(tx, organizationId, userId),
-    );
+    // Both rows are read in the re-established tenant context, on every
+    // request — no role is ever cached, so revocation is immediate.
+    const { membership, academyMembership } =
+      await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => ({
+        membership: await this.membershipsRepository.findForUserInOrganization(
+          tx,
+          organizationId,
+          userId,
+        ),
+        academyMembership: await this.academyMembersRepository.findForUserInAcademy(
+          tx,
+          academyId,
+          userId,
+        ),
+      }));
 
-    if (membership) {
-      request.academyContext = {
-        academyId,
-        organizationId,
-        organizationMembershipId: membership.id,
-        organizationRole: membership.role,
-        organizationPermissions: membership.permissions,
-      };
-      return true;
-    }
-
-    // P64 Phase 1 — an ACTIVE academy_members row (instructor/manager/owner
-    // granted at the academy level, e.g. seeded staff whose organization
-    // membership was never written) also scopes the caller to this academy.
-    // Read access only: every write still passes the services' own role
-    // checks (`assertCanManage`, `assertCanAuthorCourseContent`, ...).
-    const academyMembership = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) => this.academyMembersRepository.findForUserInAcademy(tx, academyId, userId),
-    );
-    if (!academyMembership || academyMembership.status !== 'active') {
+    let academyRole: AcademyMemberRole;
+    let academyRoleSource: AcademyContext['academyRoleSource'];
+    if (membership?.role === 'owner') {
+      // The organization owner owns every academy of their organization.
+      academyRole = 'owner';
+      academyRoleSource = 'organization_owner';
+    } else if (academyMembership && academyMembership.status === 'active') {
+      // P64 Phase 1 — an ACTIVE academy_members row (instructor/manager/
+      // owner granted at the academy level, including seeded staff whose
+      // organization membership was never written) scopes the caller to
+      // THIS academy only.
+      academyRole = academyMembership.role;
+      academyRoleSource = 'academy_membership';
+    } else {
+      // An organization member who is not staff of THIS academy (or whose
+      // academy membership is inactive/pending) — the same 403 as an
+      // outsider, so the response is no oracle for which academies exist.
       throw new ForbiddenException({ messageKey: 'errors.tenancy.notAMember' });
     }
 
-    request.academyContext = {
-      academyId,
-      organizationId,
-      organizationMembershipId: '',
-      organizationRole: `academy_${academyMembership.role}`,
-      organizationPermissions: [],
-    };
+    const requiredRoles = this.reflector.getAllAndOverride<
+      readonly AcademyMemberRole[] | undefined
+    >(ACADEMY_ROLES_KEY, [context.getHandler(), context.getClass()]);
+    if (requiredRoles && !requiredRoles.includes(academyRole)) {
+      throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+    }
+
+    request.academyContext = membership
+      ? {
+          academyId,
+          organizationId,
+          organizationMembershipId: membership.id,
+          organizationRole: membership.role,
+          organizationPermissions: membership.permissions,
+          academyRole,
+          academyRoleSource,
+        }
+      : {
+          academyId,
+          organizationId,
+          organizationMembershipId: '',
+          organizationRole: `academy_${academyRole}`,
+          organizationPermissions: [],
+          academyRole,
+          academyRoleSource,
+        };
     return true;
   }
 }

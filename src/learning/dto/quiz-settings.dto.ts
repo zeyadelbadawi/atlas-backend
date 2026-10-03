@@ -14,6 +14,7 @@ import {
   IsPositive,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 
 export const QUIZ_MODE_VALUES = ['practice', 'exam'] as const;
@@ -37,8 +38,19 @@ export const MIN_TIME_LIMIT_SECONDS = 60;
 export const MAX_TIME_LIMIT_SECONDS = 24 * 60 * 60;
 export const MAX_VIOLATIONS_LIMIT = 50;
 
+/**
+ * W7 — "present or absent, never null" for NOT NULL columns. `@IsOptional()`
+ * skips validation for `null` as well as `undefined`, so a `null` sent for a
+ * NOT NULL setting used to reach Prisma and fail as a 500. With this, an
+ * omitted field is still skipped (keeps its value), but `null` is validated
+ * by the field's other decorators and refused as a 400. Fields whose
+ * columns ARE nullable keep `@IsOptional()`: there `null` means "clear".
+ */
+export const IsOptionalNotNull = (): PropertyDecorator =>
+  ValidateIf((_object: unknown, value: unknown) => value !== undefined);
+
 export class QuizSettingsFieldsDto {
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsIn(QUIZ_MODE_VALUES)
   readonly mode?: (typeof QUIZ_MODE_VALUES)[number];
 
@@ -61,19 +73,19 @@ export class QuizSettingsFieldsDto {
   @IsDateString()
   readonly dueAt?: string | null;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsIn(ASSESSMENT_LATE_POLICY_VALUES)
   readonly latePolicy?: (typeof ASSESSMENT_LATE_POLICY_VALUES)[number];
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsIn(QUIZ_GRADING_POLICY_VALUES)
   readonly gradingPolicy?: (typeof QUIZ_GRADING_POLICY_VALUES)[number];
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsBoolean()
   readonly shuffleQuestions?: boolean;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsBoolean()
   readonly shuffleOptions?: boolean;
 
@@ -82,45 +94,45 @@ export class QuizSettingsFieldsDto {
   @IsPositive()
   readonly questionsPerAttempt?: number | null;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsIn(QUIZ_LAYOUT_VALUES)
   readonly layout?: (typeof QUIZ_LAYOUT_VALUES)[number];
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsIn(QUIZ_DISCLOSURE_VALUES)
   readonly showScore?: (typeof QUIZ_DISCLOSURE_VALUES)[number];
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsIn(QUIZ_DISCLOSURE_VALUES)
   readonly showAnswers?: (typeof QUIZ_DISCLOSURE_VALUES)[number];
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsBoolean()
   readonly showExplanations?: boolean;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsIn(QUIZ_INTEGRITY_MODE_VALUES)
   readonly integrityMode?: (typeof QUIZ_INTEGRITY_MODE_VALUES)[number];
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsInt()
   @Min(1)
   @Max(MAX_VIOLATIONS_LIMIT)
   readonly maxViolations?: number;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsBoolean()
   readonly requireFullscreen?: boolean;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsBoolean()
   readonly requiredToProgress?: boolean;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsBoolean()
   readonly requiredForCompletion?: boolean;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsBoolean()
   readonly hideTimer?: boolean;
 }

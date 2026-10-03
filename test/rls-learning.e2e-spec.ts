@@ -15,6 +15,7 @@ import { createAdminPrisma, fixtureUsers } from './utils/db-admin';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import type { PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 describe('Row-Level Security — P6 Student Learning tables (direct, no guards)', () => {
   let app: INestApplication;
@@ -51,7 +52,7 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
       const org = await tx.organization.create({
         data: {
           id,
-          name: slugLabel,
+          name: uniqueName(slugLabel),
           slug: `${slugLabel}-${Date.now()}`,
           ownerUserId: ownerId,
         },
@@ -68,7 +69,7 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
     const org = await createOrgOwnedBy(owner.id, label);
     const academy = await tenancyContext.runInTenantContext(org.id, (tx) =>
       tx.academy.create({
-        data: { organizationId: org.id, name: label, slug: `${label}-${Date.now()}` },
+        data: { organizationId: org.id, name: uniqueName(label), slug: `${label}-${Date.now()}` },
       }),
     );
     const course = await tenancyContext.runInTenantContext(org.id, (tx) =>
@@ -266,7 +267,7 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
       tx.academy.create({
         data: {
           organizationId: org.id,
-          name: 'rls-discovery-draft',
+          name: uniqueName('rls-discovery-draft'),
           slug: `rls-discovery-draft-${Date.now()}`,
         },
       }),

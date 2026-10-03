@@ -174,6 +174,39 @@ export class PlatformPaymentService {
         );
         await this.paymentApplicationService.applySuccessfulPayment(tx, reloaded!);
 
+        // W8 — record the gift in the tenant's activity log when THIS
+        // approval granted it (the subscription names this payment).
+        const gifted = await tx.tenantSubscription.findUnique({
+          where: { organizationId: payment.organizationId },
+          select: {
+            giftedDays: true,
+            giftedEndsAt: true,
+            giftedPaymentId: true,
+            billingCycle: true,
+            plan: { select: { key: true } },
+          },
+        });
+        if (
+          gifted?.giftedPaymentId === paymentId &&
+          gifted.giftedDays &&
+          gifted.giftedEndsAt
+        ) {
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: reviewerId,
+            organizationId: payment.organizationId,
+            action: 'subscription.gift.granted',
+            targetType: 'tenant_subscription',
+            targetId: payment.organizationId,
+            context: {
+              planKey: gifted.plan.key,
+              billingCycle: gifted.billingCycle,
+              giftedDays: gifted.giftedDays,
+              giftedEndsAt: gifted.giftedEndsAt.toISOString(),
+              paymentId,
+            },
+          });
+        }
+
         // Phase P15 retroactive audit coverage — same transaction as the
         // review/payment/subscription writes above.
         await this.auditLogWriterService.write(tx, {

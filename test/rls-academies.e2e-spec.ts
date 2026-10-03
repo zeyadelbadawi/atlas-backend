@@ -29,6 +29,7 @@ import { fixtureUsers } from './utils/db-admin';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
+import { uniqueName } from './utils/unique-name';
 
 describe('Row-Level Security — academies / academy_members (direct, no guards)', () => {
   let app: INestApplication;
@@ -62,7 +63,7 @@ describe('Row-Level Security — academies / academy_members (direct, no guards)
       const org = await tx.organization.create({
         data: {
           id,
-          name: slugLabel,
+          name: uniqueName(slugLabel),
           slug: `${slugLabel}-${Date.now()}`,
           ownerUserId: ownerId,
         },
@@ -82,7 +83,7 @@ describe('Row-Level Security — academies / academy_members (direct, no guards)
   ) {
     return tenancyContext.runInTenantContext(organizationId, async (tx) => {
       const academy = await tx.academy.create({
-        data: { organizationId, name: slugLabel, slug: `${slugLabel}-${Date.now()}` },
+        data: { organizationId, name: uniqueName(slugLabel), slug: `${slugLabel}-${Date.now()}` },
       });
       await tx.academyMember.create({
         data: { academyId: academy.id, userId: ownerId, role: 'owner' },
@@ -170,7 +171,7 @@ describe('Row-Level Security — academies / academy_members (direct, no guards)
         tx.academy.create({
           data: {
             organizationId: org2.id, // attacker-controlled — not the active context.
-            name: 'Attacker Academy',
+            name: uniqueName('Attacker Academy'),
             slug: `rls-atk-academy-${Date.now()}`,
           },
         }),
@@ -269,10 +270,11 @@ describe('Row-Level Security — academies / academy_members (direct, no guards)
     const org = await createOrgOwnedBy(owner.id, 'rls-legit-update-org');
     const academy = await createAcademyOwnedBy(org.id, owner.id, 'rls-legit-update-a');
 
+    const renamed = uniqueName('Renamed');
     const updated = await tenancyContext.runInTenantContext(org.id, (tx) =>
-      tx.academy.update({ where: { id: academy.id }, data: { name: 'Renamed' } }),
+      tx.academy.update({ where: { id: academy.id }, data: { name: renamed } }),
     );
-    expect(updated.name).toBe('Renamed');
+    expect(updated.name).toBe(renamed);
     expect(updated.organizationId).toBe(org.id);
   });
 });

@@ -11,7 +11,7 @@
  * unmodified) already proved organization membership before any of these
  * run; RLS proves it again, independently.
  */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { resolveSubscriptionLimits } from '../utils/granted-limits.util';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { TenantSubscriptionsRepository } from '../repositories/tenant-subscriptions.repository';
@@ -26,6 +26,8 @@ import { toTenantUsageResponse } from '../dto/tenant-usage.contract';
 import type { TenantUsageResponse } from '../dto/tenant-usage.contract';
 import { SubscriptionAccessService } from './subscription-access.service';
 import { TrialEligibilityService } from './trial-eligibility.service';
+import { PaidGiftEligibilityService } from './paid-gift-eligibility.service';
+import { PLANS_CLOCK, type Clock } from '../utils/clock';
 import { TrialPolicyRepository } from '../repositories/trial-policy.repository';
 import { toPlanResponse } from '../dto/plan.contract';
 import type { SubscriptionLifecycleResponse } from '../dto/subscription-lifecycle.contract';
@@ -42,6 +44,8 @@ export class TenantSubscriptionService {
     private readonly subscriptionAccessService: SubscriptionAccessService,
     private readonly trialEligibilityService: TrialEligibilityService,
     private readonly trialPolicyRepository: TrialPolicyRepository,
+    private readonly paidGiftEligibilityService: PaidGiftEligibilityService,
+    @Inject(PLANS_CLOCK) private readonly clock: Clock,
   ) {}
 
   /**
@@ -62,10 +66,26 @@ export class TenantSubscriptionService {
       this.trialPolicyRepository.findSingleton(),
     ]);
 
-    const subscription = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) => this.tenantSubscriptionsRepository.findByOrganizationId(tx, organizationId),
-    );
+    const { subscription, giftAvailable } =
+      await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+        const row = await this.tenantSubscriptionsRepository.findByOrganizationId(
+          tx,
+          organizationId,
+        );
+        // W8 — display-only gift availability, keyed (like the real claim)
+        // on the organization OWNER's identity, not the viewer's.
+        const available = await this.paidGiftEligibilityService.describeGiftAvailability(
+          tx,
+          {
+            organizationId,
+            existing: row
+              ? { currentPeriodEnd: row.currentPeriodEnd, giftedDays: row.giftedDays }
+              : null,
+          },
+        );
+        return { subscription: row, giftAvailable: available };
+      });
+    const gift = this.describeGift(subscription);
 
     // Trial availability is an ACCOUNT-level fact, not an organization
     // one — creating a second workspace must not restore it — so it is
@@ -108,6 +128,23 @@ export class TenantSubscriptionService {
       ...(state.graceEndsAt ? { graceEndsAt: state.graceEndsAt.toISOString() } : {}),
       ...(state.accessEndsAt ? { accessEndsAt: state.accessEndsAt.toISOString() } : {}),
       trialAvailable,
+      ...gift,
+      giftAvailable,
+    };
+  }
+
+  /** W8 — the granted gift, if any, with whole days left while it runs (ceil, never negative). */
+  private describeGift(
+    subscription: { giftedDays: number | null; giftedEndsAt: Date | null } | null,
+  ): { giftedDays?: number; giftedEndsAt?: string; giftedDaysRemaining?: number } {
+    if (!subscription?.giftedDays || !subscription.giftedEndsAt) return {};
+    const msLeft = subscription.giftedEndsAt.getTime() - this.clock.now().getTime();
+    return {
+      giftedDays: subscription.giftedDays,
+      giftedEndsAt: subscription.giftedEndsAt.toISOString(),
+      ...(msLeft > 0
+        ? { giftedDaysRemaining: Math.ceil(msLeft / (24 * 60 * 60 * 1000)) }
+        : {}),
     };
   }
 

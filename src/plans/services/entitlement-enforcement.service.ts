@@ -94,7 +94,13 @@ import { HOSTED_VIDEO_PROVIDERS } from '../../media/video/hosted-video-providers
 const COUNT_LIMIT_FIELDS: Record<
   Exclude<
     PlanLimitKey,
-    'generalStorage' | 'videoStorage' | 'videoStorageMinutes' | 'recordedSessions'
+    | 'generalStorage'
+    | 'videoStorage'
+    | 'videoStorageMinutes'
+    | 'recordedSessions'
+    // W3-compose — a per-academy monthly FLOW, enforced by its own
+    // conditional reservation (`AcademyEmailQuotaService`), never a count.
+    | 'monthlyEmails'
   >,
   keyof TenantUsageCounts
 > = {
@@ -143,7 +149,11 @@ export class EntitlementEnforcementService {
     organizationId: string,
     limitKey: Exclude<
       PlanLimitKey,
-      'generalStorage' | 'videoStorage' | 'videoStorageMinutes' | 'recordedSessions'
+      | 'generalStorage'
+      | 'videoStorage'
+      | 'videoStorageMinutes'
+      | 'recordedSessions'
+      | 'monthlyEmails'
     >,
     additionalAmount = 1,
   ): Promise<void> {

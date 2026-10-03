@@ -114,6 +114,11 @@ interface UsageRow {
   updatedAt: Date;
 }
 
+/** W8 — `0` and `null` both mean "no gift"; stored as NULL so there is one representation. */
+function normalizeGiftedDays(value: number | null | undefined): number | null {
+  return value === undefined || value === null || value === 0 ? null : value;
+}
+
 @Injectable()
 export class PlatformPlansService {
   constructor(
@@ -164,6 +169,8 @@ export class PlatformPlansService {
           pricing: payload.pricing as unknown as Prisma.InputJsonValue,
           trialEligible: payload.trialEligible ?? false,
           trialDurationDays: payload.trialDurationDays ?? null,
+          giftedDaysMonthly: normalizeGiftedDays(payload.giftedDaysMonthly),
+          giftedDaysYearly: normalizeGiftedDays(payload.giftedDaysYearly),
         },
       });
 
@@ -283,6 +290,18 @@ export class PlatformPlansService {
           payload.trialDurationDays,
         );
         data.trialDurationDays = payload.trialDurationDays;
+      }
+      // W8 — gifted setup days. Audited under `plan.updated` with a
+      // field-level diff, so the plan history shows who changed the gift.
+      if (payload.giftedDaysMonthly !== undefined) {
+        const next = normalizeGiftedDays(payload.giftedDaysMonthly);
+        track(generalChanges, 'giftedDaysMonthly', existing.giftedDaysMonthly, next);
+        data.giftedDaysMonthly = next;
+      }
+      if (payload.giftedDaysYearly !== undefined) {
+        const next = normalizeGiftedDays(payload.giftedDaysYearly);
+        track(generalChanges, 'giftedDaysYearly', existing.giftedDaysYearly, next);
+        data.giftedDaysYearly = next;
       }
 
       const changedCount =

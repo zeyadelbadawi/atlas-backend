@@ -3,7 +3,15 @@
  * Phase P1, §5/§6/§7 of the P1 spec: profile, preferences, change-password;
  * extended in Phase P2 to populate real organization data — §20).
  */
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import type { Prisma, User } from '@prisma/client';
+import {
+  isLearnerNameTaken,
+  isUniqueViolation,
+  lockLearnerName,
+  profileNameTakenInAcademy,
+  requireNameKey,
+} from '../../common/name-uniqueness/name-uniqueness';
 import { UsersRepository } from '../repositories/users.repository';
 import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
 import { SessionRevocationService } from './session-revocation.service';
@@ -62,16 +70,90 @@ export class UsersService {
     input: { name?: string; avatar?: string },
   ): Promise<CurrentUserResponse> {
     await this.requireUser(userId);
-    const updated = await this.usersRepository.updateProfile(userId, {
-      name: input.name,
-      avatarUrl: input.avatar,
-    });
+    const updated =
+      input.name === undefined
+        ? await this.usersRepository.updateProfile(userId, { avatarUrl: input.avatar })
+        : await this.renameUnderLearnerNameRule(userId, input.name, input.avatar);
     const organizationMemberships =
       await this.userOrganizationsService.getMembershipsForUser(userId);
     return toCurrentUser(
       updated,
       organizationMemberships,
       this.withSurfaceState(await this.principalResolver.resolve(userId)),
+    );
+  }
+
+  /**
+   * W4 — a learner's name is unique inside each academy they belong to, and
+   * it is ONE account name shared by all of them, so a rename is checked in
+   * every academy where the user's row is not exempt. A clash refuses the
+   * rename (409 `errors.profile.nameTakenInAcademy`) and lists only the
+   * user's OWN academies — never anything about the other learner.
+   *
+   * Runs in one transaction: lock each 'learner-name:<academy>:<key>' (in a
+   * fixed order, so two renames cannot deadlock), ask the boolean definer
+   * check, then update. The `users_learner_name_key_au` trigger moves every
+   * academy row's key; the partial unique index is the final truth, and a
+   * P2002 from it is classified by asking again in a fresh transaction.
+   */
+  private async renameUnderLearnerNameRule(
+    userId: string,
+    name: string,
+    avatar: string | undefined,
+  ): Promise<User> {
+    let key = '';
+    try {
+      return await this.tenancyContextService.runInUserContext(userId, async (tx) => {
+        key = await requireNameKey(tx, name, 'name');
+        const clashes = await this.learnerNameClashes(tx, userId, key, true);
+        if (clashes.length > 0) throw await this.profileNameConflict(userId, clashes);
+        return this.usersRepository.updateProfile(
+          userId,
+          { name, avatarUrl: avatar },
+          tx,
+        );
+      });
+    } catch (error) {
+      if (isUniqueViolation(error) && key !== '') {
+        const clashes = await this.tenancyContextService.runInUserContext(userId, (tx) =>
+          this.learnerNameClashes(tx, userId, key, false),
+        );
+        if (clashes.length > 0) throw await this.profileNameConflict(userId, clashes);
+      }
+      throw error;
+    }
+  }
+
+  /** The user's academies (non-exempt rows only) where another learner holds `key`. */
+  private async learnerNameClashes(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    key: string,
+    lock: boolean,
+  ): Promise<string[]> {
+    const rows = await tx.academyStudent.findMany({
+      where: { userId, nameUniqueExempt: false },
+      select: { academyId: true },
+      orderBy: { academyId: 'asc' },
+    });
+    const clashes: string[] = [];
+    for (const { academyId } of rows) {
+      if (lock) await lockLearnerName(tx, academyId, key);
+      if (await isLearnerNameTaken(tx, academyId, key, userId)) clashes.push(academyId);
+    }
+    return clashes;
+  }
+
+  private async profileNameConflict(
+    userId: string,
+    academyIds: readonly string[],
+  ): Promise<ConflictException> {
+    const own = await this.principalResolver.resolveLearnerAcademies(userId);
+    const wanted = new Set(academyIds);
+    return profileNameTakenInAcademy(
+      own
+        .filter((academy) => wanted.has(academy.academyId))
+        .map((academy) => ({ academyId: academy.academyId, name: academy.name })),
     );
   }
 

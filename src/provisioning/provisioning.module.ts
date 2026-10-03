@@ -45,6 +45,10 @@ import { ProvisioningStepsRepository } from './repositories/provisioning-steps.r
 import { SupportCasesRepository } from '../platform/repositories/support-cases.repository';
 import { OrganizationMembershipsRepository } from '../tenancy/repositories/organization-memberships.repository';
 import { SupportCaseMessagesRepository } from '../platform/repositories/support-case-messages.repository';
+// W2 — `attachLogo` checks the logo's media asset belongs to the new
+// Academy. A plain, dependency-free repository, provided here rather than
+// importing `MediaModule` (same reasoning as the support-case repositories).
+import { MediaAssetsRepository } from '../media/repositories/media-assets.repository';
 import { ProvisioningProducer } from './queue/provisioning.producer';
 import { ProvisioningProcessor } from './queue/provisioning.processor';
 import { PROVISIONING_QUEUE } from './queue/provisioning.types';
@@ -89,6 +93,7 @@ import { PROVISIONING_QUEUE } from './queue/provisioning.types';
     // Phase 11 security fix — `ProvisioningRequestsService` now refuses a
     // non-Owner synchronously, which needs the membership lookup.
     OrganizationMembershipsRepository,
+    MediaAssetsRepository,
   ],
   exports: [
     // Phase P15 — `PlatformAcademiesService` needs the same

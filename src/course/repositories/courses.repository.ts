@@ -303,6 +303,19 @@ export class CoursesRepository {
     return tx.courseOrder.count({ where: { courseId, status: 'paid' } });
   }
 
+  /** W6 — the course an earlier create with this client idempotency key made in this academy. */
+  findByCreationIdempotencyKey(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    creationIdempotencyKey: string,
+  ): Promise<Course | null> {
+    return tx.course.findUnique({
+      where: {
+        academyId_creationIdempotencyKey: { academyId, creationIdempotencyKey },
+      },
+    });
+  }
+
   create(tx: Prisma.TransactionClient, data: Prisma.CourseCreateInput): Promise<Course> {
     return tx.course.create({ data });
   }

@@ -27,6 +27,7 @@ import {
   seedTenantSubscription,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -130,7 +131,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
-          academyName: 'Second Academy',
+          academyName: uniqueName('Second Academy'),
           requestedSubdomain: `second-academy-${Date.now()}`,
           idempotencyKey: `second-academy-${Date.now()}`,
         })
@@ -168,7 +169,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
-          academyName: 'Within Limit Academy',
+          academyName: uniqueName('Within Limit Academy'),
           requestedSubdomain: `within-limit-${Date.now()}`,
           idempotencyKey: `within-limit-${Date.now()}`,
         })
@@ -192,7 +193,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
           .post(`/organizations/${org.id}/provisioning-requests`)
           .set('Authorization', `Bearer ${owner.accessToken}`)
           .send({
-            academyName: `Unlimited Academy ${i}`,
+            academyName: uniqueName(`Unlimited Academy ${i}`),
             requestedSubdomain: slug,
             idempotencyKey: slug,
           })
@@ -223,7 +224,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
-          academyName: 'Already Have One',
+          academyName: uniqueName('Already Have One'),
           requestedSubdomain: `already-have-one-${Date.now()}`,
           idempotencyKey: `already-have-one-${Date.now()}`,
         })
@@ -233,7 +234,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
-          academyName: 'Via Provisioning',
+          academyName: uniqueName('Via Provisioning'),
           requestedSubdomain: `ent-prov-${Date.now()}`,
           idempotencyKey: `ent-prov-idem-${Date.now()}`,
         })
@@ -300,7 +301,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
           .post(`/organizations/${org.id}/provisioning-requests`)
           .set('Authorization', `Bearer ${caller.accessToken}`)
           .send({
-            academyName: `${role} Attempted Academy`,
+            academyName: uniqueName(`${role} Attempted Academy`),
             requestedSubdomain: `${role}-attempt-${Date.now()}`,
             idempotencyKey: `${role}-attempt-${Date.now()}`,
           });
@@ -334,7 +335,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${outsider.accessToken}`)
         .send({
-          academyName: 'Outsider Attempted Academy',
+          academyName: uniqueName('Outsider Attempted Academy'),
           requestedSubdomain: `outsider-attempt-${Date.now()}`,
           idempotencyKey: `outsider-attempt-${Date.now()}`,
         })
@@ -596,7 +597,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
-          academyName: 'No Sub Academy',
+          academyName: uniqueName('No Sub Academy'),
           requestedSubdomain: `no-sub-academy-${Date.now()}`,
           idempotencyKey: `no-sub-academy-${Date.now()}`,
         });
@@ -634,7 +635,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
-          academyName: 'Expired Org Academy',
+          academyName: uniqueName('Expired Org Academy'),
           requestedSubdomain: `expired-academy-${Date.now()}`,
           idempotencyKey: `expired-academy-${Date.now()}`,
         });
@@ -678,7 +679,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
-          academyName: 'Lapsed Trial Academy',
+          academyName: uniqueName('Lapsed Trial Academy'),
           requestedSubdomain: `lapsed-trial-academy-${Date.now()}`,
           idempotencyKey: `lapsed-trial-academy-${Date.now()}`,
         });

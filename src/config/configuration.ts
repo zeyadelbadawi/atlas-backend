@@ -258,6 +258,12 @@ export interface VideoProviderConfig {
  * is no reliable "goodbye" from a closing tab, and a lease that needed one
  * would strand learners out of their own account.
  */
+/** W2 — provisioning progress reporting. */
+export interface ProvisioningConfig {
+  /** Seconds without step progress before a non-terminal request reads `stalled`. */
+  readonly stallThresholdSeconds: number;
+}
+
 export interface LearningLeaseConfig {
   /** Lease TTL. 60 s (Phase 2 §D.7). */
   readonly ttlSeconds: number;
@@ -330,6 +336,12 @@ export interface BillingConfig {
  */
 export interface PaymentConfigurationConfig {
   readonly credentialEncryptionKeyHex: string;
+  /**
+   * W8 — optional dedicated customer-identity HMAC key (64 hex). Absent →
+   * derived from `credentialEncryptionKeyHex` (see
+   * `plans/utils/customer-identity-key.util.ts`).
+   */
+  readonly customerIdentityKeyHex?: string;
 }
 
 /** Phase P17 — Notifications, Email & Search configuration (master plan §12, §21). */
@@ -720,6 +732,10 @@ export default () => {
     heartbeatSeconds: Number(env.LEARNING_LEASE_HEARTBEAT_SECONDS ?? 20),
   };
 
+  const provisioning: ProvisioningConfig = {
+    stallThresholdSeconds: Number(env.PROVISIONING_STALL_SECONDS ?? 120),
+  };
+
   const cloudflare: CloudflareConfig = {
     apiToken: env.CLOUDFLARE_API_TOKEN || undefined,
     zoneId: env.CLOUDFLARE_ZONE_ID || undefined,
@@ -732,6 +748,7 @@ export default () => {
 
   const paymentConfiguration: PaymentConfigurationConfig = {
     credentialEncryptionKeyHex: env.PAYMENT_CREDENTIALS_ENCRYPTION_KEY,
+    customerIdentityKeyHex: env.CUSTOMER_IDENTITY_HMAC_KEY || undefined,
   };
 
   const emailProvider: EmailProviderName = env.EMAIL_PROVIDER ?? 'stub';
@@ -788,6 +805,7 @@ export default () => {
     video,
     basicVideo,
     learningLease,
+    provisioning,
     platformDomain,
     surfaceEnforcement,
     cloudflare,

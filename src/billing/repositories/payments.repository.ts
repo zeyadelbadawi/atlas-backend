@@ -328,6 +328,27 @@ export class PaymentsRepository {
     return tx.payment.update({ where: { id }, data });
   }
 
+  /**
+   * W8 D2 — the ONE conditional transition into `succeeded`.
+   *
+   * `UPDATE ... WHERE id = ? AND status <> 'succeeded'`: a manual approval
+   * followed by a signed `payment.succeeded` webhook (different event id),
+   * or two concurrent appliers, both reach here; Postgres row-locks the
+   * payment, the second re-evaluates the predicate after the first commits,
+   * matches zero rows and reports `false` — so the commercial effect (a
+   * paid period) is applied exactly once per payment.
+   */
+  async markSucceededIfNotAlready(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<boolean> {
+    const result = await tx.payment.updateMany({
+      where: { id, status: { not: 'succeeded' } },
+      data: { status: 'succeeded', failureReason: null, nextAction: Prisma.JsonNull },
+    });
+    return result.count === 1;
+  }
+
   /** Open (not yet settled) payments for one subscription checkout. */
   findOpenForCheckout(
     tx: Prisma.TransactionClient,

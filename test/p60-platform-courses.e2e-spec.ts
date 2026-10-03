@@ -58,6 +58,9 @@ describe('P60 platform course console (e2e) — P60-COURSE-001..014', () => {
   let hiddenCourseId: string;
 
   const createdCourseIds: string[] = [];
+  let orgAName = '';
+  let orgBName = '';
+  let academyAName = '';
   const createdOrgIds: string[] = [];
 
   beforeAll(async () => {
@@ -74,17 +77,20 @@ describe('P60 platform course console (e2e) — P60-COURSE-001..014', () => {
     tenantAUserId = tenantA.userId;
     const orgA = await seedOrganizationWithOwner(admin, tenantA.userId, 'p60-org-a');
     orgAId = orgA.id;
+    orgAName = orgA.name;
     createdOrgIds.push(orgA.id);
 
     const tenantB = await signUp('p60-tenant-b');
     const orgB = await seedOrganizationWithOwner(admin, tenantB.userId, 'p60-org-b');
     orgBId = orgB.id;
+    orgBName = orgB.name;
     createdOrgIds.push(orgB.id);
 
     const academyA = await seedAcademy(admin, orgAId, 'p60-academy-a');
     const academyB = await seedAcademy(admin, orgBId, 'p60-academy-b');
     academyAId = academyA.id;
     academyBId = academyB.id;
+    academyAName = academyA.name;
 
     const courseA = await seedCourse(admin, academyAId, 'P60 Alpha Course', {
       status: 'published',
@@ -238,8 +244,9 @@ describe('P60 platform course console (e2e) — P60-COURSE-001..014', () => {
     const body = await listWith('search=P60%20Alpha%20Course&pageSize=50');
     const alpha = body.items.find((item) => item.id === courseAId);
     expect(alpha?.academyId).toBe(academyAId);
-    expect(alpha?.academyName).toBe('p60-academy-a');
-    expect(alpha?.organizationName).toBe('p60-org-a');
+    // W4 — fixture names are unique per run (`seedAcademy`/`seedOrganizationWithOwner`).
+    expect(alpha?.academyName).toBe(academyAName);
+    expect(alpha?.organizationName).toBe(orgAName);
   });
 
   it('P60-COURSE-006 — money is a NUMBER in major units, never a BigInt string', async () => {
@@ -277,9 +284,9 @@ describe('P60 platform course console (e2e) — P60-COURSE-001..014', () => {
   });
 
   it('P60-COURSE-009 — search matches the ORGANIZATION name, not only the title', async () => {
-    const body = await listWith('search=p60-org-b&pageSize=50');
+    const body = await listWith(`search=${encodeURIComponent(orgBName)}&pageSize=50`);
     expect(body.items.length).toBeGreaterThan(0);
-    expect(body.items.every((item) => item.organizationName === 'p60-org-b')).toBe(true);
+    expect(body.items.every((item) => item.organizationName === orgBName)).toBe(true);
   });
 
   it('P60-COURSE-010 — sortBy is an allow-list; pagination meta is real', async () => {

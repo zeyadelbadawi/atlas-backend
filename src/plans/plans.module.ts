@@ -50,6 +50,8 @@ import { SubscriptionSweepService } from './services/subscription-sweep.service'
 import { TenantLifecycleService } from './services/tenant-lifecycle.service';
 import { OrganizationSubscriptionBootstrapService } from './services/organization-subscription-bootstrap.service';
 import { TrialEligibilityService } from './services/trial-eligibility.service';
+import { CustomerIdentityHasher } from './services/customer-identity-hasher.service';
+import { PaidGiftEligibilityService } from './services/paid-gift-eligibility.service';
 import { TrialRedemptionService } from './services/trial-redemption.service';
 import { PlansRepository } from './repositories/plans.repository';
 import { AddOnsRepository } from './repositories/add-ons.repository';
@@ -134,6 +136,10 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     OrganizationSubscriptionBootstrapService,
     TrialEligibilityService,
     TrialRedemptionService,
+    // W8 — the one customer-identity hash (trial + gift ledgers) and the
+    // gifted-setup-days authority `PaymentApplicationService` calls.
+    CustomerIdentityHasher,
+    PaidGiftEligibilityService,
     PlansRepository,
     AddOnsRepository,
     TrialPolicyRepository,
@@ -191,6 +197,10 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     TrialEligibilityService,
     TrialPolicyRepository,
     OrganizationSubscriptionBootstrapService,
+    // W8 — `BillingModule` claims gifted setup days inside the approval
+    // transaction; scripts/tests reuse the same identity hasher.
+    CustomerIdentityHasher,
+    PaidGiftEligibilityService,
     // P64 C5 — exported so the sequence evaluator can be driven directly
     // by a fake-clock regression suite, exactly as `SubscriptionExpiryService`
     // already is.

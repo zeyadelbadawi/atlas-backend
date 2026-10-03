@@ -15,6 +15,8 @@
  *   DELOTP-10  after deletion nothing can still vouch for the person
  *   DELOTP-11  the code is never in the audit trail; RLS hides challenges
  *              from a context-free application connection
+ *   DELOTP-12  (W3) the code is not in the subject, is gone from the outbox
+ *              once dispatched, and the monitoring events never carry it
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -24,6 +26,9 @@ import { createAdminPrisma } from './utils/db-admin';
 import { PrismaService } from '../src/database/prisma.service';
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
+import { CommunicationDispatchService } from '../src/communications/services/communication-dispatch.service';
+import { StubEmailProvider } from '../src/communications/providers/stub-email.provider';
+import type { EmailSendInput } from '../src/identity/services/email-provider.interface';
 
 jest.setTimeout(180000);
 
@@ -323,5 +328,53 @@ describe('Account deletion by emailed code (e2e)', () => {
     expect(
       await admin.accountDeletionChallenge.count({ where: { userId: a.userId } }),
     ).toBe(1);
+  });
+
+  it('DELOTP-12 — W3: the code is not in the subject, leaves the outbox on dispatch, and is never in a monitoring event', async () => {
+    const a = await account('delotp12');
+    const { challengeId, code } = await requestCode(a.token);
+    const row = await admin.communicationOutbox.findFirstOrThrow({
+      where: { key: 'auth.account.deletion_code', entityId: challengeId },
+    });
+
+    const stub = app.get(StubEmailProvider, { strict: false });
+    const sent: EmailSendInput[] = [];
+    const spy = jest
+      .spyOn(stub, 'send')
+      .mockImplementation(async (input: EmailSendInput) => {
+        sent.push(input);
+        return { providerMessageId: `delotp12-${sent.length}`, provider: 'stub' };
+      });
+    try {
+      const dispatcher = app.get(CommunicationDispatchService, { strict: false });
+      expect(await dispatcher.dispatch(row.id, { made: 0, max: 6 })).toBe('sent');
+    } finally {
+      spy.mockRestore();
+    }
+    const message = sent.find((m) => m.to === a.email);
+    expect(message).toBeDefined();
+    expect(message!.subject).not.toContain(code);
+    expect(message!.text).toContain(code);
+
+    const settled = await admin.communicationOutbox.findUniqueOrThrow({
+      where: { id: row.id },
+    });
+    expect(settled.state).toBe('dispatched');
+    expect(settled.values).not.toHaveProperty('code');
+    expect(JSON.stringify(settled.values)).not.toContain(code);
+
+    await confirm(a.token, challengeId, wrong(code)).expect(401);
+    const events = await admin.securityEvent.findMany({
+      where: { userId: a.userId },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(events.map((e) => e.eventType)).toEqual([
+      'deletion_code_sent',
+      'deletion_code_failed',
+    ]);
+    expect(events[1].reason).toBe('invalid_code');
+    expect(events[1].attemptsRemaining).toBe(4);
+    expect(JSON.stringify(events)).not.toContain(code);
+    expect(JSON.stringify(events)).not.toContain(a.email);
   });
 });

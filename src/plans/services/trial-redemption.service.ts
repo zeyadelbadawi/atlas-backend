@@ -457,6 +457,15 @@ export class TrialRedemptionService {
    * `cancelAtPeriodEnd`, and the existing expiry sweep performs the
    * actual transition — this method deliberately does not invent a second
    * expiry mechanism alongside it.
+   *
+   * W8 D1 — IDEMPOTENT PER PAID PERIOD, not per organization forever. The
+   * cancellation row is unique per (organization, effective_at) for paid
+   * cancellations (partial index, migration 20261104000640), and
+   * `effective_at` is the current period end. A repeat inside the same
+   * period reports `alreadyCancelled`; after a renewal the period end has
+   * moved, so cancelling again records a new row and sets
+   * `cancelAtPeriodEnd` again. Previously the second cancel was a silent
+   * no-op and the subscription kept renewing.
    */
   async cancelSubscription(
     organizationId: string,
@@ -470,7 +479,7 @@ export class TrialRedemptionService {
       async (tx) => {
         const subscription = await tx.tenantSubscription.findUnique({
           where: { organizationId },
-          select: { currentPeriodEnd: true, status: true },
+          select: { currentPeriodEnd: true, status: true, cancelAtPeriodEnd: true },
         });
 
         // Falls back to "now" only when no paid period is recorded, which
@@ -486,6 +495,15 @@ export class TrialRedemptionService {
         });
 
         if (!recorded) {
+          // Same period, already recorded. Self-heal the flag if something
+          // cleared it without moving the period end, so "already
+          // cancelled" is never reported for a subscription that renews.
+          if (subscription && !subscription.cancelAtPeriodEnd) {
+            await this.tenantSubscriptionsRepository.markPaidCancelAtPeriodEnd(
+              tx,
+              organizationId,
+            );
+          }
           return { cancelled: false, alreadyCancelled: true, effectiveAt };
         }
 

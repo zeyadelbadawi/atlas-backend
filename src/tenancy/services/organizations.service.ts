@@ -18,6 +18,13 @@ import { ORGANIZATION_OWNER_PERMISSIONS } from '../constants/organization-permis
 import { toOrganizationResponse } from '../dto/organization.contract';
 import type { OrganizationResponse } from '../dto/organization.contract';
 import type { CreateOrganizationDto } from '../dto/create-organization.dto';
+import { cleanDisplayName } from '../../common/name-uniqueness/name-key';
+import {
+  isOrganizationNameTaken,
+  lockOrganizationName,
+  organizationNameUnavailable,
+  requireNameKey,
+} from '../../common/name-uniqueness/name-uniqueness';
 
 /** Kebab-cases a name into a slug candidate — same shape as every other slug this codebase generates from a human-entered name (Academy's own client-supplied slug convention, applied here server-side since Organization creation has no dedicated slug field in its UI). */
 function slugify(name: string): string {
@@ -32,15 +39,15 @@ function slugify(name: string): string {
 }
 
 /**
- * `organizations` has exactly two unique constraints: `id` (the primary
- * key — a fresh `randomUUID()` per call here, not realistically
- * collidable) and `slug`. `error.meta.target` is NOT reliably populated
- * by Postgres/Prisma for every `P2002` (confirmed empirically against
- * this exact code path — it surfaced as "Unique constraint failed on the
- * (not available)", no target array at all), so checking `error.code ===
- * 'P2002'` alone is the only reliable signal here — and, given the two
- * constraints on this table, is equivalent to a genuine slug collision
- * in practice.
+ * `organizations` has three unique constraints: `id` (the primary key — a
+ * fresh `randomUUID()` per call here, not realistically collidable), `slug`
+ * and, since W4, `name_key`. `error.meta.target` is NOT reliably populated
+ * by Postgres/Prisma for every `P2002` (confirmed empirically against this
+ * exact code path — it surfaced as "Unique constraint failed on the (not
+ * available)", no target array at all), so a P2002 is CLASSIFIED rather
+ * than inspected: `createInTransaction` asks `organization_name_taken`
+ * again after rolling the attempt back, and only a conflict that is not the
+ * name is treated as a slug collision.
  */
 function isUniqueSlugViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
@@ -132,6 +139,8 @@ export class OrganizationsService {
       readonly userId: string;
       readonly name: string;
       readonly onboardingCompletedAt?: null;
+      /** W4 — the request field a name conflict is reported on (`organizationName` at signup). */
+      readonly nameField?: string;
     },
     onCreated?: (
       tx: Prisma.TransactionClient,
@@ -139,7 +148,19 @@ export class OrganizationsService {
     ) => Promise<void>,
   ): Promise<Organization> {
     const { organizationId, userId } = input;
-    const baseSlug = slugify(input.name);
+    const name = cleanDisplayName(input.name);
+    const nameField = input.nameField ?? 'name';
+    const baseSlug = slugify(name);
+
+    // W4 — organization names are unique platform-wide. Lock the key for the
+    // rest of this transaction, then ask the boolean definer check (RLS hides
+    // every other tenant's row from this context). The answer is generic on
+    // purpose: it never says who holds the name.
+    const nameKey = await requireNameKey(tx, name, nameField);
+    await lockOrganizationName(tx, nameKey);
+    if (await isOrganizationNameTaken(tx, nameKey)) {
+      throw organizationNameUnavailable(nameField);
+    }
 
     let created: Organization | undefined;
     let lastError: unknown;
@@ -149,7 +170,7 @@ export class OrganizationsService {
       try {
         created = await this.organizationsRepository.create(tx, {
           id: organizationId,
-          name: input.name,
+          name,
           slug,
           ownerUserId: userId,
           onboardingCompletedAt: input.onboardingCompletedAt,
@@ -158,6 +179,12 @@ export class OrganizationsService {
       } catch (error) {
         await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT organization_slug_attempt');
         if (!isUniqueSlugViolation(error)) throw error;
+        // W4 — a name conflict (a writer that skipped the lock above) is
+        // never retried as a slug collision: five slug retries would end in
+        // a raw P2002 and a 500.
+        if (await isOrganizationNameTaken(tx, nameKey)) {
+          throw organizationNameUnavailable(nameField);
+        }
         lastError = error;
       }
     }

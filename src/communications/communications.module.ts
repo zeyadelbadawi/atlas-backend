@@ -47,6 +47,10 @@ import { CommunicationPreferencesController } from './controllers/communication-
 import { PlatformCommunicationsController } from './controllers/platform-communications.controller';
 import { PlatformCommunicationsHealthService } from './services/platform-communications-health.service';
 import { CommunicationSettingsViewService } from './services/communication-settings-view.service';
+import { PlatformEmailActivityController } from './controllers/platform-email-activity.controller';
+import { AcademyEmailActivityService } from './services/academy-email-activity.service';
+import { EmailLogoService } from './services/email-logo.service';
+import { MediaModule } from '../media/media.module';
 
 @Global()
 @Module({
@@ -54,10 +58,21 @@ import { CommunicationSettingsViewService } from './services/communication-setti
     AuthCoreModule,
     IdentityModule,
     TenancyModule,
+    // W3 — `EmailLogoService` reads the academy's logo from the PUBLIC media
+    // store (`MEDIA_STORAGE_PROVIDER`). No cycle: nothing imports this
+    // `@Global()` module explicitly.
+    MediaModule,
     BullModule.registerQueue({ name: COMMUNICATIONS_QUEUE }),
   ],
-  controllers: [CommunicationPreferencesController, PlatformCommunicationsController],
+  controllers: [
+    CommunicationPreferencesController,
+    PlatformCommunicationsController,
+    // W3 — Academy Email Activity (Platform Owner, read-only).
+    PlatformEmailActivityController,
+  ],
   providers: [
+    AcademyEmailActivityService,
+    EmailLogoService,
     CommunicationSettingsViewService,
     CommunicationMetricsService,
     PlatformCommunicationsHealthService,
@@ -91,6 +106,9 @@ import { CommunicationSettingsViewService } from './services/communication-setti
   ],
   exports: [
     CommunicationService,
+    // W3 — the public logo route (`PublicWebsiteController`) renders the
+    // same PNG the email layout links to.
+    EmailLogoService,
     // Cloud remediation (finding G) — read by PlatformModule and AcademyModule.
     CommunicationSettingsViewService,
     // Observability Center — the email component of System Health.

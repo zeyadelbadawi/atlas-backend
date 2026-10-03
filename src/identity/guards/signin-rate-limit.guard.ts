@@ -9,6 +9,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
@@ -16,12 +17,15 @@ import type { IdentityConfig } from '../../config/configuration';
 import { resolveClientIp } from '../utils/request-metadata.util';
 import { AuthRateLimiterService } from '../services/auth-rate-limiter.service';
 import { normalizeEmail } from '../utils/email.util';
+import { SecurityEventsService } from '../../security-events/services/security-events.service';
 
 @Injectable()
 export class SignInRateLimitGuard implements CanActivate {
   constructor(
     private readonly rateLimiter: AuthRateLimiterService,
     private readonly configService: ConfigService,
+    /** W3 — OTP & Security Monitoring (pre-auth: hashed subject and IP only). */
+    @Optional() private readonly securityEvents?: SecurityEventsService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -44,6 +48,16 @@ export class SignInRateLimitGuard implements CanActivate {
       : { allowed: true, retryAfterSeconds: 0 };
 
     if (!ipCheck.allowed || !accountCheck.allowed) {
+      // Pre-auth: nothing here proves who is asking, so no user id — only
+      // keyed hashes of the typed address and the client IP, folded into
+      // one row per minute by the writer.
+      await this.securityEvents?.record({
+        type: 'signin_rate_limited',
+        surface: request.body?.surface === 'academy' ? 'academy' : 'management',
+        email,
+        ipAddress: resolveClientIp(request) ?? request.ip,
+        reason: ipCheck.allowed ? 'account_budget' : 'ip_budget',
+      });
       throw new HttpException(
         { messageKey: 'errors.auth.rateLimited' },
         HttpStatus.TOO_MANY_REQUESTS,

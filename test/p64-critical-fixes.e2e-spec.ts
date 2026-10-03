@@ -25,6 +25,7 @@ import {
   seedQuizQuestionOption,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -88,7 +89,7 @@ describe('P64 Phase 1 — critical fixes (e2e)', () => {
     await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        name: 'Student',
+        name: uniqueName('Student'),
         email: studentEmail,
         password: PASSWORD,
         academyId: academy.id,

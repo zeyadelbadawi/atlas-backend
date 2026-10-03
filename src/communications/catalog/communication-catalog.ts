@@ -99,6 +99,15 @@ export interface CommunicationCatalogEntry {
   readonly locale: 'user' | 'academy' | 'platform';
   /** Which brand and host the email renders under. */
   readonly branding: 'academy' | 'platform';
+  /**
+   * W3 — whose VISUAL identity (name + logo) the email header shows when an
+   * academy is attached. Defaults to `branding`. `branding` keeps choosing
+   * the link HOST (a `/auth/...` destination exists only on the platform
+   * host); an entry that must link to the platform host but is read as
+   * coming FROM the academy (an invitation, a roster approval request) sets
+   * `identity: 'academy'` so it carries the academy's logo and name.
+   */
+  readonly identity?: 'academy' | 'platform';
   /** Template id in the `TemplateRegistry` — always the key itself today. */
   readonly template: string;
   readonly titleKey: string;
@@ -109,7 +118,8 @@ export interface CommunicationCatalogEntry {
   readonly actionUrl?: (context: CommunicationRuleContext) => string;
   readonly actionLabelKey?: string;
   /**
-   * `values` keys that hold a live credential (a link token). The outbox
+   * `values` keys that hold a live credential (a link token, or an emailed
+   * one-time code such as the sign-in or account-deletion code). The outbox
    * row must carry them until the email is rendered, and not one moment
    * longer: once the dispatch settles — sent, suppressed or permanently
    * failed — `CommunicationDispatchService` deletes these keys from the
@@ -579,6 +589,7 @@ const CATALOG = {
     // helps students. The copy still names the academy — that comes from
     // `values`, not from branding.
     branding: 'platform',
+    identity: 'academy',
     template: 'academy.member.invited',
     titleKey: 'notifications:events.academyMemberInvited.title',
     messageKey: 'notifications:events.academyMemberInvited.message',
@@ -635,6 +646,7 @@ const CATALOG = {
     locale: 'user',
     // Staff sign in on the MANAGEMENT host.
     branding: 'platform',
+    identity: 'academy',
     template: 'academy.member.added',
     titleKey: 'notifications:events.academyMemberAdded.title',
     messageKey: 'notifications:events.academyMemberAdded.message',
@@ -671,6 +683,13 @@ const CATALOG = {
     template: 'auth.email.otp',
     titleKey: 'notifications:events.emailOtp.title',
     messageKey: 'notifications:events.emailOtp.message',
+    // W3 security fix — the code is a live credential. Without this the
+    // plaintext code stayed in `communication_outbox.values` for the full
+    // 90-day retention, readable by the recipient and the platform owner.
+    // It is now dropped the moment the dispatch settles (sent, suppressed
+    // or permanently failed); the prune sweep strips any row older than an
+    // hour that somehow never settled.
+    credentialValues: ['code'],
   },
   'auth.account.deletion_code': {
     category: 'security',
@@ -686,6 +705,8 @@ const CATALOG = {
     template: 'auth.account.deletion_code',
     titleKey: 'notifications:events.accountDeletionCode.title',
     messageKey: 'notifications:events.accountDeletionCode.message',
+    // W3 security fix — same as `auth.email.otp`: a live deletion code.
+    credentialValues: ['code'],
   },
   'auth.account.signup_attempt': {
     category: 'security',
@@ -762,6 +783,7 @@ const CATALOG = {
     // the logo — same repair already applied to `review.submitted` and
     // `roster.student.awaiting_approval`.
     branding: 'platform',
+    identity: 'academy',
     template: 'live_session.recording_available',
     titleKey: 'notifications:liveSession.recordingAvailable.title',
     messageKey: 'notifications:liveSession.recordingAvailable.message',
@@ -857,6 +879,7 @@ const CATALOG = {
     // the logo — same repair already applied to `review.submitted` and
     // `roster.student.awaiting_approval`.
     branding: 'platform',
+    identity: 'academy',
     template: 'live_provider.deauthorized',
     titleKey: 'notifications:liveProvider.deauthorized.title',
     messageKey: 'notifications:liveProvider.deauthorized.message',
@@ -1149,6 +1172,7 @@ const CATALOG = {
     // where the link would fall into that site's CMS catch-all and render
     // the academy's own not-found page.
     branding: 'platform',
+    identity: 'academy',
     template: 'roster.student.awaiting_approval',
     titleKey: 'notifications:events.rosterStudentAwaitingApproval.title',
     messageKey: 'notifications:events.rosterStudentAwaitingApproval.message',
@@ -1176,6 +1200,7 @@ const CATALOG = {
     // where the link would fall into that site's CMS catch-all and render
     // the academy's own not-found page.
     branding: 'platform',
+    identity: 'academy',
     template: 'review.submitted',
     titleKey: 'notifications:events.reviewSubmitted.title',
     messageKey: 'notifications:events.reviewSubmitted.message',
@@ -2122,6 +2147,46 @@ const CATALOG = {
     // The visitor's details go to the owner's inbox by email only; the
     // feed row keeps `topic` and nothing that identifies the visitor.
     personalValues: ['name', 'email', 'organizationName', 'message'],
+  },
+  // W3-compose — PERSON-AUTHORED messages. The one exception to "no API
+  // sends free text": a campaign (`communication_campaigns`) holds the
+  // author's subject and allowlist-sanitised body, and the outbox rows it
+  // releases carry only `campaign_id` — the dispatcher loads the copy at
+  // render time. Neither key is ever passed to `emit`: the campaign worker
+  // writes its rows in batches and decides per campaign whether an in-app
+  // row is written, so `channels` here is the DECLARED ceiling (both
+  // channels, email subject to the category preference, which is also
+  // what the one-click unsubscribe turns off). Deduped per recipient per
+  // campaign — a re-run batch can never queue a second email.
+  'academy.message.sent': {
+    category: 'engagement',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'preference' },
+    priority: 'medium',
+    notificationType: 'announcement',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `campaign:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'academy.message.sent',
+    titleKey: 'notifications:events.academyMessageSent.title',
+    messageKey: 'notifications:events.academyMessageSent.message',
+  },
+  'platform.broadcast.sent': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'preference' },
+    priority: 'medium',
+    notificationType: 'announcement',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `campaign:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.broadcast.sent',
+    titleKey: 'notifications:events.platformBroadcastSent.title',
+    messageKey: 'notifications:events.platformBroadcastSent.message',
   },
 } as const satisfies Record<string, CommunicationCatalogEntry>;
 

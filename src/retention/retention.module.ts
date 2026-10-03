@@ -32,6 +32,7 @@ import { VideoRetentionService } from './services/video-retention.service';
 import { TenantRetentionViewService } from './services/tenant-retention-view.service';
 import { TenantRetentionController } from './controllers/tenant-retention.controller';
 import { ArchivedMediaPurgeService } from './services/archived-media-purge.service';
+import { TrialForensicsScrubService } from './services/trial-forensics-scrub.service';
 import { VideoRetentionDeletionService } from './services/video-retention-deletion.service';
 import { VideoRetentionProducer } from './queue/video-retention.producer';
 import { VideoRetentionProcessor } from './queue/video-retention.processor';
@@ -81,6 +82,8 @@ import { VIDEO_RETENTION_QUEUE } from './queue/video-retention.types';
     VideoRetentionService,
     VideoRetentionDeletionService,
     ArchivedMediaPurgeService,
+    // W8B — 180-day IP/user-agent retention on the trial ledger.
+    TrialForensicsScrubService,
     VideoRetentionProducer,
     VideoRetentionProcessor,
     VideoRetentionScheduler,
@@ -91,6 +94,7 @@ import { VIDEO_RETENTION_QUEUE } from './queue/video-retention.types';
     VideoRetentionService,
     VideoRetentionDeletionService,
     ArchivedMediaPurgeService,
+    TrialForensicsScrubService,
     // Exported so the e2e suite can assert the owner-facing payload
     // directly as well as over HTTP.
     TenantRetentionViewService,

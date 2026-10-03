@@ -2,6 +2,7 @@
 import {
   IsIn,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -57,6 +58,18 @@ export class CreateProvisioningRequestDto {
   @IsOptional()
   @IsIn(WEBSITE_SETUP_MODES)
   readonly websiteSetupMode?: (typeof WEBSITE_SETUP_MODES)[number];
+
+  /**
+   * W2 — the brand chosen in the setup form, applied server-side by the
+   * orchestrator's `branding` step: `{ palette?, logoPending? }`. Its
+   * contents are validated by `parseRequestedBrand` (`requested-brand.ts`)
+   * — strict keys, hex or `"H S% L%"` colours, an accessible palette, and
+   * never a `data:` URI — so this decorator only asserts the shape is an
+   * object. Omitted (older clients) means "theme default colours".
+   */
+  @IsOptional()
+  @IsObject()
+  readonly brand?: Record<string, unknown>;
 
   @IsNotEmpty()
   @IsString()

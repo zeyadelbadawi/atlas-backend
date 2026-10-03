@@ -356,6 +356,22 @@ export class TenantSubscriptionsRepository {
     });
   }
 
+  /**
+   * W8 — row lock serialising plan purchases for one organization (see
+   * `PaymentApplicationService.applyCommercialEffect`). Runs in the caller's
+   * tenant-context transaction, so RLS still scopes it; a missing row (an
+   * organization's first-ever purchase before any bootstrap row) simply
+   * locks nothing.
+   */
+  async lockForPurchase(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<void> {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT 1 FROM "tenant_subscriptions" WHERE "organization_id" = ${organizationId} FOR UPDATE`,
+    );
+  }
+
   async upsertForPlanPurchase(
     tx: Prisma.TransactionClient,
     organizationId: string,
@@ -371,8 +387,28 @@ export class TenantSubscriptionsRepository {
        * the subscription following the catalog again.
        */
       readonly grantedLimits: Prisma.InputJsonValue;
+      /**
+       * W8 — present ONLY on the purchase that was granted gifted setup
+       * days. Every other purchase omits it, and the gift columns are then
+       * left exactly as they are: a renewal, plan change or re-subscription
+       * never clears (or re-grants) a gift.
+       */
+      readonly gift?: {
+        readonly days: number;
+        readonly startsAt: Date;
+        readonly endsAt: Date;
+        readonly paymentId: string;
+      };
     },
   ): Promise<TenantSubscription> {
+    const giftColumns = data.gift
+      ? {
+          giftedDays: data.gift.days,
+          giftedStartsAt: data.gift.startsAt,
+          giftedEndsAt: data.gift.endsAt,
+          giftedPaymentId: data.gift.paymentId,
+        }
+      : {};
     try {
       return await tx.tenantSubscription.update({
         where: { organizationId },
@@ -390,6 +426,7 @@ export class TenantSubscriptionsRepository {
           trialEndsAt: null,
           graceEndsAt: null,
           cancelAtPeriodEnd: false,
+          ...giftColumns,
         },
       });
     } catch (error) {
@@ -410,6 +447,7 @@ export class TenantSubscriptionsRepository {
           billingCycle: data.billingCycle,
           currentPeriodStart: data.currentPeriodStart,
           currentPeriodEnd: data.currentPeriodEnd,
+          ...giftColumns,
         },
       });
     }

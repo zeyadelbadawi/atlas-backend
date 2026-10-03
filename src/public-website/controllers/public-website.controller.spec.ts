@@ -20,3 +20,18 @@ describe('PublicWebsiteController — contact route throttling', () => {
     expect(Reflect.getMetadata(`${THROTTLER_LIMIT}default`, read)).toBeUndefined();
   });
 });
+
+describe('PublicWebsiteController — email logo route (W3)', () => {
+  // Image proxies (Gmail, Outlook, Apple MPP) fetch from a few shared IPs;
+  // the per-IP throttler must not 429 them. `@SkipThrottle()` writes
+  // `THROTTLER:SKIP<name>` = true for the `default` throttler.
+  it('is exempt from the default per-IP throttler', () => {
+    const handler = PublicWebsiteController.prototype.getEmailLogo;
+    expect(Reflect.getMetadata('THROTTLER:SKIPdefault', handler)).toBe(true);
+  });
+
+  it('leaves the favicon route on the global limit (the exemption is this route only)', () => {
+    const favicon = PublicWebsiteController.prototype.getFavicon;
+    expect(Reflect.getMetadata('THROTTLER:SKIPdefault', favicon)).toBeUndefined();
+  });
+});

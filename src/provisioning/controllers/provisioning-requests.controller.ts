@@ -11,6 +11,7 @@ import {
   Get,
   Param,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -21,6 +22,7 @@ import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { ProvisioningRequestsService } from '../services/provisioning-requests.service';
 import { CreateProvisioningRequestDto } from '../dto/create-provisioning-request.dto';
+import { AttachProvisioningLogoDto } from '../dto/attach-provisioning-logo.dto';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { ProvisioningRequestResponse } from '../dto/provisioning-request.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
@@ -82,6 +84,22 @@ export class ProvisioningRequestsController {
       organizationId,
       request.authContext!.userId,
       requestId,
+    );
+  }
+
+  /** W2 — attaches the setup form's logo (already uploaded to the new Academy's media library) by media-asset id. */
+  @Put(':id/provisioning-requests/:requestId/brand-logo')
+  async attachLogo(
+    @Req() request: Request,
+    @Param('id') organizationId: string,
+    @Param('requestId') requestId: string,
+    @Body() payload: AttachProvisioningLogoDto,
+  ): Promise<ProvisioningRequestResponse> {
+    return this.provisioningRequestsService.attachLogo(
+      organizationId,
+      request.authContext!.userId,
+      requestId,
+      payload.mediaAssetId,
     );
   }
 

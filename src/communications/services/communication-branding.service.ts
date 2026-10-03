@@ -10,6 +10,7 @@ import type { Prisma } from '@prisma/client';
 import type { CommunicationsConfig } from '../../config/configuration';
 import type { BrandingContext } from '../templates/layout';
 import { LinkBuilderService } from './link-builder.service';
+import { EmailLogoService } from './email-logo.service';
 
 export interface ResolvedBranding {
   readonly branding: BrandingContext;
@@ -26,6 +27,7 @@ export class CommunicationBrandingService {
   constructor(
     configService: ConfigService,
     private readonly links: LinkBuilderService,
+    private readonly emailLogo: EmailLogoService,
   ) {
     this.platformName =
       configService.getOrThrow<CommunicationsConfig>('communications').platformName;
@@ -44,25 +46,29 @@ export class CommunicationBrandingService {
   }
 
   /**
-   * An uploaded logo is a MediaAsset, stored as the app-RELATIVE
-   * `/api/v1/public/media/…` path (see `toMediaAssetUrl`). A relative
-   * `<img src>` means nothing inside an email, so it is resolved against
-   * the academy's own host (which serves that path), else the platform.
-   * Absolute URLs and legacy values pass through unchanged.
+   * W3 — decouples the academy's VISUAL IDENTITY (name + logo) from the
+   * catalogue's `branding` mode, which really picks the link HOST
+   * ("branding picks the host, not merely the logo"). Before this, every
+   * `branding: 'platform'` key showed no academy logo at all — including
+   * emails a person reads as coming from their academy (an invitation, a
+   * roster approval request) — because the host rule and the identity rule
+   * were one field.
+   *
+   * `identity` defaults to the mode, so nothing changes unless a catalogue
+   * entry opts in (`identity: 'academy'`). With identity `academy` and an
+   * academy attached, the email shows that academy's name and email-safe
+   * logo; `host` still follows `mode`, so links keep landing where the
+   * catalogue says they must.
+   *
+   * The logo is never the stored value: it is the platform-host URL of the
+   * public logo route (`EmailLogoService.forEmail`) with explicit display
+   * size, or absent (the layout then prints the academy name).
    */
-  private absoluteLogoUrl(
-    logoUrl: string | null,
-    host: string | null,
-  ): string | undefined {
-    if (!logoUrl) return undefined;
-    if (!logoUrl.startsWith('/') || logoUrl.startsWith('//')) return logoUrl;
-    return host ? `https://${host}${logoUrl}` : this.links.platform(logoUrl);
-  }
-
   async resolve(
     tx: Prisma.TransactionClient,
     mode: 'academy' | 'platform',
     academyId: string | null,
+    identity: 'academy' | 'platform' = mode,
   ): Promise<ResolvedBranding> {
     if (!academyId) return this.platform();
     const academy = await tx.academy.findUnique({
@@ -70,18 +76,23 @@ export class CommunicationBrandingService {
       select: { name: true, logoUrl: true, language: true, timezone: true },
     });
     if (!academy) return this.platform();
-    const host = await this.links.academyHost(tx, academyId);
-    if (mode === 'platform') {
+    const host = mode === 'academy' ? await this.links.academyHost(tx, academyId) : null;
+    if (identity === 'platform') {
       return {
         ...this.platform(),
         academyLanguage: academy.language,
         academyTimezone: academy.timezone,
       };
     }
+    const logo = await this.emailLogo
+      .forEmail(academyId, academy.logoUrl)
+      .catch(() => undefined);
     return {
       branding: {
         academyName: academy.name,
-        academyLogoUrl: this.absoluteLogoUrl(academy.logoUrl, host),
+        academyLogoUrl: logo?.url,
+        academyLogoWidth: logo?.width,
+        academyLogoHeight: logo?.height,
         academyHost: host ?? undefined,
         platformName: this.platformName,
         platformUrl: this.links.platform('/'),

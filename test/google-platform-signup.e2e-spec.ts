@@ -40,6 +40,10 @@ import type { GoogleAuthConfig, IdentityConfig } from '../src/config/configurati
 import { TrialPolicyRepository } from '../src/plans/repositories/trial-policy.repository';
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
+import { uniqueName } from './utils/unique-name';
+
+// W4 — organization names are unique platform-wide and the e2e DB persists.
+const NILE_LEARNING = uniqueName('Nile Learning');
 
 jest.setTimeout(240000);
 
@@ -368,7 +372,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
     await step('create-account', flow.binder, {
       pending,
       name: 'Nour Owner',
-      organizationName: 'Nile Learning',
+      organizationName: NILE_LEARNING,
       planId: '00000000-0000-4000-8000-000000000000',
     }).expect(400);
     expect(await admin.user.count({ where: { email } })).toBe(0);
@@ -379,7 +383,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
     const created = await step('create-account', flow.binder, {
       pending,
       name: 'Nour Owner',
-      organizationName: 'Nile Learning',
+      organizationName: NILE_LEARNING,
       planId: trialPlan.id,
     }).expect(201);
     // Google replaced the password only: the management emailed code (new
@@ -401,7 +405,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
 
     const orgs = await admin.organization.findMany({ where: { ownerUserId: user.id } });
     expect(orgs).toHaveLength(1);
-    expect(orgs[0].name).toBe('Nile Learning');
+    expect(orgs[0].name).toBe(NILE_LEARNING);
     // A signup organization starts with its onboarding open.
     expect(orgs[0].onboardingCompletedAt).toBeNull();
     const membership = await admin.organizationMembership.findFirstOrThrow({
@@ -438,7 +442,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
     await step('create-account', flow.binder, {
       pending,
       name: 'Nour Owner',
-      organizationName: 'Nile Learning',
+      organizationName: NILE_LEARNING,
       planId: trialPlan.id,
     }).expect(401);
     // The handoff and the callback are single-use too.
@@ -467,7 +471,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
     const refused = await step('create-account', flow.binder, {
       pending,
       name: 'Owner',
-      organizationName: 'Nile Learning',
+      organizationName: NILE_LEARNING,
       planId: trialPlan.id,
     }).expect(400);
     expect(refused.body.error.messageKey).toBe('errors.auth.organizationSignupDisabled');
@@ -481,7 +485,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
         name: 'Owner',
         email: uniqueTestEmail('gplat-flagoff-pw'),
         password: PASSWORD,
-        organizationName: 'Nile Learning',
+        organizationName: NILE_LEARNING,
         planId: trialPlan.id,
       })
       .expect(400);
@@ -494,7 +498,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
 
   it('GPLAT-LINK-01 — an existing password owner with the same address: password proof required (wrong one links nothing), then the SAME user, organization kept, emailed code, google session', async () => {
     const owner = await register('gplat-link', {
-      organizationName: 'Existing Org',
+      organizationName: uniqueName('Existing Org'),
       planId: trialPlan.id,
     });
     const orgsBefore = await admin.organization.findMany({

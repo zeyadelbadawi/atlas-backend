@@ -13,6 +13,7 @@ import request from 'supertest';
 import { createTestApp, uniqueTestEmail, waitForAsync } from './utils/test-app';
 import { createAdminPrisma } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 describe('POST /organizations (e2e) — Phase P19', () => {
   let app: INestApplication;
@@ -66,7 +67,7 @@ describe('POST /organizations (e2e) — Phase P19', () => {
   it('1: rejects an unauthenticated request', async () => {
     await request(app.getHttpServer())
       .post('/organizations')
-      .send({ name: 'No Auth Org' })
+      .send({ name: uniqueName('No Auth Org') })
       .expect(401);
   });
 
@@ -133,28 +134,41 @@ describe('POST /organizations (e2e) — Phase P19', () => {
     expect(orgMembership.permissions.length).toBeGreaterThan(0);
   });
 
-  it('4: a duplicate organization name does not collide — slug is uniquified, never a hard failure', async () => {
+  it('4: a slug collision is uniquified, but a duplicate NAME is refused (W4)', async () => {
     const clientA = await signUpAndSignIn('org-create-dup-a');
     const clientB = await signUpAndSignIn('org-create-dup-b');
-    // Deliberately the SAME name for both creates below — that collision
-    // is exactly what this test proves is handled gracefully. Still
-    // unique across repeated runs of this file (real, persistent
-    // Postgres, no reset) via `uniqueOrgName`.
-    const sharedName = uniqueOrgName('Shared Name Academy');
+    // Two DIFFERENT names that slugify to the same base slug — the slug
+    // collision is still handled gracefully. Unique across repeated runs of
+    // this file (real, persistent Postgres, no reset) via `uniqueOrgName`.
+    const baseName = uniqueOrgName('Shared Name Academy');
 
     const first = await request(app.getHttpServer())
       .post('/organizations')
       .set('Authorization', `Bearer ${clientA.accessToken}`)
-      .send({ name: sharedName })
+      .send({ name: baseName })
       .expect(201);
 
     const second = await request(app.getHttpServer())
       .post('/organizations')
       .set('Authorization', `Bearer ${clientB.accessToken}`)
-      .send({ name: sharedName })
+      .send({ name: `${baseName}!` })
       .expect(201);
 
     expect(second.body.slug).not.toBe(first.body.slug);
+
+    // W4 — the same name (any case/spacing) is unavailable platform-wide,
+    // with one generic answer that never names the holder.
+    const clientC = await signUpAndSignIn('org-create-dup-c');
+    const duplicate = await request(app.getHttpServer())
+      .post('/organizations')
+      .set('Authorization', `Bearer ${clientC.accessToken}`)
+      .send({ name: `  ${baseName.toUpperCase()}  ` })
+      .expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      messageKey: 'errors.organization.nameUnavailable',
+      violations: [{ field: 'name' }],
+    });
+    expect(JSON.stringify(duplicate.body)).not.toContain(first.body.id);
   });
 
   it('5: rejects an empty name (validation, not a silent create)', async () => {
@@ -289,7 +303,7 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       .post(`/organizations/${created.body.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${client.accessToken}`)
       .send({
-        academyName: 'Too Early Academy',
+        academyName: uniqueName('Too Early Academy'),
         requestedSubdomain: `too-early-${Date.now()}`,
         idempotencyKey: `too-early-idem-${Date.now()}`,
       });
@@ -305,7 +319,7 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       .post(`/organizations/${created.body.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${client.accessToken}`)
       .send({
-        academyName: 'Trial Academy',
+        academyName: uniqueName('Trial Academy'),
         requestedSubdomain: `trial-prov-${Date.now()}`,
         idempotencyKey: `trial-prov-idem-${Date.now()}`,
       })
@@ -333,7 +347,7 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       .post(`/organizations/${created.body.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${client.accessToken}`)
       .send({
-        academyName: 'Should Not Provision',
+        academyName: uniqueName('Should Not Provision'),
         requestedSubdomain: `no-sub-${Date.now()}`,
         idempotencyKey: `no-sub-idem-${Date.now()}`,
       })

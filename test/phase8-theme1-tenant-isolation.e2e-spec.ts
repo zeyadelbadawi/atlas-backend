@@ -28,6 +28,7 @@ import {
   seedMembership,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
+import { uniqueName } from './utils/unique-name';
 
 jest.setTimeout(60000);
 
@@ -148,7 +149,7 @@ describe('Phase 8 — Theme 1 tenant isolation (adversarial)', () => {
       'post',
       `/organizations/${orgA.id}/provisioning-requests`,
       {
-        academyName: 'P8 Provisioned',
+        academyName: uniqueName('P8 Provisioned'),
         requestedSubdomain: `p8prov${Date.now()}`,
         idempotencyKey: `p8prov-${Date.now()}`,
       },

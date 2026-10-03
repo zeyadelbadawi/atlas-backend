@@ -27,6 +27,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import { StubEmailProvider } from '../src/communications/providers/stub-email.provider';
+import { uniqueName } from './utils/unique-name';
 
 jest.setTimeout(120000);
 const PASSWORD = 'correct-horse-battery';
@@ -84,7 +85,7 @@ describe('P64 C8 — academy member onboarding (e2e)', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: `${label} Academy`,
+        academyName: uniqueName(`${label} Academy`),
         requestedSubdomain: slug,
         idempotencyKey: `${slug}-${Date.now()}`,
       })

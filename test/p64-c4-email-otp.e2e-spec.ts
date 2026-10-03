@@ -919,11 +919,24 @@ describe('P64 C4 — email OTP and trusted devices (e2e)', () => {
       (item) => item.to === email && (item.tags ?? []).includes('key:auth.email.otp'),
     );
     expect(message).toBeDefined();
-    expect(message!.subject).toContain(code);
+    // W3 — the code is in the body only, never in the subject (subjects
+    // live in provider logs, lock screens and notification previews).
+    expect(message!.subject).not.toContain(code);
     expect(message!.text).toContain(code);
     expect(message!.html).toContain(code);
     // A sign-in code email must not teach people to click links.
     expect(message!.html).not.toContain('reset-password?token=');
+
+    // W3 — once the dispatch settled, the outbox row no longer holds the
+    // code: it was a live credential and the 90-day retention must not
+    // keep it. Everything else about the row stays.
+    const settled = await admin.$queryRaw<
+      { state: string; values: Record<string, unknown> | null }[]
+    >`SELECT "state"::text AS "state", "values" FROM "communication_outbox" WHERE "id" = ${rows[0].id}`;
+    expect(settled[0].state).toBe('dispatched');
+    expect(settled[0].values).not.toHaveProperty('code');
+    expect(JSON.stringify(settled[0].values)).not.toContain(code);
+    expect(settled[0].values).toHaveProperty('expiresInMinutes');
   });
 
   it('P64-C4-051 — issue, verify and trust each leave an audit entry, and none of them records the code', async () => {

@@ -37,6 +37,7 @@ import {
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
 import { METRICS_REGISTRY } from '../src/observability/metrics/learning-metrics.service';
+import { uniqueName } from './utils/unique-name';
 
 jest.setTimeout(180000);
 
@@ -1041,7 +1042,7 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
       const bad = await step('create-account', a.host, binder, {
         pending: s.pending,
         name: 'XX',
-        organizationName: 'Should not be here',
+        organizationName: uniqueName('Should not be here'),
       }).expect(400);
       expect([
         'errors.auth.signupFieldsNotAllowed',

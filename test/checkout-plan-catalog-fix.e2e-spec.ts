@@ -34,6 +34,7 @@ import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma, seedOrganizationWithOwner, seedPlan } from './utils/db-admin';
 import type { Plan, PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 // P64 Phase 2 (D10) — six commercial variants across two plan families.
 // Imported rather than re-listed so a catalog change cannot leave this
@@ -211,7 +212,7 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
     const createdOrg = await request(app.getHttpServer())
       .post('/organizations')
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ name: 'trial-default-plan-org' })
+      .send({ name: uniqueName('trial-default-plan-org') })
       .expect(201);
 
     const subscription = await admin.tenantSubscription.findUnique({
