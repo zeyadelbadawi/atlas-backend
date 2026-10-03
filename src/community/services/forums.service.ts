@@ -68,7 +68,8 @@ export class ForumsService {
         .then(async (course) =>
           course
             ? tx.academyMember.findFirst({
-                where: { academyId: course.academyId, userId },
+                // Security review finding 5 — only ACTIVE staff participate.
+                where: { academyId: course.academyId, userId, status: 'active' },
               })
             : null,
         ),

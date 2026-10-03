@@ -15,7 +15,27 @@ export type AcademyMemberWithUser = AcademyMember & {
 
 @Injectable()
 export class AcademyMembersRepository {
+  /**
+   * The user's ACTIVE staff row in this academy — the authorization lookup.
+   * An `inactive` or `pending` row grants nothing (security review finding
+   * 5: routes outside `AcademyScopeGuard` authorised on this lookup alone,
+   * and some never checked the status). Mirrors `is_academy_member()` /
+   * `can_author_course_content()` (20261104000341).
+   */
   findForUserInAcademy(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+  ): Promise<AcademyMember | null> {
+    return tx.academyMember.findFirst({ where: { academyId, userId, status: 'active' } });
+  }
+
+  /**
+   * The user's staff row in this academy WHATEVER its status — only for
+   * "is there already a row?" questions (adding a member, the member
+   * lookup), never for authorization.
+   */
+  findAnyStatusForUserInAcademy(
     tx: Prisma.TransactionClient,
     academyId: string,
     userId: string,

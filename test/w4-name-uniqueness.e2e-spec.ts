@@ -8,8 +8,9 @@
  *   - Organizations and academies: duplicates refused (case, spacing, Latin
  *     accents, Arabic harakat/tatweel/hamza), empty keys 400, and a parallel
  *     race lets exactly one writer win.
- *   - Learners: interactive admissions refused with an actionable 409;
- *     automatic admissions (sign-in auto-join, purchase) still succeed,
+ *   - Learners: interactive admissions (staff add, a proven existing
+ *     account's join) refused with an actionable 409; automatic admissions
+ *     (new-account registration, sign-in auto-join, purchase) succeed,
  *     exempt, and the clash is audited; a profile rename that clashes is
  *     refused and names only the user's own academies.
  *   - The definer checks return booleans only, and the remediation backup
@@ -317,33 +318,47 @@ describe('W4 — name uniqueness (e2e)', () => {
   // -------------------------------------------------------------------
 
   describe('learners (unique per academy, Model A)', () => {
-    it('registration refuses a name already held in THIS academy only (Arabic and accent variants)', async () => {
+    // Security review finding 2 — an unauthenticated registration is never
+    // refused for a learner name (that answer told anyone whether a named
+    // person studies here). The clash is admitted `name_unique_exempt` and
+    // surfaces to the account after sign-in (test/w4-security-review).
+    it('registration admits a name already held in THIS academy as exempt (Arabic and accent variants), never a 409', async () => {
       const { academy } = await academyWithOwner('w4-learn-reg');
       const other = await academyWithOwner('w4-learn-reg-other');
       const tag = uniqueName('x').split(' ')[1];
       await registerLearner(academy.id, `مُحَمَّد أَحْمَد ${tag}`).expect(201);
       await registerLearner(academy.id, `José Ruiz ${tag}`).expect(201);
 
-      const arabic = await registerLearner(academy.id, `محـمد احمد ${tag}`).expect(409);
-      expect(arabic.body.error).toMatchObject({
-        messageKey: 'errors.academy.learnerNameTaken',
-        violations: [{ field: 'name' }],
-      });
-      await registerLearner(academy.id, `JOSE  RUIZ ${tag}`).expect(409);
+      await registerLearner(academy.id, `محـمد احمد ${tag}`).expect(201);
+      await registerLearner(academy.id, `JOSE  RUIZ ${tag}`).expect(201);
       // ى/ي are deliberately not folded.
       await registerLearner(academy.id, `مصطفى ${tag}`).expect(201);
       await registerLearner(academy.id, `مصطفي ${tag}`).expect(201);
       // Another academy is unaffected.
       await registerLearner(other.academy.id, `محمد احمد ${tag}`).expect(201);
+
+      const exempt = async (academyId: string, name: string) =>
+        (
+          await admin.academyStudent.findMany({
+            where: { academyId, nameKey: normalizeNameKey(name) },
+            orderBy: { joinedAt: 'asc' },
+            select: { nameUniqueExempt: true },
+          })
+        ).map((row) => row.nameUniqueExempt);
+      expect(await exempt(academy.id, `محمد احمد ${tag}`)).toEqual([false, true]);
+      expect(await exempt(academy.id, `jose ruiz ${tag}`)).toEqual([false, true]);
+      expect(await exempt(academy.id, `مصطفى ${tag}`)).toEqual([false]);
+      expect(await exempt(academy.id, `مصطفي ${tag}`)).toEqual([false]);
+      expect(await exempt(other.academy.id, `محمد احمد ${tag}`)).toEqual([false]);
     });
 
-    it('a parallel registration race lets exactly one learner in', async () => {
+    it('a parallel registration race admits everyone, with exactly one non-exempt learner', async () => {
       const { academy } = await academyWithOwner('w4-learn-race');
       const name = uniqueName('Race Learner');
       const results = await Promise.all(
         Array.from({ length: 4 }, () => registerLearner(academy.id, name)),
       );
-      expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409, 409]);
+      expect(results.map((r) => r.status)).toEqual([201, 201, 201, 201]);
       const key = normalizeNameKey(name);
       const rows = await admin.$queryRaw<{ n: bigint }[]>`
         SELECT count(*) AS n FROM academy_students

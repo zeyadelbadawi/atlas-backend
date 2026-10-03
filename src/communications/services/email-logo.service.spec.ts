@@ -105,7 +105,7 @@ describe('EmailLogoService', () => {
       expect(getObject).toHaveBeenCalledTimes(1);
     });
 
-    it('looks an academy up once per window and once for a concurrent burst', async () => {
+    it('shares one lookup among a concurrent burst, but re-reads a known academy afterwards', async () => {
       const key = `academies/${A}/${FILE}.png`;
       const { service } = setup({ [key]: await image('png', 200, 100) });
       const load = jest.fn(async () => `/api/v1/public/media/academies/${A}/${FILE}.png`);
@@ -113,35 +113,42 @@ describe('EmailLogoService', () => {
         Array.from({ length: 10 }, () => service.renderPublic(A, load)),
       );
       expect(burst.every((logo) => logo !== null)).toBe(true);
-      await service.renderPublic(A, load);
       expect(load).toHaveBeenCalledTimes(1);
+      // A known academy is not cached: a logo change or archive applies at once.
+      await service.renderPublic(A, load);
+      expect(load).toHaveBeenCalledTimes(2);
     });
 
-    it('caches unknown academy ids negatively, in a bounded map', async () => {
+    it('caches unknown academy ids negatively, in a bounded map; "no logo" is not cached', async () => {
       const { service } = setup();
-      const load = jest.fn(async () => null);
-      const unknown = '22222222-2222-4222-8222-222222222222';
-      expect(await service.renderPublic(unknown, load)).toBeNull();
-      expect(await service.renderPublic(unknown, load)).toBeNull();
-      expect(load).toHaveBeenCalledTimes(1);
+      const unknown = jest.fn(async () => undefined);
+      const id = '22222222-2222-4222-8222-222222222222';
+      expect(await service.renderPublic(id, unknown)).toBeNull();
+      expect(await service.renderPublic(id, unknown)).toBeNull();
+      expect(unknown).toHaveBeenCalledTimes(1);
+
+      const noLogo = jest.fn(async () => null);
+      await service.renderPublic(A, noLogo);
+      await service.renderPublic(A, noLogo);
+      expect(noLogo).toHaveBeenCalledTimes(2);
 
       // Flood with distinct random ids: the map stays bounded, so the first
       // id is eventually evicted and looked up again.
       for (let i = 0; i < 1_100; i += 1) {
-        await service.renderPublic(`id-${i}`, load);
+        await service.renderPublic(`id-${i}`, unknown);
       }
-      const references = (service as unknown as { references: Map<string, unknown> })
-        .references;
-      expect(references.size).toBeLessThanOrEqual(1_000);
-      load.mockClear();
-      await service.renderPublic(unknown, load);
-      expect(load).toHaveBeenCalledTimes(1);
+      const cache = (service as unknown as { unknownAcademies: Map<string, number> })
+        .unknownAcademies;
+      expect(cache.size).toBeLessThanOrEqual(1_000);
+      unknown.mockClear();
+      await service.renderPublic(id, unknown);
+      expect(unknown).toHaveBeenCalledTimes(1);
     });
 
     it('treats a failed lookup as no logo and does not cache it', async () => {
       const { service } = setup();
       const load = jest
-        .fn<Promise<string | null>, []>()
+        .fn<Promise<string | null | undefined>, []>()
         .mockRejectedValueOnce(new Error('db down'))
         .mockResolvedValueOnce(null);
       expect(await service.renderPublic(A, load)).toBeNull();

@@ -1347,7 +1347,7 @@ export class AcademiesService {
             }
 
             const existingAcademyMembership =
-              await this.academyMembersRepository.findForUserInAcademy(
+              await this.academyMembersRepository.findAnyStatusForUserInAcademy(
                 tx,
                 academyId,
                 target.user.id,
@@ -1617,7 +1617,7 @@ export class AcademiesService {
                   academyId,
                   user.id,
                 )
-              : await this.academyMembersRepository.findForUserInAcademy(
+              : await this.academyMembersRepository.findAnyStatusForUserInAcademy(
                   tx,
                   academyId,
                   user.id,

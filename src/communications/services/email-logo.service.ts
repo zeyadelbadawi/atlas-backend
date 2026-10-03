@@ -18,11 +18,13 @@
  *    negative results briefly, so a burst of image-proxy fetches costs one
  *    decode, not one per hit. Concurrent misses for one key share ONE
  *    decode (in-flight de-duplication).
- *  - For the public route (`renderPublic`), the academy's stored logo
- *    reference is cached briefly too — unknown academy ids negatively, in a
- *    bounded map — so a flood of random ids costs no repeated database
- *    lookups (security review finding 4; the route is also throttled per IP
- *    at a ceiling generous enough for email-client bursts).
+ *  - For the public route (`renderPublic`), an UNKNOWN academy id (no
+ *    serving academy) is cached negatively for a minute in a bounded map, so
+ *    a flood of random ids costs no repeated database lookups, and
+ *    concurrent requests for one academy share one lookup (security review
+ *    finding 4; the route is also throttled per IP at a ceiling generous
+ *    enough for email-client bursts). A known academy is always re-read, so
+ *    a logo change or an archive takes effect at once.
  *
  * Never throws: an unreadable, oversized or undecodable logo is `null`.
  */
@@ -55,11 +57,9 @@ export interface EmailLogoReference {
 
 const MAX_CACHE_ENTRIES = 200;
 const NEGATIVE_TTL_MS = 5 * 60 * 1000;
-/** Public-route reference cache: a logo change shows within this window. */
-const REFERENCE_TTL_MS = 30 * 1000;
-/** Unknown / ineligible academy ids. */
-const REFERENCE_NEGATIVE_TTL_MS = 60 * 1000;
-const MAX_REFERENCE_ENTRIES = 1_000;
+/** Unknown academy ids (no serving academy), cached negatively. */
+const UNKNOWN_ACADEMY_TTL_MS = 60 * 1000;
+const MAX_UNKNOWN_ACADEMY_ENTRIES = 1_000;
 /** 3× the 40px display height, and a generous width for wordmarks. */
 const RENDER_BOX = { width: 480, height: 160 } as const;
 /** Rejects absurd canvases before sharp allocates them (decompression bombs). */
@@ -80,11 +80,8 @@ export class EmailLogoService {
   private readonly cache = new Map<string, CacheEntry>();
   /** In-flight decodes per (academy, version). */
   private readonly decoding = new Map<string, Promise<RenderedEmailLogo | null>>();
-  /** The public route's academy → stored logo reference (null = none / unknown). */
-  private readonly references = new Map<
-    string,
-    { readonly logoUrl: string | null; readonly until: number }
-  >();
+  /** The public route's unknown academy ids → expiry (epoch ms). */
+  private readonly unknownAcademies = new Map<string, number>();
   /** In-flight public-route lookups per academy. */
   private readonly resolving = new Map<string, Promise<RenderedEmailLogo | null>>();
 
@@ -124,23 +121,24 @@ export class EmailLogoService {
   }
 
   /**
-   * The public logo route: resolves the academy's stored logo reference via
-   * `loadReference` (a database read) at most once per short window per
-   * academy — unknown ids included, negatively — and shares one lookup and
-   * one decode among concurrent requests for the same academy.
+   * The public logo route. `loadReference` reads the academy's stored logo:
+   * `undefined` when there is no such serving academy (cached negatively,
+   * bounded, for a minute), `null` when it has no logo. Concurrent requests
+   * for one academy share one lookup and one decode.
    */
   async renderPublic(
     academyId: string,
-    loadReference: () => Promise<string | null>,
+    loadReference: () => Promise<string | null | undefined>,
   ): Promise<RenderedEmailLogo | null> {
-    const known = this.references.get(academyId);
-    if (known && known.until > Date.now()) {
-      return known.logoUrl ? this.render(academyId, known.logoUrl) : null;
+    const unknownUntil = this.unknownAcademies.get(academyId);
+    if (unknownUntil !== undefined) {
+      if (unknownUntil > Date.now()) return null;
+      this.unknownAcademies.delete(academyId);
     }
     const pending = this.resolving.get(academyId);
     if (pending) return pending;
     const resolving = (async () => {
-      let logoUrl: string | null;
+      let logoUrl: string | null | undefined;
       try {
         logoUrl = await loadReference();
       } catch (error) {
@@ -150,23 +148,23 @@ export class EmailLogoService {
         );
         return null;
       }
-      this.rememberReference(academyId, logoUrl);
+      if (logoUrl === undefined) {
+        this.rememberUnknown(academyId);
+        return null;
+      }
       return logoUrl ? this.render(academyId, logoUrl) : null;
     })().finally(() => this.resolving.delete(academyId));
     this.resolving.set(academyId, resolving);
     return resolving;
   }
 
-  private rememberReference(academyId: string, logoUrl: string | null): void {
-    this.references.delete(academyId);
-    this.references.set(academyId, {
-      logoUrl,
-      until: Date.now() + (logoUrl ? REFERENCE_TTL_MS : REFERENCE_NEGATIVE_TTL_MS),
-    });
-    while (this.references.size > MAX_REFERENCE_ENTRIES) {
-      const oldest = this.references.keys().next().value;
+  private rememberUnknown(academyId: string): void {
+    this.unknownAcademies.delete(academyId);
+    this.unknownAcademies.set(academyId, Date.now() + UNKNOWN_ACADEMY_TTL_MS);
+    while (this.unknownAcademies.size > MAX_UNKNOWN_ACADEMY_ENTRIES) {
+      const oldest = this.unknownAcademies.keys().next().value;
       if (oldest === undefined) break;
-      this.references.delete(oldest);
+      this.unknownAcademies.delete(oldest);
     }
   }
 

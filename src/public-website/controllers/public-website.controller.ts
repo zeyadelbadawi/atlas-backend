@@ -143,9 +143,11 @@ export class PublicWebsiteController {
    *  - A generous per-IP ceiling (600/min) instead of the 120/min default:
    *    image proxies (Gmail, Outlook, Apple MPP) fetch from a handful of
    *    shared IPs, but fetch once and cache, so legitimate bursts fit; a
-   *    flood does not get unlimited work (security review finding 4). The
-   *    logo reference (unknown ids negatively) and the decode are cached in
-   *    process and de-duplicated in flight (`EmailLogoService.renderPublic`).
+   *    flood does not get unlimited work (security review finding 4).
+   *    Unknown academy ids are cached negatively (bounded, short TTL), and
+   *    concurrent lookups and decodes are de-duplicated in flight
+   *    (`EmailLogoService.renderPublic`); a rendered logo is cached per
+   *    (academy, version).
    *  - 404 for an unknown, archived, suspended or ineligible Academy, with
    *    the same body as every other not-found here — no tenant data at all.
    */
@@ -160,7 +162,7 @@ export class PublicWebsiteController {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
     const logo = await this.emailLogoService.renderPublic(academyId, () =>
-      this.publicWebsiteService.getLogoReference(academyId),
+      this.publicWebsiteService.findLogoReference(academyId),
     );
     if (!logo) throw new NotFoundException({ messageKey: 'errors.notFound' });
     response.setHeader(
