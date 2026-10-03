@@ -15,6 +15,7 @@ import {
   seedActiveSubscriptionForOrg,
   seedOrganizationWithOwner,
   seedMembership,
+  seedCourse,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
@@ -398,7 +399,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
     expect(allocations).toBe(1);
   });
 
-  it('GET /academies/:id/stats reflects real academy_members counts, and publishedCourses is honestly 0', async () => {
+  it("GET /academies/:id/stats reflects real academy_members counts and counts only this academy's published courses", async () => {
     const user = await signUpAndSignIn(app, 'academy-stats');
     const org = await seedOrganizationWithOwner(admin, user.userId, 'academy-stats-org');
     // Provisioning is entitlement-gated (see above).
@@ -418,6 +419,12 @@ describe('Academy Management (e2e) — functional/contract', () => {
       data: { academyId: created.body.id, userId: otherUser.userId, role: 'staff' },
     });
 
+    // The old expectation (`publishedCourses` always 0) predated the
+    // courses table; the dashboard card showed 0 for every academy.
+    await seedCourse(admin, created.body.id, 'Stats Published', { status: 'published' });
+    await seedCourse(admin, created.body.id, 'Stats Draft', { status: 'draft' });
+    await seedCourse(admin, created.body.id, 'Stats Archived', { status: 'archived' });
+
     const stats = await request(app.getHttpServer())
       .get(`/academies/${created.body.id}/stats`)
       .set('Authorization', `Bearer ${user.accessToken}`)
@@ -426,7 +433,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       totalMembers: 2,
       activeStaff: 1,
       activeInstructors: 0,
-      publishedCourses: 0,
+      publishedCourses: 1,
     });
   });
 

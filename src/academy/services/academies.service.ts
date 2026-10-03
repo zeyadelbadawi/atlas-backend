@@ -1467,15 +1467,15 @@ export class AcademiesService {
     organizationId: string,
   ): Promise<AcademyStatsResponse> {
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      const [totalMembers, activeStaff, activeInstructors] = await Promise.all([
-        this.academyMembersRepository.countAll(tx, academyId),
-        this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'staff'),
-        this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
-      ]);
+      const [totalMembers, activeStaff, activeInstructors, publishedCourses] =
+        await Promise.all([
+          this.academyMembersRepository.countAll(tx, academyId),
+          this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'staff'),
+          this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
+          tx.course.count({ where: { academyId, status: 'published' } }),
+        ]);
 
-      // See `academy-stats.contract.ts`'s doc comment — honestly `0`, no
-      // `courses` table exists yet.
-      return { totalMembers, activeStaff, activeInstructors, publishedCourses: 0 };
+      return { totalMembers, activeStaff, activeInstructors, publishedCourses };
     });
   }
 
