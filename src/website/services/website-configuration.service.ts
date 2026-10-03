@@ -68,6 +68,10 @@ import {
   globalSeoSchema,
 } from '../validation/website-config.schemas';
 import { parseOrThrow } from '../../common/validation/zod-violations.util';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+
+/** Task 3 — the site-wide areas a configuration save can touch, in the order the audit row lists them. */
+const CONFIGURATION_AREAS = ['brand', 'seo', 'navigation', 'header', 'footer'] as const;
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
@@ -87,6 +91,7 @@ export class WebsiteConfigurationService {
     private readonly websitePagesRepository: WebsitePagesRepository,
     private readonly academiesRepository: AcademiesRepository,
     private readonly academiesService: AcademiesService,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   /**
@@ -111,11 +116,12 @@ export class WebsiteConfigurationService {
     }
   }
 
+  /** Returns the caller's academy role, which the audit row records (no second lookup). */
   private async assertCanManage(
     tx: Prisma.TransactionClient,
     academyId: string,
     userId: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const membership = await this.academyMembersRepository.findForUserInAcademy(
       tx,
       academyId,
@@ -124,6 +130,7 @@ export class WebsiteConfigurationService {
     if (!membership || !MANAGING_ROLES.has(membership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
+    return membership.role;
   }
 
   /**
@@ -202,7 +209,7 @@ export class WebsiteConfigurationService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         await this.assertNotStale(tx, academyId, payload.expectedUpdatedAt);
         const current = await this.websiteBootstrapService.ensureConfiguration(
           tx,
@@ -267,6 +274,26 @@ export class WebsiteConfigurationService {
           academyId,
           data,
         );
+        // Task 3 — the theme is a readable before/after; the structured
+        // areas (brand, SEO, navigation, header, footer) are large JSON
+        // documents, so the row names WHICH changed rather than copying them.
+        const changedAreas = CONFIGURATION_AREAS.filter(
+          (area) =>
+            data[area] !== undefined &&
+            JSON.stringify(current[area]) !== JSON.stringify(updated[area]),
+        );
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'website.configuration.updated',
+          targetId: academyId,
+          context:
+            changedAreas.length > 0 ? { changedAreas: changedAreas.join(',') } : {},
+          before: { themeKey: current.themeKey },
+          after: data.themeKey !== undefined ? { themeKey: updated.themeKey } : {},
+        });
         return this.toManagedResponse(tx, academyId, updated);
       },
     );
@@ -310,12 +337,20 @@ export class WebsiteConfigurationService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         await this.assertNotStale(tx, academyId, payload.expectedUpdatedAt);
         const current = await this.websiteBootstrapService.ensureConfiguration(
           tx,
           academyId,
         );
+        // Task 3 — the audit row's "before" (one read, only when the save
+        // touches the academy row at all).
+        const academyBefore =
+          payload.name !== undefined ||
+          payload.logo !== undefined ||
+          payload.favicon !== undefined
+            ? await this.academiesRepository.findById(tx, academyId)
+            : null;
 
         const academyData: Prisma.AcademyUpdateInput = {};
         if (payload.name !== undefined) academyData.name = payload.name.trim();
@@ -360,6 +395,33 @@ export class WebsiteConfigurationService {
             ? await this.websiteConfigurationRepository.update(tx, academyId, configData)
             : current;
 
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'website.visual_identity.updated',
+          targetId: academyId,
+          targetLabel: academy.name,
+          context: {
+            brandChanged:
+              payload.brand !== undefined &&
+              JSON.stringify(current.brand) !== JSON.stringify(configuration.brand),
+          },
+          before: academyBefore
+            ? {
+                name: academyBefore.name,
+                logoUrl: academyBefore.logoUrl,
+                faviconUrl: academyBefore.faviconUrl,
+              }
+            : null,
+          after: {
+            ...(payload.name !== undefined ? { name: academy.name } : {}),
+            ...(payload.logo !== undefined ? { logoUrl: academy.logoUrl } : {}),
+            ...(payload.favicon !== undefined ? { faviconUrl: academy.faviconUrl } : {}),
+          },
+        });
+
         return {
           academy: toAcademyResponse(academy),
           configuration: await this.toManagedResponse(tx, academyId, configuration),
@@ -383,7 +445,7 @@ export class WebsiteConfigurationService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
         await this.websiteConfigurationRepository.lockForPublish(tx, academyId);
         const current = await this.websiteBootstrapService.ensureConfiguration(
@@ -410,6 +472,19 @@ export class WebsiteConfigurationService {
           tx,
           academyId,
         );
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'website.published',
+          targetId: academyId,
+          context: { pageCount: visiblePages.length },
+          changes:
+            current.status !== 'published'
+              ? { status: { from: current.status, to: 'published' } }
+              : undefined,
+        });
         return {
           ...(await this.toManagedResponse(tx, academyId, updated)),
           sampleContent: collectSampleContent(
@@ -459,13 +534,28 @@ export class WebsiteConfigurationService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
-        await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+        const role = await this.assertCanManage(tx, academyId, userId);
+        const before = await this.websiteBootstrapService.ensureConfiguration(
+          tx,
+          academyId,
+        );
 
         const updated = await this.websiteConfigurationRepository.update(tx, academyId, {
           status: 'draft',
           lastPublishError: Prisma.JsonNull,
           configVersion: { increment: 1 },
+        });
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'website.unpublished',
+          targetId: academyId,
+          changes:
+            before.status !== 'draft'
+              ? { status: { from: before.status, to: 'draft' } }
+              : undefined,
         });
         return this.toManagedResponse(tx, academyId, updated);
       },

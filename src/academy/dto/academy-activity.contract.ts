@@ -1,23 +1,18 @@
 /**
- * `AcademyActivity` response contract — matches `academy.types.ts` exactly.
+ * `GET academies/:id/activity` / `GET academies/:id/activity/:entryId` —
+ * the Academy owner's activity log (Task 3).
  *
- * No table backs this yet: no activity/event log exists anywhere in this
- * backend (`audit_log_entries` is Platform Owner Control Plane scope,
- * unbuilt; no domain event in P0–P3 writes to any kind of activity feed).
- * `GET /academies/:id/activity` is therefore a real endpoint that honestly
- * returns an empty page today, not a fake/hardcoded response masking an
- * error — there genuinely is no activity data yet, and the pagination
- * envelope is real. This is `SPECIFICATION-UNDEFINED`: which domain events
- * feed this endpoint (member joins? branding changes? course publishes?)
- * has never been specified. Documented for a future phase, not guessed at
- * here.
+ * Backed by real `audit_log_entries` rows for THIS academy only
+ * (`academy_id = :id`), restricted to the catalogue's tenant-visible actions
+ * (`TENANT_VISIBLE_AUDIT_ACTIONS`) — sign-in telemetry and platform-operator
+ * actions never appear. Keyset-paginated: `{ items, nextCursor }`, no total.
+ *
+ * The shapes are the shared tenant audit shapes; see
+ * `TenantAuditLogEntryResponse` for the privacy rules (actor name only, no
+ * emails, Atlas staff shown as "Atlas").
  */
-export interface AcademyActivityResponse {
-  readonly id: string;
-  readonly academyId: string;
-  readonly type: string;
-  readonly description: string;
-  readonly userId?: string;
-  readonly userName?: string;
-  readonly timestamp: string;
-}
+export type {
+  AuditLogCursorPage as AcademyActivityPageResponse,
+  TenantAuditLogEntryResponse as AcademyActivityResponse,
+  TenantAuditLogEntryDetailResponse as AcademyActivityDetailResponse,
+} from '../../audit-log/dto/audit-log.contract';

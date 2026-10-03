@@ -29,8 +29,17 @@ import { OrganizationPaymentSettingsRepository } from '../../billing/repositorie
 import { TenantSubscriptionService } from '../../plans/services/tenant-subscription.service';
 import {
   DashboardMetricsRepository,
+  type DashboardActivityRow,
   type DashboardScopeFilter,
 } from '../repositories/dashboard-metrics.repository';
+import {
+  AuditLogEntriesRepository,
+  type AuditReferenceNames,
+} from '../../audit-log/repositories/audit-log-entries.repository';
+import {
+  toTenantAuditLogEntryResponse,
+  type AuditLogEntryWithRelations,
+} from '../../audit-log/dto/audit-log.contract';
 import type { TenantUsageResponse } from '../../plans/dto/tenant-usage.contract';
 import type {
   DashboardActivityItemResponse,
@@ -50,6 +59,7 @@ export class DashboardService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly organizationPaymentSettingsRepository: OrganizationPaymentSettingsRepository,
     private readonly tenantSubscriptionService: TenantSubscriptionService,
+    private readonly auditLogEntriesRepository: AuditLogEntriesRepository,
   ) {}
 
   /** The Client/Organization Owner's dashboard — every Academy under the Organization. */
@@ -98,7 +108,7 @@ export class DashboardService {
   }
 
   private async build(scope: DashboardScopeFilter): Promise<DashboardOverviewResponse> {
-    const { counts, revenueTotals, paymentSettings, activity, academy } =
+    const { counts, revenueTotals, paymentSettings, activity, activityNames, academy } =
       await this.tenancyContextService.runInTenantContext(
         scope.organizationId,
         async (tx) => {
@@ -146,6 +156,10 @@ export class DashboardService {
             revenueTotals: revenueRows,
             paymentSettings: settings,
             activity: activityRows,
+            activityNames: await this.auditLogEntriesRepository.loadReferenceNames(
+              tx,
+              activityRows,
+            ),
             academy: academyRow,
           };
         },
@@ -166,7 +180,7 @@ export class DashboardService {
         revenueTotals,
       ),
       usage: await this.loadUsage(scope.organizationId),
-      recentActivity: activity.map(toActivityItemResponse),
+      recentActivity: activity.map((row) => toActivityItemResponse(row, activityNames)),
     };
   }
 
@@ -233,24 +247,34 @@ export class DashboardService {
   }
 }
 
-function toActivityItemResponse(row: {
-  id: string;
-  action: string;
-  targetType: string;
-  targetLabel: string | null;
-  academyId: string | null;
-  role: string | null;
-  occurredAt: Date;
-  actor: { name: string };
-}): DashboardActivityItemResponse {
+/**
+ * Task 3 — the same tenant privacy rules as the Academy activity log
+ * (`toTenantAuditLogEntryResponse`): actor name only, Atlas staff shown as
+ * Atlas, no email in label/context, names resolved for id-only rows.
+ */
+function toActivityItemResponse(
+  row: DashboardActivityRow,
+  names: AuditReferenceNames,
+): DashboardActivityItemResponse {
+  // The tenant mapper reads only fields this row carries (`academy` is
+  // optional on the relation type and absent here).
+  const tenant = toTenantAuditLogEntryResponse(
+    row as unknown as AuditLogEntryWithRelations,
+    names,
+  );
   return {
-    id: row.id,
-    action: row.action,
-    targetType: row.targetType,
-    targetLabel: row.targetLabel ?? undefined,
-    actorName: row.actor.name,
-    actorRole: row.role ?? undefined,
-    academyId: row.academyId ?? undefined,
-    occurredAt: row.occurredAt.toISOString(),
+    id: tenant.id,
+    action: tenant.action,
+    category: tenant.category,
+    targetType: tenant.targetType,
+    targetId: tenant.targetId,
+    targetLabel: tenant.targetLabel,
+    context: tenant.context,
+    changedFields: tenant.changedFields,
+    actorIsPlatformStaff: tenant.actor.isPlatformStaff,
+    actorName: tenant.actor.name,
+    actorRole: tenant.role,
+    academyId: tenant.academyId,
+    occurredAt: tenant.occurredAt,
   };
 }

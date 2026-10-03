@@ -88,6 +88,8 @@ import { template as retentionVideoWarning7d } from './keys/retention.video.warn
 import { template as retentionVideoWarning24h } from './keys/retention.video.warning_24h';
 import { template as retentionVideoDeleted } from './keys/retention.video.deleted';
 import { template as retentionVideoDeletionFailed } from './keys/retention.video.deletion_failed';
+// TASK 7 — Atlas marketing contact form.
+import { template as platformContactSubmissionReceived } from './keys/platform.contact_submission.received';
 
 export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'provisioning.completed': provisioningCompleted,
@@ -154,6 +156,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'retention.video.warning_24h': retentionVideoWarning24h,
   'retention.video.deleted': retentionVideoDeleted,
   'retention.video.deletion_failed': retentionVideoDeletionFailed,
+  'platform.contact_submission.received': platformContactSubmissionReceived,
   'academy.member.invited': academyMemberInvited,
   'academy.member.added': academyMemberAdded,
   'review.submitted': reviewSubmitted,

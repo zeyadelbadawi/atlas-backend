@@ -18,7 +18,8 @@ import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { PlatformCourseOrderPaymentsService } from '../services/platform-course-order-payments.service';
 import { ApprovePaymentDto } from '../../billing/dto/approve-payment.dto';
 import { RejectPaymentDto } from '../../billing/dto/reject-payment.dto';
-import { PaymentListQueryDto } from '../../billing/dto/payment-list-query.dto';
+import { PlatformPaymentListQueryDto } from '../../billing/dto/payment-list-query.dto';
+import type { PlatformCourseOrderPaymentResponse } from '../dto/platform-course-order-payment-list.contract';
 import type { CourseOrderPaymentResponse } from '../dto/course-order-payment.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
@@ -32,8 +33,8 @@ export class PlatformCourseOrderPaymentsController {
   @Get()
   async list(
     @CurrentAuthContext() auth: AuthContext,
-    @Query() query: PaymentListQueryDto,
-  ): Promise<PaginatedResult<CourseOrderPaymentResponse>> {
+    @Query() query: PlatformPaymentListQueryDto,
+  ): Promise<PaginatedResult<PlatformCourseOrderPaymentResponse>> {
     return this.platformCourseOrderPaymentsService.getPayments(auth.userId, query);
   }
 
@@ -41,7 +42,7 @@ export class PlatformCourseOrderPaymentsController {
   async get(
     @CurrentAuthContext() auth: AuthContext,
     @Param('id') paymentId: string,
-  ): Promise<CourseOrderPaymentResponse> {
+  ): Promise<PlatformCourseOrderPaymentResponse> {
     return this.platformCourseOrderPaymentsService.getPayment(auth.userId, paymentId);
   }
 

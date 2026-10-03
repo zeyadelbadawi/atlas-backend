@@ -232,6 +232,25 @@ describe('Launch Stabilization A1 — route surface inventory', () => {
     expect(unclassified).toEqual([]);
   });
 
+  // TASK 7 — the marketing contact form is public (no session to classify);
+  // its inbox is Platform-Owner only and must never be reachable from an
+  // academy-website session, so it must never land in SELF_OR_LEARNER.
+  it('keeps the platform contact inbox management-guarded and its public form unauthenticated', () => {
+    const inbox = routes.filter((r) => r.key.includes('platform/contact-submissions'));
+    expect(inbox.map((r) => r.key).sort()).toEqual([
+      'DELETE platform/contact-submissions/:id',
+      'GET platform/contact-submissions',
+      'GET platform/contact-submissions/:id',
+      'GET platform/contact-submissions/summary',
+      'PATCH platform/contact-submissions/:id',
+    ]);
+    expect(inbox.every((r) => r.authenticated && r.management)).toBe(true);
+    expect(inbox.some((r) => SELF_OR_LEARNER.has(r.key))).toBe(false);
+
+    const form = routes.find((r) => r.key === 'POST public/contact');
+    expect(form).toMatchObject({ authenticated: false, management: false });
+  });
+
   it('keeps the self/learner allow-list free of stale entries', () => {
     const live = new Set(routes.filter((r) => r.authenticated).map((r) => r.key));
     const stale = [...SELF_OR_LEARNER].filter((key) => !live.has(key));

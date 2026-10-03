@@ -65,6 +65,7 @@ import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { MediaStorageConfig } from '../../config/configuration';
 import type { Prisma } from '@prisma/client';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
@@ -83,15 +84,17 @@ export class MediaService {
     @Inject(MEDIA_STORAGE_PROVIDER)
     private readonly storageProvider: MediaStorageProvider,
     configService: ConfigService,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {
     this.storageConfig = configService.getOrThrow<MediaStorageConfig>('media');
   }
 
+  /** Returns the caller's academy role, which the audit row records (no second lookup). */
   private async assertCanManage(
     tx: Prisma.TransactionClient,
     academyId: string,
     userId: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const membership = await this.academyMembersRepository.findForUserInAcademy(
       tx,
       academyId,
@@ -100,6 +103,7 @@ export class MediaService {
     if (!membership || !MANAGING_ROLES.has(membership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.media.insufficientRole' });
     }
+    return membership.role;
   }
 
   async list(
@@ -154,17 +158,27 @@ export class MediaService {
     // caller can never cause a real R2 upload, even one whose DB write
     // will ultimately be rejected (extends this method's own pre-existing
     // "authorization first" rule to Phase 2's new entitlement check).
-    await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId);
-      await this.entitlementEnforcementService.assertStorageWithinLimit(
-        tx,
-        organizationId,
-        kind.assetType === 'video' ? 'videoStorage' : 'generalStorage',
-        buffer.length,
-      );
-    });
+    const role = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        const callerRole = await this.assertCanManage(tx, academyId, userId);
+        await this.entitlementEnforcementService.assertStorageWithinLimit(
+          tx,
+          organizationId,
+          kind.assetType === 'video' ? 'videoStorage' : 'generalStorage',
+          buffer.length,
+        );
+        return callerRole;
+      },
+    );
 
-    return this.performUpload(academyId, organizationId, payload, buffer, kind);
+    // Task 3 — only a STAFF library upload is audited; a learner's
+    // submission attachment and an automated recording import are not
+    // academy administration.
+    return this.performUpload(academyId, organizationId, payload, buffer, kind, {
+      actorUserId: userId,
+      role,
+    });
   }
 
   /**
@@ -295,6 +309,7 @@ export class MediaService {
     payload: UploadMediaAssetDto,
     buffer: Buffer,
     kind: NonNullable<ReturnType<typeof detectFileKind>>,
+    audit?: { readonly actorUserId: string; readonly role: string },
   ): Promise<MediaAssetResponse> {
     const id = randomUUID();
     const storageKey = buildStorageKey(academyId, kind.extension, id);
@@ -306,8 +321,8 @@ export class MediaService {
 
     const asset = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) =>
-        this.mediaAssetsRepository.create(tx, {
+      async (tx) => {
+        const created = await this.mediaAssetsRepository.create(tx, {
           id,
           academy: { connect: { id: academyId } },
           type: kind.assetType,
@@ -317,7 +332,21 @@ export class MediaService {
           altText: payload.altText,
           mimeType: kind.mimeType,
           sizeBytes: BigInt(buffer.length),
-        }),
+        });
+        if (audit) {
+          await this.auditLogWriterService.record(tx, {
+            actorUserId: audit.actorUserId,
+            organizationId,
+            academyId,
+            role: audit.role,
+            action: 'media.uploaded',
+            targetId: created.id,
+            targetLabel: created.fileName,
+            context: { mediaType: created.type, sizeBytes: buffer.length },
+          });
+        }
+        return created;
+      },
     );
 
     await this.mediaProcessingProducer.enqueue(asset.id, academyId, organizationId);
@@ -363,8 +392,12 @@ export class MediaService {
     const response = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
-        return this.archiveOne(tx, academyId, assetId);
+        const role = await this.assertCanManage(tx, academyId, userId);
+        return this.archiveOne(tx, academyId, assetId, {
+          actorUserId: userId,
+          organizationId,
+          role,
+        });
       },
     );
 
@@ -387,15 +420,20 @@ export class MediaService {
     userId: string,
     assetIds: readonly string[],
   ): Promise<MediaBulkArchiveResponse> {
-    await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
-      this.assertCanManage(tx, academyId, userId),
+    const role = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.assertCanManage(tx, academyId, userId),
     );
     const archived: string[] = [];
     const refused: MediaBulkArchiveResponse['refused'][number][] = [];
     for (const assetId of new Set(assetIds)) {
       try {
         await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
-          this.archiveOne(tx, academyId, assetId),
+          this.archiveOne(tx, academyId, assetId, {
+            actorUserId: userId,
+            organizationId,
+            role,
+          }),
         );
         archived.push(assetId);
       } catch (error) {
@@ -423,6 +461,11 @@ export class MediaService {
     tx: Prisma.TransactionClient,
     academyId: string,
     assetId: string,
+    audit: {
+      readonly actorUserId: string;
+      readonly organizationId: string;
+      readonly role: string;
+    },
   ): Promise<MediaAssetResponse> {
     const existing = await this.mediaAssetsRepository.findById(tx, academyId, assetId);
     if (!existing || existing.status === 'deleted') {
@@ -438,6 +481,18 @@ export class MediaService {
     }
     const updated = await this.mediaAssetsRepository.update(tx, assetId, {
       status: 'archived',
+    });
+    // Task 3 — one row per archived asset, in that asset's own transaction
+    // (an already-archived asset returned above writes nothing).
+    await this.auditLogWriterService.record(tx, {
+      actorUserId: audit.actorUserId,
+      organizationId: audit.organizationId,
+      academyId,
+      role: audit.role,
+      action: 'media.archived',
+      targetId: assetId,
+      targetLabel: existing.fileName,
+      context: { mediaType: existing.type },
     });
     return toMediaAssetResponse(updated);
   }

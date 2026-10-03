@@ -266,7 +266,10 @@ export class CoursesService {
 
           const updated = await this.coursesRepository.update(tx, courseId, data);
 
-          await this.auditLogWriterService.write(tx, {
+          // Task 3 — field-level before/after over the catalogue's course
+          // diff fields (both rows are full, so untouched fields compare
+          // equal and are omitted).
+          await this.auditLogWriterService.record(tx, {
             actorUserId: userId,
             organizationId,
             academyId,
@@ -275,6 +278,8 @@ export class CoursesService {
             targetType: 'course',
             targetId: courseId,
             targetLabel: updated.title,
+            before: current as unknown as Record<string, unknown>,
+            after: updated as unknown as Record<string, unknown>,
           });
 
           const [sections, lessons] = await Promise.all([
@@ -469,6 +474,12 @@ export class CoursesService {
 
       await this.courseInstructorsRepository.create(tx, courseId, targetUserId);
 
+      // Task 3 — the instructor's NAME, so the log reads "assigned Sara to
+      // «Chemistry 101»" instead of quoting a user id.
+      const instructor = await tx.user.findUnique({
+        where: { id: targetUserId },
+        select: { name: true },
+      });
       await this.auditLogWriterService.write(tx, {
         actorUserId: userId,
         organizationId,
@@ -478,7 +489,7 @@ export class CoursesService {
         targetType: 'course',
         targetId: courseId,
         targetLabel: current!.title,
-        context: { targetUserId },
+        context: { targetUserId, instructorName: instructor?.name ?? null },
       });
     });
 
@@ -511,6 +522,10 @@ export class CoursesService {
 
       await this.courseInstructorsRepository.delete(tx, courseId, targetUserId);
 
+      const instructor = await tx.user.findUnique({
+        where: { id: targetUserId },
+        select: { name: true },
+      });
       await this.auditLogWriterService.write(tx, {
         actorUserId: userId,
         organizationId,
@@ -520,7 +535,7 @@ export class CoursesService {
         targetType: 'course',
         targetId: courseId,
         targetLabel: current!.title,
-        context: { targetUserId },
+        context: { targetUserId, instructorName: instructor?.name ?? null },
       });
     });
   }

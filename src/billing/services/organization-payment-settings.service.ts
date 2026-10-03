@@ -13,12 +13,14 @@ import {
   type OrganizationPaymentSettingsResponse,
 } from '../dto/organization-payment-settings.contract';
 import type { UpdateOrganizationPaymentSettingsDto } from '../dto/update-organization-payment-settings.dto';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 
 @Injectable()
 export class OrganizationPaymentSettingsService {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly organizationPaymentSettingsRepository: OrganizationPaymentSettingsRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   async getPaymentSettings(
@@ -35,18 +37,40 @@ export class OrganizationPaymentSettingsService {
     return toOrganizationPaymentSettingsResponse(organizationId, settings);
   }
 
+  /**
+   * Task 3 — audited in the same transaction as the upsert, with the mode's
+   * before/after ("no row" reads as `unconfigured`, matching the response).
+   */
   async updatePaymentSettings(
     organizationId: string,
     payload: UpdateOrganizationPaymentSettingsDto,
+    actorUserId: string,
   ): Promise<OrganizationPaymentSettingsResponse> {
     const settings = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) =>
-        this.organizationPaymentSettingsRepository.upsertMode(
+      async (tx) => {
+        const before =
+          await this.organizationPaymentSettingsRepository.findByOrganizationId(
+            tx,
+            organizationId,
+          );
+        const saved = await this.organizationPaymentSettingsRepository.upsertMode(
           tx,
           organizationId,
           payload.paymentCollectionMode,
-        ),
+        );
+        await this.auditLogWriterService.record(tx, {
+          actorUserId,
+          organizationId,
+          action: 'organization.payment_settings.updated',
+          targetId: organizationId,
+          before: {
+            paymentCollectionMode: before?.paymentCollectionMode ?? 'unconfigured',
+          },
+          after: { paymentCollectionMode: saved.paymentCollectionMode },
+        });
+        return saved;
+      },
     );
     return toOrganizationPaymentSettingsResponse(organizationId, settings);
   }

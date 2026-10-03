@@ -13,7 +13,9 @@ import { CurrentAuthContext } from '../../identity/decorators/auth-context.decor
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { AuditLogService } from '../services/audit-log.service';
 import { ListAuditLogQueryDto } from '../dto/list-audit-log-query.dto';
+import { PlatformAuditFeedQueryDto } from '../../audit-log/dto/audit-feed-query.dto';
 import type {
+  AuditLogCursorPage,
   AuditLogEntryDetailResponse,
   AuditLogEntrySummaryResponse,
 } from '../../audit-log/dto/audit-log.contract';
@@ -30,6 +32,19 @@ export class AuditLogController {
     @Query() query: ListAuditLogQueryDto,
   ): Promise<PaginatedResult<AuditLogEntrySummaryResponse>> {
     return this.auditLogService.listEntries(auth.userId, query);
+  }
+
+  /**
+   * Task 3 — keyset-paginated feed (`{ items, nextCursor }`, no total) with
+   * category/action/actor/tenant/date/search filters. Declared before
+   * `:id` so `feed` is never read as an entry id.
+   */
+  @Get('feed')
+  async feed(
+    @CurrentAuthContext() auth: AuthContext,
+    @Query() query: PlatformAuditFeedQueryDto,
+  ): Promise<AuditLogCursorPage<AuditLogEntrySummaryResponse>> {
+    return this.auditLogService.listFeed(auth.userId, query);
   }
 
   @Get(':id')

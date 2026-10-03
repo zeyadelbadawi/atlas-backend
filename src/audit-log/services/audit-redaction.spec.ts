@@ -10,6 +10,12 @@
  * trusting any call site to behave.
  */
 import { redactChanges } from './audit-log-writer.service';
+import { getAuditEventDefinition } from '../catalog/audit-event-catalog';
+import {
+  maskEmailsInValue,
+  sanitizeAuditContext,
+  sanitizeTargetLabel,
+} from '../utils/audit-sanitize.util';
 
 describe('redactChanges (P58)', () => {
   it('passes ordinary business values through untouched', () => {
@@ -106,5 +112,81 @@ describe('redactChanges (P58)', () => {
     for (let i = 0; i < 40; i += 1) deep = { nested: deep };
 
     expect(() => redactChanges({ tree: { from: deep, to: deep } })).not.toThrow();
+  });
+});
+
+/*
+  Task 3 — `context` and `targetLabel` are now scrubbed at the same choke
+  point. These pin the catalogue allowlist and the tenant-visible email/IP
+  rules, which are what keep a careless call site from leaking PII into an
+  owner-facing activity log.
+*/
+describe('sanitizeAuditContext / sanitizeTargetLabel (Task 3)', () => {
+  const tenantVisible = getAuditEventDefinition('course_lesson.created')!;
+  const operatorOnly = getAuditEventDefinition('auth.otp.failed')!;
+
+  it('keeps only keys on the action’s allowlist', () => {
+    const { context, dropped } = sanitizeAuditContext(tenantVisible, {
+      courseId: 'c1',
+      sectionTitle: 'Reactions',
+      somethingElse: 'not allowed',
+    });
+    expect(context).toEqual({ courseId: 'c1', sectionTitle: 'Reactions' });
+    expect(dropped).toEqual(['somethingElse']);
+  });
+
+  it('drops sensitive-named keys even if a definition were to allow them', () => {
+    const definition = { ...tenantVisible, context: ['apiToken', 'courseId'] };
+    const { context } = sanitizeAuditContext(definition, {
+      apiToken: 'abc',
+      courseId: 'c1',
+    });
+    expect(context).toEqual({ courseId: 'c1' });
+  });
+
+  it('strips emails from tenant-visible context values and drops IP keys', () => {
+    const definition = {
+      ...tenantVisible,
+      context: ['studentName', 'ipAddress', 'note'],
+    };
+    const { context } = sanitizeAuditContext(definition, {
+      studentName: 'Mohammed (mo@example.com)',
+      ipAddress: '10.0.0.1',
+      note: 'someone@example.org',
+    });
+    expect(context).toEqual({ studentName: 'Mohammed (' + ')' });
+    expect(JSON.stringify(context)).not.toContain('@');
+  });
+
+  it('keeps the operator-only forensic IP on a platform-only security event', () => {
+    const { context } = sanitizeAuditContext(operatorOnly, {
+      surface: 'management',
+      ipAddress: '10.0.0.1',
+    });
+    expect(context).toEqual({ surface: 'management', ipAddress: '10.0.0.1' });
+  });
+
+  it('omits undefined but keeps explicit null', () => {
+    const { context } = sanitizeAuditContext(tenantVisible, {
+      courseId: undefined,
+      sectionId: null,
+    });
+    expect(context).toEqual({ sectionId: null });
+  });
+
+  it('removes an email from a tenant-visible target label', () => {
+    expect(sanitizeTargetLabel(tenantVisible, 'ali@example.com → Chemistry')).toBe(
+      'Chemistry',
+    );
+    expect(sanitizeTargetLabel(tenantVisible, 'ali@example.com')).toBeUndefined();
+    expect(sanitizeTargetLabel(operatorOnly, 'ali@example.com')).toBe('ali@example.com');
+  });
+
+  it('masks emails inside before/after values', () => {
+    expect(maskEmailsInValue('owner@example.com')).toBe('[email hidden]');
+    expect(maskEmailsInValue({ contact: 'a@b.co', city: 'Cairo' })).toEqual({
+      contact: '[email hidden]',
+      city: 'Cairo',
+    });
   });
 });

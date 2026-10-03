@@ -68,8 +68,56 @@ import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import { WebsiteLibraryRevisionService } from './website-library-revision.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import type { AuditAction } from '../../audit-log/catalog/audit-event-catalog';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
+
+/** A library entry's `LocalizedText` as an audit label: English, else Arabic. */
+function localizedAuditLabel(value: Prisma.JsonValue | string): string | undefined {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const text = value as Record<string, unknown>;
+    const picked = [text.en, text.ar].find(
+      (candidate): candidate is string =>
+        typeof candidate === 'string' && candidate.trim().length > 0,
+    );
+    return picked;
+  }
+  return undefined;
+}
+
+function faqAuditSnapshot(row: {
+  readonly question: Prisma.JsonValue;
+  readonly answer: Prisma.JsonValue;
+  readonly order: number;
+  readonly visible: boolean;
+}): Record<string, unknown> {
+  return {
+    question: row.question,
+    answer: row.answer,
+    order: row.order,
+    visible: row.visible,
+  };
+}
+
+function testimonialAuditSnapshot(row: {
+  readonly quote: Prisma.JsonValue;
+  readonly authorName: string;
+  readonly authorRole: Prisma.JsonValue | null;
+  readonly avatar: string | null;
+  readonly order: number;
+  readonly visible: boolean;
+}): Record<string, unknown> {
+  return {
+    quote: row.quote,
+    authorName: row.authorName,
+    authorRole: row.authorRole,
+    avatar: row.avatar,
+    order: row.order,
+    visible: row.visible,
+  };
+}
 
 @Injectable()
 export class WebsiteContentService {
@@ -80,13 +128,15 @@ export class WebsiteContentService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     // After a committed write — the public pages cache keys on it.
     private readonly libraryRevisionService: WebsiteLibraryRevisionService,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
+  /** Returns the caller's academy role, which the audit row records (no second lookup). */
   private async assertCanManage(
     tx: Prisma.TransactionClient,
     academyId: string,
     userId: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const membership = await this.academyMembersRepository.findForUserInAcademy(
       tx,
       academyId,
@@ -95,6 +145,35 @@ export class WebsiteContentService {
     if (!membership || !MANAGING_ROLES.has(membership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
+    return membership.role;
+  }
+
+  /** Task 3 — one audit row per library write, in the write's own transaction. */
+  private recordLibraryEvent(
+    tx: Prisma.TransactionClient,
+    input: {
+      readonly academyId: string;
+      readonly organizationId: string;
+      readonly userId: string;
+      readonly role: string;
+      readonly action: AuditAction;
+      readonly entryId: string;
+      readonly label: Prisma.JsonValue | string;
+      readonly before?: Record<string, unknown>;
+      readonly after?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    return this.auditLogWriterService.record(tx, {
+      actorUserId: input.userId,
+      organizationId: input.organizationId,
+      academyId: input.academyId,
+      role: input.role,
+      action: input.action,
+      targetId: input.entryId,
+      targetLabel: localizedAuditLabel(input.label),
+      before: input.before,
+      after: input.after,
+    });
   }
 
   /** Phase 1 (Extended Scope, dependency A), narrowed to the managing tier in Phase 9 — see `WebsiteConfigurationService.assertIsMember`'s doc comment for both changes and why an Instructor must be refused here. */
@@ -172,7 +251,7 @@ export class WebsiteContentService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const validated = parseOrThrow(createFaqEntrySchema, payload);
         const order = await this.websiteFaqEntriesRepository.nextOrder(tx, academyId);
 
@@ -181,6 +260,15 @@ export class WebsiteContentService {
           question: validated.question,
           answer: validated.answer,
           order,
+        });
+        await this.recordLibraryEvent(tx, {
+          academyId,
+          organizationId,
+          userId,
+          role,
+          action: 'website_faq.created',
+          entryId: created.id,
+          label: created.question,
         });
         return toWebsiteFaqEntryResponse(created);
       },
@@ -200,7 +288,7 @@ export class WebsiteContentService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const existing = await this.websiteFaqEntriesRepository.findById(
           tx,
           academyId,
@@ -216,6 +304,17 @@ export class WebsiteContentService {
         if (validated.visible !== undefined) data.visible = validated.visible;
 
         const updated = await this.websiteFaqEntriesRepository.update(tx, entryId, data);
+        await this.recordLibraryEvent(tx, {
+          academyId,
+          organizationId,
+          userId,
+          role,
+          action: 'website_faq.updated',
+          entryId,
+          label: updated.question,
+          before: faqAuditSnapshot(existing),
+          after: faqAuditSnapshot(updated),
+        });
         return toWebsiteFaqEntryResponse(updated);
       },
     );
@@ -233,7 +332,7 @@ export class WebsiteContentService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const existing = await this.websiteFaqEntriesRepository.findById(
           tx,
           academyId,
@@ -246,6 +345,15 @@ export class WebsiteContentService {
 
         const updated = await this.websiteFaqEntriesRepository.update(tx, entryId, {
           status: 'published',
+        });
+        await this.recordLibraryEvent(tx, {
+          academyId,
+          organizationId,
+          userId,
+          role,
+          action: 'website_faq.published',
+          entryId,
+          label: existing.question,
         });
         return toWebsiteFaqEntryResponse(updated);
       },
@@ -264,7 +372,7 @@ export class WebsiteContentService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const existing = await this.websiteFaqEntriesRepository.findById(
           tx,
           academyId,
@@ -277,6 +385,15 @@ export class WebsiteContentService {
 
         const updated = await this.websiteFaqEntriesRepository.update(tx, entryId, {
           status: 'archived',
+        });
+        await this.recordLibraryEvent(tx, {
+          academyId,
+          organizationId,
+          userId,
+          role,
+          action: 'website_faq.archived',
+          entryId,
+          label: existing.question,
         });
         return toWebsiteFaqEntryResponse(updated);
       },
@@ -348,7 +465,7 @@ export class WebsiteContentService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const validated = parseOrThrow(createTestimonialEntrySchema, payload);
         const order = await this.websiteTestimonialEntriesRepository.nextOrder(
           tx,
@@ -362,6 +479,15 @@ export class WebsiteContentService {
           authorRole: validated.authorRole,
           avatar: validated.avatar,
           order,
+        });
+        await this.recordLibraryEvent(tx, {
+          academyId,
+          organizationId,
+          userId,
+          role,
+          action: 'website_testimonial.created',
+          entryId: created.id,
+          label: created.authorName,
         });
         return toWebsiteTestimonialEntryResponse(created);
       },
@@ -381,7 +507,7 @@ export class WebsiteContentService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const existing = await this.websiteTestimonialEntriesRepository.findById(
           tx,
           academyId,
@@ -403,6 +529,17 @@ export class WebsiteContentService {
           entryId,
           data,
         );
+        await this.recordLibraryEvent(tx, {
+          academyId,
+          organizationId,
+          userId,
+          role,
+          action: 'website_testimonial.updated',
+          entryId,
+          label: updated.authorName,
+          before: testimonialAuditSnapshot(existing),
+          after: testimonialAuditSnapshot(updated),
+        });
         return toWebsiteTestimonialEntryResponse(updated);
       },
     );
@@ -420,7 +557,7 @@ export class WebsiteContentService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const existing = await this.websiteTestimonialEntriesRepository.findById(
           tx,
           academyId,
@@ -438,6 +575,15 @@ export class WebsiteContentService {
             status: 'published',
           },
         );
+        await this.recordLibraryEvent(tx, {
+          academyId,
+          organizationId,
+          userId,
+          role,
+          action: 'website_testimonial.published',
+          entryId,
+          label: existing.authorName,
+        });
         return toWebsiteTestimonialEntryResponse(updated);
       },
     );
@@ -455,7 +601,7 @@ export class WebsiteContentService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const existing = await this.websiteTestimonialEntriesRepository.findById(
           tx,
           academyId,
@@ -473,6 +619,15 @@ export class WebsiteContentService {
             status: 'archived',
           },
         );
+        await this.recordLibraryEvent(tx, {
+          academyId,
+          organizationId,
+          userId,
+          role,
+          action: 'website_testimonial.archived',
+          entryId,
+          label: existing.authorName,
+        });
         return toWebsiteTestimonialEntryResponse(updated);
       },
     );

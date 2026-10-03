@@ -40,6 +40,7 @@ import { withSavepoint } from '../../common/database/savepoint.util';
 import {
   COMMUNICATION_CATALOG,
   catalogCopy,
+  settleScrubKeys,
   type CommunicationCatalogEntry,
   type CommunicationEntityRef,
   type CommunicationEventKey,
@@ -71,6 +72,18 @@ export interface OutboxChannels {
 
 export function cooldownKey(userId: string, key: string): string {
   return `comm:cooldown:${userId}:${key}`;
+}
+
+/** `values` minus the entry's `personalValues` — what the in-app row may keep. */
+export function withoutPersonalValues(
+  entry: Pick<CommunicationCatalogEntry, 'personalValues'>,
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  const personal = entry.personalValues;
+  if (!personal?.length) return values;
+  return Object.fromEntries(
+    Object.entries(values).filter(([key]) => !personal.includes(key)),
+  );
 }
 
 function isUniqueConstraintViolation(error: unknown): boolean {
@@ -115,7 +128,8 @@ export class CommunicationService {
         priority: entry.priority,
         titleKey: copy.titleKey,
         messageKey: copy.messageKey,
-        values,
+        // Never a third party's personal data — see `personalValues`.
+        values: withoutPersonalValues(entry, values),
         actionUrl,
         actionLabelKey: entry.actionLabelKey,
         dedupeKey,
@@ -164,6 +178,60 @@ export class CommunicationService {
     }
     this.metrics.recordOutbox(entry.category, 'pending');
     return { created: true, outboxId };
+  }
+
+  /**
+   * The source record of `key` for `entity` was deleted: take back what
+   * the emit copied out of it. Runs inside the CALLER's transaction, so
+   * the deletion and this commit or roll back together.
+   *
+   *   - every outbox row of that key and entity drops its credential and
+   *     personal `values` keys, and a row still waiting to be emailed
+   *     (`pending`/`deferred`, digest windows included) is settled as
+   *     `suppressed` with `source_deleted` — an email about a deleted
+   *     record would be sent with its details already stripped. Needs the
+   *     `communication_outbox_platform_update` policy, i.e. a Platform
+   *     Owner session;
+   *   - the acting user's OWN in-app row (matched by the entry's dedupe
+   *     key) drops the same keys. Other recipients' rows are out of reach
+   *     by design (`notifications_self_update`), which is why the emit
+   *     never writes `personalValues` there in the first place; this only
+   *     cleans a row written before that rule existed.
+   *
+   * Outbox rows cannot be deleted outside the 90-day retention policy, so
+   * they are blanked, not removed. Returns how many outbox rows changed.
+   */
+  async forgetEntity(
+    tx: Prisma.TransactionClient,
+    key: CommunicationEventKey,
+    entity: CommunicationEntityRef,
+  ): Promise<number> {
+    const entry = COMMUNICATION_CATALOG[key];
+    const keys = [...settleScrubKeys(entry)];
+    const outbox = await tx.$executeRaw`
+      UPDATE "communication_outbox"
+         SET "values" = CASE WHEN "values" IS NULL THEN NULL
+                             ELSE "values" - ${keys}::text[] END,
+             "state" = CASE WHEN "state" IN ('pending', 'deferred')
+                            THEN 'suppressed'::"communication_outbox_state"
+                            ELSE "state" END,
+             "last_error" = CASE WHEN "state" IN ('pending', 'deferred')
+                                 THEN 'source_deleted'
+                                 ELSE "last_error" END
+       WHERE "key" = ${key}
+         AND "entity_type" = ${entity.type}
+         AND "entity_id" = ${entity.id}
+    `;
+    const dedupeKey = entry.dedupe({ entity, values: {} });
+    if (dedupeKey !== null && keys.length > 0) {
+      await tx.$executeRaw`
+        UPDATE "notifications"
+           SET "values" = "values" - ${keys}::text[]
+         WHERE "dedupe_key" = ${dedupeKey}
+           AND "values" IS NOT NULL
+      `;
+    }
+    return outbox;
   }
 
   /**

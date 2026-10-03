@@ -1,10 +1,11 @@
 /**
  * CourseCurriculumService — sections and lessons: CRUD, plus the
- * move-up/move-down reorder model (`ReorderItemsPayload` — the frontend
- * computes the new full order client-side via `moveItem` and sends the
- * complete `orderedIds` array; this service just persists it, matching
- * master plan P5 §8/§9's explicit "no drag-and-drop backend assumption,
- * just an `order` integer update" instruction).
+ * full-ordering reorder model (`ReorderItemsPayload` — the frontend
+ * computes the new full order client-side, from move up/down buttons or
+ * drag-and-drop, and sends the complete `orderedIds` array; this service
+ * validates it as an exact permutation and persists it as `order`
+ * integers). Reorders lock their parent row and honour an optional
+ * `expectedOrderedIds` stale check — see `curriculum-ordering.ts`.
  *
  * Every ownership-chain verification is explicit (master plan P5 §14):
  * Lesson → Section → Course → Academy → Organization. A caller must never
@@ -44,6 +45,15 @@ import type {
   UpdateCourseLessonDto,
 } from '../dto/course-lesson.dto';
 import type { ReorderItemsDto } from '../dto/reorder-items.dto';
+import {
+  assertExpectedOrder,
+  isExactPermutation,
+  lockCourseRow,
+  lockSectionRow,
+  nextUnitOrder,
+  persistUnitOrder,
+  readUnitItems,
+} from './curriculum-ordering';
 
 /** See `AcademiesService.MANAGING_ROLES` — identical rule. */
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
@@ -213,20 +223,41 @@ export class CourseCurriculumService {
     payload: ReorderItemsDto,
   ): Promise<void> {
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId, courseId);
+      const role = await this.assertCanManage(tx, academyId, userId, courseId);
       await this.assertCourseInAcademy(tx, courseId, academyId);
+      // Serialize concurrent section reorders of this course; every read
+      // below sees what the previous writer committed (see
+      // `curriculum-ordering.ts`).
+      await lockCourseRow(tx, courseId);
 
-      const existing = await this.sectionsRepository.findIdsForCourse(tx, courseId);
-      this.assertExactPermutation(
-        existing.map((s) => s.id),
-        payload.orderedIds,
-      );
+      const existing = await tx.courseSection.findMany({
+        where: { courseId },
+        select: { id: true, order: true },
+        orderBy: [{ order: 'asc' }, { id: 'asc' }],
+      });
+      const currentIds = existing.map((s) => s.id);
+      assertExpectedOrder(currentIds, payload.expectedOrderedIds);
+      this.assertExactPermutation(currentIds, payload.orderedIds);
 
-      await Promise.all(
-        payload.orderedIds.map((id, index) =>
-          this.sectionsRepository.updateOrder(tx, id, index),
-        ),
-      );
+      const currentOrder = new Map(existing.map((s) => [s.id, s.order]));
+      for (let index = 0; index < payload.orderedIds.length; index += 1) {
+        const id = payload.orderedIds[index];
+        if (currentOrder.get(id) !== index) {
+          await this.sectionsRepository.updateOrder(tx, id, index);
+        }
+      }
+
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId,
+        academyId,
+        role,
+        action: 'course_section.reordered',
+        targetType: 'course',
+        targetId: courseId,
+        context: { courseId, sectionCount: payload.orderedIds.length },
+        changes: { order: { from: currentIds, to: [...payload.orderedIds] } },
+      });
     });
   }
 
@@ -238,8 +269,12 @@ export class CourseCurriculumService {
     userId: string,
     payload: CreateCourseLessonDto,
   ): Promise<CourseLessonResponse> {
-    const lesson = await this.tenancyContextService.runInTenantContext(
+    // Combined tenant + user context: the append position is computed over
+    // EVERY item type in the unit (quizzes/assignments carry per-user author
+    // policies), not just lessons. Neither family of policy is weakened.
+    const lesson = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
+      userId,
       async (tx) => {
         const role = await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertCourseInAcademy(tx, courseId, academyId);
@@ -257,7 +292,12 @@ export class CourseCurriculumService {
           if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
         }
 
-        const { _max } = await this.lessonsRepository.maxOrder(tx, sectionId);
+        // Append after the LAST item of the unit across all types — the
+        // unit shares one ordinal space, so "max lesson order + 1" could
+        // sort a new lesson before an existing quiz/assignment. The section
+        // lock serializes this with concurrent appends and reorders.
+        await lockSectionRow(tx, sectionId);
+        const order = await nextUnitOrder(tx, sectionId);
         const created = await this.lessonsRepository.create(tx, {
           section: { connect: { id: sectionId } },
           courseId,
@@ -266,7 +306,7 @@ export class CourseCurriculumService {
           contentType: payload.contentType,
           contentUrl: payload.contentUrl,
           status: payload.status,
-          order: (_max.order ?? -1) + 1,
+          order,
           // These four were declared by `CreateCourseLessonDto` and
           // persisted by nothing, so a lesson created as a free preview,
           // with a video, a drip date or a watched-ratio rule came back
@@ -568,23 +608,57 @@ export class CourseCurriculumService {
     userId: string,
     payload: ReorderItemsDto,
   ): Promise<void> {
-    await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, userId, courseId);
-      await this.assertCourseInAcademy(tx, courseId, academyId);
-      await this.assertSectionInCourse(tx, sectionId, courseId);
+    // LEGACY ENDPOINT, SAME CONTRACT. It still takes the full ordering of the
+    // unit's LESSONS only, but it no longer renumbers lessons 0..n-1 in
+    // isolation (which collided with quiz/assignment ordinals in the shared
+    // unit space). Instead the requested lesson order is laid into the
+    // positions lessons already occupy in the unified sequence, so every
+    // non-lesson item keeps its place, and the whole unit is renumbered
+    // contiguously. Combined context because quiz/assignment rows may be
+    // renumbered too (their write policies are per-user).
+    await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        const role = await this.assertCanManage(tx, academyId, userId, courseId);
+        await this.assertCourseInAcademy(tx, courseId, academyId);
+        const section = await this.assertSectionInCourse(tx, sectionId, courseId);
+        await lockSectionRow(tx, sectionId);
 
-      const existing = await this.lessonsRepository.findIdsForSection(tx, sectionId);
-      this.assertExactPermutation(
-        existing.map((l) => l.id),
-        payload.orderedIds,
-      );
+        const items = await readUnitItems(tx, sectionId);
+        const lessons = items.filter((i) => i.type === 'lesson');
+        const currentLessonIds = lessons.map((l) => l.id);
+        assertExpectedOrder(currentLessonIds, payload.expectedOrderedIds);
+        this.assertExactPermutation(currentLessonIds, payload.orderedIds);
 
-      await Promise.all(
-        payload.orderedIds.map((id, index) =>
-          this.lessonsRepository.updateOrder(tx, id, index),
-        ),
-      );
-    });
+        const lessonById = new Map(lessons.map((l) => [l.id, l]));
+        const queue = payload.orderedIds.map((id) => lessonById.get(id)!);
+        const merged = items.map((item) =>
+          item.type === 'lesson' ? queue.shift()! : item,
+        );
+        await persistUnitOrder(tx, merged);
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'course.curriculum.items_reordered',
+          targetType: 'course_section',
+          targetId: sectionId,
+          targetLabel: section.title,
+          context: {
+            courseId,
+            sectionId,
+            itemCount: merged.length,
+            legacyLessonsEndpoint: true,
+          },
+          changes: {
+            order: { from: items.map((i) => i.id), to: merged.map((i) => i.id) },
+          },
+        });
+      },
+    );
   }
 
   /** Returns the caller's real Academy-membership role (Phase 8) — used as the `role` attributed on each mutation's audit-log entry. */
@@ -658,13 +732,7 @@ export class CourseCurriculumService {
     existingIds: readonly string[],
     orderedIds: readonly string[],
   ): void {
-    const existingSet = new Set(existingIds);
-    const orderedSet = new Set(orderedIds);
-    const isSameSet =
-      existingSet.size === orderedSet.size &&
-      [...existingSet].every((id) => orderedSet.has(id));
-
-    if (!isSameSet) {
+    if (!isExactPermutation(existingIds, orderedIds)) {
       throw new BadRequestException({ messageKey: 'errors.course.invalidReorderSet' });
     }
   }

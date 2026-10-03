@@ -89,6 +89,21 @@ import { recordSessionsRevoked } from '../../observability/metrics/auth-security
 /** Launch Stabilization A4 — whether registration created an account or added an academy to an existing one. */
 
 /**
+ * The shape an emailed verification token can have: base64url, within the
+ * length range any token this service ever issued falls in (today's are
+ * 43 characters; older test fixtures and legacy rows are longer). Anything
+ * else is refused as `invalid` without a lookup.
+ */
+const VERIFICATION_TOKEN_FORMAT = /^[A-Za-z0-9_-]{16,512}$/;
+
+/** `POST /auth/verify-email` refusals. `expired`/`used` only ever reach the holder of a real link. */
+const VERIFICATION_FAILURE_MESSAGE_KEYS = {
+  invalid: 'errors.auth.invalidVerificationToken',
+  expired: 'errors.auth.verificationTokenExpired',
+  used: 'errors.auth.verificationTokenUsed',
+} as const;
+
+/**
  * How long after a rotation a retired refresh token may be presented again
  * without being treated as stolen: two tabs refreshing the same token race
  * within milliseconds; a copied token is replayed minutes or days later.
@@ -696,7 +711,12 @@ export class AuthService {
     // can re-request verification at any time.
     if (!rawVerificationToken) return { account: 'new' };
     try {
-      await this.emitEmailVerification(userId, rawVerificationToken);
+      const verificationOutboxId = await this.tenancyContextService.runInUserContext(
+        userId,
+        (tx) =>
+          this.emitEmailVerification(tx, userId, rawVerificationToken, academyId ?? null),
+      );
+      await this.communicationService.enqueueAfterCommit(verificationOutboxId);
     } catch (error) {
       this.logger.warn(
         { userId, error: error instanceof Error ? error.message : error },
@@ -1005,6 +1025,12 @@ export class AuthService {
       email,
     );
 
+    // Task 3 — the join must carry its organization, or the academy's
+    // activity log (tenant-scoped by organization) never shows it.
+    const organizationId =
+      (await this.academyStudentsRepository.resolveOrganizationId(academyId)) ??
+      undefined;
+
     let outboxIds: (string | null)[] = [];
     try {
       outboxIds = await this.tenancyContextService.runInUserContext(
@@ -1018,6 +1044,7 @@ export class AuthService {
           });
           await this.auditLogWriterService.write(tx, {
             actorUserId: user.id,
+            organizationId,
             academyId,
             action: 'academy.student.joined',
             targetType: 'user',
@@ -1084,15 +1111,8 @@ export class AuthService {
   }
 
   /**
-   * Issues a fresh verification token and emails it.
-   *
-   * Any previously outstanding token for this user is invalidated first,
-   * so only the most recent link ever works — a user who requests
-   * verification twice cannot leave a second live token behind.
-   */
-  /**
    * Emits the verification event so the recipient gets a CTA button, not
-   * a token.
+   * a token. Runs inside the caller's user-context transaction.
    *
    * The legacy `EmailProvider.sendEmailVerification` pasted the raw token
    * into the body as `Verification token: <opaque>`, which is an internal
@@ -1100,49 +1120,42 @@ export class AuthService {
    * the reader and English-only besides. `auth.email.verification` has
    * always existed in the catalogue with a bilingual template and an
    * `actionUrl`; it was simply never wired up. The token now travels
-   * inside the link and is never displayed.
+   * inside the link and is never displayed, and the dispatcher strips it
+   * from the outbox row once the send is settled (`credentialValues`).
+   *
+   * `academyId` is set for an account created on (or resending from) an
+   * academy website: the email then carries that academy's branding and
+   * its link lands on the academy's own `/verify-email`, not on the
+   * management host a learner is refused sign-in on. Never an
+   * `organizationId` — that would make the row, and the live link in it,
+   * visible to the tenant.
    */
-  private async emitEmailVerification(userId: string, rawToken: string): Promise<void> {
-    const outboxId = await this.tenancyContextService.runInUserContext(
-      userId,
-      async (tx) => {
-        const emitted = await this.communicationService.emit(tx, {
-          key: 'auth.email.verification',
-          recipientUserId: userId,
-          entity: { type: 'email_verification', id: userId },
-          // Consumed only by the catalogue's `actionUrl`, which puts it
-          // in the href. No template prints it.
-          values: { token: rawToken },
-        });
-        return emitted.outboxId;
-      },
-    );
-    await this.communicationService.enqueueAfterCommit(outboxId);
-  }
-
-  private async sendEmailVerification(userId: string): Promise<void> {
-    try {
-      const identity = this.configService.getOrThrow<IdentityConfig>('identity');
-      const rawToken = generateOpaqueToken();
-
-      await this.emailVerificationTokensRepository.invalidateAllForUser(userId);
-      await this.emailVerificationTokensRepository.create({
-        userId,
-        tokenHash: hashOpaqueToken(rawToken),
-        expiresAt: new Date(
-          Date.now() + identity.emailVerificationTokenTtlMinutes * 60 * 1000,
+  private async emitEmailVerification(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    rawToken: string,
+    academyId: string | null,
+  ): Promise<string | null> {
+    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
+    const emitted = await this.communicationService.emit(tx, {
+      key: 'auth.email.verification',
+      recipientUserId: userId,
+      academyId,
+      entity: { type: 'email_verification', id: userId },
+      values: {
+        // Consumed only by the catalogue's `actionUrl`, which puts it in
+        // the href. No template prints it.
+        token: rawToken,
+        // The template states how long the link works.
+        expiresInHours: Math.max(
+          1,
+          Math.round(identity.emailVerificationTokenTtlMinutes / 60),
         ),
-      });
-
-      await this.emitEmailVerification(userId, rawToken);
-    } catch (error) {
-      // Logged WITHOUT the token — the raw value must never reach a log
-      // sink, since it is a live credential until used or expired.
-      this.logger.warn(
-        { userId, error: error instanceof Error ? error.message : error },
-        'Could not send the verification email; the account exists and verification can be re-requested.',
-      );
-    }
+        // Selects the academy-host destination in `actionUrl`.
+        ...(academyId ? { academyId } : {}),
+      },
+    });
+    return emitted.outboxId;
   }
 
   /**
@@ -1150,26 +1163,26 @@ export class AuthService {
    *
    * Single-use and replay-proof: the token is claimed with a conditional
    * UPDATE that only matches a row which is unexpired and not yet used,
-   * so a replayed link matches zero rows and is refused. Two concurrent
-   * submissions of the same link resolve the same way — Postgres
-   * serialises the update and only one can observe `usedAt` still null.
+   * and the address is marked verified in the SAME transaction (see
+   * `EmailVerificationTokensRepository.consume`). Two concurrent
+   * submissions of the same link serialise on the row; exactly one wins.
    *
-   * Failures are deliberately indistinguishable: unknown, expired,
-   * already-used and malformed tokens all produce the same error, so the
-   * endpoint cannot be used to probe which tokens exist.
+   * Malformed and unknown tokens are indistinguishable — both are refused
+   * as `invalidVerificationToken` before or after a hash lookup that
+   * finds nothing. Only a token whose hash matched a real row (so only
+   * the holder of the emailed link) is told it expired or was already
+   * used, which lets the page say something useful without turning the
+   * endpoint into a probe.
    */
   async verifyEmail(rawToken: string): Promise<void> {
-    const claimed = await this.emailVerificationTokensRepository.claim(
-      hashOpaqueToken(rawToken),
-    );
+    const outcome = VERIFICATION_TOKEN_FORMAT.test(rawToken)
+      ? await this.emailVerificationTokensRepository.consume(hashOpaqueToken(rawToken))
+      : ({ status: 'invalid' } as const);
 
-    if (!claimed) {
-      throw new BadRequestException({
-        messageKey: 'errors.auth.invalidVerificationToken',
-      });
-    }
-
-    await this.usersRepository.markEmailVerified(claimed.userId, new Date());
+    if (outcome.status === 'verified') return;
+    throw new BadRequestException({
+      messageKey: VERIFICATION_FAILURE_MESSAGE_KEYS[outcome.status],
+    });
   }
 
   /**
@@ -1178,12 +1191,49 @@ export class AuthService {
    * Always reports success, even when the account is already verified —
    * the caller is authenticated, so there is nothing to disclose, and a
    * uniform response keeps the client simple. Rate limiting lives on the
-   * controller: this is an endpoint that sends mail on demand.
+   * controller (`EmailVerificationResendRateLimitGuard`): this is an
+   * endpoint that sends mail on demand.
+   *
+   * Rotation and the outbox entry are ONE transaction under a lock on the
+   * user row (`rotateForUser`): concurrent resends serialise, so exactly
+   * one link is ever live, and a failed emit leaves the previous link
+   * working instead of retiring it with no replacement sent.
    */
-  async resendEmailVerification(userId: string): Promise<void> {
-    const user = await this.usersRepository.findById(userId);
-    if (!user || user.emailVerifiedAt) return;
-    await this.sendEmailVerification(user.id);
+  async resendEmailVerification(
+    userId: string,
+    options: { readonly academyId?: string | null } = {},
+  ): Promise<void> {
+    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
+    const rawToken = generateOpaqueToken();
+    try {
+      const outboxId = await this.tenancyContextService.runInUserContext(
+        userId,
+        async (tx) => {
+          const rotated = await this.emailVerificationTokensRepository.rotateForUser(tx, {
+            userId,
+            tokenHash: hashOpaqueToken(rawToken),
+            expiresAt: new Date(
+              Date.now() + identity.emailVerificationTokenTtlMinutes * 60 * 1000,
+            ),
+          });
+          if (!rotated) return null;
+          return this.emitEmailVerification(
+            tx,
+            userId,
+            rawToken,
+            options.academyId ?? null,
+          );
+        },
+      );
+      await this.communicationService.enqueueAfterCommit(outboxId);
+    } catch (error) {
+      // Logged WITHOUT the token — the raw value must never reach a log
+      // sink, since it is a live credential until used or expired.
+      this.logger.warn(
+        { userId, error: error instanceof Error ? error.message : error },
+        'Could not send the verification email; the account exists and verification can be re-requested.',
+      );
+    }
   }
 
   async signIn(input: {

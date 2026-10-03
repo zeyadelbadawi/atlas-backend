@@ -108,6 +108,44 @@ export interface CommunicationCatalogEntry {
   /** In-app action path and the email's call-to-action, relative to the branded host. */
   readonly actionUrl?: (context: CommunicationRuleContext) => string;
   readonly actionLabelKey?: string;
+  /**
+   * `values` keys that hold a live credential (a link token). The outbox
+   * row must carry them until the email is rendered, and not one moment
+   * longer: once the dispatch settles — sent, suppressed or permanently
+   * failed — `CommunicationDispatchService` deletes these keys from the
+   * row, so the 90-day outbox retention never holds a usable link. A
+   * transient failure keeps them, because the retry has to re-render.
+   *
+   * Rows written before this field existed are NOT rewritten: they expire
+   * with the retention sweep, and every token in them has long since
+   * expired on its own (24h verification, 45m reset, 72h setup).
+   */
+  readonly credentialValues?: readonly string[];
+  /**
+   * `values` keys that hold personal data about someone OTHER than the
+   * recipient (a website visitor's name, address, message). They exist for
+   * the email body only:
+   *
+   *   - `CommunicationService.emit` leaves them out of the in-app
+   *     `notifications` row, which the recipient keeps for 180 days and no
+   *     one can retract on the subject's behalf (RLS lets only the
+   *     recipient touch it);
+   *   - the dispatcher strips them from the outbox row once the dispatch
+   *     settles, on exactly the `credentialValues` schedule above —
+   *     including the digest paths, which a non-security key can take;
+   *   - `CommunicationService.forgetEntity` strips them on demand when the
+   *     source record is deleted before the email has gone out.
+   *
+   * The in-app copy for such a key must therefore not interpolate them.
+   */
+  readonly personalValues?: readonly string[];
+}
+
+/** Every `values` key the outbox row must drop once its dispatch settles. */
+export function settleScrubKeys(
+  entry: Pick<CommunicationCatalogEntry, 'credentialValues' | 'personalValues'>,
+): readonly string[] {
+  return [...(entry.credentialValues ?? []), ...(entry.personalValues ?? [])];
 }
 
 /** The (titleKey, messageKey) pair this entry writes for one concrete event. */
@@ -459,16 +497,31 @@ const CATALOG = {
     retentionClass: 'extended',
     dedupe: NEVER_DEDUPED,
     cooldownSeconds: 0,
-    locale: 'user',
-    branding: 'platform',
+    // An academy learner who never chose a language gets the academy's.
+    // Without an academy attached this is the same as `user`.
+    locale: 'academy',
+    // `academy` resolves to the PLATFORM brand and host whenever the row
+    // carries no academy (`CommunicationBrandingService.resolve`), so a
+    // management-surface signup is unchanged; an account created on an
+    // academy website (the producer sets the row's `academyId` and
+    // `values.academyId`) gets that academy's name, logo and host.
+    branding: 'academy',
     template: 'auth.email.verification',
     titleKey: 'notifications:events.emailVerification.title',
     messageKey: 'notifications:events.emailVerification.message',
-    // `/auth/verify-email`, NOT `/verify-email`: the page is mounted
-    // inside the `/auth` subtree (`AUTH_ROUTES.verifyEmail`), and the
-    // shorter path 404s. The token lives ONLY in this href — the
+    // Two destinations, one per surface. The management host mounts the
+    // page inside the `/auth` subtree (`AUTH_ROUTES.verifyEmail`, where
+    // the shorter path 404s); an academy host mounts its own
+    // `/verify-email` at the root (`PublicWebsiteRouter`), and `/auth/...`
+    // there falls into the CMS catch-all. Sending a learner to the
+    // management host instead would verify them on a surface that then
+    // refuses them sign-in. The token lives ONLY in this href — the
     // template renders a CTA and never prints the value.
-    actionUrl: ({ values }) => `/auth/verify-email?token=${str(values, 'token')}`,
+    actionUrl: ({ values }) =>
+      str(values, 'academyId')
+        ? `/verify-email?token=${str(values, 'token')}`
+        : `/auth/verify-email?token=${str(values, 'token')}`,
+    credentialValues: ['token'],
   },
   /**
    * P64 Communications C4 (§12) — the emailed sign-in code.
@@ -531,6 +584,7 @@ const CATALOG = {
     messageKey: 'notifications:events.academyMemberInvited.message',
     actionUrl: ({ values }) =>
       `/auth/reset-password?token=${str(values, 'token')}&setup=1`,
+    credentialValues: ['token'],
   },
   'academy.learner.invited': {
     category: 'security',
@@ -560,6 +614,7 @@ const CATALOG = {
     // `/auth/...` would set the password on a host they are then refused
     // sign-in on (403 by surface enforcement, which is correct).
     actionUrl: ({ values }) => `/reset-password?token=${str(values, 'token')}&setup=1`,
+    credentialValues: ['token'],
   },
   // Smart member invitation — an EXISTING, active Atlas account was added
   // to an academy by its owner. Nothing to set up (the account already has
@@ -669,6 +724,7 @@ const CATALOG = {
     // point, same 404 if it is wrong. `ResetPasswordPage` reads `token`
     // from the query string and validates it before showing the form.
     actionUrl: ({ values }) => `/auth/reset-password?token=${str(values, 'token')}`,
+    credentialValues: ['token'],
   },
   'auth.password.reset_confirmed': {
     category: 'security',
@@ -2042,6 +2098,30 @@ const CATALOG = {
     titleKey: 'notifications:events.retentionVideoDeletionFailed.title',
     messageKey: 'notifications:events.retentionVideoDeletionFailed.message',
     actionUrl: () => PLATFORM_DELIVERY_ANALYTICS_PATH,
+  },
+  // TASK 7 — a visitor sent the Atlas marketing homepage's contact form.
+  // One per active Platform Owner (`PlatformContactIntakeService`), emitted
+  // only AFTER the enquiry committed, so a failed notification can never
+  // lose the enquiry itself. Deduped on the enquiry id: a retried emit for
+  // the same row writes nothing new.
+  'platform.contact_submission.received': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `platform_contact_received:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.contact_submission.received',
+    titleKey: 'notifications:events.platformContactSubmissionReceived.title',
+    messageKey: 'notifications:events.platformContactSubmissionReceived.message',
+    actionUrl: () => '/dashboard/platform/contact-submissions',
+    // The visitor's details go to the owner's inbox by email only; the
+    // feed row keeps `topic` and nothing that identifies the visitor.
+    personalValues: ['name', 'email', 'organizationName', 'message'],
   },
 } as const satisfies Record<string, CommunicationCatalogEntry>;
 

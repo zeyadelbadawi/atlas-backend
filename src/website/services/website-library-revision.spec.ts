@@ -56,12 +56,14 @@ function build(role: string | null = 'owner') {
     findForUserInAcademy: jest.fn(async () => (role ? { role } : null)),
   };
   const libraryRevisionService = { bump: jest.fn(async () => undefined) };
+  const auditLogWriterService = { record: jest.fn(async () => undefined) };
   const service = new WebsiteContentService(
     tenancyContextService as never,
     faqRepo as never,
     testimonialRepo as never,
     academyMembersRepository as never,
     libraryRevisionService as never,
+    auditLogWriterService as never,
   );
   return { service, libraryRevisionService };
 }

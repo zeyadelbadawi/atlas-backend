@@ -177,12 +177,14 @@ describe('Phase 10.1 signup email security (e2e) — P101-MAIL-001..012', () => 
     const user = await admin.user.findUniqueOrThrow({ where: { email } });
     expect(user.emailVerifiedAt).toBeInstanceOf(Date);
 
-    // REPLAY: the same link a second time must fail.
+    // REPLAY: the same link a second time must fail. Its holder is told
+    // the link was already used (only a token whose hash matched a real
+    // row gets a specific reason — see P101-MAIL-012 for unknown ones).
     const replay = await request(app.getHttpServer())
       .post('/auth/verify-email')
       .send({ token });
     expect(replay.status).toBe(400);
-    expect(replay.body.error.messageKey).toBe('errors.auth.invalidVerificationToken');
+    expect(replay.body.error.messageKey).toBe('errors.auth.verificationTokenUsed');
   });
 
   it('P101-MAIL-011 — an expired token is refused', async () => {

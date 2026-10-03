@@ -25,7 +25,7 @@ import {
   MAX_ACADEMY_NAME_LENGTH,
   MAX_ACADEMY_SLUG_LENGTH,
 } from './create-academy.dto';
-import { ACADEMY_STATUS_VALUES } from './academy.constants';
+import { TENANT_SETTABLE_ACADEMY_STATUS_VALUES } from './academy.constants';
 
 /** Matches `AcademyAddress` (`academy.types.ts`) — a partial merge into the stored `address` JSON, never a full overwrite (see `AcademiesService.update`). */
 export class AcademyAddressInputDto {
@@ -98,6 +98,6 @@ export class UpdateAcademyDto {
   readonly currency?: string;
 
   @IsOptional()
-  @IsIn(ACADEMY_STATUS_VALUES)
-  readonly status?: (typeof ACADEMY_STATUS_VALUES)[number];
+  @IsIn(TENANT_SETTABLE_ACADEMY_STATUS_VALUES)
+  readonly status?: (typeof TENANT_SETTABLE_ACADEMY_STATUS_VALUES)[number];
 }

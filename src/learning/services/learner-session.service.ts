@@ -28,6 +28,7 @@ import { VideoGateRevocationService } from '../../media/video/video-gate-revocat
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { CommunicationService } from '../../communications/services/communication.service';
 import type { EmitResult } from '../../communications/services/communication.service';
+import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import type {
   LearnerDevicesResponse,
   LearnerDeviceResponse,
@@ -52,6 +53,7 @@ export class LearnerSessionService {
     private readonly gateRevocation: VideoGateRevocationService,
     private readonly metrics: LearningMetricsService,
     private readonly communications: CommunicationService,
+    private readonly academiesRepository: AcademiesRepository,
   ) {}
 
   async listDevices(
@@ -351,10 +353,18 @@ export class LearnerSessionService {
     // effect by the time this runs, and failing the request afterwards
     // would tell the learner it did not work while leaving them holding
     // the lease. The failure is logged where an operator can see it.
+    // Task 3 — the organization id, resolved from the academy through the
+    // SECURITY DEFINER lookup (a learner's own context cannot read the
+    // academy row). The row previously carried only `academyId`, so the
+    // owner's tenant-scoped feed could never see it.
+    const organizationId =
+      await this.academiesRepository.resolveOrganizationId(academyId);
     await this.tenancyContextService.runInUserContext(userId, (tx) =>
       this.auditLogWriterService.writeBestEffort(tx, {
         actorUserId: userId,
+        organizationId: organizationId ?? undefined,
         academyId,
+        role: 'student',
         action: 'learning.device_session_takeover',
         targetType: 'student_device',
         targetId: details.newDeviceId,

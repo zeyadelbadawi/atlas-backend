@@ -14,6 +14,7 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
     emailDeliverabilityCheckEnabled: false,
     signInRateLimit: { max: 10, windowSeconds: 900 },
     passwordResetRateLimit: { max: 5, windowSeconds: 3600 },
+    emailVerificationResendRateLimit: { max: 3, ipMax: 20, windowSeconds: 3600 },
     registerRateLimit: { max: 5, windowSeconds: 3600 },
     // P64 Communications C4 — irrelevant to access tokens, present
     // because `IdentityConfig` is one object; the §12 defaults.

@@ -169,6 +169,29 @@ const EnvSchema = z.object({
     .positive()
     .default(3600),
 
+  // `POST /auth/verify-email/resend` — sends mail on demand, so it has its
+  // own counters rather than borrowing password reset's (which let one
+  // flow exhaust the other's budget). Per ACCOUNT (3/hour: a person needs
+  // one link, two if the first went to spam) and per client IP (20/hour:
+  // looser, because a campus or office NAT puts many learners behind one
+  // address, and the per-account key is what actually stops one account
+  // being used to flood its own mailbox).
+  AUTH_EMAIL_VERIFICATION_RESEND_RATE_LIMIT_MAX: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3),
+  AUTH_EMAIL_VERIFICATION_RESEND_IP_RATE_LIMIT_MAX: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(20),
+  AUTH_EMAIL_VERIFICATION_RESEND_RATE_LIMIT_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3600),
+
   // --- Phase P18 — Production Hardening (master plan §16/§21 P18) ---
   // `POST /auth/register` had no dedicated rate limit before this phase —
   // only the generic global 120-req/min-per-IP default (§0's own P18

@@ -65,6 +65,31 @@ import {
 } from './quiz-scoring.util';
 import { canStartAttempt } from './quiz-engine.util';
 import { QuizAttemptsRepository } from '../repositories/quiz-attempts.repository';
+import { diffListCounts } from '../../audit-log/utils/audit-diff.util';
+
+/**
+ * Task 3 — what makes two stored questions "the same" for the audit count:
+ * prompt, type, points, explanation, accepted answers and the option set
+ * (labels and correctness). Ids and timestamps are excluded because a
+ * replace recreates them.
+ */
+function questionAuditSignature(question: {
+  readonly prompt: string;
+  readonly type: string;
+  readonly points?: number;
+  readonly explanation?: string | null;
+  readonly acceptedAnswers?: unknown;
+  readonly options?: readonly { readonly label: string; readonly isCorrect: boolean }[];
+}): string {
+  return JSON.stringify([
+    question.prompt,
+    question.type,
+    question.points ?? null,
+    question.explanation ?? null,
+    question.acceptedAnswers ?? null,
+    (question.options ?? []).map((option) => [option.label, option.isCorrect]),
+  ]);
+}
 
 /**
  * The learner's own effective attempt allowance for one quiz, override
@@ -552,7 +577,19 @@ export class QuizzesService {
         academyId,
         userId,
       );
-      await this.auditLogWriterService.write(tx, {
+      // Task 3 — settings before/after (catalogue `QUIZ_DIFF_FIELDS`) and,
+      // when the question set was replaced, readable counts. Questions are
+      // recreated on every replace, so they are compared by POSITION: "3rd
+      // question changed, 1 added" is what the author did.
+      const questionCounts = payload.questions
+        ? diffListCounts(
+            existing.questions,
+            updated!.questions,
+            (_question, index) => String(index),
+            questionAuditSignature,
+          )
+        : undefined;
+      await this.auditLogWriterService.record(tx, {
         actorUserId: userId,
         organizationId,
         academyId,
@@ -561,7 +598,19 @@ export class QuizzesService {
         targetType: 'quiz',
         targetId: quizId,
         targetLabel: updated!.title,
-        context: { courseId },
+        context: {
+          courseId,
+          ...(questionCounts
+            ? {
+                questionsAdded: questionCounts.added,
+                questionsRemoved: questionCounts.removed,
+                questionsChanged: questionCounts.changed,
+                questionCount: updated!.questions.length,
+              }
+            : {}),
+        },
+        before: existing as unknown as Record<string, unknown>,
+        after: updated as unknown as Record<string, unknown>,
       });
 
       return toQuizAuthoringResponse(updated!);

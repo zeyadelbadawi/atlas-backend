@@ -16,6 +16,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import { RegisterDto } from '../dto/register.dto';
@@ -36,6 +37,7 @@ import { CurrentAuthContext } from '../decorators/auth-context.decorator';
 import type { AuthContext } from '../guards/jwt-auth.guard';
 import { SignInRateLimitGuard } from '../guards/signin-rate-limit.guard';
 import { PasswordResetRateLimitGuard } from '../guards/password-reset-rate-limit.guard';
+import { EmailVerificationResendRateLimitGuard } from '../guards/email-verification-resend-rate-limit.guard';
 import { RegisterRateLimitGuard } from '../guards/register-rate-limit.guard';
 import { CredentialCheckRateLimitGuard } from '../guards/credential-check-rate-limit.guard';
 import type {
@@ -248,10 +250,17 @@ export class AuthController {
    * Public by design: the emailed token is the only credential, and its
    * recipient is by definition not signed in yet. Strictly single-use
    * underneath — a replayed token matches zero rows and is refused with
-   * the same generic error as an unknown or expired one, so this endpoint
-   * cannot be used to probe which tokens exist.
+   * a generic error. Unknown and malformed tokens are indistinguishable,
+   * so this endpoint cannot be used to probe which tokens exist; only the
+   * holder of a REAL link is told it expired or was already used.
+   *
+   * 10 attempts per minute per client IP, in place of the global 120/min: a
+   * person clicks a link once or twice, and a 256-bit token cannot be
+   * guessed, so the ceiling only bounds scripted hammering of the
+   * endpoint (each attempt costs a hash lookup and a transaction).
    */
   @Post('verify-email')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   async verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
     await this.authService.verifyEmail(dto.token);
@@ -260,15 +269,19 @@ export class AuthController {
   /**
    * Phase 10.1 — re-sends verification for the signed-in account.
    *
-   * Rate-limited with the same guard as password-reset requests: this
-   * endpoint sends mail on demand, which is exactly the shape that gets
-   * abused as a free mail relay if left open.
+   * Its own per-account and per-IP budget
+   * (`EmailVerificationResendRateLimitGuard`): this endpoint sends mail on
+   * demand, which is exactly the shape that gets abused as a free mail
+   * relay if left open. The session's surface decides where the new link
+   * points — an academy-website session gets its academy's verify page.
    */
   @Post('verify-email/resend')
   @HttpCode(HttpStatus.ACCEPTED)
-  @UseGuards(JwtAuthGuard, PasswordResetRateLimitGuard)
+  @UseGuards(JwtAuthGuard, EmailVerificationResendRateLimitGuard)
   async resendEmailVerification(@CurrentAuthContext() auth: AuthContext): Promise<void> {
-    await this.authService.resendEmailVerification(auth.userId);
+    await this.authService.resendEmailVerification(auth.userId, {
+      academyId: auth.surface === 'academy' ? auth.academyId : null,
+    });
   }
 
   /**

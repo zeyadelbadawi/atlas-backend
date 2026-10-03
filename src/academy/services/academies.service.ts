@@ -22,6 +22,15 @@ import { Prisma } from '@prisma/client';
 import type { AcademyMember, AcademyMemberRole } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { AuditLogEntriesRepository } from '../../audit-log/repositories/audit-log-entries.repository';
+import { TENANT_VISIBLE_AUDIT_ACTIONS } from '../../audit-log/catalog/audit-event-catalog';
+import {
+  toCursorPage,
+  toTenantAuditLogEntryDetailResponse,
+  toTenantAuditLogEntryResponse,
+} from '../../audit-log/dto/audit-log.contract';
+import type { AuditFeedQueryDto } from '../../audit-log/dto/audit-feed-query.dto';
+import { buildAuditFeedFilter } from '../../audit-log/utils/audit-feed.util';
 import { AccountSetupService } from '../../identity/services/account-setup.service';
 import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
@@ -56,7 +65,11 @@ import { toAcademyMemberResponse } from '../dto/academy-member.contract';
 import type { AcademyMemberResponse } from '../dto/academy-member.contract';
 import { toAcademyStudentResponse } from '../dto/academy-student.contract';
 import type { AcademyStatsResponse } from '../dto/academy-stats.contract';
-import type { AcademyActivityResponse } from '../dto/academy-activity.contract';
+import type {
+  AcademyActivityDetailResponse,
+  AcademyActivityPageResponse,
+  AcademyActivityResponse,
+} from '../dto/academy-activity.contract';
 import {
   toContactSubmissionResponse,
   type ContactSubmissionResponse,
@@ -129,6 +142,13 @@ const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
  * narrow rather than presenting a capability the database would then deny.
  */
 const GRANTS_MANAGER_ROLES = new Set(['owner']);
+
+/**
+ * Task 3 — academy roles that may read the Academy activity log, besides
+ * the organization owner. See `AcademiesService.getActivity` for why
+ * `manager` is not in this set.
+ */
+const ACTIVITY_LOG_ROLES = new Set(['owner', 'administrator']);
 
 /** The account an add resolved to, inside the add's own transaction. */
 interface ResolvedMemberAccount {
@@ -239,6 +259,8 @@ export class AcademiesService {
     private readonly publicWebsiteCacheService: PublicWebsiteCacheService,
     private readonly authRateLimiter: AuthRateLimiterService,
     configService: ConfigService,
+    // Task 3 — the Academy activity log's read side (global AuditLogModule).
+    private readonly auditLogEntriesRepository: AuditLogEntriesRepository,
   ) {
     this.environmentBaseDomain = configService
       .get<PlatformDomainRuntimeConfig>('platformDomain')
@@ -629,6 +651,9 @@ export class AcademiesService {
           await this.auditLogWriterService.write(tx, {
             actorUserId: userId,
             organizationId: payload.organizationId,
+            // Task 3 — academy-scoped, so it shows in the new academy's log.
+            academyId: created.id,
+            role: 'owner',
             action: 'academy.created',
             targetType: 'academy',
             targetId: created.id,
@@ -659,11 +684,23 @@ export class AcademiesService {
 
     const academy = await this.withSlugConflictHandling(() =>
       this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
 
         const current = await this.academiesRepository.findById(tx, academyId);
         if (!current) {
           throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        // Task 1 — `archived` and `suspended` are left only through their
+        // own flows (Delete/restore, platform suspension), never by PATCH:
+        // reviving an archived academy here would skip its plan-limit
+        // check and resurrect a site whose domains were already released.
+        if (current.status === 'archived') {
+          throw new ConflictException({ messageKey: 'errors.academy.statusLocked' });
+        }
+        // `payload.status` can only be draft/active (DTO), so any status in
+        // the payload is a change away from `suspended`.
+        if (current.status === 'suspended' && payload.status !== undefined) {
+          throw new ConflictException({ messageKey: 'errors.academy.statusLocked' });
         }
 
         const mergedAddress: AcademyAddressResponse | undefined = payload.address
@@ -687,7 +724,31 @@ export class AcademiesService {
           ...(mergedAddress ? { address: mergedAddress as Prisma.InputJsonValue } : {}),
         };
 
-        return this.academiesRepository.update(tx, academyId, data);
+        const updated = await this.academiesRepository.update(tx, academyId, data);
+        // Task 3 — field-level before/after over the catalogue's academy
+        // diff fields. Only fields this request sent are compared (`data`'s
+        // keys are the model's field names); the writer masks the contact
+        // email's value on this tenant-visible row.
+        const sentFields = Object.keys(data).filter(
+          (field) => data[field as keyof typeof data] !== undefined,
+        );
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'academy.updated',
+          targetId: academyId,
+          targetLabel: updated.name,
+          before: current as unknown as Record<string, unknown>,
+          after: Object.fromEntries(
+            sentFields.map((field) => [
+              field,
+              (updated as unknown as Record<string, unknown>)[field],
+            ]),
+          ),
+        });
+        return updated;
       }),
     );
 
@@ -705,12 +766,36 @@ export class AcademiesService {
         organizationId,
         userId,
         async (tx) => {
-          await this.assertCanManage(tx, academyId, userId);
+          const role = await this.assertCanManage(tx, academyId, userId);
 
+          const before = await this.academiesRepository.findById(tx, academyId);
           const updated = await this.academiesRepository.update(tx, academyId, {
             name: payload.name,
             logoUrl: payload.logo,
             faviconUrl: payload.favicon,
+          });
+          await this.auditLogWriterService.record(tx, {
+            actorUserId: userId,
+            organizationId,
+            academyId,
+            role,
+            action: 'academy.branding.updated',
+            targetId: academyId,
+            targetLabel: updated.name,
+            before: before
+              ? {
+                  name: before.name,
+                  logoUrl: before.logoUrl,
+                  faviconUrl: before.faviconUrl,
+                }
+              : null,
+            after: {
+              ...(payload.name !== undefined ? { name: updated.name } : {}),
+              ...(payload.logo !== undefined ? { logoUrl: updated.logoUrl } : {}),
+              ...(payload.favicon !== undefined
+                ? { faviconUrl: updated.faviconUrl }
+                : {}),
+            },
           });
           const [allocation, connection] = await Promise.all([
             this.subdomainAllocationsRepository.findByAcademyId(tx, academyId),
@@ -823,13 +908,33 @@ export class AcademiesService {
     const archived = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
-        return this.academiesRepository.update(tx, academyId, {
+        const role = await this.assertCanManage(tx, academyId, userId);
+        const previous = await this.academiesRepository.findById(tx, academyId);
+        const result = await this.academiesRepository.update(tx, academyId, {
           status: 'archived',
           archivedAt: new Date(),
           archiveReason: input.reason ?? null,
           archiveFeedback: input.feedback?.trim() || null,
         });
+        // The feedback text itself stays on the academy row; the audit row
+        // records only that some was given.
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'academy.archived',
+          targetId: academyId,
+          targetLabel: result.name,
+          context: {
+            reason: input.reason ?? null,
+            hasFeedback: Boolean(input.feedback?.trim()),
+          },
+          changes: previous
+            ? { status: { from: previous.status, to: 'archived' } }
+            : undefined,
+        });
+        return result;
       },
     );
 
@@ -1116,15 +1221,19 @@ export class AcademiesService {
               role,
             });
 
-            await this.auditLogWriterService.write(tx, {
+            // Task 3 — academy-scoped (it previously carried only the
+            // organization id, so it never reached an academy feed) and
+            // labelled with the member's NAME: this row is tenant-visible.
+            await this.auditLogWriterService.record(tx, {
               actorUserId: actingUserId,
               organizationId,
+              academyId,
               action:
                 role === 'manager' ? 'academy.manager.added' : 'academy.instructor.added',
               targetType: 'academy_member',
               targetId: created.id,
-              targetLabel: target.user.email,
-              context: { account: target.account },
+              targetLabel: target.user.name,
+              context: { account: target.account, memberName: target.user.name },
             });
 
             return {
@@ -1230,17 +1339,19 @@ export class AcademiesService {
               source: 'staff_created',
             });
 
-            await this.auditLogWriterService.write(tx, {
+            // Task 3 — academy-scoped and name-labelled; see the staff add above.
+            await this.auditLogWriterService.record(tx, {
               actorUserId: actingUserId,
               organizationId,
+              academyId,
               action:
                 target.account === 'new'
                   ? 'academy.student.created'
                   : 'academy.student.added',
               targetType: 'user',
               targetId: target.user.id,
-              targetLabel: target.user.email,
-              context: { account: target.account },
+              targetLabel: target.user.name,
+              context: { account: target.account, studentName: target.user.name },
             });
 
             return {
@@ -1356,30 +1467,106 @@ export class AcademiesService {
     organizationId: string,
   ): Promise<AcademyStatsResponse> {
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      const [totalMembers, activeStaff, activeInstructors] = await Promise.all([
-        this.academyMembersRepository.countAll(tx, academyId),
-        this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'staff'),
-        this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
-      ]);
+      const [totalMembers, activeStaff, activeInstructors, publishedCourses] =
+        await Promise.all([
+          this.academyMembersRepository.countAll(tx, academyId),
+          this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'staff'),
+          this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
+          tx.course.count({ where: { academyId, status: 'published' } }),
+        ]);
 
-      // See `academy-stats.contract.ts`'s doc comment — honestly `0`, no
-      // `courses` table exists yet.
-      return { totalMembers, activeStaff, activeInstructors, publishedCourses: 0 };
+      return { totalMembers, activeStaff, activeInstructors, publishedCourses };
     });
   }
 
-  /** See `academy-activity.contract.ts`'s doc comment — no activity source exists yet; a real, honestly-empty page, not a hidden error. */
-  getActivity(
-    _academyId: string,
-    query: CollectionQueryDto,
-  ): Promise<PaginatedResult<AcademyActivityResponse>> {
-    const page = query.page ?? DEFAULT_PAGE;
-    const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
-
-    return Promise.resolve({
-      items: [],
-      pagination: buildPaginationMeta(page, pageSize, 0),
+  /**
+   * Task 3 — the Academy activity log: this academy's tenant-visible audit
+   * entries, newest first, keyset-paginated. See `academy-activity.contract.ts`.
+   *
+   * WHO MAY READ IT. The organization's owner (identified by the caller's
+   * real `tenant.dashboard.view` permission, as every owner-only dashboard
+   * read does) or an ACTIVE `owner`/`administrator` member of THIS academy.
+   * Managers are deliberately excluded: the permission model treats a
+   * Manager as an operator, not an administrator — they cannot grant
+   * members (`GRANTS_MANAGER_ROLES`) and never see the owner-only
+   * `tenant.*` money surface — while this log records exactly those
+   * actions (who granted whom access, payment and gateway changes) plus
+   * every other staff member's work. `AcademyScopeGuard` alone would admit
+   * any organization member, so this check is not optional.
+   *
+   * Reads run in the organization's tenant context, so the
+   * `audit_log_entries_tenant_select` RLS policy independently bounds the
+   * rows to this organization; `academy_id = :id` narrows to the academy.
+   */
+  async getActivity(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    isOrganizationOwner: boolean,
+    query: AuditFeedQueryDto,
+  ): Promise<AcademyActivityPageResponse<AcademyActivityResponse>> {
+    const filter = buildAuditFeedFilter(query, TENANT_VISIBLE_AUDIT_ACTIONS);
+    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      await this.assertCanViewActivity(tx, academyId, userId, isOrganizationOwner);
+      const rows = await this.auditLogEntriesRepository.findFeedPage(tx, {
+        ...filter,
+        academyId,
+        organizationId,
+      });
+      const names = await this.auditLogEntriesRepository.loadReferenceNames(tx, rows);
+      return toCursorPage(rows, filter.take, (row) =>
+        toTenantAuditLogEntryResponse(row, names),
+      );
     });
+  }
+
+  /** One entry of the activity log, with its before/after. Same gate and scope as `getActivity`; anything outside it is a 404. */
+  async getActivityEntry(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    isOrganizationOwner: boolean,
+    entryId: string,
+  ): Promise<AcademyActivityDetailResponse> {
+    const result = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        await this.assertCanViewActivity(tx, academyId, userId, isOrganizationOwner);
+        const entry = await this.auditLogEntriesRepository.findScopedById(tx, entryId, {
+          academyId,
+          actions: TENANT_VISIBLE_AUDIT_ACTIONS,
+        });
+        if (!entry) return null;
+        return {
+          entry,
+          names: await this.auditLogEntriesRepository.loadReferenceNames(tx, [entry]),
+        };
+      },
+    );
+    if (!result) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return toTenantAuditLogEntryDetailResponse(result.entry, result.names);
+  }
+
+  /** See `getActivity`'s WHO MAY READ IT. */
+  private async assertCanViewActivity(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+    isOrganizationOwner: boolean,
+  ): Promise<void> {
+    if (isOrganizationOwner) return;
+    const membership = await this.academyMembersRepository.findForUserInAcademy(
+      tx,
+      academyId,
+      userId,
+    );
+    if (
+      !membership ||
+      membership.status !== 'active' ||
+      !ACTIVITY_LOG_ROLES.has(membership.role)
+    ) {
+      throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+    }
   }
 
   /**
@@ -1488,7 +1675,7 @@ export class AcademiesService {
     tx: Prisma.TransactionClient,
     academyId: string,
     userId: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const membership = await this.academyMembersRepository.findForUserInAcademy(
       tx,
       academyId,
@@ -1498,6 +1685,8 @@ export class AcademiesService {
     if (!membership || !MANAGING_ROLES.has(membership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
     }
+    // Task 3 — returned so audit rows record the role without a re-read.
+    return membership.role;
   }
 
   /**

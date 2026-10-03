@@ -41,6 +41,8 @@ import { WebsiteBootstrapService } from './website-bootstrap.service';
 import { SectionReferenceValidatorService } from './section-reference-validator.service';
 import { StaleResourceVersionException } from '../../concurrency/errors/stale-resource-version.exception';
 import { EditingPresenceService } from '../../concurrency/services/editing-presence.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { diffListCounts } from '../../audit-log/utils/audit-diff.util';
 import type { EditingParticipant } from '../../concurrency/services/editing-presence.service';
 import {
   toManagedWebsitePageResponse,
@@ -67,6 +69,47 @@ function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
+/**
+ * Task 3 — what a section save did, in counts a person can read ("2 sections
+ * added, 1 edited"). Sections carry stable ids, so identity is the id and a
+ * section counts as edited when its stored JSON changed.
+ */
+function sectionChangeContext(
+  before: unknown,
+  after: unknown,
+): {
+  sectionsAdded: number;
+  sectionsRemoved: number;
+  sectionsUpdated: number;
+  sectionCount: number;
+} {
+  type SectionLike = { readonly id?: string };
+  const previous = Array.isArray(before) ? (before as SectionLike[]) : [];
+  const next = Array.isArray(after) ? (after as SectionLike[]) : [];
+  const counts = diffListCounts(
+    previous,
+    next,
+    (section, index) => section.id ?? `#${index}`,
+    (section) => JSON.stringify(section),
+  );
+  return {
+    sectionsAdded: counts.added,
+    sectionsRemoved: counts.removed,
+    sectionsUpdated: counts.changed,
+    sectionCount: next.length,
+  };
+}
+
+/** The page fields `website_page.updated` diffs (catalogue `diffFields`). */
+function pageAuditSnapshot(page: {
+  readonly title: string;
+  readonly slug: string;
+  readonly visible: boolean;
+  readonly seo: Prisma.JsonValue;
+}): Record<string, unknown> {
+  return { title: page.title, slug: page.slug, visible: page.visible, seo: page.seo };
+}
+
 @Injectable()
 export class WebsitePagesService {
   constructor(
@@ -77,13 +120,15 @@ export class WebsitePagesService {
     private readonly sectionReferenceValidatorService: SectionReferenceValidatorService,
     private readonly editingPresenceService: EditingPresenceService,
     private readonly websiteConfigurationRepository: WebsiteConfigurationRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
+  /** Returns the caller's academy role, which the audit row records (no second lookup). */
   private async assertCanManage(
     tx: Prisma.TransactionClient,
     academyId: string,
     userId: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const membership = await this.academyMembersRepository.findForUserInAcademy(
       tx,
       academyId,
@@ -92,6 +137,7 @@ export class WebsitePagesService {
     if (!membership || !MANAGING_ROLES.has(membership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
+    return membership.role;
   }
 
   /** Phase 1 (Extended Scope, dependency A), narrowed to the managing tier in Phase 9 — see `WebsiteConfigurationService.assertIsMember`'s doc comment for both changes and why an Instructor must be refused here. */
@@ -175,7 +221,7 @@ export class WebsitePagesService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         await this.websiteBootstrapService.ensureBootstrapped(tx, academyId);
 
         const validated = parseOrThrow(createWebsitePageSchema, payload);
@@ -190,6 +236,16 @@ export class WebsitePagesService {
             visible: true,
             seo: {},
             sections: [],
+          });
+          await this.auditLogWriterService.record(tx, {
+            actorUserId: userId,
+            organizationId,
+            academyId,
+            role,
+            action: 'website_page.created',
+            targetId: created.id,
+            targetLabel: created.title,
+            context: { pageType: created.pageType, slug: created.slug },
           });
           return toManagedWebsitePageResponse(created);
         } catch (error) {
@@ -213,7 +269,7 @@ export class WebsitePagesService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         await this.websiteBootstrapService.ensureBootstrapped(tx, academyId);
 
         const existing = await this.websitePagesRepository.findById(
@@ -367,6 +423,27 @@ export class WebsitePagesService {
             });
           }
 
+          // Task 3 — one row per save: field before/after for title, slug,
+          // visibility and SEO, and readable counts for the sections.
+          await this.auditLogWriterService.record(tx, {
+            actorUserId: userId,
+            organizationId,
+            academyId,
+            role,
+            action: 'website_page.updated',
+            targetId: pageId,
+            targetLabel: updated.title,
+            context: {
+              pageType: updated.pageType,
+              slug: updated.slug,
+              ...(payload.sections !== undefined
+                ? sectionChangeContext(existing.sections, updated.sections)
+                : {}),
+            },
+            before: pageAuditSnapshot(existing),
+            after: pageAuditSnapshot(updated),
+          });
+
           return toManagedWebsitePageResponse(updated);
         } catch (error) {
           if (isUniqueConstraintViolation(error)) {
@@ -460,7 +537,7 @@ export class WebsitePagesService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const existing = await this.websitePagesRepository.findById(
           tx,
           academyId,
@@ -473,6 +550,16 @@ export class WebsitePagesService {
           });
         }
         await this.websitePagesRepository.delete(tx, pageId);
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'website_page.deleted',
+          targetId: pageId,
+          targetLabel: existing.title,
+          context: { pageType: existing.pageType, slug: existing.slug },
+        });
       },
     );
   }
@@ -488,7 +575,7 @@ export class WebsitePagesService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         const existing = await this.websitePagesRepository.findById(
           tx,
           academyId,
@@ -520,6 +607,26 @@ export class WebsitePagesService {
           // unpublished change and invalidate a stale editor's version.
           version: { increment: 1 },
         });
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'website_page.sections_reordered',
+          targetId: pageId,
+          targetLabel: existing.title,
+          context: {
+            pageType: existing.pageType,
+            slug: existing.slug,
+            sectionCount: orderedIds.length,
+          },
+          changes: {
+            sectionOrder: {
+              from: currentSections.map((section) => section.id),
+              to: [...orderedIds],
+            },
+          },
+        });
         return toManagedWebsitePageResponse(updated);
       },
     );
@@ -546,7 +653,7 @@ export class WebsitePagesService {
       organizationId,
       userId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, userId);
+        const role = await this.assertCanManage(tx, academyId, userId);
         await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
         await this.websiteConfigurationRepository.lockForPublish(tx, academyId);
         const existing = await this.websitePagesRepository.findById(
@@ -603,6 +710,16 @@ export class WebsitePagesService {
           academyId,
           pageId,
         );
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'website_page.published',
+          targetId: pageId,
+          targetLabel: existing.title,
+          context: { pageType: existing.pageType, slug: existing.slug },
+        });
         return toManagedWebsitePageResponse(published!);
       },
     );

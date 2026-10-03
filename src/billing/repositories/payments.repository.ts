@@ -30,6 +30,111 @@ type PaymentWithRelations = Payment & {
   proofs: Prisma.PaymentProofGetPayload<Record<string, never>>[];
 };
 
+/**
+ * Platform review context for a SUBSCRIPTION payment: which organization
+ * paid and what the checkout was for. Readable cross-tenant through the
+ * `organizations_platform_select`/`checkouts_platform_select` policies.
+ */
+const WITH_SUBSCRIPTION_REVIEW_CONTEXT = {
+  ...WITH_RELATIONS,
+  organization: { select: { id: true, name: true } },
+  checkout: {
+    select: { targetType: true, targetKey: true, billingCycle: true, snapshot: true },
+  },
+} satisfies Prisma.PaymentInclude;
+
+export type PaymentWithSubscriptionReviewContext = Prisma.PaymentGetPayload<{
+  include: typeof WITH_SUBSCRIPTION_REVIEW_CONTEXT;
+}>;
+
+/**
+ * Platform review context for a COURSE payment: the academy paid, the
+ * course and the order's own status and refund status. Readable through
+ * the `academies`/`courses`/`course_orders`/`course_order_refunds`
+ * `*_platform_select` policies.
+ */
+const WITH_COURSE_REVIEW_CONTEXT = {
+  ...WITH_RELATIONS,
+  payeeAcademy: { select: { id: true, name: true } },
+  courseOrder: {
+    select: {
+      status: true,
+      snapshot: true,
+      courseId: true,
+      course: { select: { title: true } },
+      refund: { select: { status: true } },
+    },
+  },
+} satisfies Prisma.PaymentInclude;
+
+export type PaymentWithCourseReviewContext = Prisma.PaymentGetPayload<{
+  include: typeof WITH_COURSE_REVIEW_CONTEXT;
+}>;
+
+/** The Platform review lists' shared filter/sort/page input. */
+export interface PlatformPaymentListFilter {
+  readonly search?: string;
+  readonly reviewStatus?: ManualReviewStatus;
+  readonly status?: Payment['status'];
+  readonly methodType?: Payment['methodType'];
+  readonly from?: string;
+  readonly to?: string;
+  readonly sortBy?: 'createdAt' | 'updatedAt' | 'amount';
+  readonly sortDirection?: 'asc' | 'desc';
+  readonly skip: number;
+  readonly take: number;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Inclusive UTC calendar dates → a `createdAt` range; `undefined` when neither bound is usable. */
+function createdAtRange(from?: string, to?: string): Prisma.DateTimeFilter | undefined {
+  const start = from ? new Date(`${from}T00:00:00.000Z`) : undefined;
+  const end = to ? new Date(`${to}T00:00:00.000Z`) : undefined;
+  const gte = start && !Number.isNaN(start.getTime()) ? start : undefined;
+  const lt =
+    end && !Number.isNaN(end.getTime()) ? new Date(end.getTime() + DAY_MS) : undefined;
+  if (!gte && !lt) return undefined;
+  return { ...(gte ? { gte } : {}), ...(lt ? { lt } : {}) };
+}
+
+/** Filters common to both Platform review lists (search is list-specific). */
+function platformListCommonWhere(
+  filter: PlatformPaymentListFilter,
+): Prisma.PaymentWhereInput {
+  const createdAt = createdAtRange(filter.from, filter.to);
+  return {
+    ...(filter.reviewStatus ? { reviewStatus: filter.reviewStatus } : {}),
+    ...(filter.status ? { status: filter.status } : {}),
+    ...(filter.methodType ? { methodType: filter.methodType } : {}),
+    ...(createdAt ? { createdAt } : {}),
+  };
+}
+
+/** Search terms every payment row can answer: its id (exact), provider reference, method key and provider. */
+function paymentSearchTerms(search: string): Prisma.PaymentWhereInput[] {
+  const contains = { contains: search, mode: 'insensitive' as const };
+  return [
+    { id: search },
+    { providerReference: contains },
+    { methodKey: contains },
+    { provider: contains },
+  ];
+}
+
+function platformListOrderBy(
+  filter: PlatformPaymentListFilter,
+): Prisma.PaymentOrderByWithRelationInput[] {
+  const direction = filter.sortDirection ?? 'desc';
+  const column =
+    filter.sortBy === 'amount'
+      ? 'amountMinorUnits'
+      : filter.sortBy === 'updatedAt'
+        ? 'updatedAt'
+        : 'createdAt';
+  return [{ [column]: direction }, { id: direction }];
+}
+
 @Injectable()
 export class PaymentsRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -84,24 +189,24 @@ export class PaymentsRepository {
     return { items, totalItems };
   }
 
-  /** Platform-review listing, across every organization — see `findByIdAnyOrganization`'s doc comment for the RLS mechanism this relies on. */
+  /** Platform-review listing, across every organization — see `findByIdAnyOrganization`'s doc comment for the RLS mechanism this relies on. Carries the organization's name and the checkout's plan/billing cycle so the reviewer never has to read a raw id. */
   async findManyAnyOrganization(
     tx: Prisma.TransactionClient,
-    filter: {
-      readonly search?: string;
-      readonly reviewStatus?: ManualReviewStatus;
-      readonly skip: number;
-      readonly take: number;
-    },
-  ): Promise<{ items: PaymentWithRelations[]; totalItems: number }> {
+    filter: PlatformPaymentListFilter,
+  ): Promise<{ items: PaymentWithSubscriptionReviewContext[]; totalItems: number }> {
+    const search = filter.search?.trim();
     const where: Prisma.PaymentWhereInput = {
       checkoutId: { not: null },
-      ...(filter.reviewStatus ? { reviewStatus: filter.reviewStatus } : {}),
-      ...(filter.search
+      ...platformListCommonWhere(filter),
+      ...(search
         ? {
             OR: [
-              { methodKey: { contains: filter.search, mode: 'insensitive' as const } },
-              { provider: { contains: filter.search, mode: 'insensitive' as const } },
+              ...paymentSearchTerms(search),
+              {
+                organization: {
+                  is: { name: { contains: search, mode: 'insensitive' as const } },
+                },
+              },
             ],
           }
         : {}),
@@ -110,8 +215,8 @@ export class PaymentsRepository {
     const [items, totalItems] = await Promise.all([
       tx.payment.findMany({
         where,
-        include: WITH_RELATIONS,
-        orderBy: { createdAt: 'desc' },
+        include: WITH_SUBSCRIPTION_REVIEW_CONTEXT,
+        orderBy: platformListOrderBy(filter),
         skip: filter.skip,
         take: filter.take,
       }),
@@ -119,6 +224,28 @@ export class PaymentsRepository {
     ]);
 
     return { items, totalItems };
+  }
+
+  /** `findByIdAnyOrganization` plus the subscription review context (organization name, checkout plan/cycle) — Platform detail read. */
+  findByIdAnyOrganizationWithSubscriptionContext(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<PaymentWithSubscriptionReviewContext | null> {
+    return tx.payment.findFirst({
+      where: { id },
+      include: WITH_SUBSCRIPTION_REVIEW_CONTEXT,
+    });
+  }
+
+  /** `findByIdAnyOrganization` plus the course review context (academy name, course title, order and refund status) — Platform detail read. */
+  findByIdAnyOrganizationWithCourseContext(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<PaymentWithCourseReviewContext | null> {
+    return tx.payment.findFirst({
+      where: { id },
+      include: WITH_COURSE_REVIEW_CONTEXT,
+    });
   }
 
   /**
@@ -132,23 +259,22 @@ export class PaymentsRepository {
    */
   async findManyAnyOrganizationCourseOrders(
     tx: Prisma.TransactionClient,
-    filter: {
-      readonly search?: string;
-      readonly reviewStatus?: ManualReviewStatus;
-      readonly skip: number;
-      readonly take: number;
-    },
-  ): Promise<{ items: PaymentWithRelations[]; totalItems: number }> {
+    filter: PlatformPaymentListFilter,
+  ): Promise<{ items: PaymentWithCourseReviewContext[]; totalItems: number }> {
+    const search = filter.search?.trim();
+    const contains = search
+      ? { contains: search, mode: 'insensitive' as const }
+      : undefined;
     const where: Prisma.PaymentWhereInput = {
       courseOrderId: { not: null },
-      // Same filter the subscription review listing applies; it was
-      // accepted by the DTO here but never reached the query.
-      ...(filter.reviewStatus ? { reviewStatus: filter.reviewStatus } : {}),
-      ...(filter.search
+      ...platformListCommonWhere(filter),
+      ...(search && contains
         ? {
             OR: [
-              { methodKey: { contains: filter.search, mode: 'insensitive' as const } },
-              { provider: { contains: filter.search, mode: 'insensitive' as const } },
+              ...paymentSearchTerms(search),
+              { courseOrderId: search },
+              { payeeAcademy: { is: { name: contains } } },
+              { courseOrder: { is: { course: { title: contains } } } },
             ],
           }
         : {}),
@@ -157,8 +283,8 @@ export class PaymentsRepository {
     const [items, totalItems] = await Promise.all([
       tx.payment.findMany({
         where,
-        include: WITH_RELATIONS,
-        orderBy: { createdAt: 'desc' },
+        include: WITH_COURSE_REVIEW_CONTEXT,
+        orderBy: platformListOrderBy(filter),
         skip: filter.skip,
         take: filter.take,
       }),

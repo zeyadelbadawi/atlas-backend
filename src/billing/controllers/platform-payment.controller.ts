@@ -24,7 +24,11 @@ import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { PlatformPaymentService } from '../services/platform-payment.service';
-import { PaymentListQueryDto } from '../dto/payment-list-query.dto';
+import { PlatformPaymentListQueryDto } from '../dto/payment-list-query.dto';
+import type {
+  PlatformPaymentDetailResponse,
+  PlatformPaymentListItemResponse,
+} from '../dto/platform-payment-list.contract';
 import { ApprovePaymentDto } from '../dto/approve-payment.dto';
 import { RejectPaymentDto } from '../dto/reject-payment.dto';
 import type { PaymentResponse } from '../dto/payment.contract';
@@ -38,8 +42,8 @@ export class PlatformPaymentController {
   @Get()
   async list(
     @CurrentAuthContext() auth: AuthContext,
-    @Query() query: PaymentListQueryDto,
-  ): Promise<PaginatedResult<PaymentResponse>> {
+    @Query() query: PlatformPaymentListQueryDto,
+  ): Promise<PaginatedResult<PlatformPaymentListItemResponse>> {
     return this.platformPaymentService.getPayments(auth.userId, query);
   }
 
@@ -47,7 +51,7 @@ export class PlatformPaymentController {
   async get(
     @CurrentAuthContext() auth: AuthContext,
     @Param('id') paymentId: string,
-  ): Promise<PaymentResponse> {
+  ): Promise<PlatformPaymentDetailResponse> {
     return this.platformPaymentService.getPayment(auth.userId, paymentId);
   }
 

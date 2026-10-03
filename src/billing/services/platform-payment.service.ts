@@ -49,7 +49,13 @@ import { resolveSubscriptionLimits } from '../../plans/utils/granted-limits.util
 import type { EmitResult } from '../../communications/services/communication.service';
 import { toPaymentResponse } from '../dto/payment.contract';
 import type { PaymentResponse } from '../dto/payment.contract';
-import type { PaymentListQueryDto } from '../dto/payment-list-query.dto';
+import type { PlatformPaymentListQueryDto } from '../dto/payment-list-query.dto';
+import {
+  toPlatformPaymentDetailResponse,
+  toPlatformPaymentListItemResponse,
+  type PlatformPaymentDetailResponse,
+  type PlatformPaymentListItemResponse,
+} from '../dto/platform-payment-list.contract';
 import type { ApprovePaymentDto } from '../dto/approve-payment.dto';
 import type { RejectPaymentDto } from '../dto/reject-payment.dto';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
@@ -75,8 +81,8 @@ export class PlatformPaymentService {
 
   async getPayments(
     reviewerId: string,
-    query: PaymentListQueryDto,
-  ): Promise<PaginatedResult<PaymentResponse>> {
+    query: PlatformPaymentListQueryDto,
+  ): Promise<PaginatedResult<PlatformPaymentListItemResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
@@ -86,27 +92,41 @@ export class PlatformPaymentService {
         this.paymentsRepository.findManyAnyOrganization(tx, {
           search: query.search,
           reviewStatus: query.reviewStatus,
+          status: query.status,
+          methodType: query.methodType,
+          from: query.from,
+          to: query.to,
+          sortBy: query.sortBy,
+          sortDirection: query.sortDirection,
           skip: (page - 1) * pageSize,
           take: pageSize,
         }),
     );
 
     return {
-      items: items.map((p) => toPaymentResponse(p)),
+      // List rows never carry the manual-transfer instructions or the
+      // proof's note — see `platform-payment-list.contract.ts`.
+      items: items.map((p) => toPlatformPaymentListItemResponse(p)),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
     };
   }
 
-  async getPayment(reviewerId: string, paymentId: string): Promise<PaymentResponse> {
+  async getPayment(
+    reviewerId: string,
+    paymentId: string,
+  ): Promise<PlatformPaymentDetailResponse> {
     const payment = await this.tenancyContextService.runInUserContext(reviewerId, (tx) =>
-      this.paymentsRepository.findByIdAnyOrganization(tx, paymentId),
+      this.paymentsRepository.findByIdAnyOrganizationWithSubscriptionContext(
+        tx,
+        paymentId,
+      ),
     );
     // A Course Commerce (P13) row has no `organizationId` — see
     // `loadReviewablePayment`'s identical guard and doc comment above.
     if (!payment || payment.organizationId == null) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
-    return toPaymentResponse(payment);
+    return toPlatformPaymentDetailResponse(payment);
   }
 
   async approvePayment(

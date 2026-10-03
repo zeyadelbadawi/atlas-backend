@@ -627,7 +627,8 @@ export class AssignmentsService {
         academyId,
         userId,
       );
-      await this.auditLogWriterService.write(tx, {
+      // Task 3 — before/after over the catalogue's assignment diff fields.
+      await this.auditLogWriterService.record(tx, {
         actorUserId: userId,
         organizationId,
         academyId,
@@ -637,6 +638,8 @@ export class AssignmentsService {
         targetId: assignmentId,
         targetLabel: updated.title,
         context: { courseId },
+        before: existing as unknown as Record<string, unknown>,
+        after: updated as unknown as Record<string, unknown>,
       });
 
       return toAssignmentResponse(updated);
