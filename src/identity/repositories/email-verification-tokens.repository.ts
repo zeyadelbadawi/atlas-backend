@@ -1,13 +1,13 @@
 /**
  * EmailVerificationTokensRepository.
  *
- * `claim()` is the security-critical method — see its doc comment.
- * Deliberately mirrors `PasswordResetTokensRepository`: same hashed-token
- * storage, same single-use semantics, same "never look up by raw token"
- * discipline.
+ * `consume()` and `rotateForUser()` are the security-critical methods —
+ * see their doc comments. Deliberately mirrors
+ * `PasswordResetTokensRepository`: same hashed-token storage, same
+ * single-use semantics, same "never look up by raw token" discipline.
  *
  * Authentication audit, Decision 2 — the table is strictly per-user under
- * RLS; `claim` finds the owner by the token's hash through
+ * RLS; `consume` finds the owner by the token's hash through
  * `IdentityResolver`, and every statement runs in the owner's context.
  */
 import { Injectable } from '@nestjs/common';
@@ -22,6 +22,11 @@ export interface CreateEmailVerificationTokenInput {
   readonly tokenHash: string;
   readonly expiresAt: Date;
 }
+
+/** What one verification attempt came to. See `consume` for when each is reported. */
+export type EmailVerificationOutcome =
+  | { readonly status: 'verified'; readonly userId: string }
+  | { readonly status: 'invalid' | 'expired' | 'used' };
 
 @Injectable()
 export class EmailVerificationTokensRepository {
@@ -44,7 +49,9 @@ export class EmailVerificationTokensRepository {
   }
 
   /**
-   * Atomically consumes a verification token.
+   * Atomically consumes a verification token AND marks the address
+   * verified — one transaction, so a crash between the two can never
+   * burn the link while leaving the account unverified.
    *
    * The `updateMany` is a compare-and-swap: it matches only a row that is
    * unused AND unexpired, and stamps `usedAt` in the same statement.
@@ -52,41 +59,78 @@ export class EmailVerificationTokensRepository {
    * link serialise and exactly one sees `count === 1` — the other matches
    * zero rows. That is what makes replay impossible, rather than a
    * read-then-write check that a second request could slip between.
+   * `emailVerifiedAt` is only ever set when still null, so the first
+   * proof's timestamp is kept (an OTP sign-in may have set it already).
    *
-   * @returns the claimed token when this caller won, `null` for every
-   *          failure mode (unknown, expired, already used) — the caller
-   *          collapses them all into one generic error so the endpoint
-   *          cannot be used to probe which tokens exist.
+   * Failure reasons beyond `invalid` are reported ONLY once the hash has
+   * matched a real row — i.e. only to whoever holds the emailed link. An
+   * unknown hash is `invalid`, exactly like a malformed token the caller
+   * never hashed, so nothing here helps anyone probe which tokens exist.
+   * A token retired by a newer resend is stamped used without the address
+   * being verified; that reads as `expired` ("request a new one"), and
+   * `used` is reserved for a link whose account is in fact verified.
    */
-  async claim(tokenHash: string): Promise<EmailVerificationToken | null> {
+  async consume(tokenHash: string): Promise<EmailVerificationOutcome> {
     const ownerId = await this.identityResolver.emailVerificationTokenOwner(tokenHash);
-    if (!ownerId) return null;
+    if (!ownerId) return { status: 'invalid' };
     const now = new Date();
-    return this.asUser(ownerId, async (tx) => {
+    return this.asUser(ownerId, async (tx): Promise<EmailVerificationOutcome> => {
       const claim = await tx.emailVerificationToken.updateMany({
         where: { tokenHash, userId: ownerId, usedAt: null, expiresAt: { gt: now } },
         data: { usedAt: now },
       });
 
-      if (claim.count !== 1) return null;
+      if (claim.count === 1) {
+        await tx.user.updateMany({
+          where: { id: ownerId, emailVerifiedAt: null },
+          data: { emailVerifiedAt: now },
+        });
+        return { status: 'verified', userId: ownerId };
+      }
 
-      return tx.emailVerificationToken.findUnique({ where: { tokenHash } });
+      const token = await tx.emailVerificationToken.findUnique({
+        where: { tokenHash },
+        select: { usedAt: true },
+      });
+      if (!token) return { status: 'invalid' };
+      if (!token.usedAt) return { status: 'expired' };
+      const owner = await tx.user.findUnique({
+        where: { id: ownerId },
+        select: { emailVerifiedAt: true },
+      });
+      return owner?.emailVerifiedAt ? { status: 'used' } : { status: 'expired' };
     });
   }
 
   /**
-   * Invalidates every outstanding token for a user.
+   * Replaces the account's live link with a new one, inside the CALLER's
+   * user-context transaction (so the outbox entry carrying the new link
+   * commits with it, or neither does).
    *
-   * Called before issuing a new one, so re-requesting verification never
-   * leaves an older link live. Marking them used (rather than deleting)
-   * keeps the audit trail of how many were issued.
+   * The user row is locked first (`SELECT … FOR UPDATE`), which serialises
+   * every rotation for one account: two concurrent resends cannot both
+   * invalidate-then-insert against the same snapshot and leave two live
+   * tokens behind. The second waits for the first to commit, and its
+   * invalidation — a new statement, so a new READ COMMITTED snapshot —
+   * then retires the token the first one just created. Retired tokens are
+   * stamped used rather than deleted, keeping the trail of what was issued.
+   *
+   * @returns `false`, writing nothing, when the account is gone or already
+   *          verified — checked under the same lock, so a verification
+   *          that commits first is never followed by a pointless new link.
    */
-  async invalidateAllForUser(userId: string): Promise<void> {
-    await this.asUser(userId, (tx) =>
-      tx.emailVerificationToken.updateMany({
-        where: { userId, usedAt: null },
-        data: { usedAt: new Date() },
-      }),
-    );
+  async rotateForUser(
+    tx: Prisma.TransactionClient,
+    input: CreateEmailVerificationTokenInput,
+  ): Promise<boolean> {
+    const locked = await tx.$queryRaw<{ email_verified_at: Date | null }[]>`
+      SELECT "email_verified_at" FROM "users" WHERE "id" = ${input.userId} FOR UPDATE`;
+    if (locked.length === 0 || locked[0].email_verified_at) return false;
+    await tx.emailVerificationToken.updateMany({
+      where: { userId: input.userId, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    await tx.emailVerificationToken.create({ data: { ...input } });
+    return true;
   }
 }

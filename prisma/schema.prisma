@@ -2771,6 +2771,60 @@ model ContactSubmission {
   @@map("contact_submissions")
 }
 
+/// TASK 7 — what a visitor to the Atlas marketing homepage asked about.
+enum PlatformContactTopic {
+  sales
+  support
+  partnership
+  other
+
+  @@map("platform_contact_topic")
+}
+
+/// TASK 7 — triage state of one marketing-site enquiry. Same vocabulary as
+/// `ContactSubmissionStatus`, deliberately a separate type: the two inboxes
+/// belong to different owners (an Academy vs. Atlas itself) and must be free
+/// to diverge.
+enum PlatformContactSubmissionStatus {
+  new
+  read
+  archived
+
+  @@map("platform_contact_submission_status")
+}
+
+/// TASK 7 — one enquiry sent through the Atlas marketing homepage's contact
+/// form (`POST public/contact`), read by Platform Owners only
+/// (`platform/contact-submissions`). Not tenant data: no organization, no
+/// academy. RLS (see the migration): anyone may INSERT a fresh `new` row;
+/// SELECT/UPDATE/DELETE require `is_platform_owner(app.current_user_id)`.
+///
+/// `organizationName` is deliberately NOT called `company`: `company` is the
+/// form's honeypot field name. `ipHash` is a keyed SHA-256 of the client
+/// address — the raw IP is never stored.
+model PlatformContactSubmission {
+  id               String                          @id @default(uuid())
+  name             String                          @db.VarChar(200)
+  /// Normalized (trimmed, lower-cased) before it is written.
+  email            String                          @db.VarChar(320)
+  organizationName String?                         @map("organization_name") @db.VarChar(200)
+  topic            PlatformContactTopic
+  message          String                          @db.VarChar(5000)
+  /// `en` | `ar` — the language the visitor wrote from.
+  locale           String                          @db.VarChar(8)
+  /// The marketing path the form was sent from (path only, no query).
+  sourcePath       String?                         @map("source_path") @db.VarChar(512)
+  status           PlatformContactSubmissionStatus @default(new)
+  ipHash           String                          @map("ip_hash") @db.VarChar(64)
+  userAgent        String?                         @map("user_agent") @db.VarChar(512)
+  readAt           DateTime?                       @map("read_at")
+  createdAt        DateTime                        @default(now()) @map("created_at")
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("platform_contact_submissions")
+}
+
 /// Matches `Forum['status']` (`forum.types.ts`) exactly.
 enum ForumStatus {
   open

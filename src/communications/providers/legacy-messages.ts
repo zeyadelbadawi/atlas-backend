@@ -57,6 +57,11 @@ export function extractPasswordResetToken(text: string): string | undefined {
   return extractTokenFromLink(text, '/auth/reset-password');
 }
 
+/**
+ * Matches both destinations `auth.email.verification` builds: the
+ * management host's `/auth/verify-email` and an academy host's
+ * root-mounted `/verify-email` (optionally under `/ar`).
+ */
 export function extractEmailVerificationToken(text: string): string | undefined {
-  return extractTokenFromLink(text, '/auth/verify-email');
+  return extractTokenFromLink(text, '/verify-email');
 }

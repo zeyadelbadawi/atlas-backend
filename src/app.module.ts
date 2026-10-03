@@ -59,6 +59,7 @@ import { CourseCommerceModule } from './course-commerce/course-commerce.module';
 import { ProvisioningModule } from './provisioning/provisioning.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { PlatformModule } from './platform/platform.module';
+import { PlatformContactModule } from './platform-contact/platform-contact.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { NotificationEventsModule } from './notification-events/notification-events.module';
 import { CommunicationsModule } from './communications/communications.module';
@@ -189,6 +190,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
     CourseCommerceModule,
     ProvisioningModule,
     PlatformModule,
+    // TASK 7 — Atlas marketing contact form + Platform Owner inbox.
+    PlatformContactModule,
     AnalyticsModule,
     NotificationsModule,
     SearchModule,

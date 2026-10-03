@@ -425,6 +425,16 @@ export interface IdentityConfig {
     readonly max: number;
     readonly windowSeconds: number;
   };
+  /**
+   * `POST /auth/verify-email/resend` — its own budget, keyed per account
+   * AND per client IP, never shared with password-reset requests. See
+   * `env.validation.ts` on `AUTH_EMAIL_VERIFICATION_RESEND_RATE_LIMIT_MAX`.
+   */
+  readonly emailVerificationResendRateLimit: {
+    readonly max: number;
+    readonly ipMax: number;
+    readonly windowSeconds: number;
+  };
   /** Phase P18 — see `env.validation.ts`'s own doc comment on `AUTH_REGISTER_RATE_LIMIT_MAX`. */
   readonly registerRateLimit: { readonly max: number; readonly windowSeconds: number };
   /** P64 Communications C4 (§12) — email one-time codes and trusted devices. */
@@ -547,6 +557,13 @@ export default () => {
     passwordResetRateLimit: {
       max: Number(env.AUTH_PASSWORD_RESET_RATE_LIMIT_MAX ?? 5),
       windowSeconds: Number(env.AUTH_PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS ?? 3600),
+    },
+    emailVerificationResendRateLimit: {
+      max: Number(env.AUTH_EMAIL_VERIFICATION_RESEND_RATE_LIMIT_MAX ?? 3),
+      ipMax: Number(env.AUTH_EMAIL_VERIFICATION_RESEND_IP_RATE_LIMIT_MAX ?? 20),
+      windowSeconds: Number(
+        env.AUTH_EMAIL_VERIFICATION_RESEND_RATE_LIMIT_WINDOW_SECONDS ?? 3600,
+      ),
     },
     registerRateLimit: {
       max: Number(env.AUTH_REGISTER_RATE_LIMIT_MAX ?? 5),

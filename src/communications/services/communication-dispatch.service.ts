@@ -92,6 +92,30 @@ const ANONYMISED_EMAIL_DOMAIN = '@account.invalid';
 /** Categories a person can never be capped or digested out of. */
 const CAP_EXEMPT_CATEGORIES: ReadonlySet<string> = new Set(['security', 'transactional']);
 
+/**
+ * A settled row's `values` with the entry's `credentialValues` removed —
+ * or `undefined` (leave the column untouched) when the entry declares none
+ * or the row holds none of them. Exported for its unit test.
+ *
+ * Every entry that declares credentials is `security`, which is never
+ * capped or digested, so the per-row settle paths here are the only ones
+ * such a row can take.
+ */
+export function withoutCredentials(
+  entry: Pick<CommunicationCatalogEntry, 'credentialValues'>,
+  values: Prisma.JsonValue | null,
+): Prisma.InputJsonValue | undefined {
+  const keys = entry.credentialValues;
+  if (!keys?.length || !values || typeof values !== 'object' || Array.isArray(values)) {
+    return undefined;
+  }
+  const record = values as Prisma.JsonObject;
+  if (!keys.some((key) => key in record)) return undefined;
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => !keys.includes(key)),
+  ) as Prisma.InputJsonValue;
+}
+
 interface RecipientState {
   readonly email: string;
   readonly preferences: unknown;
@@ -172,7 +196,14 @@ export class CommunicationDispatchService {
         });
         await tx.communicationOutbox.update({
           where: { id: plan.row.id },
-          data: { state: 'dispatched', dispatchedAt: new Date(), lastError: null },
+          data: {
+            state: 'dispatched',
+            dispatchedAt: new Date(),
+            lastError: null,
+            // The email is out; the link token it carried has no business
+            // staying in the outbox for the rest of the retention window.
+            values: withoutCredentials(plan.entry, plan.row.values),
+          },
         });
       });
       await this.countTowardsDailyCap(plan.row.recipientUserId!);
@@ -353,8 +384,13 @@ export class CommunicationDispatchService {
       entity: { type: row.entityType ?? '', id: row.entityId ?? '' },
       values,
     });
+    // An academy-branded key emitted with NO academy (e.g. a management-
+    // surface signup's verification email) is a platform email: it is
+    // built like one, without the academy-host `/ar` prefix the platform
+    // host does not mount. An academy that exists but has no host yet
+    // keeps `onHost`'s documented fallback.
     const actionUrl = path
-      ? entry.branding === 'academy'
+      ? entry.branding === 'academy' && row.academyId
         ? this.links.onHost(branding.host, path, locale)
         : this.links.platform(path)
       : null;
@@ -413,8 +449,14 @@ export class CommunicationDispatchService {
       await tx.communicationOutbox.update({
         where: { id: plan.row.id },
         data: exhausted
-          ? { state: 'failed', lastError: message.slice(0, 1000) }
-          : // Hand the row back so the BullMQ retry (or the sweep) can claim it again.
+          ? {
+              state: 'failed',
+              lastError: message.slice(0, 1000),
+              // Terminal: nothing will render this row again.
+              values: withoutCredentials(plan.entry, plan.row.values),
+            }
+          : // Hand the row back so the BullMQ retry (or the sweep) can claim it
+            // again — credentials intact, because the retry re-renders the link.
             {
               state: 'pending',
               availableAt: new Date(),
@@ -470,6 +512,17 @@ export class CommunicationDispatchService {
         lastError: reason,
       },
     });
+    // Every state written here is terminal, so a credential the row was
+    // holding for a render that will now never happen goes too.
+    const scrubbed = isCommunicationEventKey(row.key)
+      ? withoutCredentials(COMMUNICATION_CATALOG[row.key], row.values)
+      : undefined;
+    if (scrubbed !== undefined) {
+      await tx.communicationOutbox.update({
+        where: { id: outboxId },
+        data: { values: scrubbed },
+      });
+    }
     if (options.inApp) {
       await tx.communicationDelivery.create({
         data: { outboxId, channel: 'in_app', status: 'sent', sentAt: row.createdAt },
