@@ -733,6 +733,44 @@ export class AcademiesService {
   }
 
   /**
+   * Drops this Academy's cached hostname resolutions, for writes made
+   * outside this service that change what the resolution carries — the
+   * theme and colours (`presentation`), or the logo, name and favicon.
+   * Runs after the caller's transaction has committed.
+   */
+  async invalidatePublicHostnamesForAcademy(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+  ): Promise<void> {
+    // The user's context, as `updateBranding` reads them: the domain
+    // connection is not visible to a tenant-only read.
+    const found = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        const academy = await this.academiesRepository.findById(tx, academyId);
+        if (!academy) return null;
+        const [allocation, connection] = await Promise.all([
+          this.subdomainAllocationsRepository.findByAcademyId(tx, academyId),
+          this.domainConnectionsRepository.findByAcademyId(tx, academyId),
+        ]);
+        return {
+          slug: academy.slug,
+          allocation,
+          customHostname: connection?.hostname ?? null,
+        };
+      },
+    );
+    if (!found) return;
+    await this.invalidatePublicHostnames(
+      found.slug,
+      found.allocation,
+      found.customHostname,
+    );
+  }
+
+  /**
    * Drops every cached hostname resolution that could answer for this
    * Academy (P63g): the allocation's label, its stored full host, the
    * effective full host, the slug forms and the connected custom hostname.
