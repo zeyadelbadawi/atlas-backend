@@ -31,7 +31,7 @@ import { isFaviconReference } from '../../public-website/utils/favicon.util';
  * the branding form is saved). `javascript:`, `blob:`, other schemes and
  * malformed values are rejected. An empty value is accepted, as before.
  */
-function IsLogoReference(options?: ValidationOptions) {
+export function IsLogoReference(options?: ValidationOptions) {
   return function (object: object, propertyName: string): void {
     registerDecorator({
       name: 'isLogoReference',
@@ -62,7 +62,7 @@ function IsLogoReference(options?: ValidationOptions) {
  * was a free string before, so anything could be stored and then never
  * shown; an empty value still clears it.
  */
-function IsFaviconReference(options?: ValidationOptions) {
+export function IsFaviconReference(options?: ValidationOptions) {
   return function (object: object, propertyName: string): void {
     registerDecorator({
       name: 'isFaviconReference',

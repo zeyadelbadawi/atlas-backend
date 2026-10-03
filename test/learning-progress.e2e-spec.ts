@@ -234,6 +234,58 @@ describe('Course/Lesson Progress (e2e)', () => {
     expect(enrollment.body.completedAt).toBeTruthy();
   });
 
+  it('Start / Continue / Completed: the course page, My Courses and the overview agree, from one read each (Task E)', async () => {
+    const { course, lesson1, lesson2 } =
+      await seedEnrollableCourseWithLessons('progress-cta');
+    const student = await signUpAndSignIn(app, 'progress-cta-student');
+    await seedAcademyStudent(admin, course.academyId, student.userId);
+    const as = (method: 'get' | 'post', url: string) =>
+      request(app.getHttpServer())
+        [method](url)
+        .set('Authorization', `Bearer ${student.accessToken}`);
+    await as('post', '/enrollments').send({ courseId: course.id }).expect(201);
+
+    const state = async () => {
+      const byCourse = await as('get', `/enrollments/by-course/${course.id}`).expect(200);
+      const list = await as('get', '/enrollments').expect(200);
+      const listed = list.body.items.find(
+        (item: { courseId: string }) => item.courseId === course.id,
+      );
+      expect(listed.progress.learningState).toBe(byCourse.body.progress.learningState);
+      return byCourse.body.progress.learningState as string;
+    };
+
+    // Enrolled, nothing done: Start (the first lesson is already the
+    // "current" one, which must not read as started).
+    expect(await state()).toBe('not_started');
+    const overview = await as(
+      'get',
+      `/learning/overview?academyId=${course.academyId}`,
+    ).expect(200);
+    expect(
+      overview.body.continueLearning.find(
+        (item: { courseId: string }) => item.courseId === course.id,
+      )?.learningState,
+    ).toBe('not_started');
+    const counts = async () =>
+      (await as('get', `/learning/overview?academyId=${course.academyId}`).expect(200))
+        .body.courseCounts;
+    // A course not started yet is neither "in progress" nor "completed".
+    expect(await counts()).toEqual({ all: 1, inProgress: 0, completed: 0 });
+
+    await as('post', `/courses/${course.id}/progress/complete-lesson`)
+      .send({ lessonId: lesson1.id })
+      .expect(201);
+    expect(await state()).toBe('in_progress');
+    expect(await counts()).toEqual({ all: 1, inProgress: 1, completed: 0 });
+
+    await as('post', `/courses/${course.id}/progress/complete-lesson`)
+      .send({ lessonId: lesson2.id })
+      .expect(201);
+    expect(await state()).toBe('completed');
+    expect(await counts()).toEqual({ all: 1, inProgress: 0, completed: 1 });
+  });
+
   it('rejects completing a lesson from a different course', async () => {
     const { course: courseA } = await seedEnrollableCourseWithLessons('progress-crossA');
     const { lesson1: foreignLesson } =

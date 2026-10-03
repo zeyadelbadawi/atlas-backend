@@ -13,6 +13,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -29,6 +30,9 @@ import { WebsitePagesService } from '../services/website-pages.service';
 import type { EditingParticipant } from '../../concurrency/services/editing-presence.service';
 import { UpdateWebsiteConfigurationDto } from '../dto/update-website-configuration.dto';
 import { CreateWebsitePageDto } from '../dto/create-website-page.dto';
+import { PublishWebsitePageDto } from '../dto/publish-website-page.dto';
+import { SaveVisualIdentityDto } from '../dto/save-visual-identity.dto';
+import type { AcademyResponse } from '../../academy/dto/academy.contract';
 import { UpdateWebsitePageDto } from '../dto/update-website-page.dto';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import { ReorderItemsDto } from '../../course/dto/reorder-items.dto';
@@ -61,6 +65,24 @@ export class WebsiteController {
   ): Promise<WebsiteConfigurationResponse> {
     const { academyId, organizationId } = request.academyContext!;
     return this.websiteConfigurationService.updateConfiguration(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      body,
+    );
+  }
+
+  /** The one "Save Visual Identity" (Task G) — see `saveVisualIdentity`. */
+  @Put(':id/visual-identity')
+  async saveVisualIdentity(
+    @Req() request: Request,
+    @Body() body: SaveVisualIdentityDto,
+  ): Promise<{
+    readonly academy: AcademyResponse;
+    readonly configuration: WebsiteConfigurationResponse;
+  }> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.websiteConfigurationService.saveVisualIdentity(
       academyId,
       organizationId,
       request.authContext!.userId,
@@ -158,6 +180,7 @@ export class WebsiteController {
   async publishPage(
     @Req() request: Request,
     @Param('pageId') pageId: string,
+    @Body() body: PublishWebsitePageDto,
   ): Promise<WebsitePageResponse> {
     const { academyId, organizationId } = request.academyContext!;
     return this.websitePagesService.publish(
@@ -165,6 +188,7 @@ export class WebsiteController {
       organizationId,
       request.authContext!.userId,
       pageId,
+      body?.expectedVersion,
     );
   }
 

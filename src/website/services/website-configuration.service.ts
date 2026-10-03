@@ -34,11 +34,19 @@ import {
   collectSampleContent,
   type SampleContentEntry,
 } from '../utils/sample-content.util';
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { STALE_RESOURCE_VERSION_CODE } from '../../concurrency/errors/stale-resource-version.exception';
 import { Prisma } from '@prisma/client';
 import type { WebsiteConfiguration } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { AcademiesRepository } from '../../academy/repositories/academies.repository';
+import { AcademiesService } from '../../academy/services/academies.service';
+import {
+  toAcademyResponse,
+  type AcademyResponse,
+} from '../../academy/dto/academy.contract';
+import type { SaveVisualIdentityDto } from '../dto/save-visual-identity.dto';
 import {
   WebsiteConfigurationRepository,
   buildPublishedSnapshot,
@@ -77,7 +85,31 @@ export class WebsiteConfigurationService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly sectionReferenceValidatorService: SectionReferenceValidatorService,
     private readonly websitePagesRepository: WebsitePagesRepository,
+    private readonly academiesRepository: AcademiesRepository,
+    private readonly academiesService: AcademiesService,
   ) {}
+
+  /**
+   * Refuses a save based on a copy someone has saved over since. Locks the
+   * row first, so two saves based on the same copy cannot both pass.
+   */
+  private async assertNotStale(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    expectedUpdatedAt: string | undefined,
+  ): Promise<void> {
+    if (expectedUpdatedAt === undefined) return;
+    await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+    await this.websiteConfigurationRepository.lockForPublish(tx, academyId);
+    const current = await this.websiteBootstrapService.ensureConfiguration(tx, academyId);
+    if (Date.parse(expectedUpdatedAt) !== current.updatedAt.getTime()) {
+      throw new ConflictException({
+        code: STALE_RESOURCE_VERSION_CODE,
+        messageKey: 'errors.concurrency.staleVersion',
+        details: { currentUpdatedAt: current.updatedAt.toISOString() },
+      });
+    }
+  }
 
   private async assertCanManage(
     tx: Prisma.TransactionClient,
@@ -166,11 +198,12 @@ export class WebsiteConfigurationService {
     userId: string,
     payload: UpdateWebsiteConfigurationDto,
   ): Promise<WebsiteConfigurationResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const response = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
         await this.assertCanManage(tx, academyId, userId);
+        await this.assertNotStale(tx, academyId, payload.expectedUpdatedAt);
         const current = await this.websiteBootstrapService.ensureConfiguration(
           tx,
           academyId,
@@ -237,6 +270,108 @@ export class WebsiteConfigurationService {
         return this.toManagedResponse(tx, academyId, updated);
       },
     );
+    // Before the site is first published, the hostname resolution carries
+    // the DRAFT theme and colours (`resolve_public_presentation`): drop it,
+    // so the Coming Soon page shows them on the next load, not a minute on.
+    if (payload.brand !== undefined || payload.themeKey !== undefined) {
+      await this.academiesService.invalidatePublicHostnamesForAcademy(
+        academyId,
+        organizationId,
+        userId,
+      );
+    }
+    return response;
+  }
+
+  /**
+   * The one save for an Academy's visual identity (Task G): name, logo,
+   * favicon and website colours, in ONE transaction — never a logo saved
+   * with the old colours, or colours without the logo they came from.
+   *
+   * A VISUAL IDENTITY IS LIVE ON SAVE. The logo always was (visitors see
+   * `academies.logo_url` directly), while colours went to the draft and
+   * waited for a site publish — so a new logo appeared on the old colours.
+   * Now, on a published site, the saved brand also replaces the published
+   * brand and `configVersion` moves on, which changes every versioned
+   * public cache key (configuration, pages, SSR); the hostname resolution,
+   * which carries the colours for the first paint, is dropped after commit.
+   * Pages, navigation and SEO keep their own draft/publish cycle.
+   */
+  async saveVisualIdentity(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    payload: SaveVisualIdentityDto,
+  ): Promise<{
+    readonly academy: AcademyResponse;
+    readonly configuration: WebsiteConfigurationResponse;
+  }> {
+    const result = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        await this.assertNotStale(tx, academyId, payload.expectedUpdatedAt);
+        const current = await this.websiteBootstrapService.ensureConfiguration(
+          tx,
+          academyId,
+        );
+
+        const academyData: Prisma.AcademyUpdateInput = {};
+        if (payload.name !== undefined) academyData.name = payload.name.trim();
+        if (payload.logo !== undefined) academyData.logoUrl = payload.logo || null;
+        if (payload.favicon !== undefined) {
+          academyData.faviconUrl = payload.favicon || null;
+        }
+        const academy =
+          Object.keys(academyData).length > 0
+            ? await this.academiesRepository.update(tx, academyId, academyData)
+            : await this.academiesRepository.findById(tx, academyId);
+        if (!academy) {
+          throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
+        }
+
+        const configData: Prisma.WebsiteConfigurationUpdateInput = {};
+        if (payload.brand !== undefined) {
+          const patch = parseOrThrow(websiteBrandPatchSchema, payload.brand);
+          const brand = parseOrThrow(
+            websiteBrandSchema,
+            resolveBrandUpdate(
+              current.brand as Record<string, unknown>,
+              patch as Record<string, unknown>,
+              { userId, now: new Date() },
+            ),
+          ) as Prisma.InputJsonValue;
+          configData.brand = brand;
+          if (current.status === 'published' && current.publishedSnapshot) {
+            configData.publishedSnapshot = {
+              ...(current.publishedSnapshot as Record<string, unknown>),
+              brand,
+            } as Prisma.InputJsonValue;
+          }
+        }
+        // Anything visitors see changed: move every versioned public cache
+        // key on, so the SSR page cache cannot serve the old logo or colours.
+        if (Object.keys(academyData).length > 0 || payload.brand !== undefined) {
+          configData.configVersion = { increment: 1 };
+        }
+        const configuration =
+          Object.keys(configData).length > 0
+            ? await this.websiteConfigurationRepository.update(tx, academyId, configData)
+            : current;
+
+        return {
+          academy: toAcademyResponse(academy),
+          configuration: await this.toManagedResponse(tx, academyId, configuration),
+        };
+      },
+    );
+    await this.academiesService.invalidatePublicHostnamesForAcademy(
+      academyId,
+      organizationId,
+      userId,
+    );
+    return result;
   }
 
   async publishConfiguration(
@@ -244,7 +379,7 @@ export class WebsiteConfigurationService {
     organizationId: string,
     userId: string,
   ): Promise<PublishWebsiteResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const response = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -287,6 +422,14 @@ export class WebsiteConfigurationService {
         };
       },
     );
+    // The hostname resolution carries the published theme and colours
+    // (`resolve_public_presentation`); drop it so the change shows at once.
+    await this.academiesService.invalidatePublicHostnamesForAcademy(
+      academyId,
+      organizationId,
+      userId,
+    );
+    return response;
   }
 
   /**
@@ -312,7 +455,7 @@ export class WebsiteConfigurationService {
     organizationId: string,
     userId: string,
   ): Promise<WebsiteConfigurationResponse> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const response = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -327,5 +470,13 @@ export class WebsiteConfigurationService {
         return this.toManagedResponse(tx, academyId, updated);
       },
     );
+    // The hostname resolution carries the published theme and colours
+    // (`resolve_public_presentation`); drop it so the change shows at once.
+    await this.academiesService.invalidatePublicHostnamesForAcademy(
+      academyId,
+      organizationId,
+      userId,
+    );
+    return response;
   }
 }

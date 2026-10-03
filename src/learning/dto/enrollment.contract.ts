@@ -2,6 +2,7 @@
  * `Enrollment` response contract — matches `enrollment.types.ts`
  * field-for-field.
  */
+import { deriveLearningState, type LearningState } from '../utils/learning-state.util';
 import type {
   Course as PrismaCourse,
   CourseCategory as PrismaCourseCategory,
@@ -32,6 +33,8 @@ export interface EnrollmentProgressSummary {
   readonly currentLessonId?: string;
   readonly completionState: PrismaCourseProgress['completionState'];
   readonly certificateStatus: PrismaCourseProgress['certificateStatus'];
+  /** Start / Continue / Completed (Task E) — see `deriveLearningState`. */
+  readonly learningState: LearningState;
 }
 
 export interface EnrollmentResponse {
@@ -108,6 +111,7 @@ export function toEnrollmentResponse(
           currentLessonId: progress.currentLessonId ?? undefined,
           completionState: progress.completionState,
           certificateStatus: progress.certificateStatus,
+          learningState: deriveLearningState(progress),
         }
       : undefined,
   };

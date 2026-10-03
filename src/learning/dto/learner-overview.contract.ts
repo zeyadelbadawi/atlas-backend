@@ -1,3 +1,4 @@
+import type { LearningState } from '../utils/learning-state.util';
 /**
  * The learner dashboard's read contracts (master plan Phase 2 §D.8/§E.1).
  *
@@ -28,6 +29,8 @@ export interface ContinueLearningItem {
   readonly nextItemId: string | null;
   readonly nextItemTitle: string | null;
   readonly lastActivityAt: string | null;
+  /** Start or Continue (completed courses are not listed) — Task E. */
+  readonly learningState: LearningState;
 }
 
 export interface LearnerCourseCounts {
