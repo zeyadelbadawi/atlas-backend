@@ -191,6 +191,20 @@ describe('Academy Management (e2e) — functional/contract', () => {
     expect(updated.body.status).toBe('active');
     expect(updated.body.organizationId).toBe(org.id); // never reassignable.
 
+    // Task 1: an owner cannot suspend or archive through PATCH — that would
+    // take the site and academy sign-in offline and skip archive()'s side
+    // effects. Archiving is DELETE only; suspension is a platform action.
+    for (const status of ['suspended', 'archived']) {
+      await request(app.getHttpServer())
+        .patch(`/academies/${academyId}`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ status })
+        .expect(400);
+    }
+    const stillActive = await admin.academy.findUniqueOrThrow({ where: { id: academyId } });
+    expect(stillActive.status).toBe('active');
+    expect(stillActive.archivedAt).toBeNull();
+
     const branded = await request(app.getHttpServer())
       .patch(`/academies/${academyId}/branding`)
       .set('Authorization', `Bearer ${user.accessToken}`)
