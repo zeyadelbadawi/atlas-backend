@@ -9,6 +9,8 @@
 #   remote.sh hosts   -> up to two published Academy hosts: "host|<hostname>"
 #   remote.sh rum     -> "rum|<total samples>": the sum of the RUM
 #                        histograms' _count series in Prometheus
+#   remote.sh dups    -> "w4dups|<entity>|<groups>|<rows>|<to rename>": the
+#                        W4 duplicate-name report (counts only)
 #
 # Read-only: every statement is a SELECT, every probe a GET. Prints
 # non-secret facts only — no secret value, no personal data, no bank detail,
@@ -192,5 +194,49 @@ case "${1:-}" in
       | count_json "d.data.result.map(r=>r.metric.__name__.replace('atlas_rum_','').replace('_count','')+'='+r.value[1]).join(',')||'none'" 2>/dev/null)
     echo "rum|${total:-0}|${per:-none}"
     ;;
-  *) echo "usage: remote.sh facts|hosts|rum" >&2; exit 2 ;;
+  dups)
+    # W4 pre-deploy report: how many organization / academy names collide
+    # under the W4 name key, and how many learners share a key inside one
+    # academy. Counts only, never a name. The key function is a session-
+    # temporary copy of migration 20261104000300's atlas_name_key, created
+    # inside a transaction that is rolled back: nothing persists.
+    docker compose exec -T postgres psql -U "$PGUSER_" -d "$PGDB_" -t -A -F'|' -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+CREATE FUNCTION pg_temp.w4_key(p text) RETURNS text LANGUAGE sql IMMUTABLE STRICT AS $fn$
+  SELECT btrim(
+    regexp_replace(
+      normalize(
+        translate(
+          lower(
+            regexp_replace(
+              normalize(p, NFKD),
+              '[̀-ًͯ-ٰٟۖ-ۭـ​-‏‪-‮⁠-⁩﻿]',
+              '',
+              'g'
+            ) COLLATE "und-x-icu"
+          ),
+          'ς',
+          'σ'
+        ),
+        NFKC
+      ),
+      '\s+',
+      ' ',
+      'g'
+    )
+  )
+$fn$;
+SELECT 'w4dups', e, count(*), coalesce(sum(n),0), coalesce(sum(n-1),0) FROM (
+  SELECT 'organizations' e, count(*) n FROM organizations GROUP BY pg_temp.w4_key(name) HAVING count(*) > 1
+  UNION ALL
+  SELECT 'academies', count(*) FROM academies GROUP BY pg_temp.w4_key(name) HAVING count(*) > 1
+  UNION ALL
+  SELECT 'learners', count(*) FROM academy_students s JOIN users u ON u.id = s.user_id
+   GROUP BY s.academy_id, pg_temp.w4_key(u.name) HAVING count(*) > 1
+) g GROUP BY e ORDER BY e;
+SELECT 'w4totals', (SELECT count(*) FROM organizations), (SELECT count(*) FROM academies), (SELECT count(*) FROM academy_students);
+ROLLBACK;
+SQL
+    ;;
+  *) echo "usage: remote.sh facts|hosts|rum|dups" >&2; exit 2 ;;
 esac
