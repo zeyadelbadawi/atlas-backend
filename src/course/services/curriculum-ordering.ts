@@ -153,6 +153,20 @@ export async function lockSectionRow(
 }
 
 /**
+ * Row-lock several sections in a stable (sorted) order, so two
+ * transactions moving items between the same pair of units can never
+ * deadlock.
+ */
+export async function lockSectionRows(
+  tx: Prisma.TransactionClient,
+  sectionIds: readonly string[],
+): Promise<void> {
+  for (const id of [...new Set(sectionIds)].sort()) {
+    await lockSectionRow(tx, id);
+  }
+}
+
+/**
  * Refuse a reorder built on an order the client no longer has. No-op when
  * the client did not send `expectedOrderedIds` (older clients keep working
  * with last-write-wins, still serialized by the row lock).

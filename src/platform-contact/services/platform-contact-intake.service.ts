@@ -30,7 +30,7 @@
  * burst) and the lane is drained on application shutdown. The enquiry is
  * always visible in the Platform Owner's inbox regardless.
  */
-import { Injectable, Logger, type OnApplicationShutdown } from '@nestjs/common';
+import { Injectable, Logger, type BeforeApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, createHmac } from 'node:crypto';
 import type { IdentityConfig } from '../../config/configuration';
@@ -67,7 +67,7 @@ const EMAIL_MESSAGE_EXCERPT = 1000;
 const NOTIFY_BATCH_SIZE = 20;
 
 @Injectable()
-export class PlatformContactIntakeService implements OnApplicationShutdown {
+export class PlatformContactIntakeService implements BeforeApplicationShutdown {
   private readonly logger = new Logger(PlatformContactIntakeService.name);
   private readonly ipHashKey: Buffer;
   private notificationLane: Promise<void> = Promise.resolve();
@@ -140,7 +140,9 @@ export class PlatformContactIntakeService implements OnApplicationShutdown {
     } while (tail !== this.notificationLane);
   }
 
-  async onApplicationShutdown(): Promise<void> {
+  // Before shutdown, not on it: the communications queue closes in
+  // `onApplicationShutdown`, and the lane still needs it to enqueue.
+  async beforeApplicationShutdown(): Promise<void> {
     await this.drainNotifications();
   }
 
@@ -263,6 +265,9 @@ export class PlatformContactIntakeService implements OnApplicationShutdown {
             anchor.id,
             async (tx) => {
               const ids: (string | null)[] = [];
+              // Deleted while queued: emit nothing, so no email about a
+              // deleted enquiry is ever sent (see `lockIfExists`).
+              if (!(await this.repository.lockIfExists(tx, submissionId))) return ids;
               for (const recipientUserId of batch) {
                 const emitted = await this.communicationService.emit(tx, {
                   key: PLATFORM_CONTACT_NOTIFICATION.key,

@@ -14,11 +14,11 @@
  */
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type {
-  PlatformContactSubmission,
-  PlatformContactSubmissionStatus,
-  PlatformContactTopic,
+import {
   Prisma,
+  type PlatformContactSubmission,
+  type PlatformContactSubmissionStatus,
+  type PlatformContactTopic,
 } from '@prisma/client';
 import type { PlatformContactSortField } from '../dto/list-platform-contact-submissions-query.dto';
 
@@ -120,6 +120,19 @@ export class PlatformContactSubmissionsRepository {
     id: string,
   ): Promise<PlatformContactSubmission | null> {
     return tx.platformContactSubmission.findUnique({ where: { id } });
+  }
+
+  /**
+   * `true` while the enquiry still exists, holding a share lock on it for
+   * the rest of the transaction: a concurrent delete waits until this
+   * transaction commits (so its outbox cleanup sees what was written here),
+   * and a delete that committed first makes this return `false`.
+   */
+  async lockIfExists(tx: Prisma.TransactionClient, id: string): Promise<boolean> {
+    const rows = await tx.$queryRaw<{ id: string }[]>(
+      Prisma.sql`SELECT "id" FROM "platform_contact_submissions" WHERE "id" = ${id} FOR SHARE`,
+    );
+    return rows.length > 0;
   }
 
   /**

@@ -535,6 +535,10 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'previousDeviceLabel',
     'courseId',
     'lessonId',
+    // Operator forensics; stored, but hidden from tenants by
+    // TENANT_HIDDEN_CONTEXT_KEYS.
+    'newSessionId',
+    'previousSessionId',
   ]),
 
   /* ---------------------------- Certificates --------------------------- */

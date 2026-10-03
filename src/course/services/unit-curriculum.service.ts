@@ -27,11 +27,13 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { STALE_RESOURCE_VERSION_CODE } from '../../concurrency/errors/stale-resource-version.exception';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { CourseInstructorsRepository } from '../repositories/course-instructors.repository';
@@ -47,6 +49,7 @@ import {
   assertExpectedOrder,
   isExactPermutation,
   lockSectionRow,
+  lockSectionRows,
   nextUnitOrder,
   persistUnitOrder,
   readUnitItems,
@@ -152,22 +155,39 @@ export class UnitCurriculumService {
 
         // The item must already belong to THIS course — never reach across
         // courses/academies by guessing an id.
-        const existing =
+        const readItem = () =>
           dto.type === 'quiz'
-            ? await tx.quiz.findUnique({
+            ? tx.quiz.findUnique({
                 where: { id: dto.itemId },
-                select: { id: true, courseId: true, title: true },
+                select: { id: true, courseId: true, sectionId: true, title: true },
               })
-            : await tx.assignment.findUnique({
+            : tx.assignment.findUnique({
                 where: { id: dto.itemId },
-                select: { id: true, courseId: true, title: true },
+                select: { id: true, courseId: true, sectionId: true, title: true },
               });
-        if (!existing || existing.courseId !== courseId) {
+        const found = await readItem();
+        if (!found || found.courseId !== courseId) {
           throw new NotFoundException({ messageKey: 'errors.notFound' });
         }
 
-        // Serialize appends with concurrent reorders/attaches on this unit.
-        await lockSectionRow(tx, sectionId);
+        // Serialize with concurrent reorders/attaches/detaches on BOTH units
+        // the item touches (the one it leaves and this one), then re-read
+        // its membership under the locks.
+        await lockSectionRows(
+          tx,
+          found.sectionId ? [sectionId, found.sectionId] : [sectionId],
+        );
+        const existing = await readItem();
+        if (!existing || existing.courseId !== courseId) {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        if (existing.sectionId !== found.sectionId) {
+          // Moved by someone else between the first read and the locks.
+          throw new ConflictException({
+            code: STALE_RESOURCE_VERSION_CODE,
+            messageKey: 'errors.concurrency.staleVersion',
+          });
+        }
         const nextOrder = await nextUnitOrder(tx, sectionId);
         if (dto.type === 'quiz') {
           await tx.quiz.update({
@@ -214,6 +234,10 @@ export class UnitCurriculumService {
       async (tx) => {
         const role = await this.assertCanManage(tx, academyId, userId, courseId);
         await this.assertSectionInCourseInAcademy(tx, sectionId, courseId, academyId);
+        // Serialize with reorders/attaches on this unit; membership is read
+        // under the lock, so a reorder can never validate against an item
+        // that is about to leave.
+        await lockSectionRow(tx, sectionId);
 
         const existing =
           dto.type === 'quiz'

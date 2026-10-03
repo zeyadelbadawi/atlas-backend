@@ -23,7 +23,12 @@ function payload(
 }
 
 function build(
-  options: { redisSet?: jest.Mock; insert?: jest.Mock; owner?: boolean } = {},
+  options: {
+    redisSet?: jest.Mock;
+    insert?: jest.Mock;
+    owner?: boolean;
+    stillExists?: boolean;
+  } = {},
 ) {
   const redisSet = options.redisSet ?? jest.fn().mockResolvedValue('OK');
   const redisDel = jest.fn().mockResolvedValue(1);
@@ -39,7 +44,10 @@ function build(
   const enqueueAfterCommit = jest.fn().mockResolvedValue(undefined);
   const service = new PlatformContactIntakeService(
     tenancy as unknown as TenancyContextService,
-    { insertAnonymous: insert } as unknown as PlatformContactSubmissionsRepository,
+    {
+      insertAnonymous: insert,
+      lockIfExists: jest.fn().mockResolvedValue(options.stillExists ?? true),
+    } as unknown as PlatformContactSubmissionsRepository,
     {
       getClient: () => ({ set: redisSet, del: redisDel }),
     } as unknown as RedisService,
@@ -153,6 +161,14 @@ describe('PlatformContactIntakeService', () => {
     await service.drainNotifications();
     expect(insert).toHaveBeenCalledTimes(1);
     expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('emits nothing for an enquiry deleted before the notification lane reached it', async () => {
+    const { service, emit, enqueueAfterCommit } = build({ stillExists: false });
+    await service.submit(payload(), {}, NOW);
+    await service.drainNotifications();
+    expect(emit).not.toHaveBeenCalled();
+    expect(enqueueAfterCommit).not.toHaveBeenCalled();
   });
 
   it('hashes the same address to the same value and never returns it raw', () => {

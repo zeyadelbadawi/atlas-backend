@@ -183,6 +183,46 @@ describe('Unit curriculum — unified ordering (e2e)', () => {
     expect(u2items.body.map((i: { id: string }) => i.id)).toEqual([l2.id, q2.id]);
   });
 
+  it('attaching an item that sits in another unit moves it: it leaves that unit and lands last in this one', async () => {
+    const { owner, academy, course } = await arrange('move-between');
+    const u1 = await seedCourseSection(admin, course.id, 'U1', 0);
+    const u2 = await seedCourseSection(admin, course.id, 'U2', 1);
+    const l1 = await seedCourseLesson(admin, u1.id, course.id, 'L1', 0, {
+      status: 'published',
+    });
+    const l2 = await seedCourseLesson(admin, u2.id, course.id, 'L2', 0, {
+      status: 'published',
+    });
+    const q = await seedQuiz(admin, course.id, 'Mover', { status: 'published' });
+    const items = (unit: string) =>
+      `/academies/${academy.id}/courses/${course.id}/sections/${unit}/items`;
+
+    await request(app.getHttpServer())
+      .post(`${items(u1.id)}/attach`)
+      .set(auth(owner.accessToken))
+      .send({ type: 'quiz', itemId: q.id })
+      .expect(201);
+    // Both units are locked (in a stable order) and membership re-read.
+    const moved = await request(app.getHttpServer())
+      .post(`${items(u2.id)}/attach`)
+      .set(auth(owner.accessToken))
+      .send({ type: 'quiz', itemId: q.id })
+      .expect(201);
+    expect(moved.body.map((i: { id: string }) => i.id)).toEqual([l2.id, q.id]);
+
+    const u1items = await request(app.getHttpServer())
+      .get(items(u1.id))
+      .set(auth(owner.accessToken))
+      .expect(200);
+    expect(u1items.body.map((i: { id: string }) => i.id)).toEqual([l1.id]);
+    // A reorder of unit 1 built on the view that still held the quiz is stale.
+    await request(app.getHttpServer())
+      .patch(`${items(u1.id)}/order`)
+      .set(auth(owner.accessToken))
+      .send({ orderedIds: [l1.id], expectedOrderedIds: [l1.id, q.id] })
+      .expect(409);
+  });
+
   it('lists course-level content available to attach, and detach returns an item to course level', async () => {
     const { owner, academy, course } = await arrange('available');
     const unit = await seedCourseSection(admin, course.id, 'U', 0);

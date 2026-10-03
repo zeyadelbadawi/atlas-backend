@@ -175,7 +175,7 @@ writer stores.
 | `enrollment.granted` | students | academy | yes | studentId, studentName, courseId, courseTitle, expiresAt |
 | `enrollment.revoked` | students | academy | yes | studentId, studentName, courseId, courseTitle, reason |
 | `enrollment.expiry_updated` | students | academy | yes | studentId, studentName, courseId, courseTitle, expiresAt |
-| `learning.device_session_takeover` | students | academy | yes | previousDeviceLabel, courseId, lessonId |
+| `learning.device_session_takeover` | students | academy | yes | previousDeviceLabel, courseId, lessonId, newSessionId†, previousSessionId† |
 | `certificate.issued` | certificates | academy | yes | enrollmentId, courseId, courseTitle, studentId, studentName, automatic, forced, reason, overallScore |
 | `certificate.reissued` | certificates | academy | yes | enrollmentId, courseId, courseTitle, studentId, studentName, automatic, forced, reason, overallScore |
 | `certificate.revoked` | certificates | academy | yes | reason, studentId, studentName, courseId, courseTitle |
@@ -262,6 +262,8 @@ writer stores.
 | `platform.contact_submission.status_changed` | platform | platform | no | status, previousStatus |
 | `platform.contact_submission.deleted` | platform | platform | no | status |
 
+† Stored for operators only; removed from tenant responses by `TENANT_HIDDEN_CONTEXT_KEYS`.
+
 ## Intentionally excluded or not tenant-visible
 
 - **Sign-in and account-security telemetry** (`auth.*`, `password_reset.*`,
@@ -287,9 +289,6 @@ writer stores.
 
 ## Known gaps
 
-- `academy.student.joined` (`src/identity/services/auth.service.ts`) is still
-  written without an organization id, so it does not appear in tenant feeds;
-  that file belongs to the identity work stream.
 - Organization-scoped events (payment settings, subscription, support) have
   no `academy_id` and therefore appear on the organization dashboard widget,
   not in an individual academy's activity log.
