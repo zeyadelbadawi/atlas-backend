@@ -267,16 +267,23 @@ describe('Course/Lesson Progress (e2e)', () => {
         (item: { courseId: string }) => item.courseId === course.id,
       )?.learningState,
     ).toBe('not_started');
+    const counts = async () =>
+      (await as('get', `/learning/overview?academyId=${course.academyId}`).expect(200))
+        .body.courseCounts;
+    // A course not started yet is neither "in progress" nor "completed".
+    expect(await counts()).toEqual({ all: 1, inProgress: 0, completed: 0 });
 
     await as('post', `/courses/${course.id}/progress/complete-lesson`)
       .send({ lessonId: lesson1.id })
       .expect(201);
     expect(await state()).toBe('in_progress');
+    expect(await counts()).toEqual({ all: 1, inProgress: 1, completed: 0 });
 
     await as('post', `/courses/${course.id}/progress/complete-lesson`)
       .send({ lessonId: lesson2.id })
       .expect(201);
     expect(await state()).toBe('completed');
+    expect(await counts()).toEqual({ all: 1, inProgress: 0, completed: 1 });
   });
 
   it('rejects completing a lesson from a different course', async () => {

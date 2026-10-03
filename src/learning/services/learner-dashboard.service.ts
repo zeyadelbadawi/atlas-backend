@@ -87,6 +87,16 @@ export class LearnerDashboardService {
         enrollments,
       );
 
+      const stateOf = (row: (typeof enrollments)[number]) =>
+        deriveLearningState(
+          row.progress
+            ? {
+                ...row.progress,
+                completedItems: itemsByCourseId.get(row.courseId)?.completed,
+              }
+            : null,
+        );
+
       const continueLearning: ContinueLearningItem[] = enrollments
         .filter((row) => row.progress && row.progress.completionState !== 'completed')
         // Most recently touched first. `lastActivityAt` rather than
@@ -112,14 +122,7 @@ export class LearnerDashboardService {
           nextItemId: row.progress?.currentLessonId ?? null,
           nextItemTitle: null,
           lastActivityAt: row.progress?.lastActivityAt?.toISOString() ?? null,
-          learningState: deriveLearningState(
-            row.progress
-              ? {
-                  ...row.progress,
-                  completedItems: itemsByCourseId.get(row.courseId)?.completed,
-                }
-              : null,
-          ),
+          learningState: stateOf(row),
         }));
 
       // The titles for the "Next: …" labels, in one query rather than one
@@ -168,14 +171,14 @@ export class LearnerDashboardService {
             ? (nextTitles.get(item.nextItemId) ?? null)
             : null,
         })),
+        // The same rule as every Start / Continue / Completed label, so
+        // a tab's count always matches the cards it lists (Task E). A
+        // course not started yet is in neither "in progress" nor
+        // "completed" — it used to be counted as in progress.
         courseCounts: {
           all: enrollments.length,
-          inProgress: enrollments.filter(
-            (row) => row.progress?.completionState !== 'completed',
-          ).length,
-          completed: enrollments.filter(
-            (row) => row.progress?.completionState === 'completed',
-          ).length,
+          inProgress: enrollments.filter((row) => stateOf(row) === 'in_progress').length,
+          completed: enrollments.filter((row) => stateOf(row) === 'completed').length,
         },
         upcomingDeadlines: deadlines,
         recentResults,
