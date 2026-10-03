@@ -216,6 +216,33 @@ describe('POST /auth/register (e2e)', () => {
     expect(membershipB).not.toBeNull();
   });
 
+  it('an existing account joining an academy is audited under that academy and its organization (Task 3)', async () => {
+    const academy = await seedRealAcademy('register-existing-join');
+    const email = uniqueTestEmail('register-existing-join-student');
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ name: 'Existing Learner', email, password: 'correct-horse-battery' })
+      .expect(201);
+
+    const joined = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        name: 'Existing Learner',
+        email,
+        password: 'correct-horse-battery',
+        academyId: academy.id,
+      })
+      .expect(201);
+    expect(joined.body).toMatchObject({ account: 'existing' });
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    const entry = await admin.auditLogEntry.findFirstOrThrow({
+      where: { action: 'academy.student.joined', targetId: user.id, academyId: academy.id },
+    });
+    // Without the organization the Academy's activity log never shows it.
+    expect(entry.organizationId).toBe(academy.organizationId);
+  });
+
   it('rejects registration against an unknown academyId — never silently falls back to an academy-less account', async () => {
     const email = uniqueTestEmail('register-unknown-academy');
 

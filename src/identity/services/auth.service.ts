@@ -1025,6 +1025,11 @@ export class AuthService {
       email,
     );
 
+    // Task 3 — the join must carry its organization, or the academy's
+    // activity log (tenant-scoped by organization) never shows it.
+    const organizationId =
+      (await this.academyStudentsRepository.resolveOrganizationId(academyId)) ?? undefined;
+
     let outboxIds: (string | null)[] = [];
     try {
       outboxIds = await this.tenancyContextService.runInUserContext(
@@ -1038,6 +1043,7 @@ export class AuthService {
           });
           await this.auditLogWriterService.write(tx, {
             actorUserId: user.id,
+            organizationId,
             academyId,
             action: 'academy.student.joined',
             targetType: 'user',
