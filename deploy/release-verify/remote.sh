@@ -44,10 +44,13 @@ case "${1:-}" in
     # only. Catalog reads, no row data.
     rls=$(sql "select relrowsecurity::text || ',' || relforcerowsecurity::text from pg_class where relname='platform_contact_submissions'")
     if [ "$rls" = "true,true" ]; then pass "platform_contact_submissions RLS enabled and forced"; else fail "platform_contact_submissions RLS state '$rls'"; fi
-    policies=$(sql "select string_agg(policyname || ':' || cmd, ' ' order by policyname) from pg_policies where policyname in ('course_orders_tenant_select','payments_tenant_course_order_select','course_order_refunds_tenant_select','checkouts_platform_select')")
-    info "initiative read policies: $policies"
-    writable=$(sql "select count(*) from pg_policies where policyname in ('course_orders_tenant_select','payments_tenant_course_order_select','course_order_refunds_tenant_select','checkouts_platform_select') and cmd <> 'SELECT'")
-    if [ "$writable" = 0 ]; then pass "initiative tenant/platform read policies are SELECT-only"; else fail "$writable initiative read policies are not SELECT-only"; fi
+    # Each expected policy must exist on its own table, in `public`, as a
+    # SELECT policy; a missing or misplaced one fails.
+    for expected in course_orders_tenant_select:course_orders payments_tenant_course_order_select:payments course_order_refunds_tenant_select:course_order_refunds checkouts_platform_select:checkouts; do
+      name=${expected%%:*}; table=${expected#*:}
+      cmd=$(sql "select coalesce((select cmd from pg_policies where schemaname='public' and tablename='$table' and policyname='$name'), 'absent')")
+      if [ "$cmd" = SELECT ]; then pass "policy $name on $table is SELECT-only"; else fail "policy $name on $table: $cmd"; fi
+    done
 
     echo "== Health"
     health=$(docker compose exec -T backend node -e "fetch('http://localhost:3000/health').then(async r=>console.log(r.status)).catch(()=>console.log('000'))")
