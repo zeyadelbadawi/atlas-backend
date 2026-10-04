@@ -65,6 +65,56 @@ export const MAX_CANONICAL_PATH_LENGTH = 200;
 export const MAX_SHORT_TEXT = 100;
 export const MAX_LONG_TEXT = 2000;
 
+/**
+ * Section content limits — characters per language (`en` and `ar` each).
+ * Identical to the frontend's `website.constants.ts`; the shared parity
+ * cases (`validation/__parity__`) prove both schemas agree at every
+ * boundary.
+ *
+ * They live on the shared section contract, not per theme: a section's
+ * config survives a theme switch (`PATCH themeKey` changes only the theme),
+ * so a value valid in one theme must be valid in every theme.
+ *
+ * | Field                                  | Limit |
+ * | -------------------------------------- | ----- |
+ * | hero eyebrow                           | 60    |
+ * | hero title / emphasised highlight      | 70    |
+ * | hero subtitle                          | 140   |
+ * | hero description                       | 280   |
+ * | hero highlight chip label              | 40    |
+ * | every section CTA label                | 40    |
+ * | steps title                            | 80    |
+ * | steps description                      | 240   |
+ * | step title                             | 60    |
+ * | step description                       | 240   |
+ * | statistics title                       | 80    |
+ * | statistic label                        | 40    |
+ * | other short text (titles, alt text)    | 100   |
+ * | other long text (descriptions, bodies) | 2000  |
+ *
+ * Counted as zod counts (`string.length`, UTF-16 code units — every Arabic
+ * diacritic is a character). Enforced on every page write
+ * (`WebsitePagesService.update`, `WebsiteGenerationService`); reads never
+ * re-validate, so content stored under an older, looser limit keeps
+ * rendering and is only refused when a page holding it is next saved.
+ * The header CTA and navigation/footer labels are site settings
+ * (`website-config.schemas.ts`), not section content, and keep
+ * `MAX_SHORT_TEXT`.
+ */
+export const MAX_HERO_EYEBROW_LENGTH = 60;
+export const MAX_HERO_TITLE_LENGTH = 70;
+export const MAX_HERO_SUBTITLE_LENGTH = 140;
+export const MAX_HERO_DESCRIPTION_LENGTH = 280;
+export const MAX_CTA_LABEL_LENGTH = 40;
+export const MAX_STEPS_TITLE_LENGTH = 80;
+export const MAX_STEPS_DESCRIPTION_LENGTH = 240;
+export const MAX_STEP_TITLE_LENGTH = 60;
+export const MAX_STEP_DESCRIPTION_LENGTH = 240;
+export const MAX_STATISTICS_TITLE_LENGTH = 80;
+export const MAX_STATISTIC_LABEL_LENGTH = 40;
+/** A statistic's authored value ("500+", "٥٠٠+"). */
+export const MAX_STATISTIC_VALUE_LENGTH = 20;
+
 /** Schemes a tenant-authored link is allowed to use — matches `isSafeExternalUrl`'s `ALLOWED_URL_SCHEMES` exactly. */
 export const ALLOWED_URL_SCHEMES: readonly string[] = [
   'http:',

@@ -873,6 +873,1037 @@
         ]
       },
       "valid": false
+    },
+    {
+      "name": "limit: hero.eyebrow en 60 chars (cap 60)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "eyebrow": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.eyebrow en 61 chars (cap 60)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "eyebrow": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.eyebrow ar 60 chars (cap 60)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "eyebrow": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.eyebrow ar 61 chars (cap 60)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "eyebrow": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.title en 70 chars (cap 70)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.title en 71 chars (cap 70)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.title ar 70 chars (cap 70)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.title ar 71 chars (cap 70)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.highlight en 70 chars (cap 70)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "highlight": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.highlight en 71 chars (cap 70)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "highlight": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.highlight ar 70 chars (cap 70)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "highlight": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.highlight ar 71 chars (cap 70)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "highlight": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.subtitle en 140 chars (cap 140)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "subtitle": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.subtitle en 141 chars (cap 140)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "subtitle": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.subtitle ar 140 chars (cap 140)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "subtitle": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.subtitle ar 141 chars (cap 140)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "subtitle": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.description en 280 chars (cap 280)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.description en 281 chars (cap 280)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.description ar 280 chars (cap 280)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "description": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.description ar 281 chars (cap 280)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "description": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.highlights[0].label en 40 chars (cap 40)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "highlights": [
+          {
+            "id": "h1",
+            "label": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.highlights[0].label en 41 chars (cap 40)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "highlights": [
+          {
+            "id": "h1",
+            "label": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.highlights[0].label ar 40 chars (cap 40)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "highlights": [
+          {
+            "id": "h1",
+            "label": {
+              "en": "x",
+              "ar": "عععععععععععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.highlights[0].label ar 41 chars (cap 40)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "highlights": [
+          {
+            "id": "h1",
+            "label": {
+              "en": "x",
+              "ar": "ععععععععععععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.cta.label en 40 chars (cap 40)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ar": ""
+          },
+          "pageId": "p1"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.cta.label en 41 chars (cap 40)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ar": ""
+          },
+          "pageId": "p1"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.cta.label ar 40 chars (cap 40)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "x",
+            "ar": "عععععععععععععععععععععععععععععععععععععععع"
+          },
+          "pageId": "p1"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.cta.label ar 41 chars (cap 40)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "x",
+            "ar": "ععععععععععععععععععععععععععععععععععععععععع"
+          },
+          "pageId": "p1"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: cta.secondaryCta.label en 40 chars (cap 40)",
+      "type": "cta",
+      "config": {
+        "title": {
+          "en": "Join",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Go",
+            "ar": ""
+          }
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ar": ""
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: cta.secondaryCta.label en 41 chars (cap 40)",
+      "type": "cta",
+      "config": {
+        "title": {
+          "en": "Join",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Go",
+            "ar": ""
+          }
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ar": ""
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: cta.secondaryCta.label ar 40 chars (cap 40)",
+      "type": "cta",
+      "config": {
+        "title": {
+          "en": "Join",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Go",
+            "ar": ""
+          }
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "x",
+            "ar": "عععععععععععععععععععععععععععععععععععععععع"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: cta.secondaryCta.label ar 41 chars (cap 40)",
+      "type": "cta",
+      "config": {
+        "title": {
+          "en": "Join",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Go",
+            "ar": ""
+          }
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "x",
+            "ar": "ععععععععععععععععععععععععععععععععععععععععع"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: steps.title en 80 chars (cap 80)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: steps.title en 81 chars (cap 80)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: steps.title ar 80 chars (cap 80)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "title": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: steps.title ar 81 chars (cap 80)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "title": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: steps.description en 240 chars (cap 240)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: steps.description en 241 chars (cap 240)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: steps.description ar 240 chars (cap 240)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "description": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: steps.description ar 241 chars (cap 240)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "description": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: steps.items[0].title en 60 chars (cap 60)",
+      "type": "steps",
+      "config": {
+        "items": [
+          {
+            "id": "i1",
+            "title": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: steps.items[0].title en 61 chars (cap 60)",
+      "type": "steps",
+      "config": {
+        "items": [
+          {
+            "id": "i1",
+            "title": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: steps.items[0].title ar 60 chars (cap 60)",
+      "type": "steps",
+      "config": {
+        "items": [
+          {
+            "id": "i1",
+            "title": {
+              "en": "x",
+              "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: steps.items[0].title ar 61 chars (cap 60)",
+      "type": "steps",
+      "config": {
+        "items": [
+          {
+            "id": "i1",
+            "title": {
+              "en": "x",
+              "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: steps.items[0].description en 240 chars (cap 240)",
+      "type": "steps",
+      "config": {
+        "items": [
+          {
+            "id": "i1",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            },
+            "description": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: steps.items[0].description en 241 chars (cap 240)",
+      "type": "steps",
+      "config": {
+        "items": [
+          {
+            "id": "i1",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            },
+            "description": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: steps.items[0].description ar 240 chars (cap 240)",
+      "type": "steps",
+      "config": {
+        "items": [
+          {
+            "id": "i1",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            },
+            "description": {
+              "en": "x",
+              "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: steps.items[0].description ar 241 chars (cap 240)",
+      "type": "steps",
+      "config": {
+        "items": [
+          {
+            "id": "i1",
+            "title": {
+              "en": "Step",
+              "ar": ""
+            },
+            "description": {
+              "en": "x",
+              "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: steps.imageAlt en 100 chars (cap 100)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "imageAlt": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: steps.imageAlt en 101 chars (cap 100)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "imageAlt": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: steps.imageAlt ar 100 chars (cap 100)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "imageAlt": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: steps.imageAlt ar 101 chars (cap 100)",
+      "type": "steps",
+      "config": {
+        "items": [],
+        "imageAlt": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: statistics.title en 80 chars (cap 80)",
+      "type": "statistics",
+      "config": {
+        "items": [],
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: statistics.title en 81 chars (cap 80)",
+      "type": "statistics",
+      "config": {
+        "items": [],
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: statistics.title ar 80 chars (cap 80)",
+      "type": "statistics",
+      "config": {
+        "items": [],
+        "title": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: statistics.title ar 81 chars (cap 80)",
+      "type": "statistics",
+      "config": {
+        "items": [],
+        "title": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: statistics.items[0].label en 40 chars (cap 40)",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "value": {
+              "en": "5",
+              "ar": ""
+            },
+            "label": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: statistics.items[0].label en 41 chars (cap 40)",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "value": {
+              "en": "5",
+              "ar": ""
+            },
+            "label": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: statistics.items[0].label ar 40 chars (cap 40)",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "value": {
+              "en": "5",
+              "ar": ""
+            },
+            "label": {
+              "en": "x",
+              "ar": "عععععععععععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: statistics.items[0].label ar 41 chars (cap 40)",
+      "type": "statistics",
+      "config": {
+        "items": [
+          {
+            "id": "s1",
+            "value": {
+              "en": "5",
+              "ar": ""
+            },
+            "label": {
+              "en": "x",
+              "ar": "ععععععععععععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: hero.title ar with diacritics 70 code units (cap 70)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": "عَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَ"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: hero.title ar with diacritics 72 code units (cap 70)",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": "عَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَعَ"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "steps image 'theme-asset:atelier/home-method'",
+      "type": "steps",
+      "config": {
+        "image": "theme-asset:atelier/home-method",
+        "imageAlt": {
+          "en": "Plate",
+          "ar": "لوحة"
+        },
+        "items": []
+      },
+      "valid": true
+    },
+    {
+      "name": "steps image '/api/v1/public/media/academies/a/b.webp'",
+      "type": "steps",
+      "config": {
+        "image": "/api/v1/public/media/academies/a/b.webp",
+        "imageAlt": {
+          "en": "Plate",
+          "ar": "لوحة"
+        },
+        "items": []
+      },
+      "valid": true
+    },
+    {
+      "name": "steps image ''",
+      "type": "steps",
+      "config": {
+        "image": "",
+        "imageAlt": {
+          "en": "Plate",
+          "ar": "لوحة"
+        },
+        "items": []
+      },
+      "valid": true
+    },
+    {
+      "name": "steps image 'javascript:alert(1)'",
+      "type": "steps",
+      "config": {
+        "image": "javascript:alert(1)",
+        "imageAlt": {
+          "en": "Plate",
+          "ar": "لوحة"
+        },
+        "items": []
+      },
+      "valid": false
+    },
+    {
+      "name": "steps image 'theme-asset:../../etc/passwd'",
+      "type": "steps",
+      "config": {
+        "image": "theme-asset:../../etc/passwd",
+        "imageAlt": {
+          "en": "Plate",
+          "ar": "لوحة"
+        },
+        "items": []
+      },
+      "valid": false
     }
   ]
 }

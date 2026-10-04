@@ -303,9 +303,10 @@ const home: WebsiteTemplatePage = {
         ),
       },
     },
-    // Chapter V — the method, as a syllabus.
+    // Chapter V — the method, as a syllabus, beside its plate.
     {
       type: 'steps',
+      assets: { image: asset('home-method') },
       starterContent: {
         title: lt('The method', 'المنهج'),
         description: lt(

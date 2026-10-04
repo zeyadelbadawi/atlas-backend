@@ -210,6 +210,14 @@ describe('Atelier template v1 — the template', () => {
     expect(byType.faqs[0].dynamicDefaults).toMatchObject({ search: 'faq' });
   });
 
+  it('the Method scene (steps) carries its plate, in both modes', () => {
+    const steps = atelierTemplate.pages
+      .flatMap((page) => page.sections)
+      .filter((section) => section.type === 'steps');
+    expect(steps).toHaveLength(1);
+    expect(steps[0].assets).toEqual({ image: 'theme-asset:atelier/home-method' });
+  });
+
   it('statistics are metric-only: no authored number anywhere in the template', () => {
     const items = atelierTemplate.pages.flatMap((page) =>
       page.sections
