@@ -258,6 +258,7 @@ export class PlatformPaymentService {
             payment.organizationId,
             organization.ownerUserId,
             fresh.checkoutId,
+            paymentId,
           );
         }
 
@@ -383,12 +384,22 @@ export class PlatformPaymentService {
    * `resolveSubscriptionLimits` — the one function that answers "what is
    * this customer entitled to" — so the receipt can never quote a number
    * the write gate would not honour.
+   *
+   * W8 — gifted days. The row read here is the one `applySuccessfulPayment`
+   * just wrote in THIS transaction, so its gift columns and period are the
+   * committed-with-this-approval values, never a recomputation from the
+   * plan. The outbox row (and the values it renders from) commits
+   * atomically with them, and is only enqueued after commit. The gift
+   * values are added only when this payment is the one that was granted
+   * the gift (`giftedPaymentId`): the columns stay set on the row for
+   * every later renewal, whose receipt must not mention them.
    */
   private async emitSubscriptionActivated(
     tx: Prisma.TransactionClient,
     organizationId: string,
     ownerUserId: string,
     checkoutId: string | null,
+    paymentId: string,
   ): Promise<EmitResult> {
     const none: EmitResult = { created: false, outboxId: null };
     if (!checkoutId) return none;
@@ -405,10 +416,28 @@ export class PlatformPaymentService {
         currentPeriodStart: true,
         currentPeriodEnd: true,
         grantedLimits: true,
+        giftedDays: true,
+        giftedStartsAt: true,
+        giftedEndsAt: true,
+        giftedPaymentId: true,
         plan: { select: { name: true, limits: true } },
       },
     });
     if (!subscription?.currentPeriodEnd || !subscription.currentPeriodStart) return none;
+
+    const { giftedDays, giftedStartsAt, giftedEndsAt } = subscription;
+    const gift =
+      subscription.giftedPaymentId === paymentId &&
+      giftedDays !== null &&
+      giftedDays > 0 &&
+      giftedStartsAt !== null &&
+      giftedEndsAt !== null
+        ? {
+            giftedDays,
+            giftStartDate: formatLifecycleInstant(giftedStartsAt),
+            giftEndDate: formatLifecycleInstant(giftedEndsAt),
+          }
+        : {};
 
     const limits = resolveSubscriptionLimits(subscription);
     return this.communicationService.emit(tx, {
@@ -424,6 +453,7 @@ export class PlatformPaymentService {
         academiesLimit: String(limits.academies ?? ''),
         studentsLimit: String(limits.students ?? ''),
         coursesLimit: String(limits.courses ?? ''),
+        ...gift,
       },
     });
   }

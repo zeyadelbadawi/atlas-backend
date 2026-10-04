@@ -1362,6 +1362,11 @@ const CATALOG = {
   // S1 — the receipt §27 asks for beside the existing approval notice:
   // period dates and the limits this purchase actually froze. Anchored on
   // the new `currentPeriodEnd`, so each renewal is its own receipt.
+  // W8 — on the purchase that was granted gifted days, the values also
+  // carry `giftedDays`, `giftStartDate` and `giftEndDate`. They describe the
+  // recipient's own subscription (no third party, no credential), so they
+  // are neither `personalValues` nor `credentialValues` and are retained
+  // like the period dates beside them.
   'lifecycle.subscription.activated': {
     category: 'transactional',
     audience: 'staff',
