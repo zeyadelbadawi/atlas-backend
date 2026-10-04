@@ -47,9 +47,11 @@
  * does not hold.
  *
  * KEY SAFETY. Rows hashed under the wrong key are worthless (they match
- * nobody) and would mask the mistake. Before writing, the script recomputes
- * a sample of existing v2 trial rows whose redeemer is still a live account;
- * if v2 rows exist and none match, it aborts.
+ * nobody) and would mask the mistake. Every mode recomputes a sample of the
+ * most recent v2 trial claims and v2 approval/gateway gifts whose subject is
+ * still a live account; if any such row exists and none match, it aborts.
+ * If none exists, `--apply` proceeds only when the ledgers hold no v2 row at
+ * all — otherwise key continuity cannot be established and it refuses.
  *
  * Usage (DATABASE_URL = the migration/superuser connection; the app's
  * PAYMENT_CREDENTIALS_ENCRYPTION_KEY / CUSTOMER_IDENTITY_HMAC_KEY):
@@ -251,29 +253,72 @@ function bySubject(evidence: readonly Evidence[], key: Buffer) {
   return { subjects, unrecoverable };
 }
 
+/**
+ * Key continuity: the key this process resolved must be the key the
+ * application hashed its existing v2 rows with. Recomputes a sample of the
+ * most recent application-written v2 rows whose subject is still a live
+ * account — trial claims (the redeemer's email) and paid gifts from
+ * approval/gateway (the owner's email, stored as the redeemer) — and:
+ *   - verifiable rows exist and NONE match → refuse (every mode);
+ *   - no verifiable row exists → read-only modes proceed, but `--apply`
+ *     proceeds only when there is no v2 row at all (a truly empty start);
+ *     otherwise key continuity cannot be established and it refuses.
+ * Counts only.
+ */
 async function assertKeyMatchesApplication(
   prisma: PrismaClient,
   key: Buffer,
+  forApply: boolean,
 ): Promise<string> {
-  const sample = await prisma.$queryRaw<
-    { subject_hash: string; email: string }[]
-  >(Prisma.sql`
-    SELECT t.subject_hash, u.email
-      FROM trial_redemptions t JOIN users u ON u.id = t.redeemed_by_user_id
-     WHERE t.hash_version = 2 AND t.source = 'claim' AND u.status <> 'deleted'
-     ORDER BY t.redeemed_at DESC
-     LIMIT 25
+  const trialSample = await prisma.$queryRaw<{ subject_hash: string; email: string }[]>(
+    Prisma.sql`
+      SELECT t.subject_hash, u.email
+        FROM trial_redemptions t JOIN users u ON u.id = t.redeemed_by_user_id
+       WHERE t.hash_version = 2 AND t.source = 'claim' AND u.status <> 'deleted'
+       ORDER BY t.redeemed_at DESC
+       LIMIT 25
+    `,
+  );
+  const giftSample = await prisma.$queryRaw<{ subject_hash: string; email: string }[]>(
+    Prisma.sql`
+      SELECT g.subject_hash, u.email
+        FROM paid_gift_redemptions g JOIN users u ON u.id = g.redeemed_by_user_id
+       WHERE g.hash_version = 2 AND g.source IN ('approval', 'gateway')
+         AND u.status <> 'deleted'
+       ORDER BY g.redeemed_at DESC
+       LIMIT 25
+    `,
+  );
+  const matching = (rows: readonly { subject_hash: string; email: string }[]) =>
+    rows.filter((r) => customerSubjectHashV2(r.email, key) === r.subject_hash).length;
+  const trialMatches = matching(trialSample);
+  const giftMatches = matching(giftSample);
+  const verifiable = trialSample.length + giftSample.length;
+  const summary = `trials ${trialMatches}/${trialSample.length}, gifts ${giftMatches}/${giftSample.length} recent verifiable v2 rows match`;
+
+  if (verifiable > 0) {
+    if (trialMatches + giftMatches === 0) {
+      throw new Error(
+        `Key check FAILED: ${summary}. This environment's identity key differs from the application's. Nothing was written.`,
+      );
+    }
+    return summary;
+  }
+
+  const [v2] = await prisma.$queryRaw<{ trials: number; gifts: number }[]>(Prisma.sql`
+    SELECT (SELECT count(*)::int FROM trial_redemptions WHERE hash_version = 2) AS trials,
+           (SELECT count(*)::int FROM paid_gift_redemptions WHERE hash_version = 2) AS gifts
   `);
-  if (sample.length === 0) return 'no live v2 rows to compare yet (key not verifiable)';
-  const matches = sample.filter(
-    (r) => customerSubjectHashV2(r.email, key) === r.subject_hash,
-  ).length;
-  if (matches === 0) {
+  const totals = `v2 rows in total: trials ${v2.trials}, gifts ${v2.gifts}`;
+  if (v2.trials + v2.gifts === 0) {
+    return 'no v2 rows at all (empty ledgers); nothing to compare, key continuity is trivial';
+  }
+  if (forApply) {
     throw new Error(
-      `Key check FAILED: 0/${sample.length} recent v2 trial rows match. This environment's identity key differs from the application's. Nothing was written.`,
+      `Key check FAILED: key continuity cannot be established — no verifiable v2 row (live claim or approval/gateway gift), but ${totals}. Nothing was written.`,
     );
   }
-  return `${matches}/${sample.length} recent v2 trial rows match`;
+  return `no verifiable v2 row (${totals}); key continuity cannot be established, --apply would refuse`;
 }
 
 /**
@@ -347,7 +392,9 @@ async function main(): Promise<void> {
       console.log('Mode: VERIFY (read-only)');
       let keyOk = true;
       try {
-        console.log(`Key check: ${await assertKeyMatchesApplication(prisma, key)}`);
+        console.log(
+          `Key check: ${await assertKeyMatchesApplication(prisma, key, false)}`,
+        );
       } catch (error) {
         keyOk = false;
         console.log(error instanceof Error ? error.message : 'Key check failed.');
@@ -358,7 +405,9 @@ async function main(): Promise<void> {
     }
 
     console.log(`Mode: ${options.apply ? 'APPLY' : 'DRY RUN (pass --apply to write)'}`);
-    console.log(`Key check: ${await assertKeyMatchesApplication(prisma, key)}`);
+    console.log(
+      `Key check: ${await assertKeyMatchesApplication(prisma, key, options.apply)}`,
+    );
 
     // ---- trials ----
     const trial = bySubject(await trialEvidence(prisma, options.autoTrialEra), key);

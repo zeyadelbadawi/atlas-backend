@@ -183,9 +183,17 @@ fi
 # customer-identity-key.util.ts), so rotating the payment key would silently
 # re-grant every trial and gift. Pinning freezes it.
 #
-# The value pinned is the one the backend uses NOW: computed ON THE HOST by
-# the backend image's own util, with the backend's own env (.env), in a
-# throwaway container (--no-deps: nothing else starts, no DB is touched).
+# The value pinned is the one the backend uses NOW, computed ON THE HOST by
+# the backend image's own util (customerIdentityKeyFromEnv()):
+#   * a backend is RUNNING: derived INSIDE it (`compose exec`), from the env
+#     the live application actually started with, and cross-checked against
+#     a derivation from the current .env (`compose run`). If both exist and
+#     differ — .env's PAYMENT_CREDENTIALS_ENCRYPTION_KEY changed since the
+#     backend started — nothing is pinned: pinning either could reset
+#     eligibility, and an operator must decide. If the running backend
+#     cannot derive it, nothing is pinned either (never a guess from .env).
+#   * no backend running (first deploy): derived from .env in a throwaway
+#     container (--no-deps: nothing else starts, no DB is touched).
 # Pinning it changes no hash: every existing v2 row still matches. A NEW
 # RANDOM KEY MUST NEVER BE USED HERE — it would re-grant every trial and
 # gift.
@@ -201,10 +209,30 @@ fi
 if ! grep -Eq '^CUSTOMER_IDENTITY_HMAC_KEY=.' .env && [ "$MODE" != "check-rollback-record" ]; then
   case $- in *x*) identity_xtrace=1; set +x ;; *) identity_xtrace=0 ;; esac
   echo "==> CUSTOMER_IDENTITY_HMAC_KEY missing — pinning the currently derived value (value never printed)"
-  pinned_identity_key=$(timeout 180 docker compose run --rm --no-deps -T backend node -e '
+  identity_js='
     const { customerIdentityKeyFromEnv } = require("./dist/plans/utils/customer-identity-key.util.js");
-    process.stdout.write(customerIdentityKeyFromEnv().toString("hex"));' 2>/dev/null) || pinned_identity_key=""
-  if [[ "$pinned_identity_key" =~ ^[0-9a-f]{64}$ ]]; then
+    process.stdout.write(customerIdentityKeyFromEnv().toString("hex"));'
+  identity_from_env=$(timeout 180 docker compose run --rm --no-deps -T backend node -e "$identity_js" 2>/dev/null) || identity_from_env=""
+  [[ "$identity_from_env" =~ ^[0-9a-f]{64}$ ]] || identity_from_env=""
+  pinned_identity_key=""
+  identity_refusal="the backend image could not derive it (image without dist/plans/utils/customer-identity-key.util.js, or another error)"
+  if [ -n "$(docker compose ps -q backend 2>/dev/null)" ]; then
+    identity_running=$(timeout 60 docker compose exec -T backend node -e "$identity_js" 2>/dev/null) || identity_running=""
+    if ! [[ "$identity_running" =~ ^[0-9a-f]{64}$ ]]; then
+      identity_refusal="the running backend could not derive it (no util in the running image, or another error)"
+    elif [ -n "$identity_from_env" ] && [ "$identity_from_env" != "$identity_running" ]; then
+      identity_refusal="the running backend and the current .env derive DIFFERENT keys (PAYMENT_CREDENTIALS_ENCRYPTION_KEY changed since the backend started?); pinning either could reset eligibility, an operator must decide"
+    else
+      pinned_identity_key=$identity_running
+      echo "==> Derived inside the running backend$([ -n "$identity_from_env" ] && echo ', and it matches the derivation from .env')"
+    fi
+    unset identity_running
+  elif [ -n "$identity_from_env" ]; then
+    pinned_identity_key=$identity_from_env
+    echo "==> No running backend: derived from .env (first deploy)"
+  fi
+  unset identity_js identity_from_env
+  if [ -n "$pinned_identity_key" ]; then
     # Drop an empty `CUSTOMER_IDENTITY_HMAC_KEY=` line, if any (a non-empty
     # one never reaches this block), so the key appears exactly once. Every
     # step is checked: a failure here warns and leaves .env as it was.
@@ -225,11 +253,10 @@ if ! grep -Eq '^CUSTOMER_IDENTITY_HMAC_KEY=.' .env && [ "$MODE" != "check-rollba
     fi
     unset identity_tmp
   else
-    echo "WARNING: CUSTOMER_IDENTITY_HMAC_KEY not pinned: the backend image could not derive it" >&2
-    echo "         (image without dist/plans/utils/customer-identity-key.util.js, or another error)." >&2
+    echo "WARNING: CUSTOMER_IDENTITY_HMAC_KEY not pinned: ${identity_refusal}." >&2
     echo "         .env unchanged; the deploy continues and the next deploy retries." >&2
   fi
-  unset pinned_identity_key
+  unset pinned_identity_key identity_refusal
   [ "$identity_xtrace" = 1 ] && set -x
   unset identity_xtrace
 fi

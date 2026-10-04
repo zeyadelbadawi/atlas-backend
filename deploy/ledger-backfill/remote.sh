@@ -76,9 +76,27 @@ SCRIPT=dist/scripts/backfill-customer-ledgers.js
 # --gifts and --allow-production always; --include-auto-trial-era NEVER.
 backfill() { docker compose exec -T backend node "$SCRIPT" --gifts --allow-production "$@"; }
 
+# Sets KEY_IN_ENV and KEY_LOADED (yes/no) and prints them. KEY_LOADED: the
+# RUNNING backend loaded exactly the .env value, compared as SHA-256
+# fingerprints inside this shell; neither the key nor a fingerprint is
+# printed. Called up front, and again for apply once the host lock is held
+# (the lock can wait 10 minutes, during which a deploy may change either).
+check_key_state() {
+  local file_fp running_fp
+  if grep -Eq '^CUSTOMER_IDENTITY_HMAC_KEY=.' .env; then KEY_IN_ENV=yes; else KEY_IN_ENV=no; fi
+  KEY_LOADED=no
+  if [ "$KEY_IN_ENV" = yes ]; then
+    file_fp=$(env_value CUSTOMER_IDENTITY_HMAC_KEY | tr -d '\r\n' | sha256sum | cut -d' ' -f1)
+    running_fp=$(docker compose exec -T backend node -e \
+      'process.stdout.write(require("node:crypto").createHash("sha256").update(process.env.CUSTOMER_IDENTITY_HMAC_KEY || "").digest("hex"))' 2>/dev/null)
+    [ -n "$running_fp" ] && [ "$running_fp" = "$file_fp" ] && KEY_LOADED=yes
+  fi
+  echo "CUSTOMER_IDENTITY_HMAC_KEY present in .env${1:+ $1}: $KEY_IN_ENV"
+  echo "running backend loaded the pinned key${1:+ $1}: $KEY_LOADED"
+}
+
 echo "== Customer ledger backfill: $MODE ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
-if grep -Eq '^CUSTOMER_IDENTITY_HMAC_KEY=.' .env; then KEY_IN_ENV=yes; else KEY_IN_ENV=no; fi
-echo "CUSTOMER_IDENTITY_HMAC_KEY present in .env: $KEY_IN_ENV"
+check_key_state
 
 if [ -z "$(docker compose ps -q backend 2>/dev/null)" ]; then
   echo "FAIL  the backend container is not running" >&2
@@ -89,18 +107,6 @@ if ! docker compose exec -T backend node -e "process.exit(require('node:fs').exi
   exit 1
 fi
 
-# Whether the RUNNING backend loaded exactly the .env value. Compared as
-# SHA-256 fingerprints inside this shell; neither the key nor a fingerprint
-# is printed.
-KEY_LOADED=no
-if [ "$KEY_IN_ENV" = yes ]; then
-  file_fp=$(env_value CUSTOMER_IDENTITY_HMAC_KEY | tr -d '\r\n' | sha256sum | cut -d' ' -f1)
-  running_fp=$(docker compose exec -T backend node -e \
-    'process.stdout.write(require("node:crypto").createHash("sha256").update(process.env.CUSTOMER_IDENTITY_HMAC_KEY || "").digest("hex"))' 2>/dev/null)
-  [ -n "$running_fp" ] && [ "$running_fp" = "$file_fp" ] && KEY_LOADED=yes
-  unset file_fp running_fp
-fi
-echo "running backend loaded the pinned key: $KEY_LOADED"
 
 case "$MODE" in
   dry-run)
@@ -121,6 +127,8 @@ if ! flock -w 600 9; then
   echo "REFUSED  a deploy holds /opt/atlas/.deploy.lock (waited 10 min). Nothing was written." >&2
   exit 1
 fi
+# Re-checked under the lock: what is decided below is what holds while writing.
+check_key_state "(under the lock)"
 if [ "$KEY_IN_ENV" != yes ]; then
   echo "REFUSED  CUSTOMER_IDENTITY_HMAC_KEY is not pinned in .env. Deploy first (deploy.sh pins" >&2
   echo "         the derived value), then re-run. Nothing was written." >&2
