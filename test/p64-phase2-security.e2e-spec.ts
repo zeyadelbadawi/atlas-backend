@@ -994,15 +994,19 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
 
     it('a RECOGNISED device is still subject to a cap the owner lowered afterwards', async () => {
       const w = await world('p2sec-device-rank');
-      // Three devices registered while the cap allowed them.
+      // Three devices registered while the cap allowed them, at distinct
+      // times (back-to-back inserts can share a millisecond, and a tie is
+      // ranked by id, not insertion order; the tie case has its own test).
       const cookies = ['rank-one', 'rank-two', 'rank-three'].map(deviceCookie);
-      for (const cookie of cookies) {
+      const firstRegisteredAt = Date.now() - 60_000;
+      for (const [index, cookie] of cookies.entries()) {
         await admin.studentDevice.create({
           data: {
             userId: w.learner.id,
             academyId: w.academy.id,
             cookieHash: hashDeviceCookie(cookie),
             label: `Browser ${cookie}`,
+            createdAt: new Date(firstRegisteredAt + index * 1_000),
           },
         });
       }

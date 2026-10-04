@@ -5,7 +5,9 @@
 #
 #   remote.sh facts   -> PASS/FAIL/INFO: the release's migrations, health,
 #                        runtime flags, renderer, data backfills, Bank
-#                        Transfer configuration state (never its details)
+#                        Transfer configuration state (never its details),
+#                        the customer-identity key (set yes/no, match/
+#                        mismatch with its derivation — never a value)
 #   remote.sh hosts   -> up to two published Academy hosts: "host|<hostname>"
 #   remote.sh rum     -> "rum|<total samples>": the sum of the RUM
 #                        histograms' _count series in Prometheus
@@ -66,6 +68,34 @@ case "${1:-}" in
     if [ "$dups" = "0,0" ]; then pass "no duplicate organization or academy names (W4)"; else fail "duplicate name groups (orgs,academies)=$dups"; fi
     info "W4 rename backups (orgs,academies): $(sql "select (select count(*) from atlas_migration_backups.w4_backup_organization_names) || ',' || (select count(*) from atlas_migration_backups.w4_backup_academy_names)")"
     info "plans with gifted days (monthly,yearly): $(sql "select count(*) filter (where gifted_days_monthly is not null) || ',' || count(*) filter (where gifted_days_yearly is not null) from plans")"
+
+    # W8B — the customer-identity key behind every v2 trial/gift hash. Read
+    # inside the backend container with the image's own util; prints only
+    # set yes/no and match/mismatch, never a value. A mismatch means the
+    # pinned key is not the derivation the existing rows were hashed under:
+    # trial and gift eligibility would reset. (After a DELIBERATE rotation
+    # of PAYMENT_CREDENTIALS_ENCRYPTION_KEY, a pinned key no longer equals
+    # the derivation by design — update this check then.)
+    echo "== Customer identity key (W8B; set/match only, never a value)"
+    idk=$(docker compose exec -T backend node -e '
+      const u = require("./dist/plans/utils/customer-identity-key.util.js");
+      const e = process.env;
+      if (!e.CUSTOMER_IDENTITY_HMAC_KEY) { console.log("unset"); process.exit(0); }
+      try {
+        const pinned = u.customerIdentityKeyFromEnv(e);
+        const derived = u.deriveCustomerIdentityKey({ paymentCredentialsKeyHex: e.PAYMENT_CREDENTIALS_ENCRYPTION_KEY });
+        console.log(pinned.equals(derived) ? "match" : "mismatch");
+      } catch { console.log("error"); }' 2>/dev/null | tr -d '\r') || idk=error
+    case "$idk" in
+      match)
+        info "CUSTOMER_IDENTITY_HMAC_KEY set: yes"
+        pass "CUSTOMER_IDENTITY_HMAC_KEY equals the HKDF derivation of PAYMENT_CREDENTIALS_ENCRYPTION_KEY: match" ;;
+      unset) info "CUSTOMER_IDENTITY_HMAC_KEY set: no (the derived key is in use; the next deploy pins it)" ;;
+      mismatch)
+        info "CUSTOMER_IDENTITY_HMAC_KEY set: yes"
+        fail "CUSTOMER_IDENTITY_HMAC_KEY does not equal the HKDF derivation: mismatch (trial and gift eligibility would reset)" ;;
+      *) fail "customer identity key check could not run (${idk:-no output})" ;;
+    esac
 
     echo "== Health"
     health=$(docker compose exec -T backend node -e "fetch('http://localhost:3000/health').then(async r=>console.log(r.status)).catch(()=>console.log('000'))")

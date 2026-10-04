@@ -2,19 +2,24 @@
  * W8B — backfill the customer-identity ledgers for customers who used a
  * trial (or paid) BEFORE the ledgers existed.
  *
- * STATUS: NOT RUN IN PRODUCTION. Whether the pre-ledger era is recorded as
- * "trial used" / "already a paying customer" is a PENDING PRODUCT DECISION
- * (W8 investigation §8, decisions 7 and the gift-launch semantics). The
- * script refuses a production environment unless `--allow-production` is
- * passed, which must only happen once that decision is made. Running it
- * locally against test data is fine.
+ * STATUS: APPROVED FOR PRODUCTION by the product owner on 4 Oct 2026, run
+ * with `--gifts` and WITHOUT `--include-auto-trial-era` (that era is
+ * inferred from an organization's creation date, not evidence that a trial
+ * was used, so it is not recorded). Production runs go through the
+ * `Customer ledger backfill` workflow (deploy/ledger-backfill/remote.sh),
+ * which pins `CUSTOMER_IDENTITY_HMAC_KEY` first and takes a data-only dump
+ * of both ledgers before `--apply`. The script still refuses a production
+ * environment unless `--allow-production` is passed. Running it locally
+ * against test data is fine.
  *
  * WHAT IT DOES. Collects evidence that an email has already consumed a
  * benefit, canonicalizes + HMACs it exactly like the application
  * (`customerSubjectHashV2`, same key resolution as `CustomerIdentityHasher`),
  * and — only with `--apply` — inserts ledger rows with
  * `INSERT ... ON CONFLICT DO NOTHING` and `source = 'backfill'`. Idempotent:
- * a second run inserts nothing.
+ * subjects already in a ledger (v1 or v2) are filtered out first, and
+ * `skipDuplicates` covers a concurrent claim, so a second run inserts
+ * nothing.
  *
  *   Trials (always considered), strongest evidence first:
  *     (a) audit entries `subscription.trial.redeemed` → the actor's email;
@@ -23,7 +28,8 @@
  *         `trial_ends_at` → the org owner;
  *     (d) ONLY with `--include-auto-trial-era`: every organization created
  *         before the trial ledger migration (the P4–P33 era, when every new
- *         organization was auto-granted a trial) → the org owner.
+ *         organization was auto-granted a trial) → the org owner. NOT
+ *         approved for production.
  *   Gifts (only with `--gifts`): owners of organizations with a succeeded
  *     plan-subscription payment → a `paid_gift_redemptions` row carrying no
  *     gift (gifted_days NULL), so "first-ever paid subscription" means first
@@ -33,24 +39,39 @@
  * longer exist, so they cannot be recovered (accepted residual).
  *
  * OUTPUT IS COUNTS ONLY. No email, canonical address or digest is printed.
+ * Every mode ends with the ledger state: rows by source (and hash version
+ * for trials), duplicate subject hashes per table (0 — both are UNIQUE),
+ * and backfill gift rows carrying gifted days (0 — a backfill row is never
+ * a gift). `--verify` prints only that state and the key check; it reads
+ * nothing else and writes nothing, and exits non-zero if an invariant
+ * does not hold.
  *
  * KEY SAFETY. Rows hashed under the wrong key are worthless (they match
- * nobody) and would mask the mistake. Before writing, the script recomputes
- * a sample of existing v2 trial rows whose redeemer is still a live account;
- * if v2 rows exist and none match, it aborts.
+ * nobody) and would mask the mistake. Every mode recomputes a sample of the
+ * most recent v2 trial claims and v2 approval/gateway gifts whose subject is
+ * still a live account; if any such row exists and none match, it aborts.
+ * If none exists, `--apply` proceeds only when the ledgers hold no v2 row at
+ * all — otherwise key continuity cannot be established and it refuses.
  *
  * Usage (DATABASE_URL = the migration/superuser connection; the app's
  * PAYMENT_CREDENTIALS_ENCRYPTION_KEY / CUSTOMER_IDENTITY_HMAC_KEY):
- *   npx ts-node -r tsconfig-paths/register scripts/backfill-customer-ledgers.ts            # dry run
- *   npx ts-node -r tsconfig-paths/register scripts/backfill-customer-ledgers.ts --apply    # write
+ *   node dist/scripts/backfill-customer-ledgers.js              # dry run
+ *   node dist/scripts/backfill-customer-ledgers.js --apply      # write
+ *   node dist/scripts/backfill-customer-ledgers.js --verify     # read-only state
  *   ... [--gifts] [--include-auto-trial-era] [--allow-production]
+ * In production, inside the running backend container (via the workflow):
+ *   docker compose exec -T backend node dist/scripts/backfill-customer-ledgers.js \
+ *     --gifts --allow-production [--apply | --verify]
+ * From a checkout without a build:
+ *   npx ts-node -r tsconfig-paths/register src/scripts/backfill-customer-ledgers.ts
  */
+/* eslint-disable no-console -- an operator CLI: counts on stdout are its interface. */
 import { Prisma, PrismaClient } from '@prisma/client';
-import { customerIdentityKeyFromEnv } from '../src/plans/utils/customer-identity-key.util';
+import { customerIdentityKeyFromEnv } from '../plans/utils/customer-identity-key.util';
 import {
   customerSubjectHashV2,
   legacySubjectHashV1,
-} from '../src/plans/utils/trial-subject.util';
+} from '../plans/utils/trial-subject.util';
 
 const TRIAL_LEDGER_MIGRATION = '20260911000000_p33_trial_redemption_history';
 const DELETED_EMAIL = /^deleted-.*@account\.invalid$/i;
@@ -65,18 +86,38 @@ interface Evidence {
 
 interface Options {
   readonly apply: boolean;
+  readonly verify: boolean;
   readonly gifts: boolean;
   readonly autoTrialEra: boolean;
   readonly allowProduction: boolean;
 }
 
+const KNOWN_FLAGS = new Set([
+  '--apply',
+  '--verify',
+  '--gifts',
+  '--include-auto-trial-era',
+  '--allow-production',
+]);
+
 function parseOptions(argv: readonly string[]): Options {
-  return {
+  const unknown = argv.filter((a) => !KNOWN_FLAGS.has(a));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown option(s): ${unknown.join(' ')}. Nothing was read or written.`,
+    );
+  }
+  const options = {
     apply: argv.includes('--apply'),
+    verify: argv.includes('--verify'),
     gifts: argv.includes('--gifts'),
     autoTrialEra: argv.includes('--include-auto-trial-era'),
     allowProduction: argv.includes('--allow-production'),
   };
+  if (options.apply && options.verify) {
+    throw new Error('--verify is read-only; it cannot be combined with --apply.');
+  }
+  return options;
 }
 
 function isProductionEnvironment(env: NodeJS.ProcessEnv): boolean {
@@ -212,36 +253,132 @@ function bySubject(evidence: readonly Evidence[], key: Buffer) {
   return { subjects, unrecoverable };
 }
 
+/**
+ * Key continuity: the key this process resolved must be the key the
+ * application hashed its existing v2 rows with. Recomputes a sample of the
+ * most recent application-written v2 rows whose subject is still a live
+ * account — trial claims (the redeemer's email) and paid gifts from
+ * approval/gateway (the owner's email, stored as the redeemer) — and:
+ *   - verifiable rows exist and NONE match → refuse (every mode);
+ *   - no verifiable row exists → read-only modes proceed, but `--apply`
+ *     proceeds only when there is no v2 row at all (a truly empty start);
+ *     otherwise key continuity cannot be established and it refuses.
+ * Counts only.
+ */
 async function assertKeyMatchesApplication(
   prisma: PrismaClient,
   key: Buffer,
+  forApply: boolean,
 ): Promise<string> {
-  const sample = await prisma.$queryRaw<
-    { subject_hash: string; email: string }[]
-  >(Prisma.sql`
-    SELECT t.subject_hash, u.email
-      FROM trial_redemptions t JOIN users u ON u.id = t.redeemed_by_user_id
-     WHERE t.hash_version = 2 AND t.source = 'claim' AND u.status <> 'deleted'
-     ORDER BY t.redeemed_at DESC
-     LIMIT 25
+  const trialSample = await prisma.$queryRaw<{ subject_hash: string; email: string }[]>(
+    Prisma.sql`
+      SELECT t.subject_hash, u.email
+        FROM trial_redemptions t JOIN users u ON u.id = t.redeemed_by_user_id
+       WHERE t.hash_version = 2 AND t.source = 'claim' AND u.status <> 'deleted'
+       ORDER BY t.redeemed_at DESC
+       LIMIT 25
+    `,
+  );
+  const giftSample = await prisma.$queryRaw<{ subject_hash: string; email: string }[]>(
+    Prisma.sql`
+      SELECT g.subject_hash, u.email
+        FROM paid_gift_redemptions g JOIN users u ON u.id = g.redeemed_by_user_id
+       WHERE g.hash_version = 2 AND g.source IN ('approval', 'gateway')
+         AND u.status <> 'deleted'
+       ORDER BY g.redeemed_at DESC
+       LIMIT 25
+    `,
+  );
+  const matching = (rows: readonly { subject_hash: string; email: string }[]) =>
+    rows.filter((r) => customerSubjectHashV2(r.email, key) === r.subject_hash).length;
+  const trialMatches = matching(trialSample);
+  const giftMatches = matching(giftSample);
+  const verifiable = trialSample.length + giftSample.length;
+  const summary = `trials ${trialMatches}/${trialSample.length}, gifts ${giftMatches}/${giftSample.length} recent verifiable v2 rows match`;
+
+  if (verifiable > 0) {
+    if (trialMatches + giftMatches === 0) {
+      throw new Error(
+        `Key check FAILED: ${summary}. This environment's identity key differs from the application's. Nothing was written.`,
+      );
+    }
+    return summary;
+  }
+
+  const [v2] = await prisma.$queryRaw<{ trials: number; gifts: number }[]>(Prisma.sql`
+    SELECT (SELECT count(*)::int FROM trial_redemptions WHERE hash_version = 2) AS trials,
+           (SELECT count(*)::int FROM paid_gift_redemptions WHERE hash_version = 2) AS gifts
   `);
-  if (sample.length === 0) return 'no live v2 rows to compare yet (key not verifiable)';
-  const matches = sample.filter(
-    (r) => customerSubjectHashV2(r.email, key) === r.subject_hash,
-  ).length;
-  if (matches === 0) {
+  const totals = `v2 rows in total: trials ${v2.trials}, gifts ${v2.gifts}`;
+  if (v2.trials + v2.gifts === 0) {
+    return 'no v2 rows at all (empty ledgers); nothing to compare, key continuity is trivial';
+  }
+  if (forApply) {
     throw new Error(
-      `Key check FAILED: 0/${sample.length} recent v2 trial rows match. This environment's identity key differs from the application's. Nothing was written.`,
+      `Key check FAILED: key continuity cannot be established — no verifiable v2 row (live claim or approval/gateway gift), but ${totals}. Nothing was written.`,
     );
   }
-  return `${matches}/${sample.length} recent v2 trial rows match`;
+  return `no verifiable v2 row (${totals}); key continuity cannot be established, --apply would refuse`;
+}
+
+/**
+ * The ledgers' state, counts only. Returns false when an invariant fails:
+ * a duplicate subject hash (impossible under the UNIQUE constraints) or a
+ * backfill gift row that carries gifted days.
+ */
+async function reportLedgerState(prisma: PrismaClient, label: string): Promise<boolean> {
+  const trials = await prisma.$queryRaw<
+    { source: string; hash_version: number; n: number }[]
+  >(
+    Prisma.sql`
+      SELECT source, hash_version::int AS hash_version, count(*)::int AS n
+        FROM trial_redemptions GROUP BY source, hash_version ORDER BY source, hash_version
+    `,
+  );
+  const gifts = await prisma.$queryRaw<{ source: string; n: number }[]>(Prisma.sql`
+    SELECT source, count(*)::int AS n FROM paid_gift_redemptions GROUP BY source ORDER BY source
+  `);
+  const [inv] = await prisma.$queryRaw<
+    { trial_dups: number; gift_dups: number; backfill_gifted: number }[]
+  >(Prisma.sql`
+    SELECT
+      (SELECT count(*)::int FROM (SELECT 1 FROM trial_redemptions
+         GROUP BY subject_hash HAVING count(*) > 1) d) AS trial_dups,
+      (SELECT count(*)::int FROM (SELECT 1 FROM paid_gift_redemptions
+         GROUP BY subject_hash HAVING count(*) > 1) d) AS gift_dups,
+      (SELECT count(*)::int FROM paid_gift_redemptions
+        WHERE source = 'backfill' AND gifted_days IS NOT NULL) AS backfill_gifted
+  `);
+  console.log(`Ledger state (${label}):`);
+  console.log('  trial_redemptions by source / hash_version:');
+  if (trials.length === 0) console.log('    (none)');
+  for (const r of trials) {
+    console.log(`    ${r.source.padEnd(12)} v${r.hash_version}  ${r.n}`);
+  }
+  console.log('  paid_gift_redemptions by source:');
+  if (gifts.length === 0) console.log('    (none)');
+  for (const r of gifts) console.log(`    ${r.source.padEnd(12)}     ${r.n}`);
+  const trialBackfill = trials
+    .filter((r) => r.source === 'backfill')
+    .reduce((s, r) => s + r.n, 0);
+  const giftBackfill = gifts.find((r) => r.source === 'backfill')?.n ?? 0;
+  console.log(
+    `  backfill rows (trials, gifts):            ${trialBackfill}, ${giftBackfill}`,
+  );
+  console.log(
+    `  duplicate subject_hash (trials, gifts):   ${inv.trial_dups}, ${inv.gift_dups}`,
+  );
+  console.log(`  backfill gift rows with gifted_days:      ${inv.backfill_gifted}`);
+  const ok = inv.trial_dups === 0 && inv.gift_dups === 0 && inv.backfill_gifted === 0;
+  console.log(`  invariants:                               ${ok ? 'OK' : 'VIOLATED'}`);
+  return ok;
 }
 
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   if (isProductionEnvironment(process.env) && !options.allowProduction) {
     throw new Error(
-      'Refusing to run against production: the pre-ledger backfill is a pending product decision. Pass --allow-production only once it is approved.',
+      'Refusing to run against production without --allow-production (approved 4 Oct 2026; use the Customer ledger backfill workflow).',
     );
   }
   const url = process.env.DATABASE_URL;
@@ -251,8 +388,26 @@ async function main(): Promise<void> {
   const key = customerIdentityKeyFromEnv();
   const prisma = new PrismaClient({ datasources: { db: { url } } });
   try {
+    if (options.verify) {
+      console.log('Mode: VERIFY (read-only)');
+      let keyOk = true;
+      try {
+        console.log(
+          `Key check: ${await assertKeyMatchesApplication(prisma, key, false)}`,
+        );
+      } catch (error) {
+        keyOk = false;
+        console.log(error instanceof Error ? error.message : 'Key check failed.');
+      }
+      const ok = await reportLedgerState(prisma, 'current');
+      if (!ok || !keyOk) process.exitCode = 1;
+      return;
+    }
+
     console.log(`Mode: ${options.apply ? 'APPLY' : 'DRY RUN (pass --apply to write)'}`);
-    console.log(`Key check: ${await assertKeyMatchesApplication(prisma, key)}`);
+    console.log(
+      `Key check: ${await assertKeyMatchesApplication(prisma, key, options.apply)}`,
+    );
 
     // ---- trials ----
     const trial = bySubject(await trialEvidence(prisma, options.autoTrialEra), key);
@@ -336,6 +491,12 @@ async function main(): Promise<void> {
       console.log(`  recorded:                      ${inserted}`);
       console.log(`  unrecoverable (deleted users): ${gift.unrecoverable}`);
     }
+
+    const ok = await reportLedgerState(
+      prisma,
+      options.apply ? 'after apply' : 'unchanged, dry run',
+    );
+    if (!ok) process.exitCode = 1;
   } finally {
     await prisma.$disconnect();
   }

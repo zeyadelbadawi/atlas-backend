@@ -166,6 +166,24 @@ describe('W8 gifted setup days & durable eligibility (e2e)', () => {
     return res.body;
   }
 
+  /** The receipt (`lifecycle.subscription.activated`) outbox row for one paid period. */
+  async function receiptValues(orgId: string, periodEnd: Date) {
+    const rows = await admin.communicationOutbox.findMany({
+      where: { organizationId: orgId, key: 'lifecycle.subscription.activated' },
+    });
+    const row = rows.find(
+      (r) =>
+        (r.values as Record<string, unknown> | null)?.anchorAt ===
+        periodEnd.toISOString(),
+    );
+    expect(row).toBeDefined();
+    return row!.values as Record<string, unknown>;
+  }
+
+  /** The `formatLifecycleInstant` shape every lifecycle email uses. */
+  const utc = (at: Date) =>
+    `${at.toISOString().slice(0, 10)} ${at.toISOString().slice(11, 16)} UTC`;
+
   function giftLedgerCount(email: string) {
     return admin.paidGiftRedemption.count({
       where: { subjectHash: ledgerSubjectHash(email) },
@@ -246,6 +264,18 @@ describe('W8 gifted setup days & durable eligibility (e2e)', () => {
         where: { organizationId: orgId, action: 'subscription.gift.granted' },
       }),
     ).toBe(1);
+
+    // The receipt carries the gift exactly as the approval recorded it:
+    // gift period from the gift columns, paid period from the subscription.
+    const receipt = await receiptValues(orgId, row.currentPeriodEnd!);
+    expect(receipt).toMatchObject({
+      giftedDays: 7,
+      giftStartDate: utc(row.giftedStartsAt!),
+      giftEndDate: utc(row.giftedEndsAt!),
+      periodStartDate: utc(row.currentPeriodStart!),
+      periodEndDate: utc(row.currentPeriodEnd!),
+    });
+    expect(receipt.periodStartDate).toBe(receipt.giftEndDate);
   });
 
   it('a renewal gets no gift: it extends from the current end and leaves the gift untouched', async () => {
@@ -264,6 +294,20 @@ describe('W8 gifted setup days & durable eligibility (e2e)', () => {
     expect(second.giftedPaymentId).toBe(first.giftedPaymentId);
     expect(second.giftedEndsAt).toEqual(first.giftedEndsAt);
     expect(await giftLedgerCount(owner.email)).toBe(1);
+
+    // The first receipt carried the gift; the renewal's carries none, even
+    // though the gift columns are still set on the row.
+    expect(await receiptValues(orgId, first.currentPeriodEnd!)).toMatchObject({
+      giftedDays: 7,
+    });
+    const renewal = await receiptValues(orgId, second.currentPeriodEnd!);
+    expect(renewal).toMatchObject({
+      periodStartDate: utc(second.currentPeriodStart!),
+      periodEndDate: utc(second.currentPeriodEnd!),
+    });
+    expect(renewal).not.toHaveProperty('giftedDays');
+    expect(renewal).not.toHaveProperty('giftStartDate');
+    expect(renewal).not.toHaveProperty('giftEndDate');
   });
 
   it('a second organization of the same owner email gets no gift', async () => {
@@ -284,6 +328,12 @@ describe('W8 gifted setup days & durable eligibility (e2e)', () => {
       addBillingPeriod(b.currentPeriodStart!, 'monthly'),
     );
     expect(await giftLedgerCount(owner.email)).toBe(1);
+
+    // An ineligible customer's receipt carries no gift fields at all.
+    const receipt = await receiptValues(orgB, b.currentPeriodEnd!);
+    expect(receipt).not.toHaveProperty('giftedDays');
+    expect(receipt).not.toHaveProperty('giftStartDate');
+    expect(receipt).not.toHaveProperty('giftEndDate');
   });
 
   it('a trialist who converts DOES get the gift (distinct from the trial)', async () => {
