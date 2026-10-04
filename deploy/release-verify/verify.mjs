@@ -354,16 +354,34 @@ console.log('== Legal pages and pricing (Chromium, EN + AR, desktop + 390 px)');
       );
       let giftOk = true;
       let giftPlans = 0;
+      // The plan cards render after the catalog request settles; wait for
+      // the explainer and for every note the catalog says should exist
+      // before reading any of them, or a slow load reads as "no gift".
+      await page
+        .getByTestId('pricing-gifted-days')
+        .waitFor({ state: 'attached', timeout: 30_000 })
+        .catch(() => undefined);
+      for (const plan of plans) {
+        const want = expectGift(plan);
+        if (want.monthly || want.yearly) {
+          await page
+            .getByTestId(`marketing-plan-gift-${plan.key}`)
+            .first()
+            .waitFor({ state: 'attached', timeout: 15_000 })
+            .catch(() => undefined);
+        }
+      }
       for (const plan of plans) {
         const want = expectGift(plan);
         const note = page.getByTestId(`marketing-plan-gift-${plan.key}`);
         const present = (await note.count()) > 0;
-        const text = present
-          ? await note
-              .first()
-              .innerText()
-              .catch(() => '')
-          : '';
+        const text =
+          (present
+            ? await note
+                .first()
+                .textContent()
+                .catch(() => '')
+            : '') ?? '';
         const got = {
           monthly: text.includes(t.monthly),
           yearly: text.includes(t.yearly),
