@@ -157,6 +157,33 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .expect(400);
   });
 
+  it('selects Atelier (Theme 2): the key is accepted and persisted, and switching back works', async () => {
+    const { owner, academy } = await seedManagedAcademy('theme-atelier');
+    const selected = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ themeKey: 'atelier' })
+      .expect(200);
+    expect(selected.body.themeKey).toBe('atelier');
+
+    const stored = await admin.websiteConfiguration.findUnique({
+      where: { academyId: academy.id },
+    });
+    expect(stored?.themeKey).toBe('atelier');
+    const current = await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(current.body.themeKey).toBe('atelier');
+
+    const back = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ themeKey: 'modern-education' })
+      .expect(200);
+    expect(back.body.themeKey).toBe('modern-education');
+  });
+
   it('refuses a retired theme (Themes 2–5) and keeps the current one', async () => {
     const { owner, academy } = await seedManagedAcademy('theme-retired');
     for (const themeKey of [

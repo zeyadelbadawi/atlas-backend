@@ -5,7 +5,7 @@
  * Phase 7 changed shared generation code (`emptyModeMinimum`, section
  * defaults) that every theme goes through, while only Theme 1 had an
  * output test. This runs the real `WebsiteGenerationService` with
- * in-memory repositories for all five themes in both modes and checks
+ * in-memory repositories for every theme in both modes and checks
  * the contract every generated website must meet: each template page is
  * created, every page validates against the shared section schema, CTA
  * targets resolve to generated pages, no template token survives
@@ -23,6 +23,7 @@ const ACADEMY = { id: 'a1', name: 'Cedar Academy', description: 'Learn with us.'
 
 const THEMES = [
   'modern-education',
+  'atelier',
   'premium-academy',
   'corporate-learning',
   'minimal-editorial',
@@ -131,11 +132,14 @@ describe('Website generation — every theme × setup mode', () => {
     },
   );
 
-  it('complete mode does carry Theme 1 samples (the check below is not vacuous)', async () => {
-    const { service, pages } = setup();
-    await service.generate(tx, ACADEMY.id, 'modern-education', 'complete');
-    expect(JSON.stringify(pages)).toMatch(/"sample":true/);
-  });
+  it.each(['modern-education', 'atelier'] as const)(
+    'complete mode does carry %s samples (the check below is not vacuous)',
+    async (theme) => {
+      const { service, pages } = setup();
+      await service.generate(tx, ACADEMY.id, theme, 'complete');
+      expect(JSON.stringify(pages)).toMatch(/"sample":true/);
+    },
+  );
 
   it.each(THEMES)('%s: empty mode carries no sample content', async (theme) => {
     const { service, pages } = setup();

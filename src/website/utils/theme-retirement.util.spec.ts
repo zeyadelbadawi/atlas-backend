@@ -63,6 +63,7 @@ function website(
 describe('theme retirement plan', () => {
   it('leaves a website on a selectable theme alone', () => {
     expect(planThemeRetirement(website({ themeKey: 'modern-education' }))).toBeNull();
+    expect(planThemeRetirement(website({ themeKey: 'atelier' }))).toBeNull();
   });
 
   it('moves a retired theme to Theme 1 and reports what the website holds', () => {
@@ -226,5 +227,6 @@ describe('theme retirement plan', () => {
   it('provisioning maps a retired key to its replacement and keeps a selectable one', () => {
     expect(selectableWebsiteThemeKey('corporate-learning')).toBe('modern-education');
     expect(selectableWebsiteThemeKey('modern-education')).toBe('modern-education');
+    expect(selectableWebsiteThemeKey('atelier')).toBe('atelier');
   });
 });

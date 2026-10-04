@@ -152,9 +152,14 @@ export const COURSE_CATALOG_SORT_VALUES = [
 /**
  * The themes an Owner (or a provisioning request) may select. Matches
  * `SELECTABLE_WEBSITE_THEME_KEYS` (`website-theme.types.ts`) exactly. A
- * future theme is added here and to both template/theme registries.
+ * future theme is appended here (index 0 stays the platform default) and
+ * registered in both template/theme registries.
  */
-export const SELECTABLE_WEBSITE_THEME_KEYS = ['modern-education'] as const;
+export const SELECTABLE_WEBSITE_THEME_KEYS = [
+  'modern-education',
+  // Theme 2 — Atelier (frontend repo, Reports/THEME_2_ATELIER_PLAN.md).
+  'atelier',
+] as const;
 
 /**
  * W2 — the platform's default theme: what `WebsiteBootstrapService` gives a
@@ -165,7 +170,8 @@ export const DEFAULT_WEBSITE_THEME_KEY: (typeof SELECTABLE_WEBSITE_THEME_KEYS)[n
   SELECTABLE_WEBSITE_THEME_KEYS[0];
 
 /**
- * Themes 2–5, retired from selection (frontend repo, Reports/THEMES_2_5_RETIREMENT.md).
+ * The original Themes 2–5, retired from selection (frontend repo,
+ * Reports/THEMES_2_5_RETIREMENT.md) — not the current Theme 2, Atelier.
  * Their code stays until every website on them has been moved to
  * `RETIRED_WEBSITE_THEME_REPLACEMENT` (`npm run db:retire-website-themes`)
  * and verified, so a website still on one keeps rendering as it does.
