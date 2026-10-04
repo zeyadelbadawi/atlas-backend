@@ -17,6 +17,12 @@
 #   H4  caddy and ssr run with an init process: healthchecks leave no
 #       zombies, and SIGTERM still stops them gracefully.
 #
+# And the W8B identity-key pin (4 Oct 2026): a missing
+# CUSTOMER_IDENTITY_HMAC_KEY is computed by the backend image from .env,
+# appended once and the backend recreated; a present key is never touched;
+# a failed or invalid computation writes nothing and the deploy continues;
+# the value never appears in the output.
+#
 #   bash deploy/test/deploy-script.test.sh        (needs Docker, ~5 min)
 set -euo pipefail
 
@@ -87,7 +93,10 @@ FROM busybox:1.36
 ARG VERSION
 ARG MIGRATIONS
 ARG HEALTHY=1
-RUN mkdir -p /app/prisma/migrations /www \
+ARG NODE_STUB=
+COPY fake-node /opt/fake-node
+RUN if [ -n "$NODE_STUB" ]; then cp /opt/fake-node /bin/node && chmod +x /bin/node; fi \
+ && mkdir -p /app/prisma/migrations /www \
  && for m in $MIGRATIONS; do mkdir -p "/app/prisma/migrations/$m"; done \
  && if [ "$HEALTHY" = 1 ]; then echo ok > /www/health; fi \
  && echo "$VERSION" > /www/version \
@@ -96,6 +105,24 @@ RUN mkdir -p /app/prisma/migrations /www \
 LABEL test.version=$VERSION
 CMD ["httpd", "-f", "-p", "3000", "-h", "/www"]
 DOCKERFILE
+# Stands in for `node` in the backend image (only when built with
+# NODE_STUB=1): accepts only the deploy's identity-key invocation — the
+# image's own util, customerIdentityKeyFromEnv() — and answers from the
+# container's environment, i.e. from .env, so a pass also proves the value
+# is computed with the backend's env file.
+cat >"$B/backend/fake-node" <<'NODE'
+#!/bin/sh
+case "$*" in
+  *'./dist/plans/utils/customer-identity-key.util.js'*customerIdentityKeyFromEnv*) ;;
+  *) echo "fake node: unexpected invocation" >&2; exit 3 ;;
+esac
+case "${FAKE_IDENTITY_MODE:-}" in
+  valid) printf '%s' "$FAKE_DERIVED_KEY" ;;
+  invalid) printf 'not-a-64-hex-key' ;;
+  multiline) printf 'noise\n%s\n' "$FAKE_DERIVED_KEY" ;;
+  *) echo "fake node: derivation failed" >&2; exit 1 ;;
+esac
+NODE
 cat >"$B/caddy/Dockerfile" <<'DOCKERFILE'
 FROM caddy:2-alpine
 ARG VERSION
@@ -356,6 +383,54 @@ for c in atlas-deploy-test-init atlas-deploy-test-noinit; do
   code=$(docker inspect -f '{{.State.ExitCode}}' "$c")
   check "$c: SIGTERM stops caddy gracefully (exit $code in ${took}s, no SIGKILL)" bash -c "[ '$code' = 0 ] && [ '$took' -lt 10 ]"
 done
+
+# =============================================================================
+echo "# 7. CUSTOMER_IDENTITY_HMAC_KEY pin (W8B)"
+env_key_lines() { grep -c '^CUSTOMER_IDENTITY_HMAC_KEY=' "$W/.env" || true; }
+set_env() { # set_env KEY VALUE — replace or add a test-only line in .env
+  sed -i "/^$1=/d" "$W/.env"; printf '%s=%s\n' "$1" "$2" >>"$W/.env"
+}
+# Sections 1-5 deployed an image with no node at all: the computation failed
+# every time, and each of those deploys still succeeded (checked above).
+check "an image without the util: every earlier deploy warned and wrote nothing" \
+  bash -c "grep -q 'CUSTOMER_IDENTITY_HMAC_KEY not pinned' '$W/log1' && grep -q 'CUSTOMER_IDENTITY_HMAC_KEY not pinned' '$W/log7' && [ \"\$(grep -c '^CUSTOMER_IDENTITY_HMAC_KEY=' '$W/.env')\" = 0 ]"
+cp "$W/last-good.bootstrap" "$W/.last-good"
+sed -i '/^ATLAS_SSR=/d' "$W/.env"
+build_push atlas-backend:latest "$B/backend" --build-arg VERSION=v5 --build-arg NODE_STUB=1 \
+  --build-arg "MIGRATIONS=20260101000000_m1 20260201000000_m2 20260301000000_m3"
+DERIVED=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+set_env FAKE_DERIVED_KEY "$DERIVED"
+for mode in invalid multiline fail; do
+  set_env FAKE_IDENTITY_MODE "$mode"
+  ENV_SUM=$(sha256sum <"$W/.env")
+  check "computation '$mode': the deploy still succeeds" run_deploy "$W/log9-$mode"
+  check "computation '$mode': .env is byte-for-byte unchanged" eq "$(sha256sum <"$W/.env")" "$ENV_SUM"
+  check "computation '$mode': a warning, and no forced backend recreate" \
+    bash -c "grep -q 'CUSTOMER_IDENTITY_HMAC_KEY not pinned' '$W/log9-$mode' && ! grep -q 'Env changed' '$W/log9-$mode'"
+done
+set_env FAKE_IDENTITY_MODE valid
+# An EMPTY line counts as missing and is replaced, never duplicated.
+printf 'CUSTOMER_IDENTITY_HMAC_KEY=\n' >>"$W/.env"
+OTHER_LINES=$(grep -v '^CUSTOMER_IDENTITY_HMAC_KEY=' "$W/.env" | sed '/^$/d' | sha256sum)
+check "missing key: the deploy succeeds" run_deploy "$W/log10"
+check "missing key: exactly one CUSTOMER_IDENTITY_HMAC_KEY line in .env" eq "$(env_key_lines)" "1"
+check "missing key: the appended value is the image's derivation from .env" \
+  eq "$(sed -n 's/^CUSTOMER_IDENTITY_HMAC_KEY=//p' "$W/.env")" "$DERIVED"
+check "missing key: every other .env line is unchanged" \
+  eq "$(grep -v '^CUSTOMER_IDENTITY_HMAC_KEY=' "$W/.env" | sed '/^$/d' | sha256sum)" "$OTHER_LINES"
+check "missing key: the backend recreate was forced" log_has "$W/log10" "Env changed — force-recreating backend"
+check "missing key: the running backend has the pinned key in its environment" \
+  bash -c "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' '$(cid backend)' | grep -qx 'CUSTOMER_IDENTITY_HMAC_KEY=$DERIVED'"
+# Present: a different derivation must never replace or rotate it.
+set_env FAKE_DERIVED_KEY "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+ENV_SUM=$(sha256sum <"$W/.env")
+check "present key: the deploy succeeds" run_deploy "$W/log11"
+check "present key: .env unchanged (the key is never overwritten)" eq "$(sha256sum <"$W/.env")" "$ENV_SUM"
+check "present key: still the first pinned value" \
+  eq "$(sed -n 's/^CUSTOMER_IDENTITY_HMAC_KEY=//p' "$W/.env")" "$DERIVED"
+check "present key: no computation and no forced backend recreate" \
+  bash -c "! grep -qE 'CUSTOMER_IDENTITY_HMAC_KEY|Env changed' '$W/log11'"
+check "the key value never appears in any deploy output" bash -c "! grep -rqF '$DERIVED' '$W'/log*"
 
 echo
 echo "# $PASS passed, $FAIL failed"

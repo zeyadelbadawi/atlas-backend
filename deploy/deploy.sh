@@ -176,6 +176,64 @@ if [ -z "${METRICS_SCRAPE_TOKEN:-}" ] && [ "$MODE" != "check-rollback-record" ];
   ENV_SYNCED=1
 fi
 
+# --- W8B: pin the customer-identity key (CUSTOMER_IDENTITY_HMAC_KEY) -------
+# Every v2 `subject_hash` in trial_redemptions / paid_gift_redemptions is an
+# HMAC under this key. Until it is set, the backend DERIVES it from
+# PAYMENT_CREDENTIALS_ENCRYPTION_KEY (src/plans/utils/
+# customer-identity-key.util.ts), so rotating the payment key would silently
+# re-grant every trial and gift. Pinning freezes it.
+#
+# The value pinned is the one the backend uses NOW: computed ON THE HOST by
+# the backend image's own util, with the backend's own env (.env), in a
+# throwaway container (--no-deps: nothing else starts, no DB is touched).
+# Pinning it changes no hash: every existing v2 row still matches. A NEW
+# RANDOM KEY MUST NEVER BE USED HERE — it would re-grant every trial and
+# gift.
+#
+#   * Only when .env has no non-empty CUSTOMER_IDENTITY_HMAC_KEY: a present
+#     key is never overwritten or rotated.
+#   * Only a value matching ^[0-9a-f]{64}$ is written; anything else (an
+#     image without the util, an error, empty or extra output) writes
+#     nothing, prints a warning and the deploy continues unchanged.
+#   * The value is never echoed and xtrace is suspended for the block.
+#   * Written atomically (temp copy, size guard, mv), like --sync-env.
+#   * ENV_SYNCED=1 forces the backend recreate below so it loads the key.
+if ! grep -Eq '^CUSTOMER_IDENTITY_HMAC_KEY=.' .env && [ "$MODE" != "check-rollback-record" ]; then
+  case $- in *x*) identity_xtrace=1; set +x ;; *) identity_xtrace=0 ;; esac
+  echo "==> CUSTOMER_IDENTITY_HMAC_KEY missing — pinning the currently derived value (value never printed)"
+  pinned_identity_key=$(timeout 180 docker compose run --rm --no-deps -T backend node -e '
+    const { customerIdentityKeyFromEnv } = require("./dist/plans/utils/customer-identity-key.util.js");
+    process.stdout.write(customerIdentityKeyFromEnv().toString("hex"));' 2>/dev/null) || pinned_identity_key=""
+  if [[ "$pinned_identity_key" =~ ^[0-9a-f]{64}$ ]]; then
+    # Drop an empty `CUSTOMER_IDENTITY_HMAC_KEY=` line, if any (a non-empty
+    # one never reaches this block), so the key appears exactly once. Every
+    # step is checked: a failure here warns and leaves .env as it was.
+    identity_tmp=""
+    if identity_tmp=$(mktemp "$ATLAS_DIR/.env.identity.XXXXXX") \
+      && awk 'index($0, "CUSTOMER_IDENTITY_HMAC_KEY=") != 1' .env > "$identity_tmp" \
+      && printf '\nCUSTOMER_IDENTITY_HMAC_KEY=%s\n' "$pinned_identity_key" >> "$identity_tmp" \
+      && [ "$(wc -c < "$identity_tmp")" -gt "$(wc -c < .env)" ] \
+      && { chmod --reference=.env "$identity_tmp" 2>/dev/null || true; } \
+      && mv "$identity_tmp" .env; then
+      CUSTOMER_IDENTITY_HMAC_KEY=$pinned_identity_key
+      export CUSTOMER_IDENTITY_HMAC_KEY
+      ENV_SYNCED=1
+      echo "==> CUSTOMER_IDENTITY_HMAC_KEY pinned in .env; the backend will be recreated to load it"
+    else
+      [ -n "$identity_tmp" ] && rm -f "$identity_tmp"
+      echo "WARNING: CUSTOMER_IDENTITY_HMAC_KEY not pinned: .env could not be rewritten safely; .env unchanged." >&2
+    fi
+    unset identity_tmp
+  else
+    echo "WARNING: CUSTOMER_IDENTITY_HMAC_KEY not pinned: the backend image could not derive it" >&2
+    echo "         (image without dist/plans/utils/customer-identity-key.util.js, or another error)." >&2
+    echo "         .env unchanged; the deploy continues and the next deploy retries." >&2
+  fi
+  unset pinned_identity_key
+  [ "$identity_xtrace" = 1 ] && set -x
+  unset identity_xtrace
+fi
+
 # --- Image identity: what each service runs, as an immutable digest --------
 #
 # `.last-good` must name images that can be pulled back byte for byte, so

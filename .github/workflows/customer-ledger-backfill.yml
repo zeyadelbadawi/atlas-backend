@@ -1,0 +1,87 @@
+name: Customer ledger backfill
+
+# W8B — the historical trial and gift ledger backfill, approved by the
+# product owner on 4 Oct 2026 for production (trials from evidence and prior
+# paying customers; never the inferred auto-trial era).
+#
+# On the VPS, over the same restricted `deploy` SSH identity as Deploy and
+# Release verify, deploy/ledger-backfill/remote.sh runs the compiled script
+# inside the RUNNING backend container:
+#   docker compose exec -T backend node dist/scripts/backfill-customer-ledgers.js \
+#     --gifts --allow-production [--apply | --verify]
+#
+#   dry-run  (default) counts what would be recorded; writes nothing
+#   verify   read-only post-state counts and invariants
+#   apply    requires confirm = APPLY-LEDGER-BACKFILL; refuses unless
+#            CUSTOMER_IDENTITY_HMAC_KEY is pinned and loaded; prints the
+#            pre-run state, takes a verified data-only dump of both ledgers,
+#            applies, then verifies
+#
+# Output is counts and yes/no only. Recovery SQL: the header of
+# deploy/ledger-backfill/remote.sh.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: dry-run (writes nothing) | verify (read-only) | apply (writes)
+        required: true
+        default: dry-run
+        type: choice
+        options: [dry-run, verify, apply]
+      confirm:
+        description: For apply only — type APPLY-LEDGER-BACKFILL exactly
+        required: false
+        default: ''
+        type: string
+
+# The deploy group: this can never run while a deploy is rolling the backend
+# (and a deploy queues behind it).
+concurrency:
+  group: atlas-vps-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check the inputs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            dry-run|verify) echo "Mode: $MODE (writes nothing)" ;;
+            apply)
+              if [ "$CONFIRM" != "APPLY-LEDGER-BACKFILL" ]; then
+                echo "::error::mode=apply requires confirm=APPLY-LEDGER-BACKFILL. Refusing; nothing was run." >&2
+                exit 1
+              fi
+              echo "Mode: apply (confirmed)" ;;
+            *) echo "::error::unknown mode '$MODE'" >&2; exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Run on the VPS
+        working-directory: deploy/ledger-backfill
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -uo pipefail
+          # The script travels over stdin into a temp file (not `bash -s`:
+          # `docker compose exec -T` inside it would read the rest of it).
+          # MODE is one of the three choice values, checked above.
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" ${MODE} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh
