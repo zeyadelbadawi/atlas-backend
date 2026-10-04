@@ -18,12 +18,20 @@
  * observes progress.
  */
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { cleanDisplayName } from '../../common/name-uniqueness/name-key';
+import {
+  academyNameTaken,
+  isAcademyNameTaken,
+  requireNameKey,
+} from '../../common/name-uniqueness/name-uniqueness';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
@@ -37,10 +45,22 @@ import { ProvisioningRequestsRepository } from '../repositories/provisioning-req
 import { ProvisioningStepsRepository } from '../repositories/provisioning-steps.repository';
 import { ProvisioningProducer } from '../queue/provisioning.producer';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { MediaAssetsRepository } from '../../media/repositories/media-assets.repository';
+import { toMediaAssetUrl } from '../../media/dto/media-asset.contract';
+import { WebsiteConfigurationService } from '../../website/services/website-configuration.service';
+import { DEFAULT_WEBSITE_THEME_KEY } from '../../website/constants/website.constants';
+import type { ProvisioningConfig } from '../../config/configuration';
+import { ProvisioningOrchestratorService } from './provisioning-orchestrator.service';
 import {
+  DEFAULT_PROVISIONING_STALL_SECONDS,
   RESERVED_SUBDOMAINS,
   TERMINAL_PROVISIONING_STATUSES,
 } from '../dto/provisioning.constants';
+import {
+  parseRequestedBrand,
+  readRequestedBrand,
+  type RequestedBrand,
+} from '../dto/requested-brand';
 import {
   toProvisioningRequestResponse,
   type ProvisioningRequestResponse,
@@ -70,7 +90,18 @@ export class ProvisioningRequestsService {
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly organizationMembershipsRepository: OrganizationMembershipsRepository,
     @Inject(PLANS_CLOCK) private readonly clock: Clock,
+    private readonly provisioningOrchestratorService: ProvisioningOrchestratorService,
+    private readonly mediaAssetsRepository: MediaAssetsRepository,
+    private readonly websiteConfigurationService: WebsiteConfigurationService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private stallThresholdSeconds(): number {
+    return (
+      this.configService.get<ProvisioningConfig>('provisioning')?.stallThresholdSeconds ??
+      DEFAULT_PROVISIONING_STALL_SECONDS
+    );
+  }
 
   /**
    * Only an Organization OWNER may start provisioning.
@@ -132,7 +163,38 @@ export class ProvisioningRequestsService {
     // one rule is the point.
     await this.assertCanCreateAcademy(organizationId, userId);
 
-    const request = await this.tenancyContextService.runInTenantContext(
+    // W2 — the brand is validated synchronously (400 with field
+    // violations: strict keys, hex/triplet colours, an accessible palette,
+    // never a data: URI) before anything is written.
+    const requestedBrand = parseRequestedBrand(payload.brand, userId);
+
+    // An address another Academy already holds is refused at once, rather
+    // than three steps into the background run — unless this is a replay
+    // of a request that already allocated it. Checked OUTSIDE the create
+    // transaction: `existsBySubdomain` is a global lookup on its own pooled
+    // connection, and must not hold a transaction open while it waits.
+    const replay = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) =>
+        this.provisioningRequestsRepository.findByIdempotencyKey(
+          tx,
+          organizationId,
+          payload.idempotencyKey,
+        ),
+    );
+    if (
+      !replay &&
+      (await this.subdomainAllocationsRepository.existsBySubdomain(
+        payload.requestedSubdomain,
+      ))
+    ) {
+      throw new ConflictException({
+        messageKey: 'errors.provisioning.subdomainUnavailable',
+        code: 'subdomain_unavailable',
+      });
+    }
+
+    const outcome = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
         const existing = await this.provisioningRequestsRepository.findByIdempotencyKey(
@@ -140,7 +202,51 @@ export class ProvisioningRequestsService {
           organizationId,
           payload.idempotencyKey,
         );
-        if (existing) return existing;
+        if (existing) return { request: existing, created: false };
+
+        // W2 — ONE ADDRESS, ONE REQUEST. Two tabs (two forms, two
+        // idempotency keys) asking for the same address used to create two
+        // rows; the second's academy step then adopted the first's Academy
+        // and died on a unique constraint, retried, and opened a support
+        // ticket. Now the create is serialized per address (a transaction
+        // advisory lock, released at commit) and the loser gets a clear
+        // 409 carrying the winner's request id, so the page can follow it.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`provisioning-subdomain:${payload.requestedSubdomain}`}, 0))`;
+        // The lock may have been waiting on a concurrent submit of the SAME
+        // key (a double click): that is a replay, not a second tab.
+        const sameKey = await this.provisioningRequestsRepository.findByIdempotencyKey(
+          tx,
+          organizationId,
+          payload.idempotencyKey,
+        );
+        if (sameKey) return { request: sameKey, created: false };
+        const active = await this.provisioningRequestsRepository.findActiveBySubdomain(
+          tx,
+          organizationId,
+          payload.requestedSubdomain,
+        );
+        if (active) {
+          throw new ConflictException({
+            messageKey: 'errors.provisioning.subdomainRequestInProgress',
+            code: 'subdomain_request_in_progress',
+            details: { requestId: active.id },
+          });
+        }
+
+        // W4 — academy names are unique platform-wide. Checked HERE, when
+        // the request is made, so a clash is an immediate 409 on the form
+        // rather than an asynchronous failed step after a 201. (A name taken
+        // between now and the worker's run is not a failure either: the
+        // worker takes the first free "<name> (2)" — see
+        // `AcademiesService.create`'s `suffix` policy.)
+        const academyNameKey = await requireNameKey(
+          tx,
+          cleanDisplayName(payload.academyName),
+          'academyName',
+        );
+        if (await isAcademyNameTaken(tx, academyNameKey, null)) {
+          throw academyNameTaken('academyName');
+        }
 
         // Phase P19 (`Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` P1-2):
         // previously, `triggeringPaymentId` was optional and, even when
@@ -212,8 +318,13 @@ export class ProvisioningRequestsService {
             requestedAcademyName: payload.academyName,
             requestedSubdomain: payload.requestedSubdomain,
             triggeringPaymentId: payload.triggeringPaymentId,
-            selectedThemeKey: payload.selectedThemeKey,
+            // W2 — the platform default theme when none was picked: the
+            // website is always built (see `executeThemeStep`).
+            selectedThemeKey: payload.selectedThemeKey ?? DEFAULT_WEBSITE_THEME_KEY,
             websiteSetupMode: payload.websiteSetupMode,
+            requestedBrand: requestedBrand
+              ? (requestedBrand as unknown as Prisma.InputJsonValue)
+              : Prisma.DbNull,
             idempotencyKey: payload.idempotencyKey,
           });
           await this.provisioningStepsRepository.initializeForRequest(tx, created.id);
@@ -232,7 +343,7 @@ export class ProvisioningRequestsService {
             targetLabel: created.requestedAcademyName,
           });
 
-          return created;
+          return { request: created, created: true };
         } catch (error) {
           // Two concurrent replays of the same idempotency key raced the
           // check above — the unique constraint is the real authority;
@@ -245,17 +356,25 @@ export class ProvisioningRequestsService {
               organizationId,
               payload.idempotencyKey,
             );
-            if (raced) return raced;
+            if (raced) return { request: raced, created: false };
           }
           throw error;
         }
       },
     );
 
-    await this.provisioningProducer.enqueue({
-      provisioningRequestId: request.id,
-      organizationId,
-    });
+    const { request, created: isNew } = outcome;
+
+    // An idempotent replay of a request that already finished (or failed)
+    // must not quietly retry it — only a new request, or a replay of one
+    // still in flight (re-enqueueing is a no-op if its job is queued), is
+    // (re)enqueued. Retrying a failed request is the explicit `retry` call.
+    if (isNew || !TERMINAL_PROVISIONING_STATUSES.has(request.status)) {
+      await this.provisioningProducer.enqueue({
+        provisioningRequestId: request.id,
+        organizationId,
+      });
+    }
 
     return this.toResponse(organizationId, userId, request);
   }
@@ -310,6 +429,21 @@ export class ProvisioningRequestsService {
     requestId: string,
   ): Promise<ProvisioningRequestResponse> {
     const request = await this.loadOwnedRequestOrThrow(organizationId, requestId);
+
+    // W2 — a ready Academy whose branding could not be applied: re-run
+    // just that step, now (one transaction), and answer with the result.
+    if (request.status === 'ready') {
+      const retried = await this.provisioningOrchestratorService.retryBrandingStep(
+        request.id,
+        organizationId,
+      );
+      if (!retried) {
+        throw new ConflictException({ messageKey: 'errors.provisioning.notRetryable' });
+      }
+      const fresh = await this.loadOwnedRequestOrThrow(organizationId, requestId);
+      return this.toResponse(organizationId, userId, fresh);
+    }
+
     this.assertRetryable(request);
 
     await this.provisioningProducer.enqueue({
@@ -318,6 +452,71 @@ export class ProvisioningRequestsService {
     });
 
     return this.toResponse(organizationId, userId, request);
+  }
+
+  /**
+   * W2 — attaches the setup form's logo to the request once the Academy
+   * exists. The page uploads the file to the new Academy's media library
+   * (the existing, authorized, quota-checked upload) and sends only the
+   * resulting media-asset id; the asset must be an active image of THIS
+   * request's Academy. The reference is stored on `requested_brand` (so
+   * the `branding` step — or a later retry of it — applies it too) and the
+   * logo is applied at once through `saveVisualIdentity`, as the caller:
+   * idempotent, it sets the same logo URL again on a repeat.
+   */
+  async attachLogo(
+    organizationId: string,
+    userId: string,
+    requestId: string,
+    mediaAssetId: string,
+  ): Promise<ProvisioningRequestResponse> {
+    await this.assertCanCreateAcademy(organizationId, userId);
+    const request = await this.loadOwnedRequestOrThrow(organizationId, requestId);
+    if (request.status === 'cancelled') {
+      throw new ConflictException({ messageKey: 'errors.provisioning.notRetryable' });
+    }
+    if (!request.academyId) {
+      throw new ConflictException({ messageKey: 'errors.provisioning.academyNotReady' });
+    }
+    const academyId = request.academyId;
+
+    const asset = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      (tx) => this.mediaAssetsRepository.findById(tx, academyId, mediaAssetId),
+    );
+    if (!asset || asset.type !== 'image' || asset.status !== 'active') {
+      throw new BadRequestException({
+        messageKey: 'errors.validation.failed',
+        violations: [
+          { field: 'mediaAssetId', messageKey: 'errors.provisioning.logoAssetInvalid' },
+        ],
+      });
+    }
+
+    // The same relative public-media URL the media library hands out
+    // (and the Brand tab stores), never the raw object-store URL.
+    const logoUrl = toMediaAssetUrl(asset.storageKey);
+    const current = readRequestedBrand(request.requestedBrand);
+    const next: RequestedBrand = {
+      ...(current?.palette ? { palette: current.palette } : {}),
+      logo: { status: 'attached', mediaAssetId: asset.id, url: logoUrl },
+    };
+    await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+      this.provisioningRequestsRepository.update(tx, request.id, {
+        requestedBrand: next as unknown as Prisma.InputJsonValue,
+      }),
+    );
+
+    await this.websiteConfigurationService.saveVisualIdentity(
+      academyId,
+      organizationId,
+      userId,
+      { logo: logoUrl },
+    );
+
+    const fresh = await this.loadOwnedRequestOrThrow(organizationId, requestId);
+    return this.toResponse(organizationId, userId, fresh);
   }
 
   /** Cancels a still-in-progress request. Does NOT roll back an already-created Academy/subdomain allocation — a conservative, "no hard delete" choice (see `Reports/PROGRESS.md`'s P14 section for the documented reasoning), matching every other cancellation in this codebase being a status transition, never a destructive undo. */
@@ -403,7 +602,17 @@ export class ProvisioningRequestsService {
         const domainConnection = request.academyId
           ? await this.domainConnectionsRepository.findByAcademyId(tx, request.academyId)
           : null;
-        return toProvisioningRequestResponse(request, steps, subdomain, domainConnection);
+        const progress = {
+          now: new Date(),
+          stallThresholdSeconds: this.stallThresholdSeconds(),
+        };
+        return toProvisioningRequestResponse(
+          request,
+          steps,
+          subdomain,
+          domainConnection,
+          progress,
+        );
       },
     );
   }

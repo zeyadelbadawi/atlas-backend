@@ -21,6 +21,9 @@ import {
   MEDIA_PURGE_JOB_SWEEP,
   MEDIA_PURGE_SWEEP_INTERVAL_MS,
   MEDIA_PURGE_SWEEP_REPEAT_JOB_ID,
+  TRIAL_FORENSICS_SCRUB_INTERVAL_MS,
+  TRIAL_FORENSICS_SCRUB_JOB,
+  TRIAL_FORENSICS_SCRUB_REPEAT_JOB_ID,
   VIDEO_RETENTION_SWEEP_REPEAT_JOB_ID,
   type VideoRetentionJobPayload,
 } from './video-retention.types';
@@ -57,6 +60,17 @@ export class VideoRetentionScheduler implements OnApplicationBootstrap {
       {
         repeat: { every: MEDIA_PURGE_SWEEP_INTERVAL_MS },
         jobId: MEDIA_PURGE_SWEEP_REPEAT_JOB_ID,
+        removeOnComplete: true,
+        removeOnFail: { count: 1000 },
+      },
+    );
+    // W8B — trial-ledger IP/user-agent retention (180 days).
+    await this.queue.add(
+      TRIAL_FORENSICS_SCRUB_JOB,
+      { kind: 'sweep' },
+      {
+        repeat: { every: TRIAL_FORENSICS_SCRUB_INTERVAL_MS },
+        jobId: TRIAL_FORENSICS_SCRUB_REPEAT_JOB_ID,
         removeOnComplete: true,
         removeOnFail: { count: 1000 },
       },

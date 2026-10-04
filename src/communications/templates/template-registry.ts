@@ -90,6 +90,9 @@ import { template as retentionVideoDeleted } from './keys/retention.video.delete
 import { template as retentionVideoDeletionFailed } from './keys/retention.video.deletion_failed';
 // TASK 7 — Atlas marketing contact form.
 import { template as platformContactSubmissionReceived } from './keys/platform.contact_submission.received';
+// W3-compose — person-authored messages (campaigns).
+import { template as academyMessageSent } from './keys/academy.message.sent';
+import { template as platformBroadcastSent } from './keys/platform.broadcast.sent';
 
 export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'provisioning.completed': provisioningCompleted,
@@ -172,6 +175,8 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'device.limit_reached': deviceLimitReached,
   'session.taken_over': sessionTakenOver,
   'announcement.published': announcementPublished,
+  'academy.message.sent': academyMessageSent,
+  'platform.broadcast.sent': platformBroadcastSent,
   'digest.daily': digestDaily,
 };
 

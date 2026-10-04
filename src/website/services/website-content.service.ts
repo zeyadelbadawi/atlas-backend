@@ -137,15 +137,16 @@ export class WebsiteContentService {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
-    return membership.role;
+    return role;
   }
 
   /** Task 3 — one audit row per library write, in the write's own transaction. */
@@ -182,12 +183,13 @@ export class WebsiteContentService {
     academyId: string,
     userId: string,
   ): Promise<void> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
   }

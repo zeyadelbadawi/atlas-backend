@@ -73,4 +73,20 @@ export interface SubscriptionLifecycleResponse {
    * trial that will be refused.
    */
   readonly trialAvailable: boolean;
+  /**
+   * W8 — gifted setup days on this organization's subscription, when one
+   * was granted: the day count, when the gift ends (== when the paid period
+   * starts), and whole days left while it is running (absent once over).
+   */
+  readonly giftedDays?: number;
+  readonly giftedEndsAt?: string;
+  readonly giftedDaysRemaining?: number;
+  /**
+   * W8 — DISPLAY ONLY, like `trialAvailable`: whether a first paid
+   * subscription bought now would plausibly include the plan's gifted setup
+   * days (this organization has never paid and the owner's identity has
+   * never received a gift). The real decision is made atomically at payment
+   * approval by `PaidGiftEligibilityService.claimFirstPaidGift`.
+   */
+  readonly giftAvailable: boolean;
 }

@@ -23,6 +23,13 @@ import {
   type ProvisioningErrorResponse,
   type ProvisioningStepResponse,
 } from './provisioning-step.contract';
+import {
+  DEFAULT_PROVISIONING_STALL_SECONDS,
+  PROVISIONING_STAGE_OF_STEP,
+  TERMINAL_PROVISIONING_STATUSES,
+  type ProvisioningStage,
+} from './provisioning.constants';
+import { summarizeRequestedBrand, type RequestedBrandSummary } from './requested-brand';
 
 export interface ProvisioningRequestResponse {
   readonly id: string;
@@ -43,10 +50,28 @@ export interface ProvisioningRequestResponse {
   /** Phase 6 — see `CreateProvisioningRequestDto.websiteSetupMode`'s own doc comment. */
   readonly websiteSetupMode?: string;
   readonly lastError?: ProvisioningErrorResponse;
+  /**
+   * W2 — the stage the request is really in (`PROVISIONING_STAGE_OF_STEP`
+   * of `currentStepKey`), or `'ready'` once it is. On a failed/cancelled
+   * request it is where it stopped.
+   */
+  readonly stage: ProvisioningStage | 'ready';
+  /** W2 — when a step last started, finished or failed (falls back to `startedAt`/`createdAt` on older rows). */
+  readonly lastProgressAt: string;
+  /** W2 — non-terminal and no progress for `stallThresholdSeconds`: the UI offers Retry. */
+  readonly stalled: boolean;
+  readonly stallThresholdSeconds: number;
+  /** W2 — what the setup form asked for (palette yes/no, logo state), never the palette itself; absent when nothing was chosen. */
+  readonly requestedBrand?: RequestedBrandSummary;
   readonly createdAt: string;
   readonly startedAt?: string;
   readonly completedAt?: string;
   readonly failedAt?: string;
+}
+
+export interface ProvisioningProgressOptions {
+  readonly now?: Date;
+  readonly stallThresholdSeconds?: number;
 }
 
 export function toProvisioningRequestResponse(
@@ -54,7 +79,15 @@ export function toProvisioningRequestResponse(
   steps: readonly PrismaProvisioningStep[],
   subdomain: PrismaSubdomainAllocation | null,
   domainConnection: PrismaDomainConnection | null,
+  options: ProvisioningProgressOptions = {},
 ): ProvisioningRequestResponse {
+  const now = options.now ?? new Date();
+  const stallThresholdSeconds =
+    options.stallThresholdSeconds ?? DEFAULT_PROVISIONING_STALL_SECONDS;
+  const lastProgressAt = request.lastProgressAt ?? request.startedAt ?? request.createdAt;
+  const stalled =
+    !TERMINAL_PROVISIONING_STATUSES.has(request.status) &&
+    now.getTime() - lastProgressAt.getTime() > stallThresholdSeconds * 1000;
   return {
     id: request.id,
     organizationId: request.organizationId,
@@ -73,6 +106,14 @@ export function toProvisioningRequestResponse(
     websiteSetupMode: request.websiteSetupMode ?? undefined,
     lastError:
       (request.lastError as unknown as ProvisioningErrorResponse | null) ?? undefined,
+    stage:
+      request.status === 'ready'
+        ? 'ready'
+        : PROVISIONING_STAGE_OF_STEP[request.currentStepKey],
+    lastProgressAt: lastProgressAt.toISOString(),
+    stalled,
+    stallThresholdSeconds,
+    requestedBrand: summarizeRequestedBrand(request.requestedBrand),
     createdAt: request.createdAt.toISOString(),
     startedAt: request.startedAt?.toISOString(),
     completedAt: request.completedAt?.toISOString(),

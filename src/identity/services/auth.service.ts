@@ -56,6 +56,13 @@ import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer
 import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
+import {
+  isNameConflict,
+  isOrganizationNameTaken,
+  nameInvalid,
+  organizationNameUnavailable,
+  sqlNameKey,
+} from '../../common/name-uniqueness/name-uniqueness';
 import { EmailRiskService } from './email-risk.service';
 import { TwoFactorService } from './two-factor.service';
 import { EmailVerificationTokensRepository } from '../repositories/email-verification-tokens.repository';
@@ -245,6 +252,30 @@ export class AuthService {
   ) {}
 
   /**
+   * W4 — classifies a registration P2002 that may have been a name conflict,
+   * by asking the boolean definer checks (the transaction has rolled back, so
+   * the new account no longer exists and nothing is excluded). `null` when it
+   * was not a name — the email/identity handling then decides.
+   *
+   * Organization names only. A LEARNER name is never answered to an
+   * unauthenticated registration (security review, finding 2): the new
+   * learner's admission is automatic and cannot fail on a name (see
+   * `registerInternal`), so classifying one here would only re-open the
+   * "does a person of this name study at this academy?" oracle.
+   */
+  private async classifyRegistrationNameConflict(input: {
+    readonly organizationName?: string;
+  }): Promise<ConflictException | null> {
+    if (input.organizationName) {
+      const key = await sqlNameKey(this.prisma, input.organizationName);
+      if (key && (await isOrganizationNameTaken(this.prisma, key))) {
+        return organizationNameUnavailable('organizationName');
+      }
+    }
+    return null;
+  }
+
+  /**
    * Whether a registration's P2002 came from `users.email` — the only unique
    * index a duplicate registration can hit besides a federated identity's.
    * PostgreSQL names the index only when the caller may see the conflicting
@@ -288,6 +319,17 @@ export class AuthService {
       throw new BadRequestException({
         messageKey: 'errors.auth.organizationNameRequired',
       });
+    }
+    // W4 — organization names are unique platform-wide. Checked here, before
+    // any write, and again under a lock inside the signup transaction
+    // (`OrganizationsService.createInTransaction`). One generic answer — it
+    // never says who holds the name — and only at submit: there is no public
+    // availability endpoint. Reached for an already-registered address too,
+    // so the decoy path does not become a second oracle.
+    const organizationNameKey = await sqlNameKey(this.prisma, organizationName);
+    if (organizationNameKey === '') throw nameInvalid('organizationName');
+    if (await isOrganizationNameTaken(this.prisma, organizationNameKey)) {
+      throw organizationNameUnavailable('organizationName');
     }
     try {
       return await this.signupOrganizationPort.prepare({
@@ -460,6 +502,9 @@ export class AuthService {
     },
   ): Promise<RegistrationResult> {
     const email = normalizeEmail(input.email);
+    // W4 — a name made only of marks, invisibles or spaces has nothing to
+    // compare and is refused before anything else (for every address alike).
+    if ((await sqlNameKey(this.prisma, input.name)) === '') throw nameInvalid('name');
     const existing = await this.usersRepository.findByEmail(email);
     if (existing && external) {
       throw new ConflictException({ messageKey: 'errors.auth.emailAlreadyRegistered' });
@@ -533,6 +578,8 @@ export class AuthService {
           input.inviteToken,
           email,
         );
+        // W4 / security review finding 2 — no learner-name check here: a
+        // brand-new address is never refused for its name either (below).
       }
       await this.passwordCredentials.hashDecoy(input.password || randomUUID());
       await this.noticeSignupAttempt(existing, academyId ?? undefined);
@@ -549,6 +596,13 @@ export class AuthService {
           email,
         )
       : undefined;
+    // W4 / security review finding 2 — NO learner-name pre-check. Answering
+    // "this name is taken here" to an unauthenticated, unverified caller told
+    // anyone whether a named person studies at an academy. The admission
+    // below is AUTOMATIC: a clash is admitted `name_unique_exempt` (audited),
+    // the response is identical either way, and the person is asked to pick
+    // a different display name only once signed in with a verified address
+    // (`UsersService` → `academies[].nameChangeSuggested`).
 
     // An external (Google) account has no password: no credential row.
     const passwordHash = external
@@ -620,6 +674,7 @@ export class AuthService {
                 userId,
                 admission,
                 hostname: input.hostname,
+                namePolicy: 'automatic',
               })),
             );
           }
@@ -669,6 +724,18 @@ export class AuthService {
             throw new ConflictException({
               messageKey: 'errors.auth.emailAlreadyRegistered',
             });
+          }
+          // W4 — a name conflict that escaped the in-transaction checks
+          // (a writer that skipped the advisory lock): settled by asking,
+          // as for the email, never disguised as a Google identity clash.
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          ) {
+            const nameConflict = await this.classifyRegistrationNameConflict({
+              organizationName: preparedOrganization?.organizationName,
+            });
+            if (nameConflict) throw nameConflict;
           }
           // Google Identity — two first sign-ins racing with the same Google
           // account: the identity index decides.
@@ -745,17 +812,45 @@ export class AuthService {
         readonly source: 'self_signup' | 'invite';
       };
       readonly hostname?: string;
+      /**
+       * W4 — `interactive` (an existing account that has proven its
+       * password): a learner name already held in this academy is a 409 the
+       * person can act on. `automatic` (a brand-new, unverified registration —
+       * security review finding 2): never refused on the name; a clash is
+       * admitted `name_unique_exempt` and audited, so the response cannot
+       * reveal whether the name is taken.
+       */
+      readonly namePolicy: 'interactive' | 'automatic';
     },
   ): Promise<(string | null)[]> {
     const outboxIds: (string | null)[] = [];
     const { academyId, userId, admission } = input;
-    const student = await this.academyStudentsRepository.create(tx, {
-      academyId,
-      userId,
-      status: admission.status,
-      source: admission.source,
-      registeredViaHost: input.hostname ?? null,
-    });
+    const { student, nameClashExempted } = await this.academyStudentsRepository.admit(
+      tx,
+      {
+        academyId,
+        userId,
+        status: admission.status,
+        source: admission.source,
+        registeredViaHost: input.hostname ?? null,
+      },
+      input.namePolicy === 'interactive'
+        ? { mode: 'interactive', field: 'name' }
+        : { mode: 'automatic' },
+    );
+    if (nameClashExempted) {
+      const organizationId =
+        await this.academyStudentsRepository.resolveOrganizationId(academyId);
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        organizationId: organizationId ?? undefined,
+        academyId,
+        action: 'academy.student.name_clash_exempted',
+        targetType: 'user',
+        targetId: userId,
+        context: { source: admission.source },
+      });
+    }
 
     // P64 C3 (plan §8 G1). A `pending` learner is BLOCKED until staff
     // act, so nobody being told is a person stuck indefinitely whose
@@ -922,7 +1017,9 @@ export class AuthService {
       return { account: 'existing', status, name: user.name };
     } catch (error) {
       recordAcademyJoin(
-        error instanceof ConflictException ? 'already_learner' : 'refused',
+        error instanceof ConflictException && !isNameConflict(error)
+          ? 'already_learner'
+          : 'refused',
       );
       throw error;
     }
@@ -1041,6 +1138,7 @@ export class AuthService {
             userId: user.id,
             admission,
             hostname: input.hostname,
+            namePolicy: 'interactive',
           });
           await this.auditLogWriterService.write(tx, {
             actorUserId: user.id,
@@ -1463,15 +1561,34 @@ export class AuthService {
     if (policy !== 'open') {
       throw new ForbiddenException({ messageKey: 'errors.auth.notAMemberOfAcademy' });
     }
-    await this.tenancyContextService.runInUserContext(user.id, (tx) =>
-      this.academyStudentsRepository.create(tx, {
-        academyId,
-        userId: user.id,
-        status: 'active',
-        source: 'sign_in_join',
-        registeredViaHost: context?.hostname ?? null,
-      }),
-    );
+    // W4 — an AUTOMATIC admission: sign-in must never fail on a learner-name
+    // clash. The row is inserted `name_unique_exempt` and the clash recorded.
+    const organizationId =
+      await this.academyStudentsRepository.resolveOrganizationId(academyId);
+    await this.tenancyContextService.runInUserContext(user.id, async (tx) => {
+      const { nameClashExempted } = await this.academyStudentsRepository.admit(
+        tx,
+        {
+          academyId,
+          userId: user.id,
+          status: 'active',
+          source: 'sign_in_join',
+          registeredViaHost: context?.hostname ?? null,
+        },
+        { mode: 'automatic' },
+      );
+      if (nameClashExempted) {
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: user.id,
+          organizationId: organizationId ?? undefined,
+          academyId,
+          action: 'academy.student.name_clash_exempted',
+          targetType: 'user',
+          targetId: user.id,
+          context: { source: 'sign_in_join' },
+        });
+      }
+    });
     return { surface: 'academy', academyId };
   }
 

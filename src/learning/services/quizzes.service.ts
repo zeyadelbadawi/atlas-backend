@@ -25,6 +25,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { assertNoLearnerActivity } from '../../course/services/learner-activity.guard';
+import { nextUnitOrder } from '../../course/services/curriculum-ordering';
 import type { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
@@ -476,8 +477,15 @@ export class QuizzesService {
         },
         payload.questions.length,
       );
+      // W7 — a unit placement must be a unit of THIS course, and the quiz
+      // joins it at the END (it used to land at order 0, ahead of the
+      // unit's existing items).
+      const order = payload.sectionId
+        ? await this.appendOrderInCourseUnit(tx, courseId, payload.sectionId)
+        : undefined;
       const quiz = await this.quizzesRepository.create(tx, courseId, {
         ...payload,
+        order,
         settings,
       });
 
@@ -552,11 +560,25 @@ export class QuizzesService {
         },
         payload.questions ? payload.questions.length : existing.questions.length,
       );
+      // W7 — unit placement: `undefined` keeps it, `null` detaches it, a
+      // DIFFERENT unit must belong to this course and appends the quiz at
+      // its end; re-sending the current unit changes nothing.
+      let placement: Prisma.QuizUpdateInput = {};
+      if (payload.sectionId === null) {
+        placement = { section: { disconnect: true } };
+      } else if (payload.sectionId && payload.sectionId !== existing.sectionId) {
+        const order = await this.appendOrderInCourseUnit(tx, courseId, payload.sectionId);
+        placement = { section: { connect: { id: payload.sectionId } }, order };
+      }
+
       await this.quizzesRepository.update(tx, quizId, {
         title: payload.title,
-        description: payload.description,
-        section: payload.sectionId ? { connect: { id: payload.sectionId } } : undefined,
+        // W7 — `null` and `''` clear the description; `undefined` keeps it.
+        description:
+          payload.description === undefined ? undefined : payload.description || null,
+        ...placement,
         status: payload.status,
+        // `null` clears (no threshold / unlimited); `undefined` keeps.
         passingScore: payload.passingScore,
         maxAttempts: payload.maxAttempts,
         ...settings,
@@ -666,6 +688,36 @@ export class QuizzesService {
         context: { courseId },
       });
     });
+  }
+
+  /**
+   * W7 — the order a quiz placed in `sectionId` takes: the end of that unit
+   * (across every item type, see `curriculum-ordering.ts`). Refuses a unit
+   * of another course as a field violation on `sectionId` — never a
+   * cross-course placement. Runs in the author's USER context, where the
+   * section row lock `attachItem` takes (a tenant-policy UPDATE) is not
+   * available; a concurrent attach can at worst produce an equal ordinal,
+   * which `readUnitItems` orders deterministically and the next reorder
+   * renumbers.
+   */
+  private async appendOrderInCourseUnit(
+    tx: Prisma.TransactionClient,
+    courseId: string,
+    sectionId: string,
+  ): Promise<number> {
+    const section = await tx.courseSection.findFirst({
+      where: { id: sectionId, courseId },
+      select: { id: true },
+    });
+    if (!section) {
+      throw new BadRequestException({
+        messageKey: 'errors.validation.failed',
+        violations: [
+          { field: 'sectionId', messageKey: 'errors.quiz.sectionNotInCourse' },
+        ],
+      });
+    }
+    return nextUnitOrder(tx, sectionId);
   }
 
   /**

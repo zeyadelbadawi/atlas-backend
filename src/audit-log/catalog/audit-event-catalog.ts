@@ -440,7 +440,9 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ),
 
   /* ------------------------------ Academy ------------------------------ */
-  ev('academy.created', 'academy', 'academy', 'academy', true),
+  // W4 — `requestedName` only when provisioning had to suffix a name taken
+  // after the request was accepted ("<name> (2)").
+  ev('academy.created', 'academy', 'academy', 'academy', true, ['requestedName']),
   ev('academy.updated', 'academy', 'academy', 'academy', true, [], ACADEMY_DIFF_FIELDS),
   ev(
     'academy.branding.updated',
@@ -502,6 +504,12 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'existingAccount',
     'source',
     'status',
+  ]),
+  // W4 — an automatic admission (sign-in auto-join, purchase) whose account
+  // name was already held by another learner of the academy: admitted anyway
+  // with `name_unique_exempt`, and recorded here so staff can see it.
+  ev('academy.student.name_clash_exempted', 'students', 'user', 'academy', true, [
+    'source',
   ]),
   ev('academy.student.blocked', 'students', 'user', 'academy', true, ['studentName']),
   ev('academy.student.unblocked', 'students', 'user', 'academy', true, ['studentName']),
@@ -772,6 +780,15 @@ export const AUDIT_EVENT_DEFINITIONS = [
     true,
     ['planKey', 'trialEndsAt', 'durationDays'],
   ),
+  // W8 — gifted setup days granted on a first-ever paid subscription.
+  ev(
+    'subscription.gift.granted',
+    'subscription',
+    'tenant_subscription',
+    'organization',
+    true,
+    ['planKey', 'billingCycle', 'giftedDays', 'giftedEndsAt', 'paymentId'],
+  ),
   ev(
     'subscription.trial.cancelled',
     'subscription',
@@ -959,6 +976,24 @@ export const AUDIT_EVENT_DEFINITIONS = [
     false,
     ['status'],
   ),
+  // W3-compose — person-authored messages. Counts and the audience TYPE
+  // only: never the subject, the body or any recipient.
+  ev('platform.campaign.sent', 'platform', 'communication_campaign', 'platform', false, [
+    'audienceType',
+    'channels',
+    'recipientCount',
+    // Not `emailCount`: tenant-visible context keys never mention email.
+    'mailCount',
+    'inAppCount',
+  ]),
+  ev('academy.message.sent', 'academy', 'communication_campaign', 'academy', true, [
+    'audienceType',
+    'channels',
+    'recipientCount',
+    // Not `emailCount`: tenant-visible context keys never mention email.
+    'mailCount',
+    'inAppCount',
+  ]),
 ] as const;
 
 export type AuditAction = (typeof AUDIT_EVENT_DEFINITIONS)[number]['action'];

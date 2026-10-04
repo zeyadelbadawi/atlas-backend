@@ -26,6 +26,10 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
+import {
+  ACADEMY_TEACHING_ROLES,
+  AcademyRoles,
+} from '../../academy/decorators/academy-roles.decorator';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { LiveProviderConnectionService } from '../services/live-provider-connection.service';
 
@@ -57,8 +61,9 @@ export class LiveProviderConnectionController {
     private readonly connectionService: LiveProviderConnectionService,
   ) {}
 
-  /** Health only — never credentials. */
+  /** Health only — never credentials. W5 (F12): the teaching tier of THIS academy, like `live-sessions/status`. */
   @Get(':id/live-sessions/connection')
+  @AcademyRoles(...ACADEMY_TEACHING_ROLES)
   async get(@Req() request: Request) {
     const { academyId, organizationId } = request.academyContext!;
 

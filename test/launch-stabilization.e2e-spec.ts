@@ -40,6 +40,7 @@ import {
   generateOpaqueToken,
   hashOpaqueToken,
 } from '../src/identity/utils/opaque-token.util';
+import { uniqueName } from './utils/unique-name';
 
 jest.setTimeout(120000);
 
@@ -142,10 +143,13 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
   }
 
   function registerAt(a: Academy, email: string, password = PASSWORD, extra = {}) {
-    return http()
-      .post('/auth/register')
-      .set('Host', a.host)
-      .send({ name: 'Learner', email, password, academyId: a.id, ...extra });
+    return (
+      http()
+        .post('/auth/register')
+        .set('Host', a.host)
+        // W4 — learner names are unique per academy: each learner gets its own.
+        .send({ name: uniqueName('Learner'), email, password, academyId: a.id, ...extra })
+    );
   }
 
   function signInAt(

@@ -88,16 +88,21 @@ export class UsersRepository {
     return client ? write(client) : this.asUser(id, write);
   }
 
-  updateProfile(id: string, input: UpdateProfileInput): Promise<User> {
-    return this.asUser(id, (tx) =>
+  /** `client` — W4: a rename runs inside the caller's transaction (its learner-name checks and locks). */
+  updateProfile(
+    id: string,
+    input: UpdateProfileInput,
+    client?: Prisma.TransactionClient,
+  ): Promise<User> {
+    const write = (tx: Prisma.TransactionClient) =>
       tx.user.update({
         where: { id },
         data: {
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.avatarUrl !== undefined ? { avatarUrl: input.avatarUrl } : {}),
         },
-      }),
-    );
+      });
+    return client ? write(client) : this.asUser(id, write);
   }
 
   /** Phase 10.1 — records that this address proved it can receive mail. */

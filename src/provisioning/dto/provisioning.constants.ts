@@ -82,3 +82,27 @@ export const TERMINAL_PROVISIONING_STATUSES: ReadonlySet<ProvisioningStatus> = n
  * quickly.
  */
 export const PROVISIONING_AUTO_SUPPORT_CASE_FAILURE_THRESHOLD = 2;
+
+/**
+ * W2 — the stages a person sees, each tied to real steps. The no-op rows
+ * (`tenant`, the `subdomain` re-check, the always-skipped `domain`) are
+ * folded into the stage around them rather than shown as their own rows:
+ * the address is reserved inside the `academy` step itself
+ * (`AcademiesService.create`), and a custom domain is a separate flow.
+ */
+export type ProvisioningStage = 'academy' | 'website' | 'brand' | 'finalize';
+
+export const PROVISIONING_STAGE_OF_STEP: Readonly<
+  Record<ProvisioningStepKey, ProvisioningStage>
+> = {
+  tenant: 'academy',
+  academy: 'academy',
+  theme: 'website',
+  branding: 'brand',
+  subdomain: 'finalize',
+  domain: 'finalize',
+  finalization: 'finalize',
+};
+
+/** Fallback when configuration is unavailable (unit tests) — matches `PROVISIONING_STALL_SECONDS`'s default. */
+export const DEFAULT_PROVISIONING_STALL_SECONDS = 120;

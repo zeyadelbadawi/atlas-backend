@@ -100,7 +100,11 @@ export class PaymentWebhookService {
 
       switch (payload.eventType) {
         case 'payment.succeeded':
-          await this.paymentApplicationService.applySuccessfulPayment(tx, payment);
+          // Idempotent per payment (W8 D2): a payment a reviewer already
+          // approved is not applied a second time.
+          await this.paymentApplicationService.applySuccessfulPayment(tx, payment, {
+            source: 'gateway',
+          });
           break;
         case 'payment.failed':
           await this.paymentApplicationService.applyFailedPayment(

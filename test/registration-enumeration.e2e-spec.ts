@@ -33,6 +33,7 @@ import {
 } from '../src/identity/utils/opaque-token.util';
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
+import { uniqueName } from './utils/unique-name';
 
 jest.setTimeout(180000);
 
@@ -156,19 +157,22 @@ describe('Registration does not enumerate accounts (e2e)', () => {
       }).expect(400);
       expect(bad.body.error.messageKey).toBe('errors.validation.failed');
     }
+    // W4 — one unique name for both: the decoy (existing address) creates
+    // nothing, the fresh address creates it, and both must answer alike.
+    const enumOrg = uniqueName('Enum Org');
     const errorless = (body: { error?: { requestId?: string } }) =>
       body.error ? { ...body, error: { ...body.error, requestId: undefined } } : body;
     const a = await register({
       name: 'Owner',
       email: existing.email,
       password: PASSWORD,
-      organizationName: 'Enum Org',
+      organizationName: enumOrg,
     });
     const b = await register({
       name: 'Owner',
       email: fresh,
       password: PASSWORD,
-      organizationName: 'Enum Org',
+      organizationName: enumOrg,
     });
     expect(a.status).toBe(201);
     expect(a.status).toBe(b.status);

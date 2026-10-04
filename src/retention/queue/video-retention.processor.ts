@@ -13,9 +13,11 @@
  * question anyone should have to answer through a queue.
  */
 import { ArchivedMediaPurgeService } from '../services/archived-media-purge.service';
+import { TrialForensicsScrubService } from '../services/trial-forensics-scrub.service';
 import {
   MEDIA_PURGE_JOB_ASSET,
   MEDIA_PURGE_JOB_SWEEP,
+  TRIAL_FORENSICS_SCRUB_JOB,
   type MediaPurgeAssetJobPayload,
 } from './video-retention.types';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
@@ -41,6 +43,7 @@ export class VideoRetentionProcessor extends WorkerHost {
     private readonly sweep: VideoRetentionService,
     private readonly deletion: VideoRetentionDeletionService,
     private readonly mediaPurge: ArchivedMediaPurgeService,
+    private readonly trialForensicsScrub: TrialForensicsScrubService,
   ) {
     super();
   }
@@ -61,6 +64,9 @@ export class VideoRetentionProcessor extends WorkerHost {
         return;
       case MEDIA_PURGE_JOB_SWEEP:
         await this.mediaPurge.sweep();
+        return;
+      case TRIAL_FORENSICS_SCRUB_JOB:
+        await this.trialForensicsScrub.run();
         return;
       case MEDIA_PURGE_JOB_ASSET: {
         const outcome = await this.mediaPurge.purgeAsset(

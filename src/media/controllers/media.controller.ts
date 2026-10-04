@@ -24,6 +24,10 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
+import {
+  ACADEMY_STAFF_ROLES,
+  AcademyRoles,
+} from '../../academy/decorators/academy-roles.decorator';
 import { MediaService } from '../services/media.service';
 import { UploadMediaAssetDto } from '../dto/upload-media-asset.dto';
 import { UpdateMediaAssetDto } from '../dto/update-media-asset.dto';
@@ -36,7 +40,9 @@ import type { PaginatedResult } from '../../common/dto/pagination.contract';
 export class MediaController {
   constructor(private readonly mediaService: MediaService) {}
 
+  /** W5 (F12) — an active staff role in THIS academy, or the organization owner. */
   @Get(':id/media')
+  @AcademyRoles(...ACADEMY_STAFF_ROLES)
   async list(
     @Req() request: Request,
     @Query() query: MediaListQueryDto,
@@ -46,6 +52,7 @@ export class MediaController {
   }
 
   @Get(':id/media/:assetId')
+  @AcademyRoles(...ACADEMY_STAFF_ROLES)
   async getById(
     @Req() request: Request,
     @Param('assetId') assetId: string,

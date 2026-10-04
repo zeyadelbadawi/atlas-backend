@@ -28,6 +28,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { deletionCodeFor } from './utils/account-deletion';
 import { createAdminPrisma } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -400,7 +401,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
       .post(`/organizations/${owner.organizationId}/provisioning-requests`)
       .set('Authorization', `Bearer ${outsider.token}`)
       .send({
-        academyName: 'Cross tenant',
+        academyName: uniqueName('Cross tenant'),
         requestedSubdomain: `x${Date.now()}`,
         idempotencyKey: `cross-${Date.now()}`,
       });
@@ -413,7 +414,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     await request(app.getHttpServer())
       .post(`/organizations/${owner.organizationId}/provisioning-requests`)
       .send({
-        academyName: 'Anon',
+        academyName: uniqueName('Anon'),
         requestedSubdomain: `y${Date.now()}`,
         idempotencyKey: `anon-${Date.now()}`,
       })

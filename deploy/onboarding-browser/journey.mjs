@@ -33,6 +33,9 @@ const OUT = process.env.OUT || path.join(here, 'out');
 const LANG = JOURNEY === 'B' ? 'ar' : 'en';
 const VIEWPORT = JOURNEY === 'B' ? { width: 390, height: 844 } : { width: 1440, height: 900 };
 const PASSWORD = `Verify-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+// W4: organization and academy names are unique platform-wide, so every run
+// names its verification organization and academy with its own run tag.
+const RUN = process.env.RUN_TAG || String(Date.now());
 if (!BASE || !EMAIL) throw new Error('BASE_URL and JOURNEY_EMAIL are required');
 mkdirSync(OUT, { recursive: true });
 
@@ -137,7 +140,7 @@ try {
   await p.fill('#name', 'Onboarding Verify');
   await p.fill('#email', EMAIL);
   await p.fill('#password', PASSWORD); await p.fill('#confirmPassword', PASSWORD);
-  await p.fill('#organizationName', `Atlas Onboarding Verify ${JOURNEY}`);
+  await p.fill('#organizationName', `Atlas Onboarding Verify ${JOURNEY} ${RUN}`);
   const firstPlan = options.trialPlans[0];
   if (firstPlan) await p.getByTestId(`trial-plan-${firstPlan.key}`).getByRole('radio').click();
   await p.getByRole('checkbox').first().click();
@@ -185,7 +188,7 @@ try {
 
     // Academy
     const sub = `onbverify${Date.now().toString().slice(-7)}`;
-    await p.locator('main input').first().fill('Atlas Onboarding Verify Academy');
+    await p.locator('main input').first().fill(`Atlas Onboarding Verify Academy ${RUN}`);
     await p.fill('input[name=requestedSubdomain]', sub); await p.waitForTimeout(1500);
     await p.getByRole('button', { name: /create academy/i }).click();
     await step('academy-provisioning');

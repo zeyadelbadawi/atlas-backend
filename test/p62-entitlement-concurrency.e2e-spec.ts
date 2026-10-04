@@ -35,6 +35,7 @@ import { EntitlementEnforcementService } from '../src/plans/services/entitlement
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { seedAcademy, seedAcademyMember } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -469,7 +470,7 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({
-        academyName: 'Over Limit',
+        academyName: uniqueName('Over Limit'),
         requestedSubdomain: `p62-adopt-e2e-${Date.now()}`,
         idempotencyKey: `p62-adopt-e2e-${Date.now()}`,
       })
@@ -504,14 +505,16 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
     // failed to record.
     const slug = `p62rec${Date.now().toString(36)}`;
     const orphan = await admin.academy.create({
-      data: { organizationId: org.id, name: 'Recovered', slug },
+      // W4 — its own unique name: adoption is keyed on the slug, and the
+      // request's name must be free for the request to be accepted at all.
+      data: { organizationId: org.id, name: uniqueName('Recovered orphan'), slug },
     });
 
     const created = await request(app.getHttpServer())
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({
-        academyName: 'Recovered',
+        academyName: uniqueName('Recovered'),
         requestedSubdomain: orphan.slug,
         idempotencyKey: `p62-adopt-recover-${Date.now()}`,
       })

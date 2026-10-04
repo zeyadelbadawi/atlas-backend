@@ -21,6 +21,7 @@ import { fixtureUsers } from './utils/db-admin';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
+import { uniqueName } from './utils/unique-name';
 
 describe('P64 Phase 1 — RLS with published+public fixtures and the review tier', () => {
   let app: INestApplication;
@@ -50,7 +51,12 @@ describe('P64 Phase 1 — RLS with published+public fixtures and the review tier
       await tx.$executeRaw`SELECT set_config('app.current_organization_id', ${id}, true)`;
       await tx.$executeRaw`SELECT set_config('app.current_user_id', ${ownerId}, true)`;
       const org = await tx.organization.create({
-        data: { id, name: label, slug: `${label}-${Date.now()}`, ownerUserId: ownerId },
+        data: {
+          id,
+          name: uniqueName(label),
+          slug: `${label}-${Date.now()}`,
+          ownerUserId: ownerId,
+        },
       });
       await tx.organizationMembership.create({
         data: { organizationId: org.id, userId: ownerId, role: 'owner', isPrimary: true },
@@ -127,7 +133,11 @@ describe('P64 Phase 1 — RLS with published+public fixtures and the review tier
 
     return tenancyContext.runInTenantAndUserContext(org.id, owner.id, async (tx) => {
       const academy = await tx.academy.create({
-        data: { organizationId: org.id, name: label, slug: `${label}-${Date.now()}` },
+        data: {
+          organizationId: org.id,
+          name: uniqueName(label),
+          slug: `${label}-${Date.now()}`,
+        },
       });
       for (const [user, role] of [
         [owner, 'owner'],

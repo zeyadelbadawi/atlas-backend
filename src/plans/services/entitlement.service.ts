@@ -46,13 +46,19 @@ export class EntitlementService {
     plan: EntitlementPlanInput,
     activeAddOns: readonly EntitlementAddOnInput[],
   ): EffectiveEntitlements {
-    const limits: Record<PlanLimitKey, LimitValue> = { ...plan.limits };
+    // `monthlyEmails` is optional on a plan (W3-compose); an add-on that
+    // raises it is applied on top of whatever the caller resolved for it.
+    const limits: Partial<Record<PlanLimitKey, LimitValue>> = { ...plan.limits };
     const features: Record<PlanFeatureKey, boolean> = { ...plan.features };
 
     for (const addOn of activeAddOns) {
       if (addOn.effect.type === 'limit') {
         const { limitKey, amount } = addOn.effect;
-        limits[limitKey] = addToLimit(limits[limitKey], amount);
+        const base = limits[limitKey];
+        // An add-on cannot raise a limit the plan never defined; the
+        // optional key's default is resolved by its own reader.
+        if (base === undefined) continue;
+        limits[limitKey] = addToLimit(base, amount);
       } else {
         features[addOn.effect.featureKey] = true;
       }

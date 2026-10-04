@@ -36,6 +36,10 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
+import {
+  ACADEMY_TEACHING_ROLES,
+  AcademyRoles,
+} from '../../academy/decorators/academy-roles.decorator';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
@@ -84,6 +88,7 @@ export class LiveSessionsController {
    * or disabled add-on explains itself instead of 403-ing blankly.
    */
   @Get(':id/live-sessions/status')
+  @AcademyRoles(...ACADEMY_TEACHING_ROLES)
   async status(@Req() request: Request) {
     const { academyId, organizationId } = request.academyContext!;
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
@@ -115,6 +120,7 @@ export class LiveSessionsController {
 
   /** Every Live Session in one course — the course builder's curriculum read. */
   @Get(':id/courses/:courseId/live-sessions')
+  @AcademyRoles(...ACADEMY_TEACHING_ROLES)
   async listForCourse(
     @Req() request: Request,
     @Param('courseId') courseId: string,
@@ -178,6 +184,7 @@ export class LiveSessionsController {
   }
 
   @Get(':id/live-sessions/:liveSessionId')
+  @AcademyRoles(...ACADEMY_TEACHING_ROLES)
   async getOne(
     @Req() request: Request,
     @Param('liveSessionId') liveSessionId: string,
@@ -414,14 +421,15 @@ export class LiveSessionsController {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
     }
-    return membership.role;
+    return role;
   }
 }

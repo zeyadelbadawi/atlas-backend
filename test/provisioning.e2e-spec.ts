@@ -20,6 +20,7 @@ import { ProvisioningProducer } from '../src/provisioning/queue/provisioning.pro
 import { WebsiteGenerationService } from '../src/website/services/website-generation.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 // Real BullMQ round trips (enqueue → worker pickup → orchestrator → DB),
 // not slow assertions — same headroom reasoning as
@@ -107,7 +108,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .post(`/organizations/${orgId}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: overrides.academyName ?? 'Test Academy',
+        academyName: overrides.academyName ?? uniqueName('Test Academy'),
         requestedSubdomain: subdomain,
         idempotencyKey: overrides.idempotencyKey ?? `idem-${subdomain}`,
         ...(overrides.triggeringPaymentId
@@ -152,7 +153,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       status: 'payment_success',
       currentStepKey: 'tenant',
       attemptCount: 0,
-      requestedAcademyName: 'Test Academy',
+      requestedAcademyName: expect.stringMatching(/^Test Academy /),
     });
     expect(body.academyId).toBeUndefined();
     expect(body.id).toBeTruthy();
@@ -179,9 +180,10 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
 
   it('3: the happy path runs all seven steps to a ready terminal state', async () => {
     const { owner, org } = await arrangeOrg('happy-path');
+    const happyName = uniqueName('Happy Academy');
     const subdomain = uniqueSubdomain('happy');
     const created = await createRequest(owner, org.id, {
-      academyName: 'Happy Academy',
+      academyName: happyName,
       requestedSubdomain: subdomain,
     });
 
@@ -199,8 +201,9 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     // `selectedThemeKey` in the request — the real Website Builder
     // bootstrap default applies (see `provisioning-orchestrator.service.
     // ts`'s `executeThemeStep`'s own doc comment: "nothing to change,"
-    // never a skip). 'branding'/'domain' remain skipped — still
-    // genuinely no data for either in this phase.
+    // never a skip). 'branding' is skipped because this request chose no
+    // brand (W2: a chosen palette is applied by that step); 'domain' stays
+    // the separate custom-domain flow.
     expect(byKey).toEqual({
       tenant: 'completed',
       academy: 'completed',
@@ -211,19 +214,22 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       finalization: 'completed',
     });
 
-    // Phase P19 — this request submitted no `selectedThemeKey`, so the
-    // 'theme' step has nothing to write (see `executeThemeStep`'s own
-    // doc comment) and correctly does not eagerly create a
-    // `website_configurations` row — that stays exactly the pre-existing,
-    // established `WebsiteBootstrapService` lazy get-or-create-on-read
-    // behavior (test 3b, below, proves the row IS created — with the
-    // Client's real chosen theme — when one is actually selected).
+    // W2 — this request submitted no `selectedThemeKey`, so it records the
+    // platform default theme and the 'theme' step applies it AND builds the
+    // website (it used to complete without writing anything, so a form that
+    // never clicked the theme card got no starter pages). Covered in detail
+    // by `w2-provisioning-progress.e2e-spec.ts` (W2-2).
+    expect(final.selectedThemeKey).toBe('modern-education');
+    const websiteConfiguration = await admin.websiteConfiguration.findUnique({
+      where: { academyId: final.academyId },
+    });
+    expect(websiteConfiguration?.themeKey).toBe('modern-education');
 
     // The real Academy this request created — no duplicate, correct fields.
     const academy = await admin.academy.findUnique({ where: { id: final.academyId } });
     expect(academy).toMatchObject({
       organizationId: org.id,
-      name: 'Happy Academy',
+      name: happyName,
       slug: subdomain,
     });
 
@@ -240,7 +246,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: 'Themed Academy',
+        academyName: uniqueName('Themed Academy'),
         requestedSubdomain: subdomain,
         selectedThemeKey: 'modern-education',
         idempotencyKey: `themed-idem-${subdomain}`,
@@ -282,7 +288,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: 'Retired Theme Academy',
+        academyName: uniqueName('Retired Theme Academy'),
         requestedSubdomain: subdomain,
         selectedThemeKey: 'bold-creative',
         idempotencyKey: `retired-theme-idem-${subdomain}`,
@@ -294,12 +300,13 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
 
   it('3c: selecting a theme + "complete" setup mode generates a real, structured, bilingual website — never a fabricated statistic', async () => {
     const { owner, org } = await arrangeOrg('complete-gen');
+    const completeGenName = uniqueName('Complete Gen Academy');
     const subdomain = uniqueSubdomain('complete-gen');
     const created = await request(app.getHttpServer())
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: 'Complete Gen Academy',
+        academyName: completeGenName,
         requestedSubdomain: subdomain,
         selectedThemeKey: 'modern-education',
         websiteSetupMode: 'complete',
@@ -337,8 +344,8 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     // the Academy in its "Why {{academyName}}" split, not the hero.)
     const split = homeSections.find((section) => section.type === 'featureSplit');
     const eyebrow = split!.config.eyebrow as { en: string; ar: string };
-    expect(eyebrow.en).toBe('Why Complete Gen Academy');
-    expect(eyebrow.ar).toBe('لماذا Complete Gen Academy');
+    expect(eyebrow.en).toBe(`Why ${completeGenName}`);
+    expect(eyebrow.ar).toBe(`لماذا ${completeGenName}`);
     expect(JSON.stringify(homeSections)).not.toContain('{{');
 
     // Statistics is generated with a LIVE metric, never a hardcoded number — a brand-new Academy has 0 courses/students/instructors.
@@ -369,12 +376,13 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
 
   it('3d: selecting a theme with no explicit setup mode generates a real structured shell (never a fabricated stat), with minimal copy', async () => {
     const { owner, org } = await arrangeOrg('empty-gen');
+    const emptyGenName = uniqueName('Empty Gen Academy');
     const subdomain = uniqueSubdomain('empty-gen');
     const created = await request(app.getHttpServer())
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: 'Empty Gen Academy',
+        academyName: emptyGenName,
         requestedSubdomain: subdomain,
         selectedThemeKey: 'modern-education',
         idempotencyKey: `empty-gen-idem-${subdomain}`,
@@ -399,7 +407,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     const hero = sections.find((section) => section.type === 'hero');
     const heroTitle = hero!.config.title as { en: string; ar: string };
     // Minimal — just the real Academy name, never a theme-authored marketing sentence.
-    expect(heroTitle.en).toBe('Empty Gen Academy');
+    expect(heroTitle.en).toBe(emptyGenName);
   });
 
   // --- 3e. Phase 6 — idempotency / non-destructive re-generation --------------
@@ -411,7 +419,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: 'Idempotent Gen Academy',
+        academyName: uniqueName('Idempotent Gen Academy'),
         requestedSubdomain: subdomain,
         selectedThemeKey: 'modern-education',
         websiteSetupMode: 'complete',
@@ -479,12 +487,13 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
   it('3f: Theme 1 provisioning creates the v2 website; re-generation is idempotent and keeps Owner edits; samples stay private until confirmed', async () => {
     type Section = { id: string; type: string; config: Record<string, unknown> };
     const { owner, org } = await arrangeOrg('theme1-v2');
+    const cedarName = uniqueName('Cedar Academy');
     const subdomain = uniqueSubdomain('theme1-v2');
     const created = await request(app.getHttpServer())
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: 'Cedar Academy',
+        academyName: cedarName,
         requestedSubdomain: subdomain,
         selectedThemeKey: 'modern-education',
         websiteSetupMode: 'complete',
@@ -521,8 +530,8 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     }
     const aboutHero = sectionsOf(pages.about!)[0].config;
     expect(aboutHero.eyebrow).toEqual({
-      en: 'About Cedar Academy',
-      ar: 'عن Cedar Academy',
+      en: `About ${cedarName}`,
+      ar: `عن ${cedarName}`,
     });
     expect(aboutHero.image).toBe('theme-asset:modern-education/about-header');
 
@@ -690,7 +699,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: 'Reserved Academy',
+        academyName: uniqueName('Reserved Academy'),
         requestedSubdomain: 'admin',
         idempotencyKey: `idem-reserved-${Date.now()}`,
       })
@@ -705,7 +714,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: 'Invalid Academy',
+        academyName: uniqueName('Invalid Academy'),
         requestedSubdomain: 'AB',
         idempotencyKey: `idem-invalid-${Date.now()}`,
       })
@@ -733,7 +742,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: 'Payment Ref Academy',
+        academyName: uniqueName('Payment Ref Academy'),
         requestedSubdomain: uniqueSubdomain('payref'),
         idempotencyKey: `idem-payref-${Date.now()}`,
         triggeringPaymentId: foreignPayment.id,
@@ -801,7 +810,7 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/organizations/${org.id}/provisioning-requests`)
       .send({
-        academyName: 'Unauth Academy',
+        academyName: uniqueName('Unauth Academy'),
         requestedSubdomain: uniqueSubdomain('unauth'),
         idempotencyKey: `idem-unauth-${Date.now()}`,
       })
@@ -824,11 +833,15 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     // attempt" path correctly does NOT trigger — this is a genuine,
     // unrecoverable-until-fixed failure, not an idempotent replay.
     const blocker = await admin.academy.create({
-      data: { organizationId: blockerOrg.id, name: 'Blocker Academy', slug: subdomain },
+      data: {
+        organizationId: blockerOrg.id,
+        name: uniqueName('Blocker Academy'),
+        slug: subdomain,
+      },
     });
 
     const created = await createRequest(owner, org.id, {
-      academyName: 'Resumable Academy',
+      academyName: uniqueName('Resumable Academy'),
       requestedSubdomain: subdomain,
     });
 

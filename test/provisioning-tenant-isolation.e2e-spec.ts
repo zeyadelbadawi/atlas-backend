@@ -13,6 +13,7 @@ import request from 'supertest';
 import { createTestApp, uniqueTestEmail, waitForAsync } from './utils/test-app';
 import { createAdminPrisma, seedOrganizationWithOwner, seedPlan } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 jest.setTimeout(30000);
 
@@ -81,7 +82,7 @@ describe('Provisioning Orchestration — tenant isolation (e2e)', () => {
       .post(`/organizations/${orgId}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        academyName: 'Isolation Academy',
+        academyName: uniqueName('Isolation Academy'),
         requestedSubdomain: subdomain,
         idempotencyKey: `idem-${subdomain}`,
       })
@@ -161,7 +162,7 @@ describe('Provisioning Orchestration — tenant isolation (e2e)', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${outsider.accessToken}`)
       .send({
-        academyName: 'Outsider Academy',
+        academyName: uniqueName('Outsider Academy'),
         requestedSubdomain: uniqueSubdomain('outsider'),
         idempotencyKey: `idem-outsider-${Date.now()}`,
       })
@@ -219,14 +220,18 @@ describe('Provisioning Orchestration — tenant isolation (e2e)', () => {
     const { org: blockerOrg } = await arrangeOrg('platform-write-blocker');
     const subdomain = uniqueSubdomain('platform-write');
     await admin.academy.create({
-      data: { organizationId: blockerOrg.id, name: 'Blocker Academy', slug: subdomain },
+      data: {
+        organizationId: blockerOrg.id,
+        name: uniqueName('Blocker Academy'),
+        slug: subdomain,
+      },
     });
 
     const created = await request(app.getHttpServer())
       .post(`/organizations/${orgA.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${ownerA.accessToken}`)
       .send({
-        academyName: 'Platform Write Academy',
+        academyName: uniqueName('Platform Write Academy'),
         requestedSubdomain: subdomain,
         idempotencyKey: `idem-${subdomain}`,
       })

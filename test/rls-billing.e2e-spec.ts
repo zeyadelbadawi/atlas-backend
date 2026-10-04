@@ -18,6 +18,7 @@ import { fixtureUsers } from './utils/db-admin';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
+import { uniqueName } from './utils/unique-name';
 
 describe('Row-Level Security — billing (checkouts/payments/*, direct, no guards)', () => {
   let app: INestApplication;
@@ -57,7 +58,7 @@ describe('Row-Level Security — billing (checkouts/payments/*, direct, no guard
       const org = await tx.organization.create({
         data: {
           id,
-          name: slugLabel,
+          name: uniqueName(slugLabel),
           slug: `${slugLabel}-${Date.now()}`,
           ownerUserId: ownerId,
         },

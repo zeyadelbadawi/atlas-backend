@@ -22,15 +22,20 @@
  * establish that, and guessing would block legitimate colleagues who each
  * sign up from the same company.
  *
- * PRIVACY. Only a SHA-256 digest is ever persisted, never the address.
- * The digest is domain-separated by a fixed application salt so it cannot
- * be trivially cross-referenced against a hash of the same address
- * computed elsewhere. The salt is a CONSTANT, not a rotatable secret,
- * and that is deliberate: trial-redemption history has to outlive secret
- * rotation, and a rotated pepper would silently hand every past abuser a
- * fresh trial.
+ * PRIVACY. Only a digest is ever persisted, never the address.
+ *
+ *   - v1 (legacy, frozen): SHA-256 under a CONSTANT public salt. Because the
+ *     salt is in source, a holder of the database and a candidate email list
+ *     can test addresses against it — it is pseudonymous, not irreversible.
+ *     No new v1 rows are written (W8B); existing ones are still checked.
+ *   - v2 (every new claim): HMAC-SHA256 under a SERVER key
+ *     (`customer-identity-key.util.ts`). Without the key the digest cannot be
+ *     tested against guesses. The key is non-rotating for the same reason
+ *     the v1 salt was constant: redemption history must outlive it.
+ *
+ * Neither the address, the canonical form, nor the key is ever logged.
  */
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
 /**
  * Domain-separation salt. Changing this value invalidates every existing
@@ -103,13 +108,40 @@ export function emailDomain(email: string): string {
 }
 
 /**
- * The value stored in `trial_redemptions.subject_hash`.
- *
- * One-way by construction: the address cannot be recovered from it, so a
- * database disclosure reveals only that *some* address consumed a trial,
- * not whose.
+ * LEGACY v1 value of `trial_redemptions.subject_hash` (constant-salt
+ * SHA-256). Kept ONLY so pre-W8 rows keep matching: claims and describes
+ * check it alongside v2, and nothing writes it any more.
  */
 export function trialSubjectHash(email: string): string {
   const canonical = canonicalizeEmailForAbuse(email);
   return createHash('sha256').update(`${TRIAL_SUBJECT_SALT}:${canonical}`).digest('hex');
+}
+
+/** Explicit alias for readers of the dual-read code paths. */
+export const legacySubjectHashV1 = trialSubjectHash;
+
+/** Domain-separation prefix for v2. Frozen — changing it re-grants every trial and gift. */
+const SUBJECT_V2_LABEL = 'atlas.customer.subject.v2';
+
+/**
+ * v2 customer-identity hash: HMAC-SHA256(server key, label || canonical
+ * email). The ONE identity both the trial ledger and the gifted-days ledger
+ * key on, so the two features agree on who "the same customer" is.
+ */
+export function customerSubjectHashV2(email: string, key: Buffer): string {
+  const canonical = canonicalizeEmailForAbuse(email);
+  return createHmac('sha256', key)
+    .update(`${SUBJECT_V2_LABEL}:${canonical}`)
+    .digest('hex');
+}
+
+export interface CustomerSubjectHashes {
+  /** What every new ledger row stores. */
+  readonly v2: string;
+  /** What a pre-W8 trial row may store. Read-only. */
+  readonly v1: string;
+}
+
+export function customerSubjectHashes(email: string, key: Buffer): CustomerSubjectHashes {
+  return { v2: customerSubjectHashV2(email, key), v1: trialSubjectHash(email) };
 }

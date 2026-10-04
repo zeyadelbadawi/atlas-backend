@@ -104,6 +104,15 @@ export interface PlanResponse {
   /** Days this plan's trial runs, resolved against the platform default. Absent when the plan is not trialable. */
   readonly trialDurationDays?: number;
   /**
+   * W8 — gifted setup days granted in front of the first paid period of a
+   * customer's FIRST-EVER paid subscription on this plan, per cycle. `null`
+   * means no gift. DISPLAY data: whether a given customer actually receives
+   * it is decided server-side at payment approval
+   * (`PaidGiftEligibilityService`), never by a client.
+   */
+  readonly giftedDaysMonthly: number | null;
+  readonly giftedDaysYearly: number | null;
+  /**
    * P57 — optimistic-concurrency token. Exposed so the Platform-Owner plan
    * editor can send it back as `expectedVersion`; a customer-facing client
    * simply ignores it, exactly as it ignores `add_ons.version` today.
@@ -140,6 +149,8 @@ export function toPlanResponse(
     features: plan.features as unknown as PlanFeatures,
     pricing: (plan.pricing as PlanPricingMetadataResponse | null) ?? undefined,
     trialEligible: plan.trialEligible,
+    giftedDaysMonthly: plan.giftedDaysMonthly ? plan.giftedDaysMonthly : null,
+    giftedDaysYearly: plan.giftedDaysYearly ? plan.giftedDaysYearly : null,
     version: plan.version,
     ...(trialDurationDays === undefined ? {} : { trialDurationDays }),
   };

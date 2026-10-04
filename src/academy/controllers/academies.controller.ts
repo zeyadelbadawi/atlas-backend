@@ -29,7 +29,13 @@ import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyOrganizationScopeGuard } from '../guards/academy-organization-scope.guard';
 import { AcademyScopeGuard } from '../guards/academy-scope.guard';
+import {
+  ACADEMY_MANAGING_ROLES,
+  AcademyRoles,
+} from '../decorators/academy-roles.decorator';
 import { AcademiesService } from '../services/academies.service';
+import type { AcademyListItemResponse } from '../services/academies.service';
+import type { AcademyMeResponse } from '../dto/academy-me.contract';
 import { UpdateAcademyDto } from '../dto/update-academy.dto';
 import { DeleteAcademyDto } from '../dto/delete-academy.dto';
 import { UpdateAcademyBrandingDto } from '../dto/update-academy-branding.dto';
@@ -70,12 +76,17 @@ import type { PaginatedResult } from '../../common/dto/pagination.contract';
 export class AcademiesController {
   constructor(private readonly academiesService: AcademiesService) {}
 
+  /** W5 (F5) — only the academies the caller staffs; the organization owner sees all. */
   @Get()
   @UseGuards(AcademyOrganizationScopeGuard)
   async list(
+    @Req() request: Request,
     @Query() query: ListAcademiesQueryDto,
-  ): Promise<PaginatedResult<AcademyResponse>> {
-    return this.academiesService.list(query);
+  ): Promise<PaginatedResult<AcademyListItemResponse>> {
+    return this.academiesService.list(query, {
+      userId: request.authContext!.userId,
+      organizationRole: request.tenantContext!.role,
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -100,6 +111,19 @@ export class AcademiesController {
   // in the frontend would leave the endpoint reachable by anyone willing
   // to send the request themselves.
   // ---------------------------------------------------------------------
+
+  /**
+   * W5 — the caller's role, permissions and the academy summary. Any active
+   * staff member of THIS academy (or the organization owner) may read it;
+   * everyone else gets the guard's 403, which is how the dashboard learns
+   * that access was revoked. Declared before `:id` sub-routes for clarity;
+   * Nest matches the literal `me` segment exactly.
+   */
+  @Get(':id/me')
+  @UseGuards(AcademyScopeGuard)
+  async getMe(@Req() request: Request): Promise<AcademyMeResponse> {
+    return this.academiesService.getMe(request.academyContext!);
+  }
 
   @Get(':id')
   @UseGuards(AcademyScopeGuard)
@@ -273,8 +297,10 @@ export class AcademiesController {
     );
   }
 
+  /** W5 (F12) — the Academy Overview's counters: the managing tier of THIS academy (or the organization owner), like `getById`. */
   @Get(':id/stats')
   @UseGuards(AcademyScopeGuard)
+  @AcademyRoles(...ACADEMY_MANAGING_ROLES)
   async getStats(@Req() request: Request): Promise<AcademyStatsResponse> {
     const { academyId, organizationId } = request.academyContext!;
     return this.academiesService.getStats(academyId, organizationId);

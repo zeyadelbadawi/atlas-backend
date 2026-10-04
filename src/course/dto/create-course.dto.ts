@@ -11,6 +11,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Length,
   Matches,
   MaxLength,
   ValidateNested,
@@ -103,4 +104,18 @@ export class CreateCourseDto {
   @IsOptional()
   @IsString()
   readonly introVideoAssetId?: string;
+
+  /**
+   * W6 — optional client-generated key (the wizard sends one UUID per
+   * create attempt). A repeat create with the same key in the same academy
+   * by the same user returns the course the first request made, so a double
+   * submit or a replay after an ambiguous network failure never yields a
+   * second draft or a misleading `slugTaken`. Stored on the course
+   * (`creation_idempotency_key`, unique per academy) and never returned.
+   */
+  @IsOptional()
+  @IsString()
+  @Length(8, 128)
+  @Matches(/^[A-Za-z0-9_-]+$/, { message: 'errors.course.invalidIdempotencyKey' })
+  readonly idempotencyKey?: string;
 }

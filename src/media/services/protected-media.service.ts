@@ -590,12 +590,13 @@ export class ProtectedMediaService {
     academyId: string,
     userId: string,
   ): Promise<void> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.media.insufficientRole' });
     }
   }

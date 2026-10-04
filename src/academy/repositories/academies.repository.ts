@@ -24,6 +24,12 @@ import { PLATFORM_DETAIL_MEMBER_CAP } from '../../tenancy/repositories/organizat
 
 export interface AcademyListFilter {
   readonly search?: string;
+  /**
+   * W5 — when set, only academies where this user holds an ACTIVE
+   * `academy_members` row (the switcher must not offer academies the
+   * caller cannot open). Unset for the organization owner.
+   */
+  readonly staffUserId?: string;
   readonly sortBy?: 'name' | 'slug' | 'createdAt' | 'updatedAt';
   readonly sortDirection?: 'asc' | 'desc';
   readonly skip: number;
@@ -80,6 +86,9 @@ export class AcademiesRepository {
       organizationId,
       ...(filter.search
         ? { name: { contains: filter.search, mode: 'insensitive' as const } }
+        : {}),
+      ...(filter.staffUserId
+        ? { members: { some: { userId: filter.staffUserId, status: 'active' as const } } }
         : {}),
     };
 

@@ -32,6 +32,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
@@ -40,6 +41,11 @@ import { CommunicationService } from '../../communications/services/communicatio
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { AuthChallengeCipher } from './auth-challenge-cipher.service';
 import { maskEmail } from './email-otp.service';
+import {
+  SecurityEventsService,
+  type SecurityEventInput,
+  type SecurityEventReason,
+} from '../../security-events/services/security-events.service';
 
 const CODE_DIGITS = 6;
 export const DELETION_CODE_TTL_MS = 10 * 60 * 1000;
@@ -68,7 +74,13 @@ export class AccountDeletionChallengeService {
     private readonly communicationService: CommunicationService,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly cipher: AuthChallengeCipher,
+    /** W3 — OTP & Security Monitoring; recorded after each transaction, never with the code. */
+    @Optional() private readonly securityEvents?: SecurityEventsService,
   ) {}
+
+  private async track(event: SecurityEventInput): Promise<void> {
+    await this.securityEvents?.record(event);
+  }
 
   /** `POST /users/me/delete/request` — emails a fresh code; nothing is deleted. */
   async issue(
@@ -80,102 +92,125 @@ export class AccountDeletionChallengeService {
     const salt = randomBytes(16).toString('hex');
     const challengeId = randomUUID();
     const expiresAt = new Date(now + DELETION_CODE_TTL_MS);
+    // Set just before a budget refusal is thrown, so the refusal can be
+    // recorded once the transaction has unwound (see the catch below).
+    let refusedFor: SecurityEventReason | null = null;
 
-    const { email, outboxId } = await this.tenancyContextService.runInUserContext(
-      userId,
-      async (tx) => {
-        const user = await tx.user.findUnique({
-          where: { id: userId },
-          select: {
-            email: true,
-            status: true,
-            isPlatformOwner: true,
-            emailVerifiedAt: true,
-          },
+    const issued = this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: {
+          email: true,
+          status: true,
+          isPlatformOwner: true,
+          emailVerifiedAt: true,
+        },
+      });
+      if (!user || user.status !== 'active') {
+        throw new UnauthorizedException({ messageKey: 'errors.unauthorized' });
+      }
+      // The same refusal the deletion itself makes — no code is mailed
+      // for a deletion that could never happen.
+      if (user.isPlatformOwner) {
+        throw new ForbiddenException({
+          messageKey: 'errors.auth.platformOwnerCannotSelfDelete',
         });
-        if (!user || user.status !== 'active') {
-          throw new UnauthorizedException({ messageKey: 'errors.unauthorized' });
-        }
-        // The same refusal the deletion itself makes — no code is mailed
-        // for a deletion that could never happen.
-        if (user.isPlatformOwner) {
-          throw new ForbiddenException({
-            messageKey: 'errors.auth.platformOwnerCannotSelfDelete',
-          });
-        }
-        // The code goes to a VERIFIED address only: an unverified one is
-        // not yet proven to be the owner's mailbox.
-        if (!user.emailVerifiedAt) {
-          throw new ConflictException({
-            messageKey: 'errors.account.deletionEmailUnverified',
-          });
-        }
+      }
+      // The code goes to a VERIFIED address only: an unverified one is
+      // not yet proven to be the owner's mailbox.
+      if (!user.emailVerifiedAt) {
+        throw new ConflictException({
+          messageKey: 'errors.account.deletionEmailUnverified',
+        });
+      }
 
-        const recent = await tx.accountDeletionChallenge.findMany({
-          where: { userId, createdAt: { gt: new Date(now - 60 * 60 * 1000) } },
-          orderBy: { createdAt: 'desc' },
-          select: { createdAt: true },
-        });
-        if (recent.length >= DELETION_MAX_REQUESTS_PER_HOUR) {
-          throw new HttpException(
-            { messageKey: 'errors.auth.rateLimited' },
-            HttpStatus.TOO_MANY_REQUESTS,
-          );
-        }
-        if (
-          recent[0] &&
-          now - recent[0].createdAt.getTime() < DELETION_RESEND_COOLDOWN_MS
-        ) {
-          throw new HttpException(
-            {
-              messageKey: 'errors.account.deletionCodeCooldown',
-              details: {
-                resendAvailableAt: new Date(
-                  recent[0].createdAt.getTime() + DELETION_RESEND_COOLDOWN_MS,
-                ).toISOString(),
-              },
+      const recent = await tx.accountDeletionChallenge.findMany({
+        where: { userId, createdAt: { gt: new Date(now - 60 * 60 * 1000) } },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      });
+      if (recent.length >= DELETION_MAX_REQUESTS_PER_HOUR) {
+        refusedFor = 'hourly_budget';
+        throw new HttpException(
+          { messageKey: 'errors.auth.rateLimited' },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      if (
+        recent[0] &&
+        now - recent[0].createdAt.getTime() < DELETION_RESEND_COOLDOWN_MS
+      ) {
+        refusedFor = 'cooldown';
+        throw new HttpException(
+          {
+            messageKey: 'errors.account.deletionCodeCooldown',
+            details: {
+              resendAvailableAt: new Date(
+                recent[0].createdAt.getTime() + DELETION_RESEND_COOLDOWN_MS,
+              ).toISOString(),
             },
-            HttpStatus.TOO_MANY_REQUESTS,
-          );
-        }
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
 
-        // A new code retires every open one: only the latest email works.
-        await tx.accountDeletionChallenge.updateMany({
-          where: { userId, consumedAt: null },
-          data: { consumedAt: new Date(now) },
+      // A new code retires every open one: only the latest email works.
+      await tx.accountDeletionChallenge.updateMany({
+        where: { userId, consumedAt: null },
+        data: { consumedAt: new Date(now) },
+      });
+      await tx.accountDeletionChallenge.create({
+        data: {
+          id: challengeId,
+          userId,
+          sessionId,
+          salt,
+          codeHash: this.cipher.hashCode({ challengeRowId: challengeId, salt, code }),
+          expiresAt,
+        },
+      });
+      const emitted = await this.communicationService.emit(tx, {
+        key: 'auth.account.deletion_code',
+        recipientUserId: userId,
+        // Never tenant-visible: the row carries a live deletion code.
+        organizationId: null,
+        entity: { type: 'account_deletion_challenge', id: challengeId },
+        values: {
+          code,
+          expiresInMinutes: Math.round(DELETION_CODE_TTL_MS / 60_000),
+        },
+      });
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        action: 'account.deletion.requested',
+        targetType: 'user',
+        targetId: userId,
+        context: { challengeId },
+      });
+      return { email: user.email, outboxId: emitted.outboxId };
+    });
+    let email: string;
+    let outboxId: string | null;
+    try {
+      ({ email, outboxId } = await issued);
+    } catch (error) {
+      if (refusedFor) {
+        await this.track({
+          type: 'deletion_code_rate_limited',
+          surface: 'management',
+          userId,
+          reason: refusedFor,
         });
-        await tx.accountDeletionChallenge.create({
-          data: {
-            id: challengeId,
-            userId,
-            sessionId,
-            salt,
-            codeHash: this.cipher.hashCode({ challengeRowId: challengeId, salt, code }),
-            expiresAt,
-          },
-        });
-        const emitted = await this.communicationService.emit(tx, {
-          key: 'auth.account.deletion_code',
-          recipientUserId: userId,
-          // Never tenant-visible: the row carries a live deletion code.
-          organizationId: null,
-          entity: { type: 'account_deletion_challenge', id: challengeId },
-          values: {
-            code,
-            expiresInMinutes: Math.round(DELETION_CODE_TTL_MS / 60_000),
-          },
-        });
-        await this.auditLogWriterService.write(tx, {
-          actorUserId: userId,
-          action: 'account.deletion.requested',
-          targetType: 'user',
-          targetId: userId,
-          context: { challengeId },
-        });
-        return { email: user.email, outboxId: emitted.outboxId };
-      },
-    );
+      }
+      throw error;
+    }
     await this.communicationService.enqueueAfterCommit(outboxId);
+    await this.track({
+      type: 'deletion_code_sent',
+      surface: 'management',
+      userId,
+      challengeId,
+    });
 
     return {
       challengeId,
@@ -262,6 +297,35 @@ export class AccountDeletionChallengeService {
         return { kind: 'ok' as const };
       },
     );
+
+    const base = { surface: 'management', userId, challengeId } as const;
+    switch (outcome.kind) {
+      case 'ok':
+        await this.track({ ...base, type: 'deletion_code_verified' });
+        break;
+      case 'wrong':
+        await this.track({
+          ...base,
+          type: 'deletion_code_failed',
+          reason: 'invalid_code',
+          attemptsRemaining: outcome.attemptsRemaining,
+        });
+        break;
+      case 'locked':
+        await this.track({
+          ...base,
+          type: 'deletion_code_locked',
+          reason: 'attempts_exhausted',
+          attemptsRemaining: 0,
+        });
+        break;
+      default:
+        await this.track({
+          ...base,
+          type: 'deletion_code_failed',
+          reason: 'dead_challenge',
+        });
+    }
 
     switch (outcome.kind) {
       case 'ok':

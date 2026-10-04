@@ -26,6 +26,7 @@ import {
   seedActiveSubscriptionForOrg,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
+import { uniqueName } from './utils/unique-name';
 
 const REAL_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
@@ -235,15 +236,17 @@ describe('Task 3 — audit activity log (e2e)', () => {
     expect(faqRows).toHaveLength(1);
     expect(faqRows[0].targetLabel).toBe('What is Atlas?');
 
+    // W4 — academy names are unique platform-wide; the e2e DB persists.
+    const renamedAcademy = uniqueName('Renamed Academy');
     await request(app.getHttpServer())
       .patch(`/academies/${academy.id}`)
       .set(auth(owner))
-      .send({ name: 'Renamed Academy', contactEmail: 'contact@example.com' })
+      .send({ name: renamedAcademy, contactEmail: 'contact@example.com' })
       .expect(200);
     const academyRows = await rows({ action: 'academy.updated', targetId: academy.id });
     expect(academyRows).toHaveLength(1);
     expect(academyRows[0].changes).toMatchObject({
-      name: { to: 'Renamed Academy' },
+      name: { to: renamedAcademy },
       contactEmail: { to: '[email hidden]' },
     });
     expect(JSON.stringify(academyRows[0])).not.toContain('contact@example.com');

@@ -28,7 +28,7 @@ import {
 } from '@nestjs/common';
 import { limitsToGrant } from '../../plans/utils/granted-limits.util';
 import { Prisma } from '@prisma/client';
-import type { Checkout, Payment, SubscriptionBillingCycle } from '@prisma/client';
+import type { Checkout, Payment } from '@prisma/client';
 import { CheckoutsRepository } from '../repositories/checkouts.repository';
 import { PaymentsRepository } from '../repositories/payments.repository';
 import { PlansRepository } from '../../plans/repositories/plans.repository';
@@ -36,18 +36,18 @@ import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
 import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
 import { TenantAddOnsRepository } from '../../plans/repositories/tenant-add-ons.repository';
 import { PLANS_CLOCK, type Clock } from '../../plans/utils/clock';
+import {
+  PaidGiftEligibilityService,
+  type GiftSource,
+} from '../../plans/services/paid-gift-eligibility.service';
+import {
+  computePurchaseDates,
+  resolvePurchaseBillingCycle,
+} from '../utils/billing-period.util';
 
-function addPeriod(start: Date, billingCycle: SubscriptionBillingCycle | null): Date {
-  const end = new Date(start);
-  if (billingCycle === 'yearly') {
-    end.setFullYear(end.getFullYear() + 1);
-  } else {
-    // 'monthly', or no billing cycle recorded on the snapshot — the
-    // narrower, safer default (a shorter period is never a correctness
-    // problem for a Tenant, only a longer one would be).
-    end.setMonth(end.getMonth() + 1);
-  }
-  return end;
+export interface ApplySuccessOptions {
+  /** Who confirmed the money: a human reviewer (default) or a gateway webhook. Recorded on a gift. */
+  readonly source?: GiftSource;
 }
 
 @Injectable()
@@ -59,6 +59,7 @@ export class PaymentApplicationService {
     private readonly addOnsRepository: AddOnsRepository,
     private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
     private readonly tenantAddOnsRepository: TenantAddOnsRepository,
+    private readonly paidGiftEligibilityService: PaidGiftEligibilityService,
     @Inject(PLANS_CLOCK) private readonly clock: Clock,
   ) {}
 
@@ -71,16 +72,25 @@ export class PaymentApplicationService {
    * update yet — real subscription CREATION is Phase P14 provisioning, not
    * this phase's job (see `TenantSubscriptionsRepository.
    * updateForPlanPurchase`'s own doc comment).
+   *
+   * W8 D2 — IDEMPOTENT PER PAYMENT. The transition into `succeeded` is one
+   * conditional UPDATE (`markSucceededIfNotAlready`). A payment that is
+   * already succeeded — a webhook arriving after a manual approval, a
+   * replay with a new event id, or a concurrent applier that lost the row
+   * lock — returns the current row and applies NO commercial effect, so a
+   * second paid period can never be stacked onto one payment.
    */
   async applySuccessfulPayment(
     tx: Prisma.TransactionClient,
     payment: Payment,
+    options: ApplySuccessOptions = {},
   ): Promise<Payment> {
-    const updated = await this.paymentsRepository.update(tx, payment.id, {
-      status: 'succeeded',
-      failureReason: null,
-      nextAction: Prisma.JsonNull,
-    });
+    const transitioned = await this.paymentsRepository.markSucceededIfNotAlready(
+      tx,
+      payment.id,
+    );
+    const updated = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    if (!transitioned) return updated;
 
     if (!payment.checkoutId) return updated;
 
@@ -88,7 +98,12 @@ export class PaymentApplicationService {
     if (!checkout) return updated;
 
     await this.checkoutsRepository.updateStatus(tx, checkout.id, 'completed');
-    await this.applyCommercialEffect(tx, checkout);
+    await this.applyCommercialEffect(
+      tx,
+      checkout,
+      payment.id,
+      options.source ?? 'approval',
+    );
 
     return updated;
   }
@@ -115,6 +130,8 @@ export class PaymentApplicationService {
   private async applyCommercialEffect(
     tx: Prisma.TransactionClient,
     checkout: Checkout,
+    paymentId: string,
+    source: GiftSource,
   ): Promise<void> {
     if (checkout.targetType === 'plan_subscription') {
       const plan = await this.plansRepository.findByKey(checkout.targetKey);
@@ -135,6 +152,16 @@ export class PaymentApplicationService {
         `graceEndsAt` and `cancelAtPeriodEnd` on every purchase, so a
         cancel-then-renew customer is simply active again.
       */
+      // W8 — serialise purchases per organization. Two different payments
+      // for one organization approved at the same moment would otherwise
+      // both read the pre-purchase row and the later commit would overwrite
+      // the earlier one's period (and a gift's dates). Under READ COMMITTED
+      // the read below runs after the lock is granted, so it sees the
+      // winner's committed row and extends from it.
+      await this.tenantSubscriptionsRepository.lockForPurchase(
+        tx,
+        checkout.organizationId,
+      );
       const existing = await this.tenantSubscriptionsRepository.findByOrganizationId(
         tx,
         checkout.organizationId,
@@ -145,6 +172,35 @@ export class PaymentApplicationService {
         existing.currentPeriodEnd !== null &&
         existing.currentPeriodEnd.getTime() > now.getTime();
       const periodStart = extendsCurrentPeriod ? existing.currentPeriodEnd! : now;
+      // W8 D4 — the column first, then the frozen snapshot's native cycle.
+      const billingCycle = resolvePurchaseBillingCycle(
+        checkout.billingCycle,
+        checkout.snapshot,
+      );
+
+      // W8A — gifted setup days on a customer's first-ever paid
+      // subscription. Decided (and recorded in the append-only ledger) only
+      // here, server-side, in this transaction.
+      const gift = await this.paidGiftEligibilityService.claimFirstPaidGift(tx, {
+        organizationId: checkout.organizationId,
+        paymentId,
+        plan,
+        billingCycle,
+        extendsCurrentPeriod,
+        existing: existing
+          ? {
+              currentPeriodEnd: existing.currentPeriodEnd,
+              giftedDays: existing.giftedDays,
+            }
+          : null,
+        now,
+        source,
+      });
+      const dates = computePurchaseDates({
+        periodStart,
+        billingCycle,
+        giftedDays: gift.granted ? gift.days : null,
+      });
       // Phase P19 (`Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` P0-3):
       // `upsertForPlanPurchase` now creates the Organization's first-ever
       // `tenant_subscriptions` row itself when none exists yet, rather
@@ -169,9 +225,19 @@ export class PaymentApplicationService {
           // deliberate plan change — only across catalog edits the
           // customer did not ask for.
           grantedLimits: limitsToGrant(plan) as unknown as Prisma.InputJsonValue,
-          billingCycle: checkout.billingCycle,
-          currentPeriodStart: periodStart,
-          currentPeriodEnd: addPeriod(periodStart, checkout.billingCycle),
+          billingCycle,
+          currentPeriodStart: dates.currentPeriodStart,
+          currentPeriodEnd: dates.currentPeriodEnd,
+          ...(dates.gift
+            ? {
+                gift: {
+                  days: dates.gift.days,
+                  startsAt: dates.gift.startsAt,
+                  endsAt: dates.gift.endsAt,
+                  paymentId,
+                },
+              }
+            : {}),
         },
       );
       return;

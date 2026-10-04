@@ -536,3 +536,35 @@ future work.
   queue path works.
 - `test/media-delete.e2e-spec.ts` (5): the matrix above, the usage guard, mixed bulk
   outcomes, and a just-deleted asset is not purgeable.
+
+## 15. `IMPLEMENTED` — Durable customer-identity ledgers (W8, Nov 2026)
+
+Two append-only, platform-owned ledgers decide one-time benefits, and both
+outlive account deletion (FKs `ON DELETE SET NULL`, no UPDATE/DELETE for
+`atlas_app`, untouched by the anonymisation scrub):
+
+| Ledger | Benefit | Identity |
+|---|---|---|
+| `trial_redemptions` | one Free Trial per customer | canonical email (alias-collapsed) |
+| `paid_gift_redemptions` | one set of gifted setup days, on the first-ever paid subscription | the organization OWNER's canonical email |
+
+- **Hash v2.** New rows store `HMAC-SHA256(key, canonical email)` with
+  `hash_version = 2`. The key is `CUSTOMER_IDENTITY_HMAC_KEY` when set, else an
+  HKDF derivation of `PAYMENT_CREDENTIALS_ENCRYPTION_KEY`. It must never
+  change once rows exist (a new key re-grants every trial and gift); pin
+  the derived value as `CUSTOMER_IDENTITY_HMAC_KEY` before rotating the payment
+  key. Pre-W8 trial rows hold the v1 constant-salt SHA-256, are frozen, and are
+  still checked on every claim and display read (v1 rows of deleted users
+  can never be upgraded — accepted residual).
+- **Re-signup.** Deleting the account and registering again with the same
+  mailbox (or a Gmail dot / `+tag` variant) gets no trial and no gift.
+- **Retention.** `ip_address` / `user_agent` on `trial_redemptions` are cleared
+  after 180 days by the `trial-forensics-scrub` job on the `video-retention`
+  queue (SECURITY DEFINER `scrub_trial_redemption_forensics`). Hashes and
+  dates are kept for as long as the one-trial rule exists.
+- **Backfill — PENDING PRODUCT DECISION, not run in production.**
+  `scripts/backfill-customer-ledgers.ts` (dry run by default, counts only,
+  refuses a production environment without `--allow-production`) records
+  trials evidenced before the ledger existed and, with `--gifts`, prior paying
+  customers. Whether the pre-ledger era is recorded is the product owner's
+  decision (W8 investigation §8).

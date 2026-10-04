@@ -69,6 +69,13 @@ import {
 } from '../validation/website-config.schemas';
 import { parseOrThrow } from '../../common/validation/zod-violations.util';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import {
+  academyNameTaken,
+  isAcademyNameTaken,
+  isUniqueViolation,
+  lockAcademyName,
+  requireNameKey,
+} from '../../common/name-uniqueness/name-uniqueness';
 
 /** Task 3 — the site-wide areas a configuration save can touch, in the order the audit row lists them. */
 const CONFIGURATION_AREAS = ['brand', 'seo', 'navigation', 'header', 'footer'] as const;
@@ -122,15 +129,16 @@ export class WebsiteConfigurationService {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
-    return membership.role;
+    return role;
   }
 
   /**
@@ -154,12 +162,13 @@ export class WebsiteConfigurationService {
     academyId: string,
     userId: string,
   ): Promise<void> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.website.insufficientRole' });
     }
   }
@@ -333,12 +342,22 @@ export class WebsiteConfigurationService {
     readonly academy: AcademyResponse;
     readonly configuration: WebsiteConfigurationResponse;
   }> {
-    const result = await this.tenancyContextService.runInTenantAndUserContext(
-      organizationId,
-      userId,
-      async (tx) => {
+    const name = payload.name === undefined ? undefined : payload.name.trim();
+    let nameKey: string | null = null;
+    const result = await this.tenancyContextService
+      .runInTenantAndUserContext(organizationId, userId, async (tx) => {
         const role = await this.assertCanManage(tx, academyId, userId);
         await this.assertNotStale(tx, academyId, payload.expectedUpdatedAt);
+        // W4 — this form renames the academy too, so it takes the same
+        // name-key lock and platform-wide check as `AcademiesService`
+        // (`updateBranding`): a taken name is a 409, never a raw 23505.
+        if (name !== undefined) {
+          nameKey = await requireNameKey(tx, name, 'name');
+          await lockAcademyName(tx, nameKey);
+          if (await isAcademyNameTaken(tx, nameKey, academyId)) {
+            throw academyNameTaken('name');
+          }
+        }
         const current = await this.websiteBootstrapService.ensureConfiguration(
           tx,
           academyId,
@@ -353,7 +372,7 @@ export class WebsiteConfigurationService {
             : null;
 
         const academyData: Prisma.AcademyUpdateInput = {};
-        if (payload.name !== undefined) academyData.name = payload.name.trim();
+        if (name !== undefined) academyData.name = name;
         if (payload.logo !== undefined) academyData.logoUrl = payload.logo || null;
         if (payload.favicon !== undefined) {
           academyData.faviconUrl = payload.favicon || null;
@@ -426,8 +445,22 @@ export class WebsiteConfigurationService {
           academy: toAcademyResponse(academy),
           configuration: await this.toManagedResponse(tx, academyId, configuration),
         };
-      },
-    );
+      })
+      .catch(async (error: unknown) => {
+        // W4 — a concurrent rename that slipped past the check hits the
+        // unique index; under FORCE RLS the 23505 cannot be attributed by
+        // inspection, so it is classified by asking the check again.
+        if (
+          isUniqueViolation(error) &&
+          nameKey !== null &&
+          (await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+            isAcademyNameTaken(tx, nameKey as string, academyId),
+          ))
+        ) {
+          throw academyNameTaken('name');
+        }
+        throw error;
+      });
     await this.academiesService.invalidatePublicHostnamesForAcademy(
       academyId,
       organizationId,

@@ -153,7 +153,7 @@ writer stores.
 | `website_testimonial.updated` | website | academy | yes | — |
 | `website_testimonial.published` | website | academy | yes | — |
 | `website_testimonial.archived` | website | academy | yes | — |
-| `academy.created` | academy | academy | yes | — |
+| `academy.created` | academy | academy | yes | requestedName (only when provisioning suffixed a taken name) |
 | `academy.updated` | academy | academy | yes | — |
 | `academy.branding.updated` | academy | academy | yes | — |
 | `academy.archived` | academy | academy | yes | reason, hasFeedback |
@@ -166,6 +166,7 @@ writer stores.
 | `academy.student.created` | students | academy | yes | account, studentName |
 | `academy.student.added` | students | academy | yes | account, studentName |
 | `academy.student.joined` | students | academy | yes | existingAccount, source, status |
+| `academy.student.name_clash_exempted` | students | academy | yes | source |
 | `academy.student.blocked` | students | academy | yes | studentName |
 | `academy.student.unblocked` | students | academy | yes | studentName |
 | `academy.student.approved` | students | academy | yes | studentName |
@@ -218,6 +219,7 @@ writer stores.
 | `organization.onboarding.completed` | subscription | organization | yes | mode, requiredComplete |
 | `provisioning_request.created` | subscription | organization | yes | — |
 | `subscription.trial.redeemed` | subscription | organization | yes | planKey, trialEndsAt, durationDays |
+| `subscription.gift.granted` | subscription | organization | yes | planKey, billingCycle, giftedDays, giftedEndsAt, paymentId |
 | `subscription.trial.cancelled` | subscription | organization | yes | reason, hasFeedback, effectiveAt |
 | `subscription.cancelled` | subscription | organization | yes | reason, hasFeedback, effectiveAt, previousStatus |
 | `subscription.grace_started` | subscription | organization | yes | previousStatus, newStatus, reason, at, currentPeriodEnd, graceEndsAt |
@@ -261,6 +263,8 @@ writer stores.
 | `observability.synthetic_alert.resolved` | platform | platform | no | — |
 | `platform.contact_submission.status_changed` | platform | platform | no | status, previousStatus |
 | `platform.contact_submission.deleted` | platform | platform | no | status |
+| `platform.campaign.sent` | platform | platform | no | audienceType, channels, recipientCount, mailCount, inAppCount |
+| `academy.message.sent` | academy | academy | yes | audienceType, channels, recipientCount, mailCount, inAppCount |
 
 † Stored for operators only; removed from tenant responses by `TENANT_HIDDEN_CONTEXT_KEYS`.
 

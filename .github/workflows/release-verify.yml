@@ -72,6 +72,8 @@ jobs:
           echo "== Server facts"
           facts=$(remote facts) || rc=1
           printf '%s\n' "$facts"
+          echo "== W4 duplicate-name report (counts only)"
+          remote dups | grep -E '^w4(dups|totals)\|' || { echo "FAIL  W4 duplicate report"; rc=1; }
           EXPECT_SSR=$(printf '%s\n' "$facts" | sed -n 's/^INFO  ATLAS_SSR=//p' | head -1)
           ACADEMY_HOSTS=$(remote hosts | sed -n 's/^host|//p' | paste -sd, -)
           echo "INFO  checking ${ACADEMY_HOSTS:+$(printf '%s' "$ACADEMY_HOSTS" | tr ',' '\n' | grep -c .)} published Academy host(s)"

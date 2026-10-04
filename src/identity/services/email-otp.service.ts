@@ -17,8 +17,11 @@
  *  - A RAW CODE IS NEVER STORED. `auth_email_challenges.code_hash` is an
  *    HMAC-SHA256 under a server key plus the row's own random salt
  *    (`AuthChallengeCipher.hashCode`), so the table yields no working code
- *    even to someone holding it. The code exists in plaintext in exactly
- *    two places: this method's local variable, and the email.
+ *    even to someone holding it. The code exists in plaintext in this
+ *    method's local variable, the email, and — only until its dispatch
+ *    settles — the outbox row's `values` (W3: the catalogue declares it a
+ *    `credentialValues` key, so the dispatcher strips it once the email is
+ *    out and the daily prune strips any row older than an hour).
  *
  *  - COMPARISON IS CONSTANT-TIME (`AuthChallengeCipher.digestsEqual`).
  *
@@ -60,6 +63,7 @@ import {
   HttpStatus,
   Injectable,
   Logger,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -75,6 +79,10 @@ import { AuthRateLimiterService } from './auth-rate-limiter.service';
 import { AuthChallengeCipher } from './auth-challenge-cipher.service';
 import { TrustedDeviceService } from './trusted-device.service';
 import type { SignInSurface } from '../dto/sign-in.dto';
+import {
+  SecurityEventsService,
+  type SecurityEventInput,
+} from '../../security-events/services/security-events.service';
 
 /** Six digits, as the frontend's `EMAIL_OTP_LENGTH` and the email both assume. */
 const CODE_DIGITS = 6;
@@ -156,7 +164,19 @@ export class EmailOtpService {
     private readonly rateLimiter: AuthRateLimiterService,
     private readonly cipher: AuthChallengeCipher,
     private readonly trustedDeviceService: TrustedDeviceService,
+    /**
+     * W3 — OTP & Security Monitoring. Recorded OUTSIDE every auth
+     * transaction and never awaited into a failure (the writer swallows
+     * its own errors). Never handed the code. Optional only so unit specs
+     * that construct this class positionally need not supply it.
+     */
+    @Optional() private readonly securityEvents?: SecurityEventsService,
   ) {}
+
+  /** Records one monitoring event; resolves in every case. */
+  private async track(event: SecurityEventInput): Promise<void> {
+    await this.securityEvents?.record(event);
+  }
 
   private get settings(): IdentityConfig['emailOtp'] {
     return this.configService.getOrThrow<IdentityConfig>('identity').emailOtp;
@@ -221,10 +241,22 @@ export class EmailOtpService {
 
     if (await this.isSuppressed(input.user.email)) {
       this.metrics.recordOtp('suppressed');
+      await this.track({
+        type: 'otp_suppressed',
+        surface: input.surface,
+        userId: input.user.id,
+        email: input.user.email,
+        ipAddress: input.context?.ipAddress,
+        academyId: input.academyId,
+        reason: 'address_suppressed',
+      });
       throw new ForbiddenException({ messageKey: 'errors.auth.otpSuppressedAddress' });
     }
 
-    await this.consumeIssueBudget(input.user.id, input.context?.ipAddress);
+    await this.consumeIssueBudget(input.user.id, input.context?.ipAddress, {
+      surface: input.surface,
+      email: input.user.email,
+    });
 
     const now = new Date();
     const challengeRowId = randomUUID();
@@ -288,6 +320,15 @@ export class EmailOtpService {
 
     await this.communicationService.enqueueAfterCommit(outboxId);
     this.metrics.recordOtp('requested');
+    await this.track({
+      type: 'otp_sent',
+      surface: input.surface,
+      userId: input.user.id,
+      email: input.user.email,
+      ipAddress: input.context?.ipAddress,
+      academyId: input.academyId,
+      challengeId: challengeRowId,
+    });
 
     return {
       challengeId: this.cipher.sealChallengeRef({
@@ -328,8 +369,21 @@ export class EmailOtpService {
     const row = await this.readChallenge(reference.userId, reference.challengeRowId);
     if (!row || row.consumed_at !== null) throw this.deadChallenge();
 
+    const resendEvent = {
+      surface: row.surface === 'academy' ? 'academy' : 'management',
+      userId: reference.userId,
+      ipAddress: context?.ipAddress,
+      academyId: row.academy_id,
+      challengeId: reference.challengeRowId,
+    } as const;
+
     const remainingBefore = Math.max(0, settings.maxCodesPerChallenge - 1 - row.resends);
     if (remainingBefore === 0) {
+      await this.track({
+        ...resendEvent,
+        type: 'otp_rate_limited',
+        reason: 'resend_budget',
+      });
       throw new HttpException(
         { messageKey: 'errors.auth.otpResendExhausted' },
         HttpStatus.TOO_MANY_REQUESTS,
@@ -343,6 +397,7 @@ export class EmailOtpService {
       lastSentAt.getTime() + settings.resendCooldownSeconds * 1000,
     );
     if (availableAt > now) {
+      await this.track({ ...resendEvent, type: 'otp_rate_limited', reason: 'cooldown' });
       throw new HttpException(
         { messageKey: 'errors.auth.otpResendCooldown' },
         HttpStatus.TOO_MANY_REQUESTS,
@@ -356,6 +411,12 @@ export class EmailOtpService {
     const email = await this.recipientEmail(reference.userId);
     if (!email || (await this.isSuppressed(email))) {
       this.metrics.recordOtp('suppressed');
+      await this.track({
+        ...resendEvent,
+        email,
+        type: 'otp_suppressed',
+        reason: 'address_suppressed',
+      });
       throw new ForbiddenException({ messageKey: 'errors.auth.otpSuppressedAddress' });
     }
 
@@ -418,6 +479,7 @@ export class EmailOtpService {
 
     await this.communicationService.enqueueAfterCommit(result);
     this.metrics.recordOtp('resent');
+    await this.track({ ...resendEvent, email, type: 'otp_resent' });
 
     return {
       resendAvailableAt: new Date(now.getTime() + settings.resendCooldownSeconds * 1000),
@@ -451,10 +513,29 @@ export class EmailOtpService {
     const reference = this.cipher.openChallengeRef(challengeId);
     if (!reference) {
       this.metrics.recordOtp('failed');
+      // No account is known from a forged/garbled reference: IP only.
+      await this.track({
+        type: 'otp_failed',
+        surface: expected?.surface ?? null,
+        ipAddress: context?.ipAddress,
+        reason: 'dead_challenge',
+      });
       throw this.deadChallenge();
     }
 
     const now = new Date();
+    // What the monitoring event says about this attempt, decided inside the
+    // transaction and written only after it has committed — never with it,
+    // so a failed attempt is recorded even though nothing about it rolls
+    // back, and a monitoring hiccup cannot fail the verification.
+    let monitored: SecurityEventInput = {
+      type: 'otp_failed',
+      surface: expected?.surface ?? null,
+      userId: reference.userId,
+      ipAddress: context?.ipAddress,
+      challengeId: reference.challengeRowId,
+      reason: 'dead_challenge',
+    };
 
     const outcome = await this.tenancyContextService.runInUserContext(
       reference.userId,
@@ -472,6 +553,11 @@ export class EmailOtpService {
         `;
         const row = rows[0];
         if (!row) return { kind: 'dead' };
+        monitored = {
+          ...monitored,
+          surface: row.surface === 'academy' ? 'academy' : 'management',
+          academyId: row.academy_id,
+        };
 
         // Already consumed: verified once, or destroyed by the attempt
         // ceiling, or superseded by a newer sign-in. All three mean the
@@ -479,6 +565,12 @@ export class EmailOtpService {
         if (row.consumed_at !== null) return { kind: 'dead' };
 
         if (row.attempts > settings.maxAttempts) {
+          monitored = {
+            ...monitored,
+            type: 'otp_locked',
+            reason: 'attempts_exhausted',
+            attemptsRemaining: 0,
+          };
           await this.destroy(tx, row, now);
           await this.auditLogWriterService.write(tx, {
             actorUserId: row.user_id,
@@ -497,6 +589,7 @@ export class EmailOtpService {
         }
 
         if (row.expires_at <= now) {
+          monitored = { ...monitored, type: 'otp_expired', reason: 'expired' };
           await this.auditLogWriterService.write(tx, {
             actorUserId: row.user_id,
             action: 'auth.otp.failed',
@@ -524,6 +617,12 @@ export class EmailOtpService {
         });
         if (!contextMatches || !this.cipher.digestsEqual(candidate, row.code_hash)) {
           const attemptsRemaining = Math.max(0, settings.maxAttempts - row.attempts);
+          monitored = {
+            ...monitored,
+            type: attemptsRemaining === 0 ? 'otp_locked' : 'otp_failed',
+            reason: contextMatches ? 'invalid_code' : 'context_mismatch',
+            attemptsRemaining,
+          };
           // The last wrong guess destroys the challenge in the same
           // transaction, so "0 attempts left" is a fact about the server's
           // state and not just a number on a screen.
@@ -561,6 +660,7 @@ export class EmailOtpService {
             AND "consumed_at" IS NULL
         `;
         if (claimed !== 1) return { kind: 'dead' };
+        monitored = { ...monitored, type: 'otp_verified', reason: null };
 
         await this.auditLogWriterService.write(tx, {
           actorUserId: row.user_id,
@@ -585,6 +685,8 @@ export class EmailOtpService {
         };
       },
     );
+
+    await this.track(monitored);
 
     switch (outcome.kind) {
       case 'verified':
@@ -722,7 +824,11 @@ export class EmailOtpService {
    * admitted without the factor the policy demands — a rate limiter must
    * never become a way to skip a control.
    */
-  private async consumeIssueBudget(userId: string, ipAddress?: string): Promise<void> {
+  private async consumeIssueBudget(
+    userId: string,
+    ipAddress: string | undefined,
+    monitoring: { readonly surface: SignInSurface; readonly email: string },
+  ): Promise<void> {
     const { challengesPerHour } = this.settings;
     const account = await this.rateLimiter.consume(
       `otp:issue:account:${userId}`,
@@ -739,6 +845,13 @@ export class EmailOtpService {
 
     if (!account.allowed || !ip.allowed) {
       this.metrics.recordOtp('rate_limited');
+      await this.track({
+        type: 'otp_rate_limited',
+        surface: monitoring.surface,
+        email: monitoring.email,
+        ipAddress,
+        reason: account.allowed ? 'ip_budget' : 'account_budget',
+      });
       throw new HttpException(
         { messageKey: 'errors.auth.rateLimited' },
         HttpStatus.TOO_MANY_REQUESTS,
@@ -761,6 +874,7 @@ export class EmailOtpService {
     );
     if (!check.allowed) {
       this.metrics.recordOtp('rate_limited');
+      await this.track({ type: 'otp_rate_limited', ipAddress, reason: 'ip_budget' });
       throw new HttpException(
         { messageKey: 'errors.auth.rateLimited' },
         HttpStatus.TOO_MANY_REQUESTS,

@@ -20,9 +20,17 @@
  * caller's existing transaction, and its return value IS the decision.
  * `describeEligibility` exists only for read-only display and says so.
  *
- * WHAT IDENTIFIES A SUBJECT. A salted hash of the canonical email (see
- * `trial-subject.util.ts`), which collapses plus-addressing and, on
- * providers that ignore them, dots. The email is the only signal in this
+ * WHAT IDENTIFIES A SUBJECT. A keyed hash of the canonical email (see
+ * `trial-subject.util.ts` and `CustomerIdentityHasher`), which collapses
+ * plus-addressing and, on providers that ignore them, dots.
+ *
+ * HASH VERSIONS (W8B). New claims store the v2 HMAC (server key). Pre-W8
+ * rows hold the v1 constant-salt SHA-256 and are FROZEN — nothing inserts
+ * a v1 row any more — so every claim and describe also checks the v1 digest
+ * of the same address. Because v1 rows never appear concurrently, that
+ * extra read is race-free; the v2 INSERT ... ON CONFLICT remains the one
+ * atomic decision. v1 rows of deleted users can never be upgraded (no raw
+ * address survives), so the v1 check stays for as long as such rows exist. The email is the only signal in this
  * system that is both durable and tied to identity rather than to
  * infrastructure. Deliberately NOT used as identity: IP address, device,
  * browser, user agent, or any client-supplied value — all are trivially
@@ -41,7 +49,10 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { trialSubjectHash } from '../utils/trial-subject.util';
+import {
+  CURRENT_SUBJECT_HASH_VERSION,
+  CustomerIdentityHasher,
+} from './customer-identity-hasher.service';
 
 /** Forensic-only context. Recorded, never used to decide eligibility. */
 export interface TrialClaimContext {
@@ -69,6 +80,8 @@ export interface TrialClaimResult {
 export class TrialEligibilityService {
   private readonly logger = new Logger(TrialEligibilityService.name);
 
+  constructor(private readonly hasher: CustomerIdentityHasher) {}
+
   /**
    * Atomically claims the one Free Trial available to this subject.
    *
@@ -94,7 +107,42 @@ export class TrialEligibilityService {
     tx: Prisma.TransactionClient,
     input: TrialClaimInput,
   ): Promise<TrialClaimResult> {
-    const subjectHash = trialSubjectHash(input.email);
+    const { v2: subjectHash, v1: legacyHash } = this.hasher.subjectHashes(input.email);
+
+    // Legacy (v1) redemption of the same mailbox: refused. v1 rows are
+    // frozen, so this read cannot race a concurrent v1 insert. A v2 copy is
+    // written opportunistically (ON CONFLICT DO NOTHING, in the caller's
+    // transaction) so the subject is recognised under the current key too.
+    const legacy = await tx.trialRedemption.findUnique({
+      where: { subjectHash: legacyHash },
+      select: {
+        organizationId: true,
+        redeemedByUserId: true,
+        redeemedAt: true,
+        trialEndsAt: true,
+      },
+    });
+    if (legacy) {
+      await tx.trialRedemption.createMany({
+        data: [
+          {
+            subjectHash,
+            hashVersion: CURRENT_SUBJECT_HASH_VERSION,
+            source: 'v1_upgrade',
+            organizationId: legacy.organizationId,
+            redeemedByUserId: legacy.redeemedByUserId,
+            redeemedAt: legacy.redeemedAt,
+            trialEndsAt: legacy.trialEndsAt,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      this.logger.log(
+        { organizationId: input.organizationId, hashVersion: 1 },
+        'Free Trial refused — this subject has already redeemed one.',
+      );
+      return { granted: false, reason: 'already_redeemed' };
+    }
 
     // `createMany({ skipDuplicates })` compiles to INSERT ... ON CONFLICT
     // DO NOTHING, and `count` reports whether the row was actually
@@ -118,6 +166,8 @@ export class TrialEligibilityService {
       data: [
         {
           subjectHash,
+          hashVersion: CURRENT_SUBJECT_HASH_VERSION,
+          source: 'claim',
           organizationId: input.organizationId,
           redeemedByUserId: input.userId,
           trialEndsAt: input.trialEndsAt,
@@ -132,9 +182,10 @@ export class TrialEligibilityService {
 
     // The subject has consumed their trial already — either long ago, or
     // microseconds ago in a concurrent request that won the race. Both
-    // are the same answer. Logged with the hash only, never the address.
+    // are the same answer. Logged with neither the address nor any digest
+    // of it — the organization id is enough to correlate.
     this.logger.log(
-      { subjectHash, organizationId: input.organizationId },
+      { organizationId: input.organizationId, hashVersion: CURRENT_SUBJECT_HASH_VERSION },
       'Free Trial refused — this subject has already redeemed one.',
     );
     return { granted: false, reason: 'already_redeemed' };
@@ -153,8 +204,9 @@ export class TrialEligibilityService {
     tx: Prisma.TransactionClient,
     email: string,
   ): Promise<{ eligible: boolean }> {
-    const existing = await tx.trialRedemption.findUnique({
-      where: { subjectHash: trialSubjectHash(email) },
+    const { v2, v1 } = this.hasher.subjectHashes(email);
+    const existing = await tx.trialRedemption.findFirst({
+      where: { subjectHash: { in: [v2, v1] } },
       select: { id: true },
     });
     return { eligible: existing === null };

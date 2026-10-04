@@ -44,7 +44,19 @@ export type PlanLimitKey =
    * this phase; formalising them here is what finally gives that data
    * meaning, rather than adding a parallel counter.
    */
-  | 'recordedSessions';
+  | 'recordedSessions'
+  /**
+   * W3-compose — emails an ACADEMY may send through the Messages composer
+   * per calendar month (UTC). Counted per academy in
+   * `tenant_email_usage_periods`; in-app notifications and Platform Owner
+   * broadcasts are never counted.
+   *
+   * OPTIONAL on purpose (see `OPTIONAL_PLAN_LIMIT_KEYS`): every plan and
+   * every `granted_limits` snapshot written before this key existed lacks
+   * it, and a missing value resolves to `DEFAULT_MONTHLY_EMAILS` (50) —
+   * never to "unlimited" — through `resolveMonthlyEmailLimit`.
+   */
+  | 'monthlyEmails';
 
 /** Every `PlanLimitKey`, for iteration — mirrors `PLAN_LIMIT_KEYS` (`tenant.constants.ts`). Order doesn't matter here (unlike the frontend's display-order constant); this is used for exhaustive validation/iteration only. */
 export const PLAN_LIMIT_KEYS: readonly PlanLimitKey[] = [
@@ -59,6 +71,13 @@ export const PLAN_LIMIT_KEYS: readonly PlanLimitKey[] = [
   'recordedSessions',
 ];
 
+/**
+ * Limit keys a plan MAY carry but is not required to (`assertValidLimits`
+ * validates them when present and never demands them). Kept out of
+ * `PLAN_LIMIT_KEYS` so every existing plan stays valid without a backfill.
+ */
+export const OPTIONAL_PLAN_LIMIT_KEYS: readonly PlanLimitKey[] = ['monthlyEmails'];
+
 /** Matches `PlanResourceLimits` (`plan.types.ts`) exactly. */
 export interface PlanResourceLimits {
   readonly academies: LimitValue;
@@ -70,6 +89,8 @@ export interface PlanResourceLimits {
   readonly videoStorage: LimitValue;
   readonly videoStorageMinutes: LimitValue;
   readonly recordedSessions: LimitValue;
+  /** Optional — see `OPTIONAL_PLAN_LIMIT_KEYS`. */
+  readonly monthlyEmails?: LimitValue;
 }
 
 /** Matches `PlanFeatureKey` (`plan.types.ts`) exactly — 12 keys. */

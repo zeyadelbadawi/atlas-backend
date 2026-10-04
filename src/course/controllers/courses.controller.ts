@@ -24,12 +24,18 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
+import {
+  ACADEMY_MANAGING_ROLES,
+  ACADEMY_STAFF_ROLES,
+  AcademyRoles,
+} from '../../academy/decorators/academy-roles.decorator';
 import { CoursesService } from '../services/courses.service';
 import { CreateCourseDto } from '../dto/create-course.dto';
 import { UpdateCourseDto } from '../dto/update-course.dto';
 import { AssignCourseInstructorDto } from '../dto/assign-course-instructor.dto';
 import { CourseListQueryDto } from '../dto/course-list-query.dto';
 import type { CourseResponse } from '../dto/course.contract';
+import type { CoursePublishReadinessResponse } from '../services/course-readiness';
 import type { CourseCategoryResponse } from '../dto/course-category.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
@@ -38,7 +44,13 @@ import type { PaginatedResult } from '../../common/dto/pagination.contract';
 export class CoursesController {
   constructor(private readonly coursesService: CoursesService) {}
 
+  /**
+   * W5 (F12) — reads (list incl. drafts, detail, categories) need an active
+   * staff role in THIS academy (instructors author course content), or the
+   * organization owner; organization membership alone no longer suffices.
+   */
   @Get(':id/courses')
+  @AcademyRoles(...ACADEMY_STAFF_ROLES)
   async list(
     @Req() request: Request,
     @Query() query: CourseListQueryDto,
@@ -62,12 +74,35 @@ export class CoursesController {
   }
 
   @Get(':id/courses/:courseId')
+  @AcademyRoles(...ACADEMY_STAFF_ROLES)
   async getById(
     @Req() request: Request,
     @Param('courseId') courseId: string,
   ): Promise<CourseResponse> {
     const { academyId, organizationId } = request.academyContext!;
     return this.coursesService.getById(courseId, academyId, organizationId);
+  }
+
+  /**
+   * W6 — publish readiness (blocking checks + warnings) for the guided
+   * course wizard. Same audience as every course write: the managing tier
+   * of THIS academy, re-checked in the service (`assertCanManage`).
+   * Advisory in Phase 1 — `publish` does not enforce it (see
+   * `course-readiness.ts`, `PUBLISH_READINESS_ENFORCED`).
+   */
+  @Get(':id/courses/:courseId/publish-readiness')
+  @AcademyRoles(...ACADEMY_MANAGING_ROLES)
+  async getPublishReadiness(
+    @Req() request: Request,
+    @Param('courseId') courseId: string,
+  ): Promise<CoursePublishReadinessResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.coursesService.getPublishReadiness(
+      courseId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+    );
   }
 
   @Patch(':id/courses/:courseId')
@@ -173,6 +208,7 @@ export class CoursesController {
   }
 
   @Get(':id/course-categories')
+  @AcademyRoles(...ACADEMY_STAFF_ROLES)
   async getCategories(
     @Req() request: Request,
   ): Promise<PaginatedResult<CourseCategoryResponse>> {
@@ -181,6 +217,7 @@ export class CoursesController {
   }
 
   @Get(':id/course-categories/:categoryId')
+  @AcademyRoles(...ACADEMY_STAFF_ROLES)
   async getCategoryById(
     @Req() request: Request,
     @Param('categoryId') categoryId: string,

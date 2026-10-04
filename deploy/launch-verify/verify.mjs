@@ -43,6 +43,10 @@ mkdirSync(OUT, { recursive: true });
 // Production is always https on the default port; a local dry run overrides both.
 const ORIGIN = (host) => `${process.env.SCHEME || 'https'}://${host}${process.env.PORT_SUFFIX || ''}`;
 const mail = (tag) => `${MAILBOX}+atlas-lsv-${RUN}-${tag}@gmail.com`;
+// W4: a learner's name is unique inside each academy, and every run registers
+// learners into the same two production academies, so each test person's name
+// carries the run and the same tag as its address (never a fixed literal).
+const who = (label, tag) => `${label} ${RUN}-${tag}`;
 const password = () => `Lsv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 // --- server-side facts --------------------------------------------------------
@@ -135,7 +139,7 @@ async function apiMode() {
   // ---- learner L: new account at A --------------------------------------------
   const L = mail('l');
   const pw = password();
-  let r = await call(A.host, 'POST', '/auth/register', { body: { name: 'Launch Verify', email: L, password: pw, academyId: A.id } });
+  let r = await call(A.host, 'POST', '/auth/register', { body: { name: who('Launch Verify', 'l'), email: L, password: pw, academyId: A.id } });
   check('A4 new learner registers at Academy A → {account:new}', r.status === 201 && r.body?.account === 'new', `${r.status} ${r.key}`);
 
   // A6: password → code; wrong context refused; right context → session + trust.
@@ -181,7 +185,7 @@ async function apiMode() {
   check('SESSION the rotated-to cookie keeps working after a replay inside the multi-tab grace', rr.status === 200 && !!rr.session, `${rr.status}`);
 
   // ---- A4: the same person joins Academy B with the same password -------------
-  r = await call(B.host, 'POST', '/auth/register', { body: { name: 'Launch Verify', email: L, password: pw, academyId: B.id } });
+  r = await call(B.host, 'POST', '/auth/register', { body: { name: who('Launch Verify', 'l'), email: L, password: pw, academyId: B.id } });
   check('A4 existing account joins Academy B → {account:existing}', r.status === 201 && r.body?.account === 'existing', `${r.status} ${r.key}`);
   f = facts('user', L, A.id, B.id);
   check('A4 one user row, learner rows at A and B', f.users === '1' && f.learner_rows === '2' && f.learner_A !== '-' && f.learner_B !== '-', `users=${f.users} rows=${f.learner_rows} A=${f.learner_A} B=${f.learner_B}`);
@@ -236,10 +240,10 @@ async function apiMode() {
   // ---- A4 with a management account ---------------------------------------------
   const M = mail('m');
   const mpw = password();
-  r = await call(MGMT, 'POST', '/auth/register', { body: { name: 'Launch Verify Staff', email: M, password: mpw } });
+  r = await call(MGMT, 'POST', '/auth/register', { body: { name: who('Launch Verify Staff', 'm'), email: M, password: mpw } });
   check('management account registers', r.status === 201 && r.body?.account === 'new', `${r.status} ${r.key}`);
   const before = facts('user', M, A.id, B.id);
-  r = await call(A.host, 'POST', '/auth/register', { body: { name: 'Launch Verify Staff', email: M, password: mpw, academyId: A.id } });
+  r = await call(A.host, 'POST', '/auth/register', { body: { name: who('Launch Verify Staff', 'm'), email: M, password: mpw, academyId: A.id } });
   const afterM = facts('user', M, A.id, B.id);
   check('A4 management account becomes a learner at A without a duplicate user; memberships unchanged', r.status === 201 && r.body?.account === 'existing' && afterM.users === '1' && afterM.learner_A !== '-' && afterM.org_memberships === before.org_memberships, `${r.status} users=${afterM.users} memberships ${before.org_memberships}→${afterM.org_memberships}`);
 
@@ -287,7 +291,7 @@ async function browserMode() {
   // Management: plain account → sign-in → email code → dashboard.
   const M = mail('bm');
   const mpw = password();
-  let r = await call(MGMT, 'POST', '/auth/register', { body: { name: 'Launch Verify Browser', email: M, password: mpw } });
+  let r = await call(MGMT, 'POST', '/auth/register', { body: { name: who('Launch Verify Browser', 'bm'), email: M, password: mpw } });
   check('management account registers (API)', r.status === 201, `${r.status} ${r.key}`);
   {
     const { ctx, p } = await page('management');
@@ -302,7 +306,7 @@ async function browserMode() {
   // Academy A website: learner → sign-in → email code → /my.
   const L = mail('bl');
   const lpw = password();
-  r = await call(A.host, 'POST', '/auth/register', { body: { name: 'Launch Verify Browser', email: L, password: lpw, academyId: A.id } });
+  r = await call(A.host, 'POST', '/auth/register', { body: { name: who('Launch Verify Browser', 'bl'), email: L, password: lpw, academyId: A.id } });
   check('academy learner registers (API)', r.status === 201, `${r.status} ${r.key}`);
   {
     const { ctx, p } = await page('academy-A');
@@ -329,7 +333,7 @@ async function browserMode() {
   for (const v of [{ tag: 'ar-mobile', ar: true, mobile: true }, { tag: 'en-mobile', ar: false, mobile: true }]) {
     const email = mail(`b${v.tag.replace('-', '')}`);
     const vpw = password();
-    const reg = await call(A.host, 'POST', '/auth/register', { body: { name: 'Launch Verify Browser', email, password: vpw, academyId: A.id } });
+    const reg = await call(A.host, 'POST', '/auth/register', { body: { name: who('Launch Verify Browser', `b${v.tag.replace('-', '')}`), email, password: vpw, academyId: A.id } });
     check(`[${v.tag}] academy learner registers (API)`, reg.status === 201, `${reg.status} ${reg.key}`);
     const prefix = v.ar ? '/ar' : '';
     const { ctx, p } = await page(`academy-A-${v.tag}`, v);
@@ -371,7 +375,7 @@ async function smiMode() {
   // ---- Smart academy join: an existing account joins B, answered like sign-in --
   const J = mail('sj');
   const jpw = password();
-  r = await call(A.host, 'POST', '/auth/register', { body: { name: 'Launch Verify Join', email: J, password: jpw, academyId: A.id } });
+  r = await call(A.host, 'POST', '/auth/register', { body: { name: who('Launch Verify Join', 'sj'), email: J, password: jpw, academyId: A.id } });
   check('SMI join fixture: learner registers at Academy A', r.status === 201 && r.body?.account === 'new', `${r.status} ${r.key}`);
   const ghost = await call(B.host, 'POST', '/auth/academy-join', { body: { email: mail('ghost'), password: password(), academyId: B.id } });
   const wrong = await call(B.host, 'POST', '/auth/academy-join', { body: { email: J, password: 'not-the-password', academyId: B.id } });
@@ -380,7 +384,7 @@ async function smiMode() {
     `${ghost.status} ${ghost.key} / ${wrong.status} ${wrong.key}`);
   r = await call(B.host, 'POST', '/auth/academy-join', { body: { email: J, password: jpw, academyId: B.id } });
   check('SMI join: the right password joins Academy B, returns the name, mints no session',
-    r.status === 200 && r.body?.account === 'existing' && r.body?.name === 'Launch Verify Join' && !r.body?.accessToken,
+    r.status === 200 && r.body?.account === 'existing' && r.body?.name === who('Launch Verify Join', 'sj') && !r.body?.accessToken,
     `${r.status} ${r.key} status=${r.body?.status}`);
   f = facts('user', J, A.id, B.id);
   check('SMI join: one user, learner rows at A and B, owner notified (account.academy.joined)',
@@ -410,7 +414,7 @@ async function smiMode() {
   // A management session that owns nothing may not look anyone up.
   const M = mail('sm');
   const mpw = password();
-  r = await call(MGMT, 'POST', '/auth/register', { body: { name: 'Launch Verify Staff', email: M, password: mpw } });
+  r = await call(MGMT, 'POST', '/auth/register', { body: { name: who('Launch Verify Staff', 'sm'), email: M, password: mpw } });
   check('SMI lookup fixture: management account registers', r.status === 201, `${r.status} ${r.key}`);
   r = await signIn(MGMT, M, mpw);
   if (r.body?.emailOtpRequired) r = await verify(MGMT, r.body.challengeId, await code(M), false, 'management');
@@ -457,14 +461,14 @@ async function smiBrowserMode() {
   for (const v of [{ tag: 'join-en-desktop', ar: false, mobile: false }, { tag: 'join-ar-mobile', ar: true, mobile: true }]) {
     const email = mail(`b${v.tag.replace(/-/g, '')}`);
     const jpw = password();
-    const reg = await call(A.host, 'POST', '/auth/register', { body: { name: 'Launch Verify Join', email, password: jpw, academyId: A.id } });
+    const reg = await call(A.host, 'POST', '/auth/register', { body: { name: who('Launch Verify Join', `b${v.tag.replace(/-/g, '')}`), email, password: jpw, academyId: A.id } });
     check(`[${v.tag}] join fixture: learner registers at Academy A (API)`, reg.status === 201, `${reg.status} ${reg.key}`);
     const prefix = v.ar ? '/ar' : '';
     const { ctx, p } = await page(`academy-B-${v.tag}`, v);
     try {
       await p.goto(`${ORIGIN(B.host)}${prefix}/sign-up`); await p.waitForLoadState('networkidle'); await accept(p);
       const other = password();
-      await p.fill('#name', 'Launch Verify Join'); await p.fill('#email', email);
+      await p.fill('#name', who('Launch Verify Join', `b${v.tag.replace(/-/g, '')}`)); await p.fill('#email', email);
       await p.fill('#password', other); await p.fill('#confirmPassword', other);
       await p.getByRole('checkbox').first().click();
       await p.locator('form button[type=submit]').click();

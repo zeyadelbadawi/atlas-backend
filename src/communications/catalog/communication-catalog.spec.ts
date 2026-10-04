@@ -344,6 +344,16 @@ const EXPECTED_DEDUPE: Record<
     expected: `platform_contact_received:${ENTITY_ID}`,
   },
 
+  // W3-compose — one row per recipient per campaign; the entity is the campaign.
+  'academy.message.sent': {
+    values: {},
+    expected: `campaign:${ENTITY_ID}`,
+  },
+  'platform.broadcast.sent': {
+    values: {},
+    expected: `campaign:${ENTITY_ID}`,
+  },
+
   // A STAFF work item. The submission instant is in the key because a
   // re-submitted review is a new thing to moderate — without it an edited
   // review would dedupe against the original and never be re-queued.

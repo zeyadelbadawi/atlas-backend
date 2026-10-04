@@ -55,6 +55,7 @@ import { ProtectedMediaStorage } from '../src/media/storage/protected-media-stor
 import { VideoProviderRegistry } from '../src/media/video/video-provider.registry';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { hashDeviceCookie } from '../src/tenancy/services/student-device.service';
+import { uniqueName } from './utils/unique-name';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -1392,7 +1393,7 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
     await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        name: 'Learner',
+        name: uniqueName('Learner'),
         email,
         password: PASSWORD,
         academyId: w.academy.id,

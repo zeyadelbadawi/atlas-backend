@@ -34,6 +34,7 @@ import type { IdentityConfig } from '../src/config/configuration';
 import { Prisma } from '@prisma/client';
 import type { Plan, PrismaClient } from '@prisma/client';
 import { PrismaService } from '../src/database/prisma.service';
+import { uniqueName } from './utils/unique-name';
 
 const PASSWORD = 'correct-horse-battery';
 const PROOF_DATA_URL =
@@ -357,7 +358,7 @@ describe('New Customer Onboarding (e2e)', () => {
         name: 'Refused',
         email,
         password: PASSWORD,
-        organizationName: 'Refused Org',
+        organizationName: uniqueName('Refused Org'),
         planId: trialPlan.id,
         ...(await build()),
       }).expect(400);
@@ -372,7 +373,7 @@ describe('New Customer Onboarding (e2e)', () => {
         name: 'No Trials',
         email,
         password: PASSWORD,
-        organizationName: 'No Trials Org',
+        organizationName: uniqueName('No Trials Org'),
         planId: trialPlan.id,
       }).expect(400);
       expect(res.body.error.messageKey).toBe('errors.auth.signupTrialsUnavailable');
@@ -396,7 +397,7 @@ describe('New Customer Onboarding (e2e)', () => {
         name: 'Flag Off',
         email,
         password: PASSWORD,
-        organizationName: 'Flag Off Org',
+        organizationName: uniqueName('Flag Off Org'),
         planId: trialPlan.id,
       }).expect(400);
       expect(res.body.error.messageKey).toBe('errors.auth.organizationSignupDisabled');
@@ -423,7 +424,7 @@ describe('New Customer Onboarding (e2e)', () => {
         email,
         password: PASSWORD,
         academyId: academy.id,
-        organizationName: 'Should Not Exist',
+        organizationName: uniqueName('Should Not Exist'),
         planId: trialPlan.id,
       }).expect(400);
       expect(res.body.error.messageKey).toBe('errors.auth.signupFieldsNotAllowed');
@@ -441,7 +442,7 @@ describe('New Customer Onboarding (e2e)', () => {
             name: 'Racer',
             email,
             password: PASSWORD,
-            organizationName: 'Race Org',
+            organizationName: uniqueName('Race Org'),
             planId: trialPlan.id,
           }),
         ),
@@ -454,18 +455,32 @@ describe('New Customer Onboarding (e2e)', () => {
       expect(await rowsForEmail(email)).toEqual({ users: 1, orgs: 1 });
     });
 
-    it('a retry after success gets the same answer and creates nothing more (audit Decision 3)', async () => {
+    it('a retry after success gets the same answer a fresh address gets, and creates nothing more (audit Decision 3, W4)', async () => {
       const email = uniqueTestEmail('onb-retry');
+      const organizationName = uniqueName('Retry Org');
       const body = {
         name: 'Retry',
         email,
         password: PASSWORD,
-        organizationName: 'Retry Org',
+        organizationName,
         planId: trialPlan.id,
       };
       await register(body).expect(201);
-      const again = await register(body).expect(201);
-      expect(again.body).toEqual({ account: 'new' });
+      // W4 — organization names are unique platform-wide. The retry (an
+      // existing address) and a brand-new address asking for the same,
+      // now-taken name get the SAME generic answer, so the name check is
+      // never an oracle for which addresses have accounts.
+      const again = await register(body).expect(409);
+      const fresh = await register({
+        ...body,
+        email: uniqueTestEmail('onb-retry-fresh'),
+      }).expect(409);
+      expect(again.body.error.messageKey).toBe('errors.organization.nameUnavailable');
+      const errorless = (b: { error?: { requestId?: string } }) => ({
+        ...b,
+        error: { ...b.error, requestId: undefined },
+      });
+      expect(errorless(again.body)).toEqual(errorless(fresh.body));
       expect(await rowsForEmail(email)).toEqual({ users: 1, orgs: 1 });
     });
 
@@ -475,19 +490,20 @@ describe('New Customer Onboarding (e2e)', () => {
         .spyOn(bootstrap, 'bootstrapSubscription')
         .mockRejectedValueOnce(new Error('injected failure'));
       const email = uniqueTestEmail('onb-injected');
+      const injectedOrg = uniqueName('Injected Org');
       try {
         await register({
           name: 'Injected',
           email,
           password: PASSWORD,
-          organizationName: 'Injected Org',
+          organizationName: injectedOrg,
           planId: trialPlan.id,
         }).expect(500);
       } finally {
         spy.mockRestore();
       }
       expect(await rowsForEmail(email)).toEqual({ users: 0, orgs: 0 });
-      expect(await admin.organization.count({ where: { name: 'Injected Org' } })).toBe(0);
+      expect(await admin.organization.count({ where: { name: injectedOrg } })).toBe(0);
     });
   });
 
@@ -623,7 +639,7 @@ describe('New Customer Onboarding (e2e)', () => {
       const created = await request(app.getHttpServer())
         .post('/organizations')
         .set('Authorization', `Bearer ${session.accessToken}`)
-        .send({ name: 'Legacy Path Org' })
+        .send({ name: uniqueName('Legacy Path Org') })
         .expect(201);
       const legacy = await admin.organization.findUniqueOrThrow({
         where: { id: created.body.id },
@@ -655,7 +671,7 @@ describe('New Customer Onboarding (e2e)', () => {
       const second = await request(app.getHttpServer())
         .post('/organizations')
         .set('Authorization', `Bearer ${session.accessToken}`)
-        .send({ name: 'Second Org' })
+        .send({ name: uniqueName('Second Org') })
         .expect(201);
       const again = await signIn(email);
       const byId = new Map(

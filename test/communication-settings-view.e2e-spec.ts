@@ -90,6 +90,14 @@ describe('Communication settings — read-only views (e2e)', () => {
 
     const manager = await signUpAndSignIn(app, 'comms-view-manager');
     await seedMembership(admin, org.id, manager.userId, 'manager');
+    // W5 (F12) — an organization manager who is not staff of THIS academy
+    // (the manager of a sibling academy) is refused; the academy's own
+    // manager reads it.
+    await request(app.getHttpServer())
+      .get(path)
+      .set('Authorization', `Bearer ${manager.accessToken}`)
+      .expect(403);
+    await seedAcademyMember(admin, academy.id, manager.userId, 'manager');
     await request(app.getHttpServer())
       .get(path)
       .set('Authorization', `Bearer ${manager.accessToken}`)

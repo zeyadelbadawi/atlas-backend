@@ -34,11 +34,13 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Prisma, CommunicationOutbox } from '@prisma/client';
+import { EmailQuotaExhaustedError } from '../../identity/services/email-provider.interface';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { RedisService } from '../../redis/redis.service';
 import {
   COMMUNICATION_CATALOG,
+  COMMUNICATION_EVENT_KEYS,
   isCommunicationEventKey,
   settleScrubKeys,
   type CommunicationAudience,
@@ -69,6 +71,10 @@ import {
   DAILY_EMAIL_CAP_STAFF,
   DIGEST_LOCAL_HOUR,
 } from '../queue/communications.types';
+import {
+  CAMPAIGN_PREFERENCE_CATEGORY,
+  type CampaignScope,
+} from '../campaigns/campaign.types';
 
 export type DispatchOutcome =
   'skipped' | 'sent' | 'in_app_only' | 'suppressed' | 'deferred' | 'digested' | 'failed';
@@ -85,7 +91,25 @@ export interface PruneResult {
   readonly deliveries: number;
   readonly digests: number;
   readonly notifications: number;
+  /** W3 — rows whose leftover credential `values` the safety net stripped. */
+  readonly scrubbedCredentials?: number;
 }
+
+/**
+ * W3 security fix — how old an UNSETTLED row carrying a short-lived code
+ * (`auth.email.otp`, `auth.account.deletion_code`) may get before the
+ * prune strips the code anyway. Those codes expire after 10 minutes and the
+ * dispatch retry budget is ~15 minutes, so an hour-old code is dead weight
+ * that only a stuck row (no platform owner yet, a crashed worker) could
+ * still be holding.
+ */
+export const SHORT_LIVED_CODE_SCRUB_AFTER_MS = 60 * 60 * 1000;
+
+/** Catalogue keys whose `code` value is a short-lived emailed credential. */
+export const SHORT_LIVED_CODE_KEYS = [
+  'auth.email.otp',
+  'auth.account.deletion_code',
+] as const;
 
 /** Sentinel domain `AccountDeletionService` rewrites an anonymised account's address to. */
 const ANONYMISED_EMAIL_DOMAIN = '@account.invalid';
@@ -132,7 +156,23 @@ interface SendPlan {
   readonly entry: CommunicationCatalogEntry;
   readonly to: string;
   readonly rendered: RenderedEmail;
+  /** W3-compose — `List-Unsubscribe` headers for a campaign email. */
+  readonly headers?: Record<string, string>;
 }
+
+/** W3-compose — what a campaign row renders from (loaded by `campaign_id`). */
+interface CampaignContent {
+  readonly scope: CampaignScope;
+  readonly status: string;
+  readonly subject: string;
+  readonly bodyHtml: string;
+  readonly bodyText: string;
+  readonly contentLocale: string;
+}
+
+/** Campaign copy is immutable once created; status may change, so entries expire. */
+const CAMPAIGN_CONTENT_TTL_MS = 60 * 1000;
+const CAMPAIGN_CONTENT_CACHE_MAX = 200;
 
 interface SettledPlan {
   readonly kind: 'settled';
@@ -142,6 +182,10 @@ interface SettledPlan {
 @Injectable()
 export class CommunicationDispatchService {
   private readonly logger = new Logger(CommunicationDispatchService.name);
+  private readonly campaignCache = new Map<
+    string,
+    { readonly at: number; readonly content: CampaignContent | null }
+  >();
 
   constructor(
     private readonly tenancyContextService: TenancyContextService,
@@ -178,6 +222,7 @@ export class CommunicationDispatchService {
         text: plan.rendered.text,
         html: plan.rendered.html,
         idempotencyKey: plan.row.id,
+        headers: plan.headers,
         tags: { key: plan.row.key, category: plan.row.category },
         // The quota line the registry reserves against — a per-category
         // budget is the whole point of having categories, so losing it
@@ -221,8 +266,55 @@ export class CommunicationDispatchService {
       );
       return 'sent';
     } catch (error) {
+      // W3-compose — every provider was out of quota for this category, so
+      // no provider was even tried. Retrying on BullMQ's backoff would burn
+      // all six attempts inside fifteen minutes against a cap that resets
+      // at midnight UTC and then mark a perfectly sendable email `failed`.
+      // Defer it to the reset instead. Security mail keeps the old path:
+      // a code delivered tomorrow is worse than one reported as failed.
+      if (error instanceof EmailQuotaExhaustedError && plan.row.category !== 'security') {
+        return this.deferForProviderQuota(platformOwnerId, plan, error);
+      }
       return this.handleSendFailure(platformOwnerId, plan, attempt, error);
     }
+  }
+
+  /**
+   * W3-compose — park a claimed row until the provider quota resets. The
+   * claim's attempt is handed back (nothing was attempted), no delivery
+   * row is written (nothing was sent or refused), and credentials stay on
+   * the row because the eventual send re-renders it. The sweep re-enqueues
+   * the row once `available_at` has passed. Returning instead of
+   * rethrowing completes the BullMQ job, so no retry is consumed.
+   */
+  private async deferForProviderQuota(
+    platformOwnerId: string,
+    plan: SendPlan,
+    error: EmailQuotaExhaustedError,
+  ): Promise<DispatchOutcome> {
+    await this.tenancyContextService.runInUserContext(
+      platformOwnerId,
+      (tx) =>
+        tx.$executeRaw`
+        UPDATE "communication_outbox"
+           SET "state" = 'deferred'::"communication_outbox_state",
+               "available_at" = ${error.retryAt},
+               "attempts" = GREATEST("attempts" - 1, 0),
+               "last_error" = ${`provider_quota_exhausted:${error.reason}`}
+         WHERE "id" = ${plan.row.id}
+      `,
+    );
+    this.metrics.recordOutbox(plan.row.category, 'deferred');
+    this.logger.warn(
+      {
+        outboxId: plan.row.id,
+        key: plan.row.key,
+        reason: error.reason,
+        retryAt: error.retryAt.toISOString(),
+      },
+      'Every email provider is out of quota for this category; deferred until it resets.',
+    );
+    return 'deferred';
   }
 
   /** The claim + every pre-send decision, in one platform-owner transaction. */
@@ -255,6 +347,17 @@ export class CommunicationDispatchService {
     const recipient = await this.loadRecipient(tx, row.recipientUserId);
     if (!recipient) {
       return this.settle(tx, outboxId, 'suppressed', 'recipient_unavailable', {
+        inApp: channels.inApp,
+      });
+    }
+
+    // W3-compose — a campaign row renders from its campaign's copy; a
+    // cancelled (or vanished) campaign sends nothing more.
+    const campaign = row.campaignId
+      ? await this.campaignContent(tx, row.campaignId)
+      : null;
+    if (row.campaignId && (!campaign || campaign.status === 'cancelled')) {
+      return this.settle(tx, outboxId, 'suppressed', 'campaign_cancelled', {
         inApp: channels.inApp,
       });
     }
@@ -343,6 +446,9 @@ export class CommunicationDispatchService {
       tx,
       entry.branding,
       row.academyId,
+      // W3 — the visual identity (academy name + logo) may differ from
+      // the host rule; see `CommunicationBrandingService.resolve`.
+      entry.identity ?? entry.branding,
     );
 
     // Daily cap — security/transactional are exempt; everything else past
@@ -372,8 +478,85 @@ export class CommunicationDispatchService {
     }
 
     const locale = this.resolveLocale(recipient.preferences, entry, branding, row.locale);
-    const rendered = this.render(row, entry, locale, branding);
-    return { kind: 'send', row, entry, to: recipient.email, rendered };
+    const extra = campaign
+      ? this.campaignValues(campaign, row.recipientUserId)
+      : undefined;
+    const rendered = this.render(row, entry, locale, branding, extra);
+    const unsubscribeUrl = extra?.unsubscribeUrl;
+    return {
+      kind: 'send',
+      row,
+      entry,
+      to: recipient.email,
+      rendered,
+      // RFC 2369 + RFC 8058: mail clients show an "Unsubscribe" control and
+      // may POST the URL directly (one click, no sign-in).
+      headers:
+        typeof unsubscribeUrl === 'string'
+          ? {
+              'List-Unsubscribe': `<${unsubscribeUrl}>`,
+              'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+            }
+          : undefined,
+    };
+  }
+
+  /**
+   * W3-compose — the campaign's copy, read once per campaign per minute
+   * rather than once per recipient (a 10 000-person campaign is 10 000
+   * dispatches of the same body).
+   */
+  private async campaignContent(
+    tx: Prisma.TransactionClient,
+    campaignId: string,
+  ): Promise<CampaignContent | null> {
+    const cached = this.campaignCache.get(campaignId);
+    if (cached && Date.now() - cached.at < CAMPAIGN_CONTENT_TTL_MS) return cached.content;
+    const row = await tx.communicationCampaign.findUnique({
+      where: { id: campaignId },
+      select: {
+        scope: true,
+        status: true,
+        subject: true,
+        bodyHtml: true,
+        bodyText: true,
+        contentLocale: true,
+      },
+    });
+    const content: CampaignContent | null = row
+      ? {
+          scope: row.scope,
+          status: row.status,
+          subject: row.subject,
+          bodyHtml: row.bodyHtml,
+          bodyText: row.bodyText,
+          contentLocale: row.contentLocale,
+        }
+      : null;
+    if (this.campaignCache.size >= CAMPAIGN_CONTENT_CACHE_MAX) {
+      const oldest = this.campaignCache.keys().next().value;
+      if (oldest !== undefined) this.campaignCache.delete(oldest);
+    }
+    this.campaignCache.set(campaignId, { at: Date.now(), content });
+    return content;
+  }
+
+  /** The render-time values a campaign row adds (see `templates/keys/campaign-message.ts`). */
+  private campaignValues(
+    campaign: CampaignContent,
+    recipientUserId: string,
+  ): Record<string, unknown> {
+    return {
+      campaignSubject: campaign.subject,
+      campaignBodyHtml: campaign.bodyHtml,
+      campaignBodyText: campaign.bodyText,
+      campaignContentLocale: campaign.contentLocale,
+      unsubscribeUrl:
+        this.links.unsubscribe(
+          recipientUserId,
+          CAMPAIGN_PREFERENCE_CATEGORY[campaign.scope],
+        ) ?? undefined,
+    };
   }
 
   private render(
@@ -381,8 +564,12 @@ export class CommunicationDispatchService {
     entry: CommunicationCatalogEntry,
     locale: CommunicationLocale,
     branding: ResolvedBranding,
+    extraValues?: Record<string, unknown>,
   ): RenderedEmail {
-    const values = (row.values as Record<string, unknown> | null) ?? {};
+    const values = {
+      ...((row.values as Record<string, unknown> | null) ?? {}),
+      ...(extraValues ?? {}),
+    };
     const path = entry.actionUrl?.({
       entity: { type: row.entityType ?? '', id: row.entityId ?? '' },
       values,
@@ -825,7 +1012,18 @@ export class CommunicationDispatchService {
             item.academyId === first.academyId
               ? branding
               : await this.brandingService.resolve(tx, entry.branding, item.academyId);
-          const rendered = this.render(item, entry, locale, itemBranding);
+          const itemCampaign = item.campaignId
+            ? await this.campaignContent(tx, item.campaignId)
+            : null;
+          const rendered = this.render(
+            item,
+            entry,
+            locale,
+            itemBranding,
+            itemCampaign
+              ? this.campaignValues(itemCampaign, digest.recipientUserId)
+              : undefined,
+          );
           const values = (item.values as Record<string, unknown> | null) ?? {};
           const path = entry.actionUrl?.({
             entity: { type: item.entityType ?? '', id: item.entityId ?? '' },
@@ -1085,8 +1283,49 @@ export class CommunicationDispatchService {
       const digests =
         await tx.$executeRaw`DELETE FROM "communication_digests" WHERE "created_at" < ${cutoff}`;
       const notifications = await tx.$executeRaw`DELETE FROM "notifications"`;
-      return { outbox, deliveries, digests, notifications };
+      const scrubbedCredentials = await this.scrubLeftoverCredentials(tx);
+      return { outbox, deliveries, digests, notifications, scrubbedCredentials };
     });
+  }
+
+  /**
+   * W3 security fix — the safety net behind the per-row settle scrub.
+   *
+   *  1. Any SETTLED row (dispatched / suppressed / failed) still holding a
+   *     declared credential key loses it. The settle paths already do this;
+   *     this catches rows settled by a path that forgot, or written before
+   *     the key was declared.
+   *  2. Any row of a short-lived-code key older than an hour loses its
+   *     `code` whatever its state: the code expired 50 minutes earlier, so
+   *     a row that never settled has nothing left worth rendering.
+   *
+   * Runs as the platform owner (`communication_outbox_platform_update`).
+   * Only JSON keys are removed; no row is deleted or re-stated.
+   */
+  private async scrubLeftoverCredentials(tx: Prisma.TransactionClient): Promise<number> {
+    let scrubbed = 0;
+    for (const key of COMMUNICATION_EVENT_KEYS) {
+      const credentialKeys = [...(COMMUNICATION_CATALOG[key].credentialValues ?? [])];
+      if (!credentialKeys.length) continue;
+      scrubbed += await tx.$executeRaw`
+        UPDATE "communication_outbox"
+           SET "values" = "values" - ${credentialKeys}::text[]
+         WHERE "key" = ${key}
+           AND "state" IN ('dispatched', 'suppressed', 'failed')
+           AND jsonb_typeof("values") = 'object'
+           AND jsonb_exists_any("values", ${credentialKeys}::text[])
+      `;
+    }
+    const staleBefore = new Date(Date.now() - SHORT_LIVED_CODE_SCRUB_AFTER_MS);
+    scrubbed += await tx.$executeRaw`
+      UPDATE "communication_outbox"
+         SET "values" = "values" - 'code'
+       WHERE "key" = ANY(${[...SHORT_LIVED_CODE_KEYS]}::text[])
+         AND "created_at" < ${staleBefore}
+         AND jsonb_typeof("values") = 'object'
+         AND jsonb_exists("values", 'code')
+    `;
+    return scrubbed;
   }
 
   private async platformOwnerId(): Promise<string | null> {

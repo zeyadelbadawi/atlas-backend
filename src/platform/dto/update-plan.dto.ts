@@ -15,6 +15,7 @@
  * it: the version goes into the UPDATE's WHERE clause and the database
  * decides the race.
  */
+import { applyDecorators } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -28,9 +29,32 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { PLAN_FEATURE_KEYS, PLAN_LIMIT_KEYS } from '../../plans/dto/entitlement.types';
+import {
+  OPTIONAL_PLAN_LIMIT_KEYS,
+  PLAN_FEATURE_KEYS,
+  PLAN_LIMIT_KEYS,
+} from '../../plans/dto/entitlement.types';
+
+/** W8 — the configurable range of gifted setup days (mirrors the DB CHECK). */
+export const GIFTED_DAYS_MIN = 5;
+export const GIFTED_DAYS_MAX = 15;
+
+/**
+ * W8 — `null` (or omitted) or `0` means "no gift"; anything else must be a
+ * whole number of days in 5..15. Mirrors `plans_gifted_days_*_range_chk`.
+ */
+function IsGiftedDays(): PropertyDecorator {
+  return applyDecorators(
+    IsOptional(),
+    ValidateIf((_object: unknown, value: unknown) => value !== 0),
+    IsInt({ message: 'errors.plan.giftedDaysRange' }),
+    Min(GIFTED_DAYS_MIN, { message: 'errors.plan.giftedDaysRange' }),
+    Max(GIFTED_DAYS_MAX, { message: 'errors.plan.giftedDaysRange' }),
+  );
+}
 
 /** Mirrors `LocalizedText` (`{en, ar}`) — the P54 shape used by every bilingual field in Atlas. */
 export class PlanLocalizedTextDto {
@@ -88,9 +112,17 @@ export class PlanPricingDto {
  */
 export function assertValidLimits(limits: Record<string, unknown>): string[] {
   const errors: string[] = [];
-  const allowed = new Set<string>(PLAN_LIMIT_KEYS);
+  const allowed = new Set<string>([...PLAN_LIMIT_KEYS, ...OPTIONAL_PLAN_LIMIT_KEYS]);
   for (const key of Object.keys(limits)) {
     if (!allowed.has(key)) errors.push(`limits.${key} is not a plan limit key`);
+  }
+  // W3-compose — optional keys are validated when present, never required.
+  for (const key of OPTIONAL_PLAN_LIMIT_KEYS) {
+    const value = limits[key];
+    if (value === undefined || value === 'unlimited') continue;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+      errors.push(`limits.${key} must be a non-negative integer or "unlimited"`);
+    }
   }
   for (const key of PLAN_LIMIT_KEYS) {
     const value = limits[key];
@@ -183,6 +215,14 @@ export class CreatePlanDto {
   @Min(1)
   @Max(365)
   readonly trialDurationDays?: number | null;
+
+  /** W8 — gifted setup days on a first monthly subscription. null/0 = none; else 5..15. */
+  @IsGiftedDays()
+  readonly giftedDaysMonthly?: number | null;
+
+  /** W8 — gifted setup days on a first yearly subscription. null/0 = none; else 5..15. */
+  @IsGiftedDays()
+  readonly giftedDaysYearly?: number | null;
 }
 
 /** Every field optional — a partial edit must not require resending the whole plan. */
@@ -240,6 +280,14 @@ export class UpdatePlanDto {
   @Min(1)
   @Max(365)
   readonly trialDurationDays?: number | null;
+
+  /** W8 — gifted setup days on a first monthly subscription. null/0 = none; else 5..15. */
+  @IsGiftedDays()
+  readonly giftedDaysMonthly?: number | null;
+
+  /** W8 — gifted setup days on a first yearly subscription. null/0 = none; else 5..15. */
+  @IsGiftedDays()
+  readonly giftedDaysYearly?: number | null;
 }
 
 export class ArchivePlanDto {

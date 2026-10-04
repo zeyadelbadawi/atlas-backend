@@ -24,9 +24,13 @@ import { defineLocale, str } from '../layout';
 import type { CommunicationTemplate } from '../layout';
 
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
-    subject: (values) => `${str(values, 'code')} is your sign-in code`,
+    // W3 security fix — the code is NOT in the subject. Subjects are stored
+    // in provider logs, shown on lock screens and in notification previews,
+    // and indexed by mail search; the code belongs only in the body.
+    subject: (_values, ctx) =>
+      `Your ${ctx.branding.academyName ?? ctx.branding.platformName} sign-in code`,
     preheader: () => 'Use this code to finish signing in.',
     paragraphs: (values, ctx) => [
       `Your ${ctx.branding.academyName ?? ctx.branding.platformName} sign-in code is:`,
@@ -36,7 +40,8 @@ export const template: CommunicationTemplate = {
     ],
   }),
   ar: defineLocale({
-    subject: (values) => `${str(values, 'code')} هو رمز تسجيل الدخول`,
+    subject: (_values, ctx) =>
+      `رمز تسجيل الدخول إلى ${ctx.branding.academyName ?? ctx.branding.platformName}`,
     preheader: () => 'استخدم هذا الرمز لإكمال تسجيل الدخول.',
     paragraphs: (values, ctx) => [
       `رمز تسجيل الدخول إلى ${ctx.branding.academyName ?? ctx.branding.platformName}:`,

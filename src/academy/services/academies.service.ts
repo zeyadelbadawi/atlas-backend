@@ -38,6 +38,7 @@ import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-st
 import {
   ORGANIZATION_INSTRUCTOR_PERMISSIONS,
   ORGANIZATION_MANAGER_PERMISSIONS,
+  ORGANIZATION_MEMBER_PERMISSIONS,
 } from '../../tenancy/constants/organization-permissions.constants';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
@@ -61,6 +62,9 @@ import { PlatformDomainConfigurationRepository } from '../../domain/repositories
 import { PublicWebsiteCacheService } from '../../public-website/services/public-website-cache.service';
 import { toAcademyResponse } from '../dto/academy.contract';
 import type { AcademyResponse, AcademyAddressResponse } from '../dto/academy.contract';
+import { toAcademySummaryResponse } from '../dto/academy-me.contract';
+import type { AcademyMeResponse } from '../dto/academy-me.contract';
+import type { AcademyContext } from '../guards/academy-scope.guard';
 import { toAcademyMemberResponse } from '../dto/academy-member.contract';
 import type { AcademyMemberResponse } from '../dto/academy-member.contract';
 import { toAcademyStudentResponse } from '../dto/academy-student.contract';
@@ -107,6 +111,27 @@ import type {
 } from '../dto/academy-member-lookup.dto';
 import { AuthRateLimiterService } from '../../identity/services/auth-rate-limiter.service';
 import { normalizeEmail } from '../../identity/utils/email.util';
+import { cleanDisplayName } from '../../common/name-uniqueness/name-key';
+import {
+  academyNameTaken,
+  isAcademyNameTaken,
+  isUniqueViolation as isPrismaUniqueViolation,
+  lockAcademyName,
+  requireNameKey,
+  sqlNameKey,
+} from '../../common/name-uniqueness/name-uniqueness';
+
+/** W4 — the API limit on an academy name (`CreateAcademyDto`). */
+const MAX_ACADEMY_NAME_LENGTH = 100;
+
+/**
+ * W4 — what `create` does when the requested academy name is already held:
+ * `refuse` (every interactive caller) answers 409 `errors.academy.nameTaken`;
+ * `suffix` (the asynchronous provisioning worker, which must never fail
+ * after its request was accepted) takes the first free "<name> (2)",
+ * "<name> (3)", … and the audit entry records the requested name.
+ */
+export type AcademyNameConflictPolicy = 'refuse' | 'suffix';
 
 /**
  * Roles permitted to write to an Academy (create/update/branding/archive)
@@ -128,6 +153,31 @@ export function assertSlugNotReserved(slug: string): void {
 }
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
+
+/** W5 — one academy-list row: the academy plus the caller's role in it. */
+export type AcademyListItemResponse = AcademyResponse & {
+  readonly viewerRole?: AcademyMemberRole;
+};
+
+/**
+ * W5 — the permission strings that apply inside ONE academy for a staff
+ * member who is not the organization owner. Mirrors the organization-level
+ * catalog the staff grant already writes (`addManager`/`addInstructor`), so
+ * the frontend's existing `requiredPermissions` gates keep working, but
+ * scoped by the academy role instead of the organization-wide set.
+ */
+function permissionsForAcademyRole(role: AcademyMemberRole): readonly string[] {
+  switch (role) {
+    case 'owner':
+    case 'administrator':
+    case 'manager':
+      return ORGANIZATION_MANAGER_PERMISSIONS;
+    case 'instructor':
+      return ORGANIZATION_INSTRUCTOR_PERMISSIONS;
+    default:
+      return ORGANIZATION_MEMBER_PERMISSIONS;
+  }
+}
 
 /**
  * Only the Academy's `owner`-role member may grant Manager or Instructor
@@ -364,12 +414,13 @@ export class AcademiesService {
     actingUserId: string,
     role: MemberAddRole,
   ): Promise<{ readonly academyName: string }> {
-    const actingMembership = await this.academyMembersRepository.findForUserInAcademy(
+    const actingRole = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       actingUserId,
+      GRANTS_MANAGER_ROLES,
     );
-    if (!actingMembership || !GRANTS_MANAGER_ROLES.has(actingMembership.role)) {
+    if (!actingRole) {
       throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
     }
     if (role !== 'student') {
@@ -460,25 +511,84 @@ export class AcademiesService {
     }
   }
 
-  async list(query: ListAcademiesQueryDto): Promise<PaginatedResult<AcademyResponse>> {
+  /**
+   * W5 (F5) — the academies the CALLER staffs. The organization owner sees
+   * every academy of the organization (and is `owner` of each); anyone
+   * else sees only academies where they hold an ACTIVE `academy_members`
+   * row, so the switcher never offers an academy the guard would refuse.
+   * Each row carries `viewerRole` for the switcher's role badge.
+   */
+  async list(
+    query: ListAcademiesQueryDto,
+    viewer: { readonly userId: string; readonly organizationRole: string },
+  ): Promise<PaginatedResult<AcademyListItemResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
+    const isOrganizationOwner = viewer.organizationRole === 'owner';
 
-    const { items, totalItems } = await this.tenancyContextService.runInTenantContext(
-      query.organizationId,
-      (tx) =>
-        this.academiesRepository.findManyForOrganization(tx, query.organizationId, {
-          search: query.search,
-          sortBy: query.sortBy as 'name' | 'slug' | 'createdAt' | 'updatedAt' | undefined,
-          sortDirection: query.sortDirection,
-          skip: (page - 1) * pageSize,
-          take: pageSize,
-        }),
-    );
+    const { items, totalItems, roles } =
+      await this.tenancyContextService.runInTenantContext(
+        query.organizationId,
+        async (tx) => {
+          const result = await this.academiesRepository.findManyForOrganization(
+            tx,
+            query.organizationId,
+            {
+              search: query.search,
+              sortBy: query.sortBy as
+                'name' | 'slug' | 'createdAt' | 'updatedAt' | undefined,
+              sortDirection: query.sortDirection,
+              skip: (page - 1) * pageSize,
+              take: pageSize,
+              staffUserId: isOrganizationOwner ? undefined : viewer.userId,
+            },
+          );
+          const memberRows = isOrganizationOwner
+            ? []
+            : await this.academyMembersRepository.findActiveForUserInAcademies(
+                tx,
+                viewer.userId,
+                result.items.map((academy) => academy.id),
+              );
+          return {
+            ...result,
+            roles: new Map(memberRows.map((row) => [row.academyId, row.role])),
+          };
+        },
+      );
 
     return {
-      items: items.map(toAcademyResponse),
+      items: items.map((academy) => ({
+        ...toAcademyResponse(academy),
+        viewerRole: isOrganizationOwner ? 'owner' : roles.get(academy.id),
+      })),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
+    };
+  }
+
+  /**
+   * W5 — `GET /academies/:id/me`: the caller's role in this academy (already
+   * resolved, uncached, by `AcademyScopeGuard`), the permissions that apply
+   * while working in it, and the academy summary the switcher renders.
+   */
+  async getMe(context: AcademyContext): Promise<AcademyMeResponse> {
+    const academy = await this.tenancyContextService.runInTenantContext(
+      context.organizationId,
+      (tx) => this.academiesRepository.findById(tx, context.academyId),
+    );
+    // A deleted academy is archived (soft delete): nobody works in it any
+    // more, so the switch flow is told it is gone (404), not handed a summary.
+    if (!academy || academy.status === 'archived') {
+      throw new NotFoundException({ messageKey: 'errors.academy.notFound' });
+    }
+    return {
+      academy: toAcademySummaryResponse(academy),
+      role: context.academyRole,
+      roleSource: context.academyRoleSource,
+      permissions:
+        context.academyRoleSource === 'organization_owner'
+          ? [...context.organizationPermissions]
+          : [...permissionsForAcademyRole(context.academyRole)],
     };
   }
 
@@ -518,151 +628,174 @@ export class AcademiesService {
     return toAcademyResponse(academy);
   }
 
-  async create(userId: string, payload: CreateAcademyDto): Promise<AcademyResponse> {
+  async create(
+    userId: string,
+    payload: CreateAcademyDto,
+    options: { readonly onNameTaken?: AcademyNameConflictPolicy } = {},
+  ): Promise<AcademyResponse> {
     // P63g — the slug IS the public subdomain label; labels Atlas itself
     // needs (`www`, `api`, `admin`, …) are refused here exactly as the
     // provisioning path refuses them.
     assertSlugNotReserved(payload.slug);
     await this.assertSlugAvailable(payload.organizationId, payload.slug);
+    const requestedName = cleanDisplayName(payload.name);
+    let claimedNameKey: string | null = null;
 
-    const academy = await this.withSlugConflictHandling(() =>
-      // Phase 10.4 — tenant AND user context, not tenant alone.
-      //
-      // The `subdomain_allocations_insert` RLS policy requires
-      // `is_academy_member(academy_id, app.current_user_id)` (added in
-      // P21). Under a tenant-only context `app.current_user_id` is unset,
-      // so the allocation below is refused with a bare
-      // "new row violates row-level security policy" and the whole
-      // Academy creation fails. `ProvisioningOrchestratorService` already
-      // ran its own allocation under a tenant+user context for exactly
-      // this reason; this makes the two paths agree.
-      //
-      // Setting the acting user is strictly more precise, not more
-      // permissive: it is the same user the method already authorises
-      // above, and every other policy in this transaction is either
-      // organization-scoped (unaffected) or membership-scoped (satisfied
-      // by the `academy_members` row created below, before the
-      // allocation).
-      this.tenancyContextService.runInTenantAndUserContext(
-        payload.organizationId,
-        userId,
-        async (tx) => {
-          // Phase 5 — WHO may create an Academy at all, checked first and
-          // independent of the entitlement check below (see
-          // `CREATES_ACADEMY_ROLES`'s own doc comment for the exact gap
-          // this closes: without it, any organization member with a
-          // valid JWT — not only the Owner the frontend route restricts
-          // this to — could reach and succeed at this method directly).
-          const actingMembership =
-            await this.organizationMembershipsRepository.findForUserInOrganization(
+    const academy = await this.withSlugConflictHandling(
+      () =>
+        // Phase 10.4 — tenant AND user context, not tenant alone.
+        //
+        // The `subdomain_allocations_insert` RLS policy requires
+        // `is_academy_member(academy_id, app.current_user_id)` (added in
+        // P21). Under a tenant-only context `app.current_user_id` is unset,
+        // so the allocation below is refused with a bare
+        // "new row violates row-level security policy" and the whole
+        // Academy creation fails. `ProvisioningOrchestratorService` already
+        // ran its own allocation under a tenant+user context for exactly
+        // this reason; this makes the two paths agree.
+        //
+        // Setting the acting user is strictly more precise, not more
+        // permissive: it is the same user the method already authorises
+        // above, and every other policy in this transaction is either
+        // organization-scoped (unaffected) or membership-scoped (satisfied
+        // by the `academy_members` row created below, before the
+        // allocation).
+        this.tenancyContextService.runInTenantAndUserContext(
+          payload.organizationId,
+          userId,
+          async (tx) => {
+            // Phase 5 — WHO may create an Academy at all, checked first and
+            // independent of the entitlement check below (see
+            // `CREATES_ACADEMY_ROLES`'s own doc comment for the exact gap
+            // this closes: without it, any organization member with a
+            // valid JWT — not only the Owner the frontend route restricts
+            // this to — could reach and succeed at this method directly).
+            const actingMembership =
+              await this.organizationMembershipsRepository.findForUserInOrganization(
+                tx,
+                payload.organizationId,
+                userId,
+              );
+            if (!actingMembership || !CREATES_ACADEMY_ROLES.has(actingMembership.role)) {
+              throw new ForbiddenException({
+                messageKey: 'errors.academy.insufficientRole',
+              });
+            }
+
+            // Phase 2 (Decision 4) — the live, write-time entitlement
+            // check, INSIDE the same transaction as the insert below, so
+            // the count and the write can never observe a different state
+            // of the world. Reached from every real entry point this
+            // codebase has for creating an Academy — the direct `POST
+            // /academies` route AND `ProvisioningModule`'s orchestration
+            // step (`ProvisioningOrchestratorService`, which calls this
+            // exact method, never a second, parallel academy-creation
+            // path) — so both are covered by this one check, never just
+            // the primary UI-driven one.
+            await this.entitlementEnforcementService.assertWithinLimit(
               tx,
               payload.organizationId,
-              userId,
+              'academies',
             );
-          if (!actingMembership || !CREATES_ACADEMY_ROLES.has(actingMembership.role)) {
-            throw new ForbiddenException({
-              messageKey: 'errors.academy.insufficientRole',
+
+            // W4 — academy names are unique platform-wide (every status,
+            // archived included), checked under the name-key advisory lock.
+            const claimed = await this.claimAcademyName(
+              tx,
+              requestedName,
+              options.onNameTaken ?? 'refuse',
+            );
+            claimedNameKey = claimed.key;
+
+            const created = await this.academiesRepository.create(tx, {
+              organization: { connect: { id: payload.organizationId } },
+              name: claimed.name,
+              slug: payload.slug,
+              description: payload.description,
+              contactEmail: payload.contactEmail,
+              contactPhone: payload.contactPhone,
+              websiteUrl: payload.website,
+              language: payload.language,
+              timezone: payload.timezone,
+              currency: payload.currency,
+              address: payload.country ? { country: payload.country } : undefined,
             });
-          }
 
-          // Phase 2 (Decision 4) — the live, write-time entitlement
-          // check, INSIDE the same transaction as the insert below, so
-          // the count and the write can never observe a different state
-          // of the world. Reached from every real entry point this
-          // codebase has for creating an Academy — the direct `POST
-          // /academies` route AND `ProvisioningModule`'s orchestration
-          // step (`ProvisioningOrchestratorService`, which calls this
-          // exact method, never a second, parallel academy-creation
-          // path) — so both are covered by this one check, never just
-          // the primary UI-driven one.
-          await this.entitlementEnforcementService.assertWithinLimit(
-            tx,
-            payload.organizationId,
-            'academies',
-          );
+            // Creator becomes the Academy's first `owner`-role member —
+            // there is no standalone "add member" endpoint in P3 (see the
+            // migration's doc comment on `academy_members_insert`).
+            await this.createAcademyMember(tx, payload.organizationId, {
+              academyId: created.id,
+              userId,
+              role: 'owner',
+            });
 
-          const created = await this.academiesRepository.create(tx, {
-            organization: { connect: { id: payload.organizationId } },
-            name: payload.name,
-            slug: payload.slug,
-            description: payload.description,
-            contactEmail: payload.contactEmail,
-            contactPhone: payload.contactPhone,
-            websiteUrl: payload.website,
-            language: payload.language,
-            timezone: payload.timezone,
-            currency: payload.currency,
-            address: payload.country ? { country: payload.country } : undefined,
-          });
+            // THE PUBLIC WEBSITE'S HOSTNAME ALLOCATION.
+            //
+            // Without this row, `resolve_public_hostname` finds nothing and
+            // the Academy's public site answers "not found" at
+            // `{slug}.{baseDomain}` — even though DNS, TLS and origin
+            // routing are all working perfectly. That was a real, live
+            // production defect: of five Academies, only the two created
+            // through `ProvisioningOrchestratorService` (which allocates
+            // its own subdomain as a separate step) had an allocation. The
+            // three created through THIS method — the ordinary "New
+            // Academy" flow — had none, and their public sites were dead.
+            //
+            // Allocating here rather than in a second place is what makes
+            // the two creation paths agree: provisioning's own step checks
+            // `findByAcademyId` first and returns `completed` when a row
+            // already exists, so it simply becomes a no-op rather than a
+            // conflicting duplicate.
+            //
+            // The subdomain IS the slug. `assertSlugAvailable` above and
+            // the `subdomain_allocations` unique index enforce the same
+            // uniqueness from two directions, and `subdomain_is_taken`
+            // already treats the two namespaces as one.
+            const platformDomain =
+              await this.platformDomainConfigurationRepository.findSingleton();
+            const { baseDomain } = resolveEffectiveBaseDomain(
+              this.environmentBaseDomain,
+              platformDomain,
+            );
 
-          // Creator becomes the Academy's first `owner`-role member —
-          // there is no standalone "add member" endpoint in P3 (see the
-          // migration's doc comment on `academy_members_insert`).
-          await this.createAcademyMember(tx, payload.organizationId, {
-            academyId: created.id,
-            userId,
-            role: 'owner',
-          });
+            await this.subdomainAllocationsRepository.create(tx, {
+              academyId: created.id,
+              subdomain: created.slug,
+              status: 'assigned',
+              // Null when no platform base domain is configured (local and
+              // early environments). The allocation is still recorded, so
+              // resolution by bare label keeps working and configuring the
+              // domain later needs no backfill. P63g: the EFFECTIVE base
+              // domain (environment first), the same rule every reader uses.
+              fullHost: buildFullHost(created.slug, baseDomain),
+            });
 
-          // THE PUBLIC WEBSITE'S HOSTNAME ALLOCATION.
-          //
-          // Without this row, `resolve_public_hostname` finds nothing and
-          // the Academy's public site answers "not found" at
-          // `{slug}.{baseDomain}` — even though DNS, TLS and origin
-          // routing are all working perfectly. That was a real, live
-          // production defect: of five Academies, only the two created
-          // through `ProvisioningOrchestratorService` (which allocates
-          // its own subdomain as a separate step) had an allocation. The
-          // three created through THIS method — the ordinary "New
-          // Academy" flow — had none, and their public sites were dead.
-          //
-          // Allocating here rather than in a second place is what makes
-          // the two creation paths agree: provisioning's own step checks
-          // `findByAcademyId` first and returns `completed` when a row
-          // already exists, so it simply becomes a no-op rather than a
-          // conflicting duplicate.
-          //
-          // The subdomain IS the slug. `assertSlugAvailable` above and
-          // the `subdomain_allocations` unique index enforce the same
-          // uniqueness from two directions, and `subdomain_is_taken`
-          // already treats the two namespaces as one.
-          const platformDomain =
-            await this.platformDomainConfigurationRepository.findSingleton();
-          const { baseDomain } = resolveEffectiveBaseDomain(
-            this.environmentBaseDomain,
-            platformDomain,
-          );
+            // Phase P15 retroactive audit coverage (master plan §21 P15's
+            // own Definition of Done) — same transaction, atomic with the
+            // Academy/membership rows above.
+            await this.auditLogWriterService.write(tx, {
+              actorUserId: userId,
+              organizationId: payload.organizationId,
+              // Task 3 — academy-scoped, so it shows in the new academy's log.
+              academyId: created.id,
+              role: 'owner',
+              action: 'academy.created',
+              targetType: 'academy',
+              targetId: created.id,
+              targetLabel: created.name,
+              ...(claimed.name !== requestedName ? { context: { requestedName } } : {}),
+            });
 
-          await this.subdomainAllocationsRepository.create(tx, {
-            academyId: created.id,
-            subdomain: created.slug,
-            status: 'assigned',
-            // Null when no platform base domain is configured (local and
-            // early environments). The allocation is still recorded, so
-            // resolution by bare label keeps working and configuring the
-            // domain later needs no backfill. P63g: the EFFECTIVE base
-            // domain (environment first), the same rule every reader uses.
-            fullHost: buildFullHost(created.slug, baseDomain),
-          });
-
-          // Phase P15 retroactive audit coverage (master plan §21 P15's
-          // own Definition of Done) — same transaction, atomic with the
-          // Academy/membership rows above.
-          await this.auditLogWriterService.write(tx, {
-            actorUserId: userId,
-            organizationId: payload.organizationId,
-            // Task 3 — academy-scoped, so it shows in the new academy's log.
-            academyId: created.id,
-            role: 'owner',
-            action: 'academy.created',
-            targetType: 'academy',
-            targetId: created.id,
-            targetLabel: created.name,
-          });
-
-          return created;
-        },
-      ),
+            return created;
+          },
+        ),
+      () =>
+        claimedNameKey === null
+          ? Promise.resolve(false)
+          : this.tenancyContextService.runInTenantContext(payload.organizationId, (tx) =>
+              isAcademyNameTaken(tx, claimedNameKey as string, null),
+            ),
     );
 
     // Phase 2 — real reactive usage-recompute trigger (an academy change).
@@ -681,75 +814,92 @@ export class AcademiesService {
       assertSlugNotReserved(payload.slug);
       await this.assertSlugAvailable(organizationId, payload.slug, academyId);
     }
+    const name = payload.name === undefined ? undefined : cleanDisplayName(payload.name);
+    let nameKey: string | null = null;
 
-    const academy = await this.withSlugConflictHandling(() =>
-      this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-        const role = await this.assertCanManage(tx, academyId, userId);
+    const academy = await this.withSlugConflictHandling(
+      () =>
+        this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+          const role = await this.assertCanManage(tx, academyId, userId);
 
-        const current = await this.academiesRepository.findById(tx, academyId);
-        if (!current) {
-          throw new NotFoundException({ messageKey: 'errors.notFound' });
-        }
-        // Task 1 — `archived` and `suspended` are left only through their
-        // own flows (Delete/restore, platform suspension), never by PATCH:
-        // reviving an archived academy here would skip its plan-limit
-        // check and resurrect a site whose domains were already released.
-        if (current.status === 'archived') {
-          throw new ConflictException({ messageKey: 'errors.academy.statusLocked' });
-        }
-        // `payload.status` can only be draft/active (DTO), so any status in
-        // the payload is a change away from `suspended`.
-        if (current.status === 'suspended' && payload.status !== undefined) {
-          throw new ConflictException({ messageKey: 'errors.academy.statusLocked' });
-        }
+          const current = await this.academiesRepository.findById(tx, academyId);
+          if (!current) {
+            throw new NotFoundException({ messageKey: 'errors.notFound' });
+          }
+          // Task 1 — `archived` and `suspended` are left only through their
+          // own flows (Delete/restore, platform suspension), never by PATCH:
+          // reviving an archived academy here would skip its plan-limit
+          // check and resurrect a site whose domains were already released.
+          if (current.status === 'archived') {
+            throw new ConflictException({ messageKey: 'errors.academy.statusLocked' });
+          }
+          // `payload.status` can only be draft/active (DTO), so any status in
+          // the payload is a change away from `suspended`.
+          if (current.status === 'suspended' && payload.status !== undefined) {
+            throw new ConflictException({ messageKey: 'errors.academy.statusLocked' });
+          }
+          // W4 — a rename re-checks the platform-wide name rule (excluding
+          // this academy, so re-saving its own name is never a conflict).
+          if (name !== undefined) {
+            nameKey = await this.assertAcademyNameAvailable(tx, name, academyId);
+          }
 
-        const mergedAddress: AcademyAddressResponse | undefined = payload.address
-          ? { ...(current.address as AcademyAddressResponse | null), ...payload.address }
-          : undefined;
+          const mergedAddress: AcademyAddressResponse | undefined = payload.address
+            ? {
+                ...(current.address as AcademyAddressResponse | null),
+                ...payload.address,
+              }
+            : undefined;
 
-        const data: Prisma.AcademyUpdateInput = {
-          name: payload.name,
-          slug: payload.slug,
-          description: payload.description,
-          contactEmail: payload.contactEmail,
-          contactPhone: payload.contactPhone,
-          websiteUrl: payload.website,
-          language: payload.language,
-          timezone: payload.timezone,
-          currency: payload.currency,
-          status: payload.status,
-          // `organization_id` is never in `data` — `UpdateAcademyDto` has
-          // no such field, and `academies_tenant_update`'s RLS `WITH
-          // CHECK` would reject the row even if it were.
-          ...(mergedAddress ? { address: mergedAddress as Prisma.InputJsonValue } : {}),
-        };
+          const data: Prisma.AcademyUpdateInput = {
+            name,
+            slug: payload.slug,
+            description: payload.description,
+            contactEmail: payload.contactEmail,
+            contactPhone: payload.contactPhone,
+            websiteUrl: payload.website,
+            language: payload.language,
+            timezone: payload.timezone,
+            currency: payload.currency,
+            status: payload.status,
+            // `organization_id` is never in `data` — `UpdateAcademyDto` has
+            // no such field, and `academies_tenant_update`'s RLS `WITH
+            // CHECK` would reject the row even if it were.
+            ...(mergedAddress ? { address: mergedAddress as Prisma.InputJsonValue } : {}),
+          };
 
-        const updated = await this.academiesRepository.update(tx, academyId, data);
-        // Task 3 — field-level before/after over the catalogue's academy
-        // diff fields. Only fields this request sent are compared (`data`'s
-        // keys are the model's field names); the writer masks the contact
-        // email's value on this tenant-visible row.
-        const sentFields = Object.keys(data).filter(
-          (field) => data[field as keyof typeof data] !== undefined,
-        );
-        await this.auditLogWriterService.record(tx, {
-          actorUserId: userId,
-          organizationId,
-          academyId,
-          role,
-          action: 'academy.updated',
-          targetId: academyId,
-          targetLabel: updated.name,
-          before: current as unknown as Record<string, unknown>,
-          after: Object.fromEntries(
-            sentFields.map((field) => [
-              field,
-              (updated as unknown as Record<string, unknown>)[field],
-            ]),
-          ),
-        });
-        return updated;
-      }),
+          const updated = await this.academiesRepository.update(tx, academyId, data);
+          // Task 3 — field-level before/after over the catalogue's academy
+          // diff fields. Only fields this request sent are compared (`data`'s
+          // keys are the model's field names); the writer masks the contact
+          // email's value on this tenant-visible row.
+          const sentFields = Object.keys(data).filter(
+            (field) => data[field as keyof typeof data] !== undefined,
+          );
+          await this.auditLogWriterService.record(tx, {
+            actorUserId: userId,
+            organizationId,
+            academyId,
+            role,
+            action: 'academy.updated',
+            targetId: academyId,
+            targetLabel: updated.name,
+            before: current as unknown as Record<string, unknown>,
+            after: Object.fromEntries(
+              sentFields.map((field) => [
+                field,
+                (updated as unknown as Record<string, unknown>)[field],
+              ]),
+            ),
+          });
+          return updated;
+        }),
+      () =>
+        nameKey === null
+          ? Promise.resolve(false)
+          : this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+              isAcademyNameTaken(tx, nameKey as string, academyId),
+            ),
     );
 
     return toAcademyResponse(academy);
@@ -761,53 +911,66 @@ export class AcademiesService {
     userId: string,
     payload: UpdateAcademyBrandingDto,
   ): Promise<AcademyResponse> {
-    const { academy, allocation, customHostname } =
-      await this.tenancyContextService.runInTenantAndUserContext(
-        organizationId,
-        userId,
-        async (tx) => {
-          const role = await this.assertCanManage(tx, academyId, userId);
+    const name = payload.name === undefined ? undefined : cleanDisplayName(payload.name);
+    let nameKey: string | null = null;
+    const { academy, allocation, customHostname } = await this.tenancyContextService
+      .runInTenantAndUserContext(organizationId, userId, async (tx) => {
+        const role = await this.assertCanManage(tx, academyId, userId);
+        // W4 — the branding form also renames the academy.
+        if (name !== undefined) {
+          nameKey = await this.assertAcademyNameAvailable(tx, name, academyId);
+        }
 
-          const before = await this.academiesRepository.findById(tx, academyId);
-          const updated = await this.academiesRepository.update(tx, academyId, {
-            name: payload.name,
-            logoUrl: payload.logo,
-            faviconUrl: payload.favicon,
-          });
-          await this.auditLogWriterService.record(tx, {
-            actorUserId: userId,
-            organizationId,
-            academyId,
-            role,
-            action: 'academy.branding.updated',
-            targetId: academyId,
-            targetLabel: updated.name,
-            before: before
-              ? {
-                  name: before.name,
-                  logoUrl: before.logoUrl,
-                  faviconUrl: before.faviconUrl,
-                }
-              : null,
-            after: {
-              ...(payload.name !== undefined ? { name: updated.name } : {}),
-              ...(payload.logo !== undefined ? { logoUrl: updated.logoUrl } : {}),
-              ...(payload.favicon !== undefined
-                ? { faviconUrl: updated.faviconUrl }
-                : {}),
-            },
-          });
-          const [allocation, connection] = await Promise.all([
-            this.subdomainAllocationsRepository.findByAcademyId(tx, academyId),
-            this.domainConnectionsRepository.findByAcademyId(tx, academyId),
-          ]);
-          return {
-            academy: updated,
-            allocation,
-            customHostname: connection?.hostname ?? null,
-          };
-        },
-      );
+        const before = await this.academiesRepository.findById(tx, academyId);
+        const updated = await this.academiesRepository.update(tx, academyId, {
+          name,
+          logoUrl: payload.logo,
+          faviconUrl: payload.favicon,
+        });
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: userId,
+          organizationId,
+          academyId,
+          role,
+          action: 'academy.branding.updated',
+          targetId: academyId,
+          targetLabel: updated.name,
+          before: before
+            ? {
+                name: before.name,
+                logoUrl: before.logoUrl,
+                faviconUrl: before.faviconUrl,
+              }
+            : null,
+          after: {
+            ...(payload.name !== undefined ? { name: updated.name } : {}),
+            ...(payload.logo !== undefined ? { logoUrl: updated.logoUrl } : {}),
+            ...(payload.favicon !== undefined ? { faviconUrl: updated.faviconUrl } : {}),
+          },
+        });
+        const [allocation, connection] = await Promise.all([
+          this.subdomainAllocationsRepository.findByAcademyId(tx, academyId),
+          this.domainConnectionsRepository.findByAcademyId(tx, academyId),
+        ]);
+        return {
+          academy: updated,
+          allocation,
+          customHostname: connection?.hostname ?? null,
+        };
+      })
+      .catch(async (error: unknown) => {
+        // W4 — `name_key` is the only unique index a branding write can hit.
+        if (
+          isPrismaUniqueViolation(error) &&
+          nameKey !== null &&
+          (await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+            isAcademyNameTaken(tx, nameKey as string, academyId),
+          ))
+        ) {
+          throw academyNameTaken('name');
+        }
+        throw error;
+      });
 
     // The public site reads the name, logo and favicon version from the
     // cached hostname resolution (60 s): drop it, so a new favicon or logo
@@ -1185,7 +1348,7 @@ export class AcademiesService {
             }
 
             const existingAcademyMembership =
-              await this.academyMembersRepository.findForUserInAcademy(
+              await this.academyMembersRepository.findAnyStatusForUserInAcademy(
                 tx,
                 academyId,
                 target.user.id,
@@ -1315,6 +1478,9 @@ export class AcademiesService {
                 messageKey: 'errors.academy.nameRequiredForNewAccount',
               });
             }
+            if (target.account === 'new') {
+              await requireNameKey(tx, target.user.name, 'name');
+            }
 
             const existingLearner =
               await this.academyStudentsRepository.findForUserInAcademy(
@@ -1333,11 +1499,22 @@ export class AcademiesService {
             // Staff-insert policy (`academy_students_staff_insert`), tenant-
             // scoped exactly like `academy_members_insert` — the role check
             // above already gates who may reach this point.
-            const learner = await this.academyStudentsRepository.create(tx, {
-              academyId,
-              userId: target.user.id,
-              source: 'staff_created',
-            });
+            //
+            // W4 — an interactive admission: a learner name already held in
+            // this academy is a 409. For a NEW account it is reported on the
+            // name staff typed; for an existing account staff cannot edit
+            // that person's name, so the staff variant points at the email.
+            const { student: learner } = await this.academyStudentsRepository.admit(
+              tx,
+              {
+                academyId,
+                userId: target.user.id,
+                source: 'staff_created',
+              },
+              target.account === 'new'
+                ? { mode: 'interactive', field: 'name', variant: 'self' }
+                : { mode: 'interactive', field: 'email', variant: 'existingAccount' },
+            );
 
             // Task 3 — academy-scoped and name-labelled; see the staff add above.
             await this.auditLogWriterService.record(tx, {
@@ -1441,7 +1618,7 @@ export class AcademiesService {
                   academyId,
                   user.id,
                 )
-              : await this.academyMembersRepository.findForUserInAcademy(
+              : await this.academyMembersRepository.findAnyStatusForUserInAcademy(
                   tx,
                   academyId,
                   user.id,
@@ -1676,17 +1853,20 @@ export class AcademiesService {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    // The organization owner manages every academy of the organization,
+    // with or without a staff row — `AcademyScopeGuard`'s own rule.
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
 
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
     }
     // Task 3 — returned so audit rows record the role without a re-read.
-    return membership.role;
+    return role;
   }
 
   /**
@@ -1718,7 +1898,10 @@ export class AcademiesService {
    * not). Fixed here at the actual source, matching the same reasoning
    * `OrganizationsService` already documents for the identical problem.
    */
-  private async withSlugConflictHandling<T>(work: () => Promise<T>): Promise<T> {
+  private async withSlugConflictHandling<T>(
+    work: () => Promise<T>,
+    isNameConflict: () => Promise<boolean> = () => Promise.resolve(false),
+  ): Promise<T> {
     try {
       return await work();
     } catch (error) {
@@ -1726,10 +1909,61 @@ export class AcademiesService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
+        // W4 — `academies` also has a unique `name_key`. An unnamed P2002 is
+        // classified by asking the boolean definer check in a fresh
+        // transaction (this one has rolled back); only a conflict that is
+        // not the name is a slug collision.
+        if (await isNameConflict()) throw academyNameTaken('name');
         throw new ConflictException({ messageKey: 'errors.academy.slugTaken' });
       }
       throw error;
     }
+  }
+
+  /**
+   * W4 — locks the academy-name key for the rest of `tx` and refuses a name
+   * already held by ANOTHER academy anywhere on the platform (every status,
+   * archived included). Returns the key, for classifying a later P2002.
+   */
+  private async assertAcademyNameAvailable(
+    tx: Prisma.TransactionClient,
+    name: string,
+    excludeAcademyId: string | null,
+  ): Promise<string> {
+    const key = await requireNameKey(tx, name, 'name');
+    await lockAcademyName(tx, key);
+    if (await isAcademyNameTaken(tx, key, excludeAcademyId)) {
+      throw academyNameTaken('name');
+    }
+    return key;
+  }
+
+  /**
+   * W4 — claims a name for a NEW academy under the name-key lock. `refuse`
+   * answers 409; `suffix` (the provisioning worker) walks "<name> (2)",
+   * "<name> (3)", … — each candidate locked and checked — and returns the
+   * first free one, cut to the API length limit.
+   */
+  private async claimAcademyName(
+    tx: Prisma.TransactionClient,
+    name: string,
+    policy: AcademyNameConflictPolicy,
+  ): Promise<{ readonly name: string; readonly key: string }> {
+    const key = await requireNameKey(tx, name, 'name');
+    await lockAcademyName(tx, key);
+    if (!(await isAcademyNameTaken(tx, key, null))) return { name, key };
+    if (policy === 'refuse') throw academyNameTaken('name');
+
+    for (let n = 2; n < 1000; n += 1) {
+      const suffix = ` (${n})`;
+      const candidate = `${name.slice(0, MAX_ACADEMY_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
+      const candidateKey = await sqlNameKey(tx, candidate);
+      await lockAcademyName(tx, candidateKey);
+      if (!(await isAcademyNameTaken(tx, candidateKey, null))) {
+        return { name: candidate, key: candidateKey };
+      }
+    }
+    throw academyNameTaken('name');
   }
 
   private async assertSlugAvailable(

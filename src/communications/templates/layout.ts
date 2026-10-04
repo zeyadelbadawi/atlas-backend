@@ -16,7 +16,15 @@ import type { CommunicationLocale } from '../catalog/communication-catalog';
 
 export interface BrandingContext {
   readonly academyName?: string;
+  /**
+   * Absolute https URL of the email-safe PNG logo
+   * (`GET /api/v1/public/websites/:academyId/logo?v=…` on the platform host),
+   * or absent — then the academy name is rendered as text instead.
+   */
   readonly academyLogoUrl?: string;
+  /** Display size for `academyLogoUrl` (Outlook ignores CSS sizing; attributes are required). */
+  readonly academyLogoWidth?: number;
+  readonly academyLogoHeight?: number;
   readonly academyHost?: string;
   readonly platformName: string;
   readonly platformUrl: string;
@@ -96,6 +104,40 @@ function brandName(context: TemplateRenderContext): string {
   return context.branding.academyName ?? context.branding.platformName;
 }
 
+/**
+ * Only an absolute http(s) URL is ever put into `<img src>` — anything else
+ * (a `data:` URI, a relative path, a script scheme) falls back to text.
+ * Production builds it on the https platform host; plain http is admitted
+ * only so a local `PLATFORM_WEB_URL=http://localhost:…` still renders.
+ */
+function isEmailSafeImageUrl(url: string | undefined): url is string {
+  return typeof url === 'string' && /^https?:\/\/[^\s"'<>]+$/i.test(url);
+}
+
+function positiveInt(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : undefined;
+}
+
+/**
+ * The header brand mark: the academy logo with explicit `width`/`height`
+ * attributes (Outlook's Word engine ignores CSS sizing), `alt` = the brand
+ * name, and the email-client-safe inline reset — or, when there is no usable
+ * logo, the brand name as text. A `data:` URI or a relative path never
+ * reaches `src`.
+ */
+function renderLogo(branding: BrandingContext, brand: string): string {
+  if (!isEmailSafeImageUrl(branding.academyLogoUrl)) {
+    return `<span style="font-size:18px;font-weight:600;color:#111827;">${escapeHtml(brand)}</span>`;
+  }
+  const height = positiveInt(branding.academyLogoHeight) ?? 40;
+  const width = positiveInt(branding.academyLogoWidth);
+  const widthAttr = width ? ` width="${width}"` : '';
+  const widthStyle = width ? `width:${width}px;` : '';
+  return `<img src="${escapeHtml(branding.academyLogoUrl)}" alt="${escapeHtml(brand)}"${widthAttr} height="${height}" style="display:block;border:0;outline:none;text-decoration:none;height:${height}px;${widthStyle}max-width:200px;" />`;
+}
+
 export function renderHtmlLayout(
   input: LayoutInput,
   context: TemplateRenderContext,
@@ -103,9 +145,7 @@ export function renderHtmlLayout(
   const dir = context.locale === 'ar' ? 'rtl' : 'ltr';
   const footer = FOOTER[context.locale];
   const brand = brandName(context);
-  const logo = context.branding.academyLogoUrl
-    ? `<img src="${escapeHtml(context.branding.academyLogoUrl)}" alt="${escapeHtml(brand)}" height="40" style="height:40px;max-height:40px;border:0;display:block;" />`
-    : `<span style="font-size:18px;font-weight:600;color:#111827;">${escapeHtml(brand)}</span>`;
+  const logo = renderLogo(context.branding, brand);
   const paragraphs = input.paragraphs
     .map(
       (p) =>

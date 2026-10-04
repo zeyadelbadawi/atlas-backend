@@ -1,7 +1,12 @@
 /** EmailProviderRegistry — fallback order, quota skipping and permanent-stop. */
-import { EmailProviderRegistry, buildProviderChain } from './email-provider.registry';
+import {
+  EmailProviderRegistry,
+  buildProviderChain,
+  quotaResetAt,
+} from './email-provider.registry';
 import {
   EmailProviderError,
+  EmailQuotaExhaustedError,
   type EmailProviderAdapter,
 } from '../../identity/services/email-provider.interface';
 import type { EmailQuotaService } from '../services/email-quota.service';
@@ -478,5 +483,55 @@ describe('buildProviderChain', () => {
       ),
     ).toEqual(['brevo', 'resend']);
     expect(buildProviderChain([], byName)).toEqual([]);
+  });
+});
+
+describe('W3-compose — quota exhaustion is a distinct, deferrable error', () => {
+  it('throws EmailQuotaExhaustedError with the earliest reset when every provider is out of quota', async () => {
+    const h = harness({
+      brevo: { ok: false, reason: 'monthly' },
+      resend: { ok: false, reason: 'daily' },
+    });
+    const send = jest.fn();
+    const registry = new EmailProviderRegistry(
+      [adapter('brevo', send), adapter('resend', send)],
+      h.quota,
+      h.metrics,
+    );
+    const before = new Date();
+    const error = await registry
+      .send({ ...input, category: 'engagement' })
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(EmailQuotaExhaustedError);
+    // Still an EmailProviderError of kind transient: older callers are unchanged.
+    expect(error).toBeInstanceOf(EmailProviderError);
+    expect(error.kind).toBe('transient');
+    expect(error.reason).toBe('daily');
+    expect(error.retryAt.getTime()).toBe(quotaResetAt('daily', before).getTime());
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a real provider error rather than the quota error when one provider was tried', async () => {
+    const h = harness({ brevo: { ok: false, reason: 'daily' } });
+    const resend = jest
+      .fn()
+      .mockRejectedValue(new EmailProviderError('resend', 'transient', 'HTTP 503', 503));
+    const registry = new EmailProviderRegistry(
+      [adapter('brevo', jest.fn()), adapter('resend', resend)],
+      h.quota,
+      h.metrics,
+    );
+    const error = await registry.send(input).catch((e) => e);
+    expect(error).not.toBeInstanceOf(EmailQuotaExhaustedError);
+    expect(error.provider).toBe('resend');
+  });
+
+  it('computes UTC reset instants for each window', () => {
+    const now = new Date(Date.UTC(2026, 9, 31, 22, 15, 30, 400));
+    expect(quotaResetAt('daily', now).toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    expect(quotaResetAt('monthly', now).toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    expect(quotaResetAt('rate', now).toISOString()).toBe('2026-10-31T22:15:31.000Z');
+    const mid = new Date(Date.UTC(2026, 11, 15, 9));
+    expect(quotaResetAt('monthly', mid).toISOString()).toBe('2027-01-01T00:00:00.000Z');
   });
 });

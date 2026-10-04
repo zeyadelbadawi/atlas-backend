@@ -77,7 +77,11 @@ export class CheckoutService {
             input.target.type === 'plan_subscription'
               ? input.target.planKey
               : input.target.addOnKey,
-          billingCycle: input.billingCycle,
+          // W8 D4 — persist the cycle actually being bought. A natively
+          // yearly plan checked out without an explicit cycle used to store
+          // NULL here (and be applied as monthly) while the snapshot said
+          // yearly.
+          billingCycle: input.billingCycle ?? snapshot.billingCycle,
           snapshot: snapshot as unknown as Prisma.InputJsonValue,
           status: 'draft',
           expiresAt,

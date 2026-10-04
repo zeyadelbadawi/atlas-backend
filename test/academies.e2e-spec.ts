@@ -10,6 +10,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
+import { uniqueName } from './utils/unique-name';
 import {
   createAdminPrisma,
   seedActiveSubscriptionForOrg,
@@ -130,7 +131,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${user.accessToken}`)
       .send({
-        academyName: 'Bad Slug',
+        academyName: uniqueName('Bad Slug'),
         requestedSubdomain: 'Not A Valid Slug!',
         idempotencyKey: `bad-slug-${Date.now()}`,
       });
@@ -145,17 +146,15 @@ describe('Academy Management (e2e) — functional/contract', () => {
     // Provisioning is entitlement-gated (see above).
     await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
     const slug = `academy-crud-${Date.now()}`;
+    // W4 — academy names are unique platform-wide; the e2e DB persists.
+    const crudName = uniqueName('CRUD Academy');
+    const renamedName = uniqueName('Renamed Academy');
 
-    const created = await provisionAcademy(
-      user.accessToken,
-      org.id,
-      slug,
-      'CRUD Academy',
-    );
+    const created = await provisionAcademy(user.accessToken, org.id, slug, crudName);
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({
       organizationId: org.id,
-      name: 'CRUD Academy',
+      name: crudName,
       slug,
       status: 'draft',
       timezone: 'UTC',
@@ -186,9 +185,9 @@ describe('Academy Management (e2e) — functional/contract', () => {
     const updated = await request(app.getHttpServer())
       .patch(`/academies/${academyId}`)
       .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ name: 'Renamed Academy', status: 'active' })
+      .send({ name: renamedName, status: 'active' })
       .expect(200);
-    expect(updated.body.name).toBe('Renamed Academy');
+    expect(updated.body.name).toBe(renamedName);
     expect(updated.body.status).toBe('active');
     expect(updated.body.organizationId).toBe(org.id); // never reassignable.
 
@@ -268,7 +267,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       where: { id: academyId },
     });
     expect(stillArchived.status).toBe('archived');
-    expect(stillArchived.name).toBe('Renamed Academy');
+    expect(stillArchived.name).toBe(renamedName);
   });
 
   it('creating an academy auto-creates an owner-role academy_member row for the creator', async () => {
@@ -358,7 +357,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       .post(`/organizations/${firstOrg.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${firstOwner.accessToken}`)
       .send({
-        academyName: 'First Org Academy',
+        academyName: uniqueName('First Org Academy'),
         requestedSubdomain: slug,
         idempotencyKey: `cross-1-${slug}`,
       })
@@ -409,7 +408,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       user.accessToken,
       org.id,
       `stats-${Date.now()}`,
-      'Stats Academy',
+      uniqueName('Stats Academy'),
     );
     expect(created.status).toBe(201);
 
@@ -456,13 +455,37 @@ describe('Academy Management (e2e) — functional/contract', () => {
       `activity-${Date.now()}`,
     );
     expect(created.status).toBe(201);
+    // `provisionAcademy` returns once the Academy row exists, but the worker
+    // keeps going (theme → branding → subdomain). Read the feed only once the
+    // request has finished, so the rows it asserts on are all written.
+    let provisioningStatus: string | undefined;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const req = await admin.provisioningRequest.findFirst({
+        where: { academyId: created.body.id },
+        select: { status: true },
+      });
+      provisioningStatus = req?.status;
+      if (provisioningStatus === 'ready' || provisioningStatus === 'failed') break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    expect(provisioningStatus).toBe('ready');
 
     const activity = await request(app.getHttpServer())
       .get(`/academies/${created.body.id}/activity`)
       .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(200);
     expect(activity.body.nextCursor).toBeNull();
+    // Newest first. W2: provisioning always applies a theme (the platform
+    // default when none was picked) through the Website Settings write path,
+    // so that write is recorded right after the Academy itself.
     expect(activity.body.items).toEqual([
+      expect.objectContaining({
+        action: 'website.configuration.updated',
+        category: 'website',
+        academyId: created.body.id,
+        targetType: 'website_configuration',
+        actor: { id: user.userId, name: 'academy-activity', isPlatformStaff: false },
+      }),
       expect.objectContaining({
         action: 'academy.created',
         category: 'academy',
@@ -486,7 +509,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
       owner.accessToken,
       org.id,
       `create-student-${Date.now()}`,
-      'Create Student Academy',
+      uniqueName('Create Student Academy'),
     );
     expect(academy.status).toBe(201);
 

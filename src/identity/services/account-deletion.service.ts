@@ -356,6 +356,31 @@ export class AccountDeletionService {
         },
       );
     }
+
+    // A LEARNER holds no organization membership, so the loop above never
+    // reaches their academies and their `academy_students` rows survived
+    // deletion (security review, finding 1) — contradicting the documented
+    // treatment ("memberships and enrolment grants removed",
+    // docs/ACCOUNT_DELETION_AND_DATA_LIFECYCLE.md §4) and leaving the
+    // anonymised name inside W4's per-academy learner-name index. The
+    // `academy_students_self_delete` policy keys on `app.current_user_id`,
+    // so the person's OWN context removes every studentship, whichever
+    // academy it is in. Counted afterwards: a silent zero is the failure
+    // mode this method exists to avoid. Enrolments, attempts, submissions,
+    // progress and orders are separate tables and are retained.
+    const remaining = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        await tx.academyStudent.deleteMany({ where: { userId } });
+        return tx.academyStudent.count({ where: { userId } });
+      },
+    );
+    if (remaining > 0) {
+      this.logger.error(
+        { userId, remaining },
+        'Learner studentships survived account deletion; they are exempt from name uniqueness.',
+      );
+    }
   }
 
   /**

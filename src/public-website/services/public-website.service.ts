@@ -225,6 +225,34 @@ export class PublicWebsiteService {
   }
 
   /**
+   * W3 — the stored logo value behind `GET public/websites/:academyId/logo`,
+   * gated exactly like the favicon and the identity read: an unknown,
+   * archived, suspended or not-serving-eligible Academy has none (`null`).
+   * The value itself never leaves the server — the controller renders it
+   * into a bounded PNG through `EmailLogoService`.
+   */
+  async getLogoReference(academyId: string): Promise<string | null> {
+    return (await this.findLogoReference(academyId)) ?? null;
+  }
+
+  /**
+   * As `getLogoReference`, but tells "no such serving academy" (`undefined`
+   * — unknown, archived, suspended, ineligible) apart from "an academy with
+   * no logo" (`null`), so the public route can cache only the former
+   * negatively (security review finding 4).
+   */
+  async findLogoReference(academyId: string): Promise<string | null | undefined> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return undefined;
+    const academy = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) => this.academiesRepository.findById(tx, academyId),
+    );
+    if (!academy) return undefined;
+    return academy.logoUrl ?? null;
+  }
+
+  /**
    * Theme 1 plan Phase 6 — the Academy's theme key and public brand colours,
    * whatever the website's publication state, so Coming Soon can wear them.
    * Read through `resolve_public_presentation` (an unpublished configuration

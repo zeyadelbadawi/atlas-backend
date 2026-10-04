@@ -63,14 +63,22 @@ export function assertValidQuizSettings(
     effective.availableUntil &&
     effective.availableFrom.getTime() >= effective.availableUntil.getTime()
   ) {
-    throw new BadRequestException({ messageKey: 'errors.quiz.windowOrder' });
+    throw new BadRequestException({
+      messageKey: 'errors.quiz.windowOrder',
+      // W7 — name the field, so the authoring form shows the error ON it
+      // (and opens the collapsed "Advanced options" that holds it).
+      violations: [{ field: 'availableUntil', messageKey: 'errors.quiz.windowOrder' }],
+    });
   }
   if (
     effective.dueAt &&
     effective.availableUntil &&
     effective.dueAt.getTime() > effective.availableUntil.getTime()
   ) {
-    throw new BadRequestException({ messageKey: 'errors.quiz.dueAfterWindow' });
+    throw new BadRequestException({
+      messageKey: 'errors.quiz.dueAfterWindow',
+      violations: [{ field: 'dueAt', messageKey: 'errors.quiz.dueAfterWindow' }],
+    });
   }
   if (
     effective.questionsPerAttempt !== null &&
@@ -79,6 +87,13 @@ export function assertValidQuizSettings(
     throw new BadRequestException({
       messageKey: 'errors.quiz.questionsPerAttemptExceedsCount',
       details: { questionCount },
+      violations: [
+        {
+          field: 'questionsPerAttempt',
+          messageKey: 'errors.quiz.questionsPerAttemptExceedsCount',
+          values: { questionCount },
+        },
+      ],
     });
   }
 }

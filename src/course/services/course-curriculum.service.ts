@@ -668,14 +668,13 @@ export class CourseCurriculumService {
     userId: string,
     courseId?: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const managingRole = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (membership && MANAGING_ROLES.has(membership.role)) {
-      return membership.role;
-    }
+    if (managingRole) return managingRole;
     // P64 Phase 1 (RBAC matrix: "Edit curriculum — Instructor: yes, assigned
     // courses") — the course's own assigned instructor may edit its
     // curriculum; `can_author_course_content()` is the RLS twin.

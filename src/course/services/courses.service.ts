@@ -43,6 +43,13 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-que
 import type { CourseListQueryDto } from '../dto/course-list-query.dto';
 import type { CreateCourseDto } from '../dto/create-course.dto';
 import type { UpdateCourseDto } from '../dto/update-course.dto';
+import {
+  PUBLISH_READINESS_ENFORCED,
+  assertCourseReady,
+  evaluateCourseReadiness,
+  readCourseReadinessFacts,
+  type CoursePublishReadinessResponse,
+} from './course-readiness';
 
 /** See `AcademiesService.MANAGING_ROLES` — identical rule, applied here to Course writes. */
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
@@ -132,65 +139,99 @@ export class CoursesService {
     userId: string,
     payload: CreateCourseDto,
   ): Promise<CourseResponse> {
+    // W6 — an optional client key makes a retried create (double submit,
+    // ambiguous network failure, the http client's own replay) return the
+    // course the first request made instead of a misleading "slug taken".
+    // Checked BEFORE the slug check: the replayed slug IS taken — by the
+    // very course this request already created.
+    if (payload.idempotencyKey) {
+      const replay = await this.findCreateReplay(
+        academyId,
+        organizationId,
+        userId,
+        payload.idempotencyKey,
+      );
+      if (replay) return replay;
+    }
+
     await this.assertSlugAvailable(academyId, organizationId, payload.slug);
 
-    const course = await this.withSlugConflictHandling(() =>
-      this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-        const role = await this.assertCanManage(tx, academyId, userId);
+    let course: Awaited<ReturnType<CoursesRepository['create']>>;
+    try {
+      course = await this.withSlugConflictHandling(() =>
+        this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+          const role = await this.assertCanManage(tx, academyId, userId);
 
-        // Phase 2 (Decision 4) — live `courses` limit check, inside the
-        // same transaction as the insert below.
-        await this.entitlementEnforcementService.assertWithinLimit(
-          tx,
-          organizationId,
-          'courses',
-        );
+          // Phase 2 (Decision 4) — live `courses` limit check, inside the
+          // same transaction as the insert below.
+          await this.entitlementEnforcementService.assertWithinLimit(
+            tx,
+            organizationId,
+            'courses',
+          );
 
-        const created = await this.coursesRepository.create(tx, {
-          academy: { connect: { id: academyId } },
-          // P60 — record the creator at the moment of creation. Previously
-          // this was only recoverable from the audit entry written a few
-          // lines below, which made "who built this course" answerable for
-          // audited rows and unanswerable for the rest.
-          createdBy: { connect: { id: userId } },
-          category: payload.categoryId
-            ? { connect: { id: payload.categoryId } }
-            : undefined,
-          title: payload.title,
-          slug: payload.slug,
-          shortDescription: payload.shortDescription,
-          description: payload.description,
-          thumbnailUrl: payload.thumbnail,
-          visibility: payload.visibility,
-          pricingType: payload.pricing.type,
-          pricingAmountMinorUnits: toMinorUnits(payload.pricing.amount),
-          pricingCurrency:
-            payload.pricing.type === 'paid' ? payload.pricing.currency : undefined,
-          // P64 Phase 4 catalog metadata. Scalar-list defaults ([]) mean an
-          // omitted `outcomes`/`requirements` simply stays empty.
-          level: payload.level,
-          language: payload.language,
-          ...(payload.outcomes ? { outcomes: payload.outcomes } : {}),
-          ...(payload.requirements ? { requirements: payload.requirements } : {}),
-          ...(payload.introVideoAssetId
-            ? { introVideoAsset: { connect: { id: payload.introVideoAssetId } } }
-            : {}),
-        });
+          const created = await this.coursesRepository.create(tx, {
+            academy: { connect: { id: academyId } },
+            // P60 — record the creator at the moment of creation. Previously
+            // this was only recoverable from the audit entry written a few
+            // lines below, which made "who built this course" answerable for
+            // audited rows and unanswerable for the rest.
+            createdBy: { connect: { id: userId } },
+            category: payload.categoryId
+              ? { connect: { id: payload.categoryId } }
+              : undefined,
+            title: payload.title,
+            slug: payload.slug,
+            shortDescription: payload.shortDescription,
+            description: payload.description,
+            thumbnailUrl: payload.thumbnail,
+            visibility: payload.visibility,
+            pricingType: payload.pricing.type,
+            pricingAmountMinorUnits: toMinorUnits(payload.pricing.amount),
+            pricingCurrency:
+              payload.pricing.type === 'paid' ? payload.pricing.currency : undefined,
+            // P64 Phase 4 catalog metadata. Scalar-list defaults ([]) mean an
+            // omitted `outcomes`/`requirements` simply stays empty.
+            level: payload.level,
+            language: payload.language,
+            ...(payload.outcomes ? { outcomes: payload.outcomes } : {}),
+            ...(payload.requirements ? { requirements: payload.requirements } : {}),
+            ...(payload.introVideoAssetId
+              ? { introVideoAsset: { connect: { id: payload.introVideoAssetId } } }
+              : {}),
+            creationIdempotencyKey: payload.idempotencyKey,
+          });
 
-        await this.auditLogWriterService.write(tx, {
-          actorUserId: userId,
-          organizationId,
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: userId,
+            organizationId,
+            academyId,
+            role,
+            action: 'course.created',
+            targetType: 'course',
+            targetId: created.id,
+            targetLabel: created.title,
+          });
+
+          return created;
+        }),
+      );
+    } catch (error) {
+      // Two requests with the same key raced past the replay check: the
+      // loser hits a unique violation (the key's, or the slug's when the
+      // slug index is checked first). The winner has committed, so a
+      // fresh lookup returns its course.
+      if (payload.idempotencyKey) {
+        const replay = await this.findCreateReplay(
           academyId,
-          role,
-          action: 'course.created',
-          targetType: 'course',
-          targetId: created.id,
-          targetLabel: created.title,
-        });
-
-        return created;
-      }),
-    );
+          organizationId,
+          userId,
+          payload.idempotencyKey,
+        );
+        if (replay) return replay;
+      }
+      throw error;
+    }
 
     // Phase 2 — real reactive usage-recompute trigger (a course change).
     await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
@@ -323,6 +364,79 @@ export class CoursesService {
   }
 
   /**
+   * W6 — publish readiness for the guided wizard. Same authorization as
+   * every course write (`assertCanManage`): readiness reveals draft
+   * content counts and the organization's payment-setup state, which the
+   * academy's read-only audience has no business seeing. Pure evaluation
+   * lives in `course-readiness.ts`, shared with the (dormant) enforcement
+   * in `setPublicationState`.
+   */
+  async getPublishReadiness(
+    courseId: string,
+    academyId: string,
+    organizationId: string,
+    userId: string,
+  ): Promise<CoursePublishReadinessResponse> {
+    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      await this.assertCanManage(tx, academyId, userId);
+      return this.readReadiness(tx, courseId, academyId, organizationId);
+    });
+  }
+
+  private async readReadiness(
+    tx: Prisma.TransactionClient,
+    courseId: string,
+    academyId: string,
+    organizationId: string,
+  ): Promise<CoursePublishReadinessResponse> {
+    const course = await this.coursesRepository.findById(tx, courseId);
+    this.assertBelongsToAcademy(course, academyId);
+    const facts = await readCourseReadinessFacts(tx, courseId, organizationId);
+    return evaluateCourseReadiness(course!, facts);
+  }
+
+  /**
+   * The course an earlier create with this key made, or null. Authorized
+   * like a create (a non-manager cannot probe keys), and only the user who
+   * made the course may replay it — the same key from someone else is a
+   * conflict, never a way to read another author's draft.
+   */
+  private async findCreateReplay(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    idempotencyKey: string,
+  ): Promise<CourseResponse | null> {
+    const found = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.coursesRepository.findByCreationIdempotencyKey(
+          tx,
+          academyId,
+          idempotencyKey,
+        );
+        if (!existing) return null;
+        if (existing.createdById !== userId) {
+          throw new ConflictException({
+            messageKey: 'errors.course.idempotencyKeyConflict',
+          });
+        }
+        const [sections, lessons] = await Promise.all([
+          this.coursesRepository.countSections(tx, existing.id),
+          this.coursesRepository.countLessons(tx, existing.id),
+        ]);
+        return { course: existing, totalSections: sections, totalLessons: lessons };
+      },
+    );
+    if (!found) return null;
+    return toCourseResponse(found.course, {
+      totalSections: found.totalSections,
+      totalLessons: found.totalLessons,
+    });
+  }
+
+  /**
    * No publication prerequisite is enforced (e.g. "must have at least one
    * section") — none is specified anywhere in the frontend (no such check
    * in `course.schemas.ts`, no such guard in `usePublishCourse`), and
@@ -377,6 +491,15 @@ export class CoursesService {
         const role = await this.assertCanManage(tx, academyId, userId);
         const current = await this.coursesRepository.findById(tx, courseId);
         this.assertBelongsToAcademy(current, academyId);
+
+        // W6 — dormant: `PUBLISH_READINESS_ENFORCED` is false in Phase 1, so
+        // publishing is unchanged. See `course-readiness.ts` before turning
+        // it on (the PATCH `status` bypass must close at the same time).
+        if (status === 'published' && PUBLISH_READINESS_ENFORCED) {
+          assertCourseReady(
+            await this.readReadiness(tx, courseId, academyId, organizationId),
+          );
+        }
 
         const updated = await this.coursesRepository.update(tx, courseId, {
           status,
@@ -594,15 +717,16 @@ export class CoursesService {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    const role = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (!membership || !MANAGING_ROLES.has(membership.role)) {
+    if (!role) {
       throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
     }
-    return membership.role;
+    return role;
   }
 
   /** Verifies the full ownership chain (course → academy) — a caller must not be able to reach a course by guessing its id under the wrong academy path. */

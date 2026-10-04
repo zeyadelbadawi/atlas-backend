@@ -13,9 +13,10 @@ import { defineLocale, str } from '../layout';
 import type { CommunicationTemplate } from '../layout';
 
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
-    subject: (values) => `${str(values, 'code')} is your code to delete your account`,
+    // W3 security fix — the code is NOT in the subject (see `auth.email.otp`).
+    subject: () => 'Your code to delete your account',
     preheader: () => 'Only enter this code if you want to delete your account.',
     paragraphs: (values, ctx) => [
       `Someone signed in to your ${ctx.branding.platformName} account asked to delete it permanently. The confirmation code is:`,
@@ -25,7 +26,7 @@ export const template: CommunicationTemplate = {
     ],
   }),
   ar: defineLocale({
-    subject: (values) => `${str(values, 'code')} هو رمز حذف حسابك`,
+    subject: () => 'رمز حذف حسابك',
     preheader: () => 'لا تُدخل هذا الرمز إلا إذا كنت تريد حذف حسابك.',
     paragraphs: (values, ctx) => [
       `طلب شخص مسجّل الدخول إلى حسابك على ${ctx.branding.platformName} حذفه نهائيًا. رمز التأكيد هو:`,

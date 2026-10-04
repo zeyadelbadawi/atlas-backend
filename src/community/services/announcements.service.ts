@@ -45,8 +45,9 @@ async function assertCanManageAcademy(
   userId: string,
   academyId: string,
 ): Promise<void> {
+  // Security review finding 5 — only an ACTIVE staff row authorises.
   const membership = await tx.academyMember.findFirst({
-    where: { academyId, userId },
+    where: { academyId, userId, status: 'active' },
   });
   if (!membership || !MANAGING_ROLES.has(membership.role)) {
     throw new ForbiddenException({ messageKey: 'errors.forbidden' });
@@ -114,8 +115,9 @@ export class AnnouncementsService {
     });
     if (!course) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
+    // Security review finding 5 — only an ACTIVE staff row authorises.
     const membership = await tx.academyMember.findFirst({
-      where: { academyId: course.academyId, userId },
+      where: { academyId: course.academyId, userId, status: 'active' },
     });
     if (!membership || !MANAGING_ROLES.has(membership.role)) {
       throw new ForbiddenException({ messageKey: 'errors.forbidden' });

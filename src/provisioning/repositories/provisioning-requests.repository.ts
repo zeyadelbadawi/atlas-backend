@@ -56,6 +56,18 @@ export class ProvisioningRequestsRepository {
     return { items, totalItems };
   }
 
+  /** W2 — the request (if any) in this organization that still holds `requestedSubdomain`: anything not cancelled. A failed request still holds it (it is retryable), and a ready one owns the Academy on it. */
+  findActiveBySubdomain(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    requestedSubdomain: string,
+  ): Promise<ProvisioningRequest | null> {
+    return tx.provisioningRequest.findFirst({
+      where: { organizationId, requestedSubdomain, status: { not: 'cancelled' } },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
   /** Phase P15 — `PlatformAcademyDetail.provisioningStatus`. Same RLS/context rule as `findByIdAnyOrganization` below (`academyId` is `@unique`, so at most one row). */
   findByAcademyIdAnyOrganization(
     tx: Prisma.TransactionClient,

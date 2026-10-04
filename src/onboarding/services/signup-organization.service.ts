@@ -68,6 +68,8 @@ export class SignupOrganizationService implements SignupOrganizationPort {
         userId: input.owner.id,
         name: input.prepared.organizationName,
         onboardingCompletedAt: null,
+        // W4 — a name conflict is reported on the signup form's field.
+        nameField: 'organizationName',
       },
       (innerTx, created) =>
         this.subscriptionBootstrapService.bootstrapSubscription(innerTx, created.id),

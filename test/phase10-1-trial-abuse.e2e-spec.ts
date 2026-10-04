@@ -28,7 +28,8 @@ import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
-import { trialSubjectHash } from '../src/plans/utils/trial-subject.util';
+// W8B — new ledger rows carry the v2 (keyed) subject hash.
+import { ledgerSubjectHash as trialSubjectHash } from './utils/customer-identity';
 
 const PASSWORD = 'correct-horse-battery';
 

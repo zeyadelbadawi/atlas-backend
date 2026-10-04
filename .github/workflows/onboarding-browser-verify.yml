@@ -9,7 +9,8 @@ name: Onboarding browser verify
 # Sign-in codes are read on the VPS for the journey's own test account only
 # (deploy/onboarding-browser/remote.sh, same restricted deploy identity as
 # Deploy) and never logged. It creates one or two clearly named verification
-# organizations in production ("Atlas Onboarding Verify A/B").
+# organizations in production ("Atlas Onboarding Verify A/B <run id>"; W4
+# makes organization and academy names unique, so each run tags its own).
 on:
   workflow_dispatch:
     inputs:

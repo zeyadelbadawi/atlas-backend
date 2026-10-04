@@ -17,6 +17,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { uniqueName } from './utils/unique-name';
 
 jest.setTimeout(30000);
 
@@ -182,7 +183,7 @@ describe('Platform Owner Control Plane — tenant isolation & audit coverage (e2
       const academyB = await admin.academy.create({
         data: {
           organizationId: orgB.id,
-          name: 'g8-academy-b',
+          name: uniqueName('g8-academy-b'),
           slug: `g8-academy-b-${Date.now()}`,
         },
       });

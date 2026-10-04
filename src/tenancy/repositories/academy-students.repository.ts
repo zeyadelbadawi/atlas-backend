@@ -19,6 +19,36 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { AcademyStudent } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { withSavepoint } from '../../common/database/savepoint.util';
+import {
+  isUniqueViolation,
+  learnerNameTaken,
+  lockAndCheckLearnerAdmission,
+} from '../../common/name-uniqueness/name-uniqueness';
+
+/**
+ * W4 — what an admission does when the account's name is already held by
+ * another (non-exempt) learner of the academy.
+ *   - `interactive` (registration, academy-join, staff add, staff grant): a
+ *     409 the person can act on, reported on `field`. `existingAccount` is the
+ *     staff-add variant for an account whose name staff cannot edit.
+ *   - `automatic` (sign-in auto-join, purchase/payment application): NEVER
+ *     fails — the row is inserted `name_unique_exempt` and the caller records
+ *     the clash (`nameClashExempted: true`).
+ */
+export type LearnerNamePolicy =
+  | {
+      readonly mode: 'interactive';
+      readonly field?: string;
+      readonly variant?: 'self' | 'existingAccount';
+    }
+  | { readonly mode: 'automatic' };
+
+export interface LearnerAdmission {
+  readonly student: AcademyStudent;
+  /** True when an automatic admission clashed and was inserted exempt. */
+  readonly nameClashExempted: boolean;
+}
 
 @Injectable()
 export class AcademyStudentsRepository {
@@ -72,6 +102,56 @@ export class AcademyStudentsRepository {
     data: Prisma.AcademyStudentUncheckedCreateInput,
   ): Promise<AcademyStudent> {
     return tx.academyStudent.create({ data });
+  }
+
+  /**
+   * W4 — THE way a learner row is created: `create` plus the per-academy
+   * name rule (see `LearnerNamePolicy`). Must run inside the caller's write
+   * transaction:
+   *   1. `academy_learner_admission_name_taken` takes the
+   *      'learner-name:<academy>:<key>' advisory lock for the rest of the
+   *      transaction and answers whether another non-exempt learner holds the
+   *      account's current name key (a boolean definer: the caller may not be
+   *      able to read the account or the roster under RLS);
+   *   2. the insert runs in a SAVEPOINT, so a unique violation leaves the
+   *      transaction usable;
+   *   3. a P2002 is classified by asking the same check again: the name →
+   *      the policy's answer; anything else (the `(academy, user)` index —
+   *      a concurrent second admission) → rethrown unchanged for the caller's
+   *      existing handling.
+   */
+  async admit(
+    tx: Prisma.TransactionClient,
+    data: Prisma.AcademyStudentUncheckedCreateInput,
+    policy: LearnerNamePolicy,
+  ): Promise<LearnerAdmission> {
+    const refuse = () =>
+      learnerNameTaken(
+        policy.mode === 'interactive' ? (policy.field ?? 'name') : 'name',
+        policy.mode === 'interactive' ? (policy.variant ?? 'self') : 'self',
+      );
+    const taken = await lockAndCheckLearnerAdmission(tx, data.academyId, data.userId);
+    if (taken && policy.mode === 'interactive') throw refuse();
+
+    try {
+      const student = await withSavepoint(tx, () =>
+        tx.academyStudent.create({ data: { ...data, nameUniqueExempt: taken } }),
+      );
+      return { student, nameClashExempted: taken };
+    } catch (error) {
+      if (!isUniqueViolation(error) || taken) throw error;
+      const nameClash = await lockAndCheckLearnerAdmission(
+        tx,
+        data.academyId,
+        data.userId,
+      );
+      if (!nameClash) throw error;
+      if (policy.mode === 'interactive') throw refuse();
+      const student = await tx.academyStudent.create({
+        data: { ...data, nameUniqueExempt: true },
+      });
+      return { student, nameClashExempted: true };
+    }
   }
 
   /**

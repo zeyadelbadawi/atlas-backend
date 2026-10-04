@@ -13,6 +13,7 @@ import { fixtureUsers } from './utils/db-admin';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
+import { uniqueName } from './utils/unique-name';
 
 describe('Row-Level Security — Provisioning (provisioning_requests/provisioning_steps, direct, no guards)', () => {
   let app: INestApplication;
@@ -48,7 +49,7 @@ describe('Row-Level Security — Provisioning (provisioning_requests/provisionin
       const org = await tx.organization.create({
         data: {
           id,
-          name: slugLabel,
+          name: uniqueName(slugLabel),
           slug: `${slugLabel}-${Date.now()}`,
           ownerUserId: ownerId,
         },
@@ -314,7 +315,7 @@ describe('Row-Level Security — Provisioning (provisioning_requests/provisionin
         tx.academy.create({
           data: {
             organizationId: org.id,
-            name: 'rls-sit',
+            name: uniqueName('rls-sit'),
             slug: `rls-sit-${Date.now()}`,
           },
         }),
