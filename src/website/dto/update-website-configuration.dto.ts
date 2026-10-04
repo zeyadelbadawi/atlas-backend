@@ -10,7 +10,7 @@ import { IsArray, IsIn, IsISO8601, IsObject, IsOptional } from 'class-validator'
 import { SELECTABLE_WEBSITE_THEME_KEYS } from '../constants/website.constants';
 
 export class UpdateWebsiteConfigurationDto {
-  /** Only a selectable theme; Themes 2–5 are retired (`RETIRED_WEBSITE_THEME_KEYS`). */
+  /** Only a selectable theme (`SELECTABLE_WEBSITE_THEME_KEYS`); the original Themes 2–5 are retired (`RETIRED_WEBSITE_THEME_KEYS`) and rejected. */
   @IsOptional()
   @IsIn(SELECTABLE_WEBSITE_THEME_KEYS)
   readonly themeKey?: (typeof SELECTABLE_WEBSITE_THEME_KEYS)[number];

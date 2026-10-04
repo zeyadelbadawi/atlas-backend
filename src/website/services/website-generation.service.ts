@@ -46,10 +46,14 @@ import { WebsiteConfigurationRepository } from '../repositories/website-configur
 import { WebsitePagesRepository } from '../repositories/website-pages.repository';
 import { WebsiteBootstrapService, CORE_PAGE_DEFAULTS } from './website-bootstrap.service';
 import { getWebsiteTemplate } from '../templates/website-template.registry';
-import { sectionInstanceArraySchema } from '../validation/section-config.schemas';
+import {
+  getSectionConfigSchema,
+  sectionInstanceArraySchema,
+} from '../validation/section-config.schemas';
 import {
   interpolate,
   interpolateLocalized,
+  interpolateWithin,
   lt,
   type TemplateInterpolationContext,
 } from '../templates/template-content.util';
@@ -90,6 +94,46 @@ function deepInterpolate(value: unknown, context: TemplateInterpolationContext):
     );
   }
   return value;
+}
+
+function valueAt(root: unknown, path: readonly (string | number)[]): unknown {
+  return path.reduce<unknown>(
+    (node, key) =>
+      typeof node === 'object' && node !== null
+        ? (node as Record<string | number, unknown>)[key]
+        : undefined,
+    root,
+  );
+}
+
+/**
+ * Content limits (`website.constants.ts`) vs. the Academy's name: fits
+ * every interpolated string that came out longer than its field allows
+ * (see `interpolateWithin`). The section schema says which strings and
+ * what limit — each `too_big` string issue points at a value whose
+ * uninterpolated template `source` is re-interpolated within the limit. A
+ * value with no template source string is left as it is, so a template
+ * that is itself over a limit still fails the validation below loudly.
+ */
+function fitToContentLimits(
+  type: SectionType,
+  config: Record<string, unknown>,
+  source: unknown,
+  context: TemplateInterpolationContext,
+): Record<string, unknown> {
+  const result = getSectionConfigSchema(type).safeParse(config);
+  if (result.success) return config;
+  const fitted = structuredClone(config);
+  for (const issue of result.error.issues) {
+    if (issue.code !== 'too_big' || issue.type !== 'string') continue;
+    const raw = valueAt(source, issue.path);
+    const parent = valueAt(fitted, issue.path.slice(0, -1));
+    if (typeof raw !== 'string' || typeof parent !== 'object' || parent === null)
+      continue;
+    (parent as Record<string | number, unknown>)[issue.path[issue.path.length - 1]] =
+      interpolateWithin(raw, context, Number(issue.maximum));
+  }
+  return fitted;
 }
 
 /**
@@ -180,22 +224,18 @@ export class WebsiteGenerationService {
       ...(section.assets ?? {}),
     };
 
-    if (mode === 'complete' && section.starterContent) {
-      return {
-        ...base,
-        ...(deepInterpolate(section.starterContent, context) as Record<string, unknown>),
-      };
-    }
+    const source =
+      mode === 'complete' && section.starterContent
+        ? section.starterContent
+        : emptyModeMinimum(section.type, coreType);
+    if (!source) return base;
 
-    const minimal = emptyModeMinimum(section.type, coreType);
-    if (minimal) {
-      return {
-        ...base,
-        ...(deepInterpolate(minimal, context) as Record<string, unknown>),
-      };
-    }
-
-    return base;
+    return fitToContentLimits(
+      section.type,
+      { ...base, ...(deepInterpolate(source, context) as Record<string, unknown>) },
+      source,
+      context,
+    );
   }
 
   /**

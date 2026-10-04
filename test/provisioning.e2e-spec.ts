@@ -281,6 +281,89 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     expect(configRes.body.themeKey).toBe('modern-education');
   });
 
+  it('3b-atelier: selecting Atelier (Theme 2) applies it and generates the website from the Atelier template', async () => {
+    const { owner, org } = await arrangeOrg('atelier-theme');
+    const atelierName = uniqueName('Atelier Academy');
+    const subdomain = uniqueSubdomain('atelier-theme');
+    const created = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        academyName: atelierName,
+        requestedSubdomain: subdomain,
+        selectedThemeKey: 'atelier',
+        websiteSetupMode: 'complete',
+        idempotencyKey: `atelier-theme-idem-${subdomain}`,
+      })
+      .expect(201);
+    expect(created.body.selectedThemeKey).toBe('atelier');
+
+    const final = await waitForTerminal(owner, org.id, created.body.id);
+    expect(final.status).toBe('ready');
+    expect(final.selectedThemeKey).toBe('atelier');
+
+    const websiteConfig = await admin.websiteConfiguration.findUnique({
+      where: { academyId: final.academyId },
+    });
+    expect(websiteConfig?.themeKey).toBe('atelier');
+    expect(websiteConfig?.templateKey).toBe('atelier');
+    expect(websiteConfig?.templateVersion).toBe(1);
+
+    const configRes = await request(app.getHttpServer())
+      .get(`/academies/${final.academyId}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(configRes.body.themeKey).toBe('atelier');
+
+    // The pages are Atelier's own composition (plan §3), with its images.
+    const pages = await admin.websitePage.findMany({
+      where: { academyId: final.academyId },
+    });
+    const byCoreType = Object.fromEntries(pages.map((page) => [page.coreType, page]));
+    type Section = { type: string; config: Record<string, unknown> };
+    const home = byCoreType.home!.sections as Section[];
+    expect(home.map((section) => section.type)).toEqual([
+      'hero',
+      'featureSplit',
+      'features',
+      'courseCategories',
+      'featuredCourses',
+      'steps',
+      'instructors',
+      'statistics',
+      'testimonials',
+      'faq',
+      'cta',
+    ]);
+    expect(home[0].config.image).toBe('theme-asset:atelier/home-hero');
+    expect(home[0].config.eyebrow).toEqual({
+      en: `${atelierName} — a learning studio`,
+      ar: `${atelierName} — استوديو للتعلّم`,
+    });
+    expect((home[0].config.cta as { pageId?: string }).pageId).toBe(
+      byCoreType.courses!.id,
+    );
+    for (const coreType of ['about', 'courses', 'faqs', 'contact']) {
+      expect((byCoreType[coreType]!.sections as Section[])[0].type).toBe('pageHeader');
+    }
+    expect((byCoreType.about!.sections as Section[])[0].config.image).toBe(
+      'theme-asset:atelier/about-header',
+    );
+    // Live statistics only; testimonials are samples.
+    const statistics = home.find((section) => section.type === 'statistics')!;
+    for (const item of statistics.config.items as Array<Record<string, unknown>>) {
+      expect(item.metric).toBeDefined();
+      expect(item.value).toEqual({ en: '', ar: '' });
+    }
+    const testimonials = home.find((section) => section.type === 'testimonials')!;
+    expect(
+      (testimonials.config.items as Array<{ sample?: boolean }>).every(
+        (item) => item.sample,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(pages)).not.toContain('{{');
+  });
+
   it('3b-retired: Themes 2–5 are retired from selection and are refused', async () => {
     const { owner, org } = await arrangeOrg('retired-theme');
     const subdomain = uniqueSubdomain('retired-theme');

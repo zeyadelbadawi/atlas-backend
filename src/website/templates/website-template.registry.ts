@@ -7,6 +7,7 @@
  */
 import { WEBSITE_THEME_KEYS } from '../constants/website.constants';
 import { modernEducationTemplate } from './modern-education.template';
+import { atelierTemplate } from './atelier.template';
 import { premiumAcademyTemplate } from './premium-academy.template';
 import { corporateLearningTemplate } from './corporate-learning.template';
 import { minimalEditorialTemplate } from './minimal-editorial.template';
@@ -21,6 +22,7 @@ const WEBSITE_TEMPLATE_REGISTRY: Record<
   WebsiteTemplateDefinition
 > = {
   'modern-education': modernEducationTemplate,
+  atelier: atelierTemplate,
   'premium-academy': premiumAcademyTemplate,
   'corporate-learning': corporateLearningTemplate,
   'minimal-editorial': minimalEditorialTemplate,

@@ -5,24 +5,40 @@
  * Phase 7 changed shared generation code (`emptyModeMinimum`, section
  * defaults) that every theme goes through, while only Theme 1 had an
  * output test. This runs the real `WebsiteGenerationService` with
- * in-memory repositories for all five themes in both modes and checks
+ * in-memory repositories for every theme in both modes and checks
  * the contract every generated website must meet: each template page is
  * created, every page validates against the shared section schema, CTA
  * targets resolve to generated pages, no template token survives
- * interpolation, and a second run creates nothing.
+ * interpolation, and a second run creates nothing. The content limits
+ * (`website.constants.ts`) are part of that contract: every page must
+ * validate even for an Academy whose name is as long as allowed.
  */
 import type { Prisma } from '@prisma/client';
 import { WebsiteBootstrapService } from './website-bootstrap.service';
 import { WebsiteGenerationService } from './website-generation.service';
 import { sectionInstanceArraySchema } from '../validation/section-config.schemas';
 import { getWebsiteTemplate } from '../templates/website-template.registry';
+import { MAX_ACADEMY_NAME_LENGTH } from '../../academy/dto/create-academy.dto';
+import { MAX_HERO_TITLE_LENGTH } from '../constants/website.constants';
 
 type Row = Record<string, unknown>;
 const tx = {} as Prisma.TransactionClient;
 const ACADEMY = { id: 'a1', name: 'Cedar Academy', description: 'Learn with us.' };
+/** The longest names an Academy may have, in both scripts. */
+const LONG_NAMES = [
+  'The International Institute of Applied Digital Craft and Creative Leadership Studies of Alexandria'.padEnd(
+    MAX_ACADEMY_NAME_LENGTH,
+    'x',
+  ),
+  'المعهد الدولي للحرف الرقمية التطبيقية والقيادة الإبداعية والدراسات المتقدمة في الإسكندرية'.padEnd(
+    MAX_ACADEMY_NAME_LENGTH,
+    'ة',
+  ),
+];
 
 const THEMES = [
   'modern-education',
+  'atelier',
   'premium-academy',
   'corporate-learning',
   'minimal-editorial',
@@ -30,7 +46,7 @@ const THEMES = [
 ] as const;
 const MODES = ['complete', 'empty'] as const;
 
-function setup() {
+function setup(academy: typeof ACADEMY = ACADEMY) {
   let configuration: Row | null = null;
   const pages: Row[] = [];
   const configurationRepository = {
@@ -64,7 +80,7 @@ function setup() {
     },
   };
   const service = new WebsiteGenerationService(
-    { findById: async () => ACADEMY } as never,
+    { findById: async () => academy } as never,
     configurationRepository as never,
     pagesRepository as never,
     new WebsiteBootstrapService(
@@ -131,11 +147,40 @@ describe('Website generation — every theme × setup mode', () => {
     },
   );
 
-  it('complete mode does carry Theme 1 samples (the check below is not vacuous)', async () => {
-    const { service, pages } = setup();
-    await service.generate(tx, ACADEMY.id, 'modern-education', 'complete');
-    expect(JSON.stringify(pages)).toMatch(/"sample":true/);
-  });
+  it.each(
+    THEMES.flatMap((theme) =>
+      MODES.flatMap((mode) => LONG_NAMES.map((name) => [theme, mode, name] as const)),
+    ),
+  )(
+    '%s / %s: a maximum-length name still fits every limit (%s)',
+    async (theme, mode, name) => {
+      const { service, pages } = setup({ ...ACADEMY, name });
+      await service.generate(tx, ACADEMY.id, theme, mode);
+
+      expect(pages.length).toBe(getWebsiteTemplate(theme).pages.length);
+      for (const page of pages) {
+        const parsed = sectionInstanceArraySchema.safeParse(page.sections);
+        expect({ page: page.coreType, issues: parsed.error?.issues ?? [] }).toEqual({
+          page: page.coreType,
+          issues: [],
+        });
+      }
+      const home = pages.find((page) => page.coreType === 'home')!;
+      const hero = (
+        home.sections as { type: string; config: { title: { en: string } } }[]
+      ).find((section) => section.type === 'hero');
+      expect(hero?.config.title.en.length).toBeLessThanOrEqual(MAX_HERO_TITLE_LENGTH);
+    },
+  );
+
+  it.each(['modern-education', 'atelier'] as const)(
+    'complete mode does carry %s samples (the check below is not vacuous)',
+    async (theme) => {
+      const { service, pages } = setup();
+      await service.generate(tx, ACADEMY.id, theme, 'complete');
+      expect(JSON.stringify(pages)).toMatch(/"sample":true/);
+    },
+  );
 
   it.each(THEMES)('%s: empty mode carries no sample content', async (theme) => {
     const { service, pages } = setup();

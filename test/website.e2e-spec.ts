@@ -16,6 +16,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { MAX_HERO_TITLE_LENGTH } from '../src/website/constants/website.constants';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -155,6 +156,33 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({ themeKey: 'not-a-real-theme' })
       .expect(400);
+  });
+
+  it('selects Atelier (Theme 2): the key is accepted and persisted, and switching back works', async () => {
+    const { owner, academy } = await seedManagedAcademy('theme-atelier');
+    const selected = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ themeKey: 'atelier' })
+      .expect(200);
+    expect(selected.body.themeKey).toBe('atelier');
+
+    const stored = await admin.websiteConfiguration.findUnique({
+      where: { academyId: academy.id },
+    });
+    expect(stored?.themeKey).toBe('atelier');
+    const current = await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(current.body.themeKey).toBe('atelier');
+
+    const back = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ themeKey: 'modern-education' })
+      .expect(200);
+    expect(back.body.themeKey).toBe('modern-education');
   });
 
   it('refuses a retired theme (Themes 2–5) and keeps the current one', async () => {
@@ -479,6 +507,127 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     const fields = refused.body.error.violations.map((v: { field: string }) => v.field);
     expect(fields).toContain('0.config.title.en');
     expect(fields).toContain('0.config.body.en');
+  });
+
+  it('content limits: a hero title of exactly the limit saves; one character more is refused with its path', async () => {
+    const { owner, academy } = await seedManagedAcademy('content-limits');
+    const created = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/website/pages`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ title: 'Limits', slug: 'limits' })
+      .expect(201);
+    const heroWithTitle = (en: string, ar: string) => [
+      {
+        id: 'sec-hero',
+        type: 'hero',
+        enabled: true,
+        visibility: { desktop: true, tablet: true, mobile: true },
+        config: { title: { en, ar } },
+      },
+    ];
+    const patch = async (sections: unknown) =>
+      request(app.getHttpServer())
+        .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          sections,
+          expectedVersion: await pageVersion(
+            academy.id,
+            created.body.id,
+            owner.accessToken,
+          ),
+        });
+
+    const refused = await patch(
+      heroWithTitle(
+        'a'.repeat(MAX_HERO_TITLE_LENGTH + 1),
+        'ع'.repeat(MAX_HERO_TITLE_LENGTH + 1),
+      ),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.body.error.violations).toEqual([
+      { field: '0.config.title.en', messageKey: 'validation:maxLength' },
+      { field: '0.config.title.ar', messageKey: 'validation:maxLength' },
+    ]);
+
+    const atLimit = 'a'.repeat(MAX_HERO_TITLE_LENGTH);
+    const saved = await patch(heroWithTitle(atLimit, 'ع'.repeat(MAX_HERO_TITLE_LENGTH)));
+    expect(saved.status).toBe(200);
+    expect(saved.body.sections[0].config.title.en).toBe(atLimit);
+  });
+
+  it('content limits apply on write only: stored over-limit text still reads, reorders and publishes', async () => {
+    const { owner, academy } = await seedManagedAcademy('content-legacy');
+    const created = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/website/pages`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ title: 'Legacy', slug: 'legacy' })
+      .expect(201);
+    const legacyDescription = 'x'.repeat(2000);
+    const visibility = { desktop: true, tablet: true, mobile: true };
+    // Written before the limits tightened (directly, as the old API allowed).
+    await admin.websitePage.update({
+      where: { id: created.body.id },
+      data: {
+        sections: [
+          {
+            id: 'legacy-hero',
+            type: 'hero',
+            enabled: true,
+            visibility,
+            config: {
+              title: { en: 'Learn', ar: '' },
+              description: { en: legacyDescription, ar: '' },
+            },
+          },
+          {
+            id: 'legacy-about',
+            type: 'about',
+            enabled: true,
+            visibility,
+            config: { title: { en: 'About', ar: '' }, body: { en: 'Us', ar: '' } },
+          },
+        ],
+      },
+    });
+
+    const read = await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/website/pages/${created.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(read.body.sections[0].config.description.en).toBe(legacyDescription);
+
+    await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/website/pages/${created.body.id}/sections/reorder`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ orderedIds: ['legacy-about', 'legacy-hero'] })
+      .expect(201);
+    const published = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/website/pages/${created.body.id}/publish`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(201);
+    expect(published.body.sections[1].config.description.en).toBe(legacyDescription);
+
+    // Saving the page as it is is refused, naming the over-limit field.
+    const refused = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/pages/${created.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        sections: (
+          await request(app.getHttpServer())
+            .get(`/academies/${academy.id}/website/pages/${created.body.id}`)
+            .set('Authorization', `Bearer ${owner.accessToken}`)
+        ).body.sections,
+        expectedVersion: await pageVersion(
+          academy.id,
+          created.body.id,
+          owner.accessToken,
+        ),
+      })
+      .expect(400);
+    expect(refused.body.error.violations).toEqual([
+      { field: '1.config.description.en', messageKey: 'validation:maxLength' },
+    ]);
   });
 
   it('a well-formed sections array persists; a malformed or unregistered section type is rejected server-side', async () => {

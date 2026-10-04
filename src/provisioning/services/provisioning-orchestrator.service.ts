@@ -704,7 +704,7 @@ export class ProvisioningOrchestratorService {
     // W2 — no theme picked (or, defensively, no longer a registry key) is
     // the platform default theme, and the website is still built: this
     // step used to return here without generating anything, so a request
-    // that never clicked the (only) theme card silently got no starter
+    // that never clicked a theme card silently got no starter
     // pages despite the pre-selected "complete" setup mode. A request made
     // before Themes 2–5 were retired gets their replacement, exactly as
     // the retirement migration moves existing websites.

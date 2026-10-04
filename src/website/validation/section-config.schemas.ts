@@ -44,11 +44,16 @@
  * completeness indicator should show for it. This is a pure
  * validation-layer widening: `sections`/`header`/`footer`/`seo` are all
  * already `Json` columns (`schema.prisma`), so no database migration is
- * needed or performed — see `website-page.contract.ts`/
- * `website-configuration.contract.ts`, which run every stored row through
- * this same schema on the way OUT (not just on the way in) so a
- * never-re-saved legacy Academy is normalized to the new shape the moment
- * it's next read, not only the moment it's next edited.
+ * needed or performed.
+ *
+ * WRITES ONLY. These schemas run on every page write
+ * (`WebsitePagesService.update`, `WebsiteGenerationService`); no read path
+ * (`website-page.contract.ts`, the public pages payload, publish) parses
+ * stored sections against them. That is what lets the content limits in
+ * `website.constants.ts` tighten without a migration: content stored
+ * under an older, looser limit keeps loading and rendering, and is only
+ * refused — with a path-level violation per field — when a page holding
+ * it is next saved.
  */
 import { z } from 'zod';
 import {
@@ -56,12 +61,24 @@ import {
   FEATURE_ICON_OPTIONS,
   MAX_CHIP_TEXT,
   MAX_COURSE_CATALOG_PAGE_SIZE,
+  MAX_CTA_LABEL_LENGTH,
   MAX_FEATURE_SPLIT_ITEMS,
+  MAX_HERO_DESCRIPTION_LENGTH,
+  MAX_HERO_EYEBROW_LENGTH,
   MAX_HERO_HIGHLIGHTS,
+  MAX_HERO_SUBTITLE_LENGTH,
+  MAX_HERO_TITLE_LENGTH,
   MAX_LONG_TEXT,
   MAX_SECTION_ITEMS,
   MAX_SECTION_STEPS,
   MAX_SHORT_TEXT,
+  MAX_STATISTIC_LABEL_LENGTH,
+  MAX_STATISTIC_VALUE_LENGTH,
+  MAX_STATISTICS_TITLE_LENGTH,
+  MAX_STEP_DESCRIPTION_LENGTH,
+  MAX_STEP_TITLE_LENGTH,
+  MAX_STEPS_DESCRIPTION_LENGTH,
+  MAX_STEPS_TITLE_LENGTH,
   MIN_COURSE_CATALOG_PAGE_SIZE,
   MIN_COURSE_CATEGORIES,
   SECTION_TYPES,
@@ -128,9 +145,9 @@ export const localizedOptional = (maxLength: number) =>
 export const localizedTextFieldSchema = localizedOptional(MAX_LONG_TEXT);
 export type ValidatedLocalizedText = z.infer<typeof localizedTextFieldSchema>;
 
-/** `url` is checked against `isSafeExternalUrl` in addition to being syntactically a URL — matches the frontend's `websiteCtaSchema` exactly. */
+/** `url` is checked against `isSafeExternalUrl` in addition to being syntactically a URL — matches the frontend's `websiteCtaSchema` exactly. The label cap applies to every section CTA (hero, FAQ, CTA banner, feature split). */
 const websiteCtaSchema = z.object({
-  label: localizedRequired(MAX_SHORT_TEXT),
+  label: localizedRequired(MAX_CTA_LABEL_LENGTH),
   pageId: z.string().optional(),
   courseId: z.string().optional(),
   url: z
@@ -152,17 +169,18 @@ const heroHighlightSchema = z.object({
   label: localizedRequired(MAX_CHIP_TEXT),
 });
 
+/** Content limits: see `website.constants.ts` ("Section content limits"). */
 export const heroSectionSchema = z.object({
-  eyebrow: localizedOptional(MAX_SHORT_TEXT).optional(),
-  title: localizedRequired(MAX_SHORT_TEXT),
-  subtitle: localizedOptional(MAX_SHORT_TEXT).optional(),
-  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  eyebrow: localizedOptional(MAX_HERO_EYEBROW_LENGTH).optional(),
+  title: localizedRequired(MAX_HERO_TITLE_LENGTH),
+  subtitle: localizedOptional(MAX_HERO_SUBTITLE_LENGTH).optional(),
+  description: localizedOptional(MAX_HERO_DESCRIPTION_LENGTH).optional(),
   image: imageValueSchema.optional(),
   imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
   cta: websiteCtaSchema.optional(),
   secondaryCta: websiteCtaSchema.optional(),
   /** Theme 1 plan §D.2 — the one title phrase a theme may emphasise; ignored if it's no longer in the title. */
-  highlight: localizedOptional(MAX_SHORT_TEXT).optional(),
+  highlight: localizedOptional(MAX_HERO_TITLE_LENGTH).optional(),
   highlights: z.array(heroHighlightSchema).max(MAX_HERO_HIGHLIGHTS).optional(),
   /** Inline course search in the hero (submits to the catalog, `/courses?q=`). */
   showSearch: z.boolean().optional(),
@@ -210,8 +228,8 @@ const statisticItemSchema = z
      *
      * Theme 1 plan §D.4 — may be empty when `metric` is set: a live item's number is resolved at render time, so starter content never carries a hand-typed one. Without `metric` the value IS the item and stays required.
      */
-    value: localizedOptional(20),
-    label: localizedRequired(MAX_SHORT_TEXT),
+    value: localizedOptional(MAX_STATISTIC_VALUE_LENGTH),
+    label: localizedRequired(MAX_STATISTIC_LABEL_LENGTH),
     /** Present only when generated (§1.4/§6.2 of the specification) — resolves a real, live, Academy-scoped count instead of the static `value` above. Absent means "use the authored `value` as-is," matching today's manually-authored behavior exactly. */
     metric: z.enum(['courses', 'students', 'instructors']).optional(),
   })
@@ -221,7 +239,7 @@ const statisticItemSchema = z
   });
 
 export const statisticsSectionSchema = z.object({
-  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  title: localizedOptional(MAX_STATISTICS_TITLE_LENGTH).optional(),
   items: z.array(statisticItemSchema).max(MAX_SECTION_ITEMS),
 });
 
@@ -354,14 +372,21 @@ export const courseCategoriesSectionSchema = z.object({
 
 const stepItemSchema = z.object({
   id: z.string(),
-  title: localizedRequired(MAX_SHORT_TEXT),
-  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  title: localizedRequired(MAX_STEP_TITLE_LENGTH),
+  description: localizedOptional(MAX_STEP_DESCRIPTION_LENGTH).optional(),
 });
 
-/** Theme 1 plan §C.1 #6 — "How it works": an ordered, numbered sequence. */
+/**
+ * Theme 1 plan §C.1 #6 — "How it works": an ordered, numbered sequence.
+ * `image`/`imageAlt` validate exactly like `featureSplit`'s: an optional
+ * plate drawn by themes that support it (Atelier's Method scene); Theme 1
+ * ignores it.
+ */
 export const stepsSectionSchema = z.object({
-  title: localizedOptional(MAX_SHORT_TEXT).optional(),
-  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  title: localizedOptional(MAX_STEPS_TITLE_LENGTH).optional(),
+  description: localizedOptional(MAX_STEPS_DESCRIPTION_LENGTH).optional(),
+  image: imageValueSchema.optional(),
+  imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
   items: z.array(stepItemSchema).max(MAX_SECTION_STEPS),
 });
 

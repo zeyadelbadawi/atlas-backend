@@ -9,8 +9,25 @@ import {
   sectionInstanceArraySchema,
   sectionInstanceSchema,
   statisticsSectionSchema,
+  stepsSectionSchema,
   testimonialsSectionSchema,
 } from './section-config.schemas';
+import type { BadRequestException } from '@nestjs/common';
+import { parseOrThrow } from '../../common/validation/zod-violations.util';
+import {
+  MAX_CTA_LABEL_LENGTH,
+  MAX_HERO_DESCRIPTION_LENGTH,
+  MAX_HERO_EYEBROW_LENGTH,
+  MAX_HERO_SUBTITLE_LENGTH,
+  MAX_HERO_TITLE_LENGTH,
+  MAX_SHORT_TEXT,
+  MAX_STATISTIC_LABEL_LENGTH,
+  MAX_STATISTICS_TITLE_LENGTH,
+  MAX_STEP_DESCRIPTION_LENGTH,
+  MAX_STEP_TITLE_LENGTH,
+  MAX_STEPS_DESCRIPTION_LENGTH,
+  MAX_STEPS_TITLE_LENGTH,
+} from '../constants/website.constants';
 
 const visibility = { desktop: true, tablet: true, mobile: true };
 
@@ -353,5 +370,94 @@ describe('contactSectionSchema', () => {
 
   it('rejects a missing required `showForm`', () => {
     expect(contactSectionSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('content limits — violation payload', () => {
+  function violationsOf(sections: unknown): unknown {
+    try {
+      parseOrThrow(sectionInstanceArraySchema, sections);
+    } catch (error) {
+      return (error as BadRequestException).getResponse();
+    }
+    throw new Error('expected a validation failure');
+  }
+
+  it('names the section index, the field and the language of every over-limit value', () => {
+    const steps = {
+      id: 'section-2',
+      type: 'steps',
+      enabled: true,
+      visibility,
+      config: {
+        items: [
+          { id: 'i1', title: { en: 'Step', ar: 'ع'.repeat(MAX_STEP_TITLE_LENGTH + 1) } },
+        ],
+      },
+    };
+    const response = violationsOf([
+      heroInstance({
+        config: {
+          title: { en: 'x'.repeat(MAX_HERO_TITLE_LENGTH + 1), ar: '' },
+          cta: { label: { en: 'Go', ar: 'ع'.repeat(MAX_CTA_LABEL_LENGTH + 1) } },
+        },
+      }),
+      steps,
+    ]);
+
+    expect(response).toEqual({
+      messageKey: 'errors.validation.failed',
+      violations: [
+        { field: '0.config.title.en', messageKey: 'validation:maxLength' },
+        { field: '0.config.cta.label.ar', messageKey: 'validation:maxLength' },
+        { field: '1.config.items.0.title.ar', messageKey: 'validation:maxLength' },
+      ],
+    });
+  });
+
+  it('accepts every capped field at exactly its limit', () => {
+    const at = (n: number) => ({ en: 'a'.repeat(n), ar: 'ع'.repeat(n) });
+    expect(
+      heroSectionSchema.safeParse({
+        eyebrow: at(MAX_HERO_EYEBROW_LENGTH),
+        title: at(MAX_HERO_TITLE_LENGTH),
+        highlight: at(MAX_HERO_TITLE_LENGTH),
+        subtitle: at(MAX_HERO_SUBTITLE_LENGTH),
+        description: at(MAX_HERO_DESCRIPTION_LENGTH),
+        cta: { label: at(MAX_CTA_LABEL_LENGTH) },
+      }).success,
+    ).toBe(true);
+    expect(
+      stepsSectionSchema.safeParse({
+        title: at(MAX_STEPS_TITLE_LENGTH),
+        description: at(MAX_STEPS_DESCRIPTION_LENGTH),
+        image: 'theme-asset:atelier/home-method',
+        imageAlt: at(MAX_SHORT_TEXT),
+        items: [
+          {
+            id: 'i1',
+            title: at(MAX_STEP_TITLE_LENGTH),
+            description: at(MAX_STEP_DESCRIPTION_LENGTH),
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      statisticsSectionSchema.safeParse({
+        title: at(MAX_STATISTICS_TITLE_LENGTH),
+        items: [{ id: 's1', value: at(5), label: at(MAX_STATISTIC_LABEL_LENGTH) }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('counts Arabic diacritics as characters, exactly like `string.length`', () => {
+    const vowelled = 'عَ'.repeat(MAX_HERO_TITLE_LENGTH / 2);
+    expect(vowelled.length).toBe(MAX_HERO_TITLE_LENGTH);
+    expect(
+      heroSectionSchema.safeParse({ title: { en: 'x', ar: vowelled } }).success,
+    ).toBe(true);
+    expect(
+      heroSectionSchema.safeParse({ title: { en: 'x', ar: `${vowelled}ـ` } }).success,
+    ).toBe(false);
   });
 });
