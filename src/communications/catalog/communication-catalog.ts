@@ -1362,6 +1362,9 @@ const CATALOG = {
   // S1 — the receipt §27 asks for beside the existing approval notice:
   // period dates and the limits this purchase actually froze. Anchored on
   // the new `currentPeriodEnd`, so each renewal is its own receipt.
+  // Emitted by `SubscriptionReceiptService` from the shared apply step, so
+  // every way a plan payment succeeds (manual approval of any manual
+  // method, or a signed gateway webhook) sends it exactly once.
   // W8 — on the purchase that was granted gifted days, the values also
   // carry `giftedDays`, `giftStartDate` and `giftEndDate`. They describe the
   // recipient's own subscription (no third party, no credential), so they

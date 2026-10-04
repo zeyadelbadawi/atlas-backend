@@ -62,6 +62,7 @@ import { CheckoutService } from './services/checkout.service';
 import { PaymentService } from './services/payment.service';
 import { PlatformPaymentService } from './services/platform-payment.service';
 import { PaymentApplicationService } from './services/payment-application.service';
+import { SubscriptionReceiptService } from './services/subscription-receipt.service';
 import { PaymentWebhookService } from './services/payment-webhook.service';
 import { OrganizationPaymentSettingsService } from './services/organization-payment-settings.service';
 import { OrganizationGatewayCredentialsService } from './services/organization-gateway-credentials.service';
@@ -120,6 +121,7 @@ import { PublicWebsiteCacheService } from '../public-website/services/public-web
     PlatformPaymentService,
     PlatformPaymentMethodsService,
     PaymentApplicationService,
+    SubscriptionReceiptService,
     PaymentWebhookService,
     OrganizationPaymentSettingsService,
     OrganizationGatewayCredentialsService,
