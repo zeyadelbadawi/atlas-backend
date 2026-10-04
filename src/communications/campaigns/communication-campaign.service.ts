@@ -113,6 +113,9 @@ function isUniqueViolation(error: unknown): boolean {
   return (error.meta as { code?: string } | undefined)?.code === '23505';
 }
 
+/** Academy statuses that may preview and send messages. */
+const SENDING_ACADEMY_STATUSES: ReadonlySet<string> = new Set(['active', 'draft']);
+
 @Injectable()
 export class CommunicationCampaignService {
   private readonly logger = new Logger(CommunicationCampaignService.name);
@@ -145,6 +148,7 @@ export class CommunicationCampaignService {
     academyId: string,
     organizationId: string,
     userId: string,
+    purpose: 'read' | 'send' = 'send',
   ): Promise<Extract<SenderContext, { scope: 'academy' }>> {
     return this.tenancy.runInTenantAndUserContext(organizationId, userId, async (tx) => {
       const [academy, membership] = await Promise.all([
@@ -183,7 +187,11 @@ export class CommunicationCampaignService {
           code: 'ACADEMY_MESSAGING_FORBIDDEN',
         });
       }
-      if (academy.status !== 'active') {
+      // A DRAFT academy (being set up, not launched yet) is a working
+      // academy: its owner can message its staff and any learners already
+      // admitted. Only a suspended or archived academy is refused, and only
+      // for preview/send — its history and quota stay readable.
+      if (purpose === 'send' && !SENDING_ACADEMY_STATUSES.has(academy.status)) {
         throw new ForbiddenException({
           messageKey: 'errors.messaging.academyInactive',
           code: 'ACADEMY_NOT_ACTIVE',

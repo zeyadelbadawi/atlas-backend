@@ -47,11 +47,12 @@ import type {
 export class AcademyMessagesController {
   constructor(private readonly campaigns: CommunicationCampaignService) {}
 
-  private sender(request: Request, academyId: string) {
+  private sender(request: Request, academyId: string, purpose: 'read' | 'send' = 'send') {
     return this.campaigns.assertAcademySender(
       academyId,
       request.academyContext!.organizationId,
       request.authContext!.userId,
+      purpose,
     );
   }
 
@@ -61,7 +62,7 @@ export class AcademyMessagesController {
     @Req() request: Request,
     @Param('id', new ParseUUIDPipe()) academyId: string,
   ): Promise<CampaignQuotaView> {
-    return this.campaigns.quotaView(await this.sender(request, academyId));
+    return this.campaigns.quotaView(await this.sender(request, academyId, 'read'));
   }
 
   /** Recipient counts, exclusions and quota remaining. Charges nothing. */
@@ -105,7 +106,7 @@ export class AcademyMessagesController {
     @Param('id', new ParseUUIDPipe()) academyId: string,
     @Query() query: ListCampaignsQueryDto,
   ): Promise<{ items: CampaignSummaryResponse[]; nextCursor: string | null }> {
-    const sender = await this.sender(request, academyId);
+    const sender = await this.sender(request, academyId, 'read');
     return this.campaigns.list(sender, {
       limit: query.limit ?? 20,
       cursor: query.cursor,
@@ -118,7 +119,7 @@ export class AcademyMessagesController {
     @Param('id', new ParseUUIDPipe()) academyId: string,
     @Param('messageId', new ParseUUIDPipe()) messageId: string,
   ): Promise<CampaignSummaryResponse> {
-    const sender = await this.sender(request, academyId);
+    const sender = await this.sender(request, academyId, 'read');
     return this.campaigns.get(sender, messageId);
   }
 }

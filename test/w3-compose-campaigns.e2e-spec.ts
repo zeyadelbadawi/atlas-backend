@@ -294,17 +294,55 @@ describe('W3-compose — campaigns (e2e)', () => {
         .expect(403);
     });
 
-    it('refuses an academy that is not active', async () => {
+    it('lets a DRAFT academy message (it is being set up, not inactive)', async () => {
+      await admin.academy.update({
+        where: { id: academyId },
+        data: { status: 'draft' },
+      });
+      try {
+        await request(server())
+          .get(`/academies/${academyId}/messages/quota`)
+          .set('Authorization', `Bearer ${owner.token}`)
+          .expect(200);
+        await request(server())
+          .get(`/academies/${academyId}/messages`)
+          .set('Authorization', `Bearer ${owner.token}`)
+          .expect(200);
+        await request(server())
+          .post(`/academies/${academyId}/messages/preview`)
+          .set('Authorization', `Bearer ${owner.token}`)
+          .send(learners)
+          .expect(200);
+      } finally {
+        await admin.academy.update({
+          where: { id: academyId },
+          data: { status: 'active' },
+        });
+      }
+    });
+
+    it('refuses sending from a suspended academy but keeps its history and quota readable', async () => {
       await admin.academy.update({
         where: { id: academyId },
         data: { status: 'suspended' },
       });
       try {
-        await request(server())
+        const refused = await request(server())
           .post(`/academies/${academyId}/messages/preview`)
           .set('Authorization', `Bearer ${owner.token}`)
           .send(learners)
           .expect(403);
+        expect(JSON.stringify(refused.body)).toContain(
+          'errors.messaging.academyInactive',
+        );
+        await request(server())
+          .get(`/academies/${academyId}/messages/quota`)
+          .set('Authorization', `Bearer ${owner.token}`)
+          .expect(200);
+        await request(server())
+          .get(`/academies/${academyId}/messages`)
+          .set('Authorization', `Bearer ${owner.token}`)
+          .expect(200);
       } finally {
         await admin.academy.update({
           where: { id: academyId },

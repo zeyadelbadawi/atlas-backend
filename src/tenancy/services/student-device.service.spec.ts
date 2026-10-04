@@ -70,14 +70,27 @@ function deviceRow(over: Partial<DeviceRow> = {}): DeviceRow {
 
 function matchesWhere(row: DeviceRow, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([key, value]) => {
+    // The rank breaks `createdAt` ties by id with an `OR` of two clauses.
+    if (key === 'OR') {
+      return (value as Record<string, unknown>[]).some((clause) =>
+        matchesWhere(row, clause),
+      );
+    }
     const actual = (row as unknown as Record<string, unknown>)[key];
     // The service ranks devices by registration order with
-    // `createdAt: { lt: <date> }`, so the fake has to understand that one
-    // operator. Without it the clause silently matched nothing and the
-    // cap check looked like it passed when it had never run.
+    // `createdAt: { lt: <date> }` (and `id: { lt: <id> }` for ties), so the
+    // fake has to understand that one operator. Without it the clause
+    // silently matched nothing and the cap check looked like it passed when
+    // it had never run.
     if (value && typeof value === 'object' && 'lt' in (value as object)) {
-      const bound = (value as { lt: Date }).lt;
-      return actual instanceof Date && actual.getTime() < bound.getTime();
+      const bound = (value as { lt: Date | string }).lt;
+      if (bound instanceof Date) {
+        return actual instanceof Date && actual.getTime() < bound.getTime();
+      }
+      return typeof actual === 'string' && actual < bound;
+    }
+    if (value instanceof Date) {
+      return actual instanceof Date && actual.getTime() === value.getTime();
     }
     return actual === value;
   });
@@ -263,6 +276,26 @@ describe('StudentDeviceService.resolveForSession', () => {
    * request, so a learner alternating between two browsers under a cap of
    * one would lock each out in turn and never finish a lesson.
    */
+  it('breaks a createdAt tie by id, so devices registered in the same millisecond never share a rank', async () => {
+    const at = new Date('2026-09-01T00:00:00.000Z');
+    const rows = ['a', 'b', 'c'].map((name) =>
+      deviceRow({ id: `tie-${name}`, cookieHash: hashDeviceCookie(name), createdAt: at }),
+    );
+    const outcomes: boolean[] = [];
+    for (const cookie of ['a', 'b', 'c']) {
+      const { tx } = fakeTx([...rows]);
+      const resolution = await service.resolveForSession(tx, {
+        userId: USER,
+        academyId: ACADEMY,
+        cookieValue: cookie,
+        userAgent: CHROME_MAC,
+        maxDevices: 2,
+      });
+      outcomes.push(Boolean(resolution.device));
+    }
+    expect(outcomes).toEqual([true, true, false]);
+  });
+
   it('refuses a recognised device that falls outside a LOWERED cap, oldest registrations first', async () => {
     const first = deviceRow({
       cookieHash: hashDeviceCookie('first'),

@@ -34,7 +34,7 @@ count_json() { docker compose exec -T backend node -e "let s='';process.stdin.on
 case "${1:-}" in
   facts)
     echo "== Migrations"
-    for m in 20261102000000_website_published_snapshots 20261102000100_course_progress_item_counts 20261102000200_payment_instructions_snapshot 20261102000300_payment_method_instapay 20261102000400_egypt_manual_payment_placeholders 20261103000000_tenant_course_order_read_rls 20261103000100_platform_contact_submissions; do
+    for m in 20261103000100_platform_contact_submissions 20261104000000_w3_outbox_secret_code_scrub 20261104000010_w3_email_activity_index_challenge_retention 20261104000020_w3_security_events 20261104000100_communication_campaigns 20261104000200_provisioning_requested_brand_progress 20261104000300_w4_name_key_foundation 20261104000310_w4_duplicate_name_remediation 20261104000320_w4_name_unique_indexes 20261104000330_w4_backups_out_of_public 20261104000340_w4_deleted_learner_name_exemption 20261104000341_academy_member_helpers_active_only 20261104000500_course_creation_idempotency_key 20261104000600_w8_plans_gifted_days 20261104000610_w8_tenant_subscriptions_gift 20261104000620_w8_paid_gift_redemptions 20261104000630_w8_trial_redemptions_v2 20261104000640_w8_subscription_cancellations_per_period 20261104000690_w8_seed_plan_gifted_days_defaults 20261104000700_org_owner_academy_rls_helpers; do
       state=$(sql "select coalesce((select case when finished_at is not null and rolled_back_at is null then 'applied' else 'unfinished' end from _prisma_migrations where migration_name='$m'), 'absent')")
       if [ "$state" = applied ]; then pass "$m applied"; else fail "$m $state"; fi
     done
@@ -53,6 +53,19 @@ case "${1:-}" in
       cmd=$(sql "select coalesce((select cmd from pg_policies where schemaname='public' and tablename='$table' and policyname='$name'), 'absent')")
       if [ "$cmd" = SELECT ]; then pass "policy $name on $table is SELECT-only"; else fail "policy $name on $table: $cmd"; fi
     done
+
+    # Large-Scale initiative (4 Oct 2026). Counts and catalog state only.
+    echo "== Large-Scale initiative (counts only)"
+    otp=$(sql "select count(*) from communication_outbox where key in ('auth.email.otp','auth.account.deletion_code') and (\"values\" ? 'code')")
+    if [ "$otp" = 0 ]; then pass "no sign-in or deletion code is stored in the outbox"; else fail "$otp outbox row(s) still hold a code"; fi
+    for t in security_events communication_campaigns campaign_recipients tenant_email_usage_periods tenant_email_usage_ledger; do
+      rls=$(sql "select coalesce((select relrowsecurity::text || ',' || relforcerowsecurity::text from pg_class where relname='$t' and relnamespace='public'::regnamespace), 'absent')")
+      if [ "$rls" = "true,true" ]; then pass "$t RLS enabled and forced"; else fail "$t RLS state '$rls'"; fi
+    done
+    dups=$(sql "select (select count(*) from (select 1 from organizations group by name_key having count(*)>1) a) || ',' || (select count(*) from (select 1 from academies group by name_key having count(*)>1) b)")
+    if [ "$dups" = "0,0" ]; then pass "no duplicate organization or academy names (W4)"; else fail "duplicate name groups (orgs,academies)=$dups"; fi
+    info "W4 rename backups (orgs,academies): $(sql "select (select count(*) from atlas_migration_backups.w4_backup_organization_names) || ',' || (select count(*) from atlas_migration_backups.w4_backup_academy_names)")"
+    info "plans with gifted days (monthly,yearly): $(sql "select count(*) filter (where gifted_days_monthly is not null) || ',' || count(*) filter (where gifted_days_yearly is not null) from plans")"
 
     echo "== Health"
     health=$(docker compose exec -T backend node -e "fetch('http://localhost:3000/health').then(async r=>console.log(r.status)).catch(()=>console.log('000'))")

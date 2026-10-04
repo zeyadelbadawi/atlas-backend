@@ -163,6 +163,33 @@ for (const path of [
   check(status === 400, `POST /api/v1/auth/verify-email with a malformed token -> ${status} (400)`);
 }
 
+// ---- Large-Scale initiative (4 Oct 2026) -------------------------------
+// Anonymous only: every new protected API exists and refuses without a
+// session (401, never 404 or 5xx). Nothing is created.
+console.log('== Large-Scale initiative (anonymous)');
+for (const path of [
+  'platform-communications/email-activity',
+  'platform-communications/email-activity/summary',
+  'platform-communications/campaigns',
+  'platform-security/summary',
+  'platform-security/events',
+  `academies/${NIL}/messages`,
+  `academies/${NIL}/messages/quota`,
+  `academies/${NIL}/me`,
+  `academies/${NIL}/courses/${NIL}/publish-readiness`,
+]) {
+  const status = await api('GET', path);
+  check(status === 401, `GET /api/v1/${path} without a session -> ${status} (401 expected)`);
+}
+{
+  const status = await api('GET', `public/websites/${NIL}/logo`);
+  check(status === 404, `GET /api/v1/public/websites/<unknown>/logo -> ${status} (404, no tenant data)`);
+}
+for (const path of ['plans', 'add-ons']) {
+  const status = await api('GET', path);
+  check(status > 0 && status < 500, `GET /api/v1/${path} -> ${status} (catalog answers, no server error)`);
+}
+
 // ---- browser + RUM -------------------------------------------------------
 const browser = await chromium.launch();
 console.log('== Atlas homepage contact section (Chromium, not submitted)');
