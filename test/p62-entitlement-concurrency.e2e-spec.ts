@@ -74,6 +74,10 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
   });
 
   afterAll(async () => {
+    // Close the app FIRST: it may still be writing audit rows for these
+    // organizations after the last response, and deleting them under that
+    // write deadlocked (40P01) on CI.
+    await app.close();
     if (createdOrgIds.length > 0) {
       await admin.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
     }
@@ -81,7 +85,6 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
       await admin.plan.deleteMany({ where: { id: { in: createdPlanIds } } });
     }
     await admin.$disconnect();
-    await app.close();
   });
 
   beforeEach(async () => {
