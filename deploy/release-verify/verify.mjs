@@ -223,6 +223,194 @@ for (const locale of ['en', 'ar']) {
   await page.screenshot({ path: `${OUT}/home-contact-${locale}.png`, fullPage: false });
   await context.close();
 }
+console.log('== Legal pages and pricing (Chromium, EN + AR, desktop + 390 px)');
+{
+  // Which billing cycles may advertise gifted days, from the live catalog:
+  // a cycle is shown only when its gift is 5-15 days and its price is a
+  // finite number above zero (the frontend's `planCycleGifts` rule).
+  const catalogRes = await fetch(`${API}/public/plans`).catch(() => null);
+  const catalogJson = catalogRes?.ok ? await catalogRes.json().catch(() => null) : null;
+  const plans = Array.isArray(catalogJson) ? catalogJson : (catalogJson?.data ?? []);
+  check(plans.length > 0, `public plan catalog answers (${plans.length} plans)`);
+  const validDays = (d) => Number.isInteger(d) && d >= 5 && d <= 15;
+  const priced = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
+  const expectGift = (plan) => {
+    const p = plan.pricing ?? {};
+    const cycles =
+      p.billingCycle === 'yearly'
+        ? ['yearly']
+        : p.billingCycle === 'monthly' && typeof p.yearlyAmount === 'number'
+          ? ['monthly', 'yearly']
+          : ['monthly'];
+    const price = (c) =>
+      c === 'yearly' && p.billingCycle === 'monthly' ? p.yearlyAmount : p.amount;
+    const days = (c) => (c === 'yearly' ? plan.giftedDaysYearly : plan.giftedDaysMonthly);
+    return {
+      monthly:
+        cycles.includes('monthly') &&
+        validDays(days('monthly')) &&
+        priced(price('monthly')),
+      yearly:
+        cycles.includes('yearly') && validDays(days('yearly')) && priced(price('yearly')),
+    };
+  };
+  const TEXT = {
+    en: {
+      updated: '4 October 2026',
+      privacy: 'Older free trial records',
+      privacyDevices: 'Lesson access records',
+      terms: 'the trial of that plan starts when your account is created',
+      termsOld: 'does not begin automatically',
+      faq: 'Some plans include a free trial',
+      faqOld: 'Every plan starts with a free trial',
+      monthly: 'Monthly billing',
+      yearly: 'Yearly billing',
+    },
+    ar: {
+      updated: '٤ أكتوبر ٢٠٢٦',
+      privacy: 'سجلات الفترات التجريبية الأقدم',
+      privacyDevices: 'سجلات الوصول إلى الدروس',
+      terms: 'تبدأ الفترة التجريبية لتلك الخطة عند إنشاء حسابك',
+      termsOld: 'ولا تبدأ تلقائيًا',
+      faq: 'تتضمن بعض الخطط فترة تجريبية مجانية',
+      faqOld: 'تبدأ كل خطة بتجربة مجانية',
+      monthly: 'الفوترة الشهرية',
+      yearly: 'الفوترة السنوية',
+    },
+  };
+  for (const locale of ['en', 'ar']) {
+    for (const viewport of [
+      { name: 'desktop', width: 1280, height: 800 },
+      { name: 'phone', width: 390, height: 844 },
+    ]) {
+      const label = `${locale.toUpperCase()} ${viewport.name}`;
+      const t = TEXT[locale];
+      const context = await browser.newContext({ locale, viewport });
+      await context.addInitScript((l) => {
+        try {
+          localStorage.setItem('atlas:language', JSON.stringify(l));
+        } catch {
+          /* storage blocked: the page falls back to the browser locale */
+        }
+      }, locale);
+      const page = await context.newPage();
+      const errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      const overflow = () =>
+        page.evaluate(
+          () =>
+            document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+      const textOf = async (selector) =>
+        (await page
+          .locator(selector)
+          .first()
+          .innerText({ timeout: 30_000 })
+          .catch(() => '')) ?? '';
+
+      let res = await page.goto(`${BASE}/privacy-policy`, { waitUntil: 'load' });
+      await page
+        .locator('article')
+        .first()
+        .waitFor({ timeout: 30_000 })
+        .catch(() => undefined);
+      const privacy = await textOf('article');
+      check(res?.status() === 200, `${label} privacy policy loads (${res?.status()})`);
+      check(
+        privacy.includes(t.updated),
+        `${label} privacy policy is the ${TEXT.en.updated} revision`,
+      );
+      check(
+        privacy.includes(t.privacy) && privacy.includes(t.privacyDevices),
+        `${label} privacy policy carries the closure disclosures`,
+      );
+      check((await overflow()) <= 1, `${label} privacy policy has no sideways scroll`);
+
+      res = await page.goto(`${BASE}/terms`, { waitUntil: 'load' });
+      await page
+        .locator('#trials')
+        .first()
+        .waitFor({ timeout: 30_000 })
+        .catch(() => undefined);
+      const trials = await textOf('#trials');
+      check(res?.status() === 200, `${label} terms load (${res?.status()})`);
+      check(
+        trials.includes(t.terms) && !trials.includes(t.termsOld),
+        `${label} terms describe the signup trial`,
+      );
+      check((await overflow()) <= 1, `${label} terms have no sideways scroll`);
+
+      res = await page.goto(`${BASE}/pricing`, { waitUntil: 'load' });
+      const faq = page.getByText(t.faq, { exact: false }).first();
+      const faqShown = await faq
+        .waitFor({ state: 'visible', timeout: 30_000 })
+        .then(() => true)
+        .catch(() => false);
+      const body = await textOf('body');
+      check(res?.status() === 200, `${label} pricing loads (${res?.status()})`);
+      check(
+        faqShown && !body.includes(t.faqOld),
+        `${label} pricing FAQ does not promise a trial on every plan`,
+      );
+      let giftOk = true;
+      let giftPlans = 0;
+      // The plan cards render after the catalog request settles; wait for
+      // the explainer and for every note the catalog says should exist
+      // before reading any of them, or a slow load reads as "no gift".
+      await page
+        .getByTestId('pricing-gifted-days')
+        .waitFor({ state: 'attached', timeout: 30_000 })
+        .catch(() => undefined);
+      for (const plan of plans) {
+        const want = expectGift(plan);
+        if (want.monthly || want.yearly) {
+          await page
+            .getByTestId(`marketing-plan-gift-${plan.key}`)
+            .first()
+            .waitFor({ state: 'attached', timeout: 15_000 })
+            .catch(() => undefined);
+        }
+      }
+      for (const plan of plans) {
+        const want = expectGift(plan);
+        const note = page.getByTestId(`marketing-plan-gift-${plan.key}`);
+        const present = (await note.count()) > 0;
+        const text =
+          (present
+            ? await note
+                .first()
+                .textContent()
+                .catch(() => '')
+            : '') ?? '';
+        const got = {
+          monthly: text.includes(t.monthly),
+          yearly: text.includes(t.yearly),
+        };
+        if (want.monthly || want.yearly) giftPlans += 1;
+        if (got.monthly !== want.monthly || got.yearly !== want.yearly) {
+          giftOk = false;
+          fail(
+            `${label} plan ${plan.key}: gift shown ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`,
+          );
+        }
+      }
+      check(
+        giftOk,
+        `${label} gifted days shown only on priced cycles that include them (${giftPlans} plans with a gift)`,
+      );
+      check((await overflow()) <= 1, `${label} pricing has no sideways scroll`);
+      check(
+        errors.length === 0,
+        `${label} legal and pricing pages raise no page errors (${errors.length})`,
+      );
+      await page.screenshot({
+        path: `${OUT}/pricing-${locale}-${viewport.name}.png`,
+        fullPage: false,
+      });
+      await context.close();
+    }
+  }
+}
 if (HOSTS[0]) {
   console.log('== Browser (Chromium)');
   for (const [locale, path] of [
