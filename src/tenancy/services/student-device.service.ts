@@ -140,8 +140,17 @@ export class StudentDeviceService {
         // means the same devices keep working until the learner removes
         // one, and the one that is refused gets `deviceLimit` — which is
         // precisely the refusal the limit-reached dialog is built for.
+        // Ties on `createdAt` (millisecond precision; devices registered in
+        // the same millisecond) are broken by id, so every active device has
+        // a distinct rank and the cap is never exceeded by a tie.
         const rank = await tx.studentDevice.count({
-          where: { ...activeWhere, createdAt: { lt: existing.createdAt } },
+          where: {
+            ...activeWhere,
+            OR: [
+              { createdAt: { lt: existing.createdAt } },
+              { createdAt: existing.createdAt, id: { lt: existing.id } },
+            ],
+          },
         });
         if (rank >= args.maxDevices) {
           return {

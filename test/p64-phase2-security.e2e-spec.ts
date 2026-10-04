@@ -1044,6 +1044,49 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
       ).toBe(3);
     });
 
+    it('devices registered in the same millisecond still rank distinctly against the cap', async () => {
+      const w = await world('p2sec-device-tie');
+      // Same createdAt for all three: a count of strictly-older rows alone
+      // would rank every one of them 0 and let all three through a cap of 2.
+      const at = new Date();
+      const cookies = ['tie-one', 'tie-two', 'tie-three'].map(deviceCookie);
+      for (const cookie of cookies) {
+        await admin.studentDevice.create({
+          data: {
+            userId: w.learner.id,
+            academyId: w.academy.id,
+            cookieHash: hashDeviceCookie(cookie),
+            label: `Browser ${cookie}`,
+            createdAt: at,
+          },
+        });
+      }
+      await policyFor(w.academy.id, 2);
+
+      let granted = 0;
+      let refused = 0;
+      for (const cookie of cookies) {
+        try {
+          await contentService.getContent(
+            w.course.id,
+            w.previewLesson.id,
+            context({ userId: w.learner.id, sessionId: 's-tie', deviceCookie: cookie }),
+          );
+          granted += 1;
+        } catch (error) {
+          expect(error).toMatchObject({
+            status: 403,
+            response: expect.objectContaining({
+              messageKey: 'errors.learning.deviceLimit',
+            }),
+          });
+          refused += 1;
+        }
+        await leases.revokeAll(w.learner.id, w.academy.id);
+      }
+      expect({ granted, refused }).toEqual({ granted: 2, refused: 1 });
+    });
+
     it('an unknown or tampered device cookie re-registers under the cap rather than bypassing it', async () => {
       const w = await world('p2sec-device-tamper');
       await policyFor(w.academy.id, 1);
