@@ -222,11 +222,13 @@ Organization and academy name probes at signup are accepted by design, behind th
   - existing duplicates are auto-suffixed, with the oldest keeping its name.
 
 ## J. Known limitations and follow-ups
-- **Approved 4 Oct 2026 (operations, see section I):** pinning `CUSTOMER_IDENTITY_HMAC_KEY` (next deploy) and the trial and gift backfill (the `Customer ledger backfill` workflow; recovery SQL in `deploy/ledger-backfill/remote.sh`).
+- **Done 4 Oct 2026 (operations, see section I):** `CUSTOMER_IDENTITY_HMAC_KEY` pinned in production (Release verify: set, matches) and the trial and gift backfill applied (3 trial and 1 gift rows; a re-run records nothing; backup `ledger-backfill-20261004T094220Z.sql.gz`; recovery SQL in `deploy/ledger-backfill/remote.sh`).
 - **Decisions pending:**
   - an email provider plan (the free tier is about 400 emails a day; sends over the cap are deferred, not dropped);
   - enforcing publish readiness on the server.
-- **Legal:** the privacy-policy wording about trial data needs review. Receipt emails don't mention gifted days yet.
+- **Receipts (closed 4 Oct 2026):** the subscription receipt is emitted by the shared apply step (`SubscriptionReceiptService`, called from `PaymentApplicationService.applySuccessfulPayment`), so every way a plan payment succeeds — manual approval of a bank transfer, wallet transfer or InstaPay payment, or a signed gateway webhook — sends exactly one receipt, with gifted days only when that payment was granted them (`test/subscription-receipt-all-methods.e2e-spec.ts`).
+- **Legal (closed 4 Oct 2026, wording):** the Privacy Policy, Terms and pricing FAQ (frontend) now match the implementation: the signup trial, trial-eligible plans only, legacy unkeyed trial hashes, the backfill, devices, lesson access records, quiz integrity events, manual-transfer proofs, archived academies (not restorable), and transfers without unestablished safeguards. What remains is for counsel, not engineering: the lawful basis for keeping eligibility hashes after deletion, the transfer conditions and governing law, and whether the open-ended retention periods (do-not-email list, academy messages, device entries) are acceptable.
+- **Observed, not changed (behaviour outside scope):** account deletion archives academies without `archivedAt`, a domain release or a cache flush (see `ACCOUNT_DELETION_AND_DATA_LIFECYCLE.md`); a later `payment.succeeded` webhook can still apply a payment previously marked failed, and a late `payment.failed` can overwrite a succeeded payment's status (the subscription it activated stays active); expired trusted-device rows are never pruned.
 - **UX:**
   - the onboarding first-course step still uses the old form;
   - there's no intro-video editor;

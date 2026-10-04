@@ -22,6 +22,7 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { PaymentsRepository } from '../repositories/payments.repository';
 import { PaymentWebhookEventsRepository } from '../repositories/payment-webhook-events.repository';
 import { PaymentApplicationService } from './payment-application.service';
+import { CommunicationService } from '../../communications/services/communication.service';
 import { verifyWebhookSignature } from '../utils/webhook-signature.util';
 import type { PaymentWebhookEventDto } from '../dto/payment-webhook-event.dto';
 import type { BillingConfig } from '../../config/configuration';
@@ -38,6 +39,7 @@ export class PaymentWebhookService {
     private readonly paymentsRepository: PaymentsRepository,
     private readonly paymentWebhookEventsRepository: PaymentWebhookEventsRepository,
     private readonly paymentApplicationService: PaymentApplicationService,
+    private readonly communicationService: CommunicationService,
   ) {}
 
   verifySignature(
@@ -72,7 +74,9 @@ export class PaymentWebhookService {
       return;
     }
 
-    await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+    const receiptOutboxId = await this.tenancyContextService.runInTenantContext<
+      string | null
+    >(organizationId, async (tx) => {
       const inserted = await this.paymentWebhookEventsRepository.tryInsert(tx, {
         organization: { connect: { id: organizationId } },
         provider: payload.provider,
@@ -88,7 +92,7 @@ export class PaymentWebhookService {
           { eventId: payload.eventId },
           'Payment webhook event already processed — no-op.',
         );
-        return;
+        return null;
       }
 
       const payment = await this.paymentsRepository.findById(
@@ -96,16 +100,22 @@ export class PaymentWebhookService {
         organizationId,
         payload.paymentId,
       );
-      if (!payment) return;
+      if (!payment) return null;
 
       switch (payload.eventType) {
-        case 'payment.succeeded':
+        case 'payment.succeeded': {
           // Idempotent per payment (W8 D2): a payment a reviewer already
-          // approved is not applied a second time.
-          await this.paymentApplicationService.applySuccessfulPayment(tx, payment, {
-            source: 'gateway',
-          });
-          break;
+          // approved is not applied a second time. The subscription
+          // receipt is emitted by the shared apply step — the same one a
+          // manual approval uses — only when this event is the one that
+          // activated the plan.
+          const applied = await this.paymentApplicationService.applySuccessfulPayment(
+            tx,
+            payment,
+            { source: 'gateway' },
+          );
+          return applied.receipt.outboxId;
+        }
         case 'payment.failed':
           await this.paymentApplicationService.applyFailedPayment(
             tx,
@@ -134,7 +144,12 @@ export class PaymentWebhookService {
           // redelivery of THIS event still no-ops), applied as a no-op.
           break;
       }
+      return null;
     });
+
+    // After commit, never inside the transaction; the one-minute outbox
+    // sweep is the fallback if this enqueue is lost.
+    await this.communicationService.enqueueAfterCommit(receiptOutboxId);
   }
 
   static readonly PROVIDER = PROVIDER;

@@ -446,7 +446,8 @@ export async function seedPaymentMethod(
   admin: PrismaClient,
   keyLabel: string,
   overrides: {
-    type?: 'manual_bank_transfer' | 'manual_wallet_transfer' | 'gateway';
+    type?:
+      'manual_bank_transfer' | 'manual_wallet_transfer' | 'manual_instapay' | 'gateway';
     enabled?: boolean;
     capabilities?: Record<string, boolean>;
     manualInstructions?: Prisma.InputJsonValue;

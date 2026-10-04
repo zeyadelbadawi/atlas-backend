@@ -57,6 +57,9 @@ function setup(opts: {
       .fn()
       .mockResolvedValue(opts.gift ?? { granted: false, reason: 'no_gift_configured' }),
   };
+  const receipt = {
+    emitActivated: jest.fn().mockResolvedValue({ created: true, outboxId: 'outbox-1' }),
+  };
   const service = new PaymentApplicationService(
     checkoutsRepository as never,
     paymentsRepository as never,
@@ -65,6 +68,7 @@ function setup(opts: {
     tenantSubscriptionsRepository as never,
     {} as never,
     gift as never,
+    receipt as never,
     { now: () => NOW },
   );
   return {
@@ -75,6 +79,7 @@ function setup(opts: {
     tenantSubscriptionsRepository,
     gift,
     checkoutsRepository,
+    receipt,
   };
 }
 
@@ -86,6 +91,40 @@ describe('PaymentApplicationService.applySuccessfulPayment (W8)', () => {
     expect(t.tenantSubscriptionsRepository.upsertForPlanPurchase).not.toHaveBeenCalled();
     expect(t.gift.claimFirstPaidGift).not.toHaveBeenCalled();
   });
+
+  it('receipt — a payment that already succeeded emits NO second receipt', async () => {
+    const t = setup({ transitioned: false });
+    const applied = await t.service.applySuccessfulPayment(
+      t.tx as never,
+      t.payment as never,
+    );
+    expect(t.receipt.emitActivated).not.toHaveBeenCalled();
+    expect(applied.receipt).toEqual({ created: false, outboxId: null });
+  });
+
+  it.each(['approval', 'gateway'] as const)(
+    'receipt — a %s that activates the plan emits the one shared receipt, after the commercial effect',
+    async (source) => {
+      const t = setup({});
+      const applied = await t.service.applySuccessfulPayment(
+        t.tx as never,
+        t.payment as never,
+        { source },
+      );
+      expect(t.receipt.emitActivated).toHaveBeenCalledTimes(1);
+      expect(t.receipt.emitActivated).toHaveBeenCalledWith(t.tx, {
+        organizationId: 'org-1',
+        checkoutId: 'co-1',
+        paymentId: 'pay-1',
+      });
+      const upsertOrder =
+        t.tenantSubscriptionsRepository.upsertForPlanPurchase.mock.invocationCallOrder[0];
+      expect(upsertOrder).toBeLessThan(
+        t.receipt.emitActivated.mock.invocationCallOrder[0],
+      );
+      expect(applied.receipt.outboxId).toBe('outbox-1');
+    },
+  );
 
   it('serialises purchases per organization before reading the subscription', async () => {
     const t = setup({});

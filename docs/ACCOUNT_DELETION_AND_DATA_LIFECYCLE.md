@@ -87,8 +87,14 @@ Row 5 is the part that must not be faked.
   — a Redis failure must not roll back a completed deletion.
 - Removes memberships **inside per-organization tenant context**, because a
   context-free `deleteMany` matches zero rows and reports success.
-- Archives owned academies, which reuses the academy archive path and so inherits its
-  domain release and cache invalidation.
+- Archives owned academies with a direct status update (`status='archived'`). This is
+  NOT `AcademiesService.archive`: it does not set `archivedAt`. The archived-media
+  sweep can still pick up individually archived assets of these academies as
+  candidates, but `isPurgeEligible` refuses every asset of an archived academy whose
+  `archivedAt` is null, so none is ever purged. It does not release custom domains or
+  clear the hostname cache — the public resolver refuses archived academies, so the
+  site drops once that cache expires (about a minute). No restore path exists for any
+  archived academy.
 - Enqueues certificate anonymisation on the certificates queue.
 
 ### `IMPLEMENTED` — Academy archive

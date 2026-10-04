@@ -44,11 +44,26 @@ import {
   computePurchaseDates,
   resolvePurchaseBillingCycle,
 } from '../utils/billing-period.util';
+import type { EmitResult } from '../../communications/services/communication.service';
+import { SubscriptionReceiptService } from './subscription-receipt.service';
 
 export interface ApplySuccessOptions {
   /** Who confirmed the money: a human reviewer (default) or a gateway webhook. Recorded on a gift. */
   readonly source?: GiftSource;
 }
+
+export interface AppliedPayment {
+  readonly payment: Payment;
+  /**
+   * The subscription receipt this application emitted, if any. The caller
+   * passes `receipt.outboxId` to `CommunicationService.enqueueAfterCommit`
+   * once its transaction has committed (the one-minute sweep is the
+   * fallback).
+   */
+  readonly receipt: EmitResult;
+}
+
+const NO_RECEIPT: EmitResult = { created: false, outboxId: null };
 
 @Injectable()
 export class PaymentApplicationService {
@@ -60,6 +75,7 @@ export class PaymentApplicationService {
     private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
     private readonly tenantAddOnsRepository: TenantAddOnsRepository,
     private readonly paidGiftEligibilityService: PaidGiftEligibilityService,
+    private readonly subscriptionReceiptService: SubscriptionReceiptService,
     @Inject(PLANS_CLOCK) private readonly clock: Clock,
   ) {}
 
@@ -79,23 +95,30 @@ export class PaymentApplicationService {
    * replay with a new event id, or a concurrent applier that lost the row
    * lock — returns the current row and applies NO commercial effect, so a
    * second paid period can never be stacked onto one payment.
+   *
+   * RECEIPT. When the payment transitions and buys a plan, the
+   * subscription receipt is emitted here, in the same transaction, for
+   * every way a payment can succeed (manual approval or gateway webhook) —
+   * see `SubscriptionReceiptService`. A payment that does not transition
+   * emits nothing, so an approval and a webhook for the same payment
+   * produce one receipt between them.
    */
   async applySuccessfulPayment(
     tx: Prisma.TransactionClient,
     payment: Payment,
     options: ApplySuccessOptions = {},
-  ): Promise<Payment> {
+  ): Promise<AppliedPayment> {
     const transitioned = await this.paymentsRepository.markSucceededIfNotAlready(
       tx,
       payment.id,
     );
     const updated = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
-    if (!transitioned) return updated;
+    if (!transitioned) return { payment: updated, receipt: NO_RECEIPT };
 
-    if (!payment.checkoutId) return updated;
+    if (!payment.checkoutId) return { payment: updated, receipt: NO_RECEIPT };
 
     const checkout = await tx.checkout.findUnique({ where: { id: payment.checkoutId } });
-    if (!checkout) return updated;
+    if (!checkout) return { payment: updated, receipt: NO_RECEIPT };
 
     await this.checkoutsRepository.updateStatus(tx, checkout.id, 'completed');
     await this.applyCommercialEffect(
@@ -105,7 +128,12 @@ export class PaymentApplicationService {
       options.source ?? 'approval',
     );
 
-    return updated;
+    const receipt = await this.subscriptionReceiptService.emitActivated(tx, {
+      organizationId: checkout.organizationId,
+      checkoutId: checkout.id,
+      paymentId: payment.id,
+    });
+    return { payment: updated, receipt };
   }
 
   async applyFailedPayment(
