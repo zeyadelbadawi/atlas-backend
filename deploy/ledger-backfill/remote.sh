@@ -150,6 +150,7 @@ DUMP="/opt/atlas/backups/ledger-backfill-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
 dump_rc=$?
 tables=$(gunzip -c "$DUMP" 2>/dev/null | grep -cE '^COPY public\.(trial_redemptions|paid_gift_redemptions) ')
 if [ "$dump_rc" != 0 ] || [ ! -s "$DUMP" ] || ! gzip -t "$DUMP" 2>/dev/null || [ "$tables" != 2 ]; then
+  rm -f "$DUMP" # never leave a broken file that looks like a backup
   echo "REFUSED  the dump failed verification (rc=$dump_rc, tables=$tables). Nothing was written." >&2
   exit 1
 fi

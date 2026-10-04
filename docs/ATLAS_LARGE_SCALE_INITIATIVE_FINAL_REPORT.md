@@ -206,7 +206,8 @@ Organization and academy name probes at signup are accepted by design, behind th
 
 ## I. Product decisions (as implemented; all reversible)
 - **Gifted days:** 7 monthly / 14 yearly; identity is the owner email; trialists get the gift; a refund does not restore it; IP and user agent are kept 180 days.
-- **Backfill script:** not run in production.
+- **Backfill:** approved by the product owner on 4 Oct 2026 for production, trials from evidence and prior paying customers (`--gifts`), without the inferred auto-trial era. It ships in the image (`dist/scripts/backfill-customer-ledgers.js`) and runs only through the `Customer ledger backfill` workflow (dry-run / verify / apply with a typed confirmation, a pinned key and a verified dump first).
+- **Identity key:** `CUSTOMER_IDENTITY_HMAC_KEY` is pinned by `deploy.sh` to the currently derived value (approved 4 Oct 2026), so no hash changes and a later payment-key rotation cannot reset eligibility.
 - **Quota:** 50 per academy per UTC month. Owners and administrators can send.
 - **Message categories:** academy messages use the engagement category and platform broadcasts use operational.
 - **Messaging and academy status:** draft and active academies can send; suspended and archived can only view.
@@ -221,9 +222,8 @@ Organization and academy name probes at signup are accepted by design, behind th
   - existing duplicates are auto-suffixed, with the oldest keeping its name.
 
 ## J. Known limitations and follow-ups
+- **Approved 4 Oct 2026 (operations, see section I):** pinning `CUSTOMER_IDENTITY_HMAC_KEY` (next deploy) and the trial and gift backfill (the `Customer ledger backfill` workflow; recovery SQL in `deploy/ledger-backfill/remote.sh`).
 - **Decisions pending:**
-  - running the trial and gift backfill in production;
-  - pinning `CUSTOMER_IDENTITY_HMAC_KEY` before any rotation of the payment key;
   - an email provider plan (the free tier is about 400 emails a day; sends over the cap are deferred, not dropped);
   - enforcing publish readiness on the server.
 - **Legal:** the privacy-policy wording about trial data needs review. Receipt emails don't mention gifted days yet.

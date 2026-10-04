@@ -562,9 +562,25 @@ outlive account deletion (FKs `ON DELETE SET NULL`, no UPDATE/DELETE for
   after 180 days by the `trial-forensics-scrub` job on the `video-retention`
   queue (SECURITY DEFINER `scrub_trial_redemption_forensics`). Hashes and
   dates are kept for as long as the one-trial rule exists.
-- **Backfill — PENDING PRODUCT DECISION, not run in production.**
-  `scripts/backfill-customer-ledgers.ts` (dry run by default, counts only,
-  refuses a production environment without `--allow-production`) records
-  trials evidenced before the ledger existed and, with `--gifts`, prior paying
-  customers. Whether the pre-ledger era is recorded is the product owner's
-  decision (W8 investigation §8).
+- **Key pinning.** `deploy/deploy.sh` pins the key: when `.env` has no
+  `CUSTOMER_IDENTITY_HMAC_KEY`, it computes the CURRENTLY DERIVED value on the
+  host with the backend image's own util (`customerIdentityKeyFromEnv()`, the
+  backend's `.env`), appends it once and recreates the backend. Pinning changes
+  no hash; a present key is never overwritten; a failed computation writes
+  nothing and the deploy continues. Never a new random key (it would re-grant
+  every trial and gift). Release verify reports set yes/no and match/mismatch
+  with the derivation (a mismatch fails).
+- **Backfill — APPROVED by the product owner on 4 Oct 2026 for production**,
+  with `--gifts` and WITHOUT `--include-auto-trial-era` (inferred, not
+  evidence). `src/scripts/backfill-customer-ledgers.ts`, shipped in the image
+  as `dist/scripts/backfill-customer-ledgers.js` (dry run by default, counts
+  only, refuses a production environment without `--allow-production`, key
+  check, idempotent; `--verify` prints the read-only post-state) records trials
+  evidenced before the ledger existed and, with `--gifts`, prior paying
+  customers as `source = 'backfill'` rows (gift rows carry no gifted days).
+  Production runs go only through the `Customer ledger backfill` workflow
+  (`deploy/ledger-backfill/remote.sh`: dry-run / verify / apply, apply needs
+  `confirm = APPLY-LEDGER-BACKFILL`, a pinned and loaded key, and takes a
+  verified data-only dump of both ledgers first). Recovery: `DELETE ... WHERE
+  source = 'backfill'` as the migration superuser, or restore that dump (both
+  in the remote.sh header).
