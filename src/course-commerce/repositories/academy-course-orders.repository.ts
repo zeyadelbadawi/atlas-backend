@@ -119,6 +119,8 @@ export function buildAcademyCourseOrderWhere(
             { student: { name: { contains: pattern, mode: 'insensitive' as const } } },
             // Exact address only: responses mask the email, and a substring
             // match would let the list confirm it one character at a time.
+            // `equals` + `mode: 'insensitive'` compiles to ILIKE, hence the
+            // ESCAPED pattern — the raw text would make `%` and `_` wildcards.
             { student: { email: { equals: pattern, mode: 'insensitive' as const } } },
           ],
         }

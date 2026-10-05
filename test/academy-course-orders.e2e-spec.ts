@@ -163,7 +163,7 @@ describe('Academy course orders (e2e)', () => {
       data: { email: studentSaraEmail, name: `Sara ${marker}` },
     });
     const omar = await admin.user.create({
-      data: { email: `omar-${marker}@example.test`, name: `Omar ${marker}` },
+      data: { email: `omar_${marker}@example.test`, name: `Omar ${marker}` },
     });
 
     async function order(
@@ -503,8 +503,8 @@ describe('Academy course orders (e2e)', () => {
         [o3, o2],
       );
       await expectSameUnderAmountSort({ search: `sara ${marker}`, status: 'paid' }, [o1]);
-      await expectSameUnderAmountSort({ search: `Omar-${marker}@Example.test` }, [o2]);
-      await expectSameUnderAmountSort({ search: `omar-${marker}@` }, []);
+      await expectSameUnderAmountSort({ search: `Omar_${marker}@Example.test` }, [o2]);
+      await expectSameUnderAmountSort({ search: `omar_${marker}@` }, []);
       await expectSameUnderAmountSort({ search: o1, from: '2026-09-10' }, []);
       await expectSameUnderAmountSort(
         { reviewStatus: 'rejected', methodType: 'manual_instapay' },
@@ -534,19 +534,19 @@ describe('Academy course orders (e2e)', () => {
         o1,
       ]);
       expect(
-        ids((await list({ search: `Omar-${marker}@Example.test` }).expect(200)).body),
+        ids((await list({ search: `Omar_${marker}@Example.test` }).expect(200)).body),
       ).toEqual([o2]);
       // A partial address matches nothing: the email is masked in responses,
       // so the search must not reveal it piece by piece.
-      expect(ids((await list({ search: `omar-${marker}@` }).expect(200)).body)).toEqual(
+      expect(ids((await list({ search: `omar_${marker}@` }).expect(200)).body)).toEqual(
         [],
       );
       // Nor may LIKE wildcards turn the exact match into a pattern, under
       // either query path.
       for (const search of [
-        `omar-${marker}@%`,
+        `omar_${marker}@%`,
         `%${marker}@example.test`,
-        `omar-${marker}@example.tes_`,
+        `omar_${marker}@example.tes_`,
       ]) {
         expect(ids((await list({ search }).expect(200)).body)).toEqual([]);
         expect(ids((await list({ search, sortBy: 'amount' }).expect(200)).body)).toEqual(

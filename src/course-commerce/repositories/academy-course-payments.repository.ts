@@ -68,8 +68,10 @@ export function buildAcademyCoursePaymentWhere(
               },
             },
             // Exact address only — responses mask the email (see the Orders list).
+            // `equals` + `mode: 'insensitive'` compiles to ILIKE, so it takes the
+            // ESCAPED pattern: the raw text would let `%` and `_` act as wildcards.
             {
-              payer: { is: { email: { equals: search, mode: 'insensitive' as const } } },
+              payer: { is: { email: { equals: pattern, mode: 'insensitive' as const } } },
             },
             {
               proofs: {
