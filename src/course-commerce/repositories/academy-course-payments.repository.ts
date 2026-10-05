@@ -69,7 +69,7 @@ export function buildAcademyCoursePaymentWhere(
             },
             // Exact address only — responses mask the email (see the Orders list).
             {
-              payer: { is: { email: { equals: pattern, mode: 'insensitive' as const } } },
+              payer: { is: { email: { equals: search, mode: 'insensitive' as const } } },
             },
             {
               proofs: {

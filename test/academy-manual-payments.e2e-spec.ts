@@ -503,7 +503,7 @@ describe('Academy manual payments (e2e)', () => {
   // -------------------------------------------------------------------------
   describe('review: approve', () => {
     it('grants access, emails the learner once, writes no ledger entry', async () => {
-      const learner = await signUpAndSignIn(app, 'amp-ok-learner');
+      const learner = await signUpAndSignIn(app, 'amp_ok_learner');
       const o = await order(learner, courseA.id, 'amp-ok');
       const submitted = await payAndSubmit(
         learner,
@@ -544,6 +544,15 @@ describe('Academy manual payments (e2e)', () => {
         .set(auth(owner))
         .expect(200);
       expect(found.body.items.map((p: { id: string }) => p.id)).toEqual([submitted.id]);
+
+      // Search by the exact address, in any case — it carries underscores,
+      // which a LIKE-escaped comparison would never match.
+      const byEmail = await http()
+        .get(`/academies/${academyA}/course-payments`)
+        .query({ search: learner.email.toUpperCase() })
+        .set(auth(owner))
+        .expect(200);
+      expect(byEmail.body.items.map((p: { id: string }) => p.id)).toEqual([submitted.id]);
 
       const detail = await http()
         .get(`/academies/${academyA}/course-payments/${submitted.id}`)
