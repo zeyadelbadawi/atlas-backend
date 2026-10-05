@@ -553,6 +553,22 @@ describe('Academy manual payments (e2e)', () => {
         .set(auth(owner))
         .expect(200);
       expect(byEmail.body.items.map((p: { id: string }) => p.id)).toEqual([submitted.id]);
+      // LIKE wildcards never turn the exact match into a pattern: the
+      // address is masked in responses and must not be probed piece by piece.
+      const [local, domain] = learner.email.split('@');
+      for (const probe of [
+        `%@${domain}`,
+        `${local}@%`,
+        `${local.slice(0, -1)}_@${domain}`,
+        '%',
+      ]) {
+        const res = await http()
+          .get(`/academies/${academyA}/course-payments`)
+          .query({ search: probe })
+          .set(auth(owner))
+          .expect(200);
+        expect(res.body.items).toEqual([]);
+      }
 
       const detail = await http()
         .get(`/academies/${academyA}/course-payments/${submitted.id}`)
