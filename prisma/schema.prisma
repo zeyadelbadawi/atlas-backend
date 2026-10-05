@@ -473,6 +473,7 @@ model Organization {
   connectedAccount       OrganizationConnectedAccount?
   commissionSettings     OrganizationCommissionSettings?
   CourseOrder            CourseOrder[]
+  academyPaymentMethods  AcademyPaymentMethod[]
   /// Phase P14 — Provisioning Orchestration (master plan §5.11/§21).
   provisioningRequests   ProvisioningRequest[]
   /// Phase 10.1 — Free-Trial anti-abuse. SetNull, never Cascade: deleting
@@ -652,6 +653,7 @@ model Academy {
   domainProviderReleases DomainProviderRelease[]
   /// Phase P13 — Course Commerce (master plan §23/§5.8).
   courseOrderPayments    Payment[]
+  paymentMethods         AcademyPaymentMethod[]
   courseOrders           CourseOrder[]
   revenueLedgerEntries   RevenueLedgerEntry[]
   payouts                AcademyPayout[]
@@ -3999,6 +4001,10 @@ model Payment {
   /// was created — kept with the payment so a later edit or disabling of
   /// the method never changes what this payer was asked to do.
   instructionsSnapshot              Json?                  @map("instructions_snapshot")
+  /// Academy Manual Payments — the academy's own method this payment was
+  /// taken with (`provider = 'academy_manual'`). Null for every other row.
+  academyPaymentMethodId            String?                @map("academy_payment_method_id")
+  academyPaymentMethod              AcademyPaymentMethod?  @relation(fields: [academyPaymentMethodId], references: [id], onDelete: SetNull)
   providerReference                 String?                @map("provider_reference")
   expiresAt                         DateTime?              @map("expires_at")
   /// §4.1 snapshot — which payment-collection mode was effective for the
@@ -4031,6 +4037,7 @@ model Payment {
   @@index([checkoutId])
   @@index([payerUserId])
   @@index([courseOrderId])
+  @@index([academyPaymentMethodId])
   @@map("payments")
 }
 
@@ -4051,15 +4058,17 @@ model PaymentAttempt {
 
 /// Mirrors `PaymentProof` (`payment.types.ts`) — a manual-transfer proof of payment.
 model PaymentProof {
-  id         String   @id @default(uuid())
-  paymentId  String   @map("payment_id")
-  payment    Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
-  fileName   String   @map("file_name")
+  id             String   @id @default(uuid())
+  paymentId      String   @map("payment_id")
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  fileName       String   @map("file_name")
   /// Private object-storage key — never a public asset path (master plan §5.7/§13: "private, signed-URL access only"). Served only through the authenticated `.../proof/file` download endpoint (`PaymentProofsController`), never returned as a raw storage URL.
-  storageKey String   @map("storage_key")
-  mimeType   String   @map("mime_type")
-  note       String?
-  uploadedAt DateTime @default(now()) @map("uploaded_at")
+  storageKey     String   @map("storage_key")
+  mimeType       String   @map("mime_type")
+  note           String?
+  /// The transfer's reference / transaction number as the payer typed it (Academy Manual Payments). Optional.
+  payerReference String?  @map("payer_reference")
+  uploadedAt     DateTime @default(now()) @map("uploaded_at")
 
   @@index([paymentId])
   @@map("payment_proofs")
@@ -4149,6 +4158,12 @@ enum PaymentCollectionMode {
   unconfigured
   atlas_payments
   organization_gateway
+  /// Academy Manual Payments (Oct 2026) — a SNAPSHOT value only, written on
+  /// a course payment taken with one of the academy's own manual methods
+  /// (`academy_payment_methods`): the learner paid the academy directly and
+  /// the Client Owner reviews. Never an organization setting — the
+  /// `PATCH payment-settings` DTO lists the three settable modes explicitly.
+  academy_manual
 
   @@map("payment_collection_mode")
 }
@@ -4525,6 +4540,47 @@ model CourseOrder {
   @@map("course_orders")
 }
 
+/// Academy Manual Payments (Oct 2026) — the manual methods ONE academy
+/// accepts from its learners (bank transfer, InstaPay, mobile wallet), with
+/// the details the learner is shown. Academy-scoped on purpose: every
+/// academy is its own storefront (own subdomain, brand, currency and
+/// learners), so Academy A can take Bank + InstaPay while Academy B takes a
+/// wallet only. See `docs/ACADEMY_MANUAL_PAYMENTS.md`.
+///
+/// When an academy has at least one ENABLED method, its course payments
+/// are taken with these methods (`payments.provider = 'academy_manual'`,
+/// `payment_collection_mode_snapshot = 'academy_manual'`) and reviewed by
+/// the Client Owner; no Atlas commission or ledger entry is written,
+/// because the money never passes through Atlas. With none enabled, the
+/// organization's `payment_collection_mode` applies exactly as before.
+///
+/// At most one method per type per academy. A method is never deleted
+/// while payments reference it (disable it instead); every payment keeps
+/// the instructions it was created with (`payments.instructions_snapshot`).
+/// `organization_id` is denormalized from the academy for RLS.
+model AcademyPaymentMethod {
+  id              String            @id @default(uuid())
+  academyId       String            @map("academy_id")
+  academy         Academy           @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  organizationId  String            @map("organization_id")
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// One of the three `manual_*` types — `gateway` is refused by a CHECK constraint.
+  type            PaymentMethodType
+  enabled         Boolean           @default(false)
+  /// `ManualPaymentInstructionsResponse` (bank, wallet or InstaPay variant), normalized and validated server-side by the same rules as the platform catalog (`billing/utils/manual-payment-instructions.util.ts`).
+  instructions    Json
+  displayOrder    Int               @default(0) @map("display_order")
+  updatedByUserId String?           @map("updated_by_user_id")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  payments Payment[]
+
+  @@unique([academyId, type])
+  @@index([organizationId])
+  @@map("academy_payment_methods")
+}
+
 /// See this section's header comment for the full sign/reversal
 /// convention. `payout` is reserved for a future
 /// `payout-worker`-authored entry type (master plan §5.8's own enum
@@ -4792,36 +4848,38 @@ enum ProvisioningStatus {
 /// `Checkout`'s exact tenant-scoping shape, never a second tenancy
 /// mechanism.
 model ProvisioningRequest {
-  id                   String              @id @default(uuid())
-  organizationId       String              @map("organization_id")
-  organization         Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id                      String              @id @default(uuid())
+  organizationId          String              @map("organization_id")
+  organization            Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   /// Populated once the `academy` step completes — absent, not a placeholder id, before that (master plan §5.11's own exact wording).
-  academyId            String?             @unique @map("academy_id")
-  academy              Academy?            @relation(fields: [academyId], references: [id])
-  requestedByUserId    String              @map("requested_by_user_id")
-  requestedByUser      User                @relation(fields: [requestedByUserId], references: [id])
-  status               ProvisioningStatus  @default(payment_success)
-  currentStepKey       ProvisioningStepKey @default(tenant) @map("current_step_key")
-  requestedAcademyName String              @map("requested_academy_name")
-  requestedSubdomain   String              @map("requested_subdomain")
+  academyId               String?             @unique @map("academy_id")
+  academy                 Academy?            @relation(fields: [academyId], references: [id])
+  requestedByUserId       String              @map("requested_by_user_id")
+  requestedByUser         User                @relation(fields: [requestedByUserId], references: [id])
+  status                  ProvisioningStatus  @default(payment_success)
+  currentStepKey          ProvisioningStepKey @default(tenant) @map("current_step_key")
+  requestedAcademyName    String              @map("requested_academy_name")
+  requestedSubdomain      String              @map("requested_subdomain")
   /// Present only when this request was triggered by a specific P12 Payment — the real row, never a second payment abstraction (this phase's explicit instruction).
-  triggeringPaymentId  String?             @map("triggering_payment_id")
-  triggeringPayment    Payment?            @relation(fields: [triggeringPaymentId], references: [id])
+  triggeringPaymentId     String?             @map("triggering_payment_id")
+  triggeringPayment       Payment?            @relation(fields: [triggeringPaymentId], references: [id])
   /// Phase P19 — the Client's chosen theme key from the real Website Builder theme registry (`WEBSITE_THEME_KEYS`, matched exactly, never re-validated against a second catalog). Optional: the 'theme' provisioning step applies it if present, and otherwise leaves `WebsiteBootstrapService`'s own default theme in place — never a hard requirement, matching P9's own "always a sensible bootstrap default" design.
-  selectedThemeKey     String?             @map("selected_theme_key")
+  selectedThemeKey        String?             @map("selected_theme_key")
   /// Phase 6 (Bilingual Academy Websites) — `'empty' | 'complete'` (`WEBSITE_SETUP_MODES`). Meaningless without `selectedThemeKey`; `null` is treated as `'empty'` by `executeThemeStep`, matching every Academy provisioned before this column existed.
-  websiteSetupMode     String?             @map("website_setup_mode")
+  websiteSetupMode        String?             @map("website_setup_mode")
   /// W2 — the validated brand chosen in the setup form (`RequestedBrand`, `provisioning/dto/requested-brand.ts`): palette inputs, and the logo only ever as a media-asset reference once the Academy exists — never a data: URI. Applied by the orchestrator's `branding` step; `null` (every older request) keeps that step `skipped`.
-  requestedBrand       Json?               @map("requested_brand")
+  requestedBrand          Json?               @map("requested_brand")
+  /// Academy Manual Payments — the manual methods chosen in the setup form (`RequestedPaymentMethods`, `provisioning/dto/requested-payment-methods.ts`). Saved to `academy_payment_methods` by the `academy` step once the Academy exists; `null` (every older request, or "set up later") saves nothing.
+  requestedPaymentMethods Json?               @map("requested_payment_methods")
   /// W2 — stamped whenever the orchestrator starts, finishes or fails a step. The status endpoint derives `stalled` from it (falling back to `startedAt`/`createdAt` on older rows).
-  lastProgressAt       DateTime?           @map("last_progress_at")
-  idempotencyKey       String              @map("idempotency_key")
-  attemptCount         Int                 @default(0) @map("attempt_count")
+  lastProgressAt          DateTime?           @map("last_progress_at")
+  idempotencyKey          String              @map("idempotency_key")
+  attemptCount            Int                 @default(0) @map("attempt_count")
   /// Mirrors `ProvisioningError` (`{code, messageKey, detail?}`) — set only while `status = 'failed'`.
-  lastError            Json?               @map("last_error")
-  startedAt            DateTime?           @map("started_at")
-  completedAt          DateTime?           @map("completed_at")
-  failedAt             DateTime?           @map("failed_at")
+  lastError               Json?               @map("last_error")
+  startedAt               DateTime?           @map("started_at")
+  completedAt             DateTime?           @map("completed_at")
+  failedAt                DateTime?           @map("failed_at")
   /// Phase 8 — set exactly once, the moment `ProvisioningOrchestratorService`
   /// auto-opens a support case for this request after it crosses the
   /// consecutive-failure threshold (reusing `attemptCount`, never a second
@@ -4831,10 +4889,10 @@ model ProvisioningRequest {
   /// reaches `ready` and is genuinely retried again from scratch — never
   /// today's actual retry path, so in practice this is set once per
   /// request's lifetime.
-  autoSupportCaseId    String?             @map("auto_support_case_id")
-  autoSupportCase      SupportCase?        @relation(fields: [autoSupportCaseId], references: [id])
-  createdAt            DateTime            @default(now()) @map("created_at")
-  updatedAt            DateTime            @updatedAt @map("updated_at")
+  autoSupportCaseId       String?             @map("auto_support_case_id")
+  autoSupportCase         SupportCase?        @relation(fields: [autoSupportCaseId], references: [id])
+  createdAt               DateTime            @default(now()) @map("created_at")
+  updatedAt               DateTime            @updatedAt @map("updated_at")
 
   steps ProvisioningStep[]
 

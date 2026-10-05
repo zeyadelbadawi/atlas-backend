@@ -38,6 +38,12 @@ export class BankTransferInstructionsDto {
   @MaxLength(120)
   readonly bankName!: string;
 
+  /** Optional branch, as the payer's bank asks for it. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  readonly branchName?: string;
+
   @IsNotEmpty()
   @IsString()
   @MaxLength(120)

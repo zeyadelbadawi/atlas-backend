@@ -15,6 +15,7 @@ function request(overrides: Partial<ProvisioningRequest> = {}): ProvisioningRequ
     selectedThemeKey: 'modern-education',
     websiteSetupMode: 'complete',
     requestedBrand: null,
+    requestedPaymentMethods: null,
     lastProgressAt: new Date('2026-10-01T10:00:00Z'),
     idempotencyKey: 'k',
     attemptCount: 1,

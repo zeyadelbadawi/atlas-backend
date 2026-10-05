@@ -1,8 +1,10 @@
 /** `POST organizations/:id/provisioning-requests` request — matches `CreateProvisioningRequestPayload` (`provisioning.types.ts`) field-for-field. Validation floors mirror the frontend's own `createProvisioningRequestSchema` exactly. */
+import { Type } from 'class-transformer';
 import {
   IsIn,
   IsNotEmpty,
   IsObject,
+  ValidateNested,
   IsOptional,
   IsString,
   Matches,
@@ -19,6 +21,7 @@ import {
   SELECTABLE_WEBSITE_THEME_KEYS,
   WEBSITE_SETUP_MODES,
 } from '../../website/constants/website.constants';
+import { RequestedPaymentMethodsDto } from './requested-payment-methods';
 
 export class CreateProvisioningRequestDto {
   @IsNotEmpty()
@@ -70,6 +73,17 @@ export class CreateProvisioningRequestDto {
   @IsOptional()
   @IsObject()
   readonly brand?: Record<string, unknown>;
+
+  /**
+   * Academy Manual Payments — the manual methods the owner chose in the
+   * setup form (bank transfer, InstaPay, wallet), each with its typed
+   * details. Saved enabled to the new Academy by the `academy` step.
+   * Omitted ("set up later", or an older client) saves none.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RequestedPaymentMethodsDto)
+  readonly paymentMethods?: RequestedPaymentMethodsDto;
 
   @IsNotEmpty()
   @IsString()

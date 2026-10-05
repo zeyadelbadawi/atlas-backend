@@ -42,6 +42,9 @@
  * so a concurrent cancel or a redelivered duplicate job both observe and
  * respect whatever the OTHER concurrent execution already committed.
  */
+import { AcademyPaymentMethodsRepository } from '../../billing/repositories/academy-payment-methods.repository';
+import type { ManualMethodType } from '../../billing/utils/manual-payment-instructions.util';
+import { readRequestedPaymentMethods } from '../dto/requested-payment-methods';
 import { ConflictException, HttpException, Injectable, Logger } from '@nestjs/common';
 import { isNameConflict } from '../../common/name-uniqueness/name-uniqueness';
 import { Prisma } from '@prisma/client';
@@ -180,6 +183,13 @@ function toProvisioningError(error: unknown): ProvisioningErrorResponse {
   return { code: 'step_execution_failed', messageKey: 'errors.provisioning.stepFailed' };
 }
 
+/** Academy Manual Payments — checkout order of the methods saved from the setup form (same as the settings page). */
+const PAYMENT_METHOD_DISPLAY_ORDER: Record<ManualMethodType, number> = {
+  manual_bank_transfer: 0,
+  manual_instapay: 1,
+  manual_wallet_transfer: 2,
+};
+
 @Injectable()
 export class ProvisioningOrchestratorService {
   private readonly logger = new Logger(ProvisioningOrchestratorService.name);
@@ -199,6 +209,7 @@ export class ProvisioningOrchestratorService {
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly supportCasesRepository: SupportCasesRepository,
     private readonly supportCaseMessagesRepository: SupportCaseMessagesRepository,
+    private readonly academyPaymentMethodsRepository: AcademyPaymentMethodsRepository,
   ) {}
 
   /** `TenancyContextService.runInTenantContext`, wrapped with `withTransientRetry` — the ONE call path every method in this class uses to touch the database, so the transient-connection-pool protection documented on `withTransientRetry` applies uniformly, not just at the one call site that first surfaced it. */
@@ -634,7 +645,10 @@ export class ProvisioningOrchestratorService {
     request: ProvisioningRequest,
     organizationId: string,
   ): Promise<StepOutcome> {
-    if (request.academyId) return { result: 'completed' };
+    if (request.academyId) {
+      await this.applyRequestedPaymentMethods(request, request.academyId, organizationId);
+      return { result: 'completed' };
+    }
 
     try {
       // W4 — the worker must never fail on a name taken after the request
@@ -654,11 +668,91 @@ export class ProvisioningOrchestratorService {
           academyId: academy.id,
         }),
       );
+      await this.applyRequestedPaymentMethods(request, academy.id, organizationId);
       return { result: 'completed' };
     } catch (error) {
       const adopted = await this.tryAdoptExistingAcademy(request, organizationId, error);
-      if (adopted) return { result: 'completed' };
+      if (adopted) {
+        const fresh = await this.runTenant(organizationId, (tx) =>
+          this.provisioningRequestsRepository.findById(tx, request.id),
+        );
+        if (fresh?.academyId) {
+          await this.applyRequestedPaymentMethods(
+            request,
+            fresh.academyId,
+            organizationId,
+          );
+        }
+        return { result: 'completed' };
+      }
       throw error;
+    }
+  }
+
+  /**
+   * Academy Manual Payments — saves the methods chosen in the setup form
+   * (`requested_payment_methods`, validated and normalised at create) to the
+   * new Academy, enabled. Insert-if-absent per type, in one transaction with
+   * its audit entries: a retried step writes nothing twice and never
+   * overwrites a method the owner has edited since.
+   *
+   * Never fails the step. Payment methods are not what makes an academy
+   * exist; if saving them fails, the academy is still created and the owner
+   * adds them on the Payment methods page (the failure is logged).
+   */
+  private async applyRequestedPaymentMethods(
+    request: ProvisioningRequest,
+    academyId: string,
+    organizationId: string,
+  ): Promise<void> {
+    const requested = readRequestedPaymentMethods(request.requestedPaymentMethods);
+    const entries = Object.entries(requested) as [
+      ManualMethodType,
+      Prisma.InputJsonObject,
+    ][];
+    if (entries.length === 0) return;
+    try {
+      await this.runTenant(organizationId, async (tx) => {
+        for (const [type, instructions] of entries) {
+          const existing =
+            await this.academyPaymentMethodsRepository.findByAcademyAndType(
+              tx,
+              academyId,
+              type,
+            );
+          if (existing) continue;
+          const created = await this.academyPaymentMethodsRepository.create(tx, {
+            academyId,
+            organizationId,
+            type,
+            enabled: true,
+            instructions,
+            displayOrder: PAYMENT_METHOD_DISPLAY_ORDER[type],
+            updatedByUserId: request.requestedByUserId,
+          });
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: request.requestedByUserId,
+            organizationId,
+            academyId,
+            role: 'owner',
+            action: 'academy.payment_method.saved',
+            targetType: 'academy_payment_method',
+            targetId: created.id,
+            context: {
+              type,
+              enabled: true,
+              created: true,
+              fields: 'enabled,instructions',
+            },
+          });
+        }
+      });
+    } catch (error) {
+      this.logger.warn(
+        `provisioning ${request.id}: payment methods not saved (${
+          error instanceof Error ? error.message : String(error)
+        }); the owner can add them on the Payment methods page`,
+      );
     }
   }
 

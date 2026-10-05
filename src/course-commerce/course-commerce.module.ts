@@ -64,6 +64,13 @@ import { CourseOrderRefundsRepository } from './repositories/course-order-refund
 import { AcademyCourseOrdersController } from './controllers/academy-course-orders.controller';
 import { AcademyCourseOrdersService } from './services/academy-course-orders.service';
 import { AcademyCourseOrdersRepository } from './repositories/academy-course-orders.repository';
+import { AcademyPaymentMethodsController } from './controllers/academy-payment-methods.controller';
+import { AcademyPaymentMethodsService } from './services/academy-payment-methods.service';
+import { AcademyCoursePaymentsController } from './controllers/academy-course-payments.controller';
+import { AcademyCoursePaymentsService } from './services/academy-course-payments.service';
+import { AcademyCoursePaymentsRepository } from './repositories/academy-course-payments.repository';
+import { LearnerCoursePaymentsController } from './controllers/learner-course-payments.controller';
+import { LearnerCoursePaymentsService } from './services/learner-course-payments.service';
 
 @Module({
   imports: [
@@ -90,6 +97,10 @@ import { AcademyCourseOrdersRepository } from './repositories/academy-course-ord
     AcademyPayoutsController,
     PlatformAcademyPayoutsController,
     AcademyCourseOrdersController,
+    // Academy Manual Payments
+    AcademyPaymentMethodsController,
+    AcademyCoursePaymentsController,
+    LearnerCoursePaymentsController,
   ],
   providers: [
     CourseOrdersService,
@@ -106,6 +117,10 @@ import { AcademyCourseOrdersRepository } from './repositories/academy-course-ord
     CourseOrderRefundsRepository,
     AcademyCourseOrdersService,
     AcademyCourseOrdersRepository,
+    AcademyPaymentMethodsService,
+    AcademyCoursePaymentsService,
+    AcademyCoursePaymentsRepository,
+    LearnerCoursePaymentsService,
   ],
 })
 export class CourseCommerceModule {}

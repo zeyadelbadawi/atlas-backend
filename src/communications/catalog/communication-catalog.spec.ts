@@ -107,6 +107,20 @@ const EXPECTED_DEDUPE: Record<
     expected: `course_order_refunded:${ENTITY_ID}`,
   },
 
+  // --- Academy Manual Payments
+  'course.payment.approved': {
+    values: {},
+    expected: `course_payment_approved:${ENTITY_ID}`,
+  },
+  'course.payment.rejected': {
+    values: {},
+    expected: `course_payment_rejected:${ENTITY_ID}`,
+  },
+  'academy.payment.submitted': {
+    values: { academyId: 'a1', paymentId: 'p1' },
+    expected: `academy_payment_submitted:${ENTITY_ID}`,
+  },
+
   // --- Platform subscription billing (P12)
   'platform.payment.approved': {
     values: {},

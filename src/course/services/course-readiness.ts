@@ -260,6 +260,7 @@ export async function readCourseReadinessFacts(
     assignmentGroups,
     publishedLiveSessions,
     paymentSettings,
+    enabledAcademyPaymentMethods,
   ] = await Promise.all([
     tx.courseSection.findMany({
       where: { courseId },
@@ -287,6 +288,10 @@ export async function readCourseReadinessFacts(
     tx.organizationPaymentSettings.findUnique({
       where: { organizationId },
       select: { paymentCollectionMode: true },
+    }),
+    // Academy Manual Payments — the course's academy takes payments itself.
+    tx.academyPaymentMethod.count({
+      where: { enabled: true, academy: { courses: { some: { id: courseId } } } },
     }),
   ]);
 
@@ -332,6 +337,7 @@ export async function readCourseReadinessFacts(
     // "No row" is the real `unconfigured` default (see
     // `OrganizationPaymentSettingsService.isConfigured`).
     paymentConfigured:
-      !!paymentSettings && paymentSettings.paymentCollectionMode !== 'unconfigured',
+      enabledAcademyPaymentMethods > 0 ||
+      (!!paymentSettings && paymentSettings.paymentCollectionMode !== 'unconfigured'),
   };
 }

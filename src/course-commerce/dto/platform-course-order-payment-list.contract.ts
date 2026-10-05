@@ -7,8 +7,8 @@
  * own status and, if one was ever requested, its refund status.
  *
  * The LIST item additionally drops the proof's free-text `note` (the
- * proof's presence, file name and upload time stay). A course-order
- * payment response carries no manual-transfer instructions to begin with.
+ * proof's presence, file name and upload time stay) and the instructions
+ * snapshot, like the subscription list; the detail keeps the snapshot.
  * The commission snapshot stays: this surface is Platform-Owner-only and
  * the commission is the Platform's own figure.
  */
@@ -60,6 +60,7 @@ export function toPlatformCourseOrderPaymentListItemResponse(
   return {
     ...response,
     proof: response.proof ? { ...response.proof, note: undefined } : undefined,
+    instructions: undefined,
     ...toReviewContext(payment),
   };
 }

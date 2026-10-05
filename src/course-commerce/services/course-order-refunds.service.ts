@@ -36,6 +36,7 @@ import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { EnrollmentsRepository } from '../../learning/repositories/enrollments.repository';
 import { PaymentsRepository } from '../../billing/repositories/payments.repository';
+import { ACADEMY_MANUAL_PROVIDER_KEY } from '../../billing/dto/billing.constants';
 import { CourseOrdersRepository } from '../repositories/course-orders.repository';
 import { CourseOrderRefundsRepository } from '../repositories/course-order-refunds.repository';
 import { RevenueLedgerEntriesRepository } from '../repositories/revenue-ledger-entries.repository';
@@ -129,6 +130,15 @@ export class CourseOrderRefundsService {
           // real, honest failure if it ever happens anyway.
           throw new ConflictException({
             messageKey: 'errors.courseOrder.refundNotEligible',
+          });
+        }
+        // Academy Manual Payments — the learner paid the academy directly
+        // and Atlas holds none of that money, so a self-service "refund"
+        // would only revoke access while returning nothing. Refunds for
+        // these payments are between the learner and the academy.
+        if (succeededPayment.provider === ACADEMY_MANUAL_PROVIDER_KEY) {
+          throw new ConflictException({
+            messageKey: 'errors.courseOrder.refundContactAcademy',
           });
         }
 

@@ -39,7 +39,19 @@ import { OrganizationGatewayCredentialsRepository } from '../../billing/reposito
 import { CommissionService } from '../../billing/services/commission.service';
 import { PaymentProviderRegistry } from '../../billing/providers/payment-provider.registry';
 import { PaymentProofStorageService } from '../../billing/storage/payment-proof-storage.service';
-import { ATLAS_MANUAL_PROVIDER_KEY } from '../../billing/dto/billing.constants';
+import {
+  ACADEMY_MANUAL_PROVIDER_KEY,
+  ATLAS_MANUAL_PROVIDER_KEY,
+} from '../../billing/dto/billing.constants';
+import { AcademyPaymentMethodsRepository } from '../../billing/repositories/academy-payment-methods.repository';
+import {
+  academyPaymentMethodKey,
+  toAcademyCheckoutMethodResponse,
+} from '../../billing/utils/academy-payment-method.util';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { AcademyStaffRecipientsService } from '../../communications/services/academy-staff-recipients.service';
+import { ACADEMY_MANUAL_PAYMENT_WINDOW_HOURS } from '../dto/course-commerce.constants';
+import type { AcademyPaymentMethod, CourseOrder } from '@prisma/client';
 import {
   detectFileKind,
   parseDataUrl,
@@ -119,6 +131,9 @@ export class CourseOrderPaymentsService {
     private readonly paymentProofStorageService: PaymentProofStorageService,
     private readonly metrics: LearningMetricsService,
     private readonly communicationService: CommunicationService,
+    private readonly academyPaymentMethodsRepository: AcademyPaymentMethodsRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly academyStaffRecipientsService: AcademyStaffRecipientsService,
   ) {}
 
   /**
@@ -159,6 +174,18 @@ export class CourseOrderPaymentsService {
         studentId,
         orderId,
       );
+
+      // Academy Manual Payments — an academy with its own enabled methods
+      // takes its learners' payments itself, whatever the organization's
+      // collection mode (the same decision `createPayment` makes first).
+      const academyMethods =
+        await this.academyPaymentMethodsRepository.findEnabledForAcademy(
+          tx,
+          order.academyId,
+        );
+      if (academyMethods.length > 0) {
+        return academyMethods.map(toAcademyCheckoutMethodResponse);
+      }
 
       const settings = await this.organizationPaymentSettingsService.getPaymentSettings(
         order.organizationId,
@@ -278,6 +305,27 @@ export class CourseOrderPaymentsService {
         studentId,
         orderId,
       );
+
+      // Academy Manual Payments — decided first, exactly as
+      // `listAvailableMethods` decides it: an academy with its own enabled
+      // methods takes the payment itself. That path checks the order's
+      // state and expiry under the order lock, after the review check, so a
+      // proof waiting for review is answered "under review" and never turns
+      // its order `expired`.
+      const academyMethods =
+        await this.academyPaymentMethodsRepository.findEnabledForAcademy(
+          tx,
+          order.academyId,
+        );
+      if (academyMethods.length > 0) {
+        return this.createAcademyManualPayment(
+          tx,
+          studentId,
+          order,
+          academyMethods,
+          payload.methodKey,
+        );
+      }
 
       if (order.status === 'expired' || order.expiresAt.getTime() < Date.now()) {
         throw new CourseOrderExpired(
@@ -419,6 +467,152 @@ export class CourseOrderPaymentsService {
     });
   }
 
+  /**
+   * Academy Manual Payments — a payment to the academy itself, with one of
+   * its own manual methods. Inside the caller's (learner's) transaction:
+   *
+   *   - the order row is LOCKED first, so two tabs or a double click cannot
+   *     open two payments for one order; its state is re-read under the lock;
+   *   - one payment waiting for review blocks another (409
+   *     `paymentUnderReview`): the learner waits for that decision;
+   *   - an open payment for the same method with the same details and no
+   *     proof yet is returned as is (idempotent "choose method"); any other
+   *     open, proof-less payment is cancelled, so at most one is open;
+   *   - the amount and currency come from the order's frozen snapshot, never
+   *     the request; the method's details are frozen onto the payment
+   *     (`instructions_snapshot`);
+   *   - no Atlas commission and no ledger entry: the money never passes
+   *     through Atlas (`payment_collection_mode_snapshot = 'academy_manual'`);
+   *   - the order stays payable for `ACADEMY_MANUAL_PAYMENT_WINDOW_HOURS`,
+   *     long enough to make a transfer outside Atlas.
+   */
+  private async createAcademyManualPayment(
+    tx: Prisma.TransactionClient,
+    studentId: string,
+    order: CourseOrder,
+    academyMethods: readonly AcademyPaymentMethod[],
+    methodKey: string,
+  ): Promise<CourseOrderPaymentResponse> {
+    await tx.$queryRaw`SELECT "id" FROM "course_orders" WHERE "id" = ${order.id} FOR UPDATE`;
+    const locked = await this.courseOrdersService.findOrderOrThrow(
+      tx,
+      studentId,
+      order.id,
+    );
+    if (
+      locked.status === 'paid' ||
+      locked.status === 'cancelled' ||
+      locked.status === 'refunded'
+    ) {
+      throw new ConflictException({ messageKey: 'errors.courseOrder.notPayable' });
+    }
+
+    const open = await tx.payment.findMany({
+      where: {
+        courseOrderId: locked.id,
+        status: {
+          in: [
+            ...NON_TERMINAL_PAYMENT_STATUSES,
+          ] as Prisma.EnumPaymentLifecycleStatusFilter['in'],
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (open.some((payment) => payment.reviewStatus === 'pending')) {
+      throw new ConflictException({
+        messageKey: 'errors.courseOrder.paymentUnderReview',
+      });
+    }
+
+    // Expiry, as for every order — checked only once nothing is under review.
+    if (locked.status === 'expired' || locked.expiresAt.getTime() < Date.now()) {
+      throw new CourseOrderExpired(
+        locked.id,
+        locked.organizationId,
+        locked.academyId,
+        locked.courseId,
+        locked.status === 'expired',
+      );
+    }
+
+    const method = academyMethods.find(
+      (candidate) => academyPaymentMethodKey(candidate.type) === methodKey,
+    );
+    if (!method) {
+      throw new NotFoundException({ messageKey: 'errors.payment.methodNotFound' });
+    }
+
+    const sameDetails = (payment: (typeof open)[number]) =>
+      payment.provider === ACADEMY_MANUAL_PROVIDER_KEY &&
+      payment.academyPaymentMethodId === method.id &&
+      JSON.stringify(payment.instructionsSnapshot) ===
+        JSON.stringify(method.instructions);
+    const reusable = open.find(
+      (payment) => payment.reviewStatus === 'not_required' && sameDetails(payment),
+    );
+    const toCancel = open.filter((payment) => payment !== reusable);
+    if (toCancel.length > 0) {
+      await tx.payment.updateMany({
+        where: { id: { in: toCancel.map((payment) => payment.id) } },
+        data: { status: 'cancelled', nextAction: Prisma.JsonNull },
+      });
+    }
+
+    const windowEnd = new Date(
+      Date.now() + ACADEMY_MANUAL_PAYMENT_WINDOW_HOURS * 3_600_000,
+    );
+    await tx.courseOrder.update({
+      where: { id: locked.id },
+      data: {
+        ...(locked.status === 'draft' ? { status: 'pending_payment' } : {}),
+        ...(locked.expiresAt < windowEnd ? { expiresAt: windowEnd } : {}),
+      },
+    });
+    if (locked.status === 'draft') {
+      this.metrics.recordCheckoutOrderState('pending_payment');
+    }
+
+    if (reusable) {
+      const existing = await this.paymentsRepository.findByIdAnyOrganization(
+        tx,
+        reusable.id,
+      );
+      return toCourseOrderPaymentResponse(existing!);
+    }
+
+    const snapshot = locked.snapshot as {
+      price: { amountMinorUnits: number; currency: string };
+    };
+    const created = await this.paymentsRepository.createCourseOrderPayment(tx, {
+      courseOrderId: locked.id,
+      payerUserId: studentId,
+      payeeAcademyId: locked.academyId,
+      methodKey: academyPaymentMethodKey(method.type),
+      methodType: method.type,
+      provider: ACADEMY_MANUAL_PROVIDER_KEY,
+      academyPaymentMethodId: method.id,
+      amountMinorUnits: BigInt(snapshot.price.amountMinorUnits),
+      currency: snapshot.price.currency,
+      status: 'pending',
+      reviewStatus: 'not_required',
+      nextAction: { type: 'awaiting_proof' },
+      instructionsSnapshot: method.instructions as Prisma.InputJsonValue,
+      paymentCollectionModeSnapshot: 'academy_manual',
+      commissionRateBasisPointsSnapshot: null,
+      commissionAmountMinorUnits: null,
+    });
+    await this.paymentAttemptsRepository.create(tx, {
+      payment: { connect: { id: created.id } },
+      status: 'initiated',
+    });
+
+    const withRelations = await this.paymentsRepository.findByIdAnyOrganization(
+      tx,
+      created.id,
+    );
+    return toCourseOrderPaymentResponse(withRelations!);
+  }
+
   async getPayment(
     studentId: string,
     orderId: string,
@@ -456,6 +650,7 @@ export class CourseOrderPaymentsService {
     }
 
     let emitted: EmitResult = { created: false, outboxId: null };
+    const ownerOutboxIds: string[] = [];
     const response = await this.tenancyContextService.runInUserContext(
       studentId,
       async (tx) => {
@@ -479,11 +674,25 @@ export class CourseOrderPaymentsService {
           throw new ConflictException({ messageKey: 'errors.payment.notEditable' });
         }
 
-        const method = await this.paymentMethodsRepository.findByKey(payment.methodKey);
-        const capabilities = method?.capabilities as unknown as
-          { supportsProof: boolean } | undefined;
-        if (!capabilities?.supportsProof) {
-          throw new ConflictException({ messageKey: 'errors.payment.proofNotSupported' });
+        const isAcademyManual = payment.provider === ACADEMY_MANUAL_PROVIDER_KEY;
+        if (isAcademyManual) {
+          // One proof per review: once the academy is reviewing it, the
+          // learner waits for the decision (a rejection lets them start a
+          // new payment).
+          if (payment.reviewStatus === 'pending') {
+            throw new ConflictException({
+              messageKey: 'errors.payment.alreadyUnderReview',
+            });
+          }
+        } else {
+          const method = await this.paymentMethodsRepository.findByKey(payment.methodKey);
+          const capabilities = method?.capabilities as unknown as
+            { supportsProof: boolean } | undefined;
+          if (!capabilities?.supportsProof) {
+            throw new ConflictException({
+              messageKey: 'errors.payment.proofNotSupported',
+            });
+          }
         }
 
         const id = randomUUID();
@@ -506,6 +715,7 @@ export class CourseOrderPaymentsService {
           storageKey,
           mimeType: kind.mimeType,
           note: payload.note,
+          payerReference: payload.payerReference?.trim() || null,
         });
 
         await this.paymentsRepository.update(tx, paymentId, {
@@ -534,6 +744,51 @@ export class CourseOrderPaymentsService {
           },
         });
 
+        if (isAcademyManual) {
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: studentId,
+            organizationId: order.organizationId,
+            academyId: order.academyId,
+            role: 'student',
+            action: 'academy.course_payment.proof_submitted',
+            targetType: 'payment',
+            targetId: paymentId,
+            context: {
+              proofId: id,
+              mimeType: kind.mimeType,
+              methodType: payment.methodType,
+            },
+          });
+          // The Client Owner is the reviewer: tell them there is work.
+          const owners = await this.academyStaffRecipientsService.organizationOwners(
+            tx,
+            order.academyId,
+          );
+          const learner = await tx.user.findUnique({
+            where: { id: studentId },
+            select: { name: true },
+          });
+          for (const ownerId of owners) {
+            const notified = await this.communicationService.emit(tx, {
+              key: 'academy.payment.submitted',
+              recipientUserId: ownerId,
+              organizationId: order.organizationId,
+              academyId: order.academyId,
+              entity: { type: 'payment_proof', id },
+              values: {
+                academyId: order.academyId,
+                paymentId,
+                courseTitle: snapshot?.course?.title ?? '',
+                amount: (Number(payment.amountMinorUnits) / 100).toFixed(2),
+                currency: payment.currency,
+                methodType: payment.methodType,
+                learnerName: learner?.name ?? '',
+              },
+            });
+            if (notified.outboxId) ownerOutboxIds.push(notified.outboxId);
+          }
+        }
+
         const withRelations = await this.paymentsRepository.findByIdAnyOrganization(
           tx,
           paymentId,
@@ -542,6 +797,9 @@ export class CourseOrderPaymentsService {
       },
     );
     await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    for (const outboxId of ownerOutboxIds) {
+      await this.communicationService.enqueueAfterCommit(outboxId);
+    }
     return response;
   }
 

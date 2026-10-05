@@ -19,6 +19,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { ManualReviewStatus, Payment } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { ACADEMY_MANUAL_PROVIDER_KEY } from '../dto/billing.constants';
 
 const WITH_RELATIONS = {
   attempts: true,
@@ -267,6 +268,9 @@ export class PaymentsRepository {
       : undefined;
     const where: Prisma.PaymentWhereInput = {
       courseOrderId: { not: null },
+      // Academy Manual Payments are paid to the academy and reviewed by its
+      // Client Owner, never in the Platform Owner's queue.
+      provider: { not: ACADEMY_MANUAL_PROVIDER_KEY },
       ...platformListCommonWhere(filter),
       ...(search && contains
         ? {

@@ -69,6 +69,7 @@ import { OrganizationGatewayCredentialsService } from './services/organization-g
 import { OrganizationConnectedAccountService } from './services/organization-connected-account.service';
 import { CommissionService } from './services/commission.service';
 import { AtlasSubscriptionPaymentProviderService } from './services/atlas-subscription-payment-provider.service';
+import { AcademyPaymentMethodsRepository } from './repositories/academy-payment-methods.repository';
 import { PaymentMethodsRepository } from './repositories/payment-methods.repository';
 import { CheckoutsRepository } from './repositories/checkouts.repository';
 import { PaymentsRepository } from './repositories/payments.repository';
@@ -129,6 +130,7 @@ import { PublicWebsiteCacheService } from '../public-website/services/public-web
     CommissionService,
     AtlasSubscriptionPaymentProviderService,
     PaymentMethodsRepository,
+    AcademyPaymentMethodsRepository,
     CheckoutsRepository,
     PaymentsRepository,
     PaymentAttemptsRepository,
@@ -162,6 +164,10 @@ import { PublicWebsiteCacheService } from '../public-website/services/public-web
     PaymentProofsRepository,
     PaymentReviewsRepository,
     PaymentMethodsRepository,
+    // Academy Manual Payments — the academies' own manual methods, used by
+    // `CourseCommerceModule` (settings, checkout, review) and by
+    // `ProvisioningModule` (methods chosen in the academy setup form).
+    AcademyPaymentMethodsRepository,
     PaymentProofStorageService,
     PaymentProviderRegistry,
     CommissionService,

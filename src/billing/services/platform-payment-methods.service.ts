@@ -36,134 +36,25 @@ import {
   type PlatformPaymentMethodResponse,
 } from '../dto/payment-method.contract';
 import type {
-  BankTransferInstructionsDto,
   CreatePlatformBankTransferMethodDto,
   CreatePlatformInstapayMethodDto,
   CreatePlatformWalletMethodDto,
-  InstapayInstructionsDto,
   UpdatePlatformPaymentMethodDto,
-  WalletTransferInstructionsDto,
 } from '../dto/platform-payment-method.dto';
+import {
+  MANUAL_TRANSFER_CAPABILITIES,
+  incomplete,
+  isPlaceholder,
+  toStoredBankTransferInstructions as toStoredInstructions,
+  toStoredInstapayInstructions,
+  toStoredWalletInstructions,
+  trimmed,
+  type ManualMethodType,
+} from '../utils/manual-payment-instructions.util';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
-
-/** What a manual transfer (bank, wallet, InstaPay) can do — fixed by the server, never sent by a client. */
-const MANUAL_TRANSFER_CAPABILITIES = {
-  supportsManualReview: true,
-  supportsProof: true,
-  supportsRedirect: false,
-  supportsEmbeddedCheckout: false,
-  supportsAdditionalAuthentication: false,
-  supportsWebhooks: false,
-  supportsRefunds: false,
-  supportsRecurring: false,
-  supportsCancellation: true,
-} as const;
-
-function trimmed(value: string | undefined): string | undefined {
-  const result = value?.trim();
-  return result ? result : undefined;
-}
-
-type ManualMethodType =
-  'manual_bank_transfer' | 'manual_wallet_transfer' | 'manual_instapay';
-
-function incomplete(): BadRequestException {
-  // Whitespace-only values pass `@IsNotEmpty`; they are not real details.
-  return new BadRequestException({
-    messageKey: 'errors.paymentMethod.incompleteInstructions',
-  });
-}
-
-/** The holder and texts every manual method has, trimmed; Arabic ones only when given. */
-function storedTexts(input: {
-  accountName: string;
-  accountNameAr?: string;
-  instructions: string;
-  instructionsAr?: string;
-  referenceInstructions: string;
-  referenceInstructionsAr?: string;
-}): Record<string, string> {
-  const accountName = trimmed(input.accountName);
-  const instructions = trimmed(input.instructions);
-  const referenceInstructions = trimmed(input.referenceInstructions);
-  if (!accountName || !instructions || !referenceInstructions) throw incomplete();
-  const optional = {
-    accountNameAr: trimmed(input.accountNameAr),
-    instructionsAr: trimmed(input.instructionsAr),
-    referenceInstructionsAr: trimmed(input.referenceInstructionsAr),
-  };
-  return {
-    accountName,
-    instructions,
-    referenceInstructions,
-    ...Object.fromEntries(Object.entries(optional).filter(([, v]) => v)),
-  } as Record<string, string>;
-}
-
-/** The stored bank-transfer instructions: trimmed, optional fields omitted when blank. */
-function toStoredInstructions(input: BankTransferInstructionsDto): Prisma.InputJsonValue {
-  const bankName = trimmed(input.bankName);
-  const accountNumber = trimmed(input.accountNumber);
-  if (!bankName || !accountNumber) throw incomplete();
-  const texts = storedTexts(input);
-  const iban = trimmed(input.iban)?.replace(/\s+/g, '').toUpperCase();
-  const swiftCode = trimmed(input.swiftCode)?.toUpperCase();
-  return {
-    type: 'manual_bank_transfer',
-    bankName,
-    accountName: texts.accountName,
-    accountNumber,
-    ...(iban ? { iban } : {}),
-    ...(swiftCode ? { swiftCode } : {}),
-    ...texts,
-  };
-}
-
-/** `+20 10 1234 5678`, `2010…`, `010 1234 5678` → `01012345678`. */
-export function normalizeWalletNumber(raw: string): string {
-  const digits = raw.replace(/\s+/g, '').replace(/^\+/, '');
-  const national = digits.startsWith('20') ? digits.slice(2) : digits;
-  return national.startsWith('0') ? national : `0${national}`;
-}
-
-function toStoredWalletInstructions(
-  input: WalletTransferInstructionsDto,
-): Prisma.InputJsonValue {
-  const walletProviderName = trimmed(input.walletProviderName);
-  if (input.walletProvider === 'other' && !walletProviderName) {
-    throw new BadRequestException({
-      messageKey: 'errors.paymentMethod.walletProviderNameRequired',
-    });
-  }
-  return {
-    type: 'manual_wallet_transfer',
-    walletProvider: input.walletProvider,
-    ...(input.walletProvider === 'other' ? { walletProviderName } : {}),
-    walletNumber: normalizeWalletNumber(input.walletNumber),
-    ...storedTexts(input),
-  };
-}
-
-function toStoredInstapayInstructions(
-  input: InstapayInstructionsDto,
-): Prisma.InputJsonValue {
-  return {
-    type: 'manual_instapay',
-    instapayAddress: input.instapayAddress.trim().toLowerCase(),
-    ...storedTexts(input),
-  };
-}
-
-function isPlaceholder(instructions: unknown): boolean {
-  return (
-    !!instructions &&
-    typeof instructions === 'object' &&
-    (instructions as { placeholder?: unknown }).placeholder === true
-  );
-}
 
 @Injectable()
 export class PlatformPaymentMethodsService {

@@ -61,6 +61,7 @@ import {
   readRequestedBrand,
   type RequestedBrand,
 } from '../dto/requested-brand';
+import { parseRequestedPaymentMethods } from '../dto/requested-payment-methods';
 import {
   toProvisioningRequestResponse,
   type ProvisioningRequestResponse,
@@ -167,6 +168,9 @@ export class ProvisioningRequestsService {
     // violations: strict keys, hex/triplet colours, an accessible palette,
     // never a data: URI) before anything is written.
     const requestedBrand = parseRequestedBrand(payload.brand, userId);
+    // Academy Manual Payments — normalised (and blank details refused)
+    // before anything is written, like the brand.
+    const requestedPaymentMethods = parseRequestedPaymentMethods(payload.paymentMethods);
 
     // An address another Academy already holds is refused at once, rather
     // than three steps into the background run — unless this is a replay
@@ -324,6 +328,9 @@ export class ProvisioningRequestsService {
             websiteSetupMode: payload.websiteSetupMode,
             requestedBrand: requestedBrand
               ? (requestedBrand as unknown as Prisma.InputJsonValue)
+              : Prisma.DbNull,
+            requestedPaymentMethods: requestedPaymentMethods
+              ? (requestedPaymentMethods as Prisma.InputJsonValue)
               : Prisma.DbNull,
             idempotencyKey: payload.idempotencyKey,
           });

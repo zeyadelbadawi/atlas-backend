@@ -345,6 +345,71 @@ const CATALOG = {
     actionUrl: () => '/my/purchases',
   },
 
+  // --- Academy Manual Payments — a learner paid the ACADEMY directly with
+  // one of its own manual methods and the Client Owner reviewed it. Distinct
+  // from `course.order.paid`/`payment_failed` (Atlas-collected payments):
+  // these name the amount and method, and the rejection carries the owner's
+  // reason. Exactly once per payment: the review claim is conditional, and
+  // the dedupe is the payment id.
+  'course.payment.approved': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `course_payment_approved:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'academy',
+    template: 'course.payment.approved',
+    titleKey: 'notifications:events.coursePaymentApproved.title',
+    messageKey: 'notifications:events.coursePaymentApproved.message',
+    actionUrl: () => '/my/payments',
+  },
+  'course.payment.rejected': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `course_payment_rejected:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'academy',
+    template: 'course.payment.rejected',
+    titleKey: 'notifications:events.coursePaymentRejected.title',
+    messageKey: 'notifications:events.coursePaymentRejected.message',
+    actionUrl: () => '/my/payments',
+  },
+  /**
+   * A learner submitted a proof of payment to the academy — a work item for
+   * the Client Owner, the only reviewer. One per proof (a resubmission after
+   * a rejection is a new payment and a new proof). Platform-branded like
+   * every staff work item: the review page is on the management host. The
+   * learner's name is email-only (`personalValues`).
+   */
+  'academy.payment.submitted': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `academy_payment_submitted:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    identity: 'academy',
+    template: 'academy.payment.submitted',
+    titleKey: 'notifications:events.academyPaymentSubmitted.title',
+    messageKey: 'notifications:events.academyPaymentSubmitted.message',
+    actionUrl: ({ values }) =>
+      `/dashboard/academy/${str(values, 'academyId')}/payments?payment=${str(values, 'paymentId')}`,
+    personalValues: ['learnerName'],
+  },
+
   // --- Platform subscription billing (P12) — the organisation owner.
   'platform.payment.approved': {
     category: 'transactional',

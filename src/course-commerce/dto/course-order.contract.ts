@@ -20,9 +20,19 @@ export interface CourseOrderResponse {
   readonly idempotencyKey: string;
   readonly paidAt?: string;
   readonly createdAt: string;
+  /**
+   * Academy Manual Payments — `true` when the order was paid to the academy
+   * directly (one of its own manual methods). Atlas holds none of that
+   * money, so the self-service refund is not offered: refunds are arranged
+   * with the academy. Present on the learner's order reads.
+   */
+  readonly paidToAcademy?: boolean;
 }
 
-export function toCourseOrderResponse(order: PrismaCourseOrder): CourseOrderResponse {
+export function toCourseOrderResponse(
+  order: PrismaCourseOrder,
+  extras: { readonly paidToAcademy?: boolean } = {},
+): CourseOrderResponse {
   return {
     id: order.id,
     studentId: order.studentId,
@@ -35,5 +45,8 @@ export function toCourseOrderResponse(order: PrismaCourseOrder): CourseOrderResp
     idempotencyKey: order.idempotencyKey,
     paidAt: order.paidAt?.toISOString(),
     createdAt: order.createdAt.toISOString(),
+    ...(extras.paidToAcademy !== undefined
+      ? { paidToAcademy: extras.paidToAcademy }
+      : {}),
   };
 }
