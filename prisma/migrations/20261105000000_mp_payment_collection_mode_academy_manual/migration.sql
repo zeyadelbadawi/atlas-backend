@@ -1,0 +1,31 @@
+-- ============================================================================
+-- Academy Manual Payments (MP) — 1/2: the `academy_manual` snapshot value.
+--
+-- A course payment taken with one of an academy's OWN manual methods
+-- (`academy_payment_methods`, next migration) records
+-- `payment_collection_mode_snapshot = 'academy_manual'`: the learner paid the
+-- academy directly and the Client Owner reviews it. It is a snapshot value
+-- only — never an organization setting (the payment-settings DTO lists the
+-- three settable modes explicitly), so no `organization_payment_settings` row
+-- can hold it through the API.
+--
+-- In its own migration because PostgreSQL cannot use a new enum value in the
+-- same transaction that adds it (the next migration's policies and functions
+-- do not need it, but keeping ADD VALUE alone is this repository's rule).
+--
+-- Recovery: an enum value cannot be dropped in place. If this must be undone
+-- before any row uses it, recreate the type without it:
+--   ALTER TYPE payment_collection_mode RENAME TO payment_collection_mode_old;
+--   CREATE TYPE payment_collection_mode AS ENUM
+--     ('unconfigured', 'atlas_payments', 'organization_gateway');
+--   ALTER TABLE organization_payment_settings ALTER COLUMN payment_collection_mode
+--     DROP DEFAULT, ALTER COLUMN payment_collection_mode TYPE payment_collection_mode
+--     USING payment_collection_mode::text::payment_collection_mode,
+--     ALTER COLUMN payment_collection_mode SET DEFAULT 'unconfigured';
+--   ALTER TABLE payments ALTER COLUMN payment_collection_mode_snapshot
+--     TYPE payment_collection_mode
+--     USING payment_collection_mode_snapshot::text::payment_collection_mode;
+--   DROP TYPE payment_collection_mode_old;
+-- ============================================================================
+
+ALTER TYPE "payment_collection_mode" ADD VALUE 'academy_manual';

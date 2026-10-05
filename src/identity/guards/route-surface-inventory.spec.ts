@@ -136,6 +136,8 @@ const SELF_OR_LEARNER = new Set<string>([
   'GET course-orders/:id/payments/:paymentId/proof/file',
   'POST course-orders/:id/refund',
   'GET course-orders/:id/refund',
+  // Academy Manual Payments — "My payments", scoped to app.current_user_id.
+  'GET course-payments',
   // --- live sessions a learner joins ----------------------------------------
   'GET live-sessions/courses/:courseId',
   'GET live-sessions/:liveSessionId/eligibility',

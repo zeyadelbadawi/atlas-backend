@@ -40,6 +40,7 @@ export type ManualPaymentInstructionsResponse =
   | (ManualInstructionTexts & {
       readonly type: 'manual_bank_transfer';
       readonly bankName: string;
+      readonly branchName?: string;
       readonly accountNumber: string;
       readonly iban?: string;
       readonly swiftCode?: string;

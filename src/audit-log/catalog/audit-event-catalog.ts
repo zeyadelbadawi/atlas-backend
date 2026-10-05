@@ -748,6 +748,29 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('course_order_payment.rejected', 'payments', 'payment', 'platform', false, [
     'notes',
   ]),
+  // Academy Manual Payments — the academy's own methods and the Client
+  // Owner's review of a learner's payment to the academy. Never the account
+  // details themselves; the rejection reason is the owner's own text.
+  ev(
+    'academy.payment_method.saved',
+    'payments',
+    'academy_payment_method',
+    'academy',
+    true,
+    ['type', 'enabled', 'created', 'fields'],
+  ),
+  ev('academy.course_payment.proof_submitted', 'payments', 'payment', 'academy', true, [
+    'proofId',
+    'mimeType',
+    'methodType',
+  ]),
+  ev('academy.course_payment.approved', 'payments', 'payment', 'academy', true, [
+    'courseOrderId',
+  ]),
+  ev('academy.course_payment.rejected', 'payments', 'payment', 'academy', true, [
+    'courseOrderId',
+    'notes',
+  ]),
   ev('course_order.refund_recorded', 'payments', 'course_order', 'academy', true, [
     'refundId',
     'amountMinorUnits',

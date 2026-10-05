@@ -55,6 +55,8 @@ export interface PaymentProofResponse {
   readonly mimeType: string;
   readonly note?: string;
   readonly uploadedAt: string;
+  /** The transfer reference the payer typed (Academy Manual Payments); absent when none was given. */
+  readonly payerReference?: string;
 }
 
 export function toPaymentProofResponse(
@@ -84,6 +86,7 @@ export function toCourseOrderPaymentProofResponse(
     fileUrl: `/course-orders/${courseOrderId}/payments/${proof.paymentId}/proof/file`,
     mimeType: proof.mimeType,
     note: proof.note ?? undefined,
+    payerReference: proof.payerReference ?? undefined,
     uploadedAt: proof.uploadedAt.toISOString(),
   };
 }

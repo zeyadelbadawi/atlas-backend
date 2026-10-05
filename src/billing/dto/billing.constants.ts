@@ -45,3 +45,9 @@ export const CHECKOUT_EXPIRY_MINUTES = 30;
 
 /** The one registered `PaymentProviderAdapter` key — matches the frontend's `ManualTransferProvider.providerKey`/`PaymentProviderRegistry` exactly. */
 export const ATLAS_MANUAL_PROVIDER_KEY = 'atlas_manual';
+
+/** Academy Manual Payments — the provider key of a course payment taken with one of the academy's OWN manual methods (`academy_payment_methods`). Not a registered adapter: the academy, not Atlas, receives the money and the Client Owner reviews it. */
+export const ACADEMY_MANUAL_PROVIDER_KEY = 'academy_manual';
+
+/** The longest transfer reference a payer may type next to their proof. */
+export const MAX_PAYER_REFERENCE_LENGTH = 120;

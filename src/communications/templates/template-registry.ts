@@ -54,6 +54,9 @@ import { template as rosterStudentAwaitingApproval } from './keys/roster.student
 import { template as enrollmentSelfEnrolled } from './keys/enrollment.self_enrolled';
 import { template as courseOrderCreated } from './keys/course.order.created';
 import { template as courseOrderExpired } from './keys/course.order.expired';
+import { template as coursePaymentApproved } from './keys/course.payment.approved';
+import { template as coursePaymentRejected } from './keys/course.payment.rejected';
+import { template as academyPaymentSubmitted } from './keys/academy.payment.submitted';
 import { template as quizAutoSubmitted } from './keys/assessment.quiz.auto_submitted';
 import { template as attemptInvalidated } from './keys/assessment.attempt.invalidated';
 import { template as courseCompleted } from './keys/course.completed';
@@ -167,6 +170,9 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'enrollment.self_enrolled': enrollmentSelfEnrolled,
   'course.order.created': courseOrderCreated,
   'course.order.expired': courseOrderExpired,
+  'course.payment.approved': coursePaymentApproved,
+  'course.payment.rejected': coursePaymentRejected,
+  'academy.payment.submitted': academyPaymentSubmitted,
   'assessment.quiz.auto_submitted': quizAutoSubmitted,
   'assessment.attempt.invalidated': attemptInvalidated,
   'course.completed': courseCompleted,

@@ -42,6 +42,7 @@ import {
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
 import { PaymentsRepository } from '../../billing/repositories/payments.repository';
+import { ACADEMY_MANUAL_PROVIDER_KEY } from '../../billing/dto/billing.constants';
 import { PaymentReviewsRepository } from '../../billing/repositories/payment-reviews.repository';
 import { PaymentProofsRepository } from '../../billing/repositories/payment-proofs.repository';
 import { PaymentProofStorageService } from '../../billing/storage/payment-proof-storage.service';
@@ -126,7 +127,12 @@ export class PlatformCourseOrderPaymentsService {
     const payment = await this.tenancyContextService.runInUserContext(reviewerId, (tx) =>
       this.paymentsRepository.findByIdAnyOrganizationWithCourseContext(tx, paymentId),
     );
-    if (!payment || !payment.courseOrderId) {
+    // Academy Manual Payments belong to the academy's own review, not this queue.
+    if (
+      !payment ||
+      !payment.courseOrderId ||
+      payment.provider === ACADEMY_MANUAL_PROVIDER_KEY
+    ) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
     return toPlatformCourseOrderPaymentDetailResponse(payment);
@@ -325,7 +331,11 @@ export class PlatformCourseOrderPaymentsService {
           tx,
           paymentId,
         );
-        if (!payment || !payment.courseOrderId) {
+        if (
+          !payment ||
+          !payment.courseOrderId ||
+          payment.provider === ACADEMY_MANUAL_PROVIDER_KEY
+        ) {
           throw new NotFoundException({ messageKey: 'errors.notFound' });
         }
         return this.paymentProofsRepository.findLatestForPayment(tx, paymentId);
@@ -346,7 +356,9 @@ export class PlatformCourseOrderPaymentsService {
       reviewerId,
       async (tx) => {
         const p = await this.paymentsRepository.findByIdAnyOrganization(tx, paymentId);
-        if (!p || !p.courseOrderId) {
+        // Academy Manual Payments are reviewed by the academy's Client
+        // Owner: the Platform Owner never approves money Atlas did not take.
+        if (!p || !p.courseOrderId || p.provider === ACADEMY_MANUAL_PROVIDER_KEY) {
           throw new NotFoundException({ messageKey: 'errors.notFound' });
         }
         const co = await this.courseOrdersRepository.findById(tx, p.courseOrderId);

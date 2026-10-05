@@ -214,6 +214,10 @@ writer stores.
 | `payment.rejected` | payments | organization | yes | notes |
 | `course_order_payment.approved` | payments | platform | no | — |
 | `course_order_payment.rejected` | payments | platform | no | notes |
+| `academy.payment_method.saved` | payments | academy | yes | type, enabled, created, fields |
+| `academy.course_payment.proof_submitted` | payments | academy | yes | proofId, mimeType, methodType |
+| `academy.course_payment.approved` | payments | academy | yes | courseOrderId |
+| `academy.course_payment.rejected` | payments | academy | yes | courseOrderId, notes |
 | `course_order.refund_recorded` | payments | academy | yes | refundId, amountMinorUnits, currency, paymentCollectionMode |
 | `organization.created` | subscription | organization | yes | — |
 | `organization.onboarding.completed` | subscription | organization | yes | mode, requiredComplete |

@@ -27,6 +27,8 @@ import { CoursesRepository } from '../../course/repositories/courses.repository'
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import { EnrollmentsRepository } from '../../learning/repositories/enrollments.repository';
 import { OrganizationPaymentSettingsService } from '../../billing/services/organization-payment-settings.service';
+import { AcademyPaymentMethodsRepository } from '../../billing/repositories/academy-payment-methods.repository';
+import { ACADEMY_MANUAL_PROVIDER_KEY } from '../../billing/dto/billing.constants';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { CourseOrdersRepository } from '../repositories/course-orders.repository';
 import { COURSE_ORDER_EXPIRY_MINUTES } from '../dto/course-commerce.constants';
@@ -58,6 +60,7 @@ export class CourseOrdersService {
     private readonly courseOrdersRepository: CourseOrdersRepository,
     private readonly metrics: LearningMetricsService,
     private readonly communications: CommunicationService,
+    private readonly academyPaymentMethodsRepository: AcademyPaymentMethodsRepository,
   ) {}
 
   async createOrder(
@@ -137,8 +140,17 @@ export class CourseOrdersService {
         // silently default to a mode. Checked again, freshly, at Payment
         // creation (`CourseOrderPaymentsService`) — this is an early,
         // buyer-friendly rejection, not the only enforcement point.
+        //
+        // Academy Manual Payments — an academy with its own enabled manual
+        // methods is configured for payment on its own, whatever the
+        // organization's mode (read under the buyer's context through
+        // `academy_payment_methods_buyer_select`: enabled rows only).
         const configured =
-          await this.organizationPaymentSettingsService.isConfigured(organizationId);
+          (await this.academyPaymentMethodsRepository.hasEnabledForAcademy(
+            tx,
+            course.academyId,
+          )) ||
+          (await this.organizationPaymentSettingsService.isConfigured(organizationId));
         if (!configured) {
           throw new ConflictException({
             messageKey: 'errors.courseOrder.paymentSetupIncomplete',
@@ -209,11 +221,40 @@ export class CourseOrdersService {
   }
 
   async getOrder(studentId: string, orderId: string): Promise<CourseOrderResponse> {
-    const order = await this.tenancyContextService.runInUserContext(studentId, (tx) =>
-      this.courseOrdersRepository.findByIdForStudent(tx, studentId, orderId),
+    const result = await this.tenancyContextService.runInUserContext(
+      studentId,
+      async (tx) => {
+        const order = await this.courseOrdersRepository.findByIdForStudent(
+          tx,
+          studentId,
+          orderId,
+        );
+        if (!order) return null;
+        const paidToAcademy = await this.paidToAcademyOrderIds(tx, [order.id]);
+        return { order, paidToAcademy };
+      },
     );
-    if (!order) throw new NotFoundException({ messageKey: 'errors.notFound' });
-    return toCourseOrderResponse(order);
+    if (!result) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return toCourseOrderResponse(result.order, {
+      paidToAcademy: result.paidToAcademy.has(result.order.id),
+    });
+  }
+
+  /** Academy Manual Payments — which of these orders were paid to the academy directly (no self-service refund). */
+  private async paidToAcademyOrderIds(
+    tx: Prisma.TransactionClient,
+    orderIds: readonly string[],
+  ): Promise<Set<string>> {
+    if (orderIds.length === 0) return new Set();
+    const rows = await tx.payment.findMany({
+      where: {
+        courseOrderId: { in: [...orderIds] },
+        status: 'succeeded',
+        provider: ACADEMY_MANUAL_PROVIDER_KEY,
+      },
+      select: { courseOrderId: true },
+    });
+    return new Set(rows.map((row) => row.courseOrderId!));
   }
 
   async listOrders(
@@ -223,17 +264,24 @@ export class CourseOrdersService {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
-    const { items, totalItems } = await this.tenancyContextService.runInUserContext(
-      studentId,
-      (tx) =>
-        this.courseOrdersRepository.findManyForStudent(tx, studentId, {
-          skip: (page - 1) * pageSize,
-          take: pageSize,
-        }),
-    );
+    const { items, totalItems, paidToAcademy } =
+      await this.tenancyContextService.runInUserContext(studentId, async (tx) => {
+        const result = await this.courseOrdersRepository.findManyForStudent(
+          tx,
+          studentId,
+          { skip: (page - 1) * pageSize, take: pageSize },
+        );
+        const academyPaid = await this.paidToAcademyOrderIds(
+          tx,
+          result.items.map((order) => order.id),
+        );
+        return { ...result, paidToAcademy: academyPaid };
+      });
 
     return {
-      items: items.map(toCourseOrderResponse),
+      items: items.map((order) =>
+        toCourseOrderResponse(order, { paidToAcademy: paidToAcademy.has(order.id) }),
+      ),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
     };
   }

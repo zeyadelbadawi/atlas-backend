@@ -44,4 +44,24 @@ export class AcademyStaffRecipientsService {
     `;
     return rows.map((row) => row.user_id);
   }
+
+  /**
+   * Academy Manual Payments — the Client Owner(s) of the academy's
+   * organization: the only people who may review a learner's payment to
+   * the academy. `moderators` reads `academy_members` only and so misses an
+   * organization owner who has no academy membership row; this reads the
+   * organization's owner membership through
+   * `academy_organization_owner_recipients` (same narrow, user-ids-only
+   * SECURITY DEFINER shape).
+   */
+  async organizationOwners(
+    tx: Prisma.TransactionClient,
+    academyId: string | null | undefined,
+  ): Promise<string[]> {
+    if (!academyId) return [];
+    const rows = await tx.$queryRaw<{ user_id: string }[]>`
+      SELECT "user_id" FROM academy_organization_owner_recipients(${academyId})
+    `;
+    return rows.map((row) => row.user_id);
+  }
 }

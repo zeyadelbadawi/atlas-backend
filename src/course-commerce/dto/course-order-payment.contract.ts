@@ -19,6 +19,7 @@ import type {
   PaymentProof as PrismaPaymentProof,
 } from '@prisma/client';
 import type { MoneyResponse } from '../../billing/dto/checkout.contract';
+import type { ManualPaymentInstructionsResponse } from '../../billing/dto/payment-method.contract';
 import {
   toPaymentAttemptResponse,
   toCourseOrderPaymentProofResponse,
@@ -50,6 +51,13 @@ export interface CourseOrderPaymentResponse {
     readonly rateBasisPoints: number;
     readonly amountMinorUnits: number;
   };
+  /**
+   * Academy Manual Payments — the transfer details this payer was shown
+   * when the payment was created (`instructions_snapshot`), so a later edit
+   * of the academy's method never changes what they were asked to do.
+   * Absent for payments created without a snapshot.
+   */
+  readonly instructions?: ManualPaymentInstructionsResponse;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly expiresAt?: string;
@@ -99,6 +107,9 @@ export function toCourseOrderPaymentResponse(
             amountMinorUnits: Number(payment.commissionAmountMinorUnits),
           }
         : undefined,
+    instructions:
+      (payment.instructionsSnapshot as unknown as ManualPaymentInstructionsResponse | null) ??
+      undefined,
     createdAt: payment.createdAt.toISOString(),
     updatedAt: payment.updatedAt.toISOString(),
     expiresAt: payment.expiresAt?.toISOString(),
