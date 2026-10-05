@@ -7,6 +7,16 @@ Generated from `src/communications/catalog/communication-catalog.ts` on
 the code is right and this document is stale — regenerate it rather than
 patching it by hand.
 
+> **Addendum (5 October 2026) — Academy Manual Payments** added three keys
+> after this document was generated: `course.payment.approved` (learner,
+> in-app + email always, "Payment approved: <course>", `/my/payments`),
+> `course.payment.rejected` (learner, in-app + email always, carries the
+> reviewer's reason, `/my/payments`) and `academy.payment.submitted` (Client
+> Owner, in-app + email always, `/dashboard/academy/ACADEMY/payments?payment=PAYMENT`).
+> All emitted by `course-commerce/services/academy-course-payments.service`
+> and `course-order-payments.service`. See `docs/ACADEMY_MANUAL_PAYMENTS.md`.
+> Regenerate this document to fold them into the matrix.
+
 ## The exact count
 
 **Atlas has 77 communication events.**
