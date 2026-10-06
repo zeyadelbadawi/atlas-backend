@@ -364,6 +364,92 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     expect(JSON.stringify(pages)).not.toContain('{{');
   });
 
+  it('3b-manara: selecting Manara (Theme 3) applies it and generates the website from the Manara template', async () => {
+    const { owner, org } = await arrangeOrg('manara-theme');
+    const manaraName = uniqueName('Manara Academy');
+    const subdomain = uniqueSubdomain('manara-theme');
+    const created = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        academyName: manaraName,
+        requestedSubdomain: subdomain,
+        selectedThemeKey: 'manara',
+        websiteSetupMode: 'complete',
+        idempotencyKey: `manara-theme-idem-${subdomain}`,
+      })
+      .expect(201);
+    expect(created.body.selectedThemeKey).toBe('manara');
+
+    const final = await waitForTerminal(owner, org.id, created.body.id);
+    expect(final.status).toBe('ready');
+    expect(final.selectedThemeKey).toBe('manara');
+
+    const websiteConfig = await admin.websiteConfiguration.findUnique({
+      where: { academyId: final.academyId },
+    });
+    expect(websiteConfig?.themeKey).toBe('manara');
+    expect(websiteConfig?.templateKey).toBe('manara');
+    expect(websiteConfig?.templateVersion).toBe(1);
+
+    const configRes = await request(app.getHttpServer())
+      .get(`/academies/${final.academyId}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(configRes.body.themeKey).toBe('manara');
+
+    // The pages are Manara's own proof-first composition (plan §3.10), with its images.
+    const pages = await admin.websitePage.findMany({
+      where: { academyId: final.academyId },
+    });
+    const byCoreType = Object.fromEntries(pages.map((page) => [page.coreType, page]));
+    type Section = { type: string; config: Record<string, unknown> };
+    const home = byCoreType.home!.sections as Section[];
+    expect(home.map((section) => section.type)).toEqual([
+      'hero',
+      'statistics',
+      'courseCategories',
+      'featuredCourses',
+      'featureSplit',
+      'steps',
+      'features',
+      'testimonials',
+      'instructors',
+      'faq',
+      'cta',
+    ]);
+    expect(home[0].config.image).toBe('theme-asset:manara/home-hero');
+    expect(home[0].config.showSearch).toBe(true);
+    expect(home[0].config.eyebrow).toEqual({
+      en: `${manaraName} — learn with your teacher`,
+      ar: `${manaraName} — تعلّم مع معلّمك`,
+    });
+    // Join → Sign Up; Browse → the Courses page just created.
+    expect((home[0].config.cta as { authAction?: string }).authAction).toBe('signUp');
+    expect((home[0].config.secondaryCta as { pageId?: string }).pageId).toBe(
+      byCoreType.courses!.id,
+    );
+    for (const coreType of ['about', 'courses', 'faqs', 'contact']) {
+      expect((byCoreType[coreType]!.sections as Section[])[0].type).toBe('pageHeader');
+    }
+    expect((byCoreType.about!.sections as Section[])[0].config.image).toBe(
+      'theme-asset:manara/about-header',
+    );
+    // Live statistics only; testimonials are samples.
+    const statistics = home.find((section) => section.type === 'statistics')!;
+    for (const item of statistics.config.items as Array<Record<string, unknown>>) {
+      expect(item.metric).toBeDefined();
+      expect(item.value).toEqual({ en: '', ar: '' });
+    }
+    const testimonials = home.find((section) => section.type === 'testimonials')!;
+    expect(
+      (testimonials.config.items as Array<{ sample?: boolean }>).every(
+        (item) => item.sample,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(pages)).not.toContain('{{');
+  });
+
   it('3b-retired: Themes 2–5 are retired from selection and are refused', async () => {
     const { owner, org } = await arrangeOrg('retired-theme');
     const subdomain = uniqueSubdomain('retired-theme');

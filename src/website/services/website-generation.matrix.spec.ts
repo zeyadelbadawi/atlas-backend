@@ -39,6 +39,7 @@ const LONG_NAMES = [
 const THEMES = [
   'modern-education',
   'atelier',
+  'manara',
   'premium-academy',
   'corporate-learning',
   'minimal-editorial',
@@ -173,7 +174,7 @@ describe('Website generation — every theme × setup mode', () => {
     },
   );
 
-  it.each(['modern-education', 'atelier'] as const)(
+  it.each(['modern-education', 'atelier', 'manara'] as const)(
     'complete mode does carry %s samples (the check below is not vacuous)',
     async (theme) => {
       const { service, pages } = setup();
