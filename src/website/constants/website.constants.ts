@@ -209,6 +209,8 @@ export const SELECTABLE_WEBSITE_THEME_KEYS = [
   'modern-education',
   // Theme 2 — Atelier (frontend repo, Reports/THEME_2_ATELIER_PLAN.md).
   'atelier',
+  // Theme 3 — Manara (frontend repo, Reports/THEME_3_MANARA_PLAN.md).
+  'manara',
 ] as const;
 
 /**
