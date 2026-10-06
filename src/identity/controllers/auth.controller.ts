@@ -338,8 +338,16 @@ export class AuthController {
   @Post('password-reset/request')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PasswordResetRateLimitGuard)
-  async requestPasswordReset(@Body() dto: PasswordResetRequestDto): Promise<void> {
-    await this.authService.requestPasswordReset(dto.email);
+  async requestPasswordReset(
+    @Body() dto: PasswordResetRequestDto,
+    @Req() request: Request,
+  ): Promise<void> {
+    // The host the request reached decides which surface the emailed link
+    // returns to — never a body field, so a caller cannot ask for another
+    // academy's branding.
+    await this.authService.requestPasswordReset(dto.email, {
+      hostname: request.hostname,
+    });
   }
 
   /**
@@ -360,7 +368,12 @@ export class AuthController {
   @Post('password-reset/confirm')
   @HttpCode(HttpStatus.OK)
   @UseGuards(CredentialCheckRateLimitGuard)
-  async confirmPasswordReset(@Body() dto: PasswordResetConfirmDto): Promise<void> {
-    await this.authService.confirmPasswordReset(dto.token, dto.newPassword);
+  async confirmPasswordReset(
+    @Body() dto: PasswordResetConfirmDto,
+    @Req() request: Request,
+  ): Promise<void> {
+    await this.authService.confirmPasswordReset(dto.token, dto.newPassword, {
+      hostname: request.hostname,
+    });
   }
 }

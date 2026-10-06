@@ -23,6 +23,7 @@ import {
   Get,
   HttpCode,
   NotFoundException,
+  type OnModuleInit,
   Param,
   Post,
   Query,
@@ -53,11 +54,24 @@ const UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 @Controller('public/websites')
-export class PublicWebsiteController {
+export class PublicWebsiteController implements OnModuleInit {
   constructor(
     private readonly publicWebsiteService: PublicWebsiteService,
     private readonly emailLogoService: EmailLogoService,
   ) {}
+
+  /**
+   * Production QA Issue 4 — hands the email side the SAME "may this
+   * academy's logo be served" read the route below answers with, so an
+   * email never links a logo this route would 404 (an unpaid, suspended
+   * or archived academy). Registered rather than injected: communications
+   * is the lower layer and must not import the public website module.
+   */
+  onModuleInit(): void {
+    this.emailLogoService.registerServingReference((academyId) =>
+      this.publicWebsiteService.findLogoReference(academyId),
+    );
+  }
 
   @Get('resolve')
   async resolveHostname(

@@ -183,6 +183,8 @@ const NEVER_DEDUPED = (): null => null;
  * cannot drift apart.
  */
 const FORGOT_PASSWORD_PATH = '/auth/forgot-password';
+/** `PublicWebsiteRouter`'s `/forgot-password` — the academy host's own page. */
+const ACADEMY_FORGOT_PASSWORD_PATH = '/forgot-password';
 const TENANT_SUBSCRIPTION_PATH = '/dashboard/tenant/subscription';
 
 /**
@@ -801,15 +803,31 @@ const CATALOG = {
     retentionClass: 'extended',
     dedupe: NEVER_DEDUPED,
     cooldownSeconds: 0,
-    locale: 'user',
-    branding: 'platform',
+    // Production QA Issue 5 — the same two-surface shape as
+    // `auth.email.verification`. `academy` resolves to the PLATFORM brand
+    // and host whenever the row carries no academy, so a reset requested
+    // on the management host is unchanged; one requested on an academy
+    // website by that academy's own account (the worker sets the row's
+    // `academyId` and `values.academyId`, see `recoveryAcademyId`) gets
+    // that academy's name, logo, host and — for a learner who never
+    // chose a language — its language.
+    locale: 'academy',
+    branding: 'academy',
     template: 'auth.password.reset',
     titleKey: 'notifications:events.passwordReset.title',
     messageKey: 'notifications:events.passwordReset.message',
-    // `/auth/reset-password`, NOT `/reset-password` — same mounting
-    // point, same 404 if it is wrong. `ResetPasswordPage` reads `token`
-    // from the query string and validates it before showing the form.
-    actionUrl: ({ values }) => `/auth/reset-password?token=${str(values, 'token')}`,
+    // Two destinations, one per surface. The management host mounts the
+    // page inside `/auth` (`/reset-password` 404s there); an academy host
+    // mounts its own `/reset-password` (`PublicWebsiteResetPasswordPage`,
+    // which then sends the reader to THAT academy's sign-in, where every
+    // admission rule still applies) and `/auth/…` there falls into the CMS
+    // catch-all. Both read `token` from the query
+    // string and validate it before showing the form. The token lives
+    // ONLY in this href — the template renders a CTA and never prints it.
+    actionUrl: ({ values }) =>
+      str(values, 'academyId')
+        ? `/reset-password?token=${str(values, 'token')}`
+        : `/auth/reset-password?token=${str(values, 'token')}`,
     credentialValues: ['token'],
   },
   'auth.password.reset_confirmed': {
@@ -821,14 +839,20 @@ const CATALOG = {
     retentionClass: 'extended',
     dedupe: NEVER_DEDUPED,
     cooldownSeconds: 0,
-    locale: 'user',
-    branding: 'platform',
+    // Follows the reset it reports: confirmed on an academy website by
+    // that academy's own account → that academy's brand and host (see
+    // `auth.password.reset`); otherwise exactly the platform email.
+    locale: 'academy',
+    branding: 'academy',
     template: 'auth.password.reset_confirmed',
     titleKey: 'notifications:events.passwordResetConfirmed.title',
     messageKey: 'notifications:events.passwordResetConfirmed.message',
     // §13's recovery path: reachable while signed out, which is the
-    // state someone is in when this email is the one that matters.
-    actionUrl: () => FORGOT_PASSWORD_PATH,
+    // state someone is in when this email is the one that matters — on
+    // the surface the reset happened on (`/forgot-password` is the
+    // academy host's own page; the management one lives under `/auth`).
+    actionUrl: ({ values }) =>
+      str(values, 'academyId') ? ACADEMY_FORGOT_PASSWORD_PATH : FORGOT_PASSWORD_PATH,
   },
 
   // --- Live Sessions (Phase 12).

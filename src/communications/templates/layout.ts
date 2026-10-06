@@ -138,6 +138,23 @@ function renderLogo(branding: BrandingContext, brand: string): string {
   return `<img src="${escapeHtml(branding.academyLogoUrl)}" alt="${escapeHtml(brand)}"${widthAttr} height="${height}" style="display:block;border:0;outline:none;text-decoration:none;height:${height}px;${widthStyle}max-width:200px;" />`;
 }
 
+/**
+ * The call-to-action, as the widely used "bulletproof" button: the colour
+ * and padding sit on a table cell and the link fills it (`display:block`),
+ * so the WHOLE button is the tap target in every client — including
+ * Outlook's Word engine, which drops padding on `<a>` and left only the
+ * label's few pixels clickable — and a phone never has to hit the text
+ * exactly. Same look as before. Below it, the address itself as a real
+ * link (it was plain text), for a client or a reader that will not follow
+ * the button.
+ */
+function renderCta(cta: { readonly url: string; readonly label: string }): string {
+  const href = escapeHtml(cta.url);
+  const button = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 24px 0;border-collapse:separate;"><tr><td align="center" bgcolor="#111827" style="background:#111827;border-radius:6px;mso-padding-alt:12px 20px;"><a href="${href}" target="_blank" style="display:block;padding:12px 20px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;font-size:15px;line-height:20px;font-weight:600;">${escapeHtml(cta.label)}</a></td></tr></table>`;
+  const fallback = `<p style="margin:0 0 16px 0;font-size:13px;line-height:20px;color:#6b7280;text-align:start;word-break:break-all;"><a href="${href}" target="_blank" style="color:#6b7280;text-decoration:underline;">${href}</a></p>`;
+  return button + fallback;
+}
+
 export function renderHtmlLayout(
   input: LayoutInput,
   context: TemplateRenderContext,
@@ -152,9 +169,7 @@ export function renderHtmlLayout(
         `<p style="margin:0 0 16px 0;font-size:16px;line-height:24px;color:#111827;text-align:start;">${escapeHtml(p)}</p>`,
     )
     .join('');
-  const cta = input.cta
-    ? `<p style="margin:8px 0 24px 0;text-align:start;"><a href="${escapeHtml(input.cta.url)}" style="display:inline-block;padding:12px 20px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;font-size:15px;font-weight:600;">${escapeHtml(input.cta.label)}</a></p><p style="margin:0 0 16px 0;font-size:13px;line-height:20px;color:#6b7280;text-align:start;word-break:break-all;">${escapeHtml(input.cta.url)}</p>`
-    : '';
+  const cta = input.cta ? renderCta(input.cta) : '';
   const preheader = input.preheader
     ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${escapeHtml(input.preheader)}</div>`
     : '';

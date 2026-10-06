@@ -53,8 +53,13 @@ function extractTokenFromLink(text: string, path: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Matches both destinations `auth.password.reset` builds: the management
+ * host's `/auth/reset-password` and an academy host's root-mounted
+ * `/reset-password` (optionally under `/ar`).
+ */
 export function extractPasswordResetToken(text: string): string | undefined {
-  return extractTokenFromLink(text, '/auth/reset-password');
+  return extractTokenFromLink(text, '/reset-password');
 }
 
 /**

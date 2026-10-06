@@ -84,6 +84,12 @@ export class EmailLogoService {
   private readonly unknownAcademies = new Map<string, number>();
   /** In-flight public-route lookups per academy. */
   private readonly resolving = new Map<string, Promise<RenderedEmailLogo | null>>();
+  /**
+   * The public route's own reference read (`PublicWebsiteService
+   * .findLogoReference`): `undefined` when the academy may not be served.
+   * Registered by the route's controller at boot — see `forEmail`.
+   */
+  private servingReference?: (academyId: string) => Promise<string | null | undefined>;
 
   constructor(
     @Inject(MEDIA_STORAGE_PROVIDER) private readonly storage: MediaStorageProvider,
@@ -168,15 +174,32 @@ export class EmailLogoService {
     }
   }
 
+  /** Called once by the public logo route's module; see `servingReference`. */
+  registerServingReference(
+    loader: (academyId: string) => Promise<string | null | undefined>,
+  ): void {
+    this.servingReference = loader;
+  }
+
   /**
    * What the email layout needs: the absolute logo URL on the PLATFORM host
    * (stable, always TLS, independent of a custom domain's health) with its
    * display size — or `undefined`, which renders the academy name instead.
+   *
+   * Production QA Issue 4 — only when the public route would actually serve
+   * it. The route refuses an academy that may not be served (unpaid,
+   * suspended, archived); an email that linked it anyway showed a broken
+   * image in every client. The same read the route uses decides here, so
+   * the two cannot disagree; a failed read falls back to the name.
    */
   async forEmail(
     academyId: string,
     logoUrl: string | null | undefined,
   ): Promise<EmailLogoReference | undefined> {
+    if (this.servingReference) {
+      const reference = await this.servingReference(academyId).catch(() => undefined);
+      if (reference === undefined) return undefined;
+    }
     const logo = await this.render(academyId, logoUrl);
     if (!logo) return undefined;
     const size = emailLogoDisplaySize(logo.width, logo.height);

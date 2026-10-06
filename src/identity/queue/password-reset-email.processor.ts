@@ -30,7 +30,9 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import type { Job } from 'bullmq';
 import { CommunicationService } from '../../communications/services/communication.service';
+import { PrincipalResolverService } from '../../tenancy/services/principal-resolver.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { recoveryAcademyId } from '../utils/recovery-surface.util';
 import {
   PASSWORD_RESET_EMAIL_QUEUE,
   PasswordResetEmailJobPayload,
@@ -43,6 +45,7 @@ export class PasswordResetEmailProcessor extends WorkerHost {
   constructor(
     private readonly communicationService: CommunicationService,
     private readonly tenancyContextService: TenancyContextService,
+    private readonly principalResolver: PrincipalResolverService,
   ) {
     super();
   }
@@ -51,17 +54,31 @@ export class PasswordResetEmailProcessor extends WorkerHost {
     // Deliberately does not log `job.data` — it carries `rawToken`.
     this.logger.log({ jobId: job.id }, 'Processing password-reset email job');
 
-    const { userId, rawToken } = job.data;
+    const { userId, rawToken, hostAcademyId } = job.data;
+    // Requested on an academy website by one of that academy's accounts →
+    // that academy's email and reset page; otherwise the management one.
+    // Decided here, after the request was already answered the same way
+    // for every address (see `recoveryAcademyId`).
+    const academyId = hostAcademyId
+      ? recoveryAcademyId(await this.principalResolver.resolve(userId), hostAcademyId)
+      : null;
     const outboxId = await this.tenancyContextService.runInUserContext(
       userId,
       async (tx) => {
         const emitted = await this.communicationService.emit(tx, {
           key: 'auth.password.reset',
           recipientUserId: userId,
+          // Branding and host only. Never `organizationId`: the row
+          // carries a live link and must never be tenant-visible.
+          academyId,
           entity: { type: 'password_reset', id: userId },
-          // `token` is consumed ONLY by the catalogue's `actionUrl`, which
-          // puts it in the href. No template prints it.
-          values: { token: rawToken },
+          values: {
+            // `token` is consumed ONLY by the catalogue's `actionUrl`,
+            // which puts it in the href. No template prints it.
+            token: rawToken,
+            // Selects the academy-host destination in `actionUrl`.
+            ...(academyId ? { academyId } : {}),
+          },
         });
         return emitted.outboxId;
       },
