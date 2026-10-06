@@ -834,3 +834,32 @@ describe('COMMUNICATION_CATALOG', () => {
     });
   });
 });
+
+/**
+ * Production QA Issue 5 — a reset requested on an academy website by that
+ * academy's own account returns to that academy's pages; everything else
+ * keeps the management destinations it always had.
+ */
+describe('password reset — one destination per surface', () => {
+  const reset = COMMUNICATION_CATALOG['auth.password.reset'];
+  const confirmed = COMMUNICATION_CATALOG['auth.password.reset_confirmed'];
+
+  it('is academy-branded, which falls back to the platform brand without an academy', () => {
+    expect(reset.branding).toBe('academy');
+    expect(confirmed.branding).toBe('academy');
+  });
+
+  it("sends the management reader to the management host's `/auth/reset-password`", () => {
+    expect(reset.actionUrl?.(context({ token: 'tok' }))).toBe(
+      '/auth/reset-password?token=tok',
+    );
+    expect(confirmed.actionUrl?.(context())).toBe('/auth/forgot-password');
+  });
+
+  it("sends the academy's own account to that academy's `/reset-password`", () => {
+    expect(reset.actionUrl?.(context({ token: 'tok', academyId: 'a-1' }))).toBe(
+      '/reset-password?token=tok',
+    );
+    expect(confirmed.actionUrl?.(context({ academyId: 'a-1' }))).toBe('/forgot-password');
+  });
+});

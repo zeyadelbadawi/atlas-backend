@@ -93,6 +93,38 @@ describe('EmailLogoService', () => {
     expect(getObject).toHaveBeenCalledTimes(1);
   });
 
+  describe('only links a logo the public route would serve (Production QA Issue 4)', () => {
+    async function stored() {
+      const png = await image('png', 300, 100);
+      return `data:image/png;base64,${png.toString('base64')}`;
+    }
+
+    it('links the logo of an academy the route serves', async () => {
+      const { service } = setup();
+      const value = await stored();
+      service.registerServingReference(async () => value);
+      expect((await service.forEmail(A, value))?.url).toContain(
+        `/public/websites/${A}/logo?v=`,
+      );
+    });
+
+    it('falls back to the name for an academy the route refuses (unpaid, suspended, archived)', async () => {
+      const { service } = setup();
+      const serving = jest.fn(async () => undefined);
+      service.registerServingReference(serving);
+      expect(await service.forEmail(A, await stored())).toBeUndefined();
+      expect(serving).toHaveBeenCalledWith(A);
+    });
+
+    it('falls back to the name when the eligibility read fails', async () => {
+      const { service } = setup();
+      service.registerServingReference(async () => {
+        throw new Error('db down');
+      });
+      expect(await service.forEmail(A, await stored())).toBeUndefined();
+    });
+  });
+
   describe('public route caching (security review finding 4)', () => {
     it('shares one decode among concurrent requests for one logo', async () => {
       const key = `academies/${A}/${FILE}.png`;

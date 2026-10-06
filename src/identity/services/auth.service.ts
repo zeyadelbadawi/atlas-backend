@@ -75,6 +75,7 @@ import {
 } from '../../tenancy/services/student-device.service';
 import { AccessPolicyService } from '../../tenancy/services/access-policy.service';
 import type { Principal } from '../../tenancy/services/principal-resolver.service';
+import { recoveryAcademyId } from '../utils/recovery-surface.util';
 import { AcademySurfaceService } from './academy-surface.service';
 import { EmailOtpService } from './email-otp.service';
 import { CommunicationMetricsService } from '../../communications/metrics/communication-metrics.service';
@@ -1983,9 +1984,22 @@ export class AuthService {
    * identical either way, and this method resolves before the caller can
    * observe whether the (Redis-queued) email step happened. Rate limiting
    * is applied by the controller/guard layer, not here.
+   *
+   * Production QA Issue 5 — the request host's academy travels with the
+   * job, so a reset asked for on an academy website returns its reader to
+   * that academy's own reset page. It is resolved BEFORE the account
+   * lookup, for every request, so a known and an unknown address cost the
+   * same; whether the account belongs to that academy is decided later, in
+   * the worker (`recoveryAcademyId`), never here.
    */
-  async requestPasswordReset(email: string): Promise<void> {
+  async requestPasswordReset(
+    email: string,
+    context: { readonly hostname?: string } = {},
+  ): Promise<void> {
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
+    const hostAcademyId = await this.academySurfaceService.resolveHostAcademyId(
+      context.hostname,
+    );
     const normalized = normalizeEmail(email);
     const user = await this.usersRepository.findByEmail(normalized);
 
@@ -2010,6 +2024,7 @@ export class AuthService {
       email: user.email,
       rawToken,
       expiresAt: expiresAt.toISOString(),
+      ...(hostAcademyId ? { hostAcademyId } : {}),
     });
   }
 
@@ -2020,7 +2035,11 @@ export class AuthService {
    * a password reset is exactly the scenario where every existing session
    * should be treated as no-longer-trusted.
    */
-  async confirmPasswordReset(rawToken: string, newPassword: string): Promise<void> {
+  async confirmPasswordReset(
+    rawToken: string,
+    newPassword: string,
+    context: { readonly hostname?: string } = {},
+  ): Promise<void> {
     const tokenHash = hashOpaqueToken(rawToken);
     // A cheap read first, so an unknown token never costs a password hash.
     if (!(await this.passwordResetTokensRepository.findValidByHash(tokenHash))) {
@@ -2114,16 +2133,53 @@ export class AuthService {
       records: this flow predates any shared transaction across its
       writes, and restructuring that is not this change's job.
     */
+    // Confirmed on an academy website by one of that academy's own
+    // accounts → the notice carries that academy's brand and its "wasn't
+    // you?" link returns to that academy's forgot-password page. The
+    // caller already holds this account's reset token, so the lookup tells
+    // them nothing new.
+    // Best-effort, like the audit writes above: the password is already
+    // changed and every session revoked, so a failed lookup must not turn
+    // a completed reset into an error — the notice then goes out as the
+    // management one.
+    const academyId = await this.resetNoticeAcademyId(
+      resetToken.userId,
+      context.hostname,
+    );
     const emitted: EmitResult = await this.tenancyContextService.runInUserContext(
       resetToken.userId,
       (tx) =>
         this.communicationService.emit(tx, {
           key: 'auth.password.reset_confirmed',
           recipientUserId: resetToken.userId,
+          academyId,
           entity: { type: 'user', id: resetToken.userId },
+          ...(academyId ? { values: { academyId } } : {}),
         }),
     );
     await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+  }
+
+  /** The academy the "password was reset" notice belongs to, or `null` (management) — never throws. */
+  private async resetNoticeAcademyId(
+    userId: string,
+    hostname: string | undefined,
+  ): Promise<string | null> {
+    try {
+      const hostAcademyId =
+        await this.academySurfaceService.resolveHostAcademyId(hostname);
+      if (!hostAcademyId) return null;
+      return recoveryAcademyId(
+        await this.principalResolver.resolve(userId),
+        hostAcademyId,
+      );
+    } catch (error) {
+      this.logger.warn(
+        { userId, error: error instanceof Error ? error.message : error },
+        'Could not resolve the academy for the password-reset notice; sending the management one.',
+      );
+      return null;
+    }
   }
 
   /**
