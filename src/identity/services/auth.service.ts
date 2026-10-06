@@ -2138,9 +2138,13 @@ export class AuthService {
     // you?" link returns to that academy's forgot-password page. The
     // caller already holds this account's reset token, so the lookup tells
     // them nothing new.
-    const academyId = recoveryAcademyId(
-      await this.principalResolver.resolve(resetToken.userId),
-      await this.academySurfaceService.resolveHostAcademyId(context.hostname),
+    // Best-effort, like the audit writes above: the password is already
+    // changed and every session revoked, so a failed lookup must not turn
+    // a completed reset into an error — the notice then goes out as the
+    // management one.
+    const academyId = await this.resetNoticeAcademyId(
+      resetToken.userId,
+      context.hostname,
     );
     const emitted: EmitResult = await this.tenancyContextService.runInUserContext(
       resetToken.userId,
@@ -2154,6 +2158,28 @@ export class AuthService {
         }),
     );
     await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+  }
+
+  /** The academy the "password was reset" notice belongs to, or `null` (management) — never throws. */
+  private async resetNoticeAcademyId(
+    userId: string,
+    hostname: string | undefined,
+  ): Promise<string | null> {
+    try {
+      const hostAcademyId =
+        await this.academySurfaceService.resolveHostAcademyId(hostname);
+      if (!hostAcademyId) return null;
+      return recoveryAcademyId(
+        await this.principalResolver.resolve(userId),
+        hostAcademyId,
+      );
+    } catch (error) {
+      this.logger.warn(
+        { userId, error: error instanceof Error ? error.message : error },
+        'Could not resolve the academy for the password-reset notice; sending the management one.',
+      );
+      return null;
+    }
   }
 
   /**
