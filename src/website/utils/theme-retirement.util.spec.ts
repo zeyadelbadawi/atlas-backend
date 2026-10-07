@@ -65,6 +65,7 @@ describe('theme retirement plan', () => {
     expect(planThemeRetirement(website({ themeKey: 'modern-education' }))).toBeNull();
     expect(planThemeRetirement(website({ themeKey: 'atelier' }))).toBeNull();
     expect(planThemeRetirement(website({ themeKey: 'manara' }))).toBeNull();
+    expect(planThemeRetirement(website({ themeKey: 'riwaq' }))).toBeNull();
   });
 
   it('moves a retired theme to Theme 1 and reports what the website holds', () => {
@@ -230,5 +231,6 @@ describe('theme retirement plan', () => {
     expect(selectableWebsiteThemeKey('modern-education')).toBe('modern-education');
     expect(selectableWebsiteThemeKey('atelier')).toBe('atelier');
     expect(selectableWebsiteThemeKey('manara')).toBe('manara');
+    expect(selectableWebsiteThemeKey('riwaq')).toBe('riwaq');
   });
 });

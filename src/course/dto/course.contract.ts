@@ -74,6 +74,12 @@ export interface CourseResponse {
   readonly language?: string;
   readonly outcomes: readonly string[];
   readonly requirements: readonly string[];
+  /**
+   * Theme 4 plan §6 — whether finishing this course issues a certificate.
+   * Public on purpose: a theme may say "certificate on completion" only for
+   * a course that really issues one, never as a blanket claim.
+   */
+  readonly certificatesEnabled: boolean;
   readonly introVideoAssetId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -124,6 +130,7 @@ export function toCourseResponse(
     language: course.language ?? undefined,
     outcomes: course.outcomes ?? [],
     requirements: course.requirements ?? [],
+    certificatesEnabled: course.certificatesEnabled === true,
     introVideoAssetId: course.introVideoAssetId ?? undefined,
     createdAt: course.createdAt.toISOString(),
     updatedAt: course.updatedAt.toISOString(),

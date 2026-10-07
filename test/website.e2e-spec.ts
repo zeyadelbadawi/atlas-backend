@@ -212,6 +212,33 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     expect(back.body.themeKey).toBe('modern-education');
   });
 
+  it('selects Riwaq (Theme 4): the key is accepted and persisted, and switching back works', async () => {
+    const { owner, academy } = await seedManagedAcademy('theme-riwaq');
+    const selected = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ themeKey: 'riwaq' })
+      .expect(200);
+    expect(selected.body.themeKey).toBe('riwaq');
+
+    const stored = await admin.websiteConfiguration.findUnique({
+      where: { academyId: academy.id },
+    });
+    expect(stored?.themeKey).toBe('riwaq');
+    const current = await request(app.getHttpServer())
+      .get(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(current.body.themeKey).toBe('riwaq');
+
+    const back = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ themeKey: 'modern-education' })
+      .expect(200);
+    expect(back.body.themeKey).toBe('modern-education');
+  });
+
   it('refuses a retired theme (Themes 2–5) and keeps the current one', async () => {
     const { owner, academy } = await seedManagedAcademy('theme-retired');
     for (const themeKey of [

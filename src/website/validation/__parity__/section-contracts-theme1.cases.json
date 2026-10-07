@@ -1904,6 +1904,144 @@
         "items": []
       },
       "valid": false
+    },
+    {
+      "name": "courseSpotlight minimal (the newest course)",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "showSyllabus": true,
+        "maxModules": 6
+      },
+      "valid": true
+    },
+    {
+      "name": "courseSpotlight full",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "showSyllabus": true,
+        "maxModules": 6,
+        "eyebrow": {
+          "en": "Programme in focus",
+          "ar": "برنامج تحت الضوء"
+        },
+        "title": {
+          "en": "A closer look",
+          "ar": ""
+        },
+        "description": {
+          "en": "The syllabus as it stands.",
+          "ar": ""
+        },
+        "courseId": "course-1",
+        "cta": {
+          "label": {
+            "en": "See the programme",
+            "ar": ""
+          },
+          "courseId": "course-1"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "courseSpotlight maxModules at its bounds",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "showSyllabus": true,
+        "maxModules": 1
+      },
+      "valid": true
+    },
+    {
+      "name": "courseSpotlight maxModules 12",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "showSyllabus": true,
+        "maxModules": 12
+      },
+      "valid": true
+    },
+    {
+      "name": "courseSpotlight maxModules 0",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "showSyllabus": true,
+        "maxModules": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "courseSpotlight maxModules 13",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "showSyllabus": true,
+        "maxModules": 13
+      },
+      "valid": false
+    },
+    {
+      "name": "courseSpotlight maxModules not an integer",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "showSyllabus": true,
+        "maxModules": 2.5
+      },
+      "valid": false
+    },
+    {
+      "name": "courseSpotlight missing showSyllabus",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "maxModules": 6
+      },
+      "valid": false
+    },
+    {
+      "name": "courseSpotlight empty courseId",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "showSyllabus": true,
+        "maxModules": 6,
+        "courseId": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "courseSpotlight title over 100",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "showSyllabus": true,
+        "maxModules": 6,
+        "title": {
+          "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "courseSpotlight Arabic title over 100",
+      "type": "courseSpotlight",
+      "config": {
+        "showOutcomes": true,
+        "showSyllabus": true,
+        "maxModules": 6,
+        "title": {
+          "en": "ok",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
     }
   ]
 }

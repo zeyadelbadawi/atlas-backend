@@ -162,7 +162,14 @@ export const SECTION_TYPES = [
   'courseCategories',
   'steps',
   'featureSplit',
+  // Theme 4 plan §6 (frontend repo, Reports/THEME_4_RIWAQ_PLAN.md) — one real
+  // course's outcomes and syllabus; shared by every theme with a base renderer.
+  'courseSpotlight',
 ] as const;
+
+/** `courseSpotlight`: how many syllabus sections it may list — matches the frontend `MIN/MAX_SPOTLIGHT_MODULES`. */
+export const MIN_SPOTLIGHT_MODULES = 1;
+export const MAX_SPOTLIGHT_MODULES = 12;
 
 /** Theme 1 plan §B density: one idea per section, 3–6 items. */
 export const MAX_SECTION_STEPS = 6;
@@ -211,6 +218,8 @@ export const SELECTABLE_WEBSITE_THEME_KEYS = [
   'atelier',
   // Theme 3 — Manara (frontend repo, Reports/THEME_3_MANARA_PLAN.md).
   'manara',
+  // Theme 4 — Riwaq (frontend repo, Reports/THEME_4_RIWAQ_PLAN.md).
+  'riwaq',
 ] as const;
 
 /**

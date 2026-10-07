@@ -85,6 +85,11 @@ function collectSectionReferences(
       case 'featureSplit':
         addCta(section.config.cta);
         break;
+      case 'courseSpotlight':
+        // Theme 4 plan §6 — the course in focus must be this Academy's own.
+        if (section.config.courseId) courseIds.add(section.config.courseId);
+        addCta(section.config.cta);
+        break;
       case 'faq':
         (section.config.libraryEntryIds ?? []).forEach((id: string) =>
           faqEntryIds.add(id),
