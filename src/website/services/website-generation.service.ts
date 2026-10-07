@@ -192,6 +192,8 @@ const SECTION_BASE_DEFAULTS: Partial<Record<SectionType, Record<string, unknown>
   // Theme 1 plan §D.2 — the v2 types with a required list.
   steps: { items: [] },
   featureSplit: { items: [] },
+  // Theme 4 plan §6 — the spotlight's required switches, in every mode.
+  courseSpotlight: { showOutcomes: true, showSyllabus: true, maxModules: 6 },
 };
 
 export interface WebsiteGenerationResult {

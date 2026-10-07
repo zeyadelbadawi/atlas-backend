@@ -78,6 +78,8 @@ import {
   MAX_STEP_DESCRIPTION_LENGTH,
   MAX_STEP_TITLE_LENGTH,
   MAX_STEPS_DESCRIPTION_LENGTH,
+  MAX_SPOTLIGHT_MODULES,
+  MIN_SPOTLIGHT_MODULES,
   MAX_STEPS_TITLE_LENGTH,
   MIN_COURSE_CATALOG_PAGE_SIZE,
   MIN_COURSE_CATEGORIES,
@@ -409,6 +411,25 @@ export const featureSplitSectionSchema = z.object({
   cta: websiteCtaSchema.optional(),
 });
 
+/**
+ * Theme 4 plan §6 — one real course's outcomes and syllabus. `courseId`
+ * references the Academy's own Course domain (checked by
+ * `SectionReferenceValidatorService`, like `featuredCourses.courseIds`);
+ * absent means "the newest published course". Every fact it shows is read
+ * live from the public course and its curriculum — the config carries no
+ * course copy of its own.
+ */
+export const courseSpotlightSectionSchema = z.object({
+  eyebrow: localizedOptional(MAX_SHORT_TEXT).optional(),
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  courseId: z.string().min(1).optional(),
+  showOutcomes: z.boolean(),
+  showSyllabus: z.boolean(),
+  maxModules: z.number().int().min(MIN_SPOTLIGHT_MODULES).max(MAX_SPOTLIGHT_MODULES),
+  cta: websiteCtaSchema.optional(),
+});
+
 /** Matches the frontend's `SECTION_SCHEMAS` map exactly — one schema per `SectionType`, `satisfies Record<SectionType, ZodTypeAny>`. */
 const SECTION_CONFIG_SCHEMAS = {
   hero: heroSectionSchema,
@@ -427,6 +448,7 @@ const SECTION_CONFIG_SCHEMAS = {
   courseCategories: courseCategoriesSectionSchema,
   steps: stepsSectionSchema,
   featureSplit: featureSplitSectionSchema,
+  courseSpotlight: courseSpotlightSectionSchema,
 } satisfies Record<(typeof SECTION_TYPES)[number], z.ZodTypeAny>;
 
 /** Resolves the right Zod schema for a section type — matches `getSectionConfigSchema`. */
@@ -526,6 +548,11 @@ export const sectionInstanceSchema = z.discriminatedUnion('type', [
     ...sectionInstanceBase,
     type: z.literal('featureSplit'),
     config: featureSplitSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('courseSpotlight'),
+    config: courseSpotlightSectionSchema,
   }),
 ]);
 

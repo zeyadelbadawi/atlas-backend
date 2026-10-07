@@ -210,6 +210,54 @@ describe('Website Builder tenant isolation (e2e) — P9-TENANT-001..006', () => 
       .expect(400);
   });
 
+  it("T4-TENANT-001: a courseSpotlight cannot put another organization's course in focus; its own course is accepted", async () => {
+    const { owner: ownerA, academy: academyA } = await seedManagedAcademy('t4-001-a');
+    const { academy: academyB } = await seedManagedAcademy('t4-001-b');
+    const courseB = await seedCourse(admin, academyB.id, 'Org B Programme');
+    const courseA = await seedCourse(admin, academyA.id, 'Org A Programme');
+
+    const created = await request(app.getHttpServer())
+      .post(`/academies/${academyA.id}/website/pages`)
+      .set('Authorization', `Bearer ${ownerA.accessToken}`)
+      .send({ title: 'Spotlight Page', slug: 'spotlight-page' })
+      .expect(201);
+
+    const spotlight = (courseId: string, ctaCourseId?: string) => ({
+      id: 'sec-spotlight',
+      type: 'courseSpotlight',
+      enabled: true,
+      visibility: { desktop: true, tablet: true, mobile: true },
+      config: {
+        courseId,
+        showOutcomes: true,
+        showSyllabus: true,
+        maxModules: 6,
+        ...(ctaCourseId
+          ? { cta: { label: { en: 'Open', ar: '' }, courseId: ctaCourseId } }
+          : {}),
+      },
+    });
+    const save = async (section: ReturnType<typeof spotlight>) =>
+      request(app.getHttpServer())
+        .patch(`/academies/${academyA.id}/website/pages/${created.body.id}`)
+        .set('Authorization', `Bearer ${ownerA.accessToken}`)
+        .send({
+          sections: [section],
+          expectedVersion: await pageVersion(
+            academyA.id,
+            created.body.id,
+            ownerA.accessToken,
+          ),
+        });
+
+    // Another organization's course id genuinely exists, and is refused —
+    // as the course in focus and as the spotlight's own CTA target.
+    expect((await save(spotlight(courseB.id))).status).toBe(400);
+    expect((await save(spotlight(courseA.id, courseB.id))).status).toBe(400);
+    // The Academy's own course is accepted.
+    expect((await save(spotlight(courseA.id, courseA.id))).status).toBe(200);
+  });
+
   it("P9-TENANT-006: Organization B's page list never includes Organization A's pages, even with a crafted search filter", async () => {
     const { owner: ownerA, academy: academyA } = await seedManagedAcademy('t9-006-a');
     const created = await request(app.getHttpServer())

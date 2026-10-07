@@ -450,6 +450,99 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     expect(JSON.stringify(pages)).not.toContain('{{');
   });
 
+  it('3b-riwaq: selecting Riwaq (Theme 4) applies it and generates the website from the Riwaq template', async () => {
+    const { owner, org } = await arrangeOrg('riwaq-theme');
+    const riwaqName = uniqueName('Riwaq Academy');
+    const subdomain = uniqueSubdomain('riwaq-theme');
+    const created = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/provisioning-requests`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        academyName: riwaqName,
+        requestedSubdomain: subdomain,
+        selectedThemeKey: 'riwaq',
+        websiteSetupMode: 'complete',
+        idempotencyKey: `riwaq-theme-idem-${subdomain}`,
+      })
+      .expect(201);
+    expect(created.body.selectedThemeKey).toBe('riwaq');
+
+    const final = await waitForTerminal(owner, org.id, created.body.id);
+    expect(final.status).toBe('ready');
+    expect(final.selectedThemeKey).toBe('riwaq');
+
+    const websiteConfig = await admin.websiteConfiguration.findUnique({
+      where: { academyId: final.academyId },
+    });
+    expect(websiteConfig?.themeKey).toBe('riwaq');
+    expect(websiteConfig?.templateKey).toBe('riwaq');
+    expect(websiteConfig?.templateVersion).toBe(1);
+
+    const configRes = await request(app.getHttpServer())
+      .get(`/academies/${final.academyId}/website/configuration`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(configRes.body.themeKey).toBe('riwaq');
+
+    // The pages are Riwaq's own composition (plan §4), with its images.
+    const pages = await admin.websitePage.findMany({
+      where: { academyId: final.academyId },
+    });
+    const byCoreType = Object.fromEntries(pages.map((page) => [page.coreType, page]));
+    type Section = { type: string; config: Record<string, unknown> };
+    const home = byCoreType.home!.sections as Section[];
+    expect(home.map((section) => section.type)).toEqual([
+      'hero',
+      'features',
+      'courseCategories',
+      'featuredCourses',
+      'courseSpotlight',
+      'steps',
+      'featureSplit',
+      'instructors',
+      'statistics',
+      'testimonials',
+      'faq',
+      'cta',
+    ]);
+    expect(home[0].config.image).toBe('theme-asset:riwaq/home-hero');
+    expect(home[0].config.showSearch).toBe(false);
+    expect(home[0].config.eyebrow).toEqual({
+      en: `${riwaqName} — professional programmes`,
+      ar: `${riwaqName} — برامج مهنية`,
+    });
+    // Programmes → the Courses page just created; account → Sign Up.
+    expect((home[0].config.cta as { pageId?: string }).pageId).toBe(
+      byCoreType.courses!.id,
+    );
+    expect((home[0].config.secondaryCta as { authAction?: string }).authAction).toBe(
+      'signUp',
+    );
+    // The programme in focus names no course: it shows the newest one live.
+    const spotlight = home.find((section) => section.type === 'courseSpotlight')!;
+    expect(spotlight.config.courseId).toBeUndefined();
+    expect(spotlight.config).toMatchObject({ showSyllabus: true, maxModules: 6 });
+    for (const coreType of ['about', 'courses', 'faqs', 'contact']) {
+      expect((byCoreType[coreType]!.sections as Section[])[0].type).toBe('pageHeader');
+    }
+    expect((byCoreType.about!.sections as Section[])[0].config.image).toBe(
+      'theme-asset:riwaq/about-header',
+    );
+    // Live statistics only; testimonials are samples.
+    const statistics = home.find((section) => section.type === 'statistics')!;
+    for (const item of statistics.config.items as Array<Record<string, unknown>>) {
+      expect(item.metric).toBeDefined();
+      expect(item.value).toEqual({ en: '', ar: '' });
+    }
+    const testimonials = home.find((section) => section.type === 'testimonials')!;
+    expect(
+      (testimonials.config.items as Array<{ sample?: boolean }>).every(
+        (item) => item.sample,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(pages)).not.toContain('{{');
+  });
+
   it('3b-retired: Themes 2–5 are retired from selection and are refused', async () => {
     const { owner, org } = await arrangeOrg('retired-theme');
     const subdomain = uniqueSubdomain('retired-theme');
