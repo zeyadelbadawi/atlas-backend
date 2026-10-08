@@ -30,7 +30,10 @@ export class PasswordResetEmailProducer {
       attempts: 5,
       backoff: { type: 'exponential', delay: 2000 },
       removeOnComplete: true,
-      removeOnFail: false,
+      // ATO review F12 — the payload carries the raw reset token. A failed
+      // job is kept long enough to investigate (and outlives the 45-minute
+      // token), then removed, instead of holding a token in Redis forever.
+      removeOnFail: { age: 24 * 60 * 60 },
     });
   }
 }

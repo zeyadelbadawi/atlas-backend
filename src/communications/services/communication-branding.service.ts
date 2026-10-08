@@ -16,6 +16,12 @@ export interface ResolvedBranding {
   readonly branding: BrandingContext;
   /** The host links are built on; `null` means the platform URL. */
   readonly host: string | null;
+  /**
+   * ATO review F4 — the host credential-carrying links are built on: the
+   * academy's Atlas subdomain, never a tenant-controlled custom domain.
+   * Absent for platform branding (links then use the platform URL).
+   */
+  readonly credentialHost?: string | null;
   readonly academyLanguage: string | null;
   readonly academyTimezone: string | null;
 }
@@ -77,6 +83,8 @@ export class CommunicationBrandingService {
     });
     if (!academy) return this.platform();
     const host = mode === 'academy' ? await this.links.academyHost(tx, academyId) : null;
+    const credentialHost =
+      mode === 'academy' ? await this.links.academyAtlasHost(tx, academyId) : null;
     if (identity === 'platform') {
       return {
         ...this.platform(),
@@ -98,6 +106,7 @@ export class CommunicationBrandingService {
         platformUrl: this.links.platform('/'),
       },
       host,
+      credentialHost,
       academyLanguage: academy.language,
       academyTimezone: academy.timezone,
     };

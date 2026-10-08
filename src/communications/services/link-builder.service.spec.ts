@@ -171,6 +171,40 @@ describe('LinkBuilderService', () => {
     });
   });
 
+  describe('credential links (ATO review F4) — Atlas subdomain only', () => {
+    it('ignores a connected, reachable custom domain: the tenant controls its DNS', async () => {
+      const { service } = build();
+      const host = await service.academyAtlasHost(
+        txStub({
+          allocation: { fullHost: 'falcon.atlas.test' },
+          connection: {
+            status: 'connected',
+            hostname: 'falcon.example.com',
+            httpsReachable: true,
+          },
+        }),
+        'academy-1',
+      );
+      expect(host).toBe('falcon.atlas.test');
+    });
+
+    it('is null without an Atlas subdomain (the link then uses the platform URL)', async () => {
+      const { service } = build();
+      expect(
+        await service.academyAtlasHost(
+          txStub({
+            connection: {
+              status: 'connected',
+              hostname: 'falcon.example.com',
+              httpsReachable: true,
+            },
+          }),
+          'academy-1',
+        ),
+      ).toBeNull();
+    });
+  });
+
   describe('academy host (the canonical-host rule, P63)', () => {
     it('prefers a connected, reachable custom domain', async () => {
       const { service } = build();

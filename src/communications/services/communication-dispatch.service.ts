@@ -579,9 +579,17 @@ export class CommunicationDispatchService {
     // built like one, without the academy-host `/ar` prefix the platform
     // host does not mount. An academy that exists but has no host yet
     // keeps `onHost`'s documented fallback.
+    // ATO review F4 — a link that carries a credential (reset/setup token,
+    // verification token) is built on the academy's Atlas subdomain, never
+    // on a custom domain whose DNS the tenant controls.
+    const carriesCredential = (entry.credentialValues?.length ?? 0) > 0;
+    const linkHost =
+      carriesCredential && branding.credentialHost !== undefined
+        ? branding.credentialHost
+        : branding.host;
     const actionUrl = path
       ? entry.branding === 'academy' && row.academyId
-        ? this.links.onHost(branding.host, path, locale)
+        ? this.links.onHost(linkHost, path, locale)
         : this.links.platform(path)
       : null;
     return TemplateRegistry.render(

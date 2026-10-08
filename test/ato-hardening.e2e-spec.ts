@@ -74,7 +74,7 @@ describe('Account-takeover hardening (e2e)', () => {
       email,
       userId: res.body.user.id as string,
       token: res.body.accessToken as string,
-      refreshCookie: sessionTokenFrom(res),
+      refreshCookie: sessionTokenFrom(res) ?? '',
     };
   }
 

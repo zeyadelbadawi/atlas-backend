@@ -524,6 +524,12 @@ export class AuthService {
     if (existing && academySignup) {
       const joined = await this.joinAcademyWithExistingAccount(existing, email, input);
       if (joined) return joined;
+    } else if (academySignup) {
+      // ATO review F6 — an existing address's academy signup verifies its
+      // password (one Argon2 operation) before the decoy hash below; a new
+      // address must cost the same, or the response time tells the two
+      // apart. The same dummy verification an unknown sign-in performs.
+      await this.passwordCredentials.verifyForUnknownAccount(input.password || randomUUID());
     }
 
     // Phase 10.1 — disposable/undeliverable addresses are refused here,

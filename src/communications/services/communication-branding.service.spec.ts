@@ -21,6 +21,7 @@ function setup(logoUrl: string | null, host: string | null) {
   const links = {
     platform: (path = '/') => `https://app.atlas.test${path}`,
     academyHost: jest.fn(async () => host),
+    academyAtlasHost: jest.fn(async () => host),
   } as unknown as LinkBuilderService;
   const emailLogo = {
     forEmail: jest.fn(async (academyId: string, value: string | null) =>

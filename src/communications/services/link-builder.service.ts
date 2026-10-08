@@ -124,6 +124,33 @@ export class LinkBuilderService {
     return canonical?.host ?? null;
   }
 
+  /**
+   * ATO review F4 — the academy's host on Atlas's OWN domain
+   * (`<subdomain>.<base domain>`), never a connected custom domain, or
+   * `null` when it has none. Links that carry a credential (password reset,
+   * account setup, email verification) are built here: a custom domain's
+   * DNS belongs to the tenant, who could repoint it at a server of their
+   * own while it still reads as connected — and a reset token for a GLOBAL
+   * account must never reach a host Atlas does not control.
+   */
+  async academyAtlasHost(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+  ): Promise<string | null> {
+    const [allocation, baseDomain] = await Promise.all([
+      tx.subdomainAllocation.findUnique({ where: { academyId } }),
+      this.effectiveBaseDomain(),
+    ]);
+    const canonical = resolveCanonicalHost({
+      connectedCustomHostname: null,
+      customHttpsReachable: false,
+      subdomainFullHost: allocation?.fullHost,
+      subdomainLabel: allocation?.subdomain,
+      baseDomain,
+    });
+    return canonical?.host ?? null;
+  }
+
   async academy(
     tx: Prisma.TransactionClient,
     academyId: string,
