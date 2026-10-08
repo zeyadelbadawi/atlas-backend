@@ -31,7 +31,8 @@ import { PLANS_CLOCK, type Clock } from '../utils/clock';
 import { TrialPolicyRepository } from '../repositories/trial-policy.repository';
 import { toPlanResponse } from '../dto/plan.contract';
 import type { SubscriptionLifecycleResponse } from '../dto/subscription-lifecycle.contract';
-import type { EntitlementAddOnInput, PlanFeatures } from '../dto/entitlement.types';
+import { pickPlanFeatures } from '../dto/entitlement.types';
+import type { EntitlementAddOnInput } from '../dto/entitlement.types';
 
 @Injectable()
 export class TenantSubscriptionService {
@@ -219,7 +220,7 @@ export class TenantSubscriptionService {
         // grant is how a customer ends up being refused at a limit their
         // own dashboard says they are under.
         limits: resolveSubscriptionLimits(subscription),
-        features: subscription.plan.features as unknown as PlanFeatures,
+        features: pickPlanFeatures(subscription.plan.features),
       },
       addOnInputs,
     );

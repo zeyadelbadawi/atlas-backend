@@ -252,7 +252,7 @@ describe('P64 Phase 2 — video security tiers, providers and quota (e2e)', () =
           videoStorage: 100,
           videoStorageMinutes,
         },
-        features: { cms: true, themes: true },
+        features: { liveSessions: false },
         pricing: { amount: 49, currency: 'USD', billingCycle: 'monthly' },
       },
     });

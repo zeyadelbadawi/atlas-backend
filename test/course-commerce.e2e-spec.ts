@@ -364,19 +364,7 @@ describe('Course Commerce — P13 (e2e)', () => {
           generalStorage: 1,
           videoStorage: 1,
         },
-        features: {
-          cms: false,
-          seo: false,
-          seoAdvanced: false,
-          marketing: false,
-          marketingAdvanced: false,
-          analytics: false,
-          analyticsAdvanced: false,
-          customDomain: false,
-          themes: false,
-          multipleThemes: false,
-          backup: false,
-        },
+        features: { liveSessions: false },
       },
     });
     await admin.tenantSubscription.create({

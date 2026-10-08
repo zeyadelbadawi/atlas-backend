@@ -1,5 +1,5 @@
 /**
- * P57 — Platform-Owner plan administration (P57-PLAN-001..016).
+ * P57 — Platform-Owner plan administration (P57-PLAN-001..019).
  *
  * WHAT THESE PROVE THAT A UNIT TEST CANNOT. Three things, all of which
  * live in the database rather than in application code:
@@ -43,22 +43,28 @@ const LIMITS = {
 };
 
 /** A complete, valid feature set — every `PlanFeatureKey`. */
-const FEATURES = {
+const FEATURES = { liveSessions: false };
+
+/**
+ * The eleven feature keys removed because nothing ever enforced them
+ * (`LEGACY_PLAN_FEATURE_KEYS`). A plan editor loaded before the removal
+ * still sends them; a row written before it may still hold them.
+ */
+const LEGACY_FEATURES = {
   cms: true,
-  seo: false,
-  seoAdvanced: false,
-  marketing: false,
-  marketingAdvanced: false,
-  analytics: false,
-  analyticsAdvanced: false,
-  customDomain: false,
+  seo: true,
+  seoAdvanced: true,
+  marketing: true,
+  marketingAdvanced: true,
+  analytics: true,
+  analyticsAdvanced: true,
+  customDomain: true,
   themes: true,
-  multipleThemes: false,
-  backup: false,
-  liveSessions: false,
+  multipleThemes: true,
+  backup: true,
 };
 
-describe('P57 platform plan administration (e2e) — P57-PLAN-001..016', () => {
+describe('P57 platform plan administration (e2e) — P57-PLAN-001..019', () => {
   let app: INestApplication;
   let admin: PrismaClient;
   let flushRateLimitKeys: () => Promise<void>;
@@ -238,9 +244,100 @@ describe('P57 platform plan administration (e2e) — P57-PLAN-001..016', () => {
         name: 'Bad',
         displayOrder: 0,
         limits: LIMITS,
-        features: { cms: true },
+        features: {},
       })
       .expect(400);
+  });
+
+  it('P57-PLAN-017 — an unknown (non-legacy) feature key is refused, never silently stored', async () => {
+    const key = uniqueKey('unknownfeat');
+    const response = await request(app.getHttpServer())
+      .post('/platform-plans')
+      .set('Authorization', `Bearer ${platformOwnerToken}`)
+      .send({
+        key,
+        name: 'Bad',
+        displayOrder: 0,
+        limits: LIMITS,
+        features: { ...FEATURES, notARealFeature: true },
+      })
+      .expect(400);
+    expect(response.body.error.messageKey).toBe('errors.validation.failed');
+    expect(await admin.plan.findUnique({ where: { key } })).toBeNull();
+  });
+
+  it('P57-PLAN-018 — legacy feature keys from an old editor are accepted but DROPPED, never stored', async () => {
+    const created = await createPlan({
+      features: { ...LEGACY_FEATURES, liveSessions: false },
+    });
+    const afterCreate = await admin.plan.findUnique({ where: { key: created.key } });
+    expect(afterCreate?.features).toEqual({ liveSessions: false });
+
+    const patched = await request(app.getHttpServer())
+      .patch(`/platform-plans/${created.key}`)
+      .set('Authorization', `Bearer ${platformOwnerToken}`)
+      .send({
+        expectedVersion: created.version,
+        features: { ...LEGACY_FEATURES, liveSessions: true },
+      })
+      .expect(200);
+    expect(patched.body.features).toEqual({ liveSessions: true });
+
+    const afterPatch = await admin.plan.findUnique({ where: { key: created.key } });
+    expect(afterPatch?.features).toEqual({ liveSessions: true });
+  });
+
+  it('P57-PLAN-019 — a plan row still holding legacy keys returns only liveSessions from /plans and /public/plans', async () => {
+    // A fixture row written directly, as one predating the removal would be.
+    const fixture = await createPlan();
+    await admin.plan.update({
+      where: { key: fixture.key },
+      data: { features: { ...LEGACY_FEATURES, liveSessions: false } },
+    });
+
+    const byKey = await request(app.getHttpServer())
+      .get(`/plans/${fixture.key}`)
+      .set('Authorization', `Bearer ${tenantOwnerToken}`)
+      .expect(200);
+    expect(byKey.body.features).toEqual({ liveSessions: false });
+
+    // The customer-facing lists only show seeded catalog plans, so one of
+    // those is given legacy keys for the duration of the assertion and
+    // then restored exactly — no new plan ever enters the shared catalog.
+    const catalogPlan = await admin.plan.findFirst({
+      where: { status: 'active', displayOrder: { gt: 0 } },
+      orderBy: { displayOrder: 'asc' },
+    });
+    expect(catalogPlan).not.toBeNull();
+    const originalFeatures = catalogPlan!.features as Record<string, unknown>;
+    await admin.plan.update({
+      where: { id: catalogPlan!.id },
+      data: { features: { ...originalFeatures, ...LEGACY_FEATURES } },
+    });
+    try {
+      const listed = await request(app.getHttpServer())
+        .get('/plans')
+        .query({ pageSize: 100 })
+        .set('Authorization', `Bearer ${tenantOwnerToken}`)
+        .expect(200);
+      const publicList = await request(app.getHttpServer())
+        .get('/public/plans')
+        .expect(200);
+
+      const plans = [...listed.body.items, ...publicList.body] as {
+        key: string;
+        features: Record<string, unknown>;
+      }[];
+      expect(plans.filter((plan) => plan.key === catalogPlan!.key)).toHaveLength(2);
+      for (const plan of plans) {
+        expect(Object.keys(plan.features)).toEqual(['liveSessions']);
+      }
+    } finally {
+      await admin.plan.update({
+        where: { id: catalogPlan!.id },
+        data: { features: originalFeatures as never },
+      });
+    }
   });
 
   // ---------------- concurrency ----------------

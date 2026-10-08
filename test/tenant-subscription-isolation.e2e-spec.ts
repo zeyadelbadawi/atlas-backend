@@ -182,7 +182,7 @@ describe('Tenant Subscription/Usage/Add-ons tenant isolation (e2e) — P4-TENANT
     const addOn = await seedAddOn(
       admin,
       'p4t006-addon',
-      { type: 'feature', featureKey: 'backup' },
+      { type: 'feature', featureKey: 'liveSessions' },
       [],
     );
     await seedTenantAddOn(admin, org2.id, addOn.id);

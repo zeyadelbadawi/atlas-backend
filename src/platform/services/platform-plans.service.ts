@@ -53,7 +53,7 @@ import type {
   CreatePlanDto,
   UpdatePlanDto,
 } from '../dto/update-plan.dto';
-import { PLAN_LIMIT_KEYS } from '../../plans/dto/entitlement.types';
+import { PLAN_LIMIT_KEYS, pickPlanFeatures } from '../../plans/dto/entitlement.types';
 import type { PlanLimitKey } from '../../plans/dto/entitlement.types';
 
 /**
@@ -165,7 +165,10 @@ export class PlatformPlansService {
             payload.descriptionLocalized as unknown as Prisma.InputJsonValue,
           displayOrder: payload.displayOrder,
           limits: payload.limits as unknown as Prisma.InputJsonValue,
-          features: payload.features as unknown as Prisma.InputJsonValue,
+          // Validated above; this drops any legacy key an old editor sent.
+          features: pickPlanFeatures(
+            payload.features,
+          ) as unknown as Prisma.InputJsonValue,
           pricing: payload.pricing as unknown as Prisma.InputJsonValue,
           trialEligible: payload.trialEligible ?? false,
           trialDurationDays: payload.trialDurationDays ?? null,
@@ -266,8 +269,11 @@ export class PlatformPlansService {
         data.limits = payload.limits as unknown as Prisma.InputJsonValue;
       }
       if (payload.features !== undefined) {
-        track(generalChanges, 'features', existing.features, payload.features);
-        data.features = payload.features as unknown as Prisma.InputJsonValue;
+        // Validated above; only current keys are stored, and the audit diff
+        // compares current keys so dropping a legacy key is not a "change".
+        const features = pickPlanFeatures(payload.features);
+        track(generalChanges, 'features', pickPlanFeatures(existing.features), features);
+        data.features = features as unknown as Prisma.InputJsonValue;
       }
       if (payload.pricing !== undefined) {
         track(pricingChanges, 'pricing', existing.pricing, payload.pricing);

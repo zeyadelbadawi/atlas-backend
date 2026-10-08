@@ -39,19 +39,20 @@ const BASE_LIMITS: PlanResourceLimits = {
 };
 
 const BASE_FEATURES: PlanFeatures = {
-  cms: true,
-  seo: true,
-  seoAdvanced: false,
-  marketing: false,
-  marketingAdvanced: false,
-  analytics: false,
-  analyticsAdvanced: false,
-  customDomain: false,
-  themes: true,
-  multipleThemes: false,
-  backup: false,
   liveSessions: false,
 };
+
+/**
+ * A feature add-on effect as it may still be STORED: add-on `effect` is
+ * JSONB, so a row written before the legacy plan features were removed can
+ * name a key that is no longer a `PlanFeatureKey`.
+ */
+function legacyFeatureAddOn(featureKey: string): EntitlementAddOnInput {
+  return {
+    effect: { type: 'feature', featureKey: featureKey as PlanFeatureKey },
+    compatiblePlanKeys: ['starter'],
+  };
+}
 
 function buildPlan(overrides: Partial<EntitlementPlanInput> = {}): EntitlementPlanInput {
   return {
@@ -102,22 +103,37 @@ describe('EntitlementService', () => {
 
     it('a feature add-on effect turns on a feature the base plan does not include', () => {
       const addOn: EntitlementAddOnInput = {
-        effect: { type: 'feature', featureKey: 'customDomain' },
+        effect: { type: 'feature', featureKey: 'liveSessions' },
         compatiblePlanKeys: ['starter'],
       };
       const result = service.computeEffectiveEntitlements('org-1', buildPlan(), [addOn]);
-      expect(result.features.customDomain).toBe(true);
-      // Every other feature untouched.
-      expect(result.features.analytics).toBe(false);
+      expect(result.features.liveSessions).toBe(true);
     });
 
     it('a feature add-on effect on an already-enabled feature is a harmless no-op', () => {
+      const plan = buildPlan({ features: { liveSessions: true } });
       const addOn: EntitlementAddOnInput = {
-        effect: { type: 'feature', featureKey: 'cms' },
+        effect: { type: 'feature', featureKey: 'liveSessions' },
         compatiblePlanKeys: ['starter'],
       };
-      const result = service.computeEffectiveEntitlements('org-1', buildPlan(), [addOn]);
-      expect(result.features.cms).toBe(true);
+      const result = service.computeEffectiveEntitlements('org-1', plan, [addOn]);
+      expect(result.features.liveSessions).toBe(true);
+    });
+
+    it('ignores legacy keys in stored plan features and in add-on effects', () => {
+      // A plan row written before the legacy keys were removed, read as-is.
+      const plan = buildPlan({
+        features: {
+          liveSessions: false,
+          cms: true,
+          analyticsAdvanced: true,
+        } as unknown as PlanFeatures,
+      });
+      const result = service.computeEffectiveEntitlements('org-1', plan, [
+        legacyFeatureAddOn('analyticsAdvanced'),
+        legacyFeatureAddOn('customDomain'),
+      ]);
+      expect(result.features).toEqual({ liveSessions: false });
     });
 
     it('combines multiple add-ons of both effect types', () => {
@@ -131,14 +147,14 @@ describe('EntitlementService', () => {
           compatiblePlanKeys: ['starter'],
         },
         {
-          effect: { type: 'feature', featureKey: 'analytics' },
+          effect: { type: 'feature', featureKey: 'liveSessions' },
           compatiblePlanKeys: ['starter'],
         },
       ];
       const result = service.computeEffectiveEntitlements('org-1', buildPlan(), addOns);
       expect(result.limits.academies).toBe(3);
       expect(result.limits.staff).toBe(7);
-      expect(result.features.analytics).toBe(true);
+      expect(result.features.liveSessions).toBe(true);
     });
 
     /** Exhaustive: every `PlanLimitKey` gets its own limit-add-on proof — see file header for why this list drives coverage. */
@@ -183,6 +199,14 @@ describe('EntitlementService', () => {
         expect(service.hasFeature(entitlements, featureKey)).toBe(true);
       },
     );
+
+    it('is false, not undefined, for a key the entitlements do not carry', () => {
+      const entitlements = { features: {} as PlanFeatures };
+      expect(service.hasFeature(entitlements, 'liveSessions')).toBe(false);
+      expect(
+        service.hasFeature({ features: BASE_FEATURES }, 'cms' as PlanFeatureKey),
+      ).toBe(false);
+    });
   });
 
   describe('getResourceLimitStatus', () => {
@@ -297,7 +321,7 @@ describe('EntitlementService', () => {
     it('returns "upgradePlan" when the only compatible add-on is a feature-type effect', () => {
       const catalog: EntitlementAddOnInput[] = [
         {
-          effect: { type: 'feature', featureKey: 'cms' },
+          effect: { type: 'feature', featureKey: 'liveSessions' },
           compatiblePlanKeys: ['starter'],
         },
       ];
@@ -330,23 +354,25 @@ describe('EntitlementService', () => {
 
   describe('getFeatureGapAction', () => {
     it('returns "none" when the feature is already available', () => {
-      expect(service.getFeatureGapAction('cms', true, 'starter', [])).toBe('none');
+      expect(service.getFeatureGapAction('liveSessions', true, 'starter', [])).toBe(
+        'none',
+      );
     });
 
     it('returns "addOn" when a compatible add-on grants the missing feature', () => {
       const catalog: EntitlementAddOnInput[] = [
         {
-          effect: { type: 'feature', featureKey: 'analytics' },
+          effect: { type: 'feature', featureKey: 'liveSessions' },
           compatiblePlanKeys: ['starter'],
         },
       ];
-      expect(service.getFeatureGapAction('analytics', false, 'starter', catalog)).toBe(
+      expect(service.getFeatureGapAction('liveSessions', false, 'starter', catalog)).toBe(
         'addOn',
       );
     });
 
     it('returns "upgradePlan" when no add-on grants the missing feature', () => {
-      expect(service.getFeatureGapAction('analytics', false, 'starter', [])).toBe(
+      expect(service.getFeatureGapAction('liveSessions', false, 'starter', [])).toBe(
         'upgradePlan',
       );
     });
@@ -354,11 +380,11 @@ describe('EntitlementService', () => {
     it('returns "upgradePlan" when a granting add-on is not compatible with the current plan', () => {
       const catalog: EntitlementAddOnInput[] = [
         {
-          effect: { type: 'feature', featureKey: 'analytics' },
+          effect: { type: 'feature', featureKey: 'liveSessions' },
           compatiblePlanKeys: ['pro'],
         },
       ];
-      expect(service.getFeatureGapAction('analytics', false, 'starter', catalog)).toBe(
+      expect(service.getFeatureGapAction('liveSessions', false, 'starter', catalog)).toBe(
         'upgradePlan',
       );
     });
@@ -370,9 +396,17 @@ describe('EntitlementService', () => {
           compatiblePlanKeys: ['starter'],
         },
       ];
-      expect(service.getFeatureGapAction('analytics', false, 'starter', catalog)).toBe(
+      expect(service.getFeatureGapAction('liveSessions', false, 'starter', catalog)).toBe(
         'upgradePlan',
       );
+    });
+
+    it('a stored add-on effect naming a legacy key never covers a current feature', () => {
+      expect(
+        service.getFeatureGapAction('liveSessions', false, 'starter', [
+          legacyFeatureAddOn('analyticsAdvanced'),
+        ]),
+      ).toBe('upgradePlan');
     });
 
     /** Exhaustive: every `PlanFeatureKey` gets its own gap-action proof, both directions. */

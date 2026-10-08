@@ -93,19 +93,16 @@ export interface PlanResourceLimits {
   readonly monthlyEmails?: LimitValue;
 }
 
-/** Matches `PlanFeatureKey` (`plan.types.ts`) exactly — 12 keys. */
+/**
+ * Matches `PlanFeatureKey` (`plan.types.ts`) exactly — 1 key.
+ *
+ * Only keys that some server-side code actually ENFORCES belong here:
+ * Atlas must never advertise a plan entitlement it does not enforce. The
+ * eleven keys in `LEGACY_PLAN_FEATURE_KEYS` were removed for exactly that
+ * reason — they were stored on every plan and shown as plan-specific in
+ * the pricing and subscription screens, yet no gate ever read them.
+ */
 export type PlanFeatureKey =
-  | 'cms'
-  | 'seo'
-  | 'seoAdvanced'
-  | 'marketing'
-  | 'marketingAdvanced'
-  | 'analytics'
-  | 'analyticsAdvanced'
-  | 'customDomain'
-  | 'themes'
-  | 'multipleThemes'
-  | 'backup'
   /**
    * Whether this tenant may run Live Sessions at all.
    *
@@ -115,10 +112,19 @@ export type PlanFeatureKey =
    * was built for — a plan may still grant it directly if a future tier
    * bundles it.
    */
-  | 'liveSessions';
+  'liveSessions';
 
 /** Every `PlanFeatureKey`, for iteration — mirrors `PLAN_FEATURE_KEYS` (`tenant.constants.ts`). */
-export const PLAN_FEATURE_KEYS: readonly PlanFeatureKey[] = [
+export const PLAN_FEATURE_KEYS: readonly PlanFeatureKey[] = ['liveSessions'];
+
+/**
+ * Feature keys that older plan rows, add-on effects and cached plan
+ * editors may still carry, but that were never enforced anywhere and are
+ * no longer part of the contract. Kept as a list only so they can be
+ * recognised and dropped (`assertValidFeatures`, `pickPlanFeatures`) rather
+ * than rejected or echoed back to a client as if they meant something.
+ */
+export const LEGACY_PLAN_FEATURE_KEYS = [
   'cms',
   'seo',
   'seoAdvanced',
@@ -130,23 +136,32 @@ export const PLAN_FEATURE_KEYS: readonly PlanFeatureKey[] = [
   'themes',
   'multipleThemes',
   'backup',
-  'liveSessions',
-];
+] as const;
 
 /** Matches `PlanFeatures` (`plan.types.ts`) exactly. */
 export interface PlanFeatures {
-  readonly cms: boolean;
-  readonly seo: boolean;
-  readonly seoAdvanced: boolean;
-  readonly marketing: boolean;
-  readonly marketingAdvanced: boolean;
-  readonly analytics: boolean;
-  readonly analyticsAdvanced: boolean;
-  readonly customDomain: boolean;
-  readonly themes: boolean;
-  readonly multipleThemes: boolean;
-  readonly backup: boolean;
   readonly liveSessions: boolean;
+}
+
+/**
+ * Narrows a stored `plans.features` JSON value to the current contract.
+ *
+ * The column is JSONB, so a row written before the legacy keys were
+ * removed (or edited by hand) can hold anything. Every read that hands
+ * features to a client or to `EntitlementService` goes through here, so
+ * an unknown key never reaches either, and a missing or non-boolean value
+ * resolves to `false` — never to "granted".
+ */
+export function pickPlanFeatures(raw: unknown): PlanFeatures {
+  const source =
+    raw !== null && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const features = {} as Record<PlanFeatureKey, boolean>;
+  for (const key of PLAN_FEATURE_KEYS) {
+    features[key] = source[key] === true;
+  }
+  return features;
 }
 
 /** Matches `AddOnLimitEffect`/`AddOnFeatureEffect`/`AddOnEffect` (`plan.types.ts`) exactly. */

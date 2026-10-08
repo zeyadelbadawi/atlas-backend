@@ -152,7 +152,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
           generalStorage: 10,
           videoStorage: 10,
         },
-        features: { cms: true, themes: true },
+        features: { liveSessions: false },
         pricing: { amount: 49, currency: 'USD', billingCycle: 'monthly' },
       },
     });

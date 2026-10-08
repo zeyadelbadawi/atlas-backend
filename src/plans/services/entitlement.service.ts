@@ -15,6 +15,7 @@
  * entitlement model" extends to not inventing a new endpoint for it).
  */
 import { Injectable } from '@nestjs/common';
+import { PLAN_FEATURE_KEYS, pickPlanFeatures } from '../dto/entitlement.types';
 import type {
   EffectiveEntitlements,
   EntitlementAddOnInput,
@@ -33,6 +34,16 @@ function addToLimit(base: LimitValue, amount: number): LimitValue {
   return base === 'unlimited' ? 'unlimited' : base + amount;
 }
 
+/**
+ * Whether a stored add-on effect names a CURRENT feature key. Add-on
+ * effects are JSONB, so one written before the legacy plan features were
+ * removed (e.g. `advanced-analytics` → `analyticsAdvanced`) can still name
+ * a key nothing enforces; such an effect grants nothing and is skipped.
+ */
+function isPlanFeatureKey(value: unknown): value is PlanFeatureKey {
+  return (PLAN_FEATURE_KEYS as readonly unknown[]).includes(value);
+}
+
 @Injectable()
 export class EntitlementService {
   /**
@@ -49,7 +60,9 @@ export class EntitlementService {
     // `monthlyEmails` is optional on a plan (W3-compose); an add-on that
     // raises it is applied on top of whatever the caller resolved for it.
     const limits: Partial<Record<PlanLimitKey, LimitValue>> = { ...plan.limits };
-    const features: Record<PlanFeatureKey, boolean> = { ...plan.features };
+    // Narrowed even though callers already pass typed features: a stored
+    // row may still hold legacy keys, and they must never surface here.
+    const features: Record<PlanFeatureKey, boolean> = pickPlanFeatures(plan.features);
 
     for (const addOn of activeAddOns) {
       if (addOn.effect.type === 'limit') {
@@ -59,7 +72,7 @@ export class EntitlementService {
         // optional key's default is resolved by its own reader.
         if (base === undefined) continue;
         limits[limitKey] = addToLimit(base, amount);
-      } else {
+      } else if (isPlanFeatureKey(addOn.effect.featureKey)) {
         features[addOn.effect.featureKey] = true;
       }
     }
@@ -76,7 +89,7 @@ export class EntitlementService {
     entitlements: Pick<EffectiveEntitlements, 'features'>,
     featureKey: PlanFeatureKey,
   ): boolean {
-    return entitlements.features[featureKey];
+    return entitlements.features[featureKey] === true;
   }
 
   /**
