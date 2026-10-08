@@ -160,6 +160,9 @@ model User {
   /// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21).
   auditLogEntriesActedBy                        AuditLogEntry[]
   supportCasesRequested                         SupportCase[]
+  /// Customer Requests — filed by this person / assigned to this Platform Owner.
+  customerRequestsFiled                         CustomerRequest[]                        @relation("CustomerRequestRequester")
+  customerRequestsAssigned                      CustomerRequest[]                        @relation("CustomerRequestAssignee")
   /// Phase P17 — Notifications, Email & Search (master plan §5/§21).
   notifications                                 Notification[]
   /// Phase 10.1 — Free-Trial anti-abuse. SetNull, never Cascade: deleting
@@ -486,6 +489,8 @@ model Organization {
   /// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21).
   auditLogEntries        AuditLogEntry[]
   supportCases           SupportCase[]
+  /// Customer Requests — custom services an academy asked Atlas for.
+  customerRequests       CustomerRequest[]
   /// P64 Communications C5/C6.
   lifecycleState         TenantLifecycleState?
   /// W3-compose — academy campaigns and the monthly email quota.
@@ -664,6 +669,8 @@ model Academy {
   /// Phase 8 — Support, Audit & Dashboards.
   auditLogEntries        AuditLogEntry[]
   supportCases           SupportCase[]
+  /// Customer Requests — custom services this academy asked Atlas for.
+  customerRequests       CustomerRequest[]
 
   /// Phase 12 — Live Sessions add-on.
   liveProviderConnection  AcademyLiveProviderConnection?
@@ -5355,6 +5362,10 @@ model CommunicationOutbox {
   recipientUserId   String?                  @map("recipient_user_id")
   recipient         User?                    @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
   recipientInviteId String?                  @map("recipient_invite_id")
+  /// Customer Requests — an ADDRESS recipient with no Atlas account (a
+  /// team inbox the Platform Owner configured). Set only when
+  /// `recipientUserId` is null; email-only, no preferences, no in-app.
+  recipientEmail    String?                  @map("recipient_email")
   /// Tenancy snapshot for owner/manager visibility and for branding.
   organizationId    String?                  @map("organization_id")
   academyId         String?                  @map("academy_id")
@@ -6297,4 +6308,130 @@ model TenantEmailUsageLedger {
   @@unique([messageId, kind])
   @@index([academyId, periodStart])
   @@map("tenant_email_usage_ledger")
+}
+
+// ---------------------------------------------------------------------------
+// Customer Requests — custom services (logo, domain, theme, section,
+// feature) an academy's owner/administrator asks the Atlas team for.
+// ---------------------------------------------------------------------------
+
+enum CustomerRequestType {
+  logo
+  domain
+  theme
+  custom_section
+  custom_feature
+
+  @@map("customer_request_type")
+}
+
+enum CustomerRequestStatus {
+  submitted
+  received
+  under_review
+  in_progress
+  waiting_for_customer
+  completed
+  rejected
+  cancelled
+
+  @@map("customer_request_status")
+}
+
+enum CustomerRequestPriority {
+  low
+  normal
+  high
+
+  @@map("customer_request_priority")
+}
+
+enum CustomerRequestEventKind {
+  created
+  status_changed
+  assigned
+  customer_message
+  team_message
+  internal_note
+
+  @@map("customer_request_event_kind")
+}
+
+enum CustomerRequestEventVisibility {
+  /// The academy sees it (and the team).
+  customer
+  /// The Atlas team only — never readable by a tenant (RLS).
+  internal
+
+  @@map("customer_request_event_visibility")
+}
+
+model CustomerRequest {
+  id               String                  @id @default(uuid())
+  organizationId   String                  @map("organization_id")
+  organization     Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  academyId        String                  @map("academy_id")
+  academy          Academy                 @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  requesterUserId  String?                 @map("requester_user_id")
+  requester        User?                   @relation("CustomerRequestRequester", fields: [requesterUserId], references: [id], onDelete: SetNull)
+  /// Snapshots — the request keeps who filed it even if the account goes.
+  requesterName    String                  @map("requester_name")
+  requesterEmail   String                  @map("requester_email")
+  type             CustomerRequestType
+  title            String
+  description      String
+  priority         CustomerRequestPriority @default(normal)
+  /// Type-specific fields (`CUSTOMER_REQUEST_DETAIL_FIELDS`), validated server-side.
+  details          Json                    @default("{}")
+  status           CustomerRequestStatus   @default(submitted)
+  assignedToUserId String?                 @map("assigned_to_user_id")
+  assignedTo       User?                   @relation("CustomerRequestAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  /// Idempotency: a retried submit from the same person returns the same row.
+  clientRequestId  String                  @map("client_request_id")
+  lastActivityAt   DateTime                @default(now()) @map("last_activity_at")
+  closedAt         DateTime?               @map("closed_at")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  events CustomerRequestEvent[]
+
+  @@unique([requesterUserId, clientRequestId])
+  @@index([academyId, lastActivityAt(sort: Desc)])
+  @@index([status, lastActivityAt(sort: Desc)])
+  @@index([type, lastActivityAt(sort: Desc)])
+  @@index([organizationId])
+  @@map("customer_requests")
+}
+
+/// The request's history AND its conversation, in one timeline.
+model CustomerRequestEvent {
+  id             String                         @id @default(uuid())
+  requestId      String                         @map("request_id")
+  request        CustomerRequest                @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  /// Denormalised from the request so tenant RLS needs no join.
+  organizationId String                         @map("organization_id")
+  kind           CustomerRequestEventKind
+  visibility     CustomerRequestEventVisibility
+  actorUserId    String?                        @map("actor_user_id")
+  actorName      String                         @map("actor_name")
+  /// `customer` | `team`.
+  actorSide      String                         @map("actor_side")
+  body           String?
+  fromStatus     CustomerRequestStatus?         @map("from_status")
+  toStatus       CustomerRequestStatus?         @map("to_status")
+  assigneeUserId String?                        @map("assignee_user_id")
+  createdAt      DateTime                       @default(now()) @map("created_at")
+
+  @@index([requestId, createdAt(sort: Asc)])
+  @@map("customer_request_events")
+}
+
+/// Which team inbox receives each request type. Platform Owners only.
+model CustomerRequestRoutingRule {
+  type            CustomerRequestType @id
+  email           String
+  updatedByUserId String?             @map("updated_by_user_id")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  @@map("customer_request_routing_rules")
 }

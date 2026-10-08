@@ -66,6 +66,24 @@ export interface EmitInput {
   readonly notificationContext?: NotificationContextValue;
 }
 
+/**
+ * Customer Requests — an email to an ADDRESS with no Atlas account (a team
+ * inbox a Platform Owner configured). Email only: no in-app row, no
+ * preferences, no caps — the address chose none of those. Allowed only for
+ * catalogue entries that declare `addressRecipient: true`.
+ */
+export interface EmitToAddressInput {
+  readonly key: CommunicationEventKey;
+  readonly email: string;
+  // Deliberately NO organizationId/academyId: the outbox's tenant SELECT
+  // policy keys on `organization_id`, so an address row carrying one would
+  // let that tenant read the team inbox address. Address rows are the
+  // platform's own mail; they render under platform branding.
+  readonly entity: CommunicationEntityRef;
+  readonly values?: Record<string, unknown>;
+  readonly locale?: CommunicationLocale;
+}
+
 export interface EmitResult {
   /** `false` on a deduped retry — nothing new was written. */
   readonly created: boolean;
@@ -201,6 +219,51 @@ export class CommunicationService {
           ${JSON.stringify(values)}::jsonb, ${JSON.stringify(channels)}::jsonb,
           ${entry.priority}::"notification_priority", 'pending'::"communication_outbox_state",
           ${availableAt}, 0, ${now}
+        )
+      `,
+      );
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) return { created: false, outboxId: null };
+      throw error;
+    }
+    this.metrics.recordOutbox(entry.category, 'pending');
+    return { created: true, outboxId };
+  }
+
+  /**
+   * Queues one email to an address recipient (see `EmitToAddressInput`).
+   * Idempotent on the entry's dedupe key per address, exactly like `emit`
+   * per user: a retried call writes nothing new and returns `created: false`.
+   */
+  async emitToAddress(
+    tx: Prisma.TransactionClient,
+    input: EmitToAddressInput,
+  ): Promise<EmitResult> {
+    const entry = COMMUNICATION_CATALOG[input.key];
+    if (!entry.addressRecipient) {
+      throw new Error(`Catalogue key ${input.key} cannot be sent to an address.`);
+    }
+    const email = input.email.trim().toLowerCase();
+    const values = input.values ?? {};
+    const dedupeKey = entry.dedupe({ entity: input.entity, values });
+    const outboxId = randomUUID();
+    const channels: OutboxChannels = { inApp: false, email: 'always' };
+    try {
+      await this.withOutboxSavepoint(
+        tx,
+        dedupeKey !== null,
+        () => tx.$executeRaw`
+        INSERT INTO "communication_outbox"
+          ("id", "key", "category", "recipient_user_id", "recipient_email", "organization_id",
+           "academy_id", "entity_type", "entity_id", "dedupe_key", "locale", "branding", "values",
+           "channels", "priority", "state", "available_at", "attempts", "created_at")
+        VALUES (
+          ${outboxId}, ${input.key}, ${entry.category}::"communication_category",
+          NULL, ${email}, NULL, NULL,
+          ${input.entity.type}, ${input.entity.id}, ${dedupeKey}, ${input.locale ?? 'en'},
+          ${entry.branding}, ${JSON.stringify(values)}::jsonb, ${JSON.stringify(channels)}::jsonb,
+          ${entry.priority}::"notification_priority", 'pending'::"communication_outbox_state",
+          ${new Date()}, 0, ${new Date()}
         )
       `,
       );

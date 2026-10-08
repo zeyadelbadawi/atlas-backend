@@ -64,6 +64,12 @@ import { template as attemptInvalidated } from './keys/assessment.attempt.invali
 import { template as courseCompleted } from './keys/course.completed';
 import { template as deviceRegistered } from './keys/device.registered';
 import { template as deviceRemoved } from './keys/device.removed';
+import { template as customerRequestRouted } from './keys/customer_request.routed';
+import { template as customerRequestReceived } from './keys/customer_request.received';
+import { template as customerRequestCustomerReplied } from './keys/customer_request.customer_replied';
+import { template as customerRequestSubmitted } from './keys/customer_request.submitted';
+import { template as customerRequestStatusChanged } from './keys/customer_request.status_changed';
+import { template as customerRequestTeamReplied } from './keys/customer_request.team_replied';
 import { template as deviceLimitReached } from './keys/device.limit_reached';
 import { template as sessionTakenOver } from './keys/session.taken_over';
 import { template as announcementPublished } from './keys/announcement.published';
@@ -182,6 +188,12 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'course.completed': courseCompleted,
   'device.registered': deviceRegistered,
   'device.removed': deviceRemoved,
+  'customer_request.routed': customerRequestRouted,
+  'customer_request.received': customerRequestReceived,
+  'customer_request.customer_replied': customerRequestCustomerReplied,
+  'customer_request.submitted': customerRequestSubmitted,
+  'customer_request.status_changed': customerRequestStatusChanged,
+  'customer_request.team_replied': customerRequestTeamReplied,
   'device.limit_reached': deviceLimitReached,
   'session.taken_over': sessionTakenOver,
   'announcement.published': announcementPublished,

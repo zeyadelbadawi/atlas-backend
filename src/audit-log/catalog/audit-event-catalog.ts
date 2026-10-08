@@ -878,6 +878,41 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'errorCode',
   ]),
 
+  /* -------------------------- Customer Requests ------------------------- */
+  ev('customer_request.created', 'support', 'customer_request', 'academy', true, [
+    'type',
+    'priority',
+  ]),
+  ev('customer_request.cancelled', 'support', 'customer_request', 'academy', true, [
+    'fromStatus',
+  ]),
+  ev('customer_request.customer_replied', 'support', 'customer_request', 'academy', true),
+  ev('customer_request.status_changed', 'support', 'customer_request', 'academy', true, [
+    'fromStatus',
+    'toStatus',
+  ]),
+  ev('customer_request.team_replied', 'support', 'customer_request', 'academy', true),
+  // Team-only facts: never shown in a tenant's activity log.
+  ev(
+    'customer_request.internal_note_added',
+    'support',
+    'customer_request',
+    'platform',
+    false,
+  ),
+  ev('customer_request.assigned', 'support', 'customer_request', 'platform', false, [
+    'assigneeUserId',
+    'previousAssigneeUserId',
+  ]),
+  ev(
+    'customer_request.routing_updated',
+    'support',
+    'customer_request_routing',
+    'platform',
+    false,
+    ['types'],
+  ),
+
   /* --------------- Security (operator-only, never tenant) -------------- */
   ev('auth.otp.issued', 'security', 'user', 'platform', false, OTP_CONTEXT),
   ev('auth.otp.failed', 'security', 'user', 'platform', false, OTP_CONTEXT),

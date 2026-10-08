@@ -132,6 +132,12 @@ export interface CommunicationCatalogEntry {
    */
   readonly credentialValues?: readonly string[];
   /**
+   * Customer Requests — may be sent to an ADDRESS recipient (a team inbox
+   * with no Atlas account) through `CommunicationService.emitToAddress`.
+   * Such an entry must be email-only (`inApp: 'never'`).
+   */
+  readonly addressRecipient?: boolean;
+  /**
    * `values` keys that hold personal data about someone OTHER than the
    * recipient (a website visitor's name, address, message). They exist for
    * the email body only:
@@ -2282,6 +2288,116 @@ const CATALOG = {
     // The visitor's details go to the owner's inbox by email only; the
     // feed row keeps `topic` and nothing that identifies the visitor.
     personalValues: ['name', 'email', 'organizationName', 'message'],
+  },
+  // Customer Requests — an academy asked the Atlas team for a custom
+  // service. `routed` goes to the TEAM INBOX the Platform Owner configured
+  // for the request type (an address recipient, `emitToAddress`) — once per
+  // event, deduped on the event id so a retried emit never mails twice.
+  'customer_request.routed': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `customer_request_routed:${entity.id}:${str(values, 'eventId')}`,
+    cooldownSeconds: 0,
+    locale: 'platform',
+    branding: 'platform',
+    template: 'customer_request.routed',
+    titleKey: 'notifications:events.customerRequestRouted.title',
+    messageKey: 'notifications:events.customerRequestRouted.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/customer-requests/${entity.id}`,
+    addressRecipient: true,
+  },
+  // Every active Platform Owner's feed: a new request arrived.
+  'customer_request.received': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `customer_request_received:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'customer_request.received',
+    titleKey: 'notifications:events.customerRequestReceived.title',
+    messageKey: 'notifications:events.customerRequestReceived.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/customer-requests/${entity.id}`,
+  },
+  // The academy answered a request (feed of the assigned Platform Owner).
+  'customer_request.customer_replied': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `customer_request_customer_replied:${entity.id}:${str(values, 'eventId')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'customer_request.customer_replied',
+    titleKey: 'notifications:events.customerRequestCustomerReplied.title',
+    messageKey: 'notifications:events.customerRequestCustomerReplied.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/customer-requests/${entity.id}`,
+  },
+  // To the requester: we have your request.
+  'customer_request.submitted': {
+    category: 'transactional',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `customer_request_submitted:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'customer_request.submitted',
+    titleKey: 'notifications:events.customerRequestSubmitted.title',
+    messageKey: 'notifications:events.customerRequestSubmitted.message',
+    actionUrl: ({ entity }) => `/dashboard/requests/${entity.id}`,
+  },
+  // To the requester: the team moved the request on. Once per status.
+  'customer_request.status_changed': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'preference' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `customer_request_status_changed:${entity.id}:${str(values, 'eventId')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'customer_request.status_changed',
+    titleKey: 'notifications:events.customerRequestStatusChanged.title',
+    messageKey: 'notifications:events.customerRequestStatusChanged.message',
+    actionUrl: ({ entity }) => `/dashboard/requests/${entity.id}`,
+  },
+  // To the requester: the team replied (customer-visible message).
+  'customer_request.team_replied': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `customer_request_team_replied:${entity.id}:${str(values, 'eventId')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'customer_request.team_replied',
+    titleKey: 'notifications:events.customerRequestTeamReplied.title',
+    messageKey: 'notifications:events.customerRequestTeamReplied.message',
+    actionUrl: ({ entity }) => `/dashboard/requests/${entity.id}`,
   },
   // W3-compose — PERSON-AUTHORED messages. The one exception to "no API
   // sends free text": a campaign (`communication_campaigns`) holds the
