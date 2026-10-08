@@ -686,6 +686,9 @@ model Academy {
   emailUsagePeriods      TenantEmailUsagePeriod[]
   emailUsageLedger       TenantEmailUsageLedger[]
 
+  /// Notification context isolation — academy-context feed rows.
+  notifications Notification[]
+
   @@unique([nameKey])
   @@index([organizationId, status])
   @@index([searchVector], type: Gin)
@@ -5231,12 +5234,40 @@ model Notification {
   /// (`standard` 180 d, `extended` 365 d for billing/security/account).
   /// Pruned by the maintenance sweep under `notifications_retention_delete`.
   retentionClass NotificationRetentionClass @default(standard) @map("retention_class")
+  /// Notification context isolation — WHERE this notification belongs.
+  /// One person can be a Management user and a learner at several
+  /// academies at once; the feed a request sees is the one its session's
+  /// context owns (management → `management` + `account`; an academy
+  /// session → `academy` rows of THAT academy + `account`). Set at creation
+  /// from the catalogue audience; `unscoped` (the default) is shown on no
+  /// surface — a writer that forgets the context leaks nothing.
+  context        NotificationContext        @default(unscoped)
+  /// The academy an `academy`-context notification belongs to (required
+  /// for it, null for every other context — a CHECK constraint holds both).
+  academyId      String?                    @map("academy_id")
+  academy        Academy?                   @relation(fields: [academyId], references: [id], onDelete: Cascade)
   createdAt      DateTime                   @default(now()) @map("created_at")
   updatedAt      DateTime                   @updatedAt @map("updated_at")
 
   @@unique([userId, dedupeKey])
   @@index([userId, isRead, createdAt(sort: Desc)])
+  @@index([userId, context, academyId, isRead, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+/// Notification context isolation — see `Notification.context`.
+enum NotificationContext {
+  /// Atlas Management dashboard (staff, owner, platform events).
+  management
+  /// One academy's learner area — `Notification.academyId` names it.
+  academy
+  /// The global account's own security notices (password, sign-in
+  /// methods, 2FA): shown in every context, because the credential is.
+  account
+  /// Context could not be determined (legacy rows): shown nowhere.
+  unscoped
+
+  @@map("notification_context")
 }
 
 /// P64 Communications — retention class of a feed row (see the event catalogue).

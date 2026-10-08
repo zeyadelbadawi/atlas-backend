@@ -67,6 +67,34 @@ function isUniqueConstraintViolation(error: unknown): boolean {
   return meta?.code === '23505';
 }
 
+/**
+ * Notification context isolation — which feed a request may see, decided
+ * from the SESSION (never from client input) by `NotificationScopeService`:
+ *  - `management`: Management notifications + the account's own notices;
+ *  - `academy`: THAT academy's notifications + the account's own notices;
+ *  - `none`: nothing (a session with no resolvable context).
+ * Every read and every write below is constrained by it in the query.
+ */
+export type NotificationScope =
+  | { readonly kind: 'management' }
+  | { readonly kind: 'academy'; readonly academyId: string }
+  | { readonly kind: 'none' };
+
+export function scopeWhere(scope: NotificationScope): Prisma.NotificationWhereInput {
+  switch (scope.kind) {
+    case 'management':
+      return { context: { in: ['management', 'account'] } };
+    case 'academy':
+      return {
+        OR: [{ context: 'academy', academyId: scope.academyId }, { context: 'account' }],
+      };
+    case 'none':
+      // Matches nothing: `unscoped` rows are shown on no surface, and no
+      // `academy` row has a null academy (CHECK constraint).
+      return { context: 'academy', academyId: null };
+  }
+}
+
 export interface NotificationListFilter {
   readonly isRead?: boolean;
   readonly type?: string;
@@ -88,6 +116,12 @@ export interface CreateNotificationInput {
   readonly metadata?: Record<string, unknown>;
   /** Null/omitted = never deduped (see schema.prisma's own doc comment on this table). */
   readonly dedupeKey?: string | null;
+  /**
+   * Notification context isolation — REQUIRED: where this row is shown.
+   * `academy` needs `academyId`; every other context must not carry one.
+   */
+  readonly context: 'management' | 'academy' | 'account' | 'unscoped';
+  readonly academyId?: string | null;
   /** P64 Communications — feed retention class from the catalogue; defaults to `standard`. */
   readonly retentionClass?: 'standard' | 'extended';
 }
@@ -97,10 +131,12 @@ export class NotificationsRepository {
   async findMany(
     tx: Prisma.TransactionClient,
     userId: string,
+    scope: NotificationScope,
     filter: NotificationListFilter,
   ): Promise<{ items: Notification[]; totalItems: number }> {
     const where: Prisma.NotificationWhereInput = {
       userId,
+      ...scopeWhere(scope),
       ...(filter.isRead !== undefined ? { isRead: filter.isRead } : {}),
       ...(filter.type ? { type: filter.type as Prisma.EnumNotificationTypeFilter } : {}),
       ...(filter.priority
@@ -129,18 +165,26 @@ export class NotificationsRepository {
   markAsRead(
     tx: Prisma.TransactionClient,
     userId: string,
+    scope: NotificationScope,
     id: string,
   ): Promise<Notification | null> {
+    // Outside the caller's context the row does not exist for it: an
+    // academy session cannot mark a Management (or another academy's)
+    // notification read, even with its id.
     return tx.notification
-      .updateMany({ where: { id, userId }, data: { isRead: true } })
+      .updateMany({ where: { id, userId, ...scopeWhere(scope) }, data: { isRead: true } })
       .then(async (result) =>
         result.count === 0 ? null : tx.notification.findUnique({ where: { id } }),
       );
   }
 
-  async markAllAsRead(tx: Prisma.TransactionClient, userId: string): Promise<number> {
+  async markAllAsRead(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    scope: NotificationScope,
+  ): Promise<number> {
     const result = await tx.notification.updateMany({
-      where: { userId, isRead: false },
+      where: { userId, isRead: false, ...scopeWhere(scope) },
       data: { isRead: true },
     });
     return result.count;
@@ -149,17 +193,19 @@ export class NotificationsRepository {
   async getSummary(
     tx: Prisma.TransactionClient,
     userId: string,
+    scope: NotificationScope,
   ): Promise<{
     total: number;
     unread: number;
     byType: { type: string; count: number }[];
     byPriority: { priority: string; count: number }[];
   }> {
+    const where: Prisma.NotificationWhereInput = { userId, ...scopeWhere(scope) };
     const [total, unread, byType, byPriority] = await Promise.all([
-      tx.notification.count({ where: { userId } }),
-      tx.notification.count({ where: { userId, isRead: false } }),
-      tx.notification.groupBy({ by: ['type'], where: { userId }, _count: true }),
-      tx.notification.groupBy({ by: ['priority'], where: { userId }, _count: true }),
+      tx.notification.count({ where }),
+      tx.notification.count({ where: { ...where, isRead: false } }),
+      tx.notification.groupBy({ by: ['type'], where, _count: true }),
+      tx.notification.groupBy({ by: ['priority'], where, _count: true }),
     ]);
 
     return {
@@ -202,6 +248,7 @@ export class NotificationsRepository {
       input.metadata === undefined ? null : JSON.stringify(input.metadata);
     const dedupeKey = input.dedupeKey ?? null;
     const retentionClass = input.retentionClass ?? 'standard';
+    const academyId = input.context === 'academy' ? (input.academyId ?? null) : null;
 
     // `updated_at` has no DB-level default — Prisma's `@updatedAt` is
     // normally populated by Prisma CLIENT itself on every `.create()`/
@@ -218,12 +265,13 @@ export class NotificationsRepository {
         INSERT INTO "notifications"
           ("id", "user_id", "type", "priority", "title_key", "message_key", "values",
            "action_url", "action_label_key", "metadata", "dedupe_key", "retention_class",
-           "created_at", "updated_at")
+           "context", "academy_id", "created_at", "updated_at")
         VALUES (
           ${id}, ${input.userId}, ${input.type}::"notification_type", ${input.priority}::"notification_priority",
           ${input.titleKey}, ${input.messageKey}, ${valuesJson}::jsonb,
           ${input.actionUrl ?? null}, ${input.actionLabelKey ?? null}, ${metadataJson}::jsonb, ${dedupeKey},
-          ${retentionClass}::"notification_retention_class", ${now}, ${now}
+          ${retentionClass}::"notification_retention_class",
+          ${input.context}::"notification_context", ${academyId}, ${now}, ${now}
         )
       `;
         return true;

@@ -14,6 +14,7 @@ describe('NotificationFanoutService', () => {
       type: 'system',
       priority: 'medium',
       titleKey: 'notifications:events.x.title',
+      context: 'management' as const,
       messageKey: 'notifications:events.x.message',
     });
 
@@ -35,6 +36,7 @@ describe('NotificationFanoutService', () => {
         priority: 'medium',
         titleKey: 't',
         messageKey: 'm',
+        context: 'management',
         dedupeKey: 'k',
       }),
     ).resolves.toBe(false);

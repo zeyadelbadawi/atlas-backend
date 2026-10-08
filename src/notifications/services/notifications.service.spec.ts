@@ -57,16 +57,23 @@ function fakeNotification(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+const MANAGEMENT = { kind: 'management' } as const;
+
 describe('NotificationsService', () => {
   describe('markAsRead', () => {
     it('returns the updated notification when it belongs to the caller', async () => {
       const markAsRead = jest.fn().mockResolvedValue(fakeNotification({ isRead: true }));
       const service = buildService({ markAsRead });
 
-      const result = await service.markAsRead('user-1', 'notif-1');
+      const result = await service.markAsRead('user-1', MANAGEMENT, 'notif-1');
 
       expect(result.isRead).toBe(true);
-      expect(markAsRead).toHaveBeenCalledWith(expect.anything(), 'user-1', 'notif-1');
+      expect(markAsRead).toHaveBeenCalledWith(
+        expect.anything(),
+        'user-1',
+        MANAGEMENT,
+        'notif-1',
+      );
     });
 
     it('throws NotFound — never distinguishing "does not exist" from "belongs to someone else" — when the repository finds no matching row', async () => {
@@ -74,7 +81,7 @@ describe('NotificationsService', () => {
       const service = buildService({ markAsRead });
 
       await expect(
-        service.markAsRead('user-1', 'someone-elses-notification'),
+        service.markAsRead('user-1', MANAGEMENT, 'someone-elses-notification'),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -89,7 +96,7 @@ describe('NotificationsService', () => {
       });
       const service = buildService({ getSummary });
 
-      const summary = await service.getSummary('user-1');
+      const summary = await service.getSummary('user-1', MANAGEMENT);
 
       expect(summary).toEqual({
         total: 3,

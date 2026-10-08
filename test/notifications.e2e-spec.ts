@@ -64,6 +64,8 @@ describe('Notifications — P17 (e2e)', () => {
   ): Promise<boolean> {
     return tenancyContextService.runInUserContext(userId, (tx) =>
       notificationFanoutService.notify(tx, {
+        // Notification context isolation — a staff event: the Management feed.
+        context: 'management',
         userId,
         type: 'system',
         priority: 'medium',
@@ -289,6 +291,8 @@ describe('Notifications — P17 (e2e)', () => {
         user.userId,
         async (tx) => {
           const second = await notificationFanoutService.notify(tx, {
+            // Notification context isolation — a staff event: the Management feed.
+            context: 'management',
             userId: user.userId,
             type: 'system',
             priority: 'medium',
@@ -332,6 +336,8 @@ describe('Notifications — P17 (e2e)', () => {
         first.userId,
         async (tx) => {
           const a = await notificationFanoutService.notify(tx, {
+            // Notification context isolation — a staff event: the Management feed.
+            context: 'management',
             userId: first.userId,
             type: 'system',
             priority: 'medium',
@@ -341,6 +347,8 @@ describe('Notifications — P17 (e2e)', () => {
             dedupeKey: sharedEvent,
           });
           const b = await notificationFanoutService.notify(tx, {
+            // Notification context isolation — a staff event: the Management feed.
+            context: 'management',
             userId: second.userId,
             type: 'system',
             priority: 'medium',

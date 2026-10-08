@@ -40,8 +40,10 @@ import { withSavepoint } from '../../common/database/savepoint.util';
 import {
   COMMUNICATION_CATALOG,
   catalogCopy,
+  notificationContextFor,
   settleScrubKeys,
   type CommunicationCatalogEntry,
+  type NotificationContextValue,
   type CommunicationEntityRef,
   type CommunicationEventKey,
   type CommunicationLocale,
@@ -56,6 +58,12 @@ export interface EmitInput {
   readonly academyId?: string | null;
   readonly entity: CommunicationEntityRef;
   readonly values?: Record<string, unknown>;
+  /**
+   * Notification context isolation — overrides the catalogue-derived
+   * context when the caller knows better (an academy campaign sent to its
+   * STAFF reuses a learner key but belongs to the Management dashboard).
+   */
+  readonly notificationContext?: NotificationContextValue;
 }
 
 export interface EmitResult {
@@ -122,8 +130,32 @@ export class CommunicationService {
       // No savepoint here: `create` runs its own around the INSERT it is
       // allowed to lose, so a deduped call already returns with the
       // caller's transaction intact.
+      // Notification context isolation — where this row is shown is fixed
+      // here, from the catalogue audience (and the campaign's own audience
+      // when the caller decides it), never at read time.
+      const placement = input.notificationContext
+        ? {
+            context: input.notificationContext,
+            academyId:
+              input.notificationContext === 'academy' ? (input.academyId ?? null) : null,
+          }
+        : notificationContextFor(input.key, input.academyId);
+      if (
+        placement.context === 'unscoped' ||
+        (placement.context === 'academy' && !placement.academyId)
+      ) {
+        this.logger.warn(
+          { key: input.key, recipientUserId: input.recipientUserId },
+          'In-app notification without a resolvable context; stored unscoped (shown nowhere).',
+        );
+      }
       const created = await this.notificationsRepository.create(tx, {
         userId: input.recipientUserId,
+        context:
+          placement.context === 'academy' && !placement.academyId
+            ? 'unscoped'
+            : placement.context,
+        academyId: placement.academyId,
         type: entry.notificationType,
         priority: entry.priority,
         titleKey: copy.titleKey,

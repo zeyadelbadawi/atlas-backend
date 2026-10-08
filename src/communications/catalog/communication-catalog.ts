@@ -2342,3 +2342,46 @@ export function catalogEntry(key: CommunicationEventKey): CommunicationCatalogEn
 export function isCommunicationEventKey(value: string): value is CommunicationEventKey {
   return Object.prototype.hasOwnProperty.call(COMMUNICATION_CATALOG, value);
 }
+
+/**
+ * Notification context isolation — the account's OWN security notices
+ * (its password, its sign-in methods, its 2FA, its use of the password to
+ * join an academy). The credential is global, so these are shown in every
+ * context: whichever surface the person is signed in on, they see that
+ * their password changed.
+ */
+export const ACCOUNT_NOTIFICATION_KEYS: ReadonlySet<CommunicationEventKey> = new Set([
+  'auth.password.changed',
+  'auth.password.reset_confirmed',
+  'auth.identity.linked',
+  'auth.identity.unlinked',
+  'auth.two_factor.enabled',
+  'auth.two_factor.disabled',
+  'account.academy.joined',
+]);
+
+export type NotificationContextValue = 'management' | 'academy' | 'account' | 'unscoped';
+
+/**
+ * Where an in-app notification for `key` belongs, decided at creation from
+ * the catalogue — never from the reader. The audience, not the presence of
+ * an academy id, decides: a staff event about Academy A (a payment proof to
+ * review) belongs to the Management dashboard, and the learner event of the
+ * same academy (your payment was approved) to Academy A's learner area —
+ * for the SAME person when they are both. A learner event without an
+ * academy cannot be placed and is `unscoped` (shown nowhere) rather than
+ * guessed.
+ */
+export function notificationContextFor(
+  key: CommunicationEventKey,
+  academyId: string | null | undefined,
+): { readonly context: NotificationContextValue; readonly academyId: string | null } {
+  if (ACCOUNT_NOTIFICATION_KEYS.has(key)) return { context: 'account', academyId: null };
+  const audience = COMMUNICATION_CATALOG[key].audience;
+  if (audience === 'learner') {
+    return academyId
+      ? { context: 'academy', academyId }
+      : { context: 'unscoped', academyId: null };
+  }
+  return { context: 'management', academyId: null };
+}

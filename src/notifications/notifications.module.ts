@@ -24,10 +24,11 @@ import { IdentityModule } from '../identity/identity.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { NotificationsController } from './controllers/notifications.controller';
 import { NotificationsService } from './services/notifications.service';
+import { NotificationScopeService } from './services/notification-scope.service';
 
 @Module({
   imports: [AuthCoreModule, IdentityModule, TenancyModule],
   controllers: [NotificationsController],
-  providers: [NotificationsService],
+  providers: [NotificationsService, NotificationScopeService],
 })
 export class NotificationsModule {}

@@ -19,6 +19,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { NotificationsRepository } from '../../notification-events/repositories/notifications.repository';
+import type { NotificationScope } from '../../notification-events/repositories/notifications.repository';
 import { resolveNotificationPreferences } from '../../notification-events/notification-preferences.util';
 import { toNotificationResponse } from '../dto/notification.contract';
 import type {
@@ -41,6 +42,7 @@ export class NotificationsService {
 
   async listNotifications(
     userId: string,
+    scope: NotificationScope,
     query: ListNotificationsQueryDto,
   ): Promise<PaginatedResult<NotificationResponse>> {
     const page = query.page ?? DEFAULT_PAGE;
@@ -49,7 +51,7 @@ export class NotificationsService {
     const { items, totalItems } = await this.tenancyContextService.runInUserContext(
       userId,
       (tx) =>
-        this.notificationsRepository.findMany(tx, userId, {
+        this.notificationsRepository.findMany(tx, userId, scope, {
           isRead: query.isRead === undefined ? undefined : query.isRead === 'true',
           type: query.type,
           priority: query.priority,
@@ -65,9 +67,12 @@ export class NotificationsService {
     };
   }
 
-  async getSummary(userId: string): Promise<NotificationSummaryResponse> {
+  async getSummary(
+    userId: string,
+    scope: NotificationScope,
+  ): Promise<NotificationSummaryResponse> {
     const summary = await this.tenancyContextService.runInUserContext(userId, (tx) =>
-      this.notificationsRepository.getSummary(tx, userId),
+      this.notificationsRepository.getSummary(tx, userId, scope),
     );
 
     const byType = {
@@ -89,24 +94,26 @@ export class NotificationsService {
 
   async markAsRead(
     userId: string,
+    scope: NotificationScope,
     notificationId: string,
   ): Promise<NotificationResponse> {
     const updated = await this.tenancyContextService.runInUserContext(userId, (tx) =>
-      this.notificationsRepository.markAsRead(tx, userId, notificationId),
+      this.notificationsRepository.markAsRead(tx, userId, scope, notificationId),
     );
     if (!updated) {
       // Covers both "doesn't exist" and "belongs to someone else" — never
       // distinguishing the two in the response (master plan §18's own
       // "never leak existence of another user's resource" posture,
-      // matching every other self-scoped 404 in this codebase).
+      // matching every other self-scoped 404 in this codebase) — and now
+      // also "belongs to another context" (Management vs an academy).
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
     return toNotificationResponse(updated);
   }
 
-  async markAllAsRead(userId: string): Promise<void> {
+  async markAllAsRead(userId: string, scope: NotificationScope): Promise<void> {
     await this.tenancyContextService.runInUserContext(userId, (tx) =>
-      this.notificationsRepository.markAllAsRead(tx, userId),
+      this.notificationsRepository.markAllAsRead(tx, userId, scope),
     );
   }
 
