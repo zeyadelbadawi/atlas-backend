@@ -18,6 +18,8 @@ import { template as supportCaseStatusChanged } from './keys/support.case.status
 import { template as authPasswordChanged } from './keys/auth.password.changed';
 import { template as authIdentityLinked } from './keys/auth.identity.linked';
 import { template as authIdentityUnlinked } from './keys/auth.identity.unlinked';
+import { template as authTwoFactorEnabled } from './keys/auth.two_factor.enabled';
+import { template as authTwoFactorDisabled } from './keys/auth.two_factor.disabled';
 import { template as accountAcademyJoined } from './keys/account.academy.joined';
 import { template as authEmailVerification } from './keys/auth.email.verification';
 import { template as authEmailOtp } from './keys/auth.email.otp';
@@ -111,6 +113,8 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'account.academy.joined': accountAcademyJoined,
   'auth.identity.linked': authIdentityLinked,
   'auth.identity.unlinked': authIdentityUnlinked,
+  'auth.two_factor.enabled': authTwoFactorEnabled,
+  'auth.two_factor.disabled': authTwoFactorDisabled,
   'auth.email.verification': authEmailVerification,
   'auth.email.otp': authEmailOtp,
   'auth.account.deletion_code': authAccountDeletionCode,

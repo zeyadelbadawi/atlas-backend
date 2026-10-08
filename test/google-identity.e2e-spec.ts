@@ -1235,6 +1235,31 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
     });
   });
 
+  describe('GID-INV-ATO — the setup intent is for invitations only (ATO review F2)', () => {
+    it('GID-INV-03 — a live reset link for an ACTIVE account cannot start a Google setup that would drop its password', async () => {
+      const staff = await staffAccount('inv-ato-active');
+      const user = await admin.user.findUniqueOrThrow({ where: { email: staff.email } });
+      expect(user.status).toBe('active');
+      const raw = `ato-reset-${user.id}`;
+      await admin.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: hashOpaqueToken(raw),
+          expiresAt: new Date(Date.now() + 3600_000),
+        },
+      });
+      const res = await http()
+        .post('/auth/google/authorize')
+        .set('Host', PLATFORM)
+        .send({ intent: 'setup', setupToken: raw })
+        .expect(401);
+      expect(res.body.error.messageKey).toBe('errors.auth.invalidResetToken');
+      // Nothing changed: the password stays, nothing was bound.
+      expect(await admin.userCredential.count({ where: { userId: user.id } })).toBe(1);
+      expect(await admin.userAuthIdentity.count({ where: { userId: user.id } })).toBe(0);
+    });
+  });
+
   describe('GID-SET — Account settings: connect, list, disconnect', () => {
     it('GID-SET-01 — a signed-in account connects a Google account with ANOTHER address; that Google account then signs into it', async () => {
       const staff = await staffAccount('set-link');

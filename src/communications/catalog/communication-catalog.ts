@@ -543,6 +543,44 @@ const CATALOG = {
     actionUrl: () => FORGOT_PASSWORD_PATH,
   },
   /**
+   * ATO review F3 — two-factor authentication was turned on. Whoever holds
+   * the authenticator now decides every sign-in, so the owner hears about
+   * it; if it was not them, the CTA is the signed-out recovery page.
+   */
+  'auth.two_factor.enabled': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'auth.two_factor.enabled',
+    titleKey: 'notifications:events.twoFactorEnabled.title',
+    messageKey: 'notifications:events.twoFactorEnabled.message',
+    actionUrl: () => FORGOT_PASSWORD_PATH,
+  },
+  /** ATO review F3 — two-factor authentication was turned off (other sessions were ended). */
+  'auth.two_factor.disabled': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'auth.two_factor.disabled',
+    titleKey: 'notifications:events.twoFactorDisabled.title',
+    messageKey: 'notifications:events.twoFactorDisabled.message',
+    actionUrl: () => FORGOT_PASSWORD_PATH,
+  },
+  /**
    * Launch Stabilization A4 — an existing Atlas account used its own
    * password to join another academy through that academy's signup page.
    * A security notice, like `auth.password.changed`: if a leaked password

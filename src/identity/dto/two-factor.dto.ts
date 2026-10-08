@@ -21,6 +21,12 @@ export class ConfirmTwoFactorDto {
   @IsString()
   @Matches(/^\d{6}$/, { message: 'validation:invalidValue' })
   token!: string;
+
+  /** ATO review F3 — re-authentication: enrolling a second factor is persistent control. */
+  @IsString()
+  @MinLength(1, { message: 'validation:required' })
+  @MaxLength(200, { message: 'validation:invalidValue' })
+  password!: string;
 }
 
 export class VerifyTwoFactorDto {

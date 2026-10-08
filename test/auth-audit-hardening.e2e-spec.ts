@@ -140,7 +140,7 @@ describe('Authentication audit hardening (e2e)', () => {
     await http()
       .post('/auth/2fa/confirm')
       .set('Authorization', `Bearer ${token}`)
-      .send({ token: await generate({ secret }) })
+      .send({ token: await generate({ secret }), password: PASSWORD })
       .expect(200);
     return secret;
   }

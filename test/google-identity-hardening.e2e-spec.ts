@@ -318,7 +318,7 @@ describe('Google Identity — Phase 4 hardening (e2e)', () => {
       await http()
         .post('/auth/2fa/confirm')
         .set('Authorization', `Bearer ${token}`)
-        .send({ token: await generate({ secret }) })
+        .send({ token: await generate({ secret }), password: PASSWORD })
         .expect(200);
       const sub = newSub();
       await linkGoogle(staff.userId, sub, staff.email);
@@ -844,6 +844,13 @@ describe('Google Identity — Phase 4 hardening (e2e)', () => {
         .expect(201);
       const user = await admin.user.findUniqueOrThrow({ where: { email } });
       expect(await admin.userCredential.count({ where: { userId: user.id } })).toBe(0);
+      // An address Google vouched for (an authoritative account). A Google
+      // binding on a NEVER-proven address is removed by the first mailbox
+      // proof instead (ATO review F1 — ato-hardening ATO-RS).
+      await admin.user.update({
+        where: { id: user.id },
+        data: { emailVerifiedAt: new Date() },
+      });
       // A password sign-in with anything is refused.
       await http()
         .post('/auth/sign-in')

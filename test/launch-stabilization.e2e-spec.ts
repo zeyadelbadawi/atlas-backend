@@ -352,6 +352,12 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
     it('LS-A2-03 — adding an EXISTING account as manager leaves its password untouched', async () => {
       const { owner, academy: a } = await freshAcademy('a2-existing');
       const existing = await staffAccount('a2-existing-person');
+      // A person who proved their mailbox. An UNPROVEN account is returned
+      // to `invited` by a grant instead (ATO review F1, ato-hardening ATO-F1).
+      await admin.user.update({
+        where: { id: existing.userId },
+        data: { emailVerifiedAt: new Date() },
+      });
       const before = await admin.userCredential.findUniqueOrThrow({
         where: { userId: existing.userId },
       });
@@ -405,8 +411,10 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
       const after = await admin.user.findUniqueOrThrow({ where: { id: legacy.userId } });
       expect(before.status).toBe('active');
       expect(after.status).toBe('active');
-      // Only an `invited` account is activated/verified by the setup link.
-      expect(after.emailVerifiedAt).toEqual(before.emailVerifiedAt);
+      // ATO review F1 — the link reaching the inbox is the first proof of
+      // the address for a legacy account staff created: it is recorded.
+      expect(before.emailVerifiedAt).toBeNull();
+      expect(after.emailVerifiedAt).not.toBeNull();
       await http()
         .post('/auth/sign-in')
         .send({ email: legacy.email, password: 'legacy-own-password-1' })

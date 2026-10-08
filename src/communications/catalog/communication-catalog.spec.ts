@@ -143,6 +143,8 @@ const EXPECTED_DEDUPE: Record<
   'account.academy.joined': { values: { academyName: 'A' }, expected: null },
   'auth.identity.linked': { values: {}, expected: null },
   'auth.identity.unlinked': { values: {}, expected: null },
+  'auth.two_factor.enabled': { values: {}, expected: null },
+  'auth.two_factor.disabled': { values: {}, expected: null },
   // P64 C4 — a resend MUST produce a second email, so this one can never
   // carry a dedupe key; the `values` are what the OTP template renders.
   'auth.email.otp': { values: { code: '123456', expiresInMinutes: 10 }, expected: null },
@@ -495,6 +497,8 @@ const NEVER_DEDUPED_KEYS: readonly CommunicationEventKey[] = [
   'account.academy.joined',
   'auth.identity.linked',
   'auth.identity.unlinked',
+  'auth.two_factor.enabled',
+  'auth.two_factor.disabled',
   'auth.email.otp',
   'auth.account.deletion_code',
   'auth.email.verification',

@@ -41,6 +41,7 @@ import { TenancyModule } from '../tenancy/tenancy.module';
 import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.types';
 import { AcademySurfaceService } from './services/academy-surface.service';
 import { EmailOtpService } from './services/email-otp.service';
+import { UnprovenAccountService } from './services/unproven-account.service';
 import { TrustedDeviceService } from './services/trusted-device.service';
 import { AuthChallengeCipher } from './services/auth-challenge-cipher.service';
 import { EmailOtpController } from './controllers/email-otp.controller';
@@ -116,6 +117,9 @@ import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-li
     AuthChallengeCipher,
     EmailOtpService,
     TrustedDeviceService,
+    // ATO review F1 — withdraws credentials from a never-verified account
+    // before a grant by someone else reaches it.
+    UnprovenAccountService,
     SignInRateLimitGuard,
     CredentialCheckRateLimitGuard,
     PasswordResetRateLimitGuard,
@@ -192,6 +196,8 @@ import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-li
     // (`AcademiesService.lookupMember`) is budgeted on the same Redis
     // limiter as the auth routes rather than a second implementation.
     AuthRateLimiterService,
+    // ATO review F1 — `AcademiesService` resolves member accounts.
+    UnprovenAccountService,
   ],
 })
 export class IdentityModule {}

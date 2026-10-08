@@ -118,6 +118,33 @@ export class SessionRevocationService {
   }
 
   /**
+   * ATO review F3 — ends every session of the account except the caller's
+   * own, in the database and in the access-token denylist.
+   */
+  async revokeOtherSessionsForUser(
+    userId: string,
+    keepSessionId: string,
+    trigger: SessionRevocationTrigger,
+  ): Promise<number> {
+    const sessionIds = await this.refreshTokensRepository.revokeAllForUserExcept(
+      userId,
+      keepSessionId,
+    );
+    await Promise.all(sessionIds.map((sessionId) => this.markRevoked(sessionId)));
+    recordSessionsRevoked(trigger, sessionIds.length);
+    this.logger.log(
+      {
+        event: 'auth.sessions.revoked',
+        userId,
+        trigger,
+        sessionsRevoked: sessionIds.length,
+      },
+      'Every other session of the account was ended after a security change.',
+    );
+    return sessionIds.length;
+  }
+
+  /**
    * Whether this session must be refused. Redis first (one O(1) lookup on
    * the hot path); on any Redis error, the database — see this class's
    * own FAILURE BEHAVIOUR note for why neither fail-open nor global

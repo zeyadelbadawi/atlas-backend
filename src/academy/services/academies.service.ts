@@ -110,6 +110,7 @@ import type {
   MemberLookupRole,
 } from '../dto/academy-member-lookup.dto';
 import { AuthRateLimiterService } from '../../identity/services/auth-rate-limiter.service';
+import { UnprovenAccountService } from '../../identity/services/unproven-account.service';
 import { normalizeEmail } from '../../identity/utils/email.util';
 import { cleanDisplayName } from '../../common/name-uniqueness/name-key';
 import {
@@ -308,6 +309,7 @@ export class AcademiesService {
     private readonly platformDomainService: PlatformDomainService,
     private readonly publicWebsiteCacheService: PublicWebsiteCacheService,
     private readonly authRateLimiter: AuthRateLimiterService,
+    private readonly unprovenAccountService: UnprovenAccountService,
     configService: ConfigService,
     // Task 3 — the Academy activity log's read side (global AuditLogModule).
     private readonly auditLogEntriesRepository: AuditLogEntriesRepository,
@@ -362,6 +364,20 @@ export class AcademiesService {
     if (existing) {
       if (existing.status === 'suspended' || existing.status === 'deleted') {
         throw new ConflictException({ messageKey: 'errors.academy.accountUnavailable' });
+      }
+      // ATO review F1 — an active account that never proved its mailbox may
+      // belong to someone who registered this address without owning it.
+      // A grant by somebody else must not land on credentials that person
+      // chose: the account returns to `invited` (password, linked sign-in
+      // methods, 2FA, sessions and trusted browsers withdrawn) and follows
+      // the invited path below — a fresh setup link to the mailbox.
+      // Reached only after `assertCanAddMember` authorized the caller.
+      if (existing.status === 'active' && !existing.emailVerifiedAt) {
+        await this.unprovenAccountService.requireMailboxProofBeforeGrant(existing.id);
+        return {
+          user: { ...existing, status: 'invited' },
+          account: 'pending_setup',
+        };
       }
       return {
         user: existing,

@@ -82,6 +82,7 @@ import { CommunicationMetricsService } from '../../communications/metrics/commun
 import { CommunicationService } from '../../communications/services/communication.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { AcademyStaffRecipientsService } from '../../communications/services/academy-staff-recipients.service';
+import { UnprovenAccountService } from './unproven-account.service';
 import { TrustedDeviceService } from './trusted-device.service';
 import type { EmailOtpChallengeContract } from '../dto/contracts';
 import type { SignInSurface } from '../dto/sign-in.dto';
@@ -233,6 +234,7 @@ export class AuthService {
     private readonly accessPolicyService: AccessPolicyService,
     private readonly emailOtpService: EmailOtpService,
     private readonly trustedDeviceService: TrustedDeviceService,
+    private readonly unprovenAccountService: UnprovenAccountService,
     private readonly communicationMetrics: CommunicationMetricsService,
     // P64 Communications C3 (plan §8 B1) — the new-device feed row. From
     // the `@Global()` `CommunicationsModule`, like the metrics above, so
@@ -2069,6 +2071,15 @@ export class AuthService {
     // activates an `invited` account, and the link reaching the inbox
     // proves the address.
     await this.usersRepository.completeInvitation(resetToken.userId, new Date());
+    // ATO review F1/F2 — the reset proved the mailbox. On an account that
+    // had NEVER been proven, the external sign-in and 2FA on it were set by
+    // whoever held the password without that proof: they go, and the
+    // address is recorded as verified. A proven account keeps its 2FA —
+    // a reset must never be a way around the second factor.
+    await this.unprovenAccountService.afterFirstMailboxProof(
+      resetToken.userId,
+      new Date(),
+    );
     // Launch Stabilization A3 (D3) — refresh rows AND live access tokens.
     const sessionsRevoked = await this.sessionRevocationService.revokeAllSessionsForUser(
       resetToken.userId,
