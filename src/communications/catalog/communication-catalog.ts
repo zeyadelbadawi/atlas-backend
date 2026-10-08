@@ -2361,7 +2361,8 @@ const CATALOG = {
     template: 'customer_request.submitted',
     titleKey: 'notifications:events.customerRequestSubmitted.title',
     messageKey: 'notifications:events.customerRequestSubmitted.message',
-    actionUrl: ({ entity }) => `/dashboard/requests/${entity.id}`,
+    actionUrl: ({ entity, values }) =>
+      `/dashboard/academy/${str(values, 'academyId')}/requests/${entity.id}`,
   },
   // To the requester: the team moved the request on. Once per status.
   'customer_request.status_changed': {
@@ -2379,7 +2380,8 @@ const CATALOG = {
     template: 'customer_request.status_changed',
     titleKey: 'notifications:events.customerRequestStatusChanged.title',
     messageKey: 'notifications:events.customerRequestStatusChanged.message',
-    actionUrl: ({ entity }) => `/dashboard/requests/${entity.id}`,
+    actionUrl: ({ entity, values }) =>
+      `/dashboard/academy/${str(values, 'academyId')}/requests/${entity.id}`,
   },
   // To the requester: the team replied (customer-visible message).
   'customer_request.team_replied': {
@@ -2397,7 +2399,8 @@ const CATALOG = {
     template: 'customer_request.team_replied',
     titleKey: 'notifications:events.customerRequestTeamReplied.title',
     messageKey: 'notifications:events.customerRequestTeamReplied.message',
-    actionUrl: ({ entity }) => `/dashboard/requests/${entity.id}`,
+    actionUrl: ({ entity, values }) =>
+      `/dashboard/academy/${str(values, 'academyId')}/requests/${entity.id}`,
   },
   // W3-compose — PERSON-AUTHORED messages. The one exception to "no API
   // sends free text": a campaign (`communication_campaigns`) holds the

@@ -131,7 +131,11 @@ export class CustomerRequestsService {
           organizationId: actor.organizationId,
           academyId: actor.academyId,
           entity: { type: 'customer_request', id: request.id },
-          values: { title: request.title, type: request.type },
+          values: {
+            title: request.title,
+            type: request.type,
+            academyId: actor.academyId,
+          },
         });
         outboxId = emitted.outboxId;
         return { requestId: request.id, eventId: event.id };

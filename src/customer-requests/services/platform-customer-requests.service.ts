@@ -248,7 +248,12 @@ export class PlatformCustomerRequestsService {
             organizationId: request.organizationId,
             academyId: request.academyId,
             entity: { type: 'customer_request', id: requestId },
-            values: { eventId: event.id, title: request.title, status: payload.status },
+            values: {
+              eventId: event.id,
+              title: request.title,
+              status: payload.status,
+              academyId: request.academyId,
+            },
           });
           ids.push(emitted.outboxId);
         }
@@ -407,7 +412,12 @@ export class PlatformCustomerRequestsService {
       organizationId: request.organizationId,
       academyId: request.academyId,
       entity: { type: 'customer_request', id: request.id },
-      values: { eventId: event.id, title: request.title, excerpt: excerpt(body) },
+      values: {
+        eventId: event.id,
+        title: request.title,
+        excerpt: excerpt(body),
+        academyId: request.academyId,
+      },
     });
     return [emitted.outboxId];
   }
