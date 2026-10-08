@@ -174,6 +174,35 @@ describe('Notifications — P17 (e2e)', () => {
       ).toBe(false);
     });
 
+    it('N5b: a bounded mark-all (an offline replay) leaves notifications that arrived later unread', async () => {
+      const user = await signUpAndSignIn(app, 'notif-allbefore');
+      await seedNotification(user.userId, `n5b-old-${user.userId}`);
+      // The moment the person pressed "Mark all as read" (while offline).
+      const pressedAt = new Date();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await seedNotification(user.userId, `n5b-new-${user.userId}`);
+
+      await request(app.getHttpServer())
+        .post('/notifications/read-all')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ before: pressedAt.toISOString() })
+        .expect(201);
+
+      const rows = await admin.notification.findMany({
+        where: { userId: user.userId },
+        select: { dedupeKey: true, isRead: true },
+      });
+      const byKey = Object.fromEntries(rows.map((row) => [row.dedupeKey, row.isRead]));
+      expect(byKey[`n5b-old-${user.userId}`]).toBe(true);
+      expect(byKey[`n5b-new-${user.userId}`]).toBe(false);
+
+      await request(app.getHttpServer())
+        .post('/notifications/read-all')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ before: 'yesterday' })
+        .expect(400);
+    });
+
     it('N6: unauthenticated callers cannot reach any notifications route', async () => {
       await request(app.getHttpServer()).get('/notifications').expect(401);
       await request(app.getHttpServer()).get('/notifications/summary').expect(401);

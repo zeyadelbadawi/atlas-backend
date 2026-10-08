@@ -111,9 +111,13 @@ export class NotificationsService {
     return toNotificationResponse(updated);
   }
 
-  async markAllAsRead(userId: string, scope: NotificationScope): Promise<void> {
+  async markAllAsRead(
+    userId: string,
+    scope: NotificationScope,
+    before?: Date,
+  ): Promise<void> {
     await this.tenancyContextService.runInUserContext(userId, (tx) =>
-      this.notificationsRepository.markAllAsRead(tx, userId, scope),
+      this.notificationsRepository.markAllAsRead(tx, userId, scope, before),
     );
   }
 

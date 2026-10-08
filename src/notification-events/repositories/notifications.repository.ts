@@ -182,9 +182,16 @@ export class NotificationsRepository {
     tx: Prisma.TransactionClient,
     userId: string,
     scope: NotificationScope,
+    /** Only notifications created at or before this moment (an offline replay's bound). */
+    before?: Date,
   ): Promise<number> {
     const result = await tx.notification.updateMany({
-      where: { userId, isRead: false, ...scopeWhere(scope) },
+      where: {
+        userId,
+        isRead: false,
+        ...scopeWhere(scope),
+        ...(before ? { createdAt: { lte: before } } : {}),
+      },
       data: { isRead: true },
     });
     return result.count;

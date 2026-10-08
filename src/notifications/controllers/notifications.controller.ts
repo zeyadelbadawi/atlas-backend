@@ -35,6 +35,7 @@ import type {
   NotificationSummaryResponse,
 } from '../dto/notification.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { MarkAllReadDto } from '../dto/mark-all-read.dto';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
@@ -92,8 +93,13 @@ export class NotificationsController {
   async markAllAsRead(
     @CurrentAuthContext() auth: AuthContext,
     @Req() request: Request,
+    @Body() body: MarkAllReadDto,
   ): Promise<void> {
     const scope = await this.notificationScopeService.resolve(request);
-    await this.notificationsService.markAllAsRead(auth.userId, scope);
+    await this.notificationsService.markAllAsRead(
+      auth.userId,
+      scope,
+      body?.before ? new Date(body.before) : undefined,
+    );
   }
 }
