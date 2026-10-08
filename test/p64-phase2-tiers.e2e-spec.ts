@@ -638,11 +638,12 @@ describe('P64 Phase 2 — video security tiers, providers and quota (e2e)', () =
       expect(registered).toBe(2);
 
       // A THIRD browser. At the cap, sign-in still succeeds — a device
-      // limit must never lock a learner out of their account — but no
-      // device is issued, so the browser arrives at the content path
-      // with nothing to present.
+      // limit must never lock a learner out of their account — and no
+      // device is registered. The browser IS given an identity (Device
+      // Identity + Device-Limit fix), which registers only once a slot is
+      // free; until then the content path refuses it.
       const third = await anotherBrowser(learner.email, world.academyId);
-      expect(third.device).toBeNull();
+      expect(third.device).toMatch(/^[0-9a-f]{64}$/);
 
       const refused = await getContent(world, lesson.id, third).expect(403);
       expect(refused.body.error.messageKey).toBe('errors.learning.deviceLimit');

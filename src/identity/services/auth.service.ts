@@ -2256,13 +2256,13 @@ export class AuthService {
           }
 
           // P64 Communications C3 (plan §8 B1, §10 "B1/B2 device
-          // registered/removed"). `issueCookieValue` is set on exactly
-          // one path — the INSERT — so this fires for a genuinely new
-          // browser and not for the cap refusal or a recognised device
-          // being touched. In-app only by the catalogue: the learner is
-          // sitting at the browser that was just registered, and §10's
-          // own note for this row is "low volume".
-          if (resolution.issueCookieValue && resolution.device) {
+          // registered/removed"). `created` is true on exactly one path —
+          // the INSERT — so this fires for a genuinely new browser and not
+          // for the cap refusal (which still issues the browser an
+          // identity) or a recognised device being touched. In-app only by
+          // the catalogue: the learner is sitting at the browser that was
+          // just registered, and §10's own note for this row is "low volume".
+          if (resolution.created && resolution.device) {
             // No academy NAME is read: this runs in the learner's own
             // user context, where `academies` is invisible (there is no
             // `academies_student_select` policy — an `academy_students`

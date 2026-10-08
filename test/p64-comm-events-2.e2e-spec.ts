@@ -583,11 +583,30 @@ describe('P64 Communications C3 (second pass) — devices, commerce, learning, a
       expect(rows[0].entityId).toBe(device.id);
       expect(rows[0].channels).toEqual({ inApp: true, email: 'always' });
 
-      // The device is already revoked, so the second call 404s — and the
-      // emit, being inside that transaction, must leave nothing behind.
+      // That was the device this session was signed in on, so the session
+      // ended with it — its access token is refused at once (Device
+      // Identity + Device-Limit fix), not after it expires.
       await request(app.getHttpServer())
         .delete(`/learning/devices/${device.id}?academyId=${w.academy.id}`)
         .set(student.auth)
+        .expect(401);
+
+      // From a fresh sign-in: the device is already revoked, so the second
+      // removal 404s — and the emit, being inside that transaction, must
+      // leave nothing behind.
+      await flushRateLimitKeys();
+      const again = await request(app.getHttpServer())
+        .post('/auth/sign-in')
+        .send({
+          email: student.email,
+          password: PASSWORD,
+          surface: 'academy',
+          academyId: w.academy.id,
+        })
+        .expect(200);
+      await request(app.getHttpServer())
+        .delete(`/learning/devices/${device.id}?academyId=${w.academy.id}`)
+        .set({ Authorization: `Bearer ${again.body.accessToken as string}` })
         .expect(404);
       expect(await outboxFor(student.userId, 'device.removed')).toHaveLength(1);
     });

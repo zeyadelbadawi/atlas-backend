@@ -31,9 +31,10 @@ import {
   Param,
   Post,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../../identity/guards/optional-jwt-auth.guard';
 import { AcademySurfaceService } from '../../identity/services/academy-surface.service';
@@ -69,6 +70,7 @@ export class LessonContentController {
   @Header('Referrer-Policy', 'no-referrer')
   async getContent(
     @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
     @Param('id') courseId: string,
     @Param('lessonId') lessonId: string,
   ): Promise<LessonContentGrantResponse> {
@@ -77,7 +79,7 @@ export class LessonContentController {
     );
     assertSessionServesHostAcademy(request, hostAcademyId);
     return this.lessonContentService.getContent(courseId, lessonId, {
-      ...learningRequestContext(request),
+      ...learningRequestContext(request, response),
       hostAcademyId,
     });
   }
@@ -104,6 +106,7 @@ export class LessonContentController {
   @Header('Referrer-Policy', 'no-referrer')
   async refreshGrant(
     @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
     @Param('id') courseId: string,
     @Param('lessonId') lessonId: string,
   ): Promise<LessonContentGrantResponse> {
@@ -112,7 +115,7 @@ export class LessonContentController {
     );
     assertSessionServesHostAcademy(request, hostAcademyId);
     const grant = await this.lessonContentService.getContent(courseId, lessonId, {
-      ...learningRequestContext(request),
+      ...learningRequestContext(request, response),
       hostAcademyId,
     });
     // §U — the Normal tier's expected refresh load, and the series that

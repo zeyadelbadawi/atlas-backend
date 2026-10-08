@@ -96,8 +96,12 @@ function matchesWhere(row: DeviceRow, where: Record<string, unknown>): boolean {
   });
 }
 
-/** A `Prisma.TransactionClient` carrying only the four methods this service calls. */
-function fakeTx(rows: DeviceRow[]) {
+/**
+ * A `Prisma.TransactionClient` carrying only what this service calls.
+ * `hiddenHashes` stand for rows RLS hides (another account's devices):
+ * invisible to reads, but still taken in the global unique index.
+ */
+function fakeTx(rows: DeviceRow[], hiddenHashes: readonly string[] = []) {
   let created = 0;
   const studentDevice = {
     findFirst: jest.fn(
@@ -132,9 +136,46 @@ function fakeTx(rows: DeviceRow[]) {
       rows.push(row);
       return Promise.resolve(row);
     }),
+    createMany: jest.fn(
+      (args: {
+        data: Partial<DeviceRow>[];
+        skipDuplicates?: boolean;
+      }): Promise<{
+        count: number;
+      }> => {
+        let count = 0;
+        for (const data of args.data) {
+          const taken =
+            hiddenHashes.includes(data.cookieHash ?? '') ||
+            rows.some((row) => row.cookieHash === data.cookieHash);
+          if (taken) {
+            if (!args.skipDuplicates) throw new Error('fake tx: unique violation');
+            continue;
+          }
+          created += 1;
+          count += 1;
+          rows.push({
+            id: `created-${created.toString()}`,
+            userId: '',
+            academyId: '',
+            cookieHash: '',
+            label: '',
+            userAgent: null,
+            lastSeenAt: new Date(),
+            createdAt: new Date(),
+            revokedAt: null,
+            ...data,
+          });
+        }
+        return Promise.resolve({ count });
+      },
+    ),
   };
+  // The per-learner registration lock (`pg_advisory_xact_lock`).
+  const $queryRaw = jest.fn(() => Promise.resolve([{ locked: 1 }]));
   return {
-    tx: { studentDevice } as unknown as Prisma.TransactionClient,
+    tx: { studentDevice, $queryRaw } as unknown as Prisma.TransactionClient,
+    $queryRaw,
     studentDevice,
     rows,
   };
@@ -471,13 +512,18 @@ describe('StudentDeviceService.resolveForSession', () => {
       maxDevices: 2,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       device: null,
-      issueCookieValue: null,
+      created: false,
       atCapacity: true,
       activeDeviceCount: 2,
     });
+    // The forged value is never adopted: the browser is given a fresh,
+    // server-minted identity instead, and nothing is registered.
+    expect(result.issueCookieValue).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.issueCookieValue).not.toBe('forged-value-that-matches-nothing');
     expect(studentDevice.create).not.toHaveBeenCalled();
+    expect(studentDevice.createMany).not.toHaveBeenCalled();
   });
 
   /*
@@ -485,7 +531,13 @@ describe('StudentDeviceService.resolveForSession', () => {
    * The session is issued with no device attached; CONTENT is what gets
    * refused, upstream, with `deviceLimit`.
    */
-  it('returns { device: null, atCapacity: true } at capacity and issues no cookie', async () => {
+  /*
+   * Device Identity + Device-Limit fix — the browser IS given an identity
+   * at the cap. Issuing nothing here was the root cause of the limit
+   * dialog loop: the browser stayed cookie-less, so once the learner freed
+   * a slot the next grant registered a row it was never told about.
+   */
+  it('returns { device: null, atCapacity: true } at capacity, registers nothing, and gives the browser an identity', async () => {
     const { tx, studentDevice } = fakeTx([deviceRow(), deviceRow()]);
 
     const result = await service.resolveForSession(tx, {
@@ -498,9 +550,107 @@ describe('StudentDeviceService.resolveForSession', () => {
 
     expect(result.device).toBeNull();
     expect(result.atCapacity).toBe(true);
-    expect(result.issueCookieValue).toBeNull();
+    expect(result.created).toBe(false);
+    expect(result.issueCookieValue).toMatch(/^[0-9a-f]{64}$/);
     expect(result.activeDeviceCount).toBe(2);
     expect(studentDevice.create).not.toHaveBeenCalled();
+    expect(studentDevice.createMany).not.toHaveBeenCalled();
+  });
+
+  it('at capacity, a browser that already holds a well-formed identity keeps it', async () => {
+    const { tx } = fakeTx([deviceRow(), deviceRow()]);
+    const result = await service.resolveForSession(tx, {
+      userId: USER,
+      academyId: ACADEMY,
+      cookieValue: 'a'.repeat(64),
+      userAgent: CHROME_MAC,
+      maxDevices: 2,
+    });
+    expect(result).toMatchObject({ device: null, atCapacity: true, created: false });
+    expect(result.issueCookieValue).toBeNull();
+  });
+
+  it('registers the identity the browser was given at the cap, once a slot frees — no new cookie, one row', async () => {
+    const identity = 'b'.repeat(64);
+    const { tx, rows, studentDevice } = fakeTx([deviceRow()]);
+    const result = await service.resolveForSession(tx, {
+      userId: USER,
+      academyId: ACADEMY,
+      cookieValue: identity,
+      userAgent: CHROME_MAC,
+      maxDevices: 2,
+    });
+    expect(result.created).toBe(true);
+    expect(result.atCapacity).toBe(false);
+    expect(result.issueCookieValue).toBeNull();
+    expect(result.device?.cookieHash).toBe(hashDeviceCookie(identity));
+    expect(
+      rows.filter((row) => row.cookieHash === hashDeviceCookie(identity)),
+    ).toHaveLength(1);
+    expect(studentDevice.create).not.toHaveBeenCalled();
+
+    // The next request from the same browser (another tab, the retry) is
+    // RECOGNISED — no second row, nothing announced again.
+    const again = await service.resolveForSession(tx, {
+      userId: USER,
+      academyId: ACADEMY,
+      cookieValue: identity,
+      userAgent: CHROME_MAC,
+      maxDevices: 2,
+    });
+    expect(again.created).toBe(false);
+    expect(again.device?.id).toBe(result.device?.id);
+    expect(rows).toHaveLength(2);
+  });
+
+  it('serialises registration per learner and academy (the cap is never raced)', async () => {
+    const { tx, $queryRaw } = fakeTx([]);
+    await service.resolveForSession(tx, {
+      userId: USER,
+      academyId: ACADEMY,
+      userAgent: CHROME_MAC,
+      maxDevices: 2,
+    });
+    expect($queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("never reuses a removed device's identity — the browser is registered under a fresh one", async () => {
+    const identity = 'c'.repeat(64);
+    const removed = deviceRow({
+      cookieHash: hashDeviceCookie(identity),
+      revokedAt: new Date('2026-09-10T00:00:00.000Z'),
+    });
+    const { tx } = fakeTx([removed]);
+    const result = await service.resolveForSession(tx, {
+      userId: USER,
+      academyId: ACADEMY,
+      cookieValue: identity,
+      userAgent: CHROME_MAC,
+      maxDevices: 2,
+    });
+    expect(result.created).toBe(true);
+    expect(result.issueCookieValue).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.issueCookieValue).not.toBe(identity);
+    expect(removed.revokedAt).not.toBeNull();
+  });
+
+  it('an identity another account holds (hidden by RLS) is not adopted, and does not abort the transaction', async () => {
+    const identity = 'd'.repeat(64);
+    const { tx, studentDevice } = fakeTx([], [hashDeviceCookie(identity)]);
+    const result = await service.resolveForSession(tx, {
+      userId: USER,
+      academyId: ACADEMY,
+      cookieValue: identity,
+      userAgent: CHROME_MAC,
+      maxDevices: 2,
+    });
+    expect(studentDevice.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skipDuplicates: true }),
+    );
+    expect(result.created).toBe(true);
+    expect(result.issueCookieValue).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.issueCookieValue).not.toBe(identity);
+    expect(result.device?.userId).toBe(USER);
   });
 
   it('registers below capacity and returns a new cookie value to write', async () => {
