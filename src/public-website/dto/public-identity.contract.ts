@@ -6,7 +6,8 @@
  *
  * Deliberately NOT a new storage model — every field here already lives in
  * one of two existing, already-persisted sources: the `Academy` row
- * (`name`/`logoUrl`/`faviconUrl`/`contactEmail`/`contactPhone`/`address`)
+ * (`name`/`description`/`logoUrl`/`faviconUrl`/`contactEmail`/`contactPhone`/
+ * `address`)
  * or the Academy's PUBLISHED `WebsiteConfiguration.brand` JSON
  * (`primaryColor`/`secondaryColor`/`accentColor`). This endpoint is a
  * READ-COMBINING layer over both — never a second, duplicate identity
@@ -20,6 +21,8 @@ import type { AcademyAddressResponse } from '../../academy/dto/academy.contract'
 export interface AcademyIdentityResponse {
   readonly academyId: string;
   readonly name: string;
+  /** The Academy's own description (Academy settings), as the owner wrote it; omitted when blank. */
+  readonly description?: string;
   readonly logoUrl?: string;
   readonly faviconUrl?: string;
   /** HSL triplet strings (e.g. `"220 90% 56%"`) — matches `WebsiteBrandConfig.primaryColor`'s own shape (`HslColorTriplet`, atlas frontend) exactly, since these values ARE that same brand config, never reprojected. */

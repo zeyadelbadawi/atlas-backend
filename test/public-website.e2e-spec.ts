@@ -408,7 +408,11 @@ describe('Public Website Runtime (e2e)', () => {
     const { academy: academyA } = await seedManagedAcademy('pub-identity-a');
     await admin.academy.update({
       where: { id: academyA.id },
-      data: { contactEmail: 'hello@academy-a.test', contactPhone: '+1-000-000-0000' },
+      data: {
+        contactEmail: 'hello@academy-a.test',
+        contactPhone: '+1-000-000-0000',
+        description: 'Evening courses in applied statistics.',
+      },
     });
     const { academy: academyB } = await seedManagedAcademy('pub-identity-b');
     await admin.academy.update({
@@ -422,6 +426,17 @@ describe('Public Website Runtime (e2e)', () => {
     expect(identityA.body.name).toBe(academyA.name);
     expect(identityA.body.contactEmail).toBe('hello@academy-a.test');
     expect(identityA.body.contactEmail).not.toBe('hello@academy-b.test');
+    expect(identityA.body.description).toBe('Evening courses in applied statistics.');
+
+    // A blank description is omitted, never sent as an empty string.
+    await admin.academy.update({
+      where: { id: academyB.id },
+      data: { description: '   ' },
+    });
+    const identityB = await request(app.getHttpServer())
+      .get(`/public/websites/${academyB.id}/identity`)
+      .expect(200);
+    expect(identityB.body).not.toHaveProperty('description');
   });
 
   it('a manipulated/unknown academyId on the identity endpoint returns public not-found', async () => {

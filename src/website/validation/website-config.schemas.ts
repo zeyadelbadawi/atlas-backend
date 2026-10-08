@@ -161,10 +161,32 @@ export const websiteHeaderSchema = z.object({
   authPages: websiteAuthPagesSchema.optional(),
 });
 
+/**
+ * The social platforms a footer social link can name (atlas frontend
+ * `SOCIAL_PLATFORMS`, same order). The public site draws the platform's
+ * icon from it. Optional: links saved before the platform picker have only
+ * their free-text label, which the frontend reads as before.
+ */
+export const SOCIAL_PLATFORMS = [
+  'facebook',
+  'instagram',
+  'x',
+  'tiktok',
+  'linkedin',
+  'youtube',
+  'whatsapp',
+  'telegram',
+  'snapchat',
+  'threads',
+  'discord',
+  'github',
+] as const;
+
 const footerLinkSchema = z.object({
   id: z.string().min(1, 'validation:required'),
   label: localizedRequired(MAX_SHORT_TEXT),
   pageId: z.string().optional(),
+  platform: z.enum(SOCIAL_PLATFORMS).optional(),
   url: z
     .string()
     .url('validation:invalidUrl')

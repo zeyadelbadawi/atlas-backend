@@ -853,6 +853,7 @@ export class PublicWebsiteService {
     return {
       academyId: academy.id,
       name: academy.name,
+      description: academy.description?.trim() || undefined,
       logoUrl: academy.logoUrl ?? undefined,
       faviconUrl: academy.faviconUrl ?? undefined,
       primaryColor: asColor(brand?.primaryColor),
