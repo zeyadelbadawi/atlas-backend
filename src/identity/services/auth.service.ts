@@ -529,7 +529,9 @@ export class AuthService {
       // password (one Argon2 operation) before the decoy hash below; a new
       // address must cost the same, or the response time tells the two
       // apart. The same dummy verification an unknown sign-in performs.
-      await this.passwordCredentials.verifyForUnknownAccount(input.password || randomUUID());
+      await this.passwordCredentials.verifyForUnknownAccount(
+        input.password || randomUUID(),
+      );
     }
 
     // Phase 10.1 — disposable/undeliverable addresses are refused here,
