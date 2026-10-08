@@ -82,6 +82,7 @@ import { CommunicationMetricsService } from '../../communications/metrics/commun
 import { CommunicationService } from '../../communications/services/communication.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { AcademyStaffRecipientsService } from '../../communications/services/academy-staff-recipients.service';
+import { SupersededRefreshTokenException } from '../errors/superseded-refresh-token.exception';
 import { UnprovenAccountService } from './unproven-account.service';
 import { TrustedDeviceService } from './trusted-device.service';
 import type { EmailOtpChallengeContract } from '../dto/contracts';
@@ -1845,8 +1846,16 @@ export class AuthService {
           }),
         );
       }
-      // Covers: unknown token, already-revoked token (including a replay
-      // of a token a concurrent request just rotated), and expired token —
+      // Stale-tab recovery — a token a concurrent request rotated a moment
+      // ago (inside the grace): the same 401, but flagged so the controller
+      // leaves the browser's newer session cookie alone.
+      if (
+        !reused &&
+        (await this.refreshTokensRepository.findReusedRotation(presentedHash, 0))
+      ) {
+        throw new SupersededRefreshTokenException();
+      }
+      // Covers: unknown token, already-revoked token, and expired token —
       // all collapse to the same generic 401, never distinguishing which,
       // so a caller can't probe for which failure mode applies.
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
