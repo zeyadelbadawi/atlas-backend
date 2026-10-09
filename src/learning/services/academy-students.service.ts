@@ -31,6 +31,7 @@ import { AcademiesRepository } from '../../academy/repositories/academies.reposi
 import { CoursesRepository } from '../../course/repositories/courses.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
+import { readStudentPhones } from '../../identity/phone/user-phone.service';
 import { AcademyRosterRepository } from '../repositories/academy-roster.repository';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { EnrollmentsService } from './enrollments.service';
@@ -172,13 +173,13 @@ export class AcademyStudentsService {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
-    const { items, totalItems } =
+    const { items, totalItems, phones } =
       await this.tenancyContextService.runInTenantAndUserContext(
         organizationId,
         userId,
         async (tx) => {
           const viewer = await this.resolveViewer(tx, academyId, userId);
-          return this.rosterRepository.findManyForAcademy(tx, academyId, {
+          const result = await this.rosterRepository.findManyForAcademy(tx, academyId, {
             search: query.search?.trim() || undefined,
             status: query.status,
             courseId: query.courseId,
@@ -189,11 +190,27 @@ export class AcademyStudentsService {
             restrictToCourseIds:
               viewer.scope === 'assigned_courses' ? viewer.courseIds : undefined,
           });
+          // Phone numbers: owner/administrator/manager only, never an
+          // instructor. The SQL reader re-checks the role itself.
+          const phones =
+            viewer.scope === 'academy'
+              ? await readStudentPhones(
+                  tx,
+                  academyId,
+                  result.items.map((row) => row.userId),
+                )
+              : null;
+          return { ...result, phones };
         },
       );
 
     return {
-      items: items.map(toAcademyRosterStudentResponse),
+      items: items.map((row) =>
+        toAcademyRosterStudentResponse(
+          row,
+          phones ? (phones.get(row.userId) ?? null) : undefined,
+        ),
+      ),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
     };
   }
@@ -234,13 +251,20 @@ export class AcademyStudentsService {
           this.rosterRepository.countDevicesForStudent(tx, academyId, studentUserId),
         ]);
 
+        const phones =
+          viewer.scope === 'academy'
+            ? await readStudentPhones(tx, academyId, [studentUserId])
+            : null;
         const counts = {
           enrollmentCount: enrollments.length,
           activeEnrollmentCount: enrollments.filter((row) => isEnrollmentActive(row))
             .length,
         };
         return {
-          student: toAcademyRosterStudentResponse({ ...membership, ...counts }),
+          student: toAcademyRosterStudentResponse(
+            { ...membership, ...counts },
+            phones ? (phones.get(studentUserId) ?? null) : undefined,
+          ),
           enrollments: enrollments.map((row) =>
             toRosterEnrollmentResponse(row, isEnrollmentActive(row)),
           ),

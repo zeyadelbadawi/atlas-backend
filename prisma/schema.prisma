@@ -345,8 +345,8 @@ model UserPhone {
   userId      String    @id @map("user_id")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// E.164, normalised server-side by libphonenumber (`+201001234567`).
-  /// Not unique: families legitimately share one number.
-  phoneE164   String    @map("phone_e164") @db.VarChar(16)
+  /// Unique: one account per number (20261110000400_user_phone_unique_staff_read).
+  phoneE164   String    @unique(map: "user_phones_phone_e164_key") @map("phone_e164") @db.VarChar(16)
   /// ISO 3166-1 alpha-2 country the person chose (`EG`). Kept alongside the
   /// number because one calling code can serve several countries (+1, +7).
   countryCode String    @map("country_code") @db.VarChar(2)

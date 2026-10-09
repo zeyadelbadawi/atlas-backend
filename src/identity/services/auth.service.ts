@@ -22,6 +22,9 @@ import { UsersRepository } from '../repositories/users.repository';
 import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
 import {
   createPhoneForNewAccount,
+  isPhoneTaken,
+  isPhoneUniqueViolation,
+  phoneTakenError,
   requireNormalizedPhone,
 } from '../phone/user-phone.service';
 import { deriveDeviceLabel } from '../utils/request-metadata.util';
@@ -538,6 +541,12 @@ export class AuthService {
     if (academySignup) {
       await this.signInThrottle.enforce({ email, ipAddress: input.context?.ipAddress });
     }
+    // One account per number. The account itself may re-enter its own
+    // number (an existing learner joining another academy), so it is
+    // excluded; the answer is the same "already in use" whoever holds it.
+    if (phone && (await isPhoneTaken(this.prisma, phone.e164, existing?.id ?? null))) {
+      throw phoneTakenError();
+    }
     // Launch Stabilization A4 — one global identity may be a learner at many
     // academies. An academy signup with an email that already has an Atlas
     // account ADDS this academy to that account once the account's own
@@ -761,6 +770,18 @@ export class AuthService {
             throw new ConflictException({
               messageKey: 'errors.auth.emailAlreadyRegistered',
             });
+          }
+          // Two registrations racing for one phone number: the index decides.
+          // PostgreSQL may not name the index (RLS hides the other row), so an
+          // unnamed P2002 is settled by asking, as for the email above.
+          if (
+            phone &&
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002' &&
+            (isPhoneUniqueViolation(error) ||
+              (await isPhoneTaken(this.prisma, phone.e164, null)))
+          ) {
+            throw phoneTakenError();
           }
           // W4 — a name conflict that escaped the in-transaction checks
           // (a writer that skipped the advisory lock): settled by asking,

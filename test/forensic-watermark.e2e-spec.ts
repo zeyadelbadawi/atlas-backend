@@ -109,6 +109,10 @@ describe('Forensic video watermark (e2e)', () => {
 
   async function signedIn(label: string) {
     await flushRateLimitKeys();
+    // Phone numbers are unique: each new account takes over this suite's own
+    // fixed test number (snapshots already issued keep the number they
+    // recorded). Not used by any other suite, so parallel suites never collide.
+    await admin.userPhone.deleteMany({ where: { phoneE164: '+201551234567' } });
     const email = uniqueTestEmail(label);
     await http()
       .post('/auth/register')
@@ -116,7 +120,7 @@ describe('Forensic video watermark (e2e)', () => {
         name: `Watermark ${label}`,
         email,
         password: PASSWORD,
-        phoneNumber: '01001234567',
+        phoneNumber: '01551234567',
         phoneCountry: 'EG',
       })
       .expect(201);
@@ -321,7 +325,7 @@ describe('Forensic video watermark (e2e)', () => {
     expect(snapshot).toMatchObject({
       name: w.learner.name,
       email: w.learner.email,
-      phoneE164: '+201001234567',
+      phoneE164: '+201551234567',
       phoneCountry: 'EG',
       target: { courseTitle: w.course.title, lessonTitle: w.videoLesson.title },
     });
@@ -573,7 +577,7 @@ describe('Forensic video watermark (e2e)', () => {
       identityAtIssue: {
         name: w.learner.name,
         email: w.learner.email,
-        phone: '+201001234567',
+        phone: '+201551234567',
         phoneCountry: 'EG',
       },
       content: {
@@ -685,7 +689,7 @@ describe('Forensic video watermark (e2e)', () => {
     expect(found.body.identityAtIssue).toEqual({
       name: w.learner.name,
       email: w.learner.email,
-      phone: '+201001234567',
+      phone: '+201551234567',
       phoneCountry: 'EG',
     });
   });

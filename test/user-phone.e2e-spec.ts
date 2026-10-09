@@ -59,8 +59,23 @@ describe('User phone number (e2e)', () => {
     await app.close();
   });
 
+  /**
+   * Numbers are unique (20261110000400). The fixed numbers these tests
+   * assert on are freed before each test, so reruns against a long-lived
+   * local database do not collide with an earlier run's accounts.
+   */
+  const FIXED_NUMBERS = [
+    '+201001234567',
+    '+201101234567',
+    '+201012345678',
+    '+201201234567',
+    '+966501234567',
+    ...[0, 1, 2, 3, 4, 5, 6].map((d) => `+20100123456${d}`),
+  ];
+
   beforeEach(async () => {
     await flushRateLimitKeys();
+    await admin.userPhone.deleteMany({ where: { phoneE164: { in: FIXED_NUMBERS } } });
   });
 
   const http = () => request(app.getHttpServer());
@@ -154,7 +169,7 @@ describe('User phone number (e2e)', () => {
     },
   );
 
-  it('PHONE-03 — an existing address with a bad number gets the very same 400 (no enumeration); a shared number is accepted', async () => {
+  it('PHONE-03 — an existing address with a bad number gets the very same 400 (no enumeration); a number in use is refused without saying whose', async () => {
     const first = await register('p03-existing', {
       phoneNumber: '01001234567',
       phoneCountry: 'EG',
@@ -169,13 +184,27 @@ describe('User phone number (e2e)', () => {
     expect(fresh.res.status).toBe(400);
     expect(existing.body.error.violations).toEqual(fresh.res.body.error.violations);
 
-    // Families share numbers: the same number on a second account is fine,
-    // and an existing address with a good number is answered like a new one.
+    // One account per number: a second account with the same number (in
+    // any notation) is refused with "already in use" — nothing about whose.
     const sibling = await register('p03-sibling', {
       phoneNumber: '+20 100 123 4567',
       phoneCountry: 'EG',
     });
-    expect(sibling.res.status).toBe(201);
+    expect(sibling.res.status).toBe(409);
+    expect(sibling.res.body.error.messageKey).toBe('errors.auth.phoneTaken');
+    expect(sibling.res.body.error.violations).toEqual([
+      { field: 'phoneNumber', messageKey: 'validation:phoneTaken' },
+    ]);
+    expect(JSON.stringify(sibling.res.body)).not.toContain(first.email);
+    expect(await admin.user.findUnique({ where: { email: sibling.email } })).toBeNull();
+
+    // The account that holds the number may enter it again (an existing
+    // learner signing up at another academy): answered like a new address.
+    const fresh2 = await register('p03-fresh2', {
+      phoneNumber: '01001234566',
+      phoneCountry: 'EG',
+    });
+    expect(fresh2.res.status).toBe(201);
     const again = await http().post('/auth/register').send({
       name: 'Again',
       email: first.email,
@@ -184,7 +213,21 @@ describe('User phone number (e2e)', () => {
       phoneCountry: 'EG',
     });
     expect(again.status).toBe(201);
-    expect(again.body).toEqual(sibling.res.body);
+    expect(again.body).toEqual(fresh2.res.body);
+
+    // The profile refuses someone else's number the same way, and keeps the old one.
+    const other = await signedIn('p03-other', {
+      phoneNumber: '01001234565',
+      phoneCountry: 'EG',
+    });
+    const taken = await http()
+      .put('/users/me/phone')
+      .set(bearer(other.token))
+      .send({ phoneNumber: '01001234567', phoneCountry: 'EG' });
+    expect(taken.status).toBe(409);
+    expect(taken.body.error.messageKey).toBe('errors.auth.phoneTaken');
+    expect(JSON.stringify(taken.body)).not.toContain(first.email);
+    expect((await phoneRow(other.userId))?.phoneE164).toBe('+201001234565');
   });
 
   it('PHONE-04 — the profile reads, adds, changes and removes the number; /users/me never carries it', async () => {
@@ -345,7 +388,7 @@ describe('User phone number (e2e)', () => {
     return { owner, orgId: org.id, academyId: academy.id, host };
   }
 
-  it('PHONE-08 — an academy learner sign-up stores the number; the academy owner sees it on no roster response', async () => {
+  it('PHONE-08 — an academy learner sign-up stores the number; owner and Platform Owner see it, an instructor or outsider never', async () => {
     const a = await academyWithOwner('p08');
     const email = uniqueTestEmail('p08-learner');
     await http()
@@ -384,12 +427,56 @@ describe('User phone number (e2e)', () => {
       .get(`/academies/${a.academyId}/students/${learner.id}`)
       .set(bearer(a.owner.token))
       .set('X-Academy-Id', a.academyId);
-    // Whatever the roster answers, the number is not in it.
-    for (const res of [roster, detail]) {
-      expect(JSON.stringify(res.body)).not.toContain('1012345678');
-    }
+    // The academy owner sees the student's number on the roster and detail.
     expect(roster.status).toBe(200);
-    expect(JSON.stringify(roster.body)).toContain(learner.id);
+    const item = roster.body.items.find(
+      (row: { userId: string }) => row.userId === learner.id,
+    );
+    expect(item.phone).toEqual({ e164: '+201012345678', country: 'EG' });
+    expect(detail.status).toBe(200);
+    expect(detail.body.student.phone).toEqual({ e164: '+201012345678', country: 'EG' });
+
+    // An instructor of the academy, or an outsider, gets nothing from the
+    // SQL reader — it decides from app.current_user_id, not from the caller.
+    const instructor = await signedIn('p08-instructor');
+    await seedAcademyMember(admin, a.academyId, instructor.userId, 'instructor');
+    const outsider = await signedIn('p08-outsider');
+    for (const viewer of [instructor.userId, outsider.userId, learner.id]) {
+      const rows = await tenancy.runInUserContext(
+        viewer,
+        (tx) =>
+          tx.$queryRaw<
+            unknown[]
+          >`SELECT * FROM academy_student_phones(${a.academyId}, ARRAY[${learner.id}]::text[])`,
+      );
+      expect(rows).toEqual([]);
+      const platformRows = await tenancy.runInUserContext(
+        viewer,
+        (tx) =>
+          tx.$queryRaw<
+            unknown[]
+          >`SELECT * FROM platform_student_phones(ARRAY[${learner.id}]::text[])`,
+      );
+      expect(platformRows).toEqual([]);
+    }
+
+    // The Platform Owner sees it on the platform user view — and only for
+    // academy students (the academy owner is not one: no number shown).
+    const po = await signedIn('p08-po');
+    await admin.user.update({
+      where: { id: po.userId },
+      data: { isPlatformOwner: true },
+    });
+    const poView = await http()
+      .get(`/platform-users/${learner.id}`)
+      .set(bearer(po.token))
+      .expect(200);
+    expect(poView.body.phone).toEqual({ e164: '+201012345678', country: 'EG' });
+    const ownerView = await http()
+      .get(`/platform-users/${a.owner.userId}`)
+      .set(bearer(po.token))
+      .expect(200);
+    expect(ownerView.body.phone).toBeNull();
   });
 
   it('PHONE-09 — RLS: only the account itself can read or write its number', async () => {

@@ -1,24 +1,32 @@
 /**
  * The caller's OWN phone number — `GET|PUT|DELETE /users/me/phone`.
  *
- * WHO CAN READ IT. Only the account itself. `user_phones` is FORCE-RLS'd to
- * `app.current_user_id` for every command (migration
- * `20261110000200_user_phone`), and every read/write here runs inside
- * `runInUserContext(userId)` for the access token's own subject — there is
- * no user id parameter anywhere, so there is nothing to swap. Academy staff,
- * organization owners and the Platform Owner have no route and no policy.
+ * WHO CAN READ IT. Through this service, only the account itself.
+ * `user_phones` is FORCE-RLS'd to `app.current_user_id` for every command
+ * (migration `20261110000200_user_phone`), and every read/write here runs
+ * inside `runInUserContext(userId)` for the access token's own subject —
+ * there is no user id parameter anywhere, so there is nothing to swap.
+ * Academy owners/administrators/managers and the Platform Owner read their
+ * students' numbers only through the SECURITY DEFINER readers of
+ * `20261110000400_user_phone_unique_staff_read` (see `readStudentPhones`).
+ *
+ * ONE ACCOUNT PER NUMBER. A unique index decides; `user_phone_taken()` lets
+ * registration and a profile change answer "this number is already in use"
+ * before writing. The answer never says whose number it is.
  *
  * WHAT IS LOGGED. Never the number. The audit rows carry only the country
  * code and what kind of change it was; nothing here logs the value.
  */
 import {
   BadRequestException,
+  ConflictException,
   HttpException,
   HttpStatus,
   Injectable,
   Logger,
 } from '@nestjs/common';
-import type { Prisma, UserPhone } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { UserPhone } from '@prisma/client';
 import { parsePhoneNumberWithError } from 'libphonenumber-js/max';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
@@ -88,6 +96,79 @@ export function requireNormalizedPhone(
   return result.phone;
 }
 
+/**
+ * "This number is already in use" — the same violation shape as a DTO error
+ * on `phoneNumber`, so the form shows it on the field. It says nothing about
+ * which account holds the number.
+ */
+export function phoneTakenError(): HttpException {
+  return new ConflictException({
+    messageKey: 'errors.auth.phoneTaken',
+    violations: [{ field: 'phoneNumber', messageKey: 'validation:phoneTaken' }],
+  });
+}
+
+/** Minimal surface shared by `PrismaService` and a transaction client. */
+interface RawQueryClient {
+  $queryRaw<T = unknown>(query: Prisma.Sql): Promise<T>;
+}
+
+/**
+ * Whether another account already holds this E.164 number. A bare boolean
+ * from a SECURITY DEFINER function — the caller never sees the other row.
+ */
+export async function isPhoneTaken(
+  client: RawQueryClient,
+  e164: string,
+  excludeUserId: string | null,
+): Promise<boolean> {
+  const rows = await client.$queryRaw<Array<{ taken: boolean }>>(
+    Prisma.sql`SELECT user_phone_taken(${e164}, ${excludeUserId}) AS taken`,
+  );
+  return rows[0]?.taken === true;
+}
+
+/** A P2002 from `user_phones` — the unique index lost a race. */
+export function isPhoneUniqueViolation(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (error.code !== 'P2002') return false;
+  const target = error.meta?.target;
+  const fields = Array.isArray(target) ? target.map(String) : [String(target ?? '')];
+  return fields.some((field) => field.includes('phone'));
+}
+
+/** One masked-free phone entry for a staff or Platform Owner reader. */
+export interface StudentPhoneEntry {
+  readonly e164: string;
+  readonly country: string;
+}
+
+/**
+ * Students' numbers for an authorised reader, keyed by user id. The SQL
+ * functions decide from `app.current_user_id`, so a caller outside the
+ * scope simply gets an empty map: academy owner/administrator/manager (or
+ * the organization owner) for students of `academyId`; the Platform Owner
+ * (`academyId` null) for any academy student.
+ */
+export async function readStudentPhones(
+  client: RawQueryClient,
+  academyId: string | null,
+  userIds: readonly string[],
+): Promise<Map<string, StudentPhoneEntry>> {
+  if (userIds.length === 0) return new Map();
+  const ids = [...userIds];
+  const rows = await client.$queryRaw<
+    Array<{ user_id: string; phone_e164: string; country_code: string }>
+  >(
+    academyId
+      ? Prisma.sql`SELECT * FROM academy_student_phones(${academyId}, ${ids}::text[])`
+      : Prisma.sql`SELECT * FROM platform_student_phones(${ids}::text[])`,
+  );
+  return new Map(
+    rows.map((row) => [row.user_id, { e164: row.phone_e164, country: row.country_code }]),
+  );
+}
+
 /** Inserts the phone row for a brand-new account, inside the registration transaction (the new user's own RLS context is already set). */
 export async function createPhoneForNewAccount(
   tx: Prisma.TransactionClient,
@@ -135,10 +216,14 @@ export class UserPhoneService {
       return this.toResponse(current);
     }
     await this.consumeChangeBudget(userId);
+    // After the budget: probing numbers costs the same as changing one.
+    const taken = await this.tenancyContextService.runInUserContext(userId, (tx) =>
+      isPhoneTaken(tx, phone.e164, userId),
+    );
+    if (taken) throw phoneTakenError();
 
-    const updated = await this.tenancyContextService.runInUserContext(
-      userId,
-      async (tx) => {
+    const updated = await this.tenancyContextService
+      .runInUserContext(userId, async (tx) => {
         const before = await tx.userPhone.findUnique({ where: { userId } });
         const numberChanged = before?.phoneE164 !== phone.e164;
         const row = await tx.userPhone.upsert({
@@ -165,8 +250,22 @@ export class UserPhoneService {
           },
         });
         return row;
-      },
-    );
+      })
+      .catch(async (error: unknown) => {
+        // Two accounts saving the same number at once: the index decides.
+        // PostgreSQL may not name it (RLS hides the other row), so ask.
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002' &&
+          (isPhoneUniqueViolation(error) ||
+            (await this.tenancyContextService.runInUserContext(userId, (tx) =>
+              isPhoneTaken(tx, phone.e164, userId),
+            )))
+        ) {
+          throw phoneTakenError();
+        }
+        throw error;
+      });
     return this.toResponse(updated);
   }
 
