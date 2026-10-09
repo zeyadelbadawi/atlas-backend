@@ -15,6 +15,10 @@
 import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Phase2MaintenanceService } from './phase2-maintenance.service';
+import { ConfigService } from '@nestjs/config';
+import { ForensicWatermarkService } from '../../forensic-watermark/services/forensic-watermark.service';
+
+const WATERMARK_RETENTION_DAYS = 730;
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { ContentAccessLogRepository } from '../repositories/content-access-log.repository';
@@ -45,6 +49,7 @@ describe('Phase2MaintenanceService — retention sweep', () => {
   let reconciliation: { pollStalled: jest.Mock };
   let quizEngine: { finalizeOverdue: jest.Mock };
   let metrics: { recordRetentionPruned: jest.Mock; recordRetentionSweepRun: jest.Mock };
+  let forensicWatermarks: { pruneOlderThan: jest.Mock };
   let nowSpy: jest.SpyInstance;
   const silenced: jest.SpyInstance[] = [];
 
@@ -77,6 +82,7 @@ describe('Phase2MaintenanceService — retention sweep', () => {
     reconciliation = { pollStalled: jest.fn().mockResolvedValue(0) };
     quizEngine = { finalizeOverdue: jest.fn().mockResolvedValue(0) };
     metrics = { recordRetentionPruned: jest.fn(), recordRetentionSweepRun: jest.fn() };
+    forensicWatermarks = { pruneOlderThan: jest.fn().mockResolvedValue(7) };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -91,6 +97,11 @@ describe('Phase2MaintenanceService — retention sweep', () => {
         { provide: VideoReconciliationService, useValue: reconciliation },
         { provide: QuizAttemptEngineService, useValue: quizEngine },
         { provide: LearningMetricsService, useValue: metrics },
+        { provide: ForensicWatermarkService, useValue: forensicWatermarks },
+        {
+          provide: ConfigService,
+          useValue: { getOrThrow: () => ({ retentionDays: WATERMARK_RETENTION_DAYS }) },
+        },
       ],
     }).compile();
     service = moduleRef.get(Phase2MaintenanceService);
@@ -123,11 +134,11 @@ describe('Phase2MaintenanceService — retention sweep', () => {
     // Both prunes went through the platform owner's user context (row
     // visibility; the DELETE policies still bound what is deleted) —
     // never the context-free transaction, which RLS turns into a no-op.
-    expect(runInUserContext).toHaveBeenCalledTimes(2);
-    expect(runInUserContext.mock.calls[1][0]).toBe(PLATFORM_OWNER_ID);
+    expect(runInUserContext).toHaveBeenCalledTimes(3);
+    expect(runInUserContext.mock.calls[2][0]).toBe(PLATFORM_OWNER_ID);
     expect(runWithoutContext).not.toHaveBeenCalled();
     // Never a tenant context: retention is platform-wide.
-    expect(usersRepository.findFirstPlatformOwnerId).toHaveBeenCalledTimes(2);
+    expect(usersRepository.findFirstPlatformOwnerId).toHaveBeenCalledTimes(3);
   });
 
   it('with no platform owner account both prunes are skipped: 0 rows, an error run per table, no delete attempted, nothing thrown', async () => {
@@ -135,6 +146,8 @@ describe('Phase2MaintenanceService — retention sweep', () => {
     const result = await service.run();
     expect(result.prunedAccessLogRows).toBe(0);
     expect(result.prunedQuizAttemptEventRows).toBe(0);
+    expect(result.prunedWatermarkRows).toBe(0);
+    expect(forensicWatermarks.pruneOlderThan).not.toHaveBeenCalled();
     expect(runInUserContext).not.toHaveBeenCalled();
     expect(accessLog.pruneOlderThan).not.toHaveBeenCalled();
     expect(quizAttempts.pruneEventsOlderThan).not.toHaveBeenCalled();
@@ -146,7 +159,11 @@ describe('Phase2MaintenanceService — retention sweep', () => {
       'quiz_attempt_events',
       false,
     );
-    expect(metrics.recordRetentionSweepRun).toHaveBeenCalledTimes(2);
+    expect(metrics.recordRetentionSweepRun).toHaveBeenCalledWith(
+      'forensic_watermarks',
+      false,
+    );
+    expect(metrics.recordRetentionSweepRun).toHaveBeenCalledTimes(3);
     expect(metrics.recordRetentionPruned).not.toHaveBeenCalled();
     // The other duties are unaffected.
     expect(reconciliation.pollStalled).toHaveBeenCalledTimes(1);
@@ -157,6 +174,7 @@ describe('Phase2MaintenanceService — retention sweep', () => {
     const result = await service.run();
     expect(result).toEqual({
       prunedAccessLogRows: 3,
+      prunedWatermarkRows: 7,
       prunedQuizAttemptEventRows: 5,
       reconciledVideos: 0,
       finalizedOverdueQuizAttempts: 0,
@@ -171,8 +189,9 @@ describe('Phase2MaintenanceService — retention sweep', () => {
       true,
     );
     expect(metrics.recordRetentionPruned).toHaveBeenCalledWith('quiz_attempt_events', 5);
-    expect(metrics.recordRetentionSweepRun).toHaveBeenCalledTimes(2);
-    expect(metrics.recordRetentionPruned).toHaveBeenCalledTimes(2);
+    expect(metrics.recordRetentionPruned).toHaveBeenCalledWith('forensic_watermarks', 7);
+    expect(metrics.recordRetentionSweepRun).toHaveBeenCalledTimes(3);
+    expect(metrics.recordRetentionPruned).toHaveBeenCalledTimes(3);
   });
 
   it('a failing quiz-event prune never throws out of run(), counts as an error run, and leaves the other duties intact', async () => {
@@ -207,7 +226,29 @@ describe('Phase2MaintenanceService — retention sweep', () => {
       'quiz_attempt_events',
       true,
     );
-    expect(metrics.recordRetentionPruned).toHaveBeenCalledTimes(1);
+    expect(metrics.recordRetentionPruned).toHaveBeenCalledTimes(2);
     expect(metrics.recordRetentionPruned).toHaveBeenCalledWith('quiz_attempt_events', 5);
+  });
+
+  it('prunes forensic watermarks last shown before the configured window, as the platform owner', async () => {
+    await service.run();
+    expect(forensicWatermarks.pruneOlderThan).toHaveBeenCalledTimes(1);
+    const [tx, cutoff] = forensicWatermarks.pruneOlderThan.mock.calls[0] as [
+      unknown,
+      Date,
+    ];
+    expect(tx).toBe(TX);
+    expect(cutoff.getTime()).toBe(NOW - WATERMARK_RETENTION_DAYS * DAY_MS);
+  });
+
+  it('a failing watermark prune is contained and counted as an error run', async () => {
+    forensicWatermarks.pruneOlderThan.mockRejectedValue(new Error('boom'));
+    const result = await service.run();
+    expect(result.prunedWatermarkRows).toBe(0);
+    expect(result.prunedAccessLogRows).toBe(3);
+    expect(metrics.recordRetentionSweepRun).toHaveBeenCalledWith(
+      'forensic_watermarks',
+      false,
+    );
   });
 });

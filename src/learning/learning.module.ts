@@ -115,6 +115,7 @@ import { QuizDeadlineProducer } from './queue/quiz-deadline.producer';
 import { QuizDeadlineProcessor } from './queue/quiz-deadline.processor';
 import { QUIZ_DEADLINE_QUEUE } from './queue/quiz-deadline.types';
 import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.types';
+import { ForensicWatermarkModule } from '../forensic-watermark/forensic-watermark.module';
 
 @Module({
   imports: [
@@ -138,6 +139,9 @@ import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.t
     // completion evaluator enqueues into (processed by CertificatesModule).
     BullModule.registerQueue({ name: QUIZ_DEADLINE_QUEUE }),
     BullModule.registerQueue({ name: CERTIFICATE_JOBS_QUEUE }),
+    // Mandatory forensic video watermark: issued on every video grant,
+    // touched by the heartbeat, pruned by the maintenance sweep.
+    ForensicWatermarkModule,
   ],
   controllers: [
     CourseDiscoveryController,

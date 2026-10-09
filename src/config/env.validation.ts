@@ -719,6 +719,30 @@ const EnvSchema = z.object({
       'UNSUBSCRIBE_TOKEN_KEY must be a 64-character hex string.',
     )
     .optional(),
+  // Forensic video watermark (docs/FORENSIC_WATERMARK.md) — optional
+  // dedicated AES-256-GCM key for the identity snapshot; HKDF-derived from
+  // PAYMENT_CREDENTIALS_ENCRYPTION_KEY under its own label when unset. Never
+  // rotate whichever source is in use once snapshots exist: every stored
+  // snapshot would become unreadable.
+  WATERMARK_SNAPSHOT_KEY: z
+    .string()
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'WATERMARK_SNAPSHOT_KEY must be a 64-character hex string.',
+    )
+    .optional(),
+  // How long a forensic watermark record is kept after it was last shown.
+  // Bounded below by the 90-day floor the database's delete policy also
+  // enforces, so a configuration mistake cannot erase fresh evidence.
+  WATERMARK_RETENTION_DAYS: z.coerce.number().int().min(90).max(3650).default(730),
+  // Platform Owner watermark lookups per owner per window (rate limit).
+  WATERMARK_LOOKUP_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(1000).default(30),
+  WATERMARK_LOOKUP_RATE_LIMIT_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(10)
+    .max(86400)
+    .default(600),
 
   // --- Phase P17 — Notifications, Email & Search (master plan §12
   // "Transactional email", §21 P17) ---

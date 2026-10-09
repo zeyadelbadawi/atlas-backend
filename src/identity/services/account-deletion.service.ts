@@ -444,6 +444,14 @@ export class AccountDeletionService {
       });
       await tx.accountDeletionChallenge.deleteMany({ where: { userId } });
 
+      // NOTE: forensic watermark records (`forensic_watermarks`) are NOT
+      // touched, deliberately. They carry no foreign key to `users` and an
+      // encrypted snapshot of the identity at the time a video was shown,
+      // so a recording leaked before (or after) this deletion can still be
+      // traced by the Platform Owner — the anti-piracy purpose disclosed in
+      // the privacy policy. Only the retention sweep removes them
+      // (docs/FORENSIC_WATERMARK.md, docs/ACCOUNT_DELETION_AND_DATA_LIFECYCLE.md).
+
       // NOTE: memberships are NOT removed here. They are tenant-scoped
       // and RLS-protected, and this transaction runs with no tenant
       // context — a `deleteMany` here silently matches zero rows and

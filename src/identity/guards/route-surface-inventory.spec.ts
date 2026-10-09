@@ -91,6 +91,10 @@ const SELF_OR_LEARNER = new Set<string>([
   'POST learning/courses/:id/lessons/:lessonId/playback/refresh',
   'GET learning/courses/:id/sequence',
   'POST learning/courses/:id/playback',
+  // Forensic watermark tamper report — counted only on the caller's OWN
+  // record (or, anonymously, their own device's) by a SECURITY DEFINER
+  // function; always 204, discloses nothing (docs/FORENSIC_WATERMARK.md).
+  'POST learning/watermarks/tamper',
   'POST learning/courses/:id/playback/release',
   'DELETE learning/courses/:id/progress/complete-lesson/:lessonId',
   'GET enrollments',

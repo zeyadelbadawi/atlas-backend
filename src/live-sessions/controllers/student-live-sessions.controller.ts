@@ -39,6 +39,18 @@ import { LiveProviderConnectionService } from '../services/live-provider-connect
 import { ZoomOAuthService } from '../services/zoom-oauth.service';
 import type { ZoomConfig } from '../../config/configuration';
 import { ZoomProvider } from '../providers/zoom.provider';
+import {
+  ForensicWatermarkService,
+  WatermarkIssuanceError,
+  type IssuedWatermark,
+} from '../../forensic-watermark/services/forensic-watermark.service';
+import { readCookie } from '../../common/http/cookies.util';
+import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
+import {
+  resolveClientCountry,
+  resolveClientIp,
+  resolveUserAgent,
+} from '../../identity/utils/request-metadata.util';
 
 /**
  * What a student's client is told about a session.
@@ -76,6 +88,7 @@ export class StudentLiveSessionsController {
     private readonly connectionService: LiveProviderConnectionService,
     private readonly zoomOAuthService: ZoomOAuthService,
     private readonly zoomProvider: ZoomProvider,
+    private readonly forensicWatermarks: ForensicWatermarkService,
   ) {}
 
   /**
@@ -295,6 +308,41 @@ export class StudentLiveSessionsController {
     }
 
     const isHost = redeemed.role === 'host';
+
+    /*
+      FORENSIC WATERMARK (docs/FORENSIC_WATERMARK.md) — issued BEFORE the
+      SDK signature, and fail-closed: a live class is never joinable
+      without the per-viewer code the embed draws over the meeting. The
+      host is watermarked too (no exemption). Issued in the viewer's own
+      user context, the only context the record admits.
+    */
+    let watermark: IssuedWatermark;
+    try {
+      watermark = await this.forensicWatermarks.issue(
+        {
+          userId,
+          sessionId: request.authContext?.sessionId ?? null,
+          deviceCookie: readCookie(request.headers.cookie, DEVICE_COOKIE_NAME) ?? null,
+          clientIp: resolveClientIp(request) ?? null,
+          country: resolveClientCountry(request) ?? null,
+          userAgent: resolveUserAgent(request) ?? null,
+          requestHost: request.hostname ?? null,
+        },
+        {
+          surface: 'live_session',
+          organizationId: context.organizationId,
+          academyId: context.academyId,
+          liveSessionId,
+          labels: { liveSessionTitle: context.title },
+        },
+      );
+    } catch (error) {
+      if (error instanceof WatermarkIssuanceError) {
+        return { joinable: false as const, reason: 'watermark_unavailable' };
+      }
+      throw error;
+    }
+
     /*
       SDK CREDENTIALS COME FROM ATLAS CONFIGURATION NOW, not from the
       academy. Atlas owns the Meeting SDK application, so there is one
@@ -352,6 +400,8 @@ export class StudentLiveSessionsController {
       expiresAt: signature.expiresAt.toISOString(),
       isHost,
       ...(hostToken ? { hostToken } : {}),
+      // What the embed must draw over the meeting — see above.
+      watermark: watermark.display,
     };
   }
 

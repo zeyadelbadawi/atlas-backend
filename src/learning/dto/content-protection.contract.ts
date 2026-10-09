@@ -16,10 +16,17 @@
  * with a screen recorder, and Atlas does not claim they do.
  */
 export interface AcademyContentProtection {
-  /** Draw a per-viewer identifying overlay on protected video. */
-  readonly watermark: boolean;
-  /** Overrides the default overlay text. Null uses the viewer's own short id. */
-  readonly watermarkText: string | null;
+  /**
+   * The per-viewer forensic watermark. MANDATORY since
+   * docs/FORENSIC_WATERMARK.md: always `true`, whatever is stored. Kept on
+   * the shape so the frontend already in production keeps reading it.
+   */
+  readonly watermark: true;
+  /**
+   * Always `null`. Custom overlay text used to REPLACE the viewer's identity,
+   * which made a leak untraceable; it is no longer honoured or stored.
+   */
+  readonly watermarkText: null;
   /** Ask the player to hide its download control (`controlsList`). */
   readonly disableDownload: boolean;
   /** Ask the browser to refuse picture-in-picture. */
@@ -42,15 +49,15 @@ export function resolveContentProtection(value: unknown): AcademyContentProtecti
     return DEFAULT_CONTENT_PROTECTION;
   }
   const raw = value as Record<string, unknown>;
-  const bool = (key: keyof AcademyContentProtection): boolean =>
+  const bool = (key: 'disableDownload' | 'disablePip' | 'disableContextMenu'): boolean =>
     typeof raw[key] === 'boolean'
       ? (raw[key] as boolean)
-      : (DEFAULT_CONTENT_PROTECTION[key] as boolean);
-  const text = raw.watermarkText;
+      : DEFAULT_CONTENT_PROTECTION[key];
   return {
-    watermark: bool('watermark'),
-    watermarkText:
-      typeof text === 'string' && text.trim().length > 0 ? text.trim() : null,
+    // Mandatory: a stored `false` (or custom text) from before the forensic
+    // watermark is ignored rather than honoured.
+    watermark: true,
+    watermarkText: null,
     disableDownload: bool('disableDownload'),
     disablePip: bool('disablePip'),
     disableContextMenu: bool('disableContextMenu'),
