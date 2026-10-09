@@ -13,8 +13,10 @@
  *     bytes and type, immutable for the current version only;
  *   - two Academies each get their own favicon; none means 404 and no
  *     version (the platform default stays);
- *   - only PNG/ICO data URLs or http(s) URLs are accepted.
+ *   - only PNG/ICO data URLs, own media paths or http(s) URLs are accepted,
+ *     and only Atlas-hosted favicons are ever served (W2: no open redirect).
  */
+import { randomUUID } from 'node:crypto';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
@@ -183,13 +185,53 @@ describe('Academy favicon on the public website (e2e)', () => {
     ]) {
       await setFavicon(a.token, a.academyId, bad).expect(400);
     }
+    // W2 — an external URL is still accepted on save (an existing value
+    // must not make the branding form unsavable), but it is NEVER
+    // redirected to: that was an open redirect on the Academy's own host,
+    // cached immutable for a year. The platform icon stays instead.
     await setFavicon(a.token, a.academyId, 'https://cdn.example.com/icon.png').expect(
       200,
     );
     const remote = await request(app.getHttpServer())
       .get(`/public/websites/${a.academyId}/favicon`)
       .redirects(0)
+      .expect(404);
+    expect(remote.headers.location).toBeUndefined();
+    expect((await resolve(a.host)).faviconVersion).toBeUndefined();
+  });
+
+  it('W2: redirects only to the Academy’s own uploaded image, same-origin and never immutable', async () => {
+    const a = await seedAcademyWithHost('fav-media-a');
+    const b = await seedAcademyWithHost('fav-media-b');
+    const ownPath = `/api/v1/public/media/academies/${a.academyId}/${randomUUID()}.png`;
+
+    await setFavicon(a.token, a.academyId, ownPath).expect(200);
+    const version = (await resolve(a.host)).faviconVersion;
+    expect(version).toMatch(/^[0-9a-f]{16}$/);
+    const own = await request(app.getHttpServer())
+      .get(`/public/websites/${a.academyId}/favicon`)
+      .query({ v: version })
+      .redirects(0)
       .expect(302);
-    expect(remote.headers.location).toBe('https://cdn.example.com/icon.png');
+    // Path only: the redirect cannot leave the host it was requested on.
+    expect(own.headers.location).toBe(ownPath);
+    expect(own.headers['cache-control']).toBe('public, max-age=300');
+
+    // An absolute URL naming an Atlas media path is reduced to the path.
+    await setFavicon(a.token, a.academyId, `https://evil.example${ownPath}`).expect(200);
+    const absolute = await request(app.getHttpServer())
+      .get(`/public/websites/${a.academyId}/favicon`)
+      .redirects(0)
+      .expect(302);
+    expect(absolute.headers.location).toBe(ownPath);
+
+    // Another Academy's media is not this Academy's favicon.
+    const otherPath = `/api/v1/public/media/academies/${b.academyId}/${randomUUID()}.png`;
+    await setFavicon(a.token, a.academyId, otherPath).expect(200);
+    await request(app.getHttpServer())
+      .get(`/public/websites/${a.academyId}/favicon`)
+      .redirects(0)
+      .expect(404);
+    expect((await resolve(a.host)).faviconVersion).toBeUndefined();
   });
 });

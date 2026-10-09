@@ -112,7 +112,8 @@ export class PublicWebsiteController implements OnModuleInit {
 
   /**
    * The Academy's own favicon (`favicon.util.ts`): the stored PNG/ICO
-   * bytes, or a redirect to its http(s) URL. The public site links it with
+   * bytes, or a same-origin redirect to its own uploaded image — never to
+   * an external URL (W2). The public site links it with
    * `?v=<faviconVersion>`; that exact version is immutable for a year, any
    * other (an old page still open after a change) only briefly cached.
    */
@@ -124,16 +125,20 @@ export class PublicWebsiteController implements OnModuleInit {
   ): Promise<void> {
     const favicon = await this.publicWebsiteService.getFavicon(academyId);
     if (!favicon) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    if (favicon.source.kind === 'media') {
+      // W2 — only ever a same-origin, path-only redirect to this Academy's
+      // own uploaded image, and never cached as immutable: a redirect is a
+      // pointer that must be able to change, not content.
+      response.setHeader('Cache-Control', 'public, max-age=300');
+      response.redirect(302, favicon.source.path);
+      return;
+    }
     response.setHeader(
       'Cache-Control',
       version === favicon.version
         ? 'public, max-age=31536000, immutable'
         : 'public, max-age=60',
     );
-    if (favicon.source.kind === 'remote') {
-      response.redirect(302, favicon.source.url);
-      return;
-    }
     response.setHeader('Content-Type', favicon.source.contentType);
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.status(200).end(favicon.source.bytes);

@@ -202,7 +202,7 @@ export class PublicWebsiteService {
       (tx) => this.academiesRepository.findById(tx, academyId),
     );
     const stored = academy?.faviconUrl;
-    return stored && parseFavicon(stored) ? faviconVersion(stored) : undefined;
+    return stored && parseFavicon(stored, academyId) ? faviconVersion(stored) : undefined;
   }
 
   /**
@@ -220,7 +220,7 @@ export class PublicWebsiteService {
       (tx) => this.academiesRepository.findById(tx, academyId),
     );
     const stored = academy?.faviconUrl;
-    const source = parseFavicon(stored);
+    const source = parseFavicon(stored, academyId);
     return stored && source ? { source, version: faviconVersion(stored) } : null;
   }
 
