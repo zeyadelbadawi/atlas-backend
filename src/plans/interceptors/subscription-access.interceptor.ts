@@ -38,8 +38,14 @@
  * subscription to consult, and the handler's own authorisation still runs
  * untouched afterwards.
  *
- * A route with neither — sign-in, password reset, the public website
- * runtime, platform-owner tooling — is still skipped, and deliberately:
+ * A5 — routes that scope themselves in their services with a COURSE or a
+ * BLOG POST id (course authoring, grading, course announcements, forum and
+ * review moderation, the blog) declare it with `@SubscriptionScope`, and
+ * that id is resolved — in the caller's own RLS context — to its academy.
+ *
+ * A route with none of these — sign-in, password reset, the public website
+ * runtime, platform-owner tooling, a learner's own submissions/attempts —
+ * is still skipped, and deliberately:
  * gating those on a tenant's subscription would be wrong, and for auth it
  * would lock a customer out of the very account they need in order to pay.
  *
@@ -61,6 +67,10 @@ import type { Request } from 'express';
 import { Observable } from 'rxjs';
 import { SubscriptionAccessService } from '../services/subscription-access.service';
 import { ALLOW_INACTIVE_SUBSCRIPTION_KEY } from '../decorators/allow-inactive-subscription.decorator';
+import {
+  SUBSCRIPTION_SCOPE_KEY,
+  type SubscriptionScopeSpec,
+} from '../decorators/subscription-scope.decorator';
 
 /** Methods that only read. `HEAD`/`OPTIONS` included so CORS preflight is never refused for a billing reason. */
 const READ_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -107,9 +117,43 @@ export class SubscriptionAccessInterceptor implements NestInterceptor {
       as an academy would consult the wrong tenant or none at all.
     */
     const academyId = request.params?.academyId;
-    if (!academyId) return next.handle();
+    if (academyId) {
+      await this.subscriptionAccessService.assertHasAccessForAcademy(academyId);
+      return next.handle();
+    }
 
-    await this.subscriptionAccessService.assertHasAccessForAcademy(academyId);
+    /*
+      A5 — no context and no `:academyId`, but the handler names how its
+      tenant is found (`@SubscriptionScope`): course authoring, grading,
+      course announcements, forum/review moderation and the blog. These
+      used to be skipped, so an expired tenant kept doing all of them.
+      `route-surface-inventory.spec` fails for any new management mutation
+      that is in none of these categories.
+    */
+    const scope = this.reflector.getAllAndOverride<SubscriptionScopeSpec | undefined>(
+      SUBSCRIPTION_SCOPE_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    const userId = request.authContext?.userId;
+    if (!scope || !userId) return next.handle();
+
+    if (scope.kind === 'course') {
+      const courseId = request.params?.[scope.param];
+      if (courseId) {
+        await this.subscriptionAccessService.assertHasAccessForCourse(courseId, userId);
+      }
+    } else if (scope.kind === 'blogPost') {
+      const postId = request.params?.[scope.param];
+      if (postId) {
+        await this.subscriptionAccessService.assertHasAccessForBlogPost(postId, userId);
+      }
+    } else {
+      const body = request.body as { academyId?: unknown } | undefined;
+      await this.subscriptionAccessService.assertHasAccessForBlogAuthor(
+        userId,
+        typeof body?.academyId === 'string' ? body.academyId : undefined,
+      );
+    }
     return next.handle();
   }
 }

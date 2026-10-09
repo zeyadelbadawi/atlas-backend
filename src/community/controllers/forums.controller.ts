@@ -26,6 +26,7 @@ import type {
   ForumThreadResponse,
 } from '../dto/forum.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { SubscriptionScope } from '../../plans/decorators/subscription-scope.decorator';
 
 @Controller('courses')
 @UseGuards(JwtAuthGuard)
@@ -101,6 +102,7 @@ export class ForumsController {
   // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async pinThread(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -113,6 +115,7 @@ export class ForumsController {
   // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async unpinThread(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -129,6 +132,7 @@ export class ForumsController {
   // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async lockThread(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -141,6 +145,7 @@ export class ForumsController {
   // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async unlockThread(
     @Req() request: Request,
     @Param('id') courseId: string,
