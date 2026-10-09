@@ -859,6 +859,21 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
     );
   }
 
+  // W15 — the protected tier exists to keep lesson files, submissions and
+  // video out of the publicly-served bucket. Pointing it at that same
+  // bucket boots fine and silently publishes everything it was meant to
+  // protect through `public/media`, so it is refused here instead.
+  if (
+    parsed.data.R2_PROTECTED_BUCKET &&
+    parsed.data.R2_PROTECTED_BUCKET.toLowerCase() ===
+      parsed.data.R2_BUCKET.trim().toLowerCase()
+  ) {
+    throw new Error(
+      'R2_PROTECTED_BUCKET must not be the same bucket as R2_BUCKET — refusing to start with ' +
+        'protected content stored in the publicly-served media bucket.',
+    );
+  }
+
   // P64 Phase 2 — selecting the real video provider without the credentials
   // to sign a playback token would boot an app that accepts uploads and
   // then refuses every play. Fail at startup instead, where an operator
