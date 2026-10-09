@@ -21,13 +21,20 @@ import {
 } from 'class-validator';
 
 export class ContentProtectionDto {
+  /**
+   * ACCEPTED AND IGNORED. The forensic watermark is mandatory
+   * (docs/FORENSIC_WATERMARK.md); the frontend already in production still
+   * sends this field, so it is validated loosely and never fails the
+   * request — and never changes anything.
+   */
+  @IsOptional()
   @IsBoolean()
-  watermark!: boolean;
+  watermark?: boolean;
 
-  /** Null (or omitted) uses the viewer's own short id — see `content-protection.contract.ts`. */
+  /** ACCEPTED AND IGNORED — custom text no longer replaces the viewer's identity. */
   @IsOptional()
   @IsString()
-  @MaxLength(80)
+  @MaxLength(200)
   watermarkText?: string;
 
   @IsBoolean()

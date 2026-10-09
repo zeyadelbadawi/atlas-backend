@@ -6468,3 +6468,80 @@ model CustomerRequestRoutingRule {
 
   @@map("customer_request_routing_rules")
 }
+
+/// Forensic video watermark (docs/FORENSIC_WATERMARK.md) — which surface a
+/// code was drawn on.
+enum ForensicWatermarkSurface {
+  /// A hosted (MP4 / Cloudflare Stream) or YouTube video inside a lesson,
+  /// for an enrolled learner or a staff previewer.
+  lesson_video
+  /// A free preview lesson on an academy website — possibly anonymous.
+  course_preview
+  /// An embedded live class (Zoom Meeting SDK).
+  live_session
+
+  @@map("forensic_watermark_surface")
+}
+
+/// One forensic watermark code: what was shown, to whom, on which session
+/// and device. Issued (or reused) on every video grant and live-class join,
+/// drawn by the player over the picture, and looked up by the Platform Owner
+/// when a recording leaks.
+///
+/// NO FOREIGN KEYS, ON PURPOSE. The record must outlive everything it points
+/// at — a deleted account, an archived academy, a removed lesson — because a
+/// leaked recording outlives them too. Ids are kept as plain values and the
+/// identity is snapshotted, encrypted, at issue time.
+///
+/// FORCE RLS: readable only by a Platform Owner; written only through the
+/// `forensic_watermark_*` SECURITY DEFINER functions, which admit a row only
+/// for the caller's own `app.current_user_id` (or, for an anonymous course
+/// preview, only with no user context at all). See migration
+/// `20261110000300_forensic_watermarks`.
+model ForensicWatermark {
+  id               String                   @id @default(uuid())
+  /// Ten Crockford base32 symbols (nine random + one mod-37 check), stored
+  /// without the display dash: `7K3QMX9TR2` is shown as `7K3QM-X9TR2`.
+  code             String                   @unique @db.VarChar(10)
+  /// SHA-256 of (surface, viewer, session, target). One code per key: the
+  /// same session watching the same video again reuses its code; a new
+  /// session gets a new one.
+  sessionKey       String                   @unique @map("session_key") @db.VarChar(64)
+  surface          ForensicWatermarkSurface
+  /// Null only for an anonymous course preview. Never a foreign key — see
+  /// the model comment.
+  userId           String?                  @map("user_id")
+  organizationId   String?                  @map("organization_id")
+  academyId        String                   @map("academy_id")
+  courseId         String?                  @map("course_id")
+  lessonId         String?                  @map("lesson_id")
+  liveSessionId    String?                  @map("live_session_id")
+  /// The refresh-token family (`refresh_tokens.session_id`) the viewer was
+  /// signed in with. Null for an anonymous preview.
+  sessionId        String?                  @map("session_id")
+  deviceId         String?                  @map("device_id")
+  /// SHA-256 of the `atlas_device` cookie — how an anonymous preview's
+  /// views are tied together.
+  deviceCookieHash String?                  @map("device_cookie_hash") @db.VarChar(64)
+  sessionStartedAt DateTime?                @map("session_started_at")
+  issuedAt         DateTime                 @default(now()) @map("issued_at")
+  /// Bumped by the grant refresh and (throttled) by the playback heartbeat.
+  lastSeenAt       DateTime                 @default(now()) @map("last_seen_at")
+  clientIp         String?                  @map("client_ip") @db.VarChar(64)
+  country          String?                  @db.VarChar(2)
+  userAgent        String?                  @map("user_agent") @db.VarChar(512)
+  deviceLabel      String?                  @map("device_label") @db.VarChar(120)
+  /// How many times the player reported the overlay being removed or hidden.
+  tamperEventCount Int                      @default(0) @map("tamper_event_count")
+  lastTamperAt     DateTime?                @map("last_tamper_at")
+  /// AES-256-GCM ciphertext (`WatermarkSnapshotCipher`) of the viewer's name,
+  /// email and phone at issue time, authenticated against `code`. Never
+  /// plaintext. Survives account deletion by design (anti-piracy).
+  identitySnapshot String?                  @map("identity_snapshot")
+
+  @@index([userId, issuedAt])
+  @@index([sessionId])
+  @@index([deviceCookieHash])
+  @@index([lastSeenAt])
+  @@map("forensic_watermarks")
+}

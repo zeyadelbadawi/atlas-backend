@@ -28,15 +28,23 @@ import { UsersRepository } from '../../identity/repositories/users.repository';
 import { ContentAccessLogRepository } from '../repositories/content-access-log.repository';
 import { QuizAttemptsRepository } from '../repositories/quiz-attempts.repository';
 import { VideoReconciliationService } from '../../media/services/video-reconciliation.service';
-import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
+import {
+  LearningMetricsService,
+  type RetentionSweepTable,
+} from '../../observability/metrics/learning-metrics.service';
 import {
   CONTENT_ACCESS_LOG_RETENTION_DAYS,
   QUIZ_ATTEMPT_EVENTS_RETENTION_DAYS,
 } from '../queue/phase2-maintenance.types';
 import { QuizAttemptEngineService } from './quiz-attempt-engine.service';
+import { ConfigService } from '@nestjs/config';
+import { ForensicWatermarkService } from '../../forensic-watermark/services/forensic-watermark.service';
+import type { ForensicWatermarkConfig } from '../../config/configuration';
 
 export interface Phase2MaintenanceResult {
   readonly prunedAccessLogRows: number;
+  /** Forensic watermark records last shown before `WATERMARK_RETENTION_DAYS` (docs/FORENSIC_WATERMARK.md). */
+  readonly prunedWatermarkRows: number;
   /** P64 Phase 4 (§D.5) — `quiz_attempt_events` rows past the 180-day window. */
   readonly prunedQuizAttemptEventRows: number;
   readonly reconciledVideos: number;
@@ -59,11 +67,14 @@ export class Phase2MaintenanceService {
     private readonly reconciliation: VideoReconciliationService,
     private readonly quizEngine: QuizAttemptEngineService,
     private readonly metrics: LearningMetricsService,
+    private readonly forensicWatermarks: ForensicWatermarkService,
+    private readonly configService: ConfigService,
   ) {}
 
   async run(): Promise<Phase2MaintenanceResult> {
     return {
       prunedAccessLogRows: await this.pruneAccessLog(),
+      prunedWatermarkRows: await this.pruneForensicWatermarks(),
       prunedQuizAttemptEventRows: await this.pruneQuizAttemptEvents(),
       reconciledVideos: await this.pollStalledVideos(),
       finalizedOverdueQuizAttempts: await this.finalizeOverdueQuizAttempts(),
@@ -154,6 +165,46 @@ export class Phase2MaintenanceService {
   }
 
   /**
+   * Forensic watermark retention (docs/FORENSIC_WATERMARK.md) — the same
+   * shape as `pruneAccessLog`: platform-wide, in a Platform Owner's context
+   * for row visibility only (`forensic_watermarks_platform_select`), and
+   * independently bounded by `forensic_watermarks_retention_delete`, which
+   * refuses any record shown in the last 90 days whatever cutoff arrives
+   * here. The window counts from when the code was LAST shown, because a
+   * leak is recorded while the video plays, not when the code was issued.
+   * Account deletion never removes these records; only this sweep does.
+   */
+  async pruneForensicWatermarks(now: number = Date.now()): Promise<number> {
+    const { retentionDays } =
+      this.configService.getOrThrow<ForensicWatermarkConfig>('forensicWatermark');
+    const cutoff = new Date(now - retentionDays * 24 * 60 * 60 * 1000);
+    try {
+      const platformOwnerId = await this.resolvePlatformOwnerId('forensic_watermarks');
+      if (!platformOwnerId) return 0;
+      const deleted = await this.tenancyContextService.runInUserContext(
+        platformOwnerId,
+        (tx) => this.forensicWatermarks.pruneOlderThan(tx, cutoff),
+      );
+      this.metrics.recordRetentionSweepRun('forensic_watermarks', true);
+      this.metrics.recordRetentionPruned('forensic_watermarks', deleted);
+      if (deleted > 0) {
+        this.logger.log(
+          { deleted, cutoff: cutoff.toISOString(), retentionDays },
+          'Pruned forensic watermark records past the retention window.',
+        );
+      }
+      return deleted;
+    } catch (error) {
+      this.metrics.recordRetentionSweepRun('forensic_watermarks', false);
+      this.logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Forensic watermark retention sweep failed; the next run will retry.',
+      );
+      return 0;
+    }
+  }
+
+  /**
    * P64 Phase 4 (§D.5) — the `quiz_attempt_events` half of retention,
    * shaped exactly like `pruneAccessLog`: platform-wide, in a platform
    * owner's user context for row visibility only
@@ -203,7 +254,7 @@ export class Phase2MaintenanceService {
    * never thrown.
    */
   private async resolvePlatformOwnerId(
-    table: 'content_access_log' | 'quiz_attempt_events',
+    table: RetentionSweepTable,
   ): Promise<string | null> {
     const platformOwner = await this.usersRepository.findFirstPlatformOwnerId();
     if (platformOwner) return platformOwner.id;

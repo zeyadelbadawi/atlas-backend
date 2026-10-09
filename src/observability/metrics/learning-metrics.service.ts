@@ -33,7 +33,8 @@ export type CheckoutOrderMetricState =
   'created' | 'pending_payment' | 'paid' | 'expired' | 'cancelled' | 'refunded';
 
 /** P64 Phase 4 (§D.5) — the tables the retention sweep prunes. */
-export type RetentionSweepTable = 'content_access_log' | 'quiz_attempt_events';
+export type RetentionSweepTable =
+  'content_access_log' | 'quiz_attempt_events' | 'forensic_watermarks';
 
 /** One registry for the process. Module-scoped so a second `INestApplication` (every e2e spec boots one) does not re-register and throw. */
 const registry = new Registry();

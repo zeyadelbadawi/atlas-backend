@@ -38,6 +38,7 @@ import { AcademyModule } from '../academy/academy.module';
 // of courses they are assigned to. `CourseModule` never imports this
 // module, so the dependency stays a DAG.
 import { CourseModule } from '../course/course.module';
+import { ForensicWatermarkModule } from '../forensic-watermark/forensic-watermark.module';
 // `UsersRepository` — resolving a platform-owner id for the one
 // deliberately cross-tenant, system-initiated read (webhook attribution).
 import { IdentityModule } from '../identity/identity.module';
@@ -84,6 +85,8 @@ import { NotificationEventsModule } from '../notification-events/notification-ev
     PlansModule,
     AuditLogModule,
     BillingModule,
+    // Every live-class join is watermarked (docs/FORENSIC_WATERMARK.md).
+    ForensicWatermarkModule,
     // Recording import goes through the EXISTING media pipeline, never a
     // second storage path.
     MediaModule,

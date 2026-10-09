@@ -332,6 +332,13 @@ export class DeletionPlanService {
       // `audit_log_entries.actor_user_id` is RESTRICT precisely so the
       // actor cannot be deleted out from under the record.
       { key: 'auditRecords', treatment: 'retain', count: 1 },
+      // Forensic video watermark records (docs/FORENSIC_WATERMARK.md): who
+      // was shown which video, with an encrypted identity snapshot. Kept on
+      // purpose — anti-piracy evidence must outlive the account that leaked
+      // — and pruned only by the retention sweep (`WATERMARK_RETENTION_DAYS`).
+      // Not counted: the table is readable only by a Platform Owner lookup,
+      // and the line is true for every account that ever opened a video.
+      { key: 'forensicWatermarks', treatment: 'retain', count: 1 },
     ];
   }
 

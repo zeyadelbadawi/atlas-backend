@@ -20,12 +20,25 @@ import {
   DEVICE_COOKIE_NAME,
 } from '../../tenancy/services/student-device.service';
 import { surfaceDenied } from '../../identity/guards/surface-denial.util';
+import {
+  resolveClientCountry,
+  resolveClientIp,
+} from '../../identity/utils/request-metadata.util';
 
 export interface LearningRequestContext {
   readonly userId: string | null;
   readonly sessionId: string | null;
   readonly deviceCookie?: string | null;
   readonly userAgent?: string | null;
+  /**
+   * Forensic watermark (docs/FORENSIC_WATERMARK.md) — where the request came
+   * from, recorded with the code. Read through the production proxy trust
+   * model (`resolveClientIp`), never from a body.
+   */
+  readonly clientIp?: string | null;
+  readonly country?: string | null;
+  /** The host the request arrived on; shown with "Preview" to an anonymous visitor. */
+  readonly requestHost?: string | null;
   /** Present when the caller passed the response: writes a new device identity, exactly as sign-in does. */
   readonly onDeviceCookie?: (value: string) => void;
 }
@@ -39,6 +52,9 @@ export function learningRequestContext(
     sessionId: request.authContext?.sessionId ?? null,
     deviceCookie: readCookie(request.headers.cookie, DEVICE_COOKIE_NAME),
     userAgent: request.headers['user-agent'] ?? null,
+    clientIp: resolveClientIp(request) ?? null,
+    country: resolveClientCountry(request) ?? null,
+    requestHost: request.hostname ?? null,
     ...(response
       ? {
           onDeviceCookie: (value: string) => {

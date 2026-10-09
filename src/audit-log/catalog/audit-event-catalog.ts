@@ -1049,6 +1049,18 @@ export const AUDIT_EVENT_DEFINITIONS = [
     ['status', 'previousStatus'],
     ['status'],
   ),
+  // Forensic video watermark (docs/FORENSIC_WATERMARK.md) — every Platform
+  // Owner lookup, found or not. Whether it matched, the surface and whether
+  // an account was linked; NEVER the identity the lookup revealed (the
+  // looked-up code is the target label, the row id the target).
+  ev(
+    'platform.watermark.looked_up',
+    'security',
+    'forensic_watermark',
+    'platform',
+    false,
+    ['found', 'surface', 'accountLinked'],
+  ),
   ev(
     'platform.contact_submission.deleted',
     'platform',

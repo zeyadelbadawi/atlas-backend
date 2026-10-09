@@ -54,6 +54,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import type {
   LessonContentKind,
@@ -74,7 +75,6 @@ import { AcademyOriginsService } from '../../media/video/academy-origins.service
 import { LearningLeaseService } from './learning-lease.service';
 import { ContentGrantRateLimiter } from './content-grant.rate-limiter';
 import { isEnrollmentActive } from './learning-access.util';
-import { resolveContentProtection } from '../dto/content-protection.contract';
 import { MINIMUM_WATCHED_RATIO } from '../dto/learning.constants';
 import { classifyExternalEmbed } from './external-embed.util';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
@@ -88,6 +88,11 @@ import type {
 } from '../dto/lesson-content.contract';
 import { OFFLINE_READING_TTL_SECONDS } from '../dto/lesson-content.contract';
 import type { VideoProviderCapabilities } from '../../media/video/video-provider.interface';
+import {
+  ForensicWatermarkService,
+  WatermarkIssuanceError,
+  type IssuedWatermark,
+} from '../../forensic-watermark/services/forensic-watermark.service';
 
 export interface ContentRequestContext {
   readonly userId: string | null;
@@ -96,6 +101,10 @@ export interface ContentRequestContext {
   readonly hostAcademyId: string | null;
   readonly deviceCookie?: string | null;
   readonly userAgent?: string | null;
+  /** Forensic watermark — recorded with the code (docs/FORENSIC_WATERMARK.md). */
+  readonly clientIp?: string | null;
+  readonly country?: string | null;
+  readonly requestHost?: string | null;
   /**
    * Writes a NEW device identity to the response. The grant is the other
    * place a device is registered, so it must be able to hand the browser
@@ -216,6 +225,7 @@ export class LessonContentService {
     private readonly metrics: LearningMetricsService,
     private readonly courseSequence: CourseSequenceService,
     private readonly communications: CommunicationService,
+    private readonly forensicWatermarks: ForensicWatermarkService,
   ) {}
 
   async getContent(
@@ -381,7 +391,38 @@ export class LessonContentService {
         if (userId && !staffPreview) {
           const allowed = await this.rateLimiter.consume(userId);
           if (!allowed) throw new ContentRefusal('rateLimited');
+        } else if (!userId) {
+          // An anonymous preview writes a forensic watermark record, so it
+          // shares the same ceiling, keyed by the client address — a
+          // visitor rotating device cookies cannot mint records at flood
+          // rate (docs/FORENSIC_WATERMARK.md).
+          const allowed = await this.rateLimiter.consume(
+            `anon:${context.clientIp ?? 'unknown'}`,
+          );
+          if (!allowed) throw new ContentRefusal('rateLimited');
         }
+
+        // --- forensic watermark target -----------------------------------
+        // Every lesson that will carry a playable video — a hosted asset
+        // or an embeddable YouTube link — is watermarked, for every viewer:
+        // learner, staff previewer and anonymous preview visitor alike.
+        const watermarkTarget = carriesVideo(lesson, effectiveContent)
+          ? {
+              surface:
+                isOpenPreview && lesson.isPreview
+                  ? ('course_preview' as const)
+                  : ('lesson_video' as const),
+              academyId: course.academyId,
+              courseId,
+              lessonId,
+              labels: { courseTitle: course.title, lessonTitle: lesson.title },
+            }
+          : null;
+        const assetContext = {
+          securityTier: lesson.videoAsset?.securityTier ?? null,
+          provider: lesson.videoAsset?.provider ?? null,
+        };
+        let watermark: IssuedWatermark | null = null;
 
         // --- conditions 6: device + lease --------------------------------
         let deviceId: string | null = null;
@@ -446,6 +487,19 @@ export class LessonContentService {
             deviceRegisteredOutboxId = registered.outboxId;
           }
 
+          // FORENSIC WATERMARK (docs/FORENSIC_WATERMARK.md) — issued after
+          // every refusal and before the lease, so a request refused for
+          // any reason never leaves a record, and a failure here never
+          // holds another device's lease. Mandatory and fail-closed: no
+          // code, no playable video.
+          if (watermarkTarget) {
+            watermark = await this.issueWatermark(tx, context, watermarkTarget, {
+              deviceId,
+              deviceLabel: resolution.device.label,
+              assetContext,
+            });
+          }
+
           // Taken last, and only when everything else already passed.
           const outcome = await this.leaseService.acquire({
             userId,
@@ -501,6 +555,17 @@ export class LessonContentService {
           }
         }
 
+        // Staff previews and anonymous previews take no device or lease,
+        // but are watermarked all the same — a staff preview with the staff
+        // member's own identity (no exemption).
+        if (watermarkTarget && !watermark) {
+          watermark = await this.issueWatermark(tx, context, watermarkTarget, {
+            deviceId,
+            deviceLabel: null,
+            assetContext,
+          });
+        }
+
         const grant = await this.buildGrant(tx, {
           lesson,
           content: effectiveContent,
@@ -510,6 +575,7 @@ export class LessonContentService {
           deviceId,
           lease,
           staffPreview,
+          watermark,
         });
 
         await this.log(tx, {
@@ -581,6 +647,49 @@ export class LessonContentService {
     }
   }
 
+  /**
+   * Issues (or reuses) the forensic watermark inside the grant's own
+   * transaction — the viewer's user context, or none for an anonymous
+   * preview. A failure becomes the `watermarkUnavailable` refusal: the grant
+   * never carries a playable video without a code.
+   */
+  private async issueWatermark(
+    tx: Prisma.TransactionClient,
+    context: ContentRequestContext,
+    target: Parameters<ForensicWatermarkService['issueInTransaction']>[2],
+    args: {
+      readonly deviceId: string | null;
+      readonly deviceLabel: string | null;
+      readonly assetContext: {
+        readonly securityTier: VideoSecurityTier | null;
+        readonly provider: MediaAssetProvider | null;
+      };
+    },
+  ): Promise<IssuedWatermark> {
+    try {
+      return await this.forensicWatermarks.issueInTransaction(
+        tx,
+        {
+          userId: context.userId,
+          sessionId: context.sessionId,
+          deviceId: args.deviceId,
+          deviceCookie: context.deviceCookie ?? null,
+          deviceLabel: args.deviceLabel,
+          clientIp: context.clientIp ?? null,
+          country: context.country ?? null,
+          userAgent: context.userAgent ?? null,
+          requestHost: context.requestHost ?? null,
+        },
+        target,
+      );
+    } catch (error) {
+      if (error instanceof WatermarkIssuanceError) {
+        throw new ContentRefusal('watermarkUnavailable', args.assetContext);
+      }
+      throw error;
+    }
+  }
+
   /** An instructor of this course, or an owner/administrator/manager of its academy. */
   private async isStaffPreviewer(
     tx: Prisma.TransactionClient,
@@ -619,15 +728,14 @@ export class LessonContentService {
       readonly deviceId: string | null;
       readonly lease: LessonContentGrantResponse['playbackLease'];
       readonly staffPreview: boolean;
+      readonly watermark: IssuedWatermark | null;
     },
   ): Promise<LessonContentGrantResponse> {
     const { lesson, course, content } = args;
 
-    const academy = await tx.academy.findUnique({
-      where: { id: course.academyId },
-      select: { contentProtection: true, name: true },
-    });
-    const protection = resolveContentProtection(academy?.contentProtection);
+    // The academy's stored content-protection settings no longer change
+    // anything a grant carries: the forensic watermark is mandatory
+    // (docs/FORENSIC_WATERMARK.md) and the player deterrents are always on.
 
     const expiryCandidates: number[] = [];
     let bodyHtml: string | undefined;
@@ -647,6 +755,10 @@ export class LessonContentService {
       // other address stays a link-out. The player embeds from `videoId`,
       // never from the URL, so this is the only door into an iframe.
       externalEmbed = classifyExternalEmbed(externalUrl);
+      // Fail closed: an embeddable video is never handed out unmarked.
+      if (externalEmbed && !args.watermark) {
+        throw new ContentRefusal('watermarkUnavailable');
+      }
     } else if (content.kind === 'file' && content.mediaAsset) {
       const signed = await this.signer.signFile(content.mediaAsset);
       fileUrl = signed.url;
@@ -660,6 +772,14 @@ export class LessonContentService {
       // provider has not finished processing, whatever path reached it.
       if (lesson.videoAsset.processingStatus !== 'ready') {
         throw new ContentRefusal('processing', {
+          securityTier: lesson.videoAsset.securityTier,
+          provider: lesson.videoAsset.provider,
+        });
+      }
+      // Fail closed (defence in depth — `getContent` already refused): a
+      // video credential is never signed without a forensic watermark.
+      if (!args.watermark) {
+        throw new ContentRefusal('watermarkUnavailable', {
           securityTier: lesson.videoAsset.securityTier,
           provider: lesson.videoAsset.provider,
         });
@@ -728,7 +848,7 @@ export class LessonContentService {
         capabilities: videoCapabilities,
         tier: assetTier,
         expiresAt,
-        watermarkEnabled: protection.watermark && Boolean(video),
+        watermarkEnabled: Boolean(args.watermark) && Boolean(video ?? externalEmbed),
       }),
       bodyHtml,
       fileUrl,
@@ -737,12 +857,7 @@ export class LessonContentService {
       externalUrl,
       ...(externalEmbed ? { externalEmbed } : {}),
       resources,
-      watermark: {
-        enabled: protection.watermark && Boolean(video),
-        text: protection.watermark
-          ? buildWatermarkText(protection.watermarkText, args.userId)
-          : '',
-      },
+      watermark: toWatermarkContract(args.watermark, Boolean(video ?? externalEmbed)),
       playbackLease: args.lease,
       resumePositionSeconds: resume?.lastPositionSeconds ?? 0,
       expiresAt: expiresAt.toISOString(),
@@ -888,6 +1003,12 @@ function refusalToHttp(reason: ContentAccessReason): Error {
       return new NotFoundException({ messageKey: 'errors.learning.lessonNoContent' });
     case 'processing':
       return new NotFoundException({ messageKey: 'errors.learning.lessonProcessing' });
+    // Fail closed: the forensic watermark could not be issued, so no video
+    // credential was signed. Transient by nature — the player retries.
+    case 'watermarkUnavailable':
+      return new ServiceUnavailableException({
+        messageKey: 'errors.learning.watermarkUnavailable',
+      });
     default:
       return new NotFoundException({ messageKey: 'errors.notFound' });
   }
@@ -924,6 +1045,9 @@ export function buildProtectionReport(args: {
   // the learner is told rather than left to assume.
   if (args.kind === 'external') {
     return {
+      // An embeddable YouTube video IS watermarked: the forensic overlay is
+      // drawn by Atlas's player frame over the embed, whoever hosts the
+      // bytes. Everything else about the embed stays honestly "not ours".
       tier: null,
       signedUrl: false,
       expiresInSeconds: 0,
@@ -931,7 +1055,7 @@ export function buildProtectionReport(args: {
       boundToDevice: false,
       revocableBeforeExpiry: false,
       originRestricted: false,
-      watermark: false,
+      watermark: args.watermarkEnabled,
       adaptiveBitrate: false,
       drm: false,
     };
@@ -964,26 +1088,14 @@ export function buildProtectionReport(args: {
     boundToDevice: args.capabilities.boundToDevice,
     revocableBeforeExpiry: args.capabilities.revocableBeforeExpiry,
     originRestricted: args.capabilities.originRestricted,
-    // The academy must have asked for it AND the player must actually be
-    // drawing one.
+    // Mandatory since the forensic watermark (docs/FORENSIC_WATERMARK.md):
+    // true whenever a code was issued for this video.
     watermark: args.watermarkEnabled,
     adaptiveBitrate: args.capabilities.adaptiveBitrate,
     // Neither tier has DRM, and Cloudflare Stream does not offer it at
     // all (D1). Typed as the literal `false` so it cannot drift.
     drm: false,
   };
-}
-
-/**
- * The overlay text.
- *
- * The academy's own template wins when it set one; otherwise the viewer's
- * user id, which is stable, unique, and — unlike an email address —
- * discloses nothing extra to anyone standing behind the learner.
- */
-function buildWatermarkText(template: string | null, userId: string | null): string {
-  if (template) return template;
-  return userId ? `ID ${userId.slice(0, 8).toUpperCase()}` : '';
 }
 
 /**
@@ -1007,5 +1119,45 @@ export function offlineReadingFor(args: {
           (args.now ?? Date.now()) + OFFLINE_READING_TTL_SECONDS * 1000,
         ).toISOString()
       : null,
+  };
+}
+
+/**
+ * Whether this lesson's grant will carry a playable video: a hosted asset
+ * (MP4 / Cloudflare Stream) or an external link the player embeds (YouTube).
+ * Exactly the grants the forensic watermark must cover.
+ */
+function carriesVideo(
+  lesson: { readonly videoAsset: unknown | null },
+  content: EffectiveLessonContent,
+): boolean {
+  if (lesson.videoAsset) return true;
+  return (
+    content.kind === 'external' &&
+    classifyExternalEmbed(content.externalUrl ?? undefined) !== null
+  );
+}
+
+/**
+ * The grant's `watermark` field. `text` is kept for the frontend already in
+ * production, which draws exactly `text` when `enabled`: it now reads
+ * `CODE · a•••@mail.com` (or `CODE · host · Preview`), so even that player
+ * shows the forensic code. The structured fields are what the current player
+ * renders.
+ */
+function toWatermarkContract(
+  watermark: IssuedWatermark | null,
+  hasVideo: boolean,
+): LessonContentGrantResponse['watermark'] {
+  if (!watermark || !hasVideo) return { enabled: false, text: '' };
+  const { display } = watermark;
+  const who =
+    display.kind === 'account'
+      ? display.maskedIdentity
+      : [display.host, 'Preview'].filter(Boolean).join(' · ');
+  return {
+    enabled: true,
+    text: [display.code, who].filter(Boolean).join(' · '),
+    ...display,
   };
 }

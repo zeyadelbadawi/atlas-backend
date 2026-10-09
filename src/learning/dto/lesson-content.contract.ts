@@ -14,6 +14,7 @@
  * cache never holds a copy that outlives them (Phase 2 §I).
  */
 import type { LessonCompletionRule, LessonContentKind } from '@prisma/client';
+import type { ForensicWatermarkDisplay } from '../../forensic-watermark/dto/forensic-watermark.contract';
 
 /**
  * Every machine-readable reason a content decision can carry. CLOSED
@@ -62,19 +63,30 @@ export const CONTENT_ACCESS_REASONS = [
   'noContent',
   /** The lesson's video asset exists but has not finished processing. Same disclosure rule as `noContent`. */
   'processing',
+  /**
+   * The forensic watermark could not be issued, so no video credential was
+   * signed (fail closed — docs/FORENSIC_WATERMARK.md). 503: transient.
+   */
+  'watermarkUnavailable',
 ] as const;
 export type ContentAccessReason = (typeof CONTENT_ACCESS_REASONS)[number];
 
 /**
- * The per-viewer overlay the player draws over protected video.
+ * The forensic watermark the player draws over every video
+ * (docs/FORENSIC_WATERMARK.md). MANDATORY: `enabled` is true on every grant
+ * that carries a playable video (hosted or YouTube embed) and an academy
+ * cannot turn it off.
  *
- * A DETERRENT, AND LABELLED AS ONE (D1). It does not stop a determined
- * person with a camera; what it does is make a casually re-shared
- * recording trace back to the account it came from, which is the actual
- * threat for paid course content. `text` is built server-side from the
- * viewer's own identity so a client cannot blank it by lying.
+ * A DETERRENT AND A TRACE, AND LABELLED AS SUCH (D1). It does not stop a
+ * screen recording; it makes a re-published recording trace back to the
+ * account and session it came from. Everything here is built server-side
+ * from the viewer's own identity, so a client cannot blank it by lying.
+ *
+ * `text` is the legacy field (the previously deployed player draws it
+ * verbatim) and now carries `CODE · masked identity`; the structured fields
+ * (`code`, `kind`, `maskedIdentity`, `host`) are present whenever `enabled`.
  */
-export interface ContentWatermarkContract {
+export interface ContentWatermarkContract extends Partial<ForensicWatermarkDisplay> {
   readonly enabled: boolean;
   readonly text: string;
 }

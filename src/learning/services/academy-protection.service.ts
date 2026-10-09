@@ -101,9 +101,12 @@ export class AcademyProtectionService {
           academyId,
           userId,
         );
+        // `watermark` / `watermarkText` in the payload are accepted for the
+        // previously deployed frontend and ignored: the forensic watermark is
+        // mandatory (docs/FORENSIC_WATERMARK.md).
         const next: AcademyContentProtection = {
-          watermark: payload.watermark,
-          watermarkText: payload.watermarkText?.trim() || null,
+          watermark: true,
+          watermarkText: null,
           disableDownload: payload.disableDownload,
           disablePip: payload.disablePip,
           disableContextMenu: payload.disableContextMenu,

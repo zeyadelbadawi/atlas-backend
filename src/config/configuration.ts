@@ -341,6 +341,18 @@ export interface BillingConfig {
  * use, matching this codebase's "one seam, never ad hoc" convention
  * (`toMinorUnits`/`buildPaymentProofStorageKey`'s identical precedent).
  */
+/** Forensic video watermark (docs/FORENSIC_WATERMARK.md). */
+export interface ForensicWatermarkConfig {
+  /** Snapshot key source: the dedicated key, else HKDF of the payment-credentials key. */
+  readonly snapshotKeySource: {
+    readonly dedicatedKeyHex: string | null;
+    readonly paymentCredentialsKeyHex: string;
+  };
+  /** Days a record is kept after it was last displayed (floor 90). */
+  readonly retentionDays: number;
+  readonly lookupRateLimit: { readonly max: number; readonly windowSeconds: number };
+}
+
 export interface PaymentConfigurationConfig {
   readonly credentialEncryptionKeyHex: string;
   /**
@@ -835,6 +847,18 @@ export default () => {
     customerIdentityKeyHex: env.CUSTOMER_IDENTITY_HMAC_KEY || undefined,
   };
 
+  const forensicWatermark: ForensicWatermarkConfig = {
+    snapshotKeySource: {
+      dedicatedKeyHex: env.WATERMARK_SNAPSHOT_KEY || null,
+      paymentCredentialsKeyHex: env.PAYMENT_CREDENTIALS_ENCRYPTION_KEY ?? '',
+    },
+    retentionDays: Number(env.WATERMARK_RETENTION_DAYS ?? 730),
+    lookupRateLimit: {
+      max: Number(env.WATERMARK_LOOKUP_RATE_LIMIT_MAX ?? 30),
+      windowSeconds: Number(env.WATERMARK_LOOKUP_RATE_LIMIT_WINDOW_SECONDS ?? 600),
+    },
+  };
+
   const emailProvider: EmailProviderName = env.EMAIL_PROVIDER ?? 'stub';
   // `env` is raw `process.env` here (see this factory's header comment),
   // so `EMAIL_PROVIDERS` is the untransformed comma string — parsed again
@@ -898,6 +922,7 @@ export default () => {
     googleAuth,
     billing,
     paymentConfiguration,
+    forensicWatermark,
     email,
   };
 };
