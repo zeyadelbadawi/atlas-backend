@@ -58,6 +58,8 @@ import { GoogleOidcClient } from './google/google-oidc.client';
 import { GoogleIdentityRepository } from './google/google-identity.repository';
 import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard';
 import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-limit.guard';
+import { UserPhoneService } from './phone/user-phone.service';
+import { PhoneVerificationService } from './phone/phone-verification.service';
 
 @Module({
   imports: [
@@ -93,6 +95,10 @@ import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-li
     AccountSetupService,
     AuthService,
     UsersService,
+    // Phone number (docs/USER_PHONE.md) — no verification provider is bound
+    // (`PHONE_VERIFICATION_PROVIDER`); none is contracted yet.
+    UserPhoneService,
+    PhoneVerificationService,
     AcademySurfaceService,
     PasswordHasherService,
     PasswordCredentialsService,

@@ -11,6 +11,7 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
     passwordResetTokenTtlMinutes: 45,
     emailVerificationTokenTtlMinutes: 1440,
     signupOrganizationMode: 'off',
+    phoneVerificationMode: 'off',
     emailDeliverabilityCheckEnabled: false,
     signInRateLimit: {
       max: 10,

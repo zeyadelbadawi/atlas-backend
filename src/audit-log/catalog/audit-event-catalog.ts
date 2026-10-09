@@ -964,6 +964,18 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('account.deletion.confirmed', 'security', 'user', 'platform', false, [
     'challengeId',
   ]),
+  // Phone number (docs/USER_PHONE.md) — the country and the kind of change
+  // only; the number itself is never written to an audit row.
+  ev('account.phone.updated', 'security', 'user', 'platform', false, [
+    'change',
+    'country',
+    'previousCountry',
+    'verificationCleared',
+  ]),
+  ev('account.phone.removed', 'security', 'user', 'platform', false, [
+    'country',
+    'wasVerified',
+  ]),
   ev('account.deleted', 'security', 'user', 'platform', false, ACCOUNT_DELETED_CONTEXT),
   ev(
     'account.deleted_by_platform_owner',

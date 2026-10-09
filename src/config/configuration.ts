@@ -412,6 +412,9 @@ export type MediaArchivePurgeMode = 'off' | 'dry_run' | 'on';
 /** New Customer Onboarding rollout (`FLAG_SIGNUP_ORGANIZATION_MODE`). */
 export type SignupOrganizationMode = 'off' | 'on';
 
+/** Phone verification (docs/USER_PHONE.md) — `FLAG_PHONE_VERIFICATION_MODE`. */
+export type PhoneVerificationMode = 'off' | 'on';
+
 export interface IdentityConfig {
   readonly jwtAccessSecret: string;
   readonly jwtAccessTtlSeconds: number;
@@ -428,6 +431,14 @@ export interface IdentityConfig {
    * docs/NEW_CUSTOMER_ONBOARDING.md §2.
    */
   readonly signupOrganizationMode: SignupOrganizationMode;
+  /**
+   * Phone verification — `FLAG_PHONE_VERIFICATION_MODE`. `off` (default):
+   * no verification is offered and nothing is ever sent. Even `on` offers
+   * nothing until a real SMS/WhatsApp provider is bound to
+   * `PHONE_VERIFICATION_PROVIDER` — none is contracted yet. See
+   * docs/USER_PHONE.md.
+   */
+  readonly phoneVerificationMode: PhoneVerificationMode;
   /**
    * Phase 10.1 — whether registration performs the DNS deliverability
    * lookup. The disposable-domain list is unaffected and always applies.
@@ -598,6 +609,8 @@ export default () => {
     ),
     signupOrganizationMode: (env.FLAG_SIGNUP_ORGANIZATION_MODE ??
       'off') as SignupOrganizationMode,
+    phoneVerificationMode: (env.FLAG_PHONE_VERIFICATION_MODE ??
+      'off') as PhoneVerificationMode,
     emailDeliverabilityCheckEnabled:
       // `process.env` holds the raw string here (the validated boolean is not
       // written back), so 'false' must be compared, not coalesced — a bare

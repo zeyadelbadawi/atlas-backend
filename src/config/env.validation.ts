@@ -262,6 +262,10 @@ const EnvSchema = z.object({
     .optional(),
   // New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md §2.
   FLAG_SIGNUP_ORGANIZATION_MODE: z.enum(['off', 'on']).default('off'),
+  // Phone verification (docs/USER_PHONE.md). `off` (default) offers none.
+  // `on` still offers none until an SMS/WhatsApp provider is bound — there is
+  // no provider today, so the flag is a switch for the future, not a sender.
+  FLAG_PHONE_VERIFICATION_MODE: z.enum(['off', 'on']).default('off'),
   // Google Identity (docs/GOOGLE_IDENTITY.md). `off` (default): every
   // `/auth/google/*` route answers 404 and the sign-in pages offer no Google
   // button. `allowlist`: academy websites in FLAG_AUTH_GOOGLE_ACADEMY_IDS

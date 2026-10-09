@@ -65,6 +65,10 @@ const SELF_OR_LEARNER = new Set<string>([
   'GET users/me',
   'PATCH users/me',
   'PATCH users/me/preferences',
+  // The account's own phone number — personal data like the name (docs/USER_PHONE.md).
+  'GET users/me/phone',
+  'PUT users/me/phone',
+  'DELETE users/me/phone',
   'POST users/me/password',
   'GET users/me/communication-preferences',
   'PATCH users/me/communication-preferences',

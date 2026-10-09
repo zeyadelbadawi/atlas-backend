@@ -20,6 +20,10 @@ import type { AuthMethod, User } from '@prisma/client';
 import type { EmailOtpPolicy, IdentityConfig } from '../../config/configuration';
 import { UsersRepository } from '../repositories/users.repository';
 import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
+import {
+  createPhoneForNewAccount,
+  requireNormalizedPhone,
+} from '../phone/user-phone.service';
 import { deriveDeviceLabel } from '../utils/request-metadata.util';
 import { SessionActivityService } from './session-activity.service';
 import { SessionRevocationService } from './session-revocation.service';
@@ -408,6 +412,13 @@ export class AuthService {
     /** New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md §3.2. */
     organizationName?: string;
     planId?: string;
+    /**
+     * Phone number as typed + chosen country (docs/USER_PHONE.md). Optional:
+     * an older sign-up page sends neither. Stored only for a brand-new
+     * account; never applied to an existing one from a sign-up form.
+     */
+    phoneNumber?: string;
+    phoneCountry?: string;
     /** Forensic only (recorded on a trial redemption), never a decision input. */
     context?: { readonly ipAddress?: string; readonly userAgent?: string };
   }): Promise<RegistrationResult> {
@@ -506,6 +517,13 @@ export class AuthService {
     },
   ): Promise<RegistrationResult> {
     const email = normalizeEmail(input.email);
+    // Phone number — re-normalised here, never taken from the client as-is
+    // (the DTO has already validated it). Checked before anything is read,
+    // so a bad number is answered identically for every address.
+    const phone =
+      input.phoneNumber !== undefined || input.phoneCountry !== undefined
+        ? requireNormalizedPhone(input.phoneNumber, input.phoneCountry)
+        : undefined;
     // W4 — a name made only of marks, invisibles or spaces has nothing to
     // compare and is refused before anything else (for every address alike).
     if ((await sqlNameKey(this.prisma, input.name)) === '') throw nameInvalid('name');
@@ -662,6 +680,11 @@ export class AuthService {
           });
           if (passwordHash) {
             await this.passwordCredentials.storeHashed(tx, userId, passwordHash);
+          }
+          if (phone) {
+            // Same transaction, same self context: the account and its number
+            // exist together or not at all.
+            await createPhoneForNewAccount(tx, userId, phone);
           }
           if (external) {
             await tx.userAuthIdentity.create({

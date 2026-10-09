@@ -251,6 +251,8 @@ writer stores.
 | `account.deletion.code_failed` | security | platform | no | challengeId, attempts |
 | `account.deletion.locked_out` | security | platform | no | challengeId |
 | `account.deletion.confirmed` | security | platform | no | challengeId |
+| `account.phone.updated` | security | platform | no | change, country, previousCountry, verificationCleared (never the number) |
+| `account.phone.removed` | security | platform | no | country, wasVerified (never the number) |
 | `account.deleted` | security | platform | no | initiatedBy, reason, hasFeedback, sessionsRevoked |
 | `account.deleted_by_platform_owner` | security | platform | no | initiatedBy, reason, hasFeedback, sessionsRevoked |
 | `plan.created` | platform | platform | no | key |

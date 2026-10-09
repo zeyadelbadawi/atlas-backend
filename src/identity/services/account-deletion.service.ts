@@ -420,6 +420,9 @@ export class AccountDeletionService {
       await tx.userAuthIdentity.deleteMany({ where: { userId } });
       // The password credential: with no row, no password can ever verify.
       await tx.userCredential.deleteMany({ where: { userId } });
+      // The phone number is personal data with no audit value: erased, not
+      // kept on the anonymised account (docs/USER_PHONE.md).
+      await tx.userPhone.deleteMany({ where: { userId } });
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.passwordResetToken.deleteMany({ where: { userId } });
       await tx.emailVerificationToken.deleteMany({ where: { userId } });

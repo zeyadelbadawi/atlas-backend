@@ -53,6 +53,7 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
     userTwoFactor: { deleteMany: async () => ({}) },
     userAuthIdentity: { deleteMany: async () => ({}) },
     userCredential: { deleteMany: async () => ({}) },
+    userPhone: { deleteMany: async () => ({}) },
     twoFactorRecoveryCode: { deleteMany: async () => ({}) },
     passwordResetToken: { deleteMany: async () => ({}) },
     emailVerificationToken: { deleteMany: async () => ({}) },
