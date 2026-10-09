@@ -56,6 +56,7 @@ export class AccessTokenService {
     const token = this.jwtService.sign(claims, {
       secret: identity.jwtAccessSecret,
       expiresIn: identity.jwtAccessTtlSeconds,
+      algorithm: 'HS256',
     });
     return { token, expiresInSeconds: identity.jwtAccessTtlSeconds };
   }
@@ -65,6 +66,8 @@ export class AccessTokenService {
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     return this.jwtService.verify<AccessTokenClaims>(token, {
       secret: identity.jwtAccessSecret,
+      // ATO review F14 — only the algorithm Atlas signs with is accepted.
+      algorithms: ['HS256'],
     });
   }
 }

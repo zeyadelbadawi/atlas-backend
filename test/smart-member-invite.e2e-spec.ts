@@ -379,6 +379,12 @@ describe('Smart member invitation + academy join (e2e)', () => {
       const { owner, academy: a } = await freshAcademy('add-existing');
       const { academy: other } = await freshAcademy('add-existing-other');
       const person = await learnerAt(other, 'add-existing-person', 'Real Name');
+      // A person who proved their mailbox (ATO review F1: an unproven
+      // account is returned to `invited` by a grant — ato-hardening ATO-F1).
+      await admin.user.update({
+        where: { id: person.userId },
+        data: { emailVerifiedAt: new Date() },
+      });
       const before = await admin.userCredential.findUniqueOrThrow({
         where: { userId: person.userId },
       });
@@ -423,6 +429,10 @@ describe('Smart member invitation + academy join (e2e)', () => {
     it('SMI-ADD-03 — an existing account added as a learner: a staff_created learner row and an added notice', async () => {
       const { owner, academy: a } = await freshAcademy('add-learner');
       const staff = await staffAccount('add-learner-staff');
+      await admin.user.update({
+        where: { id: staff.userId },
+        data: { emailVerifiedAt: new Date() },
+      });
 
       const res = await add(a, owner.token, 'student', { email: staff.email }).expect(
         201,

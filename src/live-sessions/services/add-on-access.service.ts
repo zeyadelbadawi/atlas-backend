@@ -38,6 +38,7 @@ import { EntitlementService } from '../../plans/services/entitlement.service';
 import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
 import { TenantAddOnsRepository } from '../../plans/repositories/tenant-add-ons.repository';
 import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
+import { pickPlanFeatures } from '../../plans/dto/entitlement.types';
 import type {
   EntitlementAddOnInput,
   PlanFeatureKey,
@@ -132,7 +133,7 @@ export class AddOnAccessService {
         // snapshotted), but routing limits through the same helper keeps a
         // single definition of "this subscription's limits" in the codebase.
         limits: resolveSubscriptionLimits(subscription) as never,
-        features: subscription.plan.features as never,
+        features: pickPlanFeatures(subscription.plan.features),
       },
       addOnInputs,
     );

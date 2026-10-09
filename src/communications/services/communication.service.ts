@@ -40,8 +40,10 @@ import { withSavepoint } from '../../common/database/savepoint.util';
 import {
   COMMUNICATION_CATALOG,
   catalogCopy,
+  notificationContextFor,
   settleScrubKeys,
   type CommunicationCatalogEntry,
+  type NotificationContextValue,
   type CommunicationEntityRef,
   type CommunicationEventKey,
   type CommunicationLocale,
@@ -56,6 +58,30 @@ export interface EmitInput {
   readonly academyId?: string | null;
   readonly entity: CommunicationEntityRef;
   readonly values?: Record<string, unknown>;
+  /**
+   * Notification context isolation — overrides the catalogue-derived
+   * context when the caller knows better (an academy campaign sent to its
+   * STAFF reuses a learner key but belongs to the Management dashboard).
+   */
+  readonly notificationContext?: NotificationContextValue;
+}
+
+/**
+ * Customer Requests — an email to an ADDRESS with no Atlas account (a team
+ * inbox a Platform Owner configured). Email only: no in-app row, no
+ * preferences, no caps — the address chose none of those. Allowed only for
+ * catalogue entries that declare `addressRecipient: true`.
+ */
+export interface EmitToAddressInput {
+  readonly key: CommunicationEventKey;
+  readonly email: string;
+  // Deliberately NO organizationId/academyId: the outbox's tenant SELECT
+  // policy keys on `organization_id`, so an address row carrying one would
+  // let that tenant read the team inbox address. Address rows are the
+  // platform's own mail; they render under platform branding.
+  readonly entity: CommunicationEntityRef;
+  readonly values?: Record<string, unknown>;
+  readonly locale?: CommunicationLocale;
 }
 
 export interface EmitResult {
@@ -122,8 +148,32 @@ export class CommunicationService {
       // No savepoint here: `create` runs its own around the INSERT it is
       // allowed to lose, so a deduped call already returns with the
       // caller's transaction intact.
+      // Notification context isolation — where this row is shown is fixed
+      // here, from the catalogue audience (and the campaign's own audience
+      // when the caller decides it), never at read time.
+      const placement = input.notificationContext
+        ? {
+            context: input.notificationContext,
+            academyId:
+              input.notificationContext === 'academy' ? (input.academyId ?? null) : null,
+          }
+        : notificationContextFor(input.key, input.academyId);
+      if (
+        placement.context === 'unscoped' ||
+        (placement.context === 'academy' && !placement.academyId)
+      ) {
+        this.logger.warn(
+          { key: input.key, recipientUserId: input.recipientUserId },
+          'In-app notification without a resolvable context; stored unscoped (shown nowhere).',
+        );
+      }
       const created = await this.notificationsRepository.create(tx, {
         userId: input.recipientUserId,
+        context:
+          placement.context === 'academy' && !placement.academyId
+            ? 'unscoped'
+            : placement.context,
+        academyId: placement.academyId,
         type: entry.notificationType,
         priority: entry.priority,
         titleKey: copy.titleKey,
@@ -169,6 +219,51 @@ export class CommunicationService {
           ${JSON.stringify(values)}::jsonb, ${JSON.stringify(channels)}::jsonb,
           ${entry.priority}::"notification_priority", 'pending'::"communication_outbox_state",
           ${availableAt}, 0, ${now}
+        )
+      `,
+      );
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) return { created: false, outboxId: null };
+      throw error;
+    }
+    this.metrics.recordOutbox(entry.category, 'pending');
+    return { created: true, outboxId };
+  }
+
+  /**
+   * Queues one email to an address recipient (see `EmitToAddressInput`).
+   * Idempotent on the entry's dedupe key per address, exactly like `emit`
+   * per user: a retried call writes nothing new and returns `created: false`.
+   */
+  async emitToAddress(
+    tx: Prisma.TransactionClient,
+    input: EmitToAddressInput,
+  ): Promise<EmitResult> {
+    const entry = COMMUNICATION_CATALOG[input.key];
+    if (!entry.addressRecipient) {
+      throw new Error(`Catalogue key ${input.key} cannot be sent to an address.`);
+    }
+    const email = input.email.trim().toLowerCase();
+    const values = input.values ?? {};
+    const dedupeKey = entry.dedupe({ entity: input.entity, values });
+    const outboxId = randomUUID();
+    const channels: OutboxChannels = { inApp: false, email: 'always' };
+    try {
+      await this.withOutboxSavepoint(
+        tx,
+        dedupeKey !== null,
+        () => tx.$executeRaw`
+        INSERT INTO "communication_outbox"
+          ("id", "key", "category", "recipient_user_id", "recipient_email", "organization_id",
+           "academy_id", "entity_type", "entity_id", "dedupe_key", "locale", "branding", "values",
+           "channels", "priority", "state", "available_at", "attempts", "created_at")
+        VALUES (
+          ${outboxId}, ${input.key}, ${entry.category}::"communication_category",
+          NULL, ${email}, NULL, NULL,
+          ${input.entity.type}, ${input.entity.id}, ${dedupeKey}, ${input.locale ?? 'en'},
+          ${entry.branding}, ${JSON.stringify(values)}::jsonb, ${JSON.stringify(channels)}::jsonb,
+          ${entry.priority}::"notification_priority", 'pending'::"communication_outbox_state",
+          ${new Date()}, 0, ${new Date()}
         )
       `,
       );

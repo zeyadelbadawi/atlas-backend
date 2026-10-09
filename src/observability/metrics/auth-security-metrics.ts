@@ -40,7 +40,15 @@ export type SurfaceDenialReason =
  * grace (that one session family — two parties hold it).
  */
 export type SessionRevocationTrigger =
-  'password_reset' | 'password_change' | 'refresh_token_reuse';
+  | 'password_reset'
+  | 'password_change'
+  | 'refresh_token_reuse'
+  // ATO review F1 — an unverified account returned to `invited` before a
+  // grant by someone else reached it.
+  | 'unverified_account_grant'
+  // ATO review F3 — two-factor authentication turned off: every OTHER
+  // session ends with it.
+  | 'two_factor_disabled';
 
 const surfaceDenied = counter(
   'atlas_auth_surface_denied_total',

@@ -143,6 +143,8 @@ const EXPECTED_DEDUPE: Record<
   'account.academy.joined': { values: { academyName: 'A' }, expected: null },
   'auth.identity.linked': { values: {}, expected: null },
   'auth.identity.unlinked': { values: {}, expected: null },
+  'auth.two_factor.enabled': { values: {}, expected: null },
+  'auth.two_factor.disabled': { values: {}, expected: null },
   // P64 C4 — a resend MUST produce a second email, so this one can never
   // carry a dedupe key; the `values` are what the OTP template renders.
   'auth.email.otp': { values: { code: '123456', expiresInMinutes: 10 }, expected: null },
@@ -357,6 +359,30 @@ const EXPECTED_DEDUPE: Record<
     values: { name: 'Visitor', topic: 'sales' },
     expected: `platform_contact_received:${ENTITY_ID}`,
   },
+  'customer_request.routed': {
+    values: { eventId: 'ev-1', event: 'created' },
+    expected: `customer_request_routed:${ENTITY_ID}:ev-1`,
+  },
+  'customer_request.received': {
+    values: { title: 'Logo' },
+    expected: `customer_request_received:${ENTITY_ID}`,
+  },
+  'customer_request.customer_replied': {
+    values: { eventId: 'ev-2' },
+    expected: `customer_request_customer_replied:${ENTITY_ID}:ev-2`,
+  },
+  'customer_request.submitted': {
+    values: { title: 'Logo' },
+    expected: `customer_request_submitted:${ENTITY_ID}`,
+  },
+  'customer_request.status_changed': {
+    values: { eventId: 'ev-3', status: 'in_progress' },
+    expected: `customer_request_status_changed:${ENTITY_ID}:ev-3`,
+  },
+  'customer_request.team_replied': {
+    values: { eventId: 'ev-4' },
+    expected: `customer_request_team_replied:${ENTITY_ID}:ev-4`,
+  },
 
   // W3-compose — one row per recipient per campaign; the entity is the campaign.
   'academy.message.sent': {
@@ -495,6 +521,8 @@ const NEVER_DEDUPED_KEYS: readonly CommunicationEventKey[] = [
   'account.academy.joined',
   'auth.identity.linked',
   'auth.identity.unlinked',
+  'auth.two_factor.enabled',
+  'auth.two_factor.disabled',
   'auth.email.otp',
   'auth.account.deletion_code',
   'auth.email.verification',

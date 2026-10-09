@@ -540,7 +540,13 @@ export class GoogleAuthService {
           )
         : null;
       const user = token ? await this.usersRepository.findById(token.userId) : null;
-      if (!user || user.status === 'deleted' || user.status === 'suspended') {
+      // ATO review F2 — `setup` is the INVITATION page's "continue with
+      // Google": it activates an account nobody has signed in to yet. On an
+      // active account a reset link must go through the reset itself
+      // (which revokes every session and trusted device and tells the
+      // owner); it may not silently attach a new sign-in method and drop
+      // the password. Refused exactly like an unknown token.
+      if (!user || user.status !== 'invited') {
         throw new UnauthorizedException({ messageKey: 'errors.auth.invalidResetToken' });
       }
       return user.id;
@@ -900,13 +906,18 @@ export class GoogleAuthService {
     userId: string,
   ): Promise<void> {
     const now = new Date();
-    await tx.user.updateMany({
+    const activated = await tx.user.updateMany({
       where: { id: userId, status: 'invited' },
       data: {
         status: 'active',
         emailVerifiedAt: now,
       },
     });
+    // ATO review F2 — only an account this very statement activated loses
+    // its credential; an active account's password is never removed here.
+    if (activated.count === 0) {
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidResetToken' });
+    }
     await this.passwordCredentials.remove(userId, tx);
     await tx.passwordResetToken.updateMany({
       where: { userId, usedAt: null },

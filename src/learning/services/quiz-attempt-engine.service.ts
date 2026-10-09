@@ -970,10 +970,22 @@ export class QuizAttemptEngineService {
     // alone. A learner pressing Submit is not news and emits nothing.
     let outboxId: string | null = null;
     if (input.reason !== 'submit') {
+      // Notification context isolation — a learner notification must name
+      // its academy (or it is shown nowhere); a path without the enrollment
+      // in hand resolves it from the quiz's course.
+      const academyId =
+        input.enrollment?.academyId ??
+        (
+          await tx.course.findUnique({
+            where: { id: quiz.courseId },
+            select: { academyId: true },
+          })
+        )?.academyId ??
+        null;
       const emitted = await this.communications.emit(tx, {
         key: 'assessment.quiz.auto_submitted',
         recipientUserId: fresh.studentId,
-        academyId: input.enrollment?.academyId ?? null,
+        academyId,
         entity: { type: 'quiz_attempt', id: fresh.id },
         values: {
           reason: input.reason,

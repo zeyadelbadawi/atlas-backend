@@ -79,19 +79,7 @@ describe('Row-Level Security — tenant_subscriptions / tenant_add_ons / tenant_
           generalStorage: 1,
           videoStorage: 1,
         },
-        features: {
-          cms: false,
-          seo: false,
-          seoAdvanced: false,
-          marketing: false,
-          marketingAdvanced: false,
-          analytics: false,
-          analyticsAdvanced: false,
-          customDomain: false,
-          themes: false,
-          multipleThemes: false,
-          backup: false,
-        },
+        features: { liveSessions: false },
       },
     });
   }
@@ -162,7 +150,7 @@ describe('Row-Level Security — tenant_subscriptions / tenant_add_ons / tenant_
       data: {
         key: `rls-atk-addon-${Date.now()}`,
         name: 'x',
-        effect: { type: 'feature', featureKey: 'backup' },
+        effect: { type: 'feature', featureKey: 'liveSessions' },
       },
     });
 
@@ -217,7 +205,7 @@ describe('Row-Level Security — tenant_subscriptions / tenant_add_ons / tenant_
       data: {
         key: `rls-legit-addon-${Date.now()}`,
         name: 'x',
-        effect: { type: 'feature', featureKey: 'backup' },
+        effect: { type: 'feature', featureKey: 'liveSessions' },
       },
     });
 

@@ -254,7 +254,9 @@ export class CommunicationDispatchService {
           },
         });
       });
-      await this.countTowardsDailyCap(plan.row.recipientUserId!);
+      // An address recipient has no daily cap (see `decideForAddress`).
+      if (plan.row.recipientUserId)
+        await this.countTowardsDailyCap(plan.row.recipientUserId);
       this.metrics.recordOutbox(plan.row.category, 'dispatched');
       this.metrics.recordDispatchLatency(
         plan.row.category,
@@ -335,13 +337,16 @@ export class CommunicationDispatchService {
     if (claimed === 0) return { kind: 'settled', outcome: 'skipped' };
 
     const row = await tx.communicationOutbox.findUnique({ where: { id: outboxId } });
-    if (!row || !row.recipientUserId) {
+    if (!row || (!row.recipientUserId && !row.recipientEmail)) {
       return this.settle(tx, outboxId, 'suppressed', 'no_recipient');
     }
     if (!isCommunicationEventKey(row.key)) {
       return this.settle(tx, outboxId, 'failed', `unknown_key:${row.key}`);
     }
     const entry = COMMUNICATION_CATALOG[row.key];
+    if (!row.recipientUserId) {
+      return this.decideForAddress(tx, row, entry, row.recipientEmail as string);
+    }
     const channels = row.channels as unknown as OutboxChannels;
 
     const recipient = await this.loadRecipient(tx, row.recipientUserId);
@@ -579,9 +584,17 @@ export class CommunicationDispatchService {
     // built like one, without the academy-host `/ar` prefix the platform
     // host does not mount. An academy that exists but has no host yet
     // keeps `onHost`'s documented fallback.
+    // ATO review F4 — a link that carries a credential (reset/setup token,
+    // verification token) is built on the academy's Atlas subdomain, never
+    // on a custom domain whose DNS the tenant controls.
+    const carriesCredential = (entry.credentialValues?.length ?? 0) > 0;
+    const linkHost =
+      carriesCredential && branding.credentialHost !== undefined
+        ? branding.credentialHost
+        : branding.host;
     const actionUrl = path
       ? entry.branding === 'academy' && row.academyId
-        ? this.links.onHost(branding.host, path, locale)
+        ? this.links.onHost(linkHost, path, locale)
         : this.links.platform(path)
       : null;
     return TemplateRegistry.render(
@@ -604,6 +617,41 @@ export class CommunicationDispatchService {
   }
 
   /** The dispatcher has full visibility, so it re-resolves the locale rather than trusting the emit-time snapshot blindly. */
+  /**
+   * Customer Requests — an ADDRESS recipient (a team inbox). None of the
+   * per-person rules apply (no preferences, cooldown, daily cap or digest:
+   * the address chose none of them), so it is only checked against the
+   * suppression list and rendered in the row's locale. Only catalogue
+   * entries that declare `addressRecipient` may travel this way.
+   */
+  private async decideForAddress(
+    tx: Prisma.TransactionClient,
+    row: CommunicationOutbox,
+    entry: CommunicationCatalogEntry,
+    email: string,
+  ): Promise<SendPlan | SettledPlan> {
+    if (!entry.addressRecipient) {
+      return this.settle(tx, row.id, 'failed', 'address_recipient_not_allowed');
+    }
+    if (await this.suppression.isSuppressed(email)) {
+      return this.settle(tx, row.id, 'suppressed', 'address_suppressed');
+    }
+    const branding = await this.brandingService.resolve(
+      tx,
+      entry.branding,
+      row.academyId,
+      entry.identity ?? entry.branding,
+    );
+    const locale = this.resolveLocale(null, entry, branding, row.locale);
+    return {
+      kind: 'send',
+      row,
+      entry,
+      to: email,
+      rendered: this.render(row, entry, locale, branding),
+    };
+  }
+
   private resolveLocale(
     preferences: unknown,
     entry: CommunicationCatalogEntry,

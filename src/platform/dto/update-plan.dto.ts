@@ -33,6 +33,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import {
+  LEGACY_PLAN_FEATURE_KEYS,
   OPTIONAL_PLAN_LIMIT_KEYS,
   PLAN_FEATURE_KEYS,
   PLAN_LIMIT_KEYS,
@@ -138,11 +139,22 @@ export function assertValidLimits(limits: Record<string, unknown>): string[] {
   return errors;
 }
 
-/** `{featureKey: boolean}` — every key required, so a plan can never carry a half-defined feature set. */
+/**
+ * `{featureKey: boolean}` — every key required, so a plan can never carry a
+ * half-defined feature set.
+ *
+ * Keys in `LEGACY_PLAN_FEATURE_KEYS` are tolerated here, not reported: a
+ * plan editor loaded before they were removed still sends them, and
+ * refusing its save would block an unrelated pricing or limit edit. They
+ * are never stored — the caller persists `pickPlanFeatures(features)`.
+ * Any OTHER unknown key is still a typo and is rejected.
+ */
 export function assertValidFeatures(features: Record<string, unknown>): string[] {
   const errors: string[] = [];
   const allowed = new Set<string>(PLAN_FEATURE_KEYS);
+  const legacy = new Set<string>(LEGACY_PLAN_FEATURE_KEYS);
   for (const key of Object.keys(features)) {
+    if (legacy.has(key)) continue;
     if (!allowed.has(key)) errors.push(`features.${key} is not a plan feature key`);
   }
   for (const key of PLAN_FEATURE_KEYS) {

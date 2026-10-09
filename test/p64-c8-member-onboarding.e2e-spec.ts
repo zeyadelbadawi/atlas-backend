@@ -226,6 +226,13 @@ describe('P64 C8 — academy member onboarding (e2e)', () => {
     // "you've been added" notice, never a "set your password" link, and
     // nothing about their account (name, password) changes.
     const existing = await signUpAndSignIn('c8-existing');
+    // A real existing user has proven their mailbox. An UNVERIFIED account
+    // is never silently granted another academy — it is re-invited to
+    // prove the address first (ATO hardening F1, `ato-hardening.e2e-spec`).
+    await admin.user.update({
+      where: { id: existing.userId },
+      data: { emailVerifiedAt: new Date() },
+    });
     const { owner, academyId } = await seedOwnerWithAcademy('c8-second');
 
     const added = await request(app.getHttpServer())

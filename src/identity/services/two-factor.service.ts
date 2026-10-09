@@ -48,6 +48,8 @@ import { PrismaService } from '../../database/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { TotpSecretCipher } from './totp-secret-cipher.service';
 import { PasswordCredentialsService } from './password-credentials.service';
+import { SessionRevocationService } from './session-revocation.service';
+import { CommunicationService } from '../../communications/services/communication.service';
 import type { AppConfig } from '../../config/configuration';
 import type { AuthMethod, Prisma } from '@prisma/client';
 import { runInUserContext } from '../../database/user-context';
@@ -103,6 +105,8 @@ export class TwoFactorService {
     private readonly cipher: TotpSecretCipher,
     private readonly passwordCredentials: PasswordCredentialsService,
     private readonly configService: ConfigService,
+    private readonly sessionRevocationService: SessionRevocationService,
+    private readonly communicationService: CommunicationService,
   ) {}
 
   /**
@@ -204,7 +208,13 @@ export class TwoFactorService {
   async confirmSetup(
     userId: string,
     token: string,
+    password: string,
   ): Promise<{ recoveryCodes: string[] }> {
+    // ATO review F3 — enrolling a second factor is persistent control of
+    // the account (whoever holds the authenticator decides every future
+    // sign-in), so it needs the same re-authentication as turning 2FA off:
+    // a session alone — a stolen 15-minute access token — is not enough.
+    await this.assertPassword(userId, password);
     const record = await this.asUser(userId, (tx) =>
       tx.userTwoFactor.findUnique({ where: { userId } }),
     );
@@ -244,6 +254,7 @@ export class TwoFactorService {
       });
     });
 
+    await this.notify(userId, 'auth.two_factor.enabled');
     return { recoveryCodes };
   }
 
@@ -377,12 +388,24 @@ export class TwoFactorService {
       }
       // Persist the accepted step BEFORE returning — this is what makes
       // the code single-use.
-      await this.asUser(userId, (tx) =>
-        tx.userTwoFactor.update({
-          where: { userId },
+      //
+      // ATO review F14 — conditional on the step still being newer than the
+      // stored one, so two concurrent submissions of the SAME code cannot
+      // both pass: the second UPDATE matches no row and is refused.
+      const claimed = await this.asUser(userId, (tx) =>
+        tx.userTwoFactor.updateMany({
+          where: {
+            userId,
+            OR: [{ lastTimeStep: null }, { lastTimeStep: { lt: result.timeStep } }],
+          },
           data: { lastTimeStep: result.timeStep },
         }),
       );
+      if (claimed.count === 0) {
+        throw new UnauthorizedException({
+          messageKey: 'errors.auth.invalidTwoFactorCode',
+        });
+      }
     } else {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidTwoFactorCode' });
     }
@@ -403,7 +426,11 @@ export class TwoFactorService {
    * would be enough to strip the very control that exists to make a
    * stolen session useless. Re-authentication is the point.
    */
-  async disable(userId: string, password: string): Promise<void> {
+  async disable(
+    userId: string,
+    password: string,
+    currentSessionId?: string,
+  ): Promise<void> {
     await this.assertPassword(userId, password);
 
     await this.asUser(userId, async (tx) => {
@@ -411,7 +438,40 @@ export class TwoFactorService {
       await tx.userTwoFactor.deleteMany({ where: { userId } });
     });
 
+    // ATO review F3 — sessions opened while 2FA protected the account were
+    // fine; once it is off, any OTHER session (someone else's, if this was
+    // not the owner) ends, and the owner is told.
+    if (currentSessionId) {
+      await this.sessionRevocationService.revokeOtherSessionsForUser(
+        userId,
+        currentSessionId,
+        'two_factor_disabled',
+      );
+    }
+    await this.notify(userId, 'auth.two_factor.disabled');
     this.logger.log({ userId }, 'Two-factor authentication disabled.');
+  }
+
+  /** Best-effort security notice after the change — a mail hiccup never undoes it. */
+  private async notify(
+    userId: string,
+    key: 'auth.two_factor.enabled' | 'auth.two_factor.disabled',
+  ): Promise<void> {
+    try {
+      const emitted = await this.asUser(userId, (tx) =>
+        this.communicationService.emit(tx, {
+          key,
+          recipientUserId: userId,
+          entity: { type: 'user', id: userId },
+        }),
+      );
+      await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    } catch (error) {
+      this.logger.warn(
+        { userId, key, error: error instanceof Error ? error.message : String(error) },
+        'Could not send the two-factor notice; the change itself was made.',
+      );
+    }
   }
 
   /**

@@ -57,12 +57,12 @@ import { TenantUsageRecomputeService } from './tenant-usage-recompute.service';
 import { resolveEffectiveSubscriptionStatus } from '../utils/subscription-effective-status.util';
 import { PLANS_CLOCK, type Clock } from '../utils/clock';
 import { bytesToGb } from '../utils/storage-units.util';
+import { pickPlanFeatures } from '../dto/entitlement.types';
 import type {
   EffectiveEntitlements,
   EntitlementAddOnInput,
   LimitValue,
   PlanResourceLimits,
-  PlanFeatures,
   PlanLimitKey,
 } from '../dto/entitlement.types';
 import type { TenantUsageCounts } from '../repositories/tenant-usage.repository';
@@ -453,7 +453,7 @@ export class EntitlementEnforcementService {
         // (every row predating P61) falls back to the catalog, exactly as
         // it behaved before.
         limits: resolveSubscriptionLimits(subscription),
-        features: subscription.plan.features as unknown as PlanFeatures,
+        features: pickPlanFeatures(subscription.plan.features),
       },
       addOnInputs,
     );

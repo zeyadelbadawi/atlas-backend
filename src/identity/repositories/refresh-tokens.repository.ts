@@ -327,6 +327,26 @@ export class RefreshTokensRepository {
   }
 
   /**
+   * ATO review F3 — every live session of the account EXCEPT `keepSessionId`
+   * (the one making a security change keeps working; the others end).
+   * Same single `UPDATE … RETURNING` shape as `revokeAllForUser`.
+   */
+  async revokeAllForUserExcept(userId: string, keepSessionId: string): Promise<string[]> {
+    const rows = await this.asUser(
+      userId,
+      (tx) => tx.$queryRaw<{ session_id: string }[]>`
+        UPDATE "refresh_tokens"
+        SET "revoked_at" = NOW()
+        WHERE "user_id" = ${userId}
+          AND "revoked_at" IS NULL
+          AND "session_id" <> ${keepSessionId}
+        RETURNING "session_id"
+      `,
+    );
+    return [...new Set(rows.map((row) => row.session_id))];
+  }
+
+  /**
    * Atomic refresh-token rotation.
    *
    * Two concurrent callers presenting the *same* refresh token must not

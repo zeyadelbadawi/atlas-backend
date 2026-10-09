@@ -18,6 +18,8 @@ import { template as supportCaseStatusChanged } from './keys/support.case.status
 import { template as authPasswordChanged } from './keys/auth.password.changed';
 import { template as authIdentityLinked } from './keys/auth.identity.linked';
 import { template as authIdentityUnlinked } from './keys/auth.identity.unlinked';
+import { template as authTwoFactorEnabled } from './keys/auth.two_factor.enabled';
+import { template as authTwoFactorDisabled } from './keys/auth.two_factor.disabled';
 import { template as accountAcademyJoined } from './keys/account.academy.joined';
 import { template as authEmailVerification } from './keys/auth.email.verification';
 import { template as authEmailOtp } from './keys/auth.email.otp';
@@ -62,6 +64,12 @@ import { template as attemptInvalidated } from './keys/assessment.attempt.invali
 import { template as courseCompleted } from './keys/course.completed';
 import { template as deviceRegistered } from './keys/device.registered';
 import { template as deviceRemoved } from './keys/device.removed';
+import { template as customerRequestRouted } from './keys/customer_request.routed';
+import { template as customerRequestReceived } from './keys/customer_request.received';
+import { template as customerRequestCustomerReplied } from './keys/customer_request.customer_replied';
+import { template as customerRequestSubmitted } from './keys/customer_request.submitted';
+import { template as customerRequestStatusChanged } from './keys/customer_request.status_changed';
+import { template as customerRequestTeamReplied } from './keys/customer_request.team_replied';
 import { template as deviceLimitReached } from './keys/device.limit_reached';
 import { template as sessionTakenOver } from './keys/session.taken_over';
 import { template as announcementPublished } from './keys/announcement.published';
@@ -111,6 +119,8 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'account.academy.joined': accountAcademyJoined,
   'auth.identity.linked': authIdentityLinked,
   'auth.identity.unlinked': authIdentityUnlinked,
+  'auth.two_factor.enabled': authTwoFactorEnabled,
+  'auth.two_factor.disabled': authTwoFactorDisabled,
   'auth.email.verification': authEmailVerification,
   'auth.email.otp': authEmailOtp,
   'auth.account.deletion_code': authAccountDeletionCode,
@@ -178,6 +188,12 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'course.completed': courseCompleted,
   'device.registered': deviceRegistered,
   'device.removed': deviceRemoved,
+  'customer_request.routed': customerRequestRouted,
+  'customer_request.received': customerRequestReceived,
+  'customer_request.customer_replied': customerRequestCustomerReplied,
+  'customer_request.submitted': customerRequestSubmitted,
+  'customer_request.status_changed': customerRequestStatusChanged,
+  'customer_request.team_replied': customerRequestTeamReplied,
   'device.limit_reached': deviceLimitReached,
   'session.taken_over': sessionTakenOver,
   'announcement.published': announcementPublished,

@@ -94,6 +94,13 @@ export interface ContentRequestContext {
   readonly hostAcademyId: string | null;
   readonly deviceCookie?: string | null;
   readonly userAgent?: string | null;
+  /**
+   * Writes a NEW device identity to the response. The grant is the other
+   * place a device is registered, so it must be able to hand the browser
+   * its identity — without this, a row it registered was unreachable (see
+   * `StudentDeviceService.resolveForSession`).
+   */
+  readonly onDeviceCookie?: (value: string) => void;
 }
 
 /**
@@ -390,6 +397,11 @@ export class LessonContentService {
             userAgent: context.userAgent,
             maxDevices: policy.maxDevices,
           });
+          // Given even when the answer below is `deviceLimit`: a browser
+          // holding an identity registers itself as soon as a slot frees.
+          if (resolution.issueCookieValue) {
+            context.onDeviceCookie?.(resolution.issueCookieValue);
+          }
           if (resolution.atCapacity || !resolution.device) {
             throw new ContentRefusal('deviceLimit', undefined, {
               academyId: course.academyId,
@@ -398,12 +410,27 @@ export class LessonContentService {
           }
           deviceId = resolution.device.id;
 
+          // A session minted while the learner was at their cap carries no
+          // device. Bind it to the device it is now using, so removing that
+          // device ends this session too (termination revokes by device).
+          if (context.sessionId) {
+            await tx.refreshToken.updateMany({
+              where: {
+                userId,
+                sessionId: context.sessionId,
+                deviceId: null,
+                revokedAt: null,
+              },
+              data: { deviceId },
+            });
+          }
+
           // P64 Communications C3 (plan §8 B1) — the OTHER place a device
-          // is registered. `issueCookieValue` is set on the INSERT alone,
-          // so a recognised device being touched emits nothing, and the
+          // is registered. `created` is true on the INSERT alone, so a
+          // recognised device being touched emits nothing, and the
           // catalogue's dedupe (the device id) means the sign-in path and
           // this one can never both announce the same row.
-          if (resolution.issueCookieValue) {
+          if (resolution.created) {
             // No academy NAME: a learner's own context cannot SELECT
             // `academies` (there is no `academies_student_select`), and
             // the brand name is resolved by the dispatcher anyway.

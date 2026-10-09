@@ -152,7 +152,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
           generalStorage: 10,
           videoStorage: 10,
         },
-        features: { cms: true, themes: true },
+        features: { liveSessions: false },
         pricing: { amount: 49, currency: 'USD', billingCycle: 'monthly' },
       },
     });
@@ -560,7 +560,7 @@ describe('Google Identity — Atlas platform sign-in / sign-up (e2e)', () => {
     await http()
       .post('/auth/2fa/confirm')
       .set('Authorization', `Bearer ${token}`)
-      .send({ token: await generate({ secret }) })
+      .send({ token: await generate({ secret }), password: PASSWORD })
       .expect(200);
     const sub = newSub();
     await linkGoogle(owner.userId, sub, owner.email);

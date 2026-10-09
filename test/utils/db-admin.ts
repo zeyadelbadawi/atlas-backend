@@ -169,19 +169,7 @@ export async function seedPlan(
         generalStorage: 10,
         videoStorage: 10,
       },
-      features: overrides.features ?? {
-        cms: true,
-        seo: true,
-        seoAdvanced: false,
-        marketing: false,
-        marketingAdvanced: false,
-        analytics: false,
-        analyticsAdvanced: false,
-        customDomain: false,
-        themes: true,
-        multipleThemes: false,
-        backup: false,
-      },
+      features: overrides.features ?? { liveSessions: false },
       pricing:
         overrides.pricing === null
           ? Prisma.JsonNull

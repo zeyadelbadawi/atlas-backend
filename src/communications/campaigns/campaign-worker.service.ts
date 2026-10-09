@@ -281,16 +281,23 @@ export class CampaignWorkerService {
           }
           let inApp = 0;
           if (campaign.channels.inApp) {
+            // Notification context isolation — a platform broadcast, or an
+            // academy campaign to its STAFF, belongs to the Management
+            // dashboard; an academy campaign to learners belongs to that
+            // academy's learner area.
+            const placement = campaignNotificationPlacement(campaign);
             inApp = await tx.$executeRaw`
             INSERT INTO "notifications"
               ("id", "user_id", "type", "priority", "title_key", "message_key", "values",
                "action_url", "action_label_key", "metadata", "dedupe_key", "retention_class",
-               "created_at", "updated_at")
+               "context", "academy_id", "created_at", "updated_at")
             SELECT gen_random_uuid()::text, t.user_id, ${entry.notificationType}::"notification_type",
                    ${entry.priority}::"notification_priority", ${entry.titleKey}, ${entry.messageKey},
                    ${inAppValues}::jsonb, NULL, NULL,
                    ${JSON.stringify({ campaignId: campaign.id })}::jsonb, ${dedupeKey},
-                   ${entry.retentionClass}::"notification_retention_class", now(), now()
+                   ${entry.retentionClass}::"notification_retention_class",
+                   ${placement.context}::"notification_context", ${placement.academyId},
+                   now(), now()
               FROM unnest(${userIds}::text[]) AS t(user_id)
           `;
           }
@@ -472,4 +479,20 @@ export class CampaignWorkerService {
     );
     return null;
   }
+}
+
+/** Notification context isolation — where a campaign's in-app rows are shown. */
+export function campaignNotificationPlacement(campaign: {
+  readonly scope: string;
+  readonly academyId: string | null;
+  readonly audience: unknown;
+}): { readonly context: 'management' | 'academy'; readonly academyId: string | null } {
+  const audienceType =
+    campaign.audience && typeof campaign.audience === 'object'
+      ? (campaign.audience as { type?: unknown }).type
+      : undefined;
+  if (campaign.scope === 'academy' && campaign.academyId && audienceType !== 'staff') {
+    return { context: 'academy', academyId: campaign.academyId };
+  }
+  return { context: 'management', academyId: null };
 }

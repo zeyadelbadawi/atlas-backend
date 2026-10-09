@@ -126,7 +126,7 @@ describe('Tenant Subscription/Usage/Add-ons (e2e)', () => {
     const addOn = await seedAddOn(
       admin,
       'addons-real-addon',
-      { type: 'feature', featureKey: 'backup' },
+      { type: 'feature', featureKey: 'liveSessions' },
       [],
     );
     await seedTenantAddOn(admin, org.id, addOn.id);

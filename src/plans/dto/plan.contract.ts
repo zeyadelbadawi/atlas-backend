@@ -8,6 +8,7 @@
  * `users.preferences`'s established precedent in this codebase.
  */
 import type { Plan as PrismaPlan } from '@prisma/client';
+import { pickPlanFeatures } from './entitlement.types';
 import type { PlanFeatures, PlanResourceLimits } from './entitlement.types';
 
 export interface PlanPricingMetadataResponse {
@@ -146,7 +147,9 @@ export function toPlanResponse(
     family: plan.family,
     tier: plan.tier,
     limits: plan.limits as unknown as PlanResourceLimits,
-    features: plan.features as unknown as PlanFeatures,
+    // Only current keys reach a client — a row still holding a legacy,
+    // never-enforced key must not advertise it (`pickPlanFeatures`).
+    features: pickPlanFeatures(plan.features),
     pricing: (plan.pricing as PlanPricingMetadataResponse | null) ?? undefined,
     trialEligible: plan.trialEligible,
     giftedDaysMonthly: plan.giftedDaysMonthly ? plan.giftedDaysMonthly : null,

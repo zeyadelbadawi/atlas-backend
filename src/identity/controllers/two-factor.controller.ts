@@ -80,12 +80,12 @@ export class TwoFactorController {
    */
   @Post('confirm')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CredentialCheckRateLimitGuard)
   async confirmSetup(
     @CurrentAuthContext() auth: AuthContext,
     @Body() dto: ConfirmTwoFactorDto,
   ): Promise<{ recoveryCodes: string[] }> {
-    return this.twoFactorService.confirmSetup(auth.userId, dto.token);
+    return this.twoFactorService.confirmSetup(auth.userId, dto.token, dto.password);
   }
 
   /**
@@ -142,7 +142,7 @@ export class TwoFactorController {
     @CurrentAuthContext() auth: AuthContext,
     @Body() dto: DisableTwoFactorDto,
   ): Promise<void> {
-    await this.twoFactorService.disable(auth.userId, dto.password);
+    await this.twoFactorService.disable(auth.userId, dto.password, auth.sessionId);
   }
 
   /** Issues a new set of recovery codes and invalidates every old one. Password-gated for the same reason as disable. */

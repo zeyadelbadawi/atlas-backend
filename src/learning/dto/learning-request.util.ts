@@ -13,9 +13,12 @@
  * what they cannot do is change which host the edge routed to, which is
  * why the host is the tenancy claim the content path trusts.
  */
-import type { Request } from 'express';
-import { readCookie } from '../../common/http/cookies.util';
-import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
+import type { Request, Response } from 'express';
+import { deviceCookieOptions, readCookie } from '../../common/http/cookies.util';
+import {
+  DEVICE_COOKIE_MAX_AGE_SECONDS,
+  DEVICE_COOKIE_NAME,
+} from '../../tenancy/services/student-device.service';
 import { surfaceDenied } from '../../identity/guards/surface-denial.util';
 
 export interface LearningRequestContext {
@@ -23,14 +26,33 @@ export interface LearningRequestContext {
   readonly sessionId: string | null;
   readonly deviceCookie?: string | null;
   readonly userAgent?: string | null;
+  /** Present when the caller passed the response: writes a new device identity, exactly as sign-in does. */
+  readonly onDeviceCookie?: (value: string) => void;
 }
 
-export function learningRequestContext(request: Request): LearningRequestContext {
+export function learningRequestContext(
+  request: Request,
+  response?: Response,
+): LearningRequestContext {
   return {
     userId: request.authContext?.userId ?? null,
     sessionId: request.authContext?.sessionId ?? null,
     deviceCookie: readCookie(request.headers.cookie, DEVICE_COOKIE_NAME),
     userAgent: request.headers['user-agent'] ?? null,
+    ...(response
+      ? {
+          onDeviceCookie: (value: string) => {
+            response.cookie(
+              DEVICE_COOKIE_NAME,
+              value,
+              deviceCookieOptions({
+                secure: request.secure,
+                maxAgeSeconds: DEVICE_COOKIE_MAX_AGE_SECONDS,
+              }),
+            );
+          },
+        }
+      : {}),
   };
 }
 

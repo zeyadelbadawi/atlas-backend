@@ -184,7 +184,7 @@ describe('P64 Phase 2 — a Premium → Normal downgrade migrates nothing (D11, 
           videoStorage: 100,
           videoStorageMinutes: 2000,
         },
-        features: { cms: true, themes: true },
+        features: { liveSessions: false },
         pricing: { amount: 99, currency: 'USD', billingCycle: 'monthly' },
       },
     });

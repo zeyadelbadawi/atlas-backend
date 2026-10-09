@@ -29,6 +29,7 @@ import { LearningMetricsService } from '../../observability/metrics/learning-met
 import { CommunicationService } from '../../communications/services/communication.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
+import { SessionRevocationService } from '../../identity/services/session-revocation.service';
 import type {
   LearnerDevicesResponse,
   LearnerDeviceResponse,
@@ -54,6 +55,7 @@ export class LearnerSessionService {
     private readonly metrics: LearningMetricsService,
     private readonly communications: CommunicationService,
     private readonly academiesRepository: AcademiesRepository,
+    private readonly sessionRevocation: SessionRevocationService,
   ) {}
 
   async listDevices(
@@ -183,10 +185,21 @@ export class LearnerSessionService {
     // learner does when they no longer control it, so it has to actually
     // end access there.
     await this.gateRevocation.revokeSessions(revokedSessionIds, 'device_removed');
+    // Device Identity + Device-Limit fix — and its ACCESS tokens, at once.
+    // Revoking the refresh rows only stopped the next refresh: the removed
+    // device's current access token kept every API open for up to its
+    // remaining lifetime. The same denylist sign-out and refresh-reuse use.
+    await Promise.all(
+      revokedSessionIds.map((sessionId) => this.sessionRevocation.markRevoked(sessionId)),
+    );
     // Outside the transaction: the lease store is not transactional, and a
     // rollback must not leave it holding a lease for a device that still
-    // exists.
-    await this.leaseService.revokeAll(userId, academyId);
+    // exists. Only the REMOVED device's lease goes — a learner freeing a
+    // slot from one browser must not cut off the lesson playing on another.
+    const lease = await this.leaseService.current(userId, academyId);
+    if (lease?.deviceId === deviceId) {
+      await this.leaseService.revokeAll(userId, academyId);
+    }
     await this.communications.enqueueAfterCommit(emitted.outboxId);
   }
 

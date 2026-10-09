@@ -70,7 +70,7 @@ describe('Phase 10.3 two-factor authentication (e2e) — P103-2FA-001..020', () 
     const confirmed = await request(app.getHttpServer())
       .post('/auth/2fa/confirm')
       .set('Authorization', `Bearer ${token}`)
-      .send({ token: code })
+      .send({ token: code, password: PASSWORD })
       .expect(200);
 
     return {
@@ -175,7 +175,7 @@ describe('Phase 10.3 two-factor authentication (e2e) — P103-2FA-001..020', () 
     await request(app.getHttpServer())
       .post('/auth/2fa/confirm')
       .set('Authorization', `Bearer ${token}`)
-      .send({ token: '000000' })
+      .send({ token: '000000', password: PASSWORD })
       .expect(400);
 
     const record = await admin.userTwoFactor.findUniqueOrThrow({ where: { userId } });

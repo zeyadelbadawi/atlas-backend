@@ -132,6 +132,12 @@ export interface CommunicationCatalogEntry {
    */
   readonly credentialValues?: readonly string[];
   /**
+   * Customer Requests — may be sent to an ADDRESS recipient (a team inbox
+   * with no Atlas account) through `CommunicationService.emitToAddress`.
+   * Such an entry must be email-only (`inApp: 'never'`).
+   */
+  readonly addressRecipient?: boolean;
+  /**
    * `values` keys that hold personal data about someone OTHER than the
    * recipient (a website visitor's name, address, message). They exist for
    * the email body only:
@@ -540,6 +546,44 @@ const CATALOG = {
     template: 'auth.identity.unlinked',
     titleKey: 'notifications:events.googleUnlinked.title',
     messageKey: 'notifications:events.googleUnlinked.message',
+    actionUrl: () => FORGOT_PASSWORD_PATH,
+  },
+  /**
+   * ATO review F3 — two-factor authentication was turned on. Whoever holds
+   * the authenticator now decides every sign-in, so the owner hears about
+   * it; if it was not them, the CTA is the signed-out recovery page.
+   */
+  'auth.two_factor.enabled': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'auth.two_factor.enabled',
+    titleKey: 'notifications:events.twoFactorEnabled.title',
+    messageKey: 'notifications:events.twoFactorEnabled.message',
+    actionUrl: () => FORGOT_PASSWORD_PATH,
+  },
+  /** ATO review F3 — two-factor authentication was turned off (other sessions were ended). */
+  'auth.two_factor.disabled': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'auth.two_factor.disabled',
+    titleKey: 'notifications:events.twoFactorDisabled.title',
+    messageKey: 'notifications:events.twoFactorDisabled.message',
     actionUrl: () => FORGOT_PASSWORD_PATH,
   },
   /**
@@ -2245,6 +2289,119 @@ const CATALOG = {
     // feed row keeps `topic` and nothing that identifies the visitor.
     personalValues: ['name', 'email', 'organizationName', 'message'],
   },
+  // Customer Requests — an academy asked the Atlas team for a custom
+  // service. `routed` goes to the TEAM INBOX the Platform Owner configured
+  // for the request type (an address recipient, `emitToAddress`) — once per
+  // event, deduped on the event id so a retried emit never mails twice.
+  'customer_request.routed': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `customer_request_routed:${entity.id}:${str(values, 'eventId')}`,
+    cooldownSeconds: 0,
+    locale: 'platform',
+    branding: 'platform',
+    template: 'customer_request.routed',
+    titleKey: 'notifications:events.customerRequestRouted.title',
+    messageKey: 'notifications:events.customerRequestRouted.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/customer-requests/${entity.id}`,
+    addressRecipient: true,
+  },
+  // Every active Platform Owner's feed: a new request arrived.
+  'customer_request.received': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `customer_request_received:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'customer_request.received',
+    titleKey: 'notifications:events.customerRequestReceived.title',
+    messageKey: 'notifications:events.customerRequestReceived.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/customer-requests/${entity.id}`,
+  },
+  // The academy answered a request (feed of the assigned Platform Owner).
+  'customer_request.customer_replied': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'never' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `customer_request_customer_replied:${entity.id}:${str(values, 'eventId')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'customer_request.customer_replied',
+    titleKey: 'notifications:events.customerRequestCustomerReplied.title',
+    messageKey: 'notifications:events.customerRequestCustomerReplied.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/customer-requests/${entity.id}`,
+  },
+  // To the requester: we have your request.
+  'customer_request.submitted': {
+    category: 'transactional',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `customer_request_submitted:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'customer_request.submitted',
+    titleKey: 'notifications:events.customerRequestSubmitted.title',
+    messageKey: 'notifications:events.customerRequestSubmitted.message',
+    actionUrl: ({ entity, values }) =>
+      `/dashboard/academy/${str(values, 'academyId')}/requests/${entity.id}`,
+  },
+  // To the requester: the team moved the request on. Once per status.
+  'customer_request.status_changed': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'preference' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `customer_request_status_changed:${entity.id}:${str(values, 'eventId')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'customer_request.status_changed',
+    titleKey: 'notifications:events.customerRequestStatusChanged.title',
+    messageKey: 'notifications:events.customerRequestStatusChanged.message',
+    actionUrl: ({ entity, values }) =>
+      `/dashboard/academy/${str(values, 'academyId')}/requests/${entity.id}`,
+  },
+  // To the requester: the team replied (customer-visible message).
+  'customer_request.team_replied': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `customer_request_team_replied:${entity.id}:${str(values, 'eventId')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'customer_request.team_replied',
+    titleKey: 'notifications:events.customerRequestTeamReplied.title',
+    messageKey: 'notifications:events.customerRequestTeamReplied.message',
+    actionUrl: ({ entity, values }) =>
+      `/dashboard/academy/${str(values, 'academyId')}/requests/${entity.id}`,
+  },
   // W3-compose — PERSON-AUTHORED messages. The one exception to "no API
   // sends free text": a campaign (`communication_campaigns`) holds the
   // author's subject and allowlist-sanitised body, and the outbox rows it
@@ -2303,4 +2460,47 @@ export function catalogEntry(key: CommunicationEventKey): CommunicationCatalogEn
 
 export function isCommunicationEventKey(value: string): value is CommunicationEventKey {
   return Object.prototype.hasOwnProperty.call(COMMUNICATION_CATALOG, value);
+}
+
+/**
+ * Notification context isolation — the account's OWN security notices
+ * (its password, its sign-in methods, its 2FA, its use of the password to
+ * join an academy). The credential is global, so these are shown in every
+ * context: whichever surface the person is signed in on, they see that
+ * their password changed.
+ */
+export const ACCOUNT_NOTIFICATION_KEYS: ReadonlySet<CommunicationEventKey> = new Set([
+  'auth.password.changed',
+  'auth.password.reset_confirmed',
+  'auth.identity.linked',
+  'auth.identity.unlinked',
+  'auth.two_factor.enabled',
+  'auth.two_factor.disabled',
+  'account.academy.joined',
+]);
+
+export type NotificationContextValue = 'management' | 'academy' | 'account' | 'unscoped';
+
+/**
+ * Where an in-app notification for `key` belongs, decided at creation from
+ * the catalogue — never from the reader. The audience, not the presence of
+ * an academy id, decides: a staff event about Academy A (a payment proof to
+ * review) belongs to the Management dashboard, and the learner event of the
+ * same academy (your payment was approved) to Academy A's learner area —
+ * for the SAME person when they are both. A learner event without an
+ * academy cannot be placed and is `unscoped` (shown nowhere) rather than
+ * guessed.
+ */
+export function notificationContextFor(
+  key: CommunicationEventKey,
+  academyId: string | null | undefined,
+): { readonly context: NotificationContextValue; readonly academyId: string | null } {
+  if (ACCOUNT_NOTIFICATION_KEYS.has(key)) return { context: 'account', academyId: null };
+  const audience = COMMUNICATION_CATALOG[key].audience;
+  if (audience === 'learner') {
+    return academyId
+      ? { context: 'academy', academyId }
+      : { context: 'unscoped', academyId: null };
+  }
+  return { context: 'management', academyId: null };
 }

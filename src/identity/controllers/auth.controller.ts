@@ -61,6 +61,7 @@ import {
 import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
 import { TRUST_COOKIE_NAME } from '../services/trusted-device.service';
 import { assertSessionServesHostAcademy } from '../../learning/dto/learning-request.util';
+import { SupersededRefreshTokenException } from '../errors/superseded-refresh-token.exception';
 
 /** Real, server-resolved request metadata for a session write. See `request-metadata.util.ts` for the trust model behind these headers. */
 export function sessionContext(request: Request): SessionRequestContext {
@@ -214,7 +215,12 @@ export class AuthController {
       // activity rather than only the original sign-in.
       return await this.authService.refresh(presented, sessionContext(request));
     } catch (error) {
-      if (fromCookie) clearSessionCookie(request, response);
+      // A refused refresh clears the cookie — except one that merely lost a
+      // race to a concurrent refresh: the browser already holds the newer
+      // cookie, and clearing it would sign every tab out of a valid session.
+      if (fromCookie && !(error instanceof SupersededRefreshTokenException)) {
+        clearSessionCookie(request, response);
+      }
       throw error;
     }
   }

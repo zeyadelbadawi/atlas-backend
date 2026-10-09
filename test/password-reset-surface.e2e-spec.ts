@@ -101,7 +101,14 @@ describe('Password reset surface (e2e) — RSF-01..05', () => {
         httpsReachable: true,
       },
     });
-    return { id: a.id, host, name, owner };
+    // Its Atlas subdomain — where credential links land (ATO review F4):
+    // the custom domain's DNS belongs to the tenant.
+    const subdomain = `${label}-${Math.random().toString(36).slice(2, 9)}`;
+    const atlasHost = `${subdomain}.${BASE}`;
+    await admin.subdomainAllocation.create({
+      data: { academyId: a.id, subdomain, status: 'assigned', fullHost: atlasHost },
+    });
+    return { id: a.id, host, atlasHost, name, owner };
   }
 
   function requestReset(email: string, host: string) {
@@ -163,7 +170,10 @@ describe('Password reset surface (e2e) — RSF-01..05', () => {
 
     const { token, send } = await resetEmail(learner.email);
     const body = `${send.html ?? ''}\n${send.text}`;
-    expect(body).toContain(`https://${a.host}/reset-password?token=${token}`);
+    // The request was made on the custom domain; the token-carrying link
+    // goes to the academy's Atlas subdomain (ATO review F4).
+    expect(body).toContain(`https://${a.atlasHost}/reset-password?token=${token}`);
+    expect(body).not.toContain(`https://${a.host}/reset-password`);
     expect(body).not.toContain('/auth/reset-password');
     expect(body).toContain(a.name);
 
@@ -199,7 +209,7 @@ describe('Password reset surface (e2e) — RSF-01..05', () => {
     await requestReset(a.owner.email, a.host).expect(200);
     const { token, send } = await resetEmail(a.owner.email);
     expect(`${send.html ?? ''}\n${send.text}`).toContain(
-      `https://${a.host}/reset-password?token=${token}`,
+      `https://${a.atlasHost}/reset-password?token=${token}`,
     );
   });
 

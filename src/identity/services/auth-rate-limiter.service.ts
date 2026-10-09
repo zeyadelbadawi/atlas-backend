@@ -40,10 +40,14 @@ export class AuthRateLimiterService {
     const client = this.redisService.getClient();
     const redisKey = `ratelimit:${key}`;
 
-    const count = await client.incr(redisKey);
-    if (count === 1) {
-      await client.expire(redisKey, windowSeconds);
-    }
+    // ATO review F8 — the increment and the window's TTL in ONE atomic
+    // step. Two calls (INCR, then EXPIRE when the count is 1) left a key
+    // with no TTL if the process died or Redis failed between them, which
+    // blocked that email or IP for good. The script also repairs any such
+    // key already in place (TTL -1).
+    const count = Number(
+      await client.eval(CONSUME_SCRIPT, 1, redisKey, String(windowSeconds)),
+    );
 
     if (count <= max) {
       return { allowed: true, retryAfterSeconds: 0 };
@@ -53,3 +57,12 @@ export class AuthRateLimiterService {
     return { allowed: false, retryAfterSeconds: ttl > 0 ? ttl : windowSeconds };
   }
 }
+
+/** INCR, and set the window's TTL when the key is new or has none. */
+const CONSUME_SCRIPT = `
+local count = redis.call('INCR', KEYS[1])
+if count == 1 or redis.call('TTL', KEYS[1]) < 0 then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+end
+return count
+`;

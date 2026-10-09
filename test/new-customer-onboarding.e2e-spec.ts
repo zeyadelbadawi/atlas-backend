@@ -116,7 +116,7 @@ describe('New Customer Onboarding (e2e)', () => {
           generalStorage: 10,
           videoStorage: 10,
         },
-        features: { cms: true, themes: true },
+        features: { liveSessions: false },
         pricing: { amount: 49, currency: 'USD', billingCycle: 'monthly' },
       },
     });

@@ -82,6 +82,8 @@ import { CommunicationMetricsService } from '../../communications/metrics/commun
 import { CommunicationService } from '../../communications/services/communication.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { AcademyStaffRecipientsService } from '../../communications/services/academy-staff-recipients.service';
+import { SupersededRefreshTokenException } from '../errors/superseded-refresh-token.exception';
+import { UnprovenAccountService } from './unproven-account.service';
 import { TrustedDeviceService } from './trusted-device.service';
 import type { EmailOtpChallengeContract } from '../dto/contracts';
 import type { SignInSurface } from '../dto/sign-in.dto';
@@ -233,6 +235,7 @@ export class AuthService {
     private readonly accessPolicyService: AccessPolicyService,
     private readonly emailOtpService: EmailOtpService,
     private readonly trustedDeviceService: TrustedDeviceService,
+    private readonly unprovenAccountService: UnprovenAccountService,
     private readonly communicationMetrics: CommunicationMetricsService,
     // P64 Communications C3 (plan §8 B1) — the new-device feed row. From
     // the `@Global()` `CommunicationsModule`, like the metrics above, so
@@ -522,6 +525,14 @@ export class AuthService {
     if (existing && academySignup) {
       const joined = await this.joinAcademyWithExistingAccount(existing, email, input);
       if (joined) return joined;
+    } else if (academySignup) {
+      // ATO review F6 — an existing address's academy signup verifies its
+      // password (one Argon2 operation) before the decoy hash below; a new
+      // address must cost the same, or the response time tells the two
+      // apart. The same dummy verification an unknown sign-in performs.
+      await this.passwordCredentials.verifyForUnknownAccount(
+        input.password || randomUUID(),
+      );
     }
 
     // Phase 10.1 — disposable/undeliverable addresses are refused here,
@@ -1835,8 +1846,16 @@ export class AuthService {
           }),
         );
       }
-      // Covers: unknown token, already-revoked token (including a replay
-      // of a token a concurrent request just rotated), and expired token —
+      // Stale-tab recovery — a token a concurrent request rotated a moment
+      // ago (inside the grace): the same 401, but flagged so the controller
+      // leaves the browser's newer session cookie alone.
+      if (
+        !reused &&
+        (await this.refreshTokensRepository.findReusedRotation(presentedHash, 0))
+      ) {
+        throw new SupersededRefreshTokenException();
+      }
+      // Covers: unknown token, already-revoked token, and expired token —
       // all collapse to the same generic 401, never distinguishing which,
       // so a caller can't probe for which failure mode applies.
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
@@ -2069,6 +2088,15 @@ export class AuthService {
     // activates an `invited` account, and the link reaching the inbox
     // proves the address.
     await this.usersRepository.completeInvitation(resetToken.userId, new Date());
+    // ATO review F1/F2 — the reset proved the mailbox. On an account that
+    // had NEVER been proven, the external sign-in and 2FA on it were set by
+    // whoever held the password without that proof: they go, and the
+    // address is recorded as verified. A proven account keeps its 2FA —
+    // a reset must never be a way around the second factor.
+    await this.unprovenAccountService.afterFirstMailboxProof(
+      resetToken.userId,
+      new Date(),
+    );
     // Launch Stabilization A3 (D3) — refresh rows AND live access tokens.
     const sessionsRevoked = await this.sessionRevocationService.revokeAllSessionsForUser(
       resetToken.userId,
@@ -2228,13 +2256,13 @@ export class AuthService {
           }
 
           // P64 Communications C3 (plan §8 B1, §10 "B1/B2 device
-          // registered/removed"). `issueCookieValue` is set on exactly
-          // one path — the INSERT — so this fires for a genuinely new
-          // browser and not for the cap refusal or a recognised device
-          // being touched. In-app only by the catalogue: the learner is
-          // sitting at the browser that was just registered, and §10's
-          // own note for this row is "low volume".
-          if (resolution.issueCookieValue && resolution.device) {
+          // registered/removed"). `created` is true on exactly one path —
+          // the INSERT — so this fires for a genuinely new browser and not
+          // for the cap refusal (which still issues the browser an
+          // identity) or a recognised device being touched. In-app only by
+          // the catalogue: the learner is sitting at the browser that was
+          // just registered, and §10's own note for this row is "low volume".
+          if (resolution.created && resolution.device) {
             // No academy NAME is read: this runs in the learner's own
             // user context, where `academies` is invisible (there is no
             // `academies_student_select` policy — an `academy_students`
