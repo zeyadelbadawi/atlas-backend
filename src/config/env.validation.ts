@@ -160,6 +160,14 @@ const EnvSchema = z.object({
   // traffic informs the final numbers.
   AUTH_SIGNIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   AUTH_SIGNIN_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
+  // ATO review F7 — lockout-resistant sign-in throttling.
+  AUTH_SIGNIN_RATE_LIMIT_IP_MAX: z.coerce.number().int().positive().default(30),
+  AUTH_SIGNIN_ACCOUNT_FAILURE_CEILING: z.coerce.number().int().positive().default(50),
+  AUTH_SIGNIN_ACCOUNT_FAILURE_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3600),
 
   // Redis-backed password-reset-request rate limiting (same rationale).
   AUTH_PASSWORD_RESET_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
@@ -686,6 +694,25 @@ const EnvSchema = z.object({
     .regex(
       /^[0-9a-fA-F]{64}$/,
       'CUSTOMER_IDENTITY_HMAC_KEY must be a 64-character hex string (32 raw bytes).',
+    )
+    .optional(),
+  // ATO review F7 — optional dedicated key for the known-device sign-in
+  // cookie; derived from PAYMENT_CREDENTIALS_ENCRYPTION_KEY when unset.
+  SIGNIN_DEVICE_COOKIE_KEY: z
+    .string()
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'SIGNIN_DEVICE_COOKIE_KEY must be a 64-character hex string.',
+    )
+    .optional(),
+  // ATO review key separation — optional dedicated key for one-click
+  // unsubscribe links; derived from PAYMENT_CREDENTIALS_ENCRYPTION_KEY when
+  // unset. No longer tied to JWT_ACCESS_SECRET.
+  UNSUBSCRIBE_TOKEN_KEY: z
+    .string()
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'UNSUBSCRIBE_TOKEN_KEY must be a 64-character hex string.',
     )
     .optional(),
 

@@ -6,8 +6,6 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  HttpException,
-  HttpStatus,
   Inject,
   Injectable,
   Logger,
@@ -31,7 +29,7 @@ import {
 } from '../dto/user-session.contract';
 import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
 import { PasswordCredentialsService } from './password-credentials.service';
-import { AuthRateLimiterService } from './auth-rate-limiter.service';
+import { SignInThrottleService } from './sign-in-throttle.service';
 import { AccessTokenService } from './access-token.service';
 import { SIGNUP_ORGANIZATION_PORT } from './signup-organization.port';
 import type {
@@ -244,10 +242,11 @@ export class AuthService {
     // `UsersService` already inject this service the same way).
     private readonly communicationService: CommunicationService,
     private readonly staffRecipients: AcademyStaffRecipientsService,
-    // Launch Stabilization A4 — the per-account sign-in budget, shared by
-    // the existing-account academy signup so registration can never be a
-    // second, unmetered password-guessing endpoint.
-    private readonly rateLimiter: AuthRateLimiterService,
+    // Launch Stabilization A4 — the sign-in budgets, shared by the
+    // existing-account academy signup so registration can never be a
+    // second, unmetered password-guessing endpoint; and (ATO F7) where
+    // every failed password is counted toward the address's ceiling.
+    private readonly signInThrottle: SignInThrottleService,
     // New Customer Onboarding — provided by the global `OnboardingModule`;
     // absent in a module graph without it, which leaves the organization
     // signup unavailable (the safe direction). See the port's doc comment.
@@ -518,7 +517,9 @@ export class AuthService {
     // An academy signup can prove an existing account (its own password),
     // so it is metered like a sign-in — for EVERY address, existing or not,
     // so the budget itself says nothing about which addresses exist.
-    if (academySignup) await this.consumeSignupPasswordBudget(email);
+    if (academySignup) {
+      await this.signInThrottle.enforce({ email, ipAddress: input.context?.ipAddress });
+    }
     // Launch Stabilization A4 — one global identity may be a learner at many
     // academies. An academy signup with an email that already has an Atlas
     // account ADDS this academy to that account once the account's own
@@ -917,22 +918,6 @@ export class AuthService {
    * rules. The account owner is told by email (a leaked password must not
    * be able to quietly attach someone to academies).
    */
-  /** The sign-in budget (per address) for a signup that may prove a password. */
-  private async consumeSignupPasswordBudget(email: string): Promise<void> {
-    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
-    const budget = await this.rateLimiter.consume(
-      `signin:account:${email}`,
-      identity.signInRateLimit.max,
-      identity.signInRateLimit.windowSeconds,
-    );
-    if (!budget.allowed) {
-      throw new HttpException(
-        { messageKey: 'errors.auth.rateLimited' },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-  }
-
   /**
    * Decision 3 — the only place an existing address learns that somebody
    * tried to register it: an email to that address, at most one an hour
@@ -970,6 +955,7 @@ export class AuthService {
     input: Parameters<AuthService['register']>[0],
   ): Promise<RegistrationResult | null> {
     const passwordValid = await this.passwordCredentials.verify(user.id, input.password);
+    if (!passwordValid) await this.signInThrottle.recordFailure(email);
     // Not proven (a wrong password, or an invited/deleted account that
     // cannot be joined to anything): the caller answers exactly as for a
     // new address and emails the owner — nothing is disclosed here.
@@ -1011,10 +997,12 @@ export class AuthService {
     const user = await this.usersRepository.findByEmail(email);
     if (!user) {
       await this.passwordCredentials.verifyForUnknownAccount(input.password);
+      await this.signInThrottle.recordFailure(email);
       recordAcademyJoin('invalid_credentials');
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
     const passwordValid = await this.passwordCredentials.verify(user.id, input.password);
+    if (!passwordValid) await this.signInThrottle.recordFailure(email);
     if (!passwordValid || user.status === 'deleted' || user.status === 'invited') {
       recordAcademyJoin('invalid_credentials');
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
@@ -1365,13 +1353,18 @@ export class AuthService {
     const email = normalizeEmail(input.email);
     const user = await this.usersRepository.findByEmail(email);
 
+    // ATO F7 — every failed password counts toward the address's
+    // account-wide ceiling, known address or not (counting only known ones
+    // would make the ceiling an existence oracle).
     if (!user) {
       await this.passwordCredentials.verifyForUnknownAccount(input.password);
+      await this.signInThrottle.recordFailure(email);
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
 
     const passwordValid = await this.passwordCredentials.verify(user.id, input.password);
     if (!passwordValid) {
+      await this.signInThrottle.recordFailure(email);
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
 
@@ -2069,34 +2062,16 @@ export class AuthService {
     email: string,
     context: { readonly hostname?: string } = {},
   ): Promise<void> {
-    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     const hostAcademyId = await this.academySurfaceService.resolveHostAcademyId(
       context.hostname,
     );
-    const normalized = normalizeEmail(email);
-    const user = await this.usersRepository.findByEmail(normalized);
-
-    if (!user) {
-      return; // No account — silently succeed, matching the frontend's own copy: "If an account exists with that email...".
-    }
-
-    const rawToken = generateOpaqueToken();
-    const tokenHash = hashOpaqueToken(rawToken);
-    const expiresAt = new Date(
-      Date.now() + identity.passwordResetTokenTtlMinutes * 60 * 1000,
-    );
-
-    await this.passwordResetTokensRepository.create({
-      userId: user.id,
-      tokenHash,
-      expiresAt,
-    });
-
+    // ATO review F9 — the same work for every address: one queue add. The
+    // account lookup, the token and the email happen in the worker, so
+    // neither the response time nor an error can tell an address with an
+    // account from one without ("If an account exists with that email…").
     await this.passwordResetEmailProducer.enqueue({
-      userId: user.id,
-      email: user.email,
-      rawToken,
-      expiresAt: expiresAt.toISOString(),
+      kind: 'request',
+      email: normalizeEmail(email),
       ...(hostAcademyId ? { hostAcademyId } : {}),
     });
   }

@@ -12,7 +12,13 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
     emailVerificationTokenTtlMinutes: 1440,
     signupOrganizationMode: 'off',
     emailDeliverabilityCheckEnabled: false,
-    signInRateLimit: { max: 10, windowSeconds: 900 },
+    signInRateLimit: {
+      max: 10,
+      windowSeconds: 900,
+      ipMax: 30,
+      accountFailureCeiling: 50,
+      accountFailureWindowSeconds: 3600,
+    },
     passwordResetRateLimit: { max: 5, windowSeconds: 3600 },
     emailVerificationResendRateLimit: { max: 3, ipMax: 20, windowSeconds: 3600 },
     registerRateLimit: { max: 5, windowSeconds: 3600 },
@@ -20,6 +26,10 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
     // because `IdentityConfig` is one object; the §12 defaults.
     platformOwnerTotpRequiredFrom: null,
     sessionAbsoluteMaxDays: { management: 30, academy: 90 },
+    knownDeviceKeySource: {
+      dedicatedKeyHex: null,
+      paymentCredentialsKeyHex: 'a'.repeat(64),
+    },
     emailOtp: {
       management: 'off',
       academy: 'off',

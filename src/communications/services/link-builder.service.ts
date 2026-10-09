@@ -20,7 +20,6 @@ import { ConfigService } from '@nestjs/config';
 import type { Prisma } from '@prisma/client';
 import type {
   CommunicationsConfig,
-  IdentityConfig,
   PlatformDomainRuntimeConfig,
 } from '../../config/configuration';
 import type {
@@ -30,14 +29,18 @@ import type {
 import { resolveCanonicalHost } from '../../domain/utils/canonical-host.util';
 import { PrismaService } from '../../database/prisma.service';
 import type { UnsubscribeCategory } from '../campaigns/campaign.types';
-import { signUnsubscribeToken, unsubscribeKey } from '../campaigns/unsubscribe-token';
+import {
+  signUnsubscribeToken,
+  unsubscribeKeyringFromConfig,
+  type UnsubscribeKeyring,
+} from '../campaigns/unsubscribe-token';
 
 @Injectable()
 export class LinkBuilderService {
   private readonly platformWebUrl: string;
   private readonly environmentBaseDomain: string | undefined;
   /** W3-compose — HMAC key of the one-click unsubscribe token (derived, never the raw secret). */
-  private readonly unsubscribeHmacKey: Buffer | null;
+  private readonly unsubscribeKeys: UnsubscribeKeyring | null;
 
   constructor(
     configService: ConfigService,
@@ -49,8 +52,7 @@ export class LinkBuilderService {
     this.environmentBaseDomain =
       configService.get<PlatformDomainRuntimeConfig>('platformDomain')?.baseDomain ??
       undefined;
-    const jwtSecret = configService.get<IdentityConfig>('identity')?.jwtAccessSecret;
-    this.unsubscribeHmacKey = jwtSecret ? unsubscribeKey(jwtSecret) : null;
+    this.unsubscribeKeys = unsubscribeKeyringFromConfig(configService);
   }
 
   /**
@@ -61,8 +63,8 @@ export class LinkBuilderService {
    * configured: no link is better than a link that cannot be verified.
    */
   unsubscribe(userId: string, category: UnsubscribeCategory): string | null {
-    if (!this.unsubscribeHmacKey) return null;
-    const token = signUnsubscribeToken(this.unsubscribeHmacKey, userId, category);
+    if (!this.unsubscribeKeys) return null;
+    const token = signUnsubscribeToken(this.unsubscribeKeys, userId, category);
     return `${this.platformWebUrl}/api/v1/communications/unsubscribe?token=${encodeURIComponent(token)}`;
   }
 

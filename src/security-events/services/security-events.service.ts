@@ -35,6 +35,8 @@ export type SecurityEventReason =
   | 'dead_challenge'
   | 'attempts_exhausted'
   | 'account_budget'
+  // ATO F7 — the address's account-wide failure ceiling (unknown browsers).
+  | 'account_ceiling'
   | 'ip_budget'
   | 'resend_budget'
   | 'hourly_budget'

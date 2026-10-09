@@ -18,6 +18,7 @@ import { UsersService } from './services/users.service';
 import { PasswordHasherService } from './services/password-hasher.service';
 import { PasswordCredentialsService } from './services/password-credentials.service';
 import { AuthRateLimiterService } from './services/auth-rate-limiter.service';
+import { SignInThrottleService } from './services/sign-in-throttle.service';
 import { CommunicationsProvidersModule } from '../communications/communications-providers.module';
 import { UsersRepository } from './repositories/users.repository';
 import { RefreshTokensRepository } from './repositories/refresh-tokens.repository';
@@ -96,6 +97,7 @@ import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-li
     PasswordHasherService,
     PasswordCredentialsService,
     AuthRateLimiterService,
+    SignInThrottleService,
     // P64 Communications — `EMAIL_PROVIDER` now resolves to
     // `EmailProviderRegistry` (Brevo primary → Resend fallback, or the stub
     // in dev/test), provided by `CommunicationsProvidersModule` and
@@ -196,6 +198,8 @@ import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-li
     // (`AcademiesService.lookupMember`) is budgeted on the same Redis
     // limiter as the auth routes rather than a second implementation.
     AuthRateLimiterService,
+    // ATO F7 — `SignInRateLimitGuard` (used by the Google controller too).
+    SignInThrottleService,
     // ATO review F1 — `AcademiesService` resolves member accounts.
     UnprovenAccountService,
   ],

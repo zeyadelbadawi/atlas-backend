@@ -38,11 +38,14 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
-import type { IdentityConfig } from '../../../config/configuration';
 import { CommunicationPreferencesService } from '../../services/communication-preferences.service';
 import { RedisService } from '../../../redis/redis.service';
 import { escapeHtmlText } from '../rich-text-sanitizer';
-import { unsubscribeKey, verifyUnsubscribeToken } from '../unsubscribe-token';
+import {
+  unsubscribeKeyringFromConfig,
+  verifyUnsubscribeToken,
+  type UnsubscribeKeyring,
+} from '../unsubscribe-token';
 
 const COPY = {
   confirmTitle: 'Unsubscribe · إلغاء الاشتراك',
@@ -71,15 +74,14 @@ function page(body: string): string {
 @Controller('communications/unsubscribe')
 export class UnsubscribeController {
   private readonly logger = new Logger(UnsubscribeController.name);
-  private readonly key: Buffer | null;
+  private readonly key: UnsubscribeKeyring | null;
 
   constructor(
     private readonly preferences: CommunicationPreferencesService,
     private readonly redis: RedisService,
     configService: ConfigService,
   ) {
-    const secret = configService.get<IdentityConfig>('identity')?.jwtAccessSecret;
-    this.key = secret ? unsubscribeKey(secret) : null;
+    this.key = unsubscribeKeyringFromConfig(configService);
   }
 
   @Get()

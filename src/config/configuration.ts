@@ -368,6 +368,12 @@ export interface EmailConfig {
 export interface CommunicationsConfig {
   /** Public origin of the platform web app (`PLATFORM_WEB_URL`), no trailing slash. */
   readonly platformWebUrl: string;
+  /**
+   * Optional dedicated key for one-click unsubscribe links
+   * (`UNSUBSCRIBE_TOKEN_KEY`, 64 hex). Absent → derived from the payment
+   * credentials key (see `campaigns/unsubscribe-token.ts`).
+   */
+  readonly unsubscribeTokenKeyHex?: string;
   /** The platform's display name in email branding; reuses `EMAIL_FROM_NAME`. */
   readonly platformName: string;
   /**
@@ -432,7 +438,21 @@ export interface IdentityConfig {
    * and broken on an offline CI runner. On everywhere else.
    */
   readonly emailDeliverabilityCheckEnabled: boolean;
-  readonly signInRateLimit: { readonly max: number; readonly windowSeconds: number };
+  readonly signInRateLimit: {
+    /** Per account from one network (ATO F7), and per known device. */
+    readonly max: number;
+    readonly windowSeconds: number;
+    /** Per client IP, across every account it tries. */
+    readonly ipMax: number;
+    /** Failed passwords per address, from anywhere, before unknown browsers are refused. */
+    readonly accountFailureCeiling: number;
+    readonly accountFailureWindowSeconds: number;
+  };
+  /** ATO F7 — the known-device cookie's key: dedicated, else derived. */
+  readonly knownDeviceKeySource: {
+    readonly dedicatedKeyHex: string | null;
+    readonly paymentCredentialsKeyHex: string;
+  };
   readonly passwordResetRateLimit: {
     readonly max: number;
     readonly windowSeconds: number;
@@ -588,6 +608,15 @@ export default () => {
     signInRateLimit: {
       max: Number(env.AUTH_SIGNIN_RATE_LIMIT_MAX ?? 10),
       windowSeconds: Number(env.AUTH_SIGNIN_RATE_LIMIT_WINDOW_SECONDS ?? 900),
+      ipMax: Number(env.AUTH_SIGNIN_RATE_LIMIT_IP_MAX ?? 30),
+      accountFailureCeiling: Number(env.AUTH_SIGNIN_ACCOUNT_FAILURE_CEILING ?? 50),
+      accountFailureWindowSeconds: Number(
+        env.AUTH_SIGNIN_ACCOUNT_FAILURE_WINDOW_SECONDS ?? 3600,
+      ),
+    },
+    knownDeviceKeySource: {
+      dedicatedKeyHex: env.SIGNIN_DEVICE_COOKIE_KEY || null,
+      paymentCredentialsKeyHex: env.PAYMENT_CREDENTIALS_ENCRYPTION_KEY ?? '',
     },
     passwordResetRateLimit: {
       max: Number(env.AUTH_PASSWORD_RESET_RATE_LIMIT_MAX ?? 5),
@@ -814,6 +843,7 @@ export default () => {
 
   const communications: CommunicationsConfig = {
     platformWebUrl: (env.PLATFORM_WEB_URL || 'http://localhost:3001').replace(/\/+$/, ''),
+    unsubscribeTokenKeyHex: env.UNSUBSCRIBE_TOKEN_KEY || undefined,
     platformName: env.EMAIL_FROM_NAME ?? 'Atlas',
     // Defaults to `off` — see `FLAG_LIFECYCLE_SEQUENCES_MODE`.
     lifecycleSequencesMode: (env.FLAG_LIFECYCLE_SEQUENCES_MODE ??

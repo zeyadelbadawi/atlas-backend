@@ -1,7 +1,10 @@
 /**
- * Redis-backed rate limiting for `POST /auth/sign-in` — per-IP and
- * per-account (normalized email), both independently enforced (master plan
- * §8 "Brute-force protection", §16, §21 P1 requirement #9/#20).
+ * Redis-backed rate limiting for `POST /auth/sign-in` and the routes that
+ * prove a password or a sign-in code the same way. The budgets themselves —
+ * per IP, per account from one network, and an account-wide ceiling on
+ * failures that a known browser is exempt from — live in
+ * `SignInThrottleService` (ATO review F7: no attacker can lock an owner out
+ * of their own account from elsewhere).
  */
 import {
   CanActivate,
@@ -11,43 +14,42 @@ import {
   Injectable,
   Optional,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import type { IdentityConfig } from '../../config/configuration';
+import { readCookie } from '../../common/http/cookies.util';
 import { resolveClientIp } from '../utils/request-metadata.util';
-import { AuthRateLimiterService } from '../services/auth-rate-limiter.service';
 import { normalizeEmail } from '../utils/email.util';
+import {
+  SignInThrottleService,
+  knownDeviceCookieName,
+} from '../services/sign-in-throttle.service';
 import { SecurityEventsService } from '../../security-events/services/security-events.service';
 
 @Injectable()
 export class SignInRateLimitGuard implements CanActivate {
   constructor(
-    private readonly rateLimiter: AuthRateLimiterService,
-    private readonly configService: ConfigService,
+    private readonly throttle: SignInThrottleService,
     /** W3 — OTP & Security Monitoring (pre-auth: hashed subject and IP only). */
     @Optional() private readonly securityEvents?: SecurityEventsService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
-    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
-    const { max, windowSeconds } = identity.signInRateLimit;
-
-    const ipCheck = await this.rateLimiter.consume(
-      `signin:ip:${resolveClientIp(request) ?? request.ip}`,
-      max,
-      windowSeconds,
-    );
-
+    const ipAddress = resolveClientIp(request) ?? request.ip;
     const email =
       typeof request.body?.email === 'string'
         ? normalizeEmail(request.body.email)
         : undefined;
-    const accountCheck = email
-      ? await this.rateLimiter.consume(`signin:account:${email}`, max, windowSeconds)
-      : { allowed: true, retryAfterSeconds: 0 };
 
-    if (!ipCheck.allowed || !accountCheck.allowed) {
+    const refusal = await this.throttle.check({
+      email,
+      ipAddress,
+      knownDeviceCookie: readCookie(
+        request.headers.cookie,
+        knownDeviceCookieName(request.secure),
+      ),
+    });
+
+    if (refusal) {
       // Pre-auth: nothing here proves who is asking, so no user id — only
       // keyed hashes of the typed address and the client IP, folded into
       // one row per minute by the writer.
@@ -55,8 +57,8 @@ export class SignInRateLimitGuard implements CanActivate {
         type: 'signin_rate_limited',
         surface: request.body?.surface === 'academy' ? 'academy' : 'management',
         email,
-        ipAddress: resolveClientIp(request) ?? request.ip,
-        reason: ipCheck.allowed ? 'account_budget' : 'ip_budget',
+        ipAddress,
+        reason: refusal,
       });
       throw new HttpException(
         { messageKey: 'errors.auth.rateLimited' },

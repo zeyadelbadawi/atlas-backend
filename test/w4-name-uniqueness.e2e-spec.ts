@@ -388,7 +388,10 @@ describe('W4 — name uniqueness (e2e)', () => {
       const existing = await http()
         .post(`/academies/${academy.id}/students`)
         .set(bearer(owner.token))
-        .send({ email: existingEmail })
+        // The add form always sends a name (ATO F5 — staff cannot tell an
+        // existing account from a new one); for an existing account it is
+        // ignored, and the clash is on that account's own name.
+        .send({ email: existingEmail, name: 'Typed By Staff' })
         .expect(409);
       expect(existing.body.error).toMatchObject({
         messageKey: 'errors.academy.learnerNameTakenExistingAccount',

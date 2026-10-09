@@ -28,10 +28,18 @@ import type { Request, Response } from 'express';
 import { map, type Observable } from 'rxjs';
 import type { IdentityConfig } from '../../config/configuration';
 import { setSessionCookie } from './session-cookie';
+import {
+  KNOWN_DEVICE_COOKIE_MAX_AGE_DAYS,
+  SignInThrottleService,
+  knownDeviceCookieName,
+} from '../services/sign-in-throttle.service';
 
 @Injectable()
 export class SessionCookieInterceptor implements NestInterceptor {
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly signInThrottle: SignInThrottleService,
+  ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     if (context.getType() !== 'http') return next.handle();
@@ -55,6 +63,24 @@ export class SessionCookieInterceptor implements NestInterceptor {
           refreshToken,
           identity.refreshTokenTtlDays * 24 * 60 * 60,
         );
+        // ATO F7 — a sign-in (a session minted for a named account, not a
+        // refresh) marks this browser as one that has signed in to that
+        // account: it keeps its own throttle budget if the address is ever
+        // under a guessing campaign. Grants nothing else.
+        const email = (rest as { user?: { email?: unknown } }).user?.email;
+        if (typeof email === 'string') {
+          response.cookie(
+            knownDeviceCookieName(request.secure),
+            this.signInThrottle.mintKnownDevice(email),
+            {
+              httpOnly: true,
+              secure: request.secure,
+              sameSite: 'strict',
+              path: '/',
+              maxAge: KNOWN_DEVICE_COOKIE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000,
+            },
+          );
+        }
         return rest;
       }),
     );
