@@ -49,7 +49,11 @@ describe('LiveSessionService', () => {
     tx = {
       course: { findFirst: jest.fn().mockResolvedValue({ id: COURSE }) },
       courseSection: { findFirst: jest.fn().mockResolvedValue({ id: 'section-1' }) },
-      academyMember: { findFirst: jest.fn().mockResolvedValue({ id: 'member-1' }) },
+      // By default the host is an active instructor assigned to the course.
+      academyMember: { findFirst: jest.fn().mockResolvedValue({ role: 'instructor' }) },
+      courseInstructor: { findUnique: jest.fn().mockResolvedValue({ courseId: COURSE }) },
+      academy: { findUnique: jest.fn().mockResolvedValue({ organizationId: ORG }) },
+      organizationMembership: { findFirst: jest.fn().mockResolvedValue(null) },
       liveSession: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest
@@ -153,6 +157,51 @@ describe('LiveSessionService', () => {
     );
   });
 
+  /*
+   * CROSS-COURSE HOST: a real, active instructor of this academy who is not
+   * assigned to THIS course. Membership alone used to be enough, which let
+   * an instructor make themselves the provider-side host of another
+   * instructor's class.
+   */
+  it('REFUSES an instructor host who is not assigned to this course', async () => {
+    tx.courseInstructor.findUnique.mockResolvedValue(null);
+    await expect(create({ hostUserId: 'other-instructor' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(tx.courseInstructor.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { courseId_userId: { courseId: COURSE, userId: 'other-instructor' } },
+      }),
+    );
+    expect(tx.liveSession.create).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES a staff-role member as host', async () => {
+    tx.academyMember.findFirst.mockResolvedValue({ role: 'staff' });
+    await expect(create({ hostUserId: 'staff-1' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('accepts a manager as host of any course without a course assignment', async () => {
+    tx.academyMember.findFirst.mockResolvedValue({ role: 'manager' });
+    tx.courseInstructor.findUnique.mockResolvedValue(null);
+    const created: CreatedSession = await create({ hostUserId: 'manager-1' });
+    expect(created.hostUserId).toBe('manager-1');
+  });
+
+  it('accepts the organization owner as host with no staff row', async () => {
+    tx.academyMember.findFirst.mockResolvedValue(null);
+    tx.organizationMembership.findFirst.mockResolvedValue({ id: 'owner-membership' });
+    const created: CreatedSession = await create({ hostUserId: 'org-owner' });
+    expect(created.hostUserId).toBe('org-owner');
+    expect(tx.organizationMembership.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { organizationId: ORG, userId: 'org-owner', role: 'owner' },
+      }),
+    );
+  });
+
   it('defaults the host to the acting instructor', async () => {
     const created: CreatedSession = await create();
     expect(created.hostUserId).toBe(ACTOR);
@@ -241,6 +290,25 @@ describe('LiveSessionService', () => {
       });
       expect(updated.status).toBe('cancelled');
       expect(updated.cancelledAt).toBeInstanceOf(Date);
+    });
+
+    it('REFUSES reassigning the host to an instructor of another course', async () => {
+      tx.courseInstructor.findUnique.mockResolvedValue(null);
+      await expect(
+        service.update(tx as never, {
+          academyId: ACADEMY,
+          organizationId: ORG,
+          liveSessionId: 'ls-1',
+          patch: { hostUserId: 'other-instructor' },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      // Checked against the STORED session's course, never a request value.
+      expect(tx.courseInstructor.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { courseId_userId: { courseId: COURSE, userId: 'other-instructor' } },
+        }),
+      );
+      expect(tx.liveSession.update).not.toHaveBeenCalled();
     });
 
     it('allows turning recording off', async () => {

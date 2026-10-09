@@ -548,7 +548,7 @@ describe('W2 — provisioning progress, branding and resilience (e2e)', () => {
       .expect(200);
   });
 
-  it('W2-9: only the organization members read the status; only the owner attaches a logo', async () => {
+  it('W2-9: only the organization owner reads the status or attaches a logo', async () => {
     const { owner, org } = await arrangeOrg('w2-authz');
     const created = await post(owner.accessToken, org.id, {
       academyName: uniqueName('Authz'),
@@ -557,12 +557,16 @@ describe('W2 — provisioning progress, branding and resilience (e2e)', () => {
     }).expect(201);
     await waitForReady(owner.accessToken, org.id, created.body.id);
 
-    // A member of the same organization (not the owner) may read it…
+    // A member of the same organization who is not the owner (a Manager)
+    // may neither read it — provisioning is owner-only on every route, like
+    // the frontend's `academy.provisioning.view` gate — …
     const manager = await signUp('w2-authz-manager');
     await seedMembership(admin, org.id, manager.userId, 'manager');
-    const asManager = await getStatus(manager.accessToken, org.id, created.body.id);
-    expect(asManager.id).toBe(created.body.id);
-    // …but may not attach a logo (owner-only, like creating the request).
+    await request(app.getHttpServer())
+      .get(`/organizations/${org.id}/provisioning-requests/${created.body.id}`)
+      .set('Authorization', `Bearer ${manager.accessToken}`)
+      .expect(403);
+    // …nor attach a logo (owner-only, like creating the request).
     await request(app.getHttpServer())
       .put(`/organizations/${org.id}/provisioning-requests/${created.body.id}/brand-logo`)
       .set('Authorization', `Bearer ${manager.accessToken}`)

@@ -85,7 +85,10 @@ export class PlatformProvisioningService {
     requestId: string,
   ): Promise<ProvisioningRequestResponse> {
     const request = await this.loadAnyOrThrow(reviewerId, requestId);
-    return this.provisioningRequestsService.retryRequest(
+    // The Platform Owner is authorized by `PlatformOwnerGuard` and the
+    // platform-select read above, not by organization ownership — so the
+    // already-authorized variant, never the tenant route's owner check.
+    return this.provisioningRequestsService.retryAuthorizedRequest(
       request.organizationId,
       reviewerId,
       requestId,
@@ -97,7 +100,7 @@ export class PlatformProvisioningService {
     requestId: string,
   ): Promise<ProvisioningRequestResponse> {
     const request = await this.loadAnyOrThrow(reviewerId, requestId);
-    return this.provisioningRequestsService.cancelRequest(
+    return this.provisioningRequestsService.cancelAuthorizedRequest(
       request.organizationId,
       reviewerId,
       requestId,

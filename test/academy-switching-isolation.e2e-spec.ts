@@ -24,6 +24,7 @@ import {
   seedAcademyMember,
   seedCourse,
   seedCourseCategory,
+  seedCourseInstructor,
   seedMediaAsset,
   seedMembership,
   seedOrganizationWithOwner,
@@ -128,6 +129,10 @@ describe('W5 — academy switching isolation (e2e)', () => {
       await seedCourse(admin, academyB, 'W5 Draft Course B', { categoryId: categoryB })
     ).id;
     mediaB = (await seedMediaAsset(admin, academyB, 1024n)).id;
+    // Live sessions are course-scoped for instructors (an instructor manages
+    // only the sessions of a course they are assigned to), so B's instructor
+    // teaches course B — the relationship the teaching tier is about.
+    await seedCourseInstructor(admin, courseB, instructorOfB.userId);
 
     endpoints = [
       { path: `/academies/${academyB}/stats`, ok: 200, tier: 'managing' },
@@ -223,6 +228,19 @@ describe('W5 — academy switching isolation (e2e)', () => {
           status: expected,
         });
       }
+    });
+
+    it("an instructor of academy B who does not teach course B does not reach that course's live sessions (404)", async () => {
+      const otherInstructor = await signUpAndSignIn(app, 'w5-instructor-b-other');
+      await seedMembership(admin, organizationId, otherInstructor.userId, 'instructor');
+      await seedAcademyMember(admin, academyB, otherInstructor.userId, 'instructor');
+      await get(
+        otherInstructor,
+        `/academies/${academyB}/courses/${courseB}/live-sessions`,
+      ).expect(404);
+      await get(otherInstructor, `/academies/${academyB}/live-sessions/status`).expect(
+        200,
+      );
     });
 
     it('the course list content itself is scoped: B data is returned only to B callers', async () => {

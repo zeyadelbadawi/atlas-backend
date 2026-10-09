@@ -46,6 +46,7 @@ import {
   LIVE_SESSIONS_ADD_ON_KEY,
   LIVE_SESSIONS_FEATURE_KEY,
 } from './add-on-access.service';
+import { isEligibleLiveSessionHost } from '../utils/live-session-host.util';
 
 export const LIVE_SESSION_NOT_JOINABLE_CODE = 'LIVE_SESSION_NOT_JOINABLE';
 
@@ -129,7 +130,17 @@ export class LiveSessionAccessService {
     // are real in other tenants.
     if (!session) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
-    const isHost = session.hostUserId === args.userId;
+    // `host_user_id` alone is not proof: the person named there must STILL
+    // be able to run this course's class (an instructor removed from the
+    // course or the academy keeps the stale id on old sessions). The same
+    // rule the write path used when the host was assigned.
+    const isHost =
+      session.hostUserId === args.userId &&
+      (await isEligibleLiveSessionHost(tx, {
+        academyId: session.academyId,
+        courseId: session.courseId,
+        userId: args.userId,
+      }));
 
     // The add-on must be usable for the tenant that OWNS the session —
     // reported here so the screen can say "this add-on is disabled"

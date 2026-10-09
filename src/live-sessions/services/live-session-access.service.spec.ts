@@ -43,6 +43,10 @@ describe('LiveSessionAccessService', () => {
       updateMany: jest.Mock;
       findUniqueOrThrow: jest.Mock;
     };
+    academyMember: { findFirst: jest.Mock };
+    courseInstructor: { findUnique: jest.Mock };
+    academy: { findUnique: jest.Mock };
+    organizationMembership: { findFirst: jest.Mock };
   };
   let describeAddOn: jest.Mock;
   let assertAddOnUsable: jest.Mock;
@@ -79,6 +83,13 @@ describe('LiveSessionAccessService', () => {
           .fn()
           .mockResolvedValue({ liveSessionId: SESSION_ID, role: 'attendee' }),
       },
+      // The host is, by default, an active instructor assigned to the course.
+      academyMember: { findFirst: jest.fn().mockResolvedValue({ role: 'instructor' }) },
+      courseInstructor: {
+        findUnique: jest.fn().mockResolvedValue({ courseId: COURSE_ID }),
+      },
+      academy: { findUnique: jest.fn().mockResolvedValue({ organizationId: ORG_ID }) },
+      organizationMembership: { findFirst: jest.fn().mockResolvedValue(null) },
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -218,6 +229,39 @@ describe('LiveSessionAccessService', () => {
     const result = await eligibility(HOST_ID);
     expect(result.isHost).toBe(true);
     expect(result.joinable).toBe(true);
+  });
+
+  /*
+   * STALE HOST. `host_user_id` still names an instructor who has since been
+   * removed from the course (or the academy). The id alone must not keep
+   * opening the room as its host.
+   */
+  it('REFUSES host status to a named host no longer assigned to the course', async () => {
+    tx.enrollment.findFirst.mockResolvedValue(null);
+    tx.courseInstructor.findUnique.mockResolvedValue(null);
+    const result = await eligibility(HOST_ID);
+    expect(result.isHost).toBe(false);
+    expect(result.joinable).toBe(false);
+    expect(result.reason).toBe('not_enrolled');
+  });
+
+  it('REFUSES host status to a named host whose academy membership is gone', async () => {
+    tx.enrollment.findFirst.mockResolvedValue(null);
+    tx.academyMember.findFirst.mockResolvedValue(null);
+    const result = await eligibility(HOST_ID);
+    expect(result.isHost).toBe(false);
+    expect(result.reason).toBe('not_enrolled');
+    // Only an ACTIVE staff row counts.
+    expect(tx.academyMember.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'active' }),
+      }),
+    );
+  });
+
+  it('never consults host eligibility for someone the session does not name', async () => {
+    await eligibility(STUDENT_ID);
+    expect(tx.academyMember.findFirst).not.toHaveBeenCalled();
   });
 
   it('does not reveal whether an unknown session id exists in another tenant', async () => {

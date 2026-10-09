@@ -1,7 +1,12 @@
 /**
  * PaymentController — `organizations/:id/payments`, `organizations/:id/invoices`
- * (master plan §10). Reuses `OrganizationMembershipGuard` verbatim, exactly
- * like `CheckoutController`.
+ * (master plan §10). `OrganizationMembershipGuard` plus a per-route
+ * `@OrganizationPermissions(...)`: the organization's subscription payments,
+ * proofs and invoices are the OWNER's — reading them needs
+ * `tenant.payment.view` (invoices: `tenant.billing.view`), creating,
+ * cancelling or submitting proof for one needs `tenant.payment.create`.
+ * All three are owner-exclusive (`ORGANIZATION_OWNER_PERMISSIONS`), so a
+ * Manager or Instructor who is an organization member gets 403.
  *
  * `getProofFile` bypasses Nest's default response handling via `@Res()` —
  * this is the one endpoint in this module that returns raw bytes, not
@@ -26,6 +31,12 @@ import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
+import { OrganizationPermissions } from '../../tenancy/decorators/organization-permissions.decorator';
+import {
+  TENANT_BILLING_PERMISSION,
+  TENANT_PAYMENT_CREATE_PERMISSION,
+  TENANT_PAYMENT_VIEW_PERMISSION,
+} from '../../tenancy/constants/organization-permissions.constants';
 import { PaymentService } from '../services/payment.service';
 import { CreatePaymentDto } from '../dto/create-payment.dto';
 import { SubmitPaymentProofDto } from '../dto/submit-payment-proof.dto';
@@ -49,6 +60,7 @@ export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 
   @Post(':id/payments')
+  @OrganizationPermissions(TENANT_PAYMENT_CREATE_PERMISSION)
   async create(
     @Param('id') organizationId: string,
     @Body() payload: CreatePaymentDto,
@@ -57,6 +69,7 @@ export class PaymentController {
   }
 
   @Get(':id/payments')
+  @OrganizationPermissions(TENANT_PAYMENT_VIEW_PERMISSION)
   async list(
     @Param('id') organizationId: string,
     @Query() query: PaymentListQueryDto,
@@ -65,6 +78,7 @@ export class PaymentController {
   }
 
   @Get(':id/payments/:paymentId')
+  @OrganizationPermissions(TENANT_PAYMENT_VIEW_PERMISSION)
   async get(
     @Param('id') organizationId: string,
     @Param('paymentId') paymentId: string,
@@ -73,6 +87,7 @@ export class PaymentController {
   }
 
   @Patch(':id/payments/:paymentId/proof')
+  @OrganizationPermissions(TENANT_PAYMENT_CREATE_PERMISSION)
   async submitProof(
     @CurrentAuthContext() auth: AuthContext,
     @Param('id') organizationId: string,
@@ -88,6 +103,7 @@ export class PaymentController {
   }
 
   @Post(':id/payments/:paymentId/cancel')
+  @OrganizationPermissions(TENANT_PAYMENT_CREATE_PERMISSION)
   async cancel(
     @Param('id') organizationId: string,
     @Param('paymentId') paymentId: string,
@@ -96,6 +112,7 @@ export class PaymentController {
   }
 
   @Post(':id/payments/intents')
+  @OrganizationPermissions(TENANT_PAYMENT_CREATE_PERMISSION)
   async createIntent(
     @Param('id') organizationId: string,
     @Body() payload: CreatePaymentIntentDto,
@@ -104,6 +121,7 @@ export class PaymentController {
   }
 
   @Get(':id/payments/:paymentId/proof/file')
+  @OrganizationPermissions(TENANT_PAYMENT_VIEW_PERMISSION)
   async getProofFile(
     @Param('id') organizationId: string,
     @Param('paymentId') paymentId: string,
@@ -121,6 +139,7 @@ export class PaymentController {
   }
 
   @Get(':id/invoices')
+  @OrganizationPermissions(TENANT_BILLING_PERMISSION)
   async listInvoices(
     @Param('id') organizationId: string,
     @Query() query: PaymentListQueryDto,

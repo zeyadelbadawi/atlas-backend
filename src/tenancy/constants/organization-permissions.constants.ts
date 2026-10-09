@@ -184,3 +184,17 @@ export function permissionsForRole(role: string): readonly string[] {
       return ORGANIZATION_MEMBER_PERMISSIONS;
   }
 }
+
+/*
+ * The owner-exclusive money permissions, named once for the routes that
+ * enforce them through `@OrganizationPermissions(...)` (billing/payment
+ * settings, subscription payments, checkouts, invoices). Each is in
+ * `ORGANIZATION_OWNER_PERMISSIONS` only — never in the manager, instructor
+ * or member sets — which is the whole security property they carry.
+ */
+/** Organization billing configuration and history: payment settings, gateway credentials, invoices. */
+export const TENANT_BILLING_PERMISSION = 'tenant.billing.view';
+/** Reading the organization's own subscription payments, proofs and checkouts. */
+export const TENANT_PAYMENT_VIEW_PERMISSION = 'tenant.payment.view';
+/** Starting a checkout or payment, submitting its proof, cancelling it. */
+export const TENANT_PAYMENT_CREATE_PERMISSION = 'tenant.payment.create';

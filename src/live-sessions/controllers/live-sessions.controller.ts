@@ -9,10 +9,15 @@
  *   AcademyScopeGuard   — do they belong to this academy's organization,
  *                         and what is the tenant context? (reused
  *                         verbatim, unmodified)
- *   assertCanManage     — do they hold a MANAGING academy role? Reused
- *                         from the same rule `CoursesService` applies,
- *                         because scheduling a session is a course-write
- *                         action, not a new privilege tier.
+ *   assertCanManage...  — may they manage THIS COURSE's sessions? The
+ *                         academy's owner/administrator/manager (and the
+ *                         organization owner) may, for every course; an
+ *                         instructor only for a course they are assigned
+ *                         to (`course_instructors`) — the same
+ *                         course-scoped rule quiz/assignment authoring
+ *                         applies (`assertCanAuthorCourseContent`). An
+ *                         instructor of another course gets the same 404
+ *                         as a session that does not exist.
  *   AddOnAccessService  — is the Live Sessions add-on installed, enabled
  *                         and entitled for this tenant?
  *   RLS                 — independently, underneath all of it.
@@ -26,6 +31,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -42,6 +48,7 @@ import {
 } from '../../academy/decorators/academy-roles.decorator';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
+import { CourseInstructorsRepository } from '../../course/repositories/course-instructors.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { LiveSessionService } from '../services/live-session.service';
 import { LiveSessionProvisioningService } from '../services/live-session-provisioning.service';
@@ -57,15 +64,15 @@ import { toLiveSessionResponse } from '../dto/live-session.contract';
 import type { LiveSessionResponse } from '../dto/live-session.contract';
 
 /**
- * Academy roles permitted to manage sessions — identical to
- * `CoursesService`'s `MANAGING_ROLES`. Instructors are included because
- * running a live class is their job; students never are.
+ * Academy roles that may manage the sessions of EVERY course in the
+ * academy — identical to `CoursesService`'s `MANAGING_ROLES`. Instructors
+ * are deliberately not here: running a live class is their job, but only
+ * for the courses they are assigned to (see `assertCanManageCourseSessions`).
  */
-const MANAGING_ROLES: ReadonlySet<string> = new Set([
+const ACADEMY_WIDE_ROLES: ReadonlySet<string> = new Set([
   'owner',
   'administrator',
   'manager',
-  'instructor',
 ]);
 
 @Controller('academies')
@@ -74,6 +81,7 @@ export class LiveSessionsController {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly academyMembersRepository: AcademyMembersRepository,
+    private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly liveSessionService: LiveSessionService,
     private readonly provisioningService: LiveSessionProvisioningService,
     private readonly attendanceService: AttendanceService,
@@ -126,9 +134,13 @@ export class LiveSessionsController {
     @Param('courseId') courseId: string,
   ): Promise<LiveSessionResponse[]> {
     const { academyId, organizationId } = request.academyContext!;
+    const actorUserId = request.authContext!.userId;
     const sessions = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) => this.liveSessionService.listForCourse(tx, academyId, courseId),
+      async (tx) => {
+        await this.assertCanManageCourseSessions(tx, academyId, actorUserId, courseId);
+        return this.liveSessionService.listForCourse(tx, academyId, courseId);
+      },
     );
     return sessions.map(toLiveSessionResponse);
   }
@@ -146,7 +158,7 @@ export class LiveSessionsController {
       organizationId,
       actorUserId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, actorUserId);
+        await this.assertCanManageCourseSessions(tx, academyId, actorUserId, courseId);
 
         const created = await this.liveSessionService.create(tx, {
           academyId,
@@ -190,9 +202,10 @@ export class LiveSessionsController {
     @Param('liveSessionId') liveSessionId: string,
   ): Promise<LiveSessionResponse> {
     const { academyId, organizationId } = request.academyContext!;
+    const actorUserId = request.authContext!.userId;
     const session = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) => this.liveSessionService.getById(tx, academyId, liveSessionId),
+      (tx) => this.assertCanManageSession(tx, academyId, actorUserId, liveSessionId),
     );
     return toLiveSessionResponse(session);
   }
@@ -216,14 +229,16 @@ export class LiveSessionsController {
     */
     const before = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) => this.liveSessionService.getById(tx, academyId, liveSessionId),
+      (tx) => this.assertCanManageSession(tx, academyId, actorUserId, liveSessionId),
     );
 
     const updated = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actorUserId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, actorUserId);
+        // Re-checked inside the write's own transaction: the read above is
+        // the reschedule baseline, never the authorization of record.
+        await this.assertCanManageSession(tx, academyId, actorUserId, liveSessionId);
 
         const session = await this.liveSessionService.update(tx, {
           academyId,
@@ -314,7 +329,7 @@ export class LiveSessionsController {
     const actorUserId = request.authContext!.userId;
 
     await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
-      this.assertCanManage(tx, academyId, actorUserId),
+      this.assertCanManageSession(tx, academyId, actorUserId, liveSessionId),
     );
 
     const result = await this.provisioningService.publish({
@@ -363,7 +378,7 @@ export class LiveSessionsController {
       organizationId,
       actorUserId,
       async (tx) => {
-        await this.assertCanManage(tx, academyId, actorUserId);
+        await this.assertCanManageSession(tx, academyId, actorUserId, liveSessionId);
         return this.liveSessionService.reorder(tx, {
           academyId,
           liveSessionId,
@@ -379,8 +394,9 @@ export class LiveSessionsController {
   /**
    * Session attendance, for the management table.
    *
-   * Managing role required: one student must never be able to read the
-   * whole class's participation. A student sees only their own, through
+   * Course-scoped management required: one student must never be able to
+   * read the whole class's participation, and an instructor reads only
+   * their own courses' classes. A student sees only their own, through
    * their own learning surface and the self-scoped RLS policy.
    */
   @Get(':id/live-sessions/:liveSessionId/attendance')
@@ -392,10 +408,11 @@ export class LiveSessionsController {
     const actorUserId = request.authContext!.userId;
 
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
-      await this.assertCanManage(tx, academyId, actorUserId);
-      // Proves the session belongs to this academy before any attendance
-      // is read — an id from another tenant 404s here, not at the table.
-      await this.liveSessionService.getById(tx, academyId, liveSessionId);
+      // Proves the session belongs to this academy AND to a course the
+      // caller may manage before any attendance is read — an id from
+      // another tenant, or another instructor's course, 404s here, not at
+      // the table. Attendance carries every participant's name and email.
+      await this.assertCanManageSession(tx, academyId, actorUserId, liveSessionId);
 
       const rows = await this.attendanceService.getSessionAttendance(tx, liveSessionId);
       return rows.map((row) => ({
@@ -412,24 +429,66 @@ export class LiveSessionsController {
   }
 
   /**
-   * The same managing-role gate `CoursesService` applies, for the same
-   * reason: organization membership alone is read-sufficient, but writing
-   * a course activity requires a real academy role.
+   * May `userId` manage the Live Sessions of `courseId`?
+   *
+   *   - the academy's owner/administrator/manager, or the organization
+   *     owner (`findManagingRole`'s organization-owner rule): every course;
+   *   - an ACTIVE academy `instructor`: only a course they are assigned to
+   *     (`course_instructors`) — `can_author_course_content()`'s rule, the
+   *     one quiz/assignment authoring already enforces;
+   *   - anyone else (`staff`): 403, as before.
+   *
+   * An instructor asking about another instructor's course gets 404, not
+   * 403 — the codebase-wide "not yours looks like it does not exist" rule
+   * (`assertCanAuthorCourseContent`, `assertCanReviewCourse`), so the
+   * response is no oracle for which courses carry live sessions.
    */
-  private async assertCanManage(
+  private async assertCanManageCourseSessions(
     tx: Parameters<AcademyMembersRepository['findForUserInAcademy']>[0],
     academyId: string,
     userId: string,
-  ): Promise<string> {
-    const role = await this.academyMembersRepository.findManagingRole(
+    courseId: string,
+  ): Promise<void> {
+    const academyWideRole = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
-      MANAGING_ROLES,
+      ACADEMY_WIDE_ROLES,
     );
-    if (!role) {
+    if (academyWideRole) return;
+
+    const membership = await this.academyMembersRepository.findForUserInAcademy(
+      tx,
+      academyId,
+      userId,
+    );
+    if (membership?.role !== 'instructor') {
       throw new ForbiddenException({ messageKey: 'errors.course.insufficientRole' });
     }
-    return role;
+
+    const assigned = await this.courseInstructorsRepository.isInstructor(
+      tx,
+      courseId,
+      userId,
+    );
+    if (!assigned) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+  }
+
+  /**
+   * Resolves a session of THIS academy (404 otherwise) and applies
+   * `assertCanManageCourseSessions` to the course it belongs to — the
+   * course comes from the stored row, never from the request.
+   */
+  private async assertCanManageSession(
+    tx: Parameters<AcademyMembersRepository['findForUserInAcademy']>[0],
+    academyId: string,
+    userId: string,
+    liveSessionId: string,
+  ) {
+    const session = await this.liveSessionService.getById(tx, academyId, liveSessionId);
+    await this.assertCanManageCourseSessions(tx, academyId, userId, session.courseId);
+    return session;
   }
 }

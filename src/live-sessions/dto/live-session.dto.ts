@@ -55,7 +55,7 @@ export class CreateLiveSessionDto {
   @IsDateString(undefined, { message: 'validation:invalid' })
   scheduledEndAt!: string;
 
-  /** Defaults to the caller when omitted; always verified to be a real instructor on this academy. */
+  /** Defaults to the caller when omitted; always verified to be an active manager of this academy, its organization owner, or an instructor assigned to THIS course (`isEligibleLiveSessionHost`). */
   @IsOptional()
   @IsUUID(undefined, { message: 'validation:invalid' })
   hostUserId?: string;

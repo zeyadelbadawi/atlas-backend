@@ -490,6 +490,14 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'account',
     'memberName',
   ]),
+  // The organization owner removed a staff member from this academy
+  // (`DELETE /academies/:id/members/:userId`). Names and counts only.
+  ev('academy.member.removed', 'team', 'academy_member', 'academy', true, [
+    'memberName',
+    'memberRole',
+    'courseAssignmentsRemoved',
+    'organizationMembershipRemoved',
+  ]),
 
   /* ------------------------------ Students ----------------------------- */
   ev('academy.student.created', 'students', 'user', 'academy', true, [

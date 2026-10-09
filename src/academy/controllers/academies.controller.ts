@@ -172,7 +172,7 @@ export class AcademiesController {
    * Kept because it is the RESTful shape and existing callers use it. It
    * and `POST :id/delete` below run the identical service method — one
    * implementation behind two transports, not two behaviours that could
-   * drift apart.
+   * drift apart. Organization owner only (see `archive`).
    */
   @Delete(':id')
   @HttpCode(204)
@@ -197,8 +197,10 @@ export class AcademiesController {
    * offline.
    *
    * Authorization is identical to the DELETE above — the same
-   * `AcademyScopeGuard`, and `archive`'s own `assertCanManage` inside the
-   * transaction. This route is a different shape, never a weaker door.
+   * `AcademyScopeGuard`, and `archive`'s own organization-owner check
+   * (`assertIsOrganizationOwner`) inside the transaction: a Manager or
+   * Administrator gets 403. This route is a different shape, never a
+   * weaker door.
    */
   @Post(':id/delete')
   @HttpCode(204)
@@ -228,6 +230,34 @@ export class AcademiesController {
       organizationId,
       request.authContext!.userId,
       query,
+    );
+  }
+
+  /**
+   * Removes a staff member (manager/administrator/instructor/staff) from
+   * this academy — organization owner only. See
+   * `AcademiesService.removeStaffMember` for what one removal changes (the
+   * academy row goes `inactive`, this academy's course assignments are
+   * revoked, the organization membership ends when no other academy needs
+   * it, one audit row). 204 on success; 403 for anyone but the
+   * organization owner; 404 when the user is not (or no longer) staff
+   * here; 409 `errors.academy.cannotRemoveOrganizationOwner` for the
+   * organization owner themselves. Students are not staff rows and are
+   * never removed by this route.
+   */
+  @Delete(':id/members/:userId')
+  @HttpCode(204)
+  @UseGuards(AcademyScopeGuard)
+  async removeMember(
+    @Req() request: Request,
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+  ): Promise<void> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.academiesService.removeStaffMember(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      userId,
     );
   }
 
