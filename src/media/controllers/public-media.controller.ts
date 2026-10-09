@@ -27,30 +27,32 @@
  *     customers' own domains;
  *   - Cloudflare already fronts that origin, so responses edge-cache.
  *
- * ACCESS MODEL — UNCHANGED, deliberately. These objects were always meant
- * to be publicly readable: the config field is literally
- * `R2_PUBLIC_URL_BASE`, `putObject` returns "the durable public URL", and
+ * ACCESS MODEL (W1). These objects are publicly readable BY PURPOSE —
  * public Academy websites must render logos and hero images to anonymous
- * visitors. Keys carry a random UUID, so a URL is unguessable but is a
- * capability — anyone holding it can read the object. That is the model
- * this restores, not one it introduces. Student submission attachments
- * share the same pipeline by existing design (`MediaModule`'s own note),
- * and they inherit the same property they were always specified to have.
+ * visitors — but not every object in this bucket is: learners' older
+ * submission attachments and lesson files picked from the public library
+ * live here too. So the route no longer serves "any key": every request
+ * is decided from the asset's own row (`PublicMediaAccessService`):
+ *   - published branding (logo, course cover, certificate logo, website/
+ *     blog content) → anonymous, cached `immutable`;
+ *   - other public-tier library assets → anonymous, cached one hour;
+ *   - submission attachments and lesson files → only with a short-lived
+ *     signed link (`?exp=&sig=`, `PublicMediaLinkSigner`) from the grant
+ *     paths, served `private, no-store`;
+ *   - no row / not public / purged → 404.
  *
- * NO DATABASE READ. The route reconstructs the storage key from its own
- * path parameters and maps the extension to a content type from the same
- * allowlist the upload validator enforces, so serving an image costs one
- * object read and no query. Archived assets keep serving on purpose:
- * archiving means "hide it from the library", and pages already using an
- * asset are documented to keep working.
+ * ONE ROW READ PER REQUEST (plus the published-or-not lookups), which the
+ * edge cache absorbs for everything anonymous. Archived assets keep
+ * serving on purpose: archiving means "hide it from the library", and
+ * pages already using an asset are documented to keep working.
  */
 import {
   BadRequestException,
   Controller,
   Get,
-  Header,
   NotFoundException,
   Param,
+  Query,
   Req,
   Res,
 } from '@nestjs/common';
@@ -60,6 +62,11 @@ import {
   MEDIA_STORAGE_PROVIDER,
   type MediaStorageProvider,
 } from '../storage/media-storage.interface';
+import {
+  PublicMediaAccessService,
+  type PublicMediaAccess,
+} from '../services/public-media-access.service';
+import { PublicMediaLinkSigner } from '../services/public-media-link.signer';
 
 /** A v4 UUID, which is what both the academy id and every generated object name are. */
 const UUID_PATTERN =
@@ -72,6 +79,14 @@ const UUID_PATTERN =
  * an unknown extension is refused rather than guessed at or served as
  * `application/octet-stream`.
  */
+/** W1 — only branding may be cached for a year; a signed link is never cached anywhere. */
+const CACHE_CONTROL: Readonly<Record<PublicMediaAccess | 'signed', string>> = {
+  branding: 'public, max-age=31536000, immutable',
+  public: 'public, max-age=3600',
+  'signed-only': 'private, no-store',
+  signed: 'private, no-store',
+};
+
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -86,6 +101,8 @@ export class PublicMediaController {
   constructor(
     @Inject(MEDIA_STORAGE_PROVIDER)
     private readonly storage: MediaStorageProvider,
+    private readonly access: PublicMediaAccessService,
+    private readonly links: PublicMediaLinkSigner,
   ) {}
 
   /**
@@ -97,14 +114,11 @@ export class PublicMediaController {
    * structurally impossible rather than merely filtered.
    */
   @Get('academies/:academyId/:fileName')
-  // Immutable content: the object name is a UUID generated at upload and an
-  // asset's bytes are never replaced (there is no re-upload contract), so a
-  // long-lived immutable cache is safe and keeps repeat views off the
-  // origin entirely.
-  @Header('Cache-Control', 'public, max-age=31536000, immutable')
   async serve(
     @Param('academyId') academyId: string,
     @Param('fileName') fileName: string,
+    @Query('exp') exp: string | undefined,
+    @Query('sig') sig: string | undefined,
     @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {
@@ -120,6 +134,19 @@ export class PublicMediaController {
 
     const key = `academies/${academyId}/${name}.${extension}`;
 
+    // W1 — decided from the asset's row, never from the key alone. A
+    // signed link must be valid for exactly this key; an anonymous request
+    // gets only what is public by purpose. Every refusal is the same 404
+    // a missing object gets, so the route is no oracle for what exists.
+    const signed = exp !== undefined || sig !== undefined;
+    if (signed && !this.links.verify(key, exp, sig)) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    const access = await this.access.resolve(academyId, key);
+    if (!access || (access === 'signed-only' && !signed)) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+
     let body: Buffer;
     try {
       body = await this.storage.getObject(key);
@@ -131,6 +158,7 @@ export class PublicMediaController {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
 
+    response.setHeader('Cache-Control', CACHE_CONTROL[signed ? 'signed' : access]);
     response.setHeader('Content-Type', contentType);
     // Belt and braces for a route that returns caller-influenced bytes:
     // stops a browser from re-interpreting a stored file as something

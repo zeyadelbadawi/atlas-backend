@@ -112,7 +112,7 @@ export class ProtectedMediaService {
    * P64 Phase 3 (S12) — a STUDENT's assignment attachment into the
    * protected tier. Authorization here is the student's own active,
    * unblocked membership of the academy (the same rule
-   * `MediaService.uploadForSubmission` applied to the public tier); the
+   * removed `MediaService.uploadForSubmission` applied to the public tier); the
    * caller has already proven the active enrollment. The object is keyed
    * under `submissions/<studentId>/` and the row records the uploader, so
    * "must be a protected asset uploaded by the student" is a database
