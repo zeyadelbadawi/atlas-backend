@@ -161,6 +161,13 @@ export interface ProtectedMediaConfig {
   readonly signedUrlTtlSeconds: number;
   /** Per-file ceiling for protected uploads — video is uploaded direct-to-provider, so this governs documents and lesson images. */
   readonly maxUploadBytes: number;
+  /**
+   * W6 — per-file ceiling for a Normal-tier video PUT straight to the
+   * protected bucket (`VIDEO_MAX_UPLOAD_BYTES`). Enforced at completion for
+   * every upload, and signed into the presigned PUT as an exact
+   * `Content-Length` whenever the uploader declares `sizeBytes`.
+   */
+  readonly maxVideoUploadBytes: number;
 }
 
 /** Which `VideoProvider` implementation is wired in. `fake` is the local/test adapter; it signs nothing real and reports no DRM. */
@@ -767,6 +774,7 @@ export default () => {
     secretAccessKey: env.R2_PROTECTED_SECRET_ACCESS_KEY || env.R2_SECRET_ACCESS_KEY,
     signedUrlTtlSeconds: Number(env.PROTECTED_MEDIA_URL_TTL_SECONDS ?? 600),
     maxUploadBytes: Number(env.PROTECTED_MEDIA_MAX_UPLOAD_BYTES ?? 50 * 1024 * 1024),
+    maxVideoUploadBytes: Number(env.VIDEO_MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 * 1024),
   };
 
   const basicVideo: BasicVideoConfig = {

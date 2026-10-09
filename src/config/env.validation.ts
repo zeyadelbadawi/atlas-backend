@@ -488,6 +488,14 @@ const EnvSchema = z.object({
     .int()
     .positive()
     .default(50 * 1024 * 1024),
+  // W6 — the largest Normal-tier video a presigned PUT may store. 5 GiB is
+  // also S3/R2's own single-PUT maximum, so it is the ceiling as well.
+  VIDEO_MAX_UPLOAD_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(5 * 1024 * 1024 * 1024)
+    .default(5 * 1024 * 1024 * 1024),
   VIDEO_PROVIDER: z.enum(['fake', 'cloudflare_stream', 'r2_worker']).default('fake'),
   // P64 Phase 2 (DL-19) — the NORMAL tier's delivery gate. Optional: the
   // tier reports itself unconfigured without them rather than failing

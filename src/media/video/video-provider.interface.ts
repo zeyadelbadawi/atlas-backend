@@ -124,6 +124,12 @@ export interface CreateDirectUploadInput {
    * them.
    */
   readonly metadata: Readonly<Record<string, string>>;
+  /**
+   * W6 — the exact size the uploader declared. An adapter that uploads
+   * through a presigned PUT signs it as `Content-Length`, so storage
+   * refuses any other size. Absent when the uploader did not declare one.
+   */
+  readonly contentLength?: number;
   /** Provider-side watermark profile id, when the academy has one configured. */
   readonly watermarkProfileId?: string;
 }

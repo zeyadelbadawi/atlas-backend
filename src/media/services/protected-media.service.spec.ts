@@ -36,6 +36,8 @@ function harness(
   const tier = options.tier ?? 'normal';
   const rows: Row[] = [];
   const quotaCalls: number[] = [];
+  const storageCalls: { kind: string; bytes: number }[] = [];
+  const directUploads: Record<string, unknown>[] = [];
 
   const tx = {
     academy: { findUnique: () => Promise.resolve({ videoSecurityTier: null }) },
@@ -58,12 +60,14 @@ function harness(
     key: tier === 'premium' ? 'cloudflare_stream' : 'r2_worker',
     storedAs: tier === 'premium' ? 'cloudflare_stream' : 'r2_worker',
     capabilities: () => ({ reportsReadinessAsynchronously: tier === 'premium' }),
-    createDirectUpload: () =>
-      Promise.resolve({
+    createDirectUpload: (input: Record<string, unknown>) => {
+      directUploads.push(input);
+      return Promise.resolve({
         providerId: 'provider-asset-1',
         uploadUrl: 'https://upload.test/x',
         expiresAt: new Date(Date.now() + 600_000),
-      }),
+      });
+    },
   };
 
   const service = new ProtectedMediaService(
@@ -84,7 +88,15 @@ function harness(
         quotaCalls.push(minutes);
         return Promise.resolve();
       },
-      assertStorageWithinLimit: () => Promise.resolve(),
+      assertStorageWithinLimit: (
+        _t: unknown,
+        _o: string,
+        kind: string,
+        bytes: number,
+      ) => {
+        storageCalls.push({ kind, bytes });
+        return Promise.resolve();
+      },
     } as never,
     { enqueueOne: () => Promise.resolve() } as never,
     { maxTtlSeconds: 600 } as never,
@@ -113,11 +125,16 @@ function harness(
       recordDurationProvenance: () => undefined,
     } as never,
     {
-      getOrThrow: () => ({ bucket: 'b', signedUrlTtlSeconds: 600, maxUploadBytes: 1 }),
+      getOrThrow: () => ({
+        bucket: 'b',
+        signedUrlTtlSeconds: 600,
+        maxUploadBytes: 1,
+        maxVideoUploadBytes: 1000,
+      }),
     } as unknown as ConfigService,
   );
 
-  return { service, rows, quotaCalls, provider };
+  return { service, rows, quotaCalls, storageCalls, directUploads, provider };
 }
 
 describe('ProtectedMediaService.createVideoUpload', () => {
@@ -173,6 +190,32 @@ describe('ProtectedMediaService.createVideoUpload', () => {
       maxDurationSeconds: 90,
     });
     expect(quotaCalls).toEqual([2]);
+  });
+
+  // W6 — the video PUT used to have no size bound and charged no storage.
+  it('charges a declared size to video storage, reserves it, and hands it to the adapter to sign', async () => {
+    const { service, storageCalls, rows, directUploads } = harness();
+    await service.createVideoUpload('a', 'o', 'u', {
+      fileName: 'x.mp4',
+      maxDurationSeconds: 60,
+      sizeBytes: 900,
+    });
+    expect(storageCalls).toEqual([{ kind: 'videoStorage', bytes: 900 }]);
+    expect(Number((rows[0] as unknown as { sizeBytes: bigint }).sizeBytes)).toBe(900);
+    expect(directUploads[0]).toMatchObject({ contentLength: 900 });
+  });
+
+  it('refuses a declared size above VIDEO_MAX_UPLOAD_BYTES before reserving anything', async () => {
+    const { service, rows, storageCalls } = harness();
+    await expect(
+      service.createVideoUpload('a', 'o', 'u', {
+        fileName: 'x.mp4',
+        maxDurationSeconds: 60,
+        sizeBytes: 1001,
+      }),
+    ).rejects.toMatchObject({ status: 413 });
+    expect(rows).toEqual([]);
+    expect(storageCalls).toEqual([]);
   });
 
   it('tells the client whether it must call the completion endpoint (finding D-4)', async () => {
