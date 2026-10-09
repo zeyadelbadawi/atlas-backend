@@ -748,7 +748,7 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
       expect(entry?.provider).toBe('r2_worker');
     });
 
-    it('an external embed is reported as protecting nothing, rather than as "protected"', () => {
+    it('an external embed is reported as protecting nothing of its own — only the forensic watermark Atlas draws over it', () => {
       const report = buildProtectionReport({
         kind: 'external',
         capabilities: null,
@@ -763,9 +763,23 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
         boundToSession: false,
         boundToDevice: false,
         revocableBeforeExpiry: false,
-        watermark: false,
+        originRestricted: false,
+        adaptiveBitrate: false,
         drm: false,
       });
+      // docs/FORENSIC_WATERMARK.md: Atlas's player frame draws the
+      // per-viewer code over the embed, so that one claim is true…
+      expect(report.watermark).toBe(true);
+      // …and only when a code was actually issued for this grant.
+      expect(
+        buildProtectionReport({
+          kind: 'external',
+          capabilities: null,
+          tier: null,
+          expiresAt: new Date(Date.now() + 3_600_000),
+          watermarkEnabled: false,
+        }).watermark,
+      ).toBe(false);
     });
 
     it('a PREMIUM grant reports boundToDevice/boundToSession false (D-5, AD-16)', () => {
