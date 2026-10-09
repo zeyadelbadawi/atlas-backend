@@ -245,7 +245,7 @@ export interface VideoProviderConfig {
   readonly signingKeyPem?: string;
   readonly webhookSecret?: string;
   readonly customerSubdomain?: string;
-  /** Playback-token lifetime. 2 hours (Phase 2 §I), bound to session and device. */
+  /** Playback-token lifetime. 10 minutes by default (W5) — see `VIDEO_PLAYBACK_TOKEN_TTL_SECONDS`. */
   readonly playbackTokenTtlSeconds: number;
 }
 
@@ -787,7 +787,7 @@ export default () => {
     signingKeyPem: env.CLOUDFLARE_STREAM_SIGNING_KEY_PEM || undefined,
     webhookSecret: env.CLOUDFLARE_STREAM_WEBHOOK_SECRET || undefined,
     customerSubdomain: env.CLOUDFLARE_STREAM_CUSTOMER_SUBDOMAIN || undefined,
-    playbackTokenTtlSeconds: Number(env.VIDEO_PLAYBACK_TOKEN_TTL_SECONDS ?? 2 * 60 * 60),
+    playbackTokenTtlSeconds: Number(env.VIDEO_PLAYBACK_TOKEN_TTL_SECONDS ?? 10 * 60),
   };
 
   const learningLease: LearningLeaseConfig = {

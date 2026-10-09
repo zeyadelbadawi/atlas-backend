@@ -9,7 +9,7 @@
  * eventually disagree and one of them would be wrong.
  *
  * It also never chooses a TTL from the request. The R2 presign is 10
- * minutes and the video token is 2 hours (Phase 2 §I), both clamped
+ * minutes and the video token is 10 minutes too (W5; it was 2 hours), both clamped
  * further down in `ProtectedMediaStorage`/the provider, so a caller cannot
  * ask for a longer-lived credential by asking differently.
  */

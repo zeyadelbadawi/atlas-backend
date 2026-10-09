@@ -519,10 +519,18 @@ const EnvSchema = z.object({
     .number()
     .int()
     .positive()
-    // 2 hours (Phase 2 §I) — the ceiling, not just the default, for the
-    // same reason as above.
+    // W5 — 10 minutes by default, the same life the Normal tier's gate
+    // token and every protected-file presign already have. The token is an
+    // unbound bearer credential (Stream cannot tie it to a session or
+    // device), so its lifetime IS its revocation window. The learner player
+    // refreshes the grant at 70% of the credential's remaining life and
+    // swaps the source when the attached one expires (atlas
+    // `useLessonGrant`/`useVideoSource`), so a short token costs one
+    // position-preserving re-attach per period, never a dead video.
+    // The 2-hour ceiling is kept only so an environment that still sets the
+    // old value explicitly keeps booting; it should be unset.
     .max(2 * 60 * 60)
-    .default(2 * 60 * 60),
+    .default(10 * 60),
   LEARNING_LEASE_TTL_SECONDS: z.coerce.number().int().positive().max(600).default(60),
   // W2 — how long a non-terminal provisioning request may go without any
   // step starting, finishing or failing before the status endpoint reports
