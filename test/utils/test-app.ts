@@ -28,6 +28,7 @@ import { PrismaService } from '../../src/database/prisma.service';
 import { RedisService } from '../../src/redis/redis.service';
 import { StubEmailProvider } from '../../src/identity/services/stub-email.provider';
 import type { MediaStorageConfig } from '../../src/config/configuration';
+import { throwClassValidatorViolations } from '../../src/common/validation/class-validator-violations.util';
 
 export interface TestApp {
   readonly app: INestApplication;
@@ -82,6 +83,12 @@ async function flushTestQueues(redisService: RedisService): Promise<void> {
  */
 export interface CreateTestAppOptions {
   readonly overrides?: (builder: TestingModuleBuilder) => TestingModuleBuilder;
+  /**
+   * Answer DTO violations exactly as `main.ts` does — real per-field
+   * `violations` with `validation:*` keys (`throwClassValidatorViolations`).
+   * Opt-in so existing specs keep the shape they were written against.
+   */
+  readonly fieldViolations?: boolean;
 }
 
 export async function createTestApp(
@@ -117,7 +124,14 @@ export async function createTestApp(
   });
 
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      ...(options.fieldViolations
+        ? { exceptionFactory: (errors) => throwClassValidatorViolations(errors) }
+        : {}),
+    }),
   );
 
   /*
