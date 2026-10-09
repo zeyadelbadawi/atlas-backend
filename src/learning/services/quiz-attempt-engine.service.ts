@@ -471,7 +471,8 @@ export class QuizAttemptEngineService {
         }
         // Stale revisions are ignored, never applied: the newest server-
         // confirmed answer set wins, and the client learns the revision it
-        // must exceed.
+        // must exceed — together with that answer set, so it can merge its
+        // own unsaved edits onto it and retry rather than lose them.
         if (dto.revision <= attempt.answersRevision) {
           return {
             attemptId,
@@ -480,6 +481,8 @@ export class QuizAttemptEngineService {
             savedAt: attempt.lastSavedAt?.toISOString() ?? null,
             serverNow: now.toISOString(),
             deadlineAt: attempt.deadlineAt?.toISOString() ?? null,
+            // The newer copy the client must rebase onto (see the contract).
+            answers: this.answersOf(attempt).map(toAnswerResponse),
           };
         }
         const questions = this.attemptQuestions(quiz, attempt);

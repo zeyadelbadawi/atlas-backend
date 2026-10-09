@@ -113,6 +113,19 @@ interface EnrollmentRef {
   readonly status: string;
 }
 
+/** Lets the enqueuing transaction commit before the check reads the state. */
+export const CERTIFICATE_ISSUE_DELAY_MS = 2_000;
+
+/**
+ * The one job id per enrollment (`enqueueIssuance`). BullMQ refuses a custom
+ * id containing ':' unless it has exactly three parts, so '-' separates.
+ */
+export function certificateIssueJobId(enrollmentId: string, suffix?: 'followup'): string {
+  return suffix
+    ? `certificate-issue-${enrollmentId}-${suffix}`
+    : `certificate-issue-${enrollmentId}`;
+}
+
 @Injectable()
 export class CourseCompletionService {
   private readonly logger = new Logger(CourseCompletionService.name);
@@ -699,11 +712,47 @@ export class CourseCompletionService {
     );
   }
 
+  /**
+   * Queues the automatic issuance check for one enrollment.
+   *
+   * DETERMINISTIC JOB ID (academy offline work). The id used to embed
+   * `Date.now()`, so every recompute that saw the enrollment become
+   * eligible queued another job — and with lesson completions now replayed
+   * from offline outboxes, the same transition can be observed more than
+   * once. The id is now the enrollment's (`certificateIssueJobId`), so
+   * BullMQ keeps at most one waiting check per enrollment; the check itself
+   * reads the state when it runs, so one queued check covers every
+   * transition that happened before it starts.
+   *
+   * A finished or failed job with that id would make BullMQ ignore the new
+   * one, so it is removed first. A check already RUNNING may have read the
+   * state before this transaction committed, so a follow-up check (its own
+   * deterministic id) is queued instead of being swallowed. The short delay
+   * keeps the check from running before this transaction commits.
+   */
   private async enqueueIssuance(enrollmentId: string, academyId: string): Promise<void> {
     const payload: CertificateIssueJobPayload = { enrollmentId, academyId };
     try {
+      let jobId = certificateIssueJobId(enrollmentId);
+      const existing = await this.certificateQueue.getJob(jobId);
+      if (existing) {
+        const state = await existing.getState();
+        if (state === 'waiting' || state === 'delayed' || state === 'prioritized') return;
+        if (state === 'active') {
+          jobId = certificateIssueJobId(enrollmentId, 'followup');
+          const followup = await this.certificateQueue.getJob(jobId);
+          if (followup) {
+            const followupState = await followup.getState();
+            if (followupState !== 'completed' && followupState !== 'failed') return;
+            await followup.remove();
+          }
+        } else {
+          await existing.remove();
+        }
+      }
       await this.certificateQueue.add(CERTIFICATE_ISSUE_JOB, payload, {
-        jobId: `certificate-issue:${enrollmentId}:${Date.now()}`,
+        jobId,
+        delay: CERTIFICATE_ISSUE_DELAY_MS,
         attempts: 5,
         backoff: { type: 'exponential', delay: 3_000 },
         removeOnComplete: true,
