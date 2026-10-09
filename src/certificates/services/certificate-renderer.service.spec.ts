@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import {
   CertificateRendererService,
   reorderMixedRtl,
@@ -95,6 +96,34 @@ describe('CertificateRendererService', () => {
     });
     expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
     expect(warnings.some((w) => w.startsWith('logo:'))).toBe(true);
+  });
+
+  // W4 — the logo bytes are manager-supplied. Anything but PNG/JPEG/WebP
+  // (here a GIF, served from own media with a .png name) must never reach
+  // a sharp decoder; it used to be decoded and embedded.
+  it('refuses a logo that is not PNG/JPEG/WebP by its bytes, and still renders', async () => {
+    const gif = await sharp({
+      create: { width: 4, height: 4, channels: 3, background: { r: 1, g: 2, b: 3 } },
+    })
+      .gif()
+      .toBuffer();
+    const own =
+      '/api/v1/public/media/academies/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222.png';
+    const gifStorage = { ...storage, getObject: jest.fn().mockResolvedValue(gif) };
+    const strict = new CertificateRendererService(new CertificateImageLoader(gifStorage));
+    const { pdf, warnings } = await strict.render({
+      snapshot: snapshot({ logoUrl: own }),
+      serial: 'LLH-2026-000003',
+      verificationCode: 'ABCDEFGHJK25',
+      verificationCodeDisplay: 'ABCD-EFGH-JK25',
+      verifyUrl: 'https://atlass.dpdns.org/verify/ABCD-EFGH-JK25',
+      issuedAt: new Date('2026-09-22T10:05:00.000Z'),
+      version: 1,
+      locale: 'en',
+    });
+    expect(gifStorage.getObject).toHaveBeenCalled();
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(warnings).toEqual([expect.stringMatching(/^logo: unsupported image format/)]);
   });
 
   it('renders with a custom palette from the snapshot (P4 Issue G)', async () => {
