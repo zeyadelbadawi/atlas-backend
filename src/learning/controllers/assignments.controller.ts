@@ -41,6 +41,7 @@ import { UploadMediaAssetDto } from '../../media/dto/upload-media-asset.dto';
 import type { AssignmentResponse } from '../dto/assignment.contract';
 import type { AssignmentSubmissionResponse } from '../dto/assignment-submission.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { SubscriptionScope } from '../../plans/decorators/subscription-scope.decorator';
 
 @Controller('courses')
 @UseGuards(JwtAuthGuard)
@@ -75,6 +76,7 @@ export class AssignmentsController {
   // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async createAssignment(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -122,6 +124,7 @@ export class AssignmentsController {
   // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async updateAssignment(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -142,6 +145,7 @@ export class AssignmentsController {
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
   @HttpCode(204)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async deleteAssignment(
     @Req() request: Request,
     @Param('id') courseId: string,

@@ -9,7 +9,7 @@
  * eventually disagree and one of them would be wrong.
  *
  * It also never chooses a TTL from the request. The R2 presign is 10
- * minutes and the video token is 2 hours (Phase 2 §I), both clamped
+ * minutes and the video token is 10 minutes too (W5; it was 2 hours), both clamped
  * further down in `ProtectedMediaStorage`/the provider, so a caller cannot
  * ask for a longer-lived credential by asking differently.
  */
@@ -22,6 +22,7 @@ import type {
 } from '../../config/configuration';
 import { ProtectedMediaStorage } from '../../media/storage/protected-media-storage.provider';
 import { VideoProviderRegistry } from '../../media/video/video-provider.registry';
+import { PublicMediaLinkSigner } from '../../media/services/public-media-link.signer';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import type { GrantedVideoContract } from '../dto/lesson-content.contract';
 import type { VideoProviderCapabilities } from '../../media/video/video-provider.interface';
@@ -50,6 +51,7 @@ export class ContentGrantSigner {
     private readonly videoProviders: VideoProviderRegistry,
     private readonly metrics: LearningMetricsService,
     configService: ConfigService,
+    private readonly publicLinks: PublicMediaLinkSigner,
   ) {
     this.protectedConfig =
       configService.getOrThrow<ProtectedMediaConfig>('protectedMedia');
@@ -67,16 +69,21 @@ export class ContentGrantSigner {
   /**
    * A presigned GET for a protected object.
    *
-   * A PUBLIC asset is returned by its durable URL instead — there is no
-   * credential to mint for something that is already world-readable, and
-   * signing it would imply a protection it does not have. Callers know
-   * which they are getting from `asset.access`; the grant reports it as
-   * `protection`.
+   * W1 — a PUBLIC-tier asset reaching this method is a lesson file or a
+   * submission attachment that predates the protected tier, and those are
+   * exactly what `public/media` no longer serves anonymously. It used to
+   * be returned by its durable (stored, sometimes not even loadable) URL —
+   * a permanent link to a learner's submission. It now gets the same kind
+   * of credential a protected file does: a link bound to this one object
+   * and the same short TTL, signed by Atlas (`PublicMediaLinkSigner`) and
+   * honoured by `public/media`. The grant still reports `protection` from
+   * `asset.access`, so nothing claims a protection tier it does not have.
    */
   async signFile(asset: MediaAsset): Promise<SignedFile> {
     const expiresAt = new Date(Date.now() + this.fileTtlSeconds * 1000);
     if (asset.access !== 'protected') {
-      return { url: asset.url, expiresAt };
+      if (!asset.storageKey) return { url: asset.url, expiresAt };
+      return this.publicLinks.sign(asset.storageKey, this.fileTtlSeconds);
     }
     return {
       url: await this.storage.presignGet(asset.storageKey, this.fileTtlSeconds),

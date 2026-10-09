@@ -12,9 +12,19 @@ import {
   seedAcademy,
   seedAcademyMember,
   seedActiveSubscriptionForOrg,
+  seedCourse,
+  seedCourseLesson,
+  seedCourseSection,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
+import {
+  MEDIA_STORAGE_PROVIDER,
+  type MediaStorageProvider,
+} from '../src/media/storage/media-storage.interface';
+import { ContentGrantSigner } from '../src/learning/services/content-grant.signer';
+import { PublicMediaLinkSigner } from '../src/media/services/public-media-link.signer';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -365,7 +375,11 @@ describe('Media Library (e2e)', () => {
         .expect(200);
 
       expect(response.headers['content-type']).toContain('image/png');
-      expect(response.headers['cache-control']).toContain('immutable');
+      // W1 — a library image not (yet) published anywhere is anonymous but
+      // cached for an hour; only published branding may be immutable
+      // (asserted in the W1 block below). This used to be immutable for
+      // every object, whatever it was.
+      expect(response.headers['cache-control']).toBe('public, max-age=3600');
       expect(response.headers['x-content-type-options']).toBe('nosniff');
       expect(Buffer.compare(response.body, Buffer.from(REAL_PNG_BASE64, 'base64'))).toBe(
         0,
@@ -505,6 +519,140 @@ describe('Media Library (e2e)', () => {
         .set('Range', `bytes=${REAL_PNG_BYTE_LENGTH + 100}-${REAL_PNG_BYTE_LENGTH + 200}`)
         .expect(416);
       expect(response.headers['content-range']).toBe(`bytes */${REAL_PNG_BYTE_LENGTH}`);
+    });
+
+    // -------------------------------------------------------------------
+    // W1 — the route serves only what is public BY PURPOSE.
+    // -------------------------------------------------------------------
+
+    async function seedPublicObject(
+      academyId: string,
+      overrides: { uploadedByUserId?: string } = {},
+    ) {
+      const id = randomUUID();
+      const storageKey = `academies/${academyId}/${id}.png`;
+      await app
+        .get<MediaStorageProvider>(MEDIA_STORAGE_PROVIDER)
+        .putObject(storageKey, Buffer.from(REAL_PNG_BASE64, 'base64'), 'image/png');
+      const row = await admin.mediaAsset.create({
+        data: {
+          id,
+          academyId,
+          type: 'image',
+          fileName: 'legacy.png',
+          storageKey,
+          url: `/api/v1/public/media/${storageKey}`,
+          mimeType: 'image/png',
+          sizeBytes: BigInt(REAL_PNG_BYTE_LENGTH),
+          access: 'public',
+          provider: 'r2',
+          ...overrides,
+        },
+      });
+      return { row, path: `/public/media/${storageKey}` };
+    }
+
+    it('W1: only published branding is cached immutable', async () => {
+      const { asset, academy } = await uploadPng('w1-branding');
+      await admin.academy.update({
+        where: { id: academy.id },
+        data: { logoUrl: asset.url },
+      });
+      const response = await request(app.getHttpServer())
+        .get(stripApiPrefix(asset.url))
+        .expect(200);
+      expect(response.headers['cache-control']).toBe(
+        'public, max-age=31536000, immutable',
+      );
+    });
+
+    it('W1: an object with no asset row, or a purged or protected row, is never served', async () => {
+      const { academy } = await seedManagedAcademy('w1-rowless');
+      // Bytes in the bucket with no row at all.
+      const orphanKey = `academies/${academy.id}/${randomUUID()}.png`;
+      await app
+        .get<MediaStorageProvider>(MEDIA_STORAGE_PROVIDER)
+        .putObject(orphanKey, Buffer.from(REAL_PNG_BASE64, 'base64'), 'image/png');
+      await request(app.getHttpServer()).get(`/public/media/${orphanKey}`).expect(404);
+
+      const purged = await seedPublicObject(academy.id);
+      await admin.mediaAsset.update({
+        where: { id: purged.row.id },
+        data: { deletedAt: new Date() },
+      });
+      await request(app.getHttpServer()).get(purged.path).expect(404);
+
+      const flipped = await seedPublicObject(academy.id);
+      await admin.mediaAsset.update({
+        where: { id: flipped.row.id },
+        data: { access: 'protected' },
+      });
+      await request(app.getHttpServer()).get(flipped.path).expect(404);
+    });
+
+    it("W1: a learner's legacy public submission attachment is refused anonymously and served only by a signed link", async () => {
+      const { academy } = await seedManagedAcademy('w1-submission');
+      const learner = await signUpAndSignIn(app, 'w1-submission-learner');
+      const legacy = await seedPublicObject(academy.id, {
+        uploadedByUserId: learner.userId,
+      });
+
+      // It used to be served to anyone, immutable for a year.
+      await request(app.getHttpServer()).get(legacy.path).expect(404);
+
+      const signed = await app.get(ContentGrantSigner).signFile(legacy.row);
+      expect(signed.url).toMatch(
+        /^\/api\/v1\/public\/media\/academies\/.+\?exp=\d+&sig=/,
+      );
+      const served = await request(app.getHttpServer())
+        .get(stripApiPrefix(signed.url))
+        .expect(200);
+      expect(served.headers['cache-control']).toBe('private, no-store');
+      expect(Buffer.compare(served.body, Buffer.from(REAL_PNG_BASE64, 'base64'))).toBe(0);
+
+      // Tampered, moved to another object, or expired: the same 404.
+      const url = new URL(signed.url, 'https://atlas.test');
+      const sig = url.searchParams.get('sig')!;
+      url.searchParams.set('sig', `${sig.slice(0, -1)}${sig.endsWith('A') ? 'B' : 'A'}`);
+      await request(app.getHttpServer())
+        .get(stripApiPrefix(url.pathname + url.search))
+        .expect(404);
+      const other = await seedPublicObject(academy.id, {
+        uploadedByUserId: learner.userId,
+      });
+      await request(app.getHttpServer())
+        .get(`${other.path}${new URL(signed.url, 'https://atlas.test').search}`)
+        .expect(404);
+      const expired = app.get(PublicMediaLinkSigner).sign(legacy.row.storageKey, 60, 0);
+      await request(app.getHttpServer()).get(stripApiPrefix(expired.url)).expect(404);
+    });
+
+    it('W1: a legacy public lesson file is refused anonymously unless it is also published', async () => {
+      const { academy } = await seedManagedAcademy('w1-lesson-file');
+      const course = await seedCourse(admin, academy.id, 'w1-course');
+      const section = await seedCourseSection(admin, course.id, 'w1-section', 0);
+      const lesson = await seedCourseLesson(admin, section.id, course.id, 'w1-lesson', 0);
+      const file = await seedPublicObject(academy.id);
+      await admin.lessonContent.create({
+        data: {
+          lessonId: lesson.id,
+          courseId: course.id,
+          academyId: academy.id,
+          kind: 'file',
+          mediaAssetId: file.row.id,
+        },
+      });
+      await request(app.getHttpServer()).get(file.path).expect(404);
+      const signed = await app.get(ContentGrantSigner).signFile(file.row);
+      await request(app.getHttpServer()).get(stripApiPrefix(signed.url)).expect(200);
+
+      // The same asset deliberately used as the course cover stays public.
+      await admin.course.update({
+        where: { id: course.id },
+        data: { thumbnailUrl: file.row.url },
+      });
+      const cover = await request(app.getHttpServer()).get(file.path).expect(200);
+      expect(cover.headers['cache-control']).toBe('public, max-age=31536000, immutable');
     });
 
     it('ignores a malformed range header and serves the whole file (200)', async () => {

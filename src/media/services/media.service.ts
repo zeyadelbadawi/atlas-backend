@@ -2,10 +2,11 @@
  * MediaService — matches `MediaService` (atlas frontend) exactly:
  * `getAssets`/`getAsset`/`uploadAsset`/`updateAsset`/`archiveAsset`, no
  * more, no fewer (master plan §21 P8's own instruction: "if the frontend
- * does not have a method, do not invent it") — plus `uploadForSubmission`
- * as of Phase 4 (P24), reached only from `AssignmentsService`, never from
- * `MediaController` (see that method's own doc comment for why its
- * authorization is deliberately different from `upload`'s).
+ * does not have a method, do not invent it"). W1 removed the Phase 4
+ * `uploadForSubmission`, which wrote learners' submission attachments
+ * into this PUBLIC bucket; it had been unused since P64 Phase 3 moved
+ * them to the protected tier (`ProtectedMediaService.uploadSubmissionAttachment`),
+ * and leaving a public write path for learner files was a standing risk.
  *
  * Every method independently re-establishes the RLS tenant context via
  * `TenancyContextService.runInTenantContext`, matching every other
@@ -39,7 +40,6 @@ import {
 import { findMediaUsages, type MediaUsage } from './media-usage.util';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
-import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { MediaAssetsRepository } from '../repositories/media-assets.repository';
@@ -75,7 +75,6 @@ export class MediaService {
 
   constructor(
     private readonly tenancyContextService: TenancyContextService,
-    private readonly academyStudentsRepository: AcademyStudentsRepository,
     private readonly mediaAssetsRepository: MediaAssetsRepository,
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly mediaProcessingProducer: MediaProcessingProducer,
@@ -173,9 +172,8 @@ export class MediaService {
       },
     );
 
-    // Task 3 — only a STAFF library upload is audited; a learner's
-    // submission attachment and an automated recording import are not
-    // academy administration.
+    // Task 3 — only a STAFF library upload is audited; an automated
+    // recording import is not academy administration.
     return this.performUpload(academyId, organizationId, payload, buffer, kind, {
       actorUserId: userId,
       role,
@@ -183,65 +181,11 @@ export class MediaService {
   }
 
   /**
-   * Phase 4 (P24) — the student-submission counterpart of `upload`.
-   * Authorization is deliberately NOT `assertCanManage` (owner/
-   * administrator/manager only) — the caller here is
-   * `AssignmentsService.uploadSubmissionAttachment`, which has already
-   * verified a real, active enrollment for this student in the specific
-   * course the assignment belongs to before ever reaching this method.
-   * Everything after authorization (parse, validate, the live storage-
-   * entitlement check, the real R2 write, the `MediaAsset` row, the async
-   * dimension-extraction enqueue, the usage-recompute trigger) is
-   * IDENTICAL to `upload` — both delegate to the same `performUpload`, so
-   * a student's submitted file becomes a real, quota-counted
-   * `MediaAsset`, visible in the academy's own Media Library like any
-   * other upload, never a parallel/duplicate storage concept.
-   */
-  async uploadForSubmission(
-    academyId: string,
-    organizationId: string,
-    payload: UploadMediaAssetDto,
-    studentUserId: string,
-  ): Promise<MediaAssetResponse> {
-    const { buffer, kind } = this.parseAndValidate(payload);
-
-    // P64 Phase 1 — this method used to trust its caller entirely; it now
-    // performs its own authorization: the uploader must hold an ACTIVE,
-    // unblocked student membership of exactly this academy. A future
-    // caller that forgets its own check can no longer write into an
-    // arbitrary academy's bucket.
-    await this.tenancyContextService.runInTenantAndUserContext(
-      organizationId,
-      studentUserId,
-      async (tx) => {
-        const membership = await this.academyStudentsRepository.findForUserInAcademy(
-          tx,
-          academyId,
-          studentUserId,
-        );
-        if (!membership || membership.status !== 'active' || membership.blockedAt) {
-          throw new ForbiddenException({
-            messageKey: 'errors.enrollment.academyMembershipRequired',
-          });
-        }
-        await this.entitlementEnforcementService.assertStorageWithinLimit(
-          tx,
-          organizationId,
-          kind.assetType === 'video' ? 'videoStorage' : 'generalStorage',
-          buffer.length,
-        );
-      },
-    );
-
-    return this.performUpload(academyId, organizationId, payload, buffer, kind);
-  }
-
-  /**
    * Phase 12 — imports bytes Atlas fetched itself (a Zoom session
    * recording) into the academy's existing media library.
    *
-   * The third entry point beside `upload` and `uploadForSubmission`, and
-   * it exists for the same reason that one does: the CALLER has already
+   * The second entry point beside `upload`. It exists because the CALLER
+   * has already
    * done its own authorization, and everything after that — the storage
    * write, the `MediaAsset` row, the processing enqueue, the usage
    * recompute — must be IDENTICAL, so an imported recording becomes a
@@ -303,7 +247,7 @@ export class MediaService {
     return { buffer, kind };
   }
 
-  /** The real storage write + metadata persistence, shared verbatim by `upload` and `uploadForSubmission` — every caller has already finished its OWN authorization/entitlement check before this runs. */
+  /** The real storage write + metadata persistence, shared verbatim by `upload` and `importFromBuffer` — every caller has already finished its OWN authorization/entitlement check before this runs. */
   private async performUpload(
     academyId: string,
     organizationId: string,

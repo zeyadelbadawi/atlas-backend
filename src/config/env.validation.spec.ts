@@ -113,6 +113,26 @@ describe('validateEnv', () => {
     ).toThrow(/APP_DATABASE_URL/);
   });
 
+  // W15 — the protected tier in the public bucket would be served by
+  // `public/media`; it must refuse to boot, not run unprotected.
+  it('refuses R2_PROTECTED_BUCKET equal to R2_BUCKET', () => {
+    expect(() =>
+      validateEnv({ ...VALID_BASE, R2_PROTECTED_BUCKET: VALID_BASE.R2_BUCKET }),
+    ).toThrow(/R2_PROTECTED_BUCKET must not be the same bucket as R2_BUCKET/);
+    expect(() =>
+      validateEnv({
+        ...VALID_BASE,
+        R2_PROTECTED_BUCKET: ` ${VALID_BASE.R2_BUCKET.toUpperCase()} `,
+      }),
+    ).toThrow(/R2_PROTECTED_BUCKET/);
+    expect(() =>
+      validateEnv({
+        ...VALID_BASE,
+        R2_PROTECTED_BUCKET: `${VALID_BASE.R2_BUCKET}-protected`,
+      }),
+    ).not.toThrow();
+  });
+
   it('throws when R2_BUCKET is missing', () => {
     const withoutBucket: Record<string, string> = { ...VALID_BASE };
     delete withoutBucket.R2_BUCKET;

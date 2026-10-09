@@ -18,7 +18,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
-import sharp from 'sharp';
+import { normalizeCertificateImage } from './certificate-image.util';
 import type { CertificateSnapshot } from '../dto/certificate.contract';
 import { deriveRenderPalette, type RenderPalette } from '../certificate-palette.util';
 import { CertificateImageLoader } from './certificate-image-loader.service';
@@ -733,8 +733,9 @@ export class CertificateRendererService {
     const bytes = await this.images.load(url, label, warnings);
     if (!bytes) return null;
     try {
-      // Normalise through sharp: rejects non-images, converts webp/gif/svg-less to PNG.
-      return await sharp(bytes, { limitInputPixels: 20_000_000 }).png().toBuffer();
+      // W4 — PNG/JPEG/WebP only, by magic bytes, size- and pixel-capped,
+      // failing on any decoder warning; re-encoded to PNG for PDFKit.
+      return await normalizeCertificateImage(bytes);
     } catch (error) {
       warnings.push(
         `${label}: ${error instanceof Error ? error.message : String(error)}`,

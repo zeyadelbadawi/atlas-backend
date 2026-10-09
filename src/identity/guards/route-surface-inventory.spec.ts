@@ -16,16 +16,15 @@
  * A route guarded by `JwtAuthGuard` (or `OptionalJwtAuthGuard`) that is
  * neither fails this test. The fix is to add the management guard, or —
  * only if it genuinely is a self/learner route — to list it here.
+ *
+ * A11 — and every route with NO session guard at all is listed in
+ * `PUBLIC_ROUTES` with the reason it may be reached anonymously, so a newly
+ * added unguarded route fails here instead of quietly shipping public.
+ * Routes come from the shared inventory fixture, which finds controllers
+ * by content: `certificates.controllers.ts` (learner certificates and the
+ * public `verify/:code`) used to be skipped by a `*.controller.ts` filter.
  */
-import 'reflect-metadata';
-import {
-  GUARDS_METADATA,
-  METHOD_METADATA,
-  PATH_METADATA,
-} from '@nestjs/common/constants';
-import { RequestMethod } from '@nestjs/common';
-import { readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { collectDeclaredRoutes } from '../../common/testing/route-inventory.fixture-spec';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
 import { PlatformOwnerGuard } from './platform-owner.guard';
@@ -86,6 +85,10 @@ const SELF_OR_LEARNER = new Set<string>([
   'DELETE learning/devices/:deviceId',
   'POST learning/session/takeover',
   'GET learning/results',
+  // The caller's own certificates (RLS: the learner's own rows only).
+  'GET learning/certificates',
+  'GET learning/certificates/:certificateId',
+  'GET learning/certificates/:certificateId/download',
   'GET learning/courses/:courseId/completion',
   'GET learning/courses/:id/lessons/:lessonId/content',
   'POST learning/courses/:id/lessons/:lessonId/playback/refresh',
@@ -152,83 +155,93 @@ const SELF_OR_LEARNER = new Set<string>([
   'POST live-sessions/:liveSessionId/join/redeem',
 ]);
 
-type Guard = abstract new (...args: never[]) => unknown;
+/**
+ * A11 — every route reachable with NO session, and why that is safe. Each
+ * one authenticates some other way (a signature, a secret, a token in the
+ * request), is rate-limited pre-authentication, or serves only what is
+ * public by design.
+ */
+const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
+  // --- credential exchange (rate-limited; the credential IS the auth) -----
+  'POST auth/sign-in': 'password sign-in; SignInRateLimitGuard',
+  'POST auth/register': 'account creation; RegisterRateLimitGuard',
+  'POST auth/refresh': 'rotates the HttpOnly refresh cookie it is sent',
+  'POST auth/academy-join': 'sign-in/up on an academy host; SignInRateLimitGuard',
+  'POST auth/2fa/verify': 'completes a sealed second-factor challenge; rate-limited',
+  'POST auth/otp/verify': 'completes a sealed email-OTP challenge; rate-limited',
+  'POST auth/otp/resend': 'resends for a sealed challenge; rate-limited',
+  'POST auth/password-reset/request': 'uniform response for any email; rate-limited',
+  'POST auth/password-reset/validate': 'checks a single-use reset token; rate-limited',
+  'POST auth/password-reset/confirm': 'consumes a single-use reset token; rate-limited',
+  'GET auth/options': 'which sign-in methods this host offers (no account data)',
+  'GET auth/google/callback': "Google's redirect; state + PKCE + binder cookie",
+  'POST auth/google/complete': 'redeems a one-time handoff bound to the binder cookie',
+  'POST auth/google/activate': 'redeems a one-time handoff; rate-limited',
+  'POST auth/google/create-account': 'redeems a one-time handoff; rate-limited',
+  'POST auth/google/link': 'links after a password re-check; rate-limited',
+  // --- signed provider webhooks (verified over the raw bytes) -------------
+  'POST webhooks/email/:provider':
+    'Svix signature (Resend) / URL secret (Brevo), replay-claimed',
+  'POST webhooks/video/stream': 'Cloudflare Stream HMAC signature',
+  'POST live-sessions/webhook': 'Zoom x-zm-signature',
+  'POST live-sessions/deauthorization': 'Zoom x-zm-signature',
+  'POST payments/webhook': 'payment provider HMAC signature',
+  // --- public website runtime and media (public by design) ----------------
+  'GET public/websites/resolve': 'hostname -> academy, published state only',
+  'GET public/websites/:academyId': 'published website only',
+  'GET public/websites/:academyId/identity': 'published identity only',
+  'GET public/websites/:academyId/pages': 'published pages only',
+  'GET public/websites/:academyId/pages/:slug': 'published page only',
+  'GET public/websites/:academyId/categories': 'public catalog',
+  'GET public/websites/:academyId/courses': 'public, published courses only',
+  'GET public/websites/:academyId/courses/:courseId': 'public, published course only',
+  'GET public/websites/:academyId/courses/:courseId/curriculum':
+    'titles of a public course; no lesson content',
+  'GET public/websites/:academyId/courses/:courseId/rating': 'aggregate only',
+  'GET public/websites/:academyId/courses/:courseId/reviews': 'approved reviews only',
+  'GET public/websites/:academyId/courses/:courseId/recommendations':
+    'public courses only',
+  'GET public/websites/:academyId/statistics': 'aggregate public counts',
+  'GET public/websites/:academyId/favicon':
+    'inline bytes or own-media redirect only (W2)',
+  'GET public/websites/:academyId/logo': 'bounded PNG of the academy logo for emails',
+  'POST public/websites/:academyId/contact': 'visitor contact form; rate-limited',
+  'GET public/media/academies/:academyId/:fileName':
+    'published/public-tier assets, or a signed link (W1)',
+  'GET public/plans': 'public price list',
+  'GET public/signup-options': 'which signup paths are enabled',
+  'POST public/contact': 'marketing contact form; rate-limited',
+  'GET verify/:code': 'public certificate verification by unguessable code',
+  // --- links from emails (the token is the authorization) -----------------
+  'GET communications/unsubscribe': 'shows the signed unsubscribe token',
+  'POST communications/unsubscribe': 'applies the signed unsubscribe token',
+  // --- telemetry and infrastructure ---------------------------------------
+  'POST security/csp-reports': 'browser CSP reports; small bodies, rate-limited',
+  'POST rum/vitals': 'browser web-vitals beacons; small bodies, rate-limited',
+  'GET health': 'liveness for the orchestrator; no data',
+  'GET metrics': 'MetricsAccessGuard (scrape token)',
+};
 
-function listControllerFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...listControllerFiles(full));
-    else if (entry.endsWith('.controller.ts')) out.push(full);
-  }
-  return out;
+function isAuthenticated(guards: readonly unknown[]): boolean {
+  return guards.some((g) => g === JwtAuthGuard || g === OptionalJwtAuthGuard);
 }
 
-function guardsOf(target: object): Guard[] {
-  return (Reflect.getMetadata(GUARDS_METADATA, target) as Guard[] | undefined) ?? [];
-}
-
-function paths(value: unknown): string[] {
-  const list = Array.isArray(value) ? value : [value ?? ''];
-  return list.map((p) => String(p).replace(/^\/+|\/+$/g, ''));
-}
-
-interface RouteInfo {
-  readonly key: string;
-  readonly file: string;
-  readonly authenticated: boolean;
-  readonly management: boolean;
-}
-
-function collectRoutes(): RouteInfo[] {
-  const root = join(__dirname, '..', '..');
-  const routes: RouteInfo[] = [];
-  for (const file of listControllerFiles(root)) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require(file) as Record<string, unknown>;
-    for (const exported of Object.values(mod)) {
-      if (typeof exported !== 'function') continue;
-      const controllerPaths = Reflect.getMetadata(PATH_METADATA, exported) as unknown;
-      if (controllerPaths === undefined) continue;
-      const classGuards = guardsOf(exported);
-      const proto = (exported as { prototype: object }).prototype;
-      for (const name of Object.getOwnPropertyNames(proto)) {
-        if (name === 'constructor') continue;
-        const handler = (proto as Record<string, unknown>)[name];
-        if (typeof handler !== 'function') continue;
-        const method = Reflect.getMetadata(METHOD_METADATA, handler) as
-          RequestMethod | undefined;
-        if (method === undefined) continue;
-        const guards = [...classGuards, ...guardsOf(handler)];
-        const authenticated = guards.some(
-          (g) => g === JwtAuthGuard || g === OptionalJwtAuthGuard,
-        );
-        const management = guards.some(
-          (g) =>
-            g === ManagementSurfaceGuard ||
-            g === PlatformOwnerGuard ||
-            g === ManagementSessionGuard,
-        );
-        const methodPaths = paths(Reflect.getMetadata(PATH_METADATA, handler));
-        for (const base of paths(controllerPaths)) {
-          for (const sub of methodPaths) {
-            const path = [base, sub].filter(Boolean).join('/');
-            routes.push({
-              key: `${RequestMethod[method]} ${path}`,
-              file: relative(root, file),
-              authenticated,
-              management,
-            });
-          }
-        }
-      }
-    }
-  }
-  return routes;
+function isManagement(guards: readonly unknown[]): boolean {
+  return guards.some(
+    (g) =>
+      g === ManagementSurfaceGuard ||
+      g === PlatformOwnerGuard ||
+      g === ManagementSessionGuard,
+  );
 }
 
 describe('Launch Stabilization A1 — route surface inventory', () => {
-  const routes = collectRoutes();
+  const routes = collectDeclaredRoutes().map((r) => ({
+    key: r.key,
+    file: r.file,
+    authenticated: isAuthenticated(r.guards),
+    management: isManagement(r.guards),
+  }));
 
   it('found the application routes', () => {
     expect(routes.length).toBeGreaterThan(200);
@@ -258,6 +271,19 @@ describe('Launch Stabilization A1 — route surface inventory', () => {
 
     const form = routes.find((r) => r.key === 'POST public/contact');
     expect(form).toMatchObject({ authenticated: false, management: false });
+  });
+
+  // A11 — no route may be anonymous by omission.
+  it('lists every unauthenticated route explicitly, with a reason', () => {
+    const unlisted = routes
+      .filter((r) => !r.authenticated && !(r.key in PUBLIC_ROUTES))
+      .map((r) => `${r.key}  (${r.file})`);
+    expect(unlisted).toEqual([]);
+  });
+
+  it('keeps the public allow-list exact: every entry exists and is really unauthenticated', () => {
+    const publicNow = new Set(routes.filter((r) => !r.authenticated).map((r) => r.key));
+    expect(Object.keys(PUBLIC_ROUTES).filter((key) => !publicNow.has(key))).toEqual([]);
   });
 
   it('keeps the self/learner allow-list free of stale entries', () => {

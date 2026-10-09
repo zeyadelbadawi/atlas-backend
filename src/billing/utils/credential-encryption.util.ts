@@ -29,6 +29,13 @@ import type { PaymentConfigurationConfig } from '../../config/configuration';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH_BYTES = 12;
+/**
+ * W13 — the GCM tag length, pinned on BOTH sides. Without `authTagLength`
+ * Node accepts any tag from 4 to 16 bytes on decrypt, and checks only that
+ * many bytes: a truncated tag is a far weaker integrity check than the
+ * 128-bit one `encrypt` produces.
+ */
+const AUTH_TAG_LENGTH_BYTES = 16;
 const KEY_LENGTH_BYTES = 32;
 
 @Injectable()
@@ -51,7 +58,9 @@ export class CredentialEncryptionService {
   /** Encrypts an arbitrary plaintext string (a JSON-serialized gateway config) into the opaque `encrypted_config` storage format. */
   encrypt(plaintext: string): string {
     const iv = randomBytes(IV_LENGTH_BYTES);
-    const cipher = createCipheriv(ALGORITHM, this.key, iv);
+    const cipher = createCipheriv(ALGORITHM, this.key, iv, {
+      authTagLength: AUTH_TAG_LENGTH_BYTES,
+    });
     const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
     const authTag = cipher.getAuthTag();
     return [iv, authTag, ciphertext].map((buf) => buf.toString('base64')).join('.');
@@ -68,7 +77,9 @@ export class CredentialEncryptionService {
     const authTag = Buffer.from(authTagB64, 'base64');
     const ciphertext = Buffer.from(ciphertextB64, 'base64');
 
-    const decipher = createDecipheriv(ALGORITHM, this.key, iv);
+    const decipher = createDecipheriv(ALGORITHM, this.key, iv, {
+      authTagLength: AUTH_TAG_LENGTH_BYTES,
+    });
     decipher.setAuthTag(authTag);
     const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
     return plaintext.toString('utf8');

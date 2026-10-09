@@ -143,7 +143,9 @@ export class AuthChallengeCipher {
   /** Seals `{challengeRowId, userId}` into the opaque reference handed to the client. */
   sealChallengeRef(reference: ChallengeReference): string {
     const iv = randomBytes(IV_LENGTH_BYTES);
-    const cipher = createCipheriv(ALGORITHM, this.referenceKey, iv);
+    const cipher = createCipheriv(ALGORITHM, this.referenceKey, iv, {
+      authTagLength: TAG_LENGTH_BYTES,
+    });
     const ciphertext = Buffer.concat([
       cipher.update(`${reference.challengeRowId}.${reference.userId}`, 'utf8'),
       cipher.final(),
@@ -175,7 +177,11 @@ export class AuthChallengeCipher {
     const ciphertext = raw.subarray(IV_LENGTH_BYTES + TAG_LENGTH_BYTES);
 
     try {
-      const decipher = createDecipheriv(ALGORITHM, this.referenceKey, iv);
+      // W13 — pinned: the tag slice above is always 16 bytes, and the
+      // decipher must agree rather than accept whatever length it is given.
+      const decipher = createDecipheriv(ALGORITHM, this.referenceKey, iv, {
+        authTagLength: TAG_LENGTH_BYTES,
+      });
       decipher.setAuthTag(tag);
       const plaintext = Buffer.concat([
         decipher.update(ciphertext),

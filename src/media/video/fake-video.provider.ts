@@ -141,6 +141,8 @@ export class FakeVideoProvider implements VideoProvider {
       uploadUrl: await this.storage.presignPut(
         fakeVideoObjectKey(providerId),
         'video/mp4',
+        undefined,
+        input.contentLength,
       ),
       // The REAL ceiling of the presign, not an optimistic 30 minutes
       // (the same honesty finding D-3 is about).

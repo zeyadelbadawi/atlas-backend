@@ -31,6 +31,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  PayloadTooLargeException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
@@ -63,6 +64,8 @@ export interface CreateVideoUploadInput {
   readonly maxDurationSeconds: number;
   /** Optional, but strongly preferred: it is what prefixes the object key and what attributes the webhook. */
   readonly courseId?: string;
+  /** W6 — the exact byte size to be PUT; signs `Content-Length` and charges storage up front. */
+  readonly sizeBytes?: number;
 }
 
 export interface VideoUploadTicket {
@@ -109,7 +112,7 @@ export class ProtectedMediaService {
    * P64 Phase 3 (S12) — a STUDENT's assignment attachment into the
    * protected tier. Authorization here is the student's own active,
    * unblocked membership of the academy (the same rule
-   * `MediaService.uploadForSubmission` applied to the public tier); the
+   * removed `MediaService.uploadForSubmission` applied to the public tier); the
    * caller has already proven the active enrollment. The object is keyed
    * under `submissions/<studentId>/` and the row records the uploader, so
    * "must be a protected asset uploaded by the student" is a database
@@ -263,6 +266,18 @@ export class ProtectedMediaService {
     const reservedMinutes = Math.ceil(input.maxDurationSeconds / 60);
     const assetId = randomUUID();
 
+    // W6 — a declared size must fit the per-file ceiling before anything
+    // is reserved; it is then charged to storage like every other upload.
+    const declaredBytes = input.sizeBytes;
+    if (declaredBytes !== undefined) {
+      if (!Number.isInteger(declaredBytes) || declaredBytes <= 0) {
+        throw new BadRequestException({ messageKey: 'errors.validation.failed' });
+      }
+      if (declaredBytes > this.config.maxVideoUploadBytes) {
+        throw new PayloadTooLargeException({ messageKey: 'errors.media.fileTooLarge' });
+      }
+    }
+
     const { origins, tier } = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
@@ -313,6 +328,17 @@ export class ProtectedMediaService {
           organizationId,
           reservedMinutes,
         );
+        // W6 — video STORAGE too, consistent with every other upload path
+        // (`MediaService.upload`, `uploadProtectedFile`). The reservation
+        // row below records the declared size, so concurrent uploads see it.
+        if (declaredBytes !== undefined) {
+          await this.entitlementEnforcementService.assertStorageWithinLimit(
+            tx,
+            organizationId,
+            'videoStorage',
+            declaredBytes,
+          );
+        }
 
         // The RESERVATION, written inside the same transaction that
         // checked the quota. Doing it after the provider call would leave
@@ -328,7 +354,10 @@ export class ProtectedMediaService {
             storageKey: '',
             url: '',
             mimeType: 'video/mp4',
-            sizeBytes: BigInt(0),
+            // W6 — the declared size, reserved against storage like the
+            // declared duration is against minutes; replaced by the real
+            // size at completion.
+            sizeBytes: BigInt(declaredBytes ?? 0),
             access: 'protected',
             // FINDING D-1. This was the hardcoded literal
             // `'cloudflare_stream'`, so the column recorded a constant
@@ -372,6 +401,7 @@ export class ProtectedMediaService {
       const upload = await provider.createDirectUpload({
         maxDurationSeconds: input.maxDurationSeconds,
         allowedOrigins: origins,
+        contentLength: declaredBytes,
         // Opaque to the provider; Atlas uses them to attribute the webhook
         // and to refuse a cross-academy token later (Phase 2 §H).
         metadata: {
@@ -469,6 +499,8 @@ export class ProtectedMediaService {
       throw new BadRequestException({ messageKey: 'errors.media.uploadNotFound' });
     }
 
+    await this.enforceUploadedSize(organizationId, asset, provider, head.sizeBytes);
+
     const measured = await this.resolveDuration(asset.providerId, asset.durationSeconds);
 
     // AD-14's SECOND enforcement point: "enforcement happens before a
@@ -562,6 +594,64 @@ export class ProtectedMediaService {
       'Could not parse a duration from the uploaded video; keeping the declared value and recording it as such.',
     );
     return { durationSeconds: reservedSeconds ?? 0, source: 'declared' };
+  }
+
+  /**
+   * W6 — the size half of completion, mirroring the duration overrun check
+   * below it. A presigned PUT is only size-bound when the uploader declared
+   * `sizeBytes` (signed `Content-Length`); this check holds for EVERY
+   * upload, declared or not:
+   *
+   *  - the stored object may not exceed what was declared (or, with no
+   *    declaration, `VIDEO_MAX_UPLOAD_BYTES`);
+   *  - bytes beyond what was already reserved are charged to the video
+   *    storage quota now.
+   *
+   * Either refusal DELETES the object and releases the reservation, so an
+   * over-limit upload leaves nothing behind that occupies storage or quota.
+   */
+  private async enforceUploadedSize(
+    organizationId: string,
+    asset: MediaAsset,
+    provider: { deleteAsset(providerId: string): Promise<void> },
+    storedBytes: number,
+  ): Promise<void> {
+    const reservedBytes = Number(asset.sizeBytes);
+    const allowedBytes =
+      reservedBytes > 0 ? reservedBytes : this.config.maxVideoUploadBytes;
+    const discard = async (): Promise<void> => {
+      await provider.deleteAsset(asset.providerId!).catch((error: unknown) => {
+        this.logger.error(
+          {
+            assetId: asset.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'Could not delete an over-limit video upload; it must be removed manually.',
+        );
+      });
+      await this.releaseReservation(organizationId, asset.id);
+    };
+
+    if (storedBytes > allowedBytes) {
+      await discard();
+      throw new PayloadTooLargeException({ messageKey: 'errors.media.fileTooLarge' });
+    }
+    const extraBytes = storedBytes - reservedBytes;
+    if (extraBytes > 0) {
+      try {
+        await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+          this.entitlementEnforcementService.assertStorageWithinLimit(
+            tx,
+            organizationId,
+            'videoStorage',
+            extraBytes,
+          ),
+        );
+      } catch (error) {
+        await discard();
+        throw error;
+      }
+    }
   }
 
   /** Marks a failed reservation as `failed` so it stops counting against the quota. */

@@ -28,6 +28,7 @@ import { UpdateAnnouncementDto } from '../dto/update-announcement.dto';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { AnnouncementResponse } from '../dto/announcement.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { SubscriptionScope } from '../../plans/decorators/subscription-scope.decorator';
 
 @UseGuards(JwtAuthGuard)
 @Controller()
@@ -67,6 +68,7 @@ export class AnnouncementsController {
   // Launch Stabilization A1 (D1) — authoring is management work: an
   // academy-website session must not reach it, whoever holds it.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'courseId' })
   async createAnnouncement(
     @Req() request: Request,
     @Param('courseId') courseId: string,
@@ -83,6 +85,7 @@ export class AnnouncementsController {
   // Launch Stabilization A1 (D1) — authoring is management work: an
   // academy-website session must not reach it, whoever holds it.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'courseId' })
   async updateAnnouncement(
     @Req() request: Request,
     @Param('courseId') courseId: string,
@@ -101,6 +104,7 @@ export class AnnouncementsController {
   // Launch Stabilization A1 (D1) — authoring is management work: an
   // academy-website session must not reach it, whoever holds it.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'courseId' })
   async publishAnnouncement(
     @Req() request: Request,
     @Param('courseId') courseId: string,
@@ -117,6 +121,7 @@ export class AnnouncementsController {
   // Launch Stabilization A1 (D1) — authoring is management work: an
   // academy-website session must not reach it, whoever holds it.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'courseId' })
   async archiveAnnouncement(
     @Req() request: Request,
     @Param('courseId') courseId: string,

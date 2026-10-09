@@ -39,6 +39,7 @@ import {
 } from '../dto/course-review.dto';
 import type { CourseReviewResponse } from '../dto/course-review.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { SubscriptionScope } from '../../plans/decorators/subscription-scope.decorator';
 
 @Controller('courses')
 @UseGuards(JwtAuthGuard)
@@ -122,6 +123,7 @@ export class CourseReviewsController {
   // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async approve(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -138,6 +140,7 @@ export class CourseReviewsController {
   // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async reject(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -156,6 +159,7 @@ export class CourseReviewsController {
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
   @HttpCode(204)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async removeAsReviewer(
     @Req() request: Request,
     @Param('id') courseId: string,

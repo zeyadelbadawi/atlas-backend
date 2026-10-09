@@ -61,3 +61,74 @@ export function hstsPerHost(
     next();
   };
 }
+
+/**
+ * W14 — `Permissions-Policy` for every API response.
+ *
+ * Helmet does not set this header. The API answers JSON, media bytes and
+ * the odd plain page (the Google callback), none of which needs a single
+ * powerful browser feature, so every one is denied outright: if an API
+ * response is ever rendered as a document — a sniffed upload, an error
+ * page, a future HTML endpoint — it can still not open the camera, the
+ * microphone, location, payments or a USB/serial/HID device.
+ *
+ * Deliberately NOT the policy for the documents the frontend serves: the
+ * embedded Zoom meeting (Component View, rendered in the page itself)
+ * needs `camera`, `microphone` and `display-capture` for `self`, and the
+ * YouTube lesson embed needs `fullscreen`/`autoplay`/`encrypted-media`/
+ * `picture-in-picture` delegated to its origin. That header belongs to the
+ * edge configuration (the frontend repo's `Caddyfile`).
+ */
+export const API_PERMISSIONS_POLICY = [
+  'accelerometer=()',
+  'autoplay=()',
+  'bluetooth=()',
+  'camera=()',
+  'display-capture=()',
+  'encrypted-media=()',
+  'fullscreen=()',
+  'geolocation=()',
+  'gyroscope=()',
+  'hid=()',
+  'idle-detection=()',
+  'magnetometer=()',
+  'microphone=()',
+  'midi=()',
+  'payment=()',
+  'picture-in-picture=()',
+  'publickey-credentials-get=()',
+  'screen-wake-lock=()',
+  'serial=()',
+  'usb=()',
+  'xr-spatial-tracking=()',
+].join(', ');
+
+export function permissionsPolicy(): (
+  req: unknown,
+  res: { setHeader: (name: string, value: string) => void },
+  next: () => void,
+) => void {
+  return (_req, res, next) => {
+    res.setHeader('Permissions-Policy', API_PERMISSIONS_POLICY);
+    next();
+  };
+}
+
+/**
+ * Every security header the API sets, installed in one call so `main.ts`
+ * and the test that asserts the headers exercise the same wiring.
+ */
+type Middleware = (req: never, res: never, next: never) => void;
+
+export function installSecurityHeaders(
+  app: { use(handler: Middleware): unknown },
+  hstsBaseDomain: string | undefined,
+  helmetFactory: (options: HelmetOptions) => Middleware,
+): void {
+  app.use(helmetFactory(HELMET_OPTIONS));
+  // P63g — HSTS is asserted per host: `includeSubDomains` only for the
+  // platform's own domain. A customer's apex domain must never have its
+  // unrelated subdomains force-upgraded for a year by Atlas.
+  app.use(hstsPerHost(hstsBaseDomain));
+  app.use(permissionsPolicy());
+}

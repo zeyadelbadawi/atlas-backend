@@ -200,14 +200,30 @@ export class ProtectedMediaStorage implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  presignPut(key: string, contentType: string, ttlSeconds?: number): Promise<string> {
+  /**
+   * A presigned PUT. With `contentLength` (W6), `Content-Length` becomes a
+   * SIGNED header (`X-Amz-SignedHeaders` includes it), so storage refuses
+   * a body of any other size — the only size bound a presigned PUT can
+   * carry (R2 has no POST-policy `content-length-range`).
+   */
+  presignPut(
+    key: string,
+    contentType: string,
+    ttlSeconds?: number,
+    contentLength?: number,
+  ): Promise<string> {
     const expiresIn = Math.min(
       ttlSeconds ?? this.defaultTtlSeconds,
       this.defaultTtlSeconds,
     );
     return getSignedUrl(
       this.client,
-      new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType }),
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ContentType: contentType,
+        ...(contentLength !== undefined ? { ContentLength: contentLength } : {}),
+      }),
       { expiresIn },
     );
   }

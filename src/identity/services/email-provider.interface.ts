@@ -99,6 +99,13 @@ export interface EmailProviderAdapter {
   send(input: EmailSendInput): Promise<EmailSendResult>;
   verifyWebhook(headers: WebhookHeaders, rawBody: string): boolean;
   parseWebhookEvents(body: unknown): EmailWebhookEvent[];
+  /**
+   * A10 — the provider's own unique id for one webhook DELIVERY (Svix's
+   * `svix-id`), when its protocol has one. Read only after `verifyWebhook`
+   * succeeded (the id is covered by the signature). Adapters without one
+   * are de-duplicated per event instead.
+   */
+  webhookDeliveryId?(headers: WebhookHeaders): string | undefined;
 }
 
 /**

@@ -48,6 +48,7 @@ import type {
   SaveAnswersResponse,
 } from '../dto/quiz-attempt-session.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { SubscriptionScope } from '../../plans/decorators/subscription-scope.decorator';
 
 @Controller('courses')
 @UseGuards(JwtAuthGuard)
@@ -83,6 +84,7 @@ export class QuizzesController {
   // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async createQuiz(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -120,6 +122,7 @@ export class QuizzesController {
   // Launch Stabilization A1 (D1) — staff authoring/moderation; never from
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async updateQuiz(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -139,6 +142,7 @@ export class QuizzesController {
   // an academy-website session.
   @UseGuards(ManagementSurfaceGuard)
   @HttpCode(204)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async deleteQuiz(
     @Req() request: Request,
     @Param('id') courseId: string,

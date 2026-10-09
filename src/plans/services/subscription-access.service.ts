@@ -55,6 +55,12 @@ export const SUBSCRIPTION_INACTIVE_STATUSES: ReadonlySet<string> = new Set([
   'trial_expired',
 ]);
 
+const UUID_PATTERN =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** Mirrors `BlogPostsService`'s `AUTHORING_ROLES` (the roles that may author for an academy). */
+const BLOG_AUTHORING_ROLES = ['owner', 'administrator', 'manager', 'staff'] as const;
+
 /** The one machine-readable code the frontend switches on to show the subscription-required experience. */
 export const SUBSCRIPTION_REQUIRED_CODE = 'SUBSCRIPTION_REQUIRED';
 
@@ -185,6 +191,67 @@ export class SubscriptionAccessService {
     if (!organizationId) return;
 
     await this.assertHasAccess(organizationId);
+  }
+
+  /**
+   * A5 — the same assertion for a course-scoped mutation. The course is
+   * read in the CALLER's own RLS context, so only a course they can see
+   * resolves; anything else is the handler's 403/404 to give.
+   */
+  async assertHasAccessForCourse(courseId: string, userId: string): Promise<void> {
+    if (!UUID_PATTERN.test(courseId)) return;
+    const academyId = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const course = await tx.course.findUnique({
+          where: { id: courseId },
+          select: { academyId: true },
+        });
+        return course?.academyId ?? null;
+      },
+    );
+    if (academyId) await this.assertHasAccessForAcademy(academyId);
+  }
+
+  /** A5 — the same, for a blog post (a platform post has no academy and no tenant). */
+  async assertHasAccessForBlogPost(postId: string, userId: string): Promise<void> {
+    if (!UUID_PATTERN.test(postId)) return;
+    const academyId = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const post = await tx.blogPost.findUnique({
+          where: { id: postId },
+          select: { academyId: true },
+        });
+        return post?.academyId ?? null;
+      },
+    );
+    if (academyId) await this.assertHasAccessForAcademy(academyId);
+  }
+
+  /**
+   * A5 — a NEW blog post: the academy it will belong to, resolved the way
+   * `BlogPostsService` resolves it (the requested academy if the caller
+   * authors for it, else their only authoring academy). Ambiguous or
+   * foreign requests resolve to nothing and are refused by the service.
+   */
+  async assertHasAccessForBlogAuthor(
+    userId: string,
+    requestedAcademyId: string | undefined,
+  ): Promise<void> {
+    const memberships = await this.tenancyContextService.runInUserContext(userId, (tx) =>
+      tx.academyMember.findMany({
+        where: { userId, role: { in: [...BLOG_AUTHORING_ROLES] } },
+        select: { academyId: true },
+      }),
+    );
+    const academyIds = [...new Set(memberships.map((m) => m.academyId))];
+    const academyId = requestedAcademyId
+      ? academyIds.find((id) => id === requestedAcademyId)
+      : academyIds.length === 1
+        ? academyIds[0]
+        : undefined;
+    if (academyId) await this.assertHasAccessForAcademy(academyId);
   }
 
   /**

@@ -492,6 +492,14 @@ const EnvSchema = z.object({
     .int()
     .positive()
     .default(50 * 1024 * 1024),
+  // W6 — the largest Normal-tier video a presigned PUT may store. 5 GiB is
+  // also S3/R2's own single-PUT maximum, so it is the ceiling as well.
+  VIDEO_MAX_UPLOAD_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(5 * 1024 * 1024 * 1024)
+    .default(5 * 1024 * 1024 * 1024),
   VIDEO_PROVIDER: z.enum(['fake', 'cloudflare_stream', 'r2_worker']).default('fake'),
   // P64 Phase 2 (DL-19) — the NORMAL tier's delivery gate. Optional: the
   // tier reports itself unconfigured without them rather than failing
@@ -523,10 +531,18 @@ const EnvSchema = z.object({
     .number()
     .int()
     .positive()
-    // 2 hours (Phase 2 §I) — the ceiling, not just the default, for the
-    // same reason as above.
+    // W5 — 10 minutes by default, the same life the Normal tier's gate
+    // token and every protected-file presign already have. The token is an
+    // unbound bearer credential (Stream cannot tie it to a session or
+    // device), so its lifetime IS its revocation window. The learner player
+    // refreshes the grant at 70% of the credential's remaining life and
+    // swaps the source when the attached one expires (atlas
+    // `useLessonGrant`/`useVideoSource`), so a short token costs one
+    // position-preserving re-attach per period, never a dead video.
+    // The 2-hour ceiling is kept only so an environment that still sets the
+    // old value explicitly keeps booting; it should be unset.
     .max(2 * 60 * 60)
-    .default(2 * 60 * 60),
+    .default(10 * 60),
   LEARNING_LEASE_TTL_SECONDS: z.coerce.number().int().positive().max(600).default(60),
   // W2 — how long a non-terminal provisioning request may go without any
   // step starting, finishing or failing before the status endpoint reports
@@ -860,6 +876,21 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
       'R2_PROTECTED_ACCESS_KEY_ID and R2_PROTECTED_SECRET_ACCESS_KEY must be set together — ' +
         'refusing to start with half a protected-bucket credential, which would silently fall ' +
         'back to the public media token and lose the isolation those variables exist to provide.',
+    );
+  }
+
+  // W15 — the protected tier exists to keep lesson files, submissions and
+  // video out of the publicly-served bucket. Pointing it at that same
+  // bucket boots fine and silently publishes everything it was meant to
+  // protect through `public/media`, so it is refused here instead.
+  if (
+    parsed.data.R2_PROTECTED_BUCKET &&
+    parsed.data.R2_PROTECTED_BUCKET.toLowerCase() ===
+      parsed.data.R2_BUCKET.trim().toLowerCase()
+  ) {
+    throw new Error(
+      'R2_PROTECTED_BUCKET must not be the same bucket as R2_BUCKET — refusing to start with ' +
+        'protected content stored in the publicly-served media bucket.',
     );
   }
 
