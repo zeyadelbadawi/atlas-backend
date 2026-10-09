@@ -115,6 +115,9 @@ model User {
   /// strictly self-scoped table, never on the directory row. No row = the
   /// account has no password (Google-only, invited, deleted).
   credential                                    UserCredential?
+  /// Phone number — its own strictly self-scoped table (like the
+  /// credential), never on the directory row. No row = no phone.
+  phone                                         UserPhone?
   twoFactor                                     UserTwoFactor?
   twoFactorRecoveryCodes                        TwoFactorRecoveryCode[]
   ownedOrganizations                            Organization[]                           @relation("OrganizationOwner")
@@ -330,6 +333,30 @@ model UserCredential {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   @@map("user_credentials")
+}
+
+/// The account's own phone number (sign-up / profile). Off the `users`
+/// directory row on purpose: rosters, reviews, search and the platform
+/// console read that row inside any established context, while this table
+/// is FORCE-RLS'd to the account's own `app.current_user_id` for every
+/// command — nobody else (staff, organization owner, Platform Owner) can
+/// read it. See migration `20261110000200_user_phone`.
+model UserPhone {
+  userId      String    @id @map("user_id")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// E.164, normalised server-side by libphonenumber (`+201001234567`).
+  /// Not unique: families legitimately share one number.
+  phoneE164   String    @map("phone_e164") @db.VarChar(16)
+  /// ISO 3166-1 alpha-2 country the person chose (`EG`). Kept alongside the
+  /// number because one calling code can serve several countries (+1, +7).
+  countryCode String    @map("country_code") @db.VarChar(2)
+  /// When this exact number was proven reachable. Null = unverified. A DB
+  /// trigger clears it whenever `phone_e164` changes.
+  verifiedAt  DateTime? @map("verified_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("user_phones")
 }
 
 model UserTwoFactor {
