@@ -22,7 +22,7 @@ import { ConfigService } from '@nestjs/config';
 import { Logger, LoggerErrorInterceptor } from 'nestjs-pino';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import helmet from 'helmet';
-import { HELMET_OPTIONS, hstsPerHost } from './common/security/helmet.options';
+import { installSecurityHeaders } from './common/security/helmet.options';
 import { isPlatformOrigin } from './common/security/platform-origin.util';
 import { PlatformDomainService } from './domain/services/platform-domain.service';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -145,11 +145,9 @@ async function bootstrap(): Promise<void> {
   const platformDomainServiceEarly = app.get(PlatformDomainService, { strict: false });
   const { baseDomain: hstsBaseDomain } =
     await platformDomainServiceEarly.getEffectiveBaseDomain();
-  app.use(helmet(HELMET_OPTIONS));
-  // P63g — HSTS is asserted per host: `includeSubDomains` only for the
-  // platform's own domain. A customer's apex domain must never have its
-  // unrelated subdomains force-upgraded for a year by Atlas.
-  app.use(hstsPerHost(hstsBaseDomain));
+  // helmet + per-host HSTS (P63g) + Permissions-Policy (W14) — see
+  // `installSecurityHeaders` for each one's reasoning.
+  installSecurityHeaders(app, hstsBaseDomain, helmet);
 
   // Phase 7 — production serves the platform's main domain, every academy's
   // `{slug}.{baseDomain}` subdomain, and (eventually) connected custom
