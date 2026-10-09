@@ -34,7 +34,7 @@ describe('forensic watermark codes', () => {
   });
 
   it('formats as two groups of five', () => {
-    expect(formatWatermarkCode('7K3QMX9TR2')).toBe('7K3QM-X9TR2');
+    expect(formatWatermarkCode('7K3QMX9TR7')).toBe('7K3QM-X9TR7');
   });
 
   it('normalises OCR-style input: case, separators, O/I/L aliases, Arabic digits', () => {

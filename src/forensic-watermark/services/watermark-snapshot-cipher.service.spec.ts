@@ -41,16 +41,16 @@ const SNAPSHOT: WatermarkIdentitySnapshot = {
 describe('WatermarkSnapshotCipher', () => {
   it('round-trips and never contains the plaintext', () => {
     const cipher = cipherWith();
-    const encrypted = cipher.encrypt(SNAPSHOT, '7K3QMX9TR2');
+    const encrypted = cipher.encrypt(SNAPSHOT, '7K3QMX9TR7');
     expect(encrypted.startsWith('v1.')).toBe(true);
     expect(encrypted).not.toContain('layla');
     expect(encrypted).not.toContain('1001234567');
-    expect(cipher.decrypt(encrypted, '7K3QMX9TR2')).toEqual(SNAPSHOT);
+    expect(cipher.decrypt(encrypted, '7K3QMX9TR7')).toEqual(SNAPSHOT);
   });
 
   it('refuses a snapshot moved onto another code (AAD binding)', () => {
     const cipher = cipherWith();
-    const encrypted = cipher.encrypt(SNAPSHOT, '7K3QMX9TR2');
+    const encrypted = cipher.encrypt(SNAPSHOT, '7K3QMX9TR7');
     expect(() => cipher.decrypt(encrypted, 'ZZZZZZZZZ0')).toThrow();
   });
 
@@ -64,7 +64,7 @@ describe('WatermarkSnapshotCipher', () => {
         paymentCredentialsKeyHex: ROOT,
       }).toString('hex'),
     ).toBe(dedicated);
-    const encrypted = cipherWith(dedicated).encrypt(SNAPSHOT, '7K3QMX9TR2');
-    expect(() => cipherWith().decrypt(encrypted, '7K3QMX9TR2')).toThrow();
+    const encrypted = cipherWith(dedicated).encrypt(SNAPSHOT, '7K3QMX9TR7');
+    expect(() => cipherWith().decrypt(encrypted, '7K3QMX9TR7')).toThrow();
   });
 });

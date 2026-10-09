@@ -2,7 +2,7 @@
  * Forensic watermark codes (docs/FORENSIC_WATERMARK.md).
  *
  * SHAPE. Ten symbols of Crockford base32 — nine random, then one Crockford
- * mod-37 check symbol — displayed as two groups of five: `7K3QM-X9TR2`.
+ * mod-37 check symbol — displayed as two groups of five: `7K3QM-X9TR7`.
  * Crockford's alphabet was chosen because a code is read back by a PERSON
  * off a compressed, re-encoded screen recording: it has no I, L, O or U, so
  * the classic OCR confusions (O/0, I/1/L) have only one possible reading.
@@ -64,7 +64,7 @@ export function generateWatermarkCode(
   }
 }
 
-/** `7K3QMX9TR2` → `7K3QM-X9TR2`. */
+/** `7K3QMX9TR7` → `7K3QM-X9TR7`. */
 export function formatWatermarkCode(code: string): string {
   return code.length === WATERMARK_CODE_LENGTH
     ? `${code.slice(0, 5)}-${code.slice(5)}`

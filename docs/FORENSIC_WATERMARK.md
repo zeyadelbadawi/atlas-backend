@@ -11,7 +11,7 @@ watermark profiles are applied per video at upload time, and YouTube is a third
 party. So the forensic watermark is a **dynamic overlay drawn by Atlas's
 player**, engineered to be hard to remove from a recording and easy to trace:
 
-- a readable label — the code (`7K3QM-X9TR2`) plus a masked hint of the account
+- a readable label — the code (`7K3QM-X9TR7`) plus a masked hint of the account
   (`l•••@gmail.com`) — that moves to a new random position every 20–45 s;
 - a very faint, full-frame, rotated tile of the same code that slowly drifts,
   so a crop or a blur over the label still leaves the code all over the frame;

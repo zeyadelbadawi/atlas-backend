@@ -10,7 +10,7 @@ import type { ForensicWatermarkSurface } from '@prisma/client';
  * the page, which the player's watchdog reports.
  */
 export interface ForensicWatermarkDisplay {
-  /** `7K3QM-X9TR2` — the code an operator reads off a recording. */
+  /** `7K3QM-X9TR7` — the code an operator reads off a recording. */
   readonly code: string;
   /** `account` when a signed-in viewer is identified; `preview` for an anonymous visitor. */
   readonly kind: 'account' | 'preview';
