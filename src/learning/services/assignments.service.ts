@@ -20,6 +20,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { assertNoLearnerActivity } from '../../course/services/learner-activity.guard';
 import type { Prisma } from '@prisma/client';
@@ -39,6 +40,7 @@ import type { UploadMediaAssetDto } from '../../media/dto/upload-media-asset.dto
 
 import { AssignmentsRepository } from '../repositories/assignments.repository';
 import { CourseSequenceService } from './course-sequence.service';
+import { LearnerOpLedger } from './learner-op-ledger.service';
 import { toAssignmentResponse } from '../dto/assignment.contract';
 import type { AssignmentResponse } from '../dto/assignment.contract';
 import { toAssignmentSubmissionResponse } from '../dto/assignment-submission.contract';
@@ -80,6 +82,7 @@ export class AssignmentsService {
     private readonly assignmentsRepository: AssignmentsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly courseSequence: CourseSequenceService,
+    private readonly opLedger: LearnerOpLedger,
   ) {}
 
   /**
@@ -246,6 +249,11 @@ export class AssignmentsService {
       );
       if (!assignment) throw new NotFoundException({ messageKey: 'errors.notFound' });
       await this.assertAssignmentUnlocked(tx, userId, courseId, assignmentId);
+      // Saves of one learner's draft are judged one at a time, so the
+      // compare-and-set below cannot be raced by a second tab.
+      if (payload.baseDraftSavedAt !== undefined) {
+        await this.enrollmentsRepository.lockForUpdate(tx, enrollment.id);
+      }
       const existing = await this.assignmentsRepository.findSubmission(
         tx,
         assignmentId,
@@ -253,6 +261,29 @@ export class AssignmentsService {
       );
       if (existing && existing.status === 'submitted' && !assignment.allowResubmission) {
         throw new ConflictException({ messageKey: 'errors.assignment.alreadySubmitted' });
+      }
+      // Academy offline work — compare-and-set on the existing
+      // `draft_saved_at` column: a draft based on an older copy than the one
+      // stored (written by another tab or device meanwhile) is refused with
+      // the newer copy, never silently overwritten. Clients that send no
+      // base keep last-write-wins.
+      if (payload.baseDraftSavedAt !== undefined) {
+        const stored = existing?.draftSavedAt ?? null;
+        const base =
+          payload.baseDraftSavedAt === null ? null : new Date(payload.baseDraftSavedAt);
+        const matches =
+          stored === null
+            ? base === null
+            : base !== null && stored.getTime() === base.getTime();
+        if (!matches) {
+          throw new ConflictException({
+            messageKey: 'errors.assignment.draftConflict',
+            details: {
+              draftResponse: existing?.draftResponse ?? null,
+              draftSavedAt: stored?.toISOString() ?? null,
+            },
+          });
+        }
       }
       if (payload.attachmentAssetId) {
         await this.assertOwnedProtectedAttachment(
@@ -299,6 +330,24 @@ export class AssignmentsService {
     });
   }
 
+  /**
+   * Submits (or resubmits) the learner's work.
+   *
+   * REPLAY SAFETY (academy offline work). A submit can now be sent from the
+   * offline outbox, and any submit can be retried after an ambiguous
+   * failure. Without a guard, a replay with resubmission allowed was a
+   * second submission: it bumped the revision and RESET a grade given in
+   * between. Two guards, both optional for older clients:
+   *
+   *   - `idempotencyKey` — the outcome of a key is remembered
+   *     (`LearnerOpLedger`); a replay returns that submission as it is now
+   *     (grade included) and changes nothing;
+   *   - `baseRevision` — compare-and-set on `submitted_revision`, under the
+   *     enrollment row lock: if the server has moved past the revision the
+   *     learner saw, the request is refused with 409
+   *     `errors.assignment.submissionChanged` instead of applied. This holds
+   *     even when the Redis record is gone.
+   */
   async submitAssignment(
     userId: string,
     courseId: string,
@@ -306,101 +355,161 @@ export class AssignmentsService {
     payload: CreateAssignmentSubmissionDto,
   ): Promise<AssignmentSubmissionResponse> {
     const now = new Date();
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      const enrollment = await assertActiveEnrollment(
-        tx,
-        this.enrollmentsRepository,
-        userId,
-        courseId,
-        this.academyStudentsRepository,
-      );
-      const assignment = await this.assignmentsRepository.findPublishedById(
-        tx,
-        courseId,
-        assignmentId,
-      );
-      if (!assignment) throw new NotFoundException({ messageKey: 'errors.notFound' });
-      await this.assertAssignmentUnlocked(tx, userId, courseId, assignmentId);
-      const existing = await this.assignmentsRepository.findSubmission(
-        tx,
-        assignmentId,
-        userId,
-      );
-      // The submitted content: the payload, else the saved draft.
-      const response = payload.response?.trim()
-        ? payload.response
-        : (existing?.draftResponse ?? undefined);
-      const attachmentAssetId =
-        payload.attachmentAssetId ??
-        (payload.attachmentUrl ? undefined : (existing?.attachmentAssetId ?? undefined));
-      if (!response?.trim() && !payload.attachmentUrl && !attachmentAssetId) {
-        throw new BadRequestException({
-          messageKey: 'errors.assignment.responseRequired',
-        });
-      }
-      if (attachmentAssetId) {
-        await this.assertOwnedProtectedAttachment(
-          tx,
-          attachmentAssetId,
-          userId,
-          enrollment.academyId,
-        );
-      }
-      // S12 — the due date is enforced by policy.
-      const isLate =
-        assignment.dueAt !== null && now.getTime() > assignment.dueAt.getTime();
-      if (isLate && assignment.latePolicy === 'block') {
-        throw new ForbiddenException({
-          messageKey: 'errors.assignment.pastDue',
-          details: { dueAt: assignment.dueAt },
-        });
-      }
-      const wasSubmitted =
-        existing?.status === 'submitted' || existing?.gradingStatus === 'graded';
-      if (wasSubmitted && !assignment.allowResubmission) {
-        throw new ConflictException({ messageKey: 'errors.assignment.alreadySubmitted' });
-      }
-      const submittedData = {
-        status: 'submitted' as const,
-        response,
-        attachmentUrl: attachmentAssetId
-          ? null
-          : (payload.attachmentUrl ?? existing?.attachmentUrl ?? null),
-        ...(attachmentAssetId !== undefined
-          ? {
-              attachmentAsset: attachmentAssetId
-                ? { connect: { id: attachmentAssetId } }
-                : { disconnect: true },
-            }
-          : {}),
-        submittedAt: now,
-        isLate,
-        draftResponse: null,
-        draftSavedAt: null,
-        submittedRevision: (existing?.submittedRevision ?? 0) + 1,
-        gradingStatus: 'ungraded' as const,
-        score: null,
-        feedback: null,
-        gradedAt: null,
-      };
-      const row = existing
-        ? await this.assignmentsRepository.updateSubmission(tx, existing.id, {
-            ...submittedData,
-            ...(existing.gradedBy ? { grader: { disconnect: true } } : {}),
-          })
-        : await this.assignmentsRepository.createSubmission(tx, {
-            assignment: { connect: { id: assignmentId } },
-            student: { connect: { id: userId } },
-            ...submittedData,
-          });
-      // AD-11: a submission moves the course to "in progress" at least, and
-      // a graded resubmission back to ungraded may un-complete it.
-      await this.courseCompletionService.recompute(tx, enrollment, now);
-      return toAssignmentSubmissionResponse(
-        row,
-        await this.signAttachment(tx, row.attachmentAssetId),
-      );
+    const key = payload.idempotencyKey;
+    const fingerprint = LearnerOpLedger.fingerprint({
+      response: payload.response ?? null,
+      attachmentUrl: payload.attachmentUrl ?? null,
+      attachmentAssetId: payload.attachmentAssetId ?? null,
     });
+    const replay = key
+      ? await this.opLedger.findSubmission(userId, assignmentId, key)
+      : null;
+    if (replay && replay.fingerprint !== fingerprint) {
+      throw new UnprocessableEntityException({
+        messageKey: 'errors.assignment.idempotencyKeyReused',
+      });
+    }
+    const outcome = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const enrollment = await assertActiveEnrollment(
+          tx,
+          this.enrollmentsRepository,
+          userId,
+          courseId,
+          this.academyStudentsRepository,
+        );
+        const assignment = await this.assignmentsRepository.findPublishedById(
+          tx,
+          courseId,
+          assignmentId,
+        );
+        if (!assignment) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        // One submit per learner enrollment at a time: a replay racing its
+        // original waits here and then sees the revision it already produced.
+        await this.enrollmentsRepository.lockForUpdate(tx, enrollment.id);
+        const current = await this.assignmentsRepository.findSubmission(
+          tx,
+          assignmentId,
+          userId,
+        );
+        // A replay of a submit that already landed: the submission as it is
+        // now — never submitted again, never un-graded.
+        if (replay && current && current.id === replay.submissionId) {
+          return {
+            row: current,
+            replayed: true,
+            response: toAssignmentSubmissionResponse(
+              current,
+              await this.signAttachment(tx, current.attachmentAssetId),
+            ),
+          };
+        }
+        if (
+          payload.baseRevision !== undefined &&
+          (current?.submittedRevision ?? 0) > payload.baseRevision
+        ) {
+          throw new ConflictException({
+            messageKey: 'errors.assignment.submissionChanged',
+            details: { submittedRevision: current?.submittedRevision ?? 0 },
+          });
+        }
+        await this.assertAssignmentUnlocked(tx, userId, courseId, assignmentId);
+        const existing = current;
+        // The submitted content: the payload, else the saved draft.
+        const response = payload.response?.trim()
+          ? payload.response
+          : (existing?.draftResponse ?? undefined);
+        const attachmentAssetId =
+          payload.attachmentAssetId ??
+          (payload.attachmentUrl
+            ? undefined
+            : (existing?.attachmentAssetId ?? undefined));
+        if (!response?.trim() && !payload.attachmentUrl && !attachmentAssetId) {
+          throw new BadRequestException({
+            messageKey: 'errors.assignment.responseRequired',
+          });
+        }
+        if (attachmentAssetId) {
+          await this.assertOwnedProtectedAttachment(
+            tx,
+            attachmentAssetId,
+            userId,
+            enrollment.academyId,
+          );
+        }
+        // S12 — the due date is enforced by policy.
+        const isLate =
+          assignment.dueAt !== null && now.getTime() > assignment.dueAt.getTime();
+        if (isLate && assignment.latePolicy === 'block') {
+          throw new ForbiddenException({
+            messageKey: 'errors.assignment.pastDue',
+            details: { dueAt: assignment.dueAt },
+          });
+        }
+        const wasSubmitted =
+          existing?.status === 'submitted' || existing?.gradingStatus === 'graded';
+        if (wasSubmitted && !assignment.allowResubmission) {
+          throw new ConflictException({
+            messageKey: 'errors.assignment.alreadySubmitted',
+          });
+        }
+        const submittedData = {
+          status: 'submitted' as const,
+          response,
+          attachmentUrl: attachmentAssetId
+            ? null
+            : (payload.attachmentUrl ?? existing?.attachmentUrl ?? null),
+          ...(attachmentAssetId !== undefined
+            ? {
+                attachmentAsset: attachmentAssetId
+                  ? { connect: { id: attachmentAssetId } }
+                  : { disconnect: true },
+              }
+            : {}),
+          submittedAt: now,
+          isLate,
+          draftResponse: null,
+          draftSavedAt: null,
+          submittedRevision: (existing?.submittedRevision ?? 0) + 1,
+          gradingStatus: 'ungraded' as const,
+          score: null,
+          feedback: null,
+          gradedAt: null,
+        };
+        const row = existing
+          ? await this.assignmentsRepository.updateSubmission(tx, existing.id, {
+              ...submittedData,
+              ...(existing.gradedBy ? { grader: { disconnect: true } } : {}),
+            })
+          : await this.assignmentsRepository.createSubmission(tx, {
+              assignment: { connect: { id: assignmentId } },
+              student: { connect: { id: userId } },
+              ...submittedData,
+            });
+        // AD-11: a submission moves the course to "in progress" at least, and
+        // a graded resubmission back to ungraded may un-complete it.
+        await this.courseCompletionService.recompute(tx, enrollment, now);
+        return {
+          row,
+          replayed: false,
+          response: toAssignmentSubmissionResponse(
+            row,
+            await this.signAttachment(tx, row.attachmentAssetId),
+          ),
+        };
+      },
+    );
+    // Remembered only once the submission is committed, so a failed commit
+    // is never answered later as if it had landed.
+    if (key && !outcome.replayed) {
+      await this.opLedger.rememberSubmission(userId, assignmentId, key, {
+        submissionId: outcome.row.id,
+        revision: outcome.row.submittedRevision,
+        fingerprint,
+      });
+    }
+    return outcome.response;
   }
 
   /** S12 — the attachment must be a PROTECTED asset this student uploaded into this academy. */

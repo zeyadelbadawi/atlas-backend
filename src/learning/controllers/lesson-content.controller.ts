@@ -30,6 +30,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -48,6 +49,7 @@ import {
 } from '../dto/learning-request.util';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { PlaybackHeartbeatDto, ReleaseLeaseDto } from '../dto/playback.dto';
+import { LessonOpOrderingDto } from '../dto/complete-lesson.dto';
 import type { LessonContentGrantResponse } from '../dto/lesson-content.contract';
 import type { CourseSequenceResponse } from '../dto/course-sequence.contract';
 import type { PlaybackHeartbeatResponse } from '../services/playback.service';
@@ -179,11 +181,14 @@ export class LessonContentController {
     @Req() request: Request,
     @Param('id') courseId: string,
     @Param('lessonId') lessonId: string,
-  ): Promise<CourseProgressResponse> {
+    // Academy offline work — optional `?opId=&clientOpAt=` ordering stamp.
+    @Query() ordering: LessonOpOrderingDto,
+  ): Promise<CourseProgressResponse & { readonly applied?: boolean }> {
     return this.courseProgressService.undoCompleteLesson(
       request.authContext!.userId,
       courseId,
       lessonId,
+      ordering,
     );
   }
 }

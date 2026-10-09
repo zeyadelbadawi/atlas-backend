@@ -16,6 +16,7 @@
  * genuinely nonexistent resource. No draft title, SEO, section, or id
  * ever appears in any response body this controller can produce.
  */
+import { CachePolicy, PUBLIC_WEBSITE_CACHE } from '../../common/http/cache-policy';
 import type { PublicCourseCategoryResponse } from '../dto/public-categories.contract';
 import {
   Body,
@@ -53,6 +54,13 @@ import type { PublicCourseCurriculumSectionResponse } from '../dto/public-course
 const UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
+/**
+ * Successful GETs here are published, tenant-public content: the visitor's
+ * own browser may keep them briefly (`PUBLIC_WEBSITE_CACHE`, see
+ * `common/http/cache-policy.ts`); errors and the contact POST stay
+ * `no-store`, and the favicon/logo routes set their own.
+ */
+@CachePolicy(PUBLIC_WEBSITE_CACHE)
 @Controller('public/websites')
 export class PublicWebsiteController implements OnModuleInit {
   constructor(

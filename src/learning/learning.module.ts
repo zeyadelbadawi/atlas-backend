@@ -93,6 +93,7 @@ import { EnrollmentsService } from './services/enrollments.service';
 import { CourseProgressService } from './services/course-progress.service';
 import { QuizzesService } from './services/quizzes.service';
 import { AssignmentsService } from './services/assignments.service';
+import { LearnerOpLedger } from './services/learner-op-ledger.service';
 import { CourseReviewsService } from './services/course-reviews.service';
 import { CourseContentService } from './services/course-content.service';
 import { EnrollmentsRepository } from './repositories/enrollments.repository';
@@ -160,6 +161,7 @@ import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.t
     CourseCompletionRuleController,
   ],
   providers: [
+    LearnerOpLedger,
     CourseDiscoveryService,
     EnrollmentsService,
     CourseProgressService,

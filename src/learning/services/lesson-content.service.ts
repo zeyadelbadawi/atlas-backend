@@ -84,7 +84,9 @@ import type {
   ContentProtectionReport,
   GrantedResourceContract,
   LessonContentGrantResponse,
+  OfflineReadingPermission,
 } from '../dto/lesson-content.contract';
+import { OFFLINE_READING_TTL_SECONDS } from '../dto/lesson-content.contract';
 import type { VideoProviderCapabilities } from '../../media/video/video-provider.interface';
 
 export interface ContentRequestContext {
@@ -744,6 +746,12 @@ export class LessonContentService {
       playbackLease: args.lease,
       resumePositionSeconds: resume?.lastPositionSeconds ?? 0,
       expiresAt: expiresAt.toISOString(),
+      offlineReading: offlineReadingFor({
+        kind: content.kind,
+        hasVideo: Boolean(lesson.videoAsset),
+        signedIn: args.userId !== null,
+        staffPreview: args.staffPreview,
+      }),
     };
   }
 
@@ -976,4 +984,28 @@ export function buildProtectionReport(args: {
 function buildWatermarkText(template: string | null, userId: string | null): string {
   if (template) return template;
   return userId ? `ID ${userId.slice(0, 8).toUpperCase()}` : '';
+}
+
+/**
+ * Academy offline work — the server's answer to "may this browser keep this
+ * lesson's text for offline reading" (see `OfflineReadingPermission`). Only
+ * plain text, only for a signed-in learner's own read, never a preview.
+ */
+export function offlineReadingFor(args: {
+  readonly kind: LessonContentKind;
+  readonly hasVideo: boolean;
+  readonly signedIn: boolean;
+  readonly staffPreview: boolean;
+  readonly now?: number;
+}): OfflineReadingPermission {
+  const allowed =
+    args.kind === 'text' && !args.hasVideo && args.signedIn && !args.staffPreview;
+  return {
+    allowed,
+    until: allowed
+      ? new Date(
+          (args.now ?? Date.now()) + OFFLINE_READING_TTL_SECONDS * 1000,
+        ).toISOString()
+      : null,
+  };
 }

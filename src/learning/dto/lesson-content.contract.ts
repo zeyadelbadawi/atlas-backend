@@ -183,7 +183,33 @@ export interface LessonContentGrantResponse {
   /** Where this learner left off, so the player can resume without a second round-trip. */
   readonly resumePositionSeconds: number;
   readonly expiresAt: string;
+  /**
+   * Academy offline work — whether the learner's browser may keep a copy
+   * of THIS lesson's text to read without a connection, and until when.
+   *
+   * The server decides, never the client: only a `text` lesson (no video,
+   * no file, no signed URL of any kind is needed to read it), only for a
+   * signed-in learner reading through their own enrolment (never an
+   * anonymous preview, never a staff preview). The client stores
+   * `title` + `bodyHtml` only — never the rest of this grant — per user and
+   * per academy origin, deletes it at `until`, at sign-out, and the moment
+   * the server refuses this lesson again (revoked enrolment, unpublished
+   * lesson). Video is never offered offline: its credentials are short-lived
+   * and not device-bound, and there is no DRM.
+   *
+   * Optional so older clients are unaffected.
+   */
+  readonly offlineReading?: OfflineReadingPermission;
 }
+
+export interface OfflineReadingPermission {
+  readonly allowed: boolean;
+  /** ISO time after which a stored copy must be deleted. Null when not allowed. */
+  readonly until: string | null;
+}
+
+/** How long a learner's browser may keep a text lesson for offline reading. */
+export const OFFLINE_READING_TTL_SECONDS = 72 * 60 * 60;
 
 /** 409 body when another device holds the lease — carries what the takeover dialog needs to name the other device. */
 export interface SessionConflictDetails {

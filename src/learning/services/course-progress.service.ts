@@ -30,12 +30,16 @@ import { EnrollmentsRepository } from '../repositories/enrollments.repository';
 import { CourseProgressRepository } from '../repositories/course-progress.repository';
 import { CourseCompletionService } from './course-completion.service';
 import { CourseSequenceService } from './course-sequence.service';
+import { LearnerOpLedger } from './learner-op-ledger.service';
 import { toCourseProgressResponse } from '../dto/course-progress.contract';
 import type { CourseProgressResponse } from '../dto/course-progress.contract';
-import type { CompleteLessonDto } from '../dto/complete-lesson.dto';
+import type { CompleteLessonDto, LessonOpOrderingDto } from '../dto/complete-lesson.dto';
 import { assertActiveEnrollment } from './learning-access.util';
 import { MINIMUM_WATCHED_RATIO } from '../dto/learning.constants';
 import { deriveCompletionState } from './progress-computation.util';
+
+/** Tolerated device-clock lag when an undo is compared with a server `completed_at`. */
+const UNDO_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class CourseProgressService {
@@ -47,6 +51,7 @@ export class CourseProgressService {
     private readonly courseProgressRepository: CourseProgressRepository,
     private readonly courseSectionsRepository: CourseSectionsRepository,
     private readonly courseSequenceService: CourseSequenceService,
+    private readonly opLedger: LearnerOpLedger,
   ) {}
 
   /**
@@ -188,11 +193,81 @@ export class CourseProgressService {
     });
   }
 
+  /**
+   * Academy offline work — ORDERING of complete/undo for one lesson.
+   *
+   * Both operations are idempotent on their own, but a learner can now
+   * press "complete" offline, then "undo" online on another device, and the
+   * queued complete arrives last. Applied blindly, the stale complete would
+   * win. When the client stamps the operation (`opId` + `clientOpAt`), the
+   * newest stamp per (learner, lesson) wins: an older operation arriving
+   * later changes nothing and the response says `applied: false` with the
+   * current state, so the client drops it instead of retrying.
+   *
+   * Without the Redis record (expired, Redis down) an UNDO is still checked
+   * against the stored `completed_at`: an undo pressed before a completion
+   * the server recorded later (allowing for clock skew) is stale.
+   *
+   * Unstamped operations (older clients) are applied as before.
+   */
+  private async judgeLessonOp(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    enrollmentId: string,
+    lessonId: string,
+    action: 'complete' | 'undo',
+    ordering: LessonOpOrderingDto,
+    completedAt: Date | null,
+  ): Promise<boolean> {
+    if (!ordering.opId || ordering.clientOpAt === undefined) return true;
+    // Operations of one learner are judged one after the other.
+    await this.enrollmentsRepository.lockForUpdate(tx, enrollmentId);
+    const latest = await this.opLedger.latestLessonOp(userId, lessonId);
+    const verdict = LearnerOpLedger.judgeLessonOp(latest, {
+      opId: ordering.opId,
+      clientOpAt: ordering.clientOpAt,
+    });
+    if (!verdict.apply) return false;
+    if (
+      !latest &&
+      action === 'undo' &&
+      completedAt !== null &&
+      verdict.at < completedAt.getTime() - UNDO_CLOCK_SKEW_MS
+    ) {
+      return false;
+    }
+    // Recorded before commit on purpose: if the commit fails, the client
+    // retries the SAME operation, which is applied again (same `opId`).
+    await this.opLedger.recordLessonOp(userId, lessonId, {
+      at: verdict.at,
+      opId: ordering.opId,
+      action,
+    });
+    return true;
+  }
+
+  private async currentProgress(
+    tx: Prisma.TransactionClient,
+    enrollmentId: string,
+    courseId: string,
+  ): Promise<CourseProgressResponse> {
+    const courseProgress = await this.courseProgressRepository.findByEnrollmentId(
+      tx,
+      enrollmentId,
+    );
+    const lessonProgressRows =
+      await this.courseProgressRepository.findLessonProgressForEnrollment(
+        tx,
+        enrollmentId,
+      );
+    return toCourseProgressResponse(courseId, courseProgress!, lessonProgressRows);
+  }
+
   async completeLesson(
     userId: string,
     courseId: string,
     payload: CompleteLessonDto,
-  ): Promise<CourseProgressResponse> {
+  ): Promise<CourseProgressResponse & { readonly applied?: boolean }> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const enrollment = await assertActiveEnrollment(
         tx,
@@ -210,6 +285,21 @@ export class CourseProgressService {
       );
       if (!lessonProgress || lessonProgress.courseId !== courseId) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const ordered = await this.judgeLessonOp(
+        tx,
+        userId,
+        enrollment.id,
+        payload.lessonId,
+        'complete',
+        payload,
+        lessonProgress.completedAt,
+      );
+      if (!ordered) {
+        return {
+          ...(await this.currentProgress(tx, enrollment.id, courseId)),
+          applied: false,
+        };
       }
       // Lock enforcement is DERIVED from the live curriculum order, never
       // from the stored `LessonProgress.status`. That materialized flag was
@@ -296,16 +386,10 @@ export class CourseProgressService {
         await this.courseCompletionService.recompute(tx, enrollment);
       }
 
-      const courseProgress = await this.courseProgressRepository.findByEnrollmentId(
-        tx,
-        enrollment.id,
-      );
-      const lessonProgressRows =
-        await this.courseProgressRepository.findLessonProgressForEnrollment(
-          tx,
-          enrollment.id,
-        );
-      return toCourseProgressResponse(courseId, courseProgress!, lessonProgressRows);
+      return {
+        ...(await this.currentProgress(tx, enrollment.id, courseId)),
+        applied: true,
+      };
     });
   }
 
@@ -335,7 +419,8 @@ export class CourseProgressService {
     userId: string,
     courseId: string,
     lessonId: string,
-  ): Promise<CourseProgressResponse> {
+    ordering: LessonOpOrderingDto = {},
+  ): Promise<CourseProgressResponse & { readonly applied?: boolean }> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const enrollment = await assertActiveEnrollment(
         tx,
@@ -353,6 +438,21 @@ export class CourseProgressService {
       );
       if (!lessonProgress || lessonProgress.courseId !== courseId) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const ordered = await this.judgeLessonOp(
+        tx,
+        userId,
+        enrollment.id,
+        lessonId,
+        'undo',
+        ordering,
+        lessonProgress.status === 'completed' ? lessonProgress.completedAt : null,
+      );
+      if (!ordered) {
+        return {
+          ...(await this.currentProgress(tx, enrollment.id, courseId)),
+          applied: false,
+        };
       }
 
       // Idempotent in the same way `completeLesson` is: undoing something
@@ -389,16 +489,10 @@ export class CourseProgressService {
         await this.courseCompletionService.recompute(tx, enrollment);
       }
 
-      const courseProgress = await this.courseProgressRepository.findByEnrollmentId(
-        tx,
-        enrollment.id,
-      );
-      const lessonProgressRows =
-        await this.courseProgressRepository.findLessonProgressForEnrollment(
-          tx,
-          enrollment.id,
-        );
-      return toCourseProgressResponse(courseId, courseProgress!, lessonProgressRows);
+      return {
+        ...(await this.currentProgress(tx, enrollment.id, courseId)),
+        applied: true,
+      };
     });
   }
 }
