@@ -1,5 +1,10 @@
 # Atlas backend — where the handover lives
 
+> **Current handover (10 Oct 2026), supersedes every handover named below and in `docs/`:**
+> `atlas/ATLAS_FULL_PROJECT_HANDOVER_2026-10-10.md`
+> (GitHub: <https://github.com/zeyadelbadawi/atlas/blob/main/ATLAS_FULL_PROJECT_HANDOVER_2026-10-10.md>).
+> It covers both repositories. The older files are kept as history only.
+
 The complete, current project handover for **both** Atlas repositories is:
 
 > `atlas-front/ATLAS_HANDOVER.md`
