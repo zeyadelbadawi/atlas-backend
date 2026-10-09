@@ -18,6 +18,7 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
     registerRateLimit: { max: 5, windowSeconds: 3600 },
     // P64 Communications C4 — irrelevant to access tokens, present
     // because `IdentityConfig` is one object; the §12 defaults.
+    platformOwnerTotpRequiredFrom: null,
     emailOtp: {
       management: 'off',
       academy: 'off',
@@ -28,6 +29,7 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
       challengesPerHour: 5,
       trustedDeviceDaysManagement: 90,
       trustedDeviceDaysAcademy: 180,
+      privilegedFloor: 'new_device',
     },
     ...overrides,
   };

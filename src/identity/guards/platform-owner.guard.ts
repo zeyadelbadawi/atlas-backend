@@ -27,13 +27,21 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
+import type { IdentityConfig } from '../../config/configuration';
+import { PrismaService } from '../../database/prisma.service';
+import { runInUserContext } from '../../database/user-context';
 import { UsersRepository } from '../repositories/users.repository';
 import { surfaceDenied } from './surface-denial.util';
 
 @Injectable()
 export class PlatformOwnerGuard implements CanActivate {
-  constructor(private readonly usersRepository: UsersRepository) {}
+  constructor(
+    private readonly usersRepository: UsersRepository,
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -55,6 +63,27 @@ export class PlatformOwnerGuard implements CanActivate {
     const user = await this.usersRepository.findById(userId);
     if (!user?.isPlatformOwner) {
       throw new ForbiddenException({ messageKey: 'errors.forbidden' });
+    }
+
+    // ATO review F11 — the whole platform sits behind this guard, so from
+    // the configured date a Platform Owner must have a confirmed
+    // authenticator app to use it (an emailed code alone is not enough for
+    // this role: it depends on one mailbox and one email provider). The
+    // account can still sign in and reach its own security settings —
+    // enrolment is not behind this guard — and recovery codes keep it
+    // self-recoverable.
+    const requiredFrom =
+      this.configService.getOrThrow<IdentityConfig>('identity')
+        .platformOwnerTotpRequiredFrom;
+    if (requiredFrom && Date.now() >= requiredFrom.getTime()) {
+      const twoFactor = await runInUserContext(this.prisma, userId, (tx) =>
+        tx.userTwoFactor.findUnique({ where: { userId }, select: { confirmedAt: true } }),
+      );
+      if (!twoFactor?.confirmedAt) {
+        throw new ForbiddenException({
+          messageKey: 'errors.auth.platformOwnerTwoFactorRequired',
+        });
+      }
     }
 
     return true;

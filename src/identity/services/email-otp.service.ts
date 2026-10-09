@@ -150,6 +150,15 @@ interface ChallengeRow {
   readonly auth_method: AuthMethod | null;
 }
 
+/** The stricter of two email-code policies (`off` < `new_device` < `always`). */
+export function stricterPolicy(
+  configured: EmailOtpPolicy,
+  minimum: EmailOtpPolicy | undefined,
+): EmailOtpPolicy {
+  const rank: Record<EmailOtpPolicy, number> = { off: 0, new_device: 1, always: 2 };
+  return minimum && rank[minimum] > rank[configured] ? minimum : configured;
+}
+
 @Injectable()
 export class EmailOtpService {
   private readonly logger = new Logger(EmailOtpService.name);
@@ -202,8 +211,14 @@ export class EmailOtpService {
     /** Launch Stabilization A6 — the academy an academy-surface sign-in is for; trust is per academy. */
     readonly academyId?: string;
     readonly trustCookie?: string;
+    /**
+     * ATO review F11 — a policy this sign-in gets AT LEAST, whatever the
+     * surface flag says (privileged accounts). Only ever makes the code
+     * more likely, never less.
+     */
+    readonly minimumPolicy?: EmailOtpPolicy;
   }): Promise<boolean> {
-    const policy = this.policyFor(input.surface);
+    const policy = stricterPolicy(this.policyFor(input.surface), input.minimumPolicy);
     if (policy === 'off') return false;
     if (policy === 'always') return true;
     // The cookie is renamed on the way in on purpose: `trustCookie` is

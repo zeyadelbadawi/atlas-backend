@@ -451,6 +451,12 @@ export interface IdentityConfig {
   readonly registerRateLimit: { readonly max: number; readonly windowSeconds: number };
   /** P64 Communications C4 (§12) — email one-time codes and trusted devices. */
   readonly emailOtp: EmailOtpConfig;
+  /**
+   * ATO review F11 — from this moment a Platform Owner needs a confirmed
+   * authenticator app to use any platform route (`PlatformOwnerGuard`).
+   * `null` = not enforced (`PLATFORM_OWNER_TOTP_REQUIRED_FROM=never`).
+   */
+  readonly platformOwnerTotpRequiredFrom: Date | null;
 }
 
 /**
@@ -476,6 +482,15 @@ export type EmailOtpPolicy = 'off' | 'new_device' | 'always';
 export interface EmailOtpConfig {
   readonly management: EmailOtpPolicy;
   readonly academy: EmailOtpPolicy;
+  /**
+   * ATO review F11 — the least a PRIVILEGED management sign-in gets (a
+   * Platform Owner, or anyone who owns an organization) when the account
+   * has no confirmed authenticator app, whatever `management` says. A
+   * floor, never a ceiling: it only ever adds the emailed code. Defaults to
+   * `new_device` (a remembered browser skips it), so an email outage never
+   * locks out a privileged person on a browser they already use.
+   */
+  readonly privilegedFloor: EmailOtpPolicy;
   /** §12: 10 minutes. */
   readonly codeTtlSeconds: number;
   /** §12: 5 verify attempts, then the challenge is destroyed. */
@@ -581,10 +596,17 @@ export default () => {
       max: Number(env.AUTH_REGISTER_RATE_LIMIT_MAX ?? 5),
       windowSeconds: Number(env.AUTH_REGISTER_RATE_LIMIT_WINDOW_SECONDS ?? 3600),
     },
+    // ATO F11 — two weeks after this release by default; `never` disables.
+    platformOwnerTotpRequiredFrom:
+      env.PLATFORM_OWNER_TOTP_REQUIRED_FROM === 'never'
+        ? null
+        : new Date(env.PLATFORM_OWNER_TOTP_REQUIRED_FROM ?? '2026-10-24T00:00:00.000Z'),
     emailOtp: {
       // Defaults to `off` on BOTH surfaces — see `EmailOtpConfig`.
       management: (env.FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT ?? 'off') as EmailOtpPolicy,
       academy: (env.FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY ?? 'off') as EmailOtpPolicy,
+      privilegedFloor: (env.AUTH_PRIVILEGED_EMAIL_OTP_FLOOR ??
+        'new_device') as EmailOtpPolicy,
       codeTtlSeconds: Number(env.AUTH_EMAIL_OTP_CODE_TTL_SECONDS ?? 600),
       maxAttempts: Number(env.AUTH_EMAIL_OTP_MAX_ATTEMPTS ?? 5),
       maxCodesPerChallenge: Number(env.AUTH_EMAIL_OTP_MAX_CODES ?? 3),

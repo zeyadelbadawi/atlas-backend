@@ -231,6 +231,19 @@ const EnvSchema = z.object({
   FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY: z
     .enum(['off', 'new_device', 'always'])
     .default('off'),
+  // ATO review F11 — the emailed-code floor for privileged management
+  // sign-ins without an authenticator app (see `EmailOtpConfig.privilegedFloor`).
+  AUTH_PRIVILEGED_EMAIL_OTP_FLOOR: z
+    .enum(['off', 'new_device', 'always'])
+    .default('new_device'),
+  // ATO review F11 — when Platform Owners must have an authenticator app
+  // (ISO 8601 instant), or `never`.
+  PLATFORM_OWNER_TOTP_REQUIRED_FROM: z
+    .string()
+    .refine((value) => value === 'never' || !Number.isNaN(Date.parse(value)), {
+      message: 'must be an ISO 8601 date-time or "never"',
+    })
+    .optional(),
   // New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md §2.
   FLAG_SIGNUP_ORGANIZATION_MODE: z.enum(['off', 'on']).default('off'),
   // Google Identity (docs/GOOGLE_IDENTITY.md). `off` (default): every

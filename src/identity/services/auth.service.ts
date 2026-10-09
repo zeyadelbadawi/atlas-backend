@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type { AuthMethod, User } from '@prisma/client';
-import type { IdentityConfig } from '../../config/configuration';
+import type { EmailOtpPolicy, IdentityConfig } from '../../config/configuration';
 import { UsersRepository } from '../repositories/users.repository';
 import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
 import { deriveDeviceLabel } from '../utils/request-metadata.util';
@@ -1482,6 +1482,7 @@ export class AuthService {
         surface: selection.surface,
         academyId: selection.academyId,
         trustCookie: context?.trustCookie,
+        minimumPolicy: await this.privilegedEmailOtpFloor(user, selection.surface),
       })
     ) {
       const challenge = await this.emailOtpService.issue({
@@ -1506,6 +1507,28 @@ export class AuthService {
     await this.usersRepository.touchLastSignInAt(user.id);
 
     return session;
+  }
+
+  /**
+   * ATO review F11 — a Platform Owner, or anyone who owns an organization,
+   * signing in to the management surface without a confirmed authenticator
+   * app (that branch returned above) gets AT LEAST the configured floor
+   * (`new_device` by default), whatever `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT`
+   * says — so a phished or reused password alone never opens the whole
+   * platform or an organization's money and staff. Academy-surface sessions
+   * carry learner access only and keep the academy policy.
+   */
+  private async privilegedEmailOtpFloor(
+    user: User,
+    surface: SignInSurface,
+  ): Promise<EmailOtpPolicy | undefined> {
+    if (surface !== 'management') return undefined;
+    const floor =
+      this.configService.getOrThrow<IdentityConfig>('identity').emailOtp.privilegedFloor;
+    if (floor === 'off') return undefined;
+    if (user.isPlatformOwner) return floor;
+    const principal = await this.principalResolver.resolve(user.id);
+    return principal.ownsAnOrganization ? floor : undefined;
   }
 
   /**
