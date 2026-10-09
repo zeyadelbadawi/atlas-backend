@@ -816,8 +816,9 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     const w = await world('w6-oversize', { family: 'normal', tier: 'growth' });
     const storage = app.get(ProtectedMediaStorage);
 
-    // Declared smaller than what landed (a storage that did not enforce
-    // the signed length, as the local test store does not).
+    // Declared smaller than the body sent. The presigned PUT is signed for
+    // exactly the declared Content-Length, so a store that enforces it (R2,
+    // CI's SeaweedFS) refuses the oversized body outright and nothing lands.
     const big = faststartMp4(240);
     const ticket = await createUpload(w, {
       fileName: 'liar.mp4',
@@ -825,7 +826,18 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       courseId: w.course.id,
       sizeBytes: big.length - 100,
     });
-    expect(await putBytes(ticket.body.uploadUrl, big)).toBe(200);
+    const pending = await admin.mediaAsset.findUniqueOrThrow({
+      where: { id: ticket.body.assetId },
+    });
+    const put = await putBytes(ticket.body.uploadUrl, big);
+    if (put !== 200) {
+      expect(put).toBe(403);
+      expect(await storage.headObject(pending.providerId!)).toBeNull();
+      // The second line of defence must hold too, for a store that does not
+      // enforce the signed length (the local test store does not): the
+      // oversized object lands anyway, and completion has to catch it.
+      await storage.putObject(pending.providerId!, big, 'video/mp4');
+    }
     const refused = await request(app.getHttpServer())
       .post(
         `/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
