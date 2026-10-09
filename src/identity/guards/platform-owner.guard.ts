@@ -73,8 +73,9 @@ export class PlatformOwnerGuard implements CanActivate {
     // enrolment is not behind this guard — and recovery codes keep it
     // self-recoverable.
     const requiredFrom =
-      this.configService.getOrThrow<IdentityConfig>('identity')
-        .platformOwnerTotpRequiredFrom;
+      this.configService.getOrThrow<IdentityConfig>(
+        'identity',
+      ).platformOwnerTotpRequiredFrom;
     if (requiredFrom && Date.now() >= requiredFrom.getTime()) {
       const twoFactor = await runInUserContext(this.prisma, userId, (tx) =>
         tx.userTwoFactor.findUnique({ where: { userId }, select: { confirmedAt: true } }),

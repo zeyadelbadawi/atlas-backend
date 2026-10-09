@@ -170,7 +170,9 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
         : { email, password: PASSWORD },
     );
     if (response.status !== 200) {
-      throw new Error(`Sign-in failed: ${response.status} ${JSON.stringify(response.body)}`);
+      throw new Error(
+        `Sign-in failed: ${response.status} ${JSON.stringify(response.body)}`,
+      );
     }
     const accessToken = response.body.accessToken as string | undefined;
     if (!accessToken) throw new Error('Sign-in did not return an access token.');
@@ -394,7 +396,7 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
     const refused = await resend(accessToken).expect(429);
     expect(messageKey(refused)).toBe('errors.auth.rateLimited');
   });
-  it('EVL-012 — ATO F1: a live link opened without the account\'s session verifies nothing and stays usable', async () => {
+  it("EVL-012 — ATO F1: a live link opened without the account's session verifies nothing and stays usable", async () => {
     const { email, userId } = await register('evl012');
     const token = await waitForToken(email);
 

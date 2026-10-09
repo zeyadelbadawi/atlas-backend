@@ -13,7 +13,14 @@
  * `AcademiesService.addManager`'s doc comment for the full flow this
  * request drives.
  */
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class AddAcademyManagerDto {
   @IsNotEmpty()

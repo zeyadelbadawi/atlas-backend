@@ -8,7 +8,14 @@
  * email becomes an invited account, which is the only case that needs
  * `name` (the service answers 400 `nameRequiredForNewAccount` without it).
  */
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class CreateAcademyStudentDto {
   /**

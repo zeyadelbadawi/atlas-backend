@@ -161,7 +161,9 @@ describe('Privileged MFA floor (e2e) — ATO F11', () => {
     const setCookie = (verified.headers['set-cookie'] as unknown as string[]) ?? [];
     const raw = setCookie.find((value) => value.startsWith(`${TRUST_COOKIE_NAME}=`));
     expect(raw).toBeDefined();
-    const trust = decodeURIComponent(raw!.split(';')[0].slice(TRUST_COOKIE_NAME.length + 1));
+    const trust = decodeURIComponent(
+      raw!.split(';')[0].slice(TRUST_COOKIE_NAME.length + 1),
+    );
 
     const again = await signIn(email, trust).expect(200);
     expect(again.body.accessToken).toEqual(expect.any(String));
@@ -200,7 +202,7 @@ describe('Privileged MFA floor (e2e) — ATO F11', () => {
     expect(response.body.accessToken).toEqual(expect.any(String));
   });
 
-  it('PMFA-07 — past the enforcement date, platform routes need a Platform Owner\'s authenticator app', async () => {
+  it("PMFA-07 — past the enforcement date, platform routes need a Platform Owner's authenticator app", async () => {
     const { email, userId } = await register('pmfa-07');
     // Signed in (and enrolled) before becoming a Platform Owner, so the
     // session exists without the emailed-code step.
@@ -212,9 +214,14 @@ describe('Privileged MFA floor (e2e) — ATO F11', () => {
       .get('/platform-academies')
       .set('Authorization', `Bearer ${token}`)
       .expect(403);
-    expect(refused.body.error.messageKey).toBe('errors.auth.platformOwnerTwoFactorRequired');
+    expect(refused.body.error.messageKey).toBe(
+      'errors.auth.platformOwnerTwoFactorRequired',
+    );
     // Their own security settings stay reachable — that is where they enrol.
-    await http().get('/auth/2fa/status').set('Authorization', `Bearer ${token}`).expect(200);
+    await http()
+      .get('/auth/2fa/status')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
 
     const setup = await http()
       .post('/auth/2fa/setup')

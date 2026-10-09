@@ -524,9 +524,10 @@ describe('Smart member invitation + academy join (e2e)', () => {
       // Already a member: refused inside the same transaction that would
       // have created the account.
       const { owner, academy: b } = await freshAcademy('add-orphan-b');
-      await add(b, owner.token, 'manager', { email: owner.email, name: 'Typed Name' }).expect(
-        409,
-      );
+      await add(b, owner.token, 'manager', {
+        email: owner.email,
+        name: 'Typed Name',
+      }).expect(409);
       expect(await admin.user.count({ where: { email: owner.email } })).toBe(1);
     });
 

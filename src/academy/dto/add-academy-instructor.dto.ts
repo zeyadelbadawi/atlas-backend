@@ -5,7 +5,14 @@
  * a brand-new account and grant it in one action via `email` + `name` +
  * `password`. See `AcademiesService.addInstructor`'s doc comment.
  */
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class AddAcademyInstructorDto {
   @IsNotEmpty()

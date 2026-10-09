@@ -30,5 +30,4 @@ export class AcademyMemberLookupQueryDto {
  * literal the dialog has always treated as "ask for a name".)
  */
 export type AcademyMemberLookupResponse =
-  | { readonly status: 'new' }
-  | { readonly status: 'already_member' };
+  { readonly status: 'new' } | { readonly status: 'already_member' };
