@@ -321,6 +321,11 @@ export class ResendEmailProvider implements EmailProviderAdapter {
     return matched;
   }
 
+  /** A10 — Svix's message id: signed, and the same on every retry of one message. */
+  webhookDeliveryId(headers: WebhookHeaders): string | undefined {
+    return headerValue(headers, 'svix-id') ?? headerValue(headers, 'webhook-id');
+  }
+
   parseWebhookEvents(body: unknown): EmailWebhookEvent[] {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return [];
     const payload = body as ResendWebhookBody;

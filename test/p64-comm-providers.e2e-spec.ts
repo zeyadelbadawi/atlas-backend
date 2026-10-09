@@ -8,6 +8,7 @@
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { createHmac, randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma } from './utils/db-admin';
@@ -23,6 +24,22 @@ import { EmailProviderRegistry } from '../src/communications/providers/email-pro
 import { EMAIL_PROVIDER } from '../src/identity/services/email-provider.interface';
 
 const BREVO_SECRET = 'e2e-brevo-webhook-secret-0123456789';
+const RESEND_RAW_SECRET = Buffer.from('e2e-resend-webhook-secret-0123456789').toString(
+  'base64',
+);
+
+/** A real Svix signature over the exact bytes sent. */
+function svix(id: string, body: string, timestamp = Math.floor(Date.now() / 1000)) {
+  const signature = createHmac('sha256', Buffer.from(RESEND_RAW_SECRET, 'base64'))
+    .update(`${id}.${timestamp}.${body}`)
+    .digest('base64');
+  return {
+    'svix-id': id,
+    'svix-timestamp': String(timestamp),
+    'svix-signature': `v1,${signature}`,
+    'content-type': 'application/json',
+  };
+}
 
 jest.setTimeout(60000);
 
@@ -51,6 +68,7 @@ describe('P64 Communications — email provider layer (e2e)', () => {
   beforeAll(async () => {
     process.env.EMAIL_PROVIDERS = 'stub';
     process.env.BREVO_WEBHOOK_SECRET = BREVO_SECRET;
+    process.env.RESEND_WEBHOOK_SECRET = `whsec_${RESEND_RAW_SECRET}`;
     const testApp = await createTestApp();
     app = testApp.app;
     admin = createAdminPrisma();
@@ -199,6 +217,55 @@ describe('P64 Communications — email provider layer (e2e)', () => {
         emailDomain: 'atlas.test',
       });
       expect(await suppressions.isSuppressed(recipient)).toBe(true);
+    });
+
+    // A10 — a verified delivery is processed once; a replay is accepted
+    // (so the sender stops retrying) but enqueues nothing.
+    it('A10: a replayed Brevo event is accepted and enqueues nothing', async () => {
+      const messageId = `<e2e-${Date.now()}-replay@smtp-relay.mailin.fr>`;
+      const first = await request(app.getHttpServer())
+        .post(`/webhooks/email/brevo?secret=${BREVO_SECRET}`)
+        .send(body('delivered', messageId, 'replay@atlas.test'))
+        .expect(202);
+      expect(first.body).toEqual({ received: true, events: 1 });
+      const replay = await request(app.getHttpServer())
+        .post(`/webhooks/email/brevo?secret=${BREVO_SECRET}`)
+        .send(body('delivered', messageId, 'replay@atlas.test'))
+        .expect(202);
+      expect(replay.body).toEqual({ received: true, events: 0 });
+    });
+
+    it('A10: a Resend delivery is processed once per svix-id, and only inside the 5-minute window', async () => {
+      const id = `msg_e2e_${randomUUID()}`;
+      const raw = JSON.stringify({
+        type: 'email.delivered',
+        created_at: new Date().toISOString(),
+        data: { email_id: `em_${randomUUID()}`, to: ['resend-replay@atlas.test'] },
+      });
+      const headers = svix(id, raw);
+      const first = await request(app.getHttpServer())
+        .post('/webhooks/email/resend')
+        .set(headers)
+        .send(raw)
+        .expect(202);
+      expect(first.body).toEqual({ received: true, events: 1 });
+      const replay = await request(app.getHttpServer())
+        .post('/webhooks/email/resend')
+        .set(headers)
+        .send(raw)
+        .expect(202);
+      expect(replay.body).toEqual({ received: true, events: 0 });
+
+      const stale = svix(
+        `msg_e2e_${randomUUID()}`,
+        raw,
+        Math.floor(Date.now() / 1000) - 301,
+      );
+      await request(app.getHttpServer())
+        .post('/webhooks/email/resend')
+        .set(stale)
+        .send(raw)
+        .expect(401);
     });
 
     it('redelivery of the same event is accepted and idempotent', async () => {

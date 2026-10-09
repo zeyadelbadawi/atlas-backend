@@ -18,6 +18,26 @@ import { StubEmailProvider } from '../providers/stub-email.provider';
 import type { CommunicationsWebhookProducer } from '../queue/communications-webhook.producer';
 import type { CommunicationMetricsService } from '../services/communication-metrics.service';
 import type { EmailProviderAdapter } from '../../identity/services/email-provider.interface';
+import type { RedisService } from '../../redis/redis.service';
+
+/** An in-memory stand-in for the one Redis call the controller makes (`SET … EX … NX`). */
+function fakeRedis(): RedisService & { readonly keys: Map<string, string> } {
+  const keys = new Map<string, string>();
+  const client = {
+    set: (key: string, value: string, _ex: string, _ttl: number, _nx: string) => {
+      if (keys.has(key)) return Promise.resolve(null);
+      keys.set(key, value);
+      return Promise.resolve('OK');
+    },
+    del: (...names: string[]) => {
+      names.forEach((name) => keys.delete(name));
+      return Promise.resolve(names.length);
+    },
+  };
+  return { getClient: () => client, keys } as unknown as RedisService & {
+    readonly keys: Map<string, string>;
+  };
+}
 
 const RAW_SECRET = Buffer.from('resend-webhook-secret-fixed-for-tests').toString(
   'base64',
@@ -58,8 +78,11 @@ describe('EmailWebhookController (resend)', () => {
     recordWebhookSignatureFailure,
   } as unknown as CommunicationMetricsService;
 
-  function controller(adapters: readonly EmailProviderAdapter[]) {
-    return new EmailWebhookController(adapters, producer, metrics);
+  function controller(
+    adapters: readonly EmailProviderAdapter[],
+    redis: RedisService = fakeRedis(),
+  ) {
+    return new EmailWebhookController(adapters, producer, metrics, redis);
   }
 
   const resend = () => new ResendEmailProvider(config);
@@ -119,6 +142,83 @@ describe('EmailWebhookController (resend)', () => {
       controller([resend()]).handle('resend', undefined, request(payload, stale)),
     ).rejects.toBeInstanceOf(UnauthorizedException);
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  // A10 — the Svix signature is only time-bounded (±5 minutes, the official
+  // verifier's tolerance), so a captured delivery replayed inside that
+  // window used to be enqueued again every time.
+  it('processes one Svix delivery id once: a replay inside the window enqueues nothing', async () => {
+    const redis = fakeRedis();
+    const route = controller([resend()], redis);
+    const headers = svixHeaders(payload);
+    await expect(
+      route.handle('resend', undefined, request(payload, headers)),
+    ).resolves.toEqual({ received: true, events: 1 });
+    await expect(
+      route.handle('resend', undefined, request(payload, headers)),
+    ).resolves.toEqual({ received: true, events: 0 });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect([...redis.keys.keys()]).toEqual([
+      expect.stringMatching(/^webhook:email:resend:delivery:[0-9a-f]{64}$/),
+    ]);
+  });
+
+  it('releases the claim when enqueueing fails, so the provider retry is processed', async () => {
+    const redis = fakeRedis();
+    const route = controller([resend()], redis);
+    const headers = svixHeaders(payload);
+    enqueue.mockRejectedValueOnce(new Error('queue down'));
+    await expect(
+      route.handle('resend', undefined, request(payload, headers)),
+    ).rejects.toThrow('queue down');
+    expect(redis.keys.size).toBe(0);
+    await expect(
+      route.handle('resend', undefined, request(payload, headers)),
+    ).resolves.toEqual({ received: true, events: 1 });
+  });
+
+  it('without a delivery id (Brevo), de-duplicates per event and keeps new events', async () => {
+    const event = (id: string) => ({
+      providerMessageId: id,
+      recipientEmail: 'learner@example.com',
+      event: 'delivered' as const,
+      occurredAt: new Date('2026-09-24T10:00:00.000Z'),
+    });
+    let next = [event('m1')];
+    const brevoLike = {
+      name: 'brevo',
+      capabilities: () => ({ supportsWebhooks: true }),
+      verifyWebhook: () => true,
+      parseWebhookEvents: () => next,
+    } as unknown as EmailProviderAdapter;
+    const route = controller([brevoLike]);
+    await expect(route.handle('brevo', 's', request('{}'))).resolves.toEqual({
+      received: true,
+      events: 1,
+    });
+    await expect(route.handle('brevo', 's', request('{}'))).resolves.toEqual({
+      received: true,
+      events: 0,
+    });
+    next = [event('m1'), event('m2')];
+    await expect(route.handle('brevo', 's', request('[]'))).resolves.toEqual({
+      received: true,
+      events: 1,
+    });
+    expect(enqueue).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails open when Redis is unavailable (processing is idempotent)', async () => {
+    const broken = {
+      getClient: () => ({ set: () => Promise.reject(new Error('redis down')) }),
+    } as unknown as RedisService;
+    await expect(
+      controller([resend()], broken).handle(
+        'resend',
+        undefined,
+        request(payload, svixHeaders(payload)),
+      ),
+    ).resolves.toEqual({ received: true, events: 1 });
   });
 
   it('verifies the RAW bytes — a body that differs by a byte is refused', async () => {
