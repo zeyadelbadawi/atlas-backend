@@ -32,6 +32,10 @@ import { buildPinoOptions } from './common/logging/pino-options.factory';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { SubscriptionAccessInterceptor } from './plans/interceptors/subscription-access.interceptor';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
+import {
+  CachePolicyInterceptor,
+  NoStoreByDefaultMiddleware,
+} from './common/http/cache-policy';
 import { DatabaseModule } from './database/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
@@ -225,10 +229,13 @@ import { SecurityMonitoringModule } from './security-events/security-monitoring.
     // Production-readiness pass — refresh tokens leave the server only in the
     // HttpOnly session cookie, never in a response body (see the interceptor).
     { provide: APP_INTERCEPTOR, useClass: SessionCookieInterceptor },
+    // Every API response is `private, no-store` unless its handler declares
+    // a cache policy (`common/http/cache-policy.ts`).
+    { provide: APP_INTERCEPTOR, useClass: CachePolicyInterceptor },
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestContextMiddleware).forRoutes('*');
+    consumer.apply(RequestContextMiddleware, NoStoreByDefaultMiddleware).forRoutes('*');
   }
 }
