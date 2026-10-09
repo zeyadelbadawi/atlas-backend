@@ -23,6 +23,7 @@ import { Logger, LoggerErrorInterceptor } from 'nestjs-pino';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import helmet from 'helmet';
 import { installSecurityHeaders } from './common/security/helmet.options';
+import { createJsonBodyParser } from './common/http/body-limits';
 import { isPlatformOrigin } from './common/security/platform-origin.util';
 import { PlatformDomainService } from './domain/services/platform-domain.service';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -30,7 +31,6 @@ import { AppModule } from './app.module';
 import { throwClassValidatorViolations } from './common/validation/class-validator-violations.util';
 import type { AppConfig } from './config/configuration';
 import type { MediaStorageConfig } from './config/configuration';
-import type { IncomingMessage } from 'node:http';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -44,78 +44,17 @@ async function bootstrap(): Promise<void> {
   const configService = app.get(ConfigService);
   const config = configService.getOrThrow<AppConfig>('app');
 
-  // Phase P8 — the default Express JSON body limit (100kb) rejects any
-  // real base64-encoded image/document before it ever reaches
-  // `MediaController` (base64 inflates binary size by ~4/3). Sized with
-  // generous headroom above `MEDIA_MAX_UPLOAD_BYTES` — deliberately NOT
-  // the tight ~1.33x base64-inflation factor alone: a payload just
-  // moderately over the real ceiling must still reach
-  // `MediaService`'s own real byte-length check (the actual enforced
-  // limit, master plan §13: "server-side explicitly, per asset type")
-  // and get a proper 413, rather than tripping this outer, cruder limit
-  // first and surfacing as an opaque 500 (confirmed as a real failure
-  // mode during implementation with an 11MB-over-a-10MB-ceiling test
-  // payload landing within a few percent of a tightly-margined limit).
+  // W3 — ONE JSON parser with PER-ROUTE limits: Express's 100 KB default
+  // everywhere, and larger limits only on the routes that legitimately
+  // carry more (base64 uploads, legacy inline images, rich text,
+  // provider webhooks). The upload tier keeps P8's headroom above
+  // `MEDIA_MAX_UPLOAD_BYTES` (base64 inflates ~4/3, and a payload
+  // moderately over the ceiling must still reach the service's real
+  // byte-length check and get a proper 413). It also captures the raw
+  // bytes the signed webhooks verify (Zoom, Cloudflare Stream, Resend/
+  // Brevo). See `common/http/body-limits.ts`.
   const mediaConfig = configService.getOrThrow<MediaStorageConfig>('media');
-  const bodyLimitBytes = mediaConfig.maxUploadBytes * 3;
-  /*
-    Phase 12 — the Live Sessions webhook needs the RAW request bytes.
-
-    Zoom signs the exact body it sent, so a signature can only be verified
-    against those bytes. `JSON.stringify(parsedBody)` is NOT byte-identical
-    to what arrived (key order, whitespace, unicode escaping all differ),
-    so verifying against a re-serialized object would fail intermittently
-    and unpredictably — the worst kind of security bug, because it looks
-    like it works.
-
-    Captured ONLY for the webhook path: holding a second copy of every
-    request body in memory for the sake of one endpoint would be a real
-    cost for no benefit, and media uploads here are megabytes.
-  */
-  /*
-    Both Zoom-signed endpoints, and only these two.
-
-    P49d added the deauthorization notification endpoint, which Zoom signs
-    with the SAME app-level Secret Token and the same `x-zm-signature`
-    header as meeting events — so it needs the same exact bytes, for the
-    same reason, and it fails closed without them.
-  */
-  const ZOOM_SIGNED_PATHS = [
-    '/api/v1/live-sessions/webhook',
-    '/api/v1/live-sessions/deauthorization',
-  ];
-  /*
-    P64 Phase 2 — the video provider signs `time + "." + rawBody`, so the
-    same "verify the exact bytes, never a re-serialization" rule applies
-    for exactly the reason recorded above.
-  */
-  /*
-    P64 Communications — Resend's Svix signature covers the exact bytes
-    too, and Brevo's URL-secret check runs before the same raw body is
-    parsed; one capture rule for the whole `/webhooks/email/*` family.
-  */
-  const SIGNED_BODY_PATHS = [
-    ...ZOOM_SIGNED_PATHS,
-    '/api/v1/webhooks/video',
-    '/api/v1/webhooks/email',
-  ];
-  app.useBodyParser('json', {
-    limit: bodyLimitBytes,
-    // Authentication audit, Decision 4 — browsers send CSP violation
-    // reports as `application/csp-report` (report-uri) or
-    // `application/reports+json` (Reporting API); both are JSON.
-    type: ['application/json', 'application/csp-report', 'application/reports+json'],
-    verify: (
-      request: IncomingMessage & { rawBody?: Buffer },
-      _res: unknown,
-      buffer: Buffer,
-    ) => {
-      const url = request.url;
-      if (url && SIGNED_BODY_PATHS.some((path) => url.startsWith(path))) {
-        request.rawBody = Buffer.from(buffer);
-      }
-    },
-  });
+  app.use(createJsonBodyParser({ uploadLimitBytes: mediaConfig.maxUploadBytes * 3 }));
 
   /**
    * Phase 10 — trust the reverse proxy in front of us, but only it.

@@ -14,10 +14,9 @@
  * deployed `/api/v1` path is a separate, already-reported concern (see the
  * P1 final report's contract-matrix note on the frontend's `apiBaseUrl`).
  *
- * P8 addition: `main.ts`'s increased JSON body-parser limit (the default
- * 100kb rejects a real base64-encoded upload before it ever reaches
- * `MediaController`) — same computation as `main.ts`, so media e2e specs
- * can actually send a real payload.
+ * P8/W3 addition: `main.ts`'s JSON body parser (`createJsonBodyParser`,
+ * per-route limits) — the same function, so media e2e specs can send a
+ * real payload and every other route gets the real 100 KB default.
  */
 import { ConfigService } from '@nestjs/config';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
@@ -28,6 +27,7 @@ import { PrismaService } from '../../src/database/prisma.service';
 import { RedisService } from '../../src/redis/redis.service';
 import { StubEmailProvider } from '../../src/identity/services/stub-email.provider';
 import type { MediaStorageConfig } from '../../src/config/configuration';
+import { createJsonBodyParser } from '../../src/common/http/body-limits';
 
 export interface TestApp {
   readonly app: INestApplication;
@@ -96,25 +96,10 @@ export async function createTestApp(
   const mediaConfig = moduleRef
     .get(ConfigService)
     .getOrThrow<MediaStorageConfig>('media');
-  // Generous headroom above the real ceiling — same reasoning as
-  // `main.ts`'s identical computation (see its own doc comment).
-  app.useBodyParser('json', {
-    limit: mediaConfig.maxUploadBytes * 3,
-    // Mirrors `main.ts`: CSP violation reports' media types are JSON too.
-    type: ['application/json', 'application/csp-report', 'application/reports+json'],
-    // Mirrors `main.ts`'s raw-body capture for signed webhook paths (no
-    // global prefix/version in the test app, so the bare route).
-    verify: (
-      request: { url?: string; rawBody?: Buffer },
-      _res: unknown,
-      buffer: Buffer,
-    ) => {
-      const url = request.url;
-      if (url && ['/webhooks/email', '/webhooks/video'].some((p) => url.startsWith(p))) {
-        request.rawBody = Buffer.from(buffer);
-      }
-    },
-  });
+  // W3 — the very parser `main.ts` installs: 100 KB by default, larger
+  // limits only on the routes `body-limits.ts` names, raw-body capture for
+  // the signed webhook paths.
+  app.use(createJsonBodyParser({ uploadLimitBytes: mediaConfig.maxUploadBytes * 3 }));
 
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
