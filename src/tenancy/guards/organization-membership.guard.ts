@@ -13,6 +13,11 @@
  * regardless of any bug in this guard's own logic. No membership → 403,
  * never a silent pass-through, matching `RouteGuard`'s fail-closed
  * frontend behavior exactly.
+ *
+ * A route may also declare `@OrganizationPermissions(...)`: the membership
+ * row's persisted `permissions` must then contain every listed string, or
+ * the same 403 is returned. Membership alone admits a Manager or an
+ * Instructor; the owner-only billing and payment routes rely on this.
  */
 import {
   CanActivate,
@@ -20,7 +25,9 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
+import { ORGANIZATION_PERMISSIONS_KEY } from '../decorators/organization-permissions.decorator';
 import { TenancyContextService } from '../services/tenancy-context.service';
 import { OrganizationMembershipsRepository } from '../repositories/organization-memberships.repository';
 
@@ -43,6 +50,7 @@ export class OrganizationMembershipGuard implements CanActivate {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly membershipsRepository: OrganizationMembershipsRepository,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -63,6 +71,18 @@ export class OrganizationMembershipGuard implements CanActivate {
     );
 
     if (!membership) {
+      throw new ForbiddenException({ messageKey: 'errors.tenancy.notAMember' });
+    }
+
+    const requiredPermissions = this.reflector.getAllAndOverride<
+      readonly string[] | undefined
+    >(ORGANIZATION_PERMISSIONS_KEY, [context.getHandler(), context.getClass()]);
+    if (
+      requiredPermissions &&
+      !requiredPermissions.every((permission) =>
+        membership.permissions.includes(permission),
+      )
+    ) {
       throw new ForbiddenException({ messageKey: 'errors.tenancy.notAMember' });
     }
 

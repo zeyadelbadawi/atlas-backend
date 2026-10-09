@@ -134,8 +134,54 @@ export class AcademyMembersRepository {
     return tx.academyMember.count({ where: { academyId, role, status: 'active' } });
   }
 
+  /** Every staff row that still counts as a member — a removed (`inactive`) row does not. */
   countAll(tx: Prisma.TransactionClient, academyId: string): Promise<number> {
-    return tx.academyMember.count({ where: { academyId } });
+    return tx.academyMember.count({ where: { academyId, status: { not: 'inactive' } } });
+  }
+
+  /**
+   * The user's ACTIVE staff rows in OTHER academies of the same
+   * organization — whether removing them from one academy should also end
+   * their organization membership (`AcademiesService.removeStaffMember`).
+   */
+  countActiveForUserInOtherAcademies(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    userId: string,
+    excludeAcademyId: string,
+  ): Promise<number> {
+    return tx.academyMember.count({
+      where: {
+        userId,
+        status: 'active',
+        academyId: { not: excludeAcademyId },
+        academy: { organizationId },
+      },
+    });
+  }
+
+  /**
+   * Staff removal: the row is kept, marked `inactive` — the membership's
+   * history (and every audit row naming it) stays intact, and every
+   * authorization lookup (`findForUserInAcademy`, `AcademyScopeGuard`, the
+   * `is_academy_member()`/`can_author_course_content()` RLS helpers) reads
+   * active rows only, so the change takes effect on the very next request.
+   * Admitted by `academy_members_owner_update` (organization owner only).
+   */
+  deactivate(tx: Prisma.TransactionClient, id: string): Promise<AcademyMember> {
+    return tx.academyMember.update({ where: { id }, data: { status: 'inactive' } });
+  }
+
+  /** Re-adding a previously removed member: the same row, active again, with the newly granted role. */
+  reactivate(
+    tx: Prisma.TransactionClient,
+    id: string,
+    role: AcademyMemberRole,
+  ): Promise<AcademyMember> {
+    return tx.academyMember.update({
+      where: { id },
+      data: { status: 'active', role, joinedAt: new Date() },
+    });
   }
 
   create(

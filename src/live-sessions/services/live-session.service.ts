@@ -26,6 +26,7 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { AddOnAccessService } from './add-on-access.service';
+import { isEligibleLiveSessionHost } from '../utils/live-session-host.util';
 
 /** A session must be at least this long — a 0-minute meeting is a mistake, not a choice. */
 export const MIN_SESSION_MINUTES = 5;
@@ -122,24 +123,27 @@ export class LiveSessionService {
   }
 
   /**
-   * The host must be a real member of this academy.
+   * The host must be someone who may actually run THIS course's class.
    *
-   * Without this an instructor could be assigned from another tenant —
-   * which would leak the session into their dashboard and make them the
-   * provider-side host of a meeting they have no relationship to.
+   * Membership of the academy alone is not enough: an instructor of
+   * another course could otherwise be assigned — or assign themselves —
+   * and would then join as the provider-side host of a meeting for a
+   * course they have no relationship to. `isEligibleLiveSessionHost` is
+   * the one rule (managing tier, the organization owner, or an instructor
+   * assigned to this course), shared with the join path.
    */
-  private async assertHostInAcademy(
+  private async assertHostEligible(
     tx: Prisma.TransactionClient,
     academyId: string,
+    courseId: string,
     hostUserId: string,
   ): Promise<void> {
-    const member = await tx.academyMember.findFirst({
-      // `status: 'active'` matters: a removed or suspended member must not
-      // remain assignable as a host just because the row still exists.
-      where: { academyId, userId: hostUserId, status: 'active' },
-      select: { id: true },
+    const eligible = await isEligibleLiveSessionHost(tx, {
+      academyId,
+      courseId,
+      userId: hostUserId,
     });
-    if (!member) {
+    if (!eligible) {
       throw new BadRequestException({
         messageKey: 'errors.liveSessions.hostNotInAcademy',
       });
@@ -173,7 +177,7 @@ export class LiveSessionService {
     }
 
     const hostUserId = input.hostUserId ?? input.actorUserId;
-    await this.assertHostInAcademy(tx, input.academyId, hostUserId);
+    await this.assertHostEligible(tx, input.academyId, input.courseId, hostUserId);
 
     return tx.liveSession.create({
       data: {
@@ -262,7 +266,12 @@ export class LiveSessionService {
       );
     }
     if (args.patch.hostUserId) {
-      await this.assertHostInAcademy(tx, args.academyId, args.patch.hostUserId);
+      await this.assertHostEligible(
+        tx,
+        args.academyId,
+        existing.courseId,
+        args.patch.hostUserId,
+      );
     }
 
     // Turning recording OFF is always allowed. Turning it ON after the

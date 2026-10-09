@@ -854,6 +854,17 @@ export class AcademiesService {
           if (current.status === 'suspended' && payload.status !== undefined) {
             throw new ConflictException({ messageKey: 'errors.academy.statusLocked' });
           }
+          // The public address and the lifecycle status are the
+          // organization owner's to change (`assertIsOrganizationOwner`).
+          // Compared against the stored values, not mere presence: the
+          // settings/profile forms re-send the current slug on every save,
+          // and a Manager saving the description must keep working.
+          const changesSlug = payload.slug !== undefined && payload.slug !== current.slug;
+          const changesStatus =
+            payload.status !== undefined && payload.status !== current.status;
+          if (changesSlug || changesStatus) {
+            await this.assertIsOrganizationOwner(tx, academyId, userId);
+          }
           // W4 — a rename re-checks the platform-wide name rule (excluding
           // this academy, so re-saving its own name is never a conflict).
           if (name !== undefined) {
@@ -1087,7 +1098,9 @@ export class AcademiesService {
     const archived = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        const role = await this.assertCanManage(tx, academyId, userId);
+        // Organization owner only — see `assertIsOrganizationOwner`. A
+        // Manager or Administrator gets 403 and nothing changes.
+        const role = await this.assertIsOrganizationOwner(tx, academyId, userId);
         const previous = await this.academiesRepository.findById(tx, academyId);
         const result = await this.academiesRepository.update(tx, academyId, {
           status: 'archived',
@@ -1369,7 +1382,13 @@ export class AcademiesService {
                 academyId,
                 target.user.id,
               );
-            if (existingAcademyMembership) {
+            // A REMOVED member (`inactive`, `removeStaffMember`) may be added
+            // back: the same row is reactivated below. An active or pending
+            // row is still the usual 409.
+            if (
+              existingAcademyMembership &&
+              existingAcademyMembership.status !== 'inactive'
+            ) {
               throw new ConflictException({
                 messageKey: 'errors.academy.managerAlreadyMember',
               });
@@ -1394,11 +1413,18 @@ export class AcademiesService {
               });
             }
 
-            const created = await this.createAcademyMember(tx, organizationId, {
-              academyId,
-              userId: target.user.id,
-              role,
-            });
+            const created = existingAcademyMembership
+              ? await this.reactivateAcademyMember(
+                  tx,
+                  organizationId,
+                  existingAcademyMembership.id,
+                  role,
+                )
+              : await this.createAcademyMember(tx, organizationId, {
+                  academyId,
+                  userId: target.user.id,
+                  role,
+                });
 
             // Task 3 — academy-scoped (it previously carried only the
             // organization id, so it never reached an academy feed) and
@@ -1444,6 +1470,129 @@ export class AcademiesService {
       membershipId: result.membershipId,
     });
     return { ...result.member, outcome };
+  }
+
+  /**
+   * `DELETE /academies/:id/members/:userId` — removes a staff member
+   * (manager, administrator, instructor or staff) from this academy.
+   *
+   * ORGANIZATION OWNER ONLY (`assertIsOrganizationOwner`), the same person
+   * who alone may grant Manager/Instructor access (`assertCanAddMember`);
+   * the new `academy_members_owner_update` / `organization_memberships_owner_delete`
+   * RLS policies admit the writes for that person only. The organization
+   * owner can never be removed — not by themselves, not by anyone — since
+   * their access is the organization's ownership, not a staff row.
+   *
+   * ONE transaction:
+   *   1. the `academy_members` row becomes `inactive` (kept, not deleted:
+   *      its history and audit trail stay intact, and every authorization
+   *      read — `AcademyScopeGuard`, `findForUserInAcademy`, the RLS
+   *      `is_academy_member()` family — reads active rows only);
+   *   2. every `course_instructors` row the user holds for a course of
+   *      THIS academy is deleted (assignments in other academies are not
+   *      touched);
+   *   3. their `organization_memberships` row is deleted when they hold no
+   *      other ACTIVE staff row in this organization — otherwise it stays,
+   *      because their other academies still need it;
+   *   4. an `academy.member.removed` audit row.
+   *
+   * SESSIONS ARE NOT REVOKED, deliberately: a session is the person's
+   * identity across every organization they belong to, and revoking it
+   * would sign them out of unrelated workspaces. Nothing about academy
+   * authorization is cached in the session — the guards and services
+   * re-read both membership rows on every request — so the very next
+   * request from the removed member is refused.
+   */
+  async removeStaffMember(
+    academyId: string,
+    organizationId: string,
+    actingUserId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      actingUserId,
+      async (tx) => {
+        const role = await this.assertIsOrganizationOwner(tx, academyId, actingUserId);
+
+        const organization = await this.organizationsRepository.findById(
+          tx,
+          organizationId,
+        );
+        if (!organization) {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        if (organization.ownerUserId === targetUserId) {
+          throw new ConflictException({
+            messageKey: 'errors.academy.cannotRemoveOrganizationOwner',
+          });
+        }
+
+        const membership =
+          await this.academyMembersRepository.findAnyStatusForUserInAcademy(
+            tx,
+            academyId,
+            targetUserId,
+          );
+        // Not staff here, or already removed: nothing to remove. The same
+        // 404 either way (the request is no probe for former staff).
+        if (!membership || membership.status === 'inactive') {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+
+        await this.academyMembersRepository.deactivate(tx, membership.id);
+
+        // `course_instructors` is a Course-owned table, and `CourseModule`
+        // depends on this module (never the reverse), so the write is made
+        // here directly rather than through `CourseInstructorsRepository`.
+        // Scoped to THIS academy's courses; `course_instructors_tenant_delete`
+        // (RLS) independently limits it to this organization.
+        const removedAssignments = await tx.courseInstructor.deleteMany({
+          where: { userId: targetUserId, course: { academyId } },
+        });
+
+        const otherActiveAcademies =
+          await this.academyMembersRepository.countActiveForUserInOtherAcademies(
+            tx,
+            organizationId,
+            targetUserId,
+            academyId,
+          );
+        const organizationMembershipRemoved =
+          otherActiveAcademies === 0
+            ? (await this.organizationMembershipsRepository.deleteNonOwnerForUser(
+                tx,
+                organizationId,
+                targetUserId,
+              )) > 0
+            : false;
+
+        const member = await tx.user.findUnique({
+          where: { id: targetUserId },
+          select: { name: true },
+        });
+        await this.auditLogWriterService.record(tx, {
+          actorUserId: actingUserId,
+          organizationId,
+          academyId,
+          role,
+          action: 'academy.member.removed',
+          targetType: 'academy_member',
+          targetId: membership.id,
+          targetLabel: member?.name ?? undefined,
+          context: {
+            memberName: member?.name ?? null,
+            memberRole: membership.role,
+            courseAssignmentsRemoved: removedAssignments.count,
+            organizationMembershipRemoved,
+          },
+        });
+      },
+    );
+
+    // An `instructors`/`staff` count changed — the same reactive
+    // usage-recompute trigger the add path fires.
+    await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
   }
 
   /**
@@ -1619,14 +1768,14 @@ export class AcademiesService {
             role,
           );
 
+          // ATO review F5 — the answer is about THIS academy only: whether
+          // the address is already in it, never whether it has an Atlas
+          // account elsewhere, and never a name.
           const user = await tx.user.findUnique({
             where: { email: normalizeEmail(email) },
-            select: { id: true, name: true, status: true },
+            select: { id: true },
           });
           if (!user) return { status: 'new' };
-          if (user.status === 'suspended' || user.status === 'deleted') {
-            return { status: 'unavailable' };
-          }
           const alreadyHere =
             role === 'student'
               ? await this.academyStudentsRepository.findForUserInAcademy(
@@ -1639,15 +1788,15 @@ export class AcademiesService {
                   academyId,
                   user.id,
                 );
-          if (alreadyHere) return { status: 'already_member' };
-          return user.status === 'invited'
-            ? { status: 'existing_pending_setup', name: user.name }
-            : { status: 'existing', name: user.name };
+          // A removed staff member (`inactive`) can be added again, so the
+          // dialog must not tell the owner they are "already a member".
+          const isCurrent =
+            !!alreadyHere &&
+            !('role' in alreadyHere && alreadyHere.status === 'inactive');
+          return isCurrent ? { status: 'already_member' } : { status: 'new' };
         },
       );
-      recordMemberLookup(
-        answer.status === 'existing_pending_setup' ? 'pending_setup' : answer.status,
-      );
+      recordMemberLookup(answer.status);
       return answer;
     } catch (error) {
       if (error instanceof ForbiddenException) recordMemberLookup('denied');
@@ -1886,6 +2035,38 @@ export class AcademiesService {
   }
 
   /**
+   * Organization-owner-only academy actions: deleting (archiving) the
+   * academy, and changing its `slug` (its public address) or its lifecycle
+   * `status`. These are the organization's decisions, not day-to-day
+   * operation: archiving takes the public website offline, releases the
+   * custom domain and frees the plan's academy allowance, and a slug change
+   * moves the site's address. A Manager's or Administrator's academy-wide
+   * operational authority (`MANAGING_ROLES`) does not extend to them — the
+   * same split `assertCanManageSecurityPolicy` (P64 D8) and
+   * `GRANTS_MANAGER_ROLES` already draw.
+   *
+   * Only `organization_memberships.role = 'owner'` of the academy's own
+   * organization counts (`isOrganizationOwnerOfAcademy`), never an
+   * `academy_members` row, so an academy-level role can never be inflated
+   * into the organization's ownership.
+   */
+  private async assertIsOrganizationOwner(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    userId: string,
+  ): Promise<'owner'> {
+    const isOwner = await this.academyMembersRepository.isOrganizationOwnerOfAcademy(
+      tx,
+      academyId,
+      userId,
+    );
+    if (!isOwner) {
+      throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
+    }
+    return 'owner';
+  }
+
+  /**
    * `assertSlugAvailable`'s pre-check runs inside the caller's own tenant
    * context, so it cannot see a slug taken by an academy in a DIFFERENT
    * organization (RLS makes that row invisible, by design — see
@@ -2049,5 +2230,23 @@ export class AcademiesService {
       user: { connect: { id: member.userId } },
       role: member.role,
     });
+  }
+
+  /** `createAcademyMember`'s counterpart for a previously removed row — the same plan-limit check, then the row is active again. */
+  private async reactivateAcademyMember(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    membershipId: string,
+    role: AcademyMemberRole,
+  ): Promise<AcademyMember> {
+    const limitKey = MEMBER_ROLE_LIMIT[role];
+    if (limitKey) {
+      await this.entitlementEnforcementService.assertWithinLimit(
+        tx,
+        organizationId,
+        limitKey,
+      );
+    }
+    return this.academyMembersRepository.reactivate(tx, membershipId, role);
   }
 }

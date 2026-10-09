@@ -40,6 +40,17 @@ describe('CredentialEncryptionService', () => {
     expect(() => service.decrypt(tampered)).toThrow();
   });
 
+  // W13 — without a pinned `authTagLength`, Node verifies a GCM tag on only
+  // as many bytes as it is handed (4..16), so a 4-byte prefix of the real
+  // tag decrypted successfully: a 32-bit integrity check instead of 128.
+  it('refuses a truncated GCM tag (the 16-byte tag length is pinned)', () => {
+    const service = buildService(VALID_KEY_HEX);
+    const [iv, authTag, ciphertext] = service.encrypt('sensitive-config').split('.');
+    const truncatedTag = Buffer.from(authTag, 'base64').subarray(0, 4).toString('base64');
+
+    expect(() => service.decrypt([iv, truncatedTag, ciphertext].join('.'))).toThrow();
+  });
+
   it('throws on a malformed payload rather than silently returning something', () => {
     const service = buildService(VALID_KEY_HEX);
     expect(() => service.decrypt('not-a-valid-encrypted-payload')).toThrow();

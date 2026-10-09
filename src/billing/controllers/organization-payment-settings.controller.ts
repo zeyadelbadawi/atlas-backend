@@ -1,12 +1,18 @@
 /**
  * OrganizationPaymentSettingsController —
- * `organizations/:id/payment-settings*` (master plan §4.1/§5.8). Reuses
- * `OrganizationMembershipGuard` verbatim, exactly like `PaymentController`/
- * `CheckoutController` — no new role/permission is introduced (§9/§24:
- * no Role/Permission catalog exists in this codebase; any organization
- * member may configure the organization's own payment settings, the same
- * bar every other organization-write endpoint in this codebase already
- * uses).
+ * `organizations/:id/payment-settings*` (master plan §4.1/§5.8).
+ *
+ * ORGANIZATION OWNER ONLY. `OrganizationMembershipGuard` proves membership,
+ * which a Manager or Instructor also holds; the class-level
+ * `@OrganizationPermissions('tenant.billing.view')` narrows every route
+ * here — reads included, since they expose gateway configuration and the
+ * connected payout account — to the owner-exclusive billing permission
+ * (`ORGANIZATION_OWNER_PERMISSIONS` carries it, the manager/instructor sets
+ * deliberately do not). The frontend already gates the billing area on the
+ * same string. A `.view` string gates the writes too for the reason
+ * `TenantSubscriptionController` documents: permissions are persisted per
+ * membership row, and a new `*.manage` string would lock out every
+ * existing owner until a backfill ran.
  *
  * Commission is exposed here READ-ONLY (`GET .../commission`) — there is
  * no `PATCH` on this controller for it at all. Writing an Organization's
@@ -29,6 +35,7 @@ import {
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
+import { OrganizationPermissions } from '../../tenancy/decorators/organization-permissions.decorator';
 import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
 import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { OrganizationPaymentSettingsService } from '../services/organization-payment-settings.service';
@@ -44,9 +51,11 @@ import type {
 } from '../dto/organization-gateway-credential.contract';
 import type { OrganizationConnectedAccountResponse } from '../dto/organization-connected-account.contract';
 import type { OrganizationCommissionResponse } from '../dto/commission.contract';
+import { TENANT_BILLING_PERMISSION } from '../../tenancy/constants/organization-permissions.constants';
 
 @Controller('organizations')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, OrganizationMembershipGuard)
+@OrganizationPermissions(TENANT_BILLING_PERMISSION)
 export class OrganizationPaymentSettingsController {
   constructor(
     private readonly organizationPaymentSettingsService: OrganizationPaymentSettingsService,

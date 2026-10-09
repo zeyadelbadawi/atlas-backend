@@ -490,6 +490,14 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'account',
     'memberName',
   ]),
+  // The organization owner removed a staff member from this academy
+  // (`DELETE /academies/:id/members/:userId`). Names and counts only.
+  ev('academy.member.removed', 'team', 'academy_member', 'academy', true, [
+    'memberName',
+    'memberRole',
+    'courseAssignmentsRemoved',
+    'organizationMembershipRemoved',
+  ]),
 
   /* ------------------------------ Students ----------------------------- */
   ev('academy.student.created', 'students', 'user', 'academy', true, [
@@ -956,6 +964,18 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('account.deletion.confirmed', 'security', 'user', 'platform', false, [
     'challengeId',
   ]),
+  // Phone number (docs/USER_PHONE.md) — the country and the kind of change
+  // only; the number itself is never written to an audit row.
+  ev('account.phone.updated', 'security', 'user', 'platform', false, [
+    'change',
+    'country',
+    'previousCountry',
+    'verificationCleared',
+  ]),
+  ev('account.phone.removed', 'security', 'user', 'platform', false, [
+    'country',
+    'wasVerified',
+  ]),
   ev('account.deleted', 'security', 'user', 'platform', false, ACCOUNT_DELETED_CONTEXT),
   ev(
     'account.deleted_by_platform_owner',
@@ -1028,6 +1048,18 @@ export const AUDIT_EVENT_DEFINITIONS = [
     false,
     ['status', 'previousStatus'],
     ['status'],
+  ),
+  // Forensic video watermark (docs/FORENSIC_WATERMARK.md) — every Platform
+  // Owner lookup, found or not. Whether it matched, the surface and whether
+  // an account was linked; NEVER the identity the lookup revealed (the
+  // looked-up code is the target label, the row id the target).
+  ev(
+    'platform.watermark.looked_up',
+    'security',
+    'forensic_watermark',
+    'platform',
+    false,
+    ['found', 'surface', 'accountLinked'],
   ),
   ev(
     'platform.contact_submission.deleted',

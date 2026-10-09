@@ -33,6 +33,7 @@ function build(policies: { management: EmailOtpPolicy; academy: EmailOtpPolicy }
         challengesPerHour: 5,
         trustedDeviceDaysManagement: 90,
         trustedDeviceDaysAcademy: 180,
+        privilegedFloor: 'new_device',
       },
     }),
   } as unknown as ConfigService;

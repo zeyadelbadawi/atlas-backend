@@ -76,6 +76,24 @@ export class OrganizationMembershipsRepository {
     });
   }
 
+  /**
+   * Ends a staff member's membership of the organization — when the
+   * organization owner removed them from their last academy there
+   * (`AcademiesService.removeStaffMember`). Never an `owner` row: the
+   * predicate excludes it here, and the `organization_memberships_owner_delete`
+   * RLS policy independently refuses it. Returns the number of rows removed.
+   */
+  async deleteNonOwnerForUser(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    userId: string,
+  ): Promise<number> {
+    const result = await tx.organizationMembership.deleteMany({
+      where: { organizationId, userId, role: { not: 'owner' } },
+    });
+    return result.count;
+  }
+
   /** Finds the caller's own membership row within the active tenant context — this IS the membership-verification query (see `OrganizationMembershipGuard`). */
   findForUserInOrganization(
     tx: Prisma.TransactionClient,

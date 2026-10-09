@@ -420,6 +420,9 @@ export class AccountDeletionService {
       await tx.userAuthIdentity.deleteMany({ where: { userId } });
       // The password credential: with no row, no password can ever verify.
       await tx.userCredential.deleteMany({ where: { userId } });
+      // The phone number is personal data with no audit value: erased, not
+      // kept on the anonymised account (docs/USER_PHONE.md).
+      await tx.userPhone.deleteMany({ where: { userId } });
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.passwordResetToken.deleteMany({ where: { userId } });
       await tx.emailVerificationToken.deleteMany({ where: { userId } });
@@ -440,6 +443,14 @@ export class AccountDeletionService {
         data: { completedAt: now },
       });
       await tx.accountDeletionChallenge.deleteMany({ where: { userId } });
+
+      // NOTE: forensic watermark records (`forensic_watermarks`) are NOT
+      // touched, deliberately. They carry no foreign key to `users` and an
+      // encrypted snapshot of the identity at the time a video was shown,
+      // so a recording leaked before (or after) this deletion can still be
+      // traced by the Platform Owner — the anti-piracy purpose disclosed in
+      // the privacy policy. Only the retention sweep removes them
+      // (docs/FORENSIC_WATERMARK.md, docs/ACCOUNT_DELETION_AND_DATA_LIFECYCLE.md).
 
       // NOTE: memberships are NOT removed here. They are tenant-scoped
       // and RLS-protected, and this transaction runs with no tenant

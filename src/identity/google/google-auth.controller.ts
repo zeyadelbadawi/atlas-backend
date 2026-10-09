@@ -69,10 +69,37 @@ function clearBinder(request: Request, response: Response): void {
   });
 }
 
-function originOf(service: GoogleAuthService, request: Request): string | null {
+/**
+ * W7 — the host (with any port) the request is FOR, chosen exactly the way
+ * Express chooses `request.hostname`: `X-Forwarded-Host` only when the
+ * immediate peer is a trusted proxy (`trust proxy` in `main.ts`), else
+ * `Host`. The origin the flow returns to used to be built from the raw
+ * `Host` header while the academy/host allowlist (`resolveContext`,
+ * `isCallbackHost`) was decided on `request.hostname` — two different
+ * headers, so a request could be authorised for one host and send the
+ * browser back to another. Both now come from the same, trusted source;
+ * anything whose hostname disagrees with `request.hostname` is refused.
+ */
+export function trustedRequestHost(request: Request): string | undefined {
+  const trust = request.app?.get('trust proxy fn') as
+    ((address: string | undefined, hop: number) => boolean) | undefined;
+  let host = request.get('x-forwarded-host');
+  if (!host || !trust || !trust(request.socket?.remoteAddress, 0)) {
+    host = request.get('host');
+  } else if (host.includes(',')) {
+    host = host.slice(0, host.indexOf(',')).trimEnd();
+  }
+  if (!host || !request.hostname) return undefined;
+  const bracket = host.startsWith('[') ? host.indexOf(']') + 1 : 0;
+  const colon = host.indexOf(':', bracket);
+  const hostname = colon === -1 ? host : host.slice(0, colon);
+  return hostname.toLowerCase() === request.hostname.toLowerCase() ? host : undefined;
+}
+
+export function originOf(service: GoogleAuthService, request: Request): string | null {
   return service.requestOrigin({
     protocol: request.protocol,
-    host: request.get('host'),
+    host: trustedRequestHost(request),
     originHeader: request.get('origin'),
   });
 }

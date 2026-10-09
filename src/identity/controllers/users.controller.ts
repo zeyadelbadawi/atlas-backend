@@ -6,16 +6,21 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Patch,
   Post,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 import { UsersService } from '../services/users.service';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
 import { UpdatePreferencesDto } from '../dto/update-preferences.dto';
+import { UpdatePhoneDto } from '../dto/update-phone.dto';
+import { UserPhoneService } from '../phone/user-phone.service';
+import type { UserPhoneResponse } from '../phone/user-phone.service';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { DeleteAccountDto } from '../dto/delete-account.dto';
 import { AccountDeletionService } from '../services/account-deletion.service';
@@ -40,6 +45,7 @@ export class UsersController {
     private readonly accountDeletionService: AccountDeletionService,
     private readonly deletionPlanService: DeletionPlanService,
     private readonly accountDeletionChallengeService: AccountDeletionChallengeService,
+    private readonly userPhoneService: UserPhoneService,
   ) {}
 
   @Get('me')
@@ -73,6 +79,35 @@ export class UsersController {
       await this.usersService.updatePreferences(auth.userId, dto.preferences),
       auth,
     );
+  }
+
+  /**
+   * The caller's OWN phone number (docs/USER_PHONE.md). Deliberately not on
+   * `GET /users/me`: that payload is read on every page and kept in the
+   * session; the number is fetched only where it is shown, and the client
+   * never writes it to its offline store. No `:id` on any of these routes —
+   * the subject is the access token's account, so another person's number
+   * is structurally unreachable. Both surfaces (dashboard and academy
+   * website) may use them: it is the person's own account data, like their
+   * name.
+   */
+  @Get('me/phone')
+  async getPhone(@CurrentAuthContext() auth: AuthContext): Promise<UserPhoneResponse> {
+    return this.userPhoneService.getOwn(auth.userId);
+  }
+
+  /** Sets or replaces the number; a different number is unverified again. Metered per account. */
+  @Put('me/phone')
+  async updatePhone(
+    @CurrentAuthContext() auth: AuthContext,
+    @Body() dto: UpdatePhoneDto,
+  ): Promise<UserPhoneResponse> {
+    return this.userPhoneService.setOwn(auth.userId, dto);
+  }
+
+  @Delete('me/phone')
+  async removePhone(@CurrentAuthContext() auth: AuthContext): Promise<UserPhoneResponse> {
+    return this.userPhoneService.removeOwn(auth.userId);
   }
 
   @Post('me/password')

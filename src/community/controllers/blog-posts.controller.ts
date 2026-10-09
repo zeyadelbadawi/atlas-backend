@@ -26,6 +26,7 @@ import { UpdateBlogPostDto } from '../dto/update-blog-post.dto';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { BlogPostResponse } from '../dto/blog-post.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { SubscriptionScope } from '../../plans/decorators/subscription-scope.decorator';
 
 @Controller('blog-posts')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard)
@@ -49,6 +50,7 @@ export class BlogPostsController {
   }
 
   @Post()
+  @SubscriptionScope({ kind: 'blogAuthor' })
   async createPost(
     @Req() request: Request,
     @Body() body: CreateBlogPostDto,
@@ -57,6 +59,7 @@ export class BlogPostsController {
   }
 
   @Patch(':id')
+  @SubscriptionScope({ kind: 'blogPost', param: 'id' })
   async updatePost(
     @Req() request: Request,
     @Param('id') id: string,
@@ -66,6 +69,7 @@ export class BlogPostsController {
   }
 
   @Post(':id/publish')
+  @SubscriptionScope({ kind: 'blogPost', param: 'id' })
   async publishPost(
     @Req() request: Request,
     @Param('id') id: string,
@@ -74,6 +78,7 @@ export class BlogPostsController {
   }
 
   @Post(':id/archive')
+  @SubscriptionScope({ kind: 'blogPost', param: 'id' })
   async archivePost(
     @Req() request: Request,
     @Param('id') id: string,
@@ -83,6 +88,7 @@ export class BlogPostsController {
 
   @Delete(':id')
   @HttpCode(204)
+  @SubscriptionScope({ kind: 'blogPost', param: 'id' })
   async deletePost(@Req() request: Request, @Param('id') id: string): Promise<void> {
     return this.blogPostsService.deletePost(request.authContext!.userId, id);
   }

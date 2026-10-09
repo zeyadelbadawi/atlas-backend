@@ -777,6 +777,116 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     expect(Number(row.sizeBytes)).toBeGreaterThan(0);
   });
 
+  // =========================================================================
+  // W6 — a Normal-tier presigned PUT is size-bound and storage-charged.
+  // =========================================================================
+
+  it('W6: a declared size is signed into the PUT, reserved against storage, and replaced by the real size', async () => {
+    const w = await world('w6-declared', { family: 'normal', tier: 'growth' });
+    const bytes = faststartMp4(240);
+    const ticket = await createUpload(w, {
+      fileName: 'sized.mp4',
+      maxDurationSeconds: 300,
+      courseId: w.course.id,
+      sizeBytes: bytes.length,
+    });
+    // Content-Length is a SIGNED header: storage refuses any other size.
+    const signed = new URL(ticket.body.uploadUrl).searchParams.get('X-Amz-SignedHeaders');
+    expect(signed?.split(';')).toContain('content-length');
+    const reserved = await admin.mediaAsset.findUniqueOrThrow({
+      where: { id: ticket.body.assetId },
+    });
+    expect(Number(reserved.sizeBytes)).toBe(bytes.length);
+
+    expect(await putBytes(ticket.body.uploadUrl, bytes)).toBe(200);
+    await request(app.getHttpServer())
+      .post(
+        `/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
+      )
+      .set(w.owner.auth)
+      .expect(201);
+    const row = await admin.mediaAsset.findUniqueOrThrow({
+      where: { id: ticket.body.assetId },
+    });
+    expect(row.processingStatus).toBe('ready');
+    expect(Number(row.sizeBytes)).toBe(bytes.length);
+  });
+
+  it('W6: completion refuses — and deletes — an object larger than declared or than the ceiling', async () => {
+    const w = await world('w6-oversize', { family: 'normal', tier: 'growth' });
+    const storage = app.get(ProtectedMediaStorage);
+
+    // Declared smaller than the body sent. The presigned PUT is signed for
+    // exactly the declared Content-Length, so a store that enforces it (R2,
+    // CI's SeaweedFS) refuses the oversized body outright and nothing lands.
+    const big = faststartMp4(240);
+    const ticket = await createUpload(w, {
+      fileName: 'liar.mp4',
+      maxDurationSeconds: 300,
+      courseId: w.course.id,
+      sizeBytes: big.length - 100,
+    });
+    const pending = await admin.mediaAsset.findUniqueOrThrow({
+      where: { id: ticket.body.assetId },
+    });
+    const put = await putBytes(ticket.body.uploadUrl, big);
+    if (put !== 200) {
+      expect(put).toBe(403);
+      expect(await storage.headObject(pending.providerId!)).toBeNull();
+      // The second line of defence must hold too, for a store that does not
+      // enforce the signed length (the local test store does not): the
+      // oversized object lands anyway, and completion has to catch it.
+      await storage.putObject(pending.providerId!, big, 'video/mp4');
+    }
+    const refused = await request(app.getHttpServer())
+      .post(
+        `/academies/${w.academy.id}/media/video-uploads/${ticket.body.assetId}/complete`,
+      )
+      .set(w.owner.auth)
+      .expect(413);
+    expect(refused.body.error).toMatchObject({ messageKey: 'errors.media.fileTooLarge' });
+    const released = await admin.mediaAsset.findUniqueOrThrow({
+      where: { id: ticket.body.assetId },
+    });
+    expect(released).toMatchObject({ processingStatus: 'failed', status: 'archived' });
+    expect(await storage.headObject(released.providerId!)).toBeNull();
+
+    // No declaration: the configured ceiling applies at completion, and a
+    // declaration above the ceiling is refused before anything is issued.
+    const protectedMedia = app.get(ConfigService).getOrThrow<{
+      maxVideoUploadBytes: number;
+    }>('protectedMedia');
+    const original = protectedMedia.maxVideoUploadBytes;
+    // Below the fixture's size, so the undeclared upload is over it.
+    protectedMedia.maxVideoUploadBytes = big.length - 1;
+    try {
+      await createUpload(
+        w,
+        { fileName: 'too-big.mp4', maxDurationSeconds: 60, sizeBytes: big.length },
+        413,
+      );
+      const undeclared = await createUpload(w, {
+        fileName: 'undeclared.mp4',
+        maxDurationSeconds: 300,
+        courseId: w.course.id,
+      });
+      expect(await putBytes(undeclared.body.uploadUrl, big)).toBe(200);
+      await request(app.getHttpServer())
+        .post(
+          `/academies/${w.academy.id}/media/video-uploads/${undeclared.body.assetId}/complete`,
+        )
+        .set(w.owner.auth)
+        .expect(413);
+      const row = await admin.mediaAsset.findUniqueOrThrow({
+        where: { id: undeclared.body.assetId },
+      });
+      expect(row.processingStatus).toBe('failed');
+      expect(await storage.headObject(row.providerId!)).toBeNull();
+    } finally {
+      protectedMedia.maxVideoUploadBytes = original;
+    }
+  });
+
   it('records `declared` provenance — never silently trusting it — when the duration cannot be parsed (D5)', async () => {
     const w = await world('complete-declared', { family: 'normal', tier: 'growth' });
     const ticket = await createUpload(w, {

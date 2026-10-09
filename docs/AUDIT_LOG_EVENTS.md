@@ -251,6 +251,8 @@ writer stores.
 | `account.deletion.code_failed` | security | platform | no | challengeId, attempts |
 | `account.deletion.locked_out` | security | platform | no | challengeId |
 | `account.deletion.confirmed` | security | platform | no | challengeId |
+| `account.phone.updated` | security | platform | no | change, country, previousCountry, verificationCleared (never the number) |
+| `account.phone.removed` | security | platform | no | country, wasVerified (never the number) |
 | `account.deleted` | security | platform | no | initiatedBy, reason, hasFeedback, sessionsRevoked |
 | `account.deleted_by_platform_owner` | security | platform | no | initiatedBy, reason, hasFeedback, sessionsRevoked |
 | `plan.created` | platform | platform | no | key |
@@ -267,6 +269,7 @@ writer stores.
 | `observability.synthetic_alert.resolved` | platform | platform | no | — |
 | `platform.contact_submission.status_changed` | platform | platform | no | status, previousStatus |
 | `platform.contact_submission.deleted` | platform | platform | no | status |
+| `platform.watermark.looked_up` | security | platform | no | found, surface, accountLinked (target label = the looked-up code; never the name, email or phone it revealed) |
 | `platform.campaign.sent` | platform | platform | no | audienceType, channels, recipientCount, mailCount, inAppCount |
 | `academy.message.sent` | academy | academy | yes | audienceType, channels, recipientCount, mailCount, inAppCount |
 
@@ -280,6 +283,10 @@ writer stores.
 - **Platform operator configuration** (`plan.*`, `platform_settings.*`,
   `payment_method.*`, `commission_config.*`, `add_on.catalog_status_changed`,
   `observability.*`, `platform.contact_submission.*`) — Platform-only.
+- **Forensic watermark lookups** (`platform.watermark.looked_up`) — every
+  lookup, found or not, is written in the same transaction as the read;
+  Platform-only, and never carries the identity the lookup disclosed
+  (docs/FORENSIC_WATERMARK.md).
 - **`domain.platform_check`** — automatic health probes; noise in a customer
   feed. `domain.platform_release` *is* shown (the customer's hostname was
   released), attributed to "Atlas".

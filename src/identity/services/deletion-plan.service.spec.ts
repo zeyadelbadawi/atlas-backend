@@ -150,6 +150,8 @@ describe('DeletionPlanService', () => {
       expect(treatmentOf(plan.lines, 'affectedLearners')).toBe('revoke');
       expect(treatmentOf(plan.lines, 'financialRecords')).toBe('retain');
       expect(treatmentOf(plan.lines, 'auditRecords')).toBe('retain');
+      // Anti-piracy evidence survives deletion (docs/FORENSIC_WATERMARK.md).
+      expect(treatmentOf(plan.lines, 'forensicWatermarks')).toBe('retain');
     });
 
     it('tombstones a learner history instead of destroying it', async () => {

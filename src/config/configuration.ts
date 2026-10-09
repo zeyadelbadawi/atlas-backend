@@ -161,6 +161,13 @@ export interface ProtectedMediaConfig {
   readonly signedUrlTtlSeconds: number;
   /** Per-file ceiling for protected uploads — video is uploaded direct-to-provider, so this governs documents and lesson images. */
   readonly maxUploadBytes: number;
+  /**
+   * W6 — per-file ceiling for a Normal-tier video PUT straight to the
+   * protected bucket (`VIDEO_MAX_UPLOAD_BYTES`). Enforced at completion for
+   * every upload, and signed into the presigned PUT as an exact
+   * `Content-Length` whenever the uploader declares `sizeBytes`.
+   */
+  readonly maxVideoUploadBytes: number;
 }
 
 /** Which `VideoProvider` implementation is wired in. `fake` is the local/test adapter; it signs nothing real and reports no DRM. */
@@ -245,7 +252,7 @@ export interface VideoProviderConfig {
   readonly signingKeyPem?: string;
   readonly webhookSecret?: string;
   readonly customerSubdomain?: string;
-  /** Playback-token lifetime. 2 hours (Phase 2 §I), bound to session and device. */
+  /** Playback-token lifetime. 10 minutes by default (W5) — see `VIDEO_PLAYBACK_TOKEN_TTL_SECONDS`. */
   readonly playbackTokenTtlSeconds: number;
 }
 
@@ -334,6 +341,18 @@ export interface BillingConfig {
  * use, matching this codebase's "one seam, never ad hoc" convention
  * (`toMinorUnits`/`buildPaymentProofStorageKey`'s identical precedent).
  */
+/** Forensic video watermark (docs/FORENSIC_WATERMARK.md). */
+export interface ForensicWatermarkConfig {
+  /** Snapshot key source: the dedicated key, else HKDF of the payment-credentials key. */
+  readonly snapshotKeySource: {
+    readonly dedicatedKeyHex: string | null;
+    readonly paymentCredentialsKeyHex: string;
+  };
+  /** Days a record is kept after it was last displayed (floor 90). */
+  readonly retentionDays: number;
+  readonly lookupRateLimit: { readonly max: number; readonly windowSeconds: number };
+}
+
 export interface PaymentConfigurationConfig {
   readonly credentialEncryptionKeyHex: string;
   /**
@@ -368,6 +387,12 @@ export interface EmailConfig {
 export interface CommunicationsConfig {
   /** Public origin of the platform web app (`PLATFORM_WEB_URL`), no trailing slash. */
   readonly platformWebUrl: string;
+  /**
+   * Optional dedicated key for one-click unsubscribe links
+   * (`UNSUBSCRIBE_TOKEN_KEY`, 64 hex). Absent → derived from the payment
+   * credentials key (see `campaigns/unsubscribe-token.ts`).
+   */
+  readonly unsubscribeTokenKeyHex?: string;
   /** The platform's display name in email branding; reuses `EMAIL_FROM_NAME`. */
   readonly platformName: string;
   /**
@@ -406,6 +431,9 @@ export type MediaArchivePurgeMode = 'off' | 'dry_run' | 'on';
 /** New Customer Onboarding rollout (`FLAG_SIGNUP_ORGANIZATION_MODE`). */
 export type SignupOrganizationMode = 'off' | 'on';
 
+/** Phone verification (docs/USER_PHONE.md) — `FLAG_PHONE_VERIFICATION_MODE`. */
+export type PhoneVerificationMode = 'off' | 'on';
+
 export interface IdentityConfig {
   readonly jwtAccessSecret: string;
   readonly jwtAccessTtlSeconds: number;
@@ -423,6 +451,14 @@ export interface IdentityConfig {
    */
   readonly signupOrganizationMode: SignupOrganizationMode;
   /**
+   * Phone verification — `FLAG_PHONE_VERIFICATION_MODE`. `off` (default):
+   * no verification is offered and nothing is ever sent. Even `on` offers
+   * nothing until a real SMS/WhatsApp provider is bound to
+   * `PHONE_VERIFICATION_PROVIDER` — none is contracted yet. See
+   * docs/USER_PHONE.md.
+   */
+  readonly phoneVerificationMode: PhoneVerificationMode;
+  /**
    * Phase 10.1 — whether registration performs the DNS deliverability
    * lookup. The disposable-domain list is unaffected and always applies.
    *
@@ -432,7 +468,21 @@ export interface IdentityConfig {
    * and broken on an offline CI runner. On everywhere else.
    */
   readonly emailDeliverabilityCheckEnabled: boolean;
-  readonly signInRateLimit: { readonly max: number; readonly windowSeconds: number };
+  readonly signInRateLimit: {
+    /** Per account from one network (ATO F7), and per known device. */
+    readonly max: number;
+    readonly windowSeconds: number;
+    /** Per client IP, across every account it tries. */
+    readonly ipMax: number;
+    /** Failed passwords per address, from anywhere, before unknown browsers are refused. */
+    readonly accountFailureCeiling: number;
+    readonly accountFailureWindowSeconds: number;
+  };
+  /** ATO F7 — the known-device cookie's key: dedicated, else derived. */
+  readonly knownDeviceKeySource: {
+    readonly dedicatedKeyHex: string | null;
+    readonly paymentCredentialsKeyHex: string;
+  };
   readonly passwordResetRateLimit: {
     readonly max: number;
     readonly windowSeconds: number;
@@ -451,6 +501,20 @@ export interface IdentityConfig {
   readonly registerRateLimit: { readonly max: number; readonly windowSeconds: number };
   /** P64 Communications C4 (§12) — email one-time codes and trusted devices. */
   readonly emailOtp: EmailOtpConfig;
+  /**
+   * ATO review F10 — the longest a session may live from sign-in, however
+   * often it refreshes (refreshTokenTtlDays is only the idle limit).
+   */
+  readonly sessionAbsoluteMaxDays: {
+    readonly management: number;
+    readonly academy: number;
+  };
+  /**
+   * ATO review F11 — from this moment a Platform Owner needs a confirmed
+   * authenticator app to use any platform route (`PlatformOwnerGuard`).
+   * `null` = not enforced (`PLATFORM_OWNER_TOTP_REQUIRED_FROM=never`).
+   */
+  readonly platformOwnerTotpRequiredFrom: Date | null;
 }
 
 /**
@@ -476,6 +540,15 @@ export type EmailOtpPolicy = 'off' | 'new_device' | 'always';
 export interface EmailOtpConfig {
   readonly management: EmailOtpPolicy;
   readonly academy: EmailOtpPolicy;
+  /**
+   * ATO review F11 — the least a PRIVILEGED management sign-in gets (a
+   * Platform Owner, or anyone who owns an organization) when the account
+   * has no confirmed authenticator app, whatever `management` says. A
+   * floor, never a ceiling: it only ever adds the emailed code. Defaults to
+   * `new_device` (a remembered browser skips it), so an email outage never
+   * locks out a privileged person on a browser they already use.
+   */
+  readonly privilegedFloor: EmailOtpPolicy;
   /** §12: 10 minutes. */
   readonly codeTtlSeconds: number;
   /** §12: 5 verify attempts, then the challenge is destroyed. */
@@ -555,6 +628,8 @@ export default () => {
     ),
     signupOrganizationMode: (env.FLAG_SIGNUP_ORGANIZATION_MODE ??
       'off') as SignupOrganizationMode,
+    phoneVerificationMode: (env.FLAG_PHONE_VERIFICATION_MODE ??
+      'off') as PhoneVerificationMode,
     emailDeliverabilityCheckEnabled:
       // `process.env` holds the raw string here (the validated boolean is not
       // written back), so 'false' must be compared, not coalesced — a bare
@@ -565,6 +640,15 @@ export default () => {
     signInRateLimit: {
       max: Number(env.AUTH_SIGNIN_RATE_LIMIT_MAX ?? 10),
       windowSeconds: Number(env.AUTH_SIGNIN_RATE_LIMIT_WINDOW_SECONDS ?? 900),
+      ipMax: Number(env.AUTH_SIGNIN_RATE_LIMIT_IP_MAX ?? 30),
+      accountFailureCeiling: Number(env.AUTH_SIGNIN_ACCOUNT_FAILURE_CEILING ?? 50),
+      accountFailureWindowSeconds: Number(
+        env.AUTH_SIGNIN_ACCOUNT_FAILURE_WINDOW_SECONDS ?? 3600,
+      ),
+    },
+    knownDeviceKeySource: {
+      dedicatedKeyHex: env.SIGNIN_DEVICE_COOKIE_KEY || null,
+      paymentCredentialsKeyHex: env.PAYMENT_CREDENTIALS_ENCRYPTION_KEY ?? '',
     },
     passwordResetRateLimit: {
       max: Number(env.AUTH_PASSWORD_RESET_RATE_LIMIT_MAX ?? 5),
@@ -581,10 +665,21 @@ export default () => {
       max: Number(env.AUTH_REGISTER_RATE_LIMIT_MAX ?? 5),
       windowSeconds: Number(env.AUTH_REGISTER_RATE_LIMIT_WINDOW_SECONDS ?? 3600),
     },
+    sessionAbsoluteMaxDays: {
+      management: Number(env.SESSION_ABSOLUTE_MAX_DAYS_MANAGEMENT ?? 30),
+      academy: Number(env.SESSION_ABSOLUTE_MAX_DAYS_ACADEMY ?? 90),
+    },
+    // ATO F11 — two weeks after this release by default; `never` disables.
+    platformOwnerTotpRequiredFrom:
+      env.PLATFORM_OWNER_TOTP_REQUIRED_FROM === 'never'
+        ? null
+        : new Date(env.PLATFORM_OWNER_TOTP_REQUIRED_FROM ?? '2026-10-24T00:00:00.000Z'),
     emailOtp: {
       // Defaults to `off` on BOTH surfaces — see `EmailOtpConfig`.
       management: (env.FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT ?? 'off') as EmailOtpPolicy,
       academy: (env.FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY ?? 'off') as EmailOtpPolicy,
+      privilegedFloor: (env.AUTH_PRIVILEGED_EMAIL_OTP_FLOOR ??
+        'new_device') as EmailOtpPolicy,
       codeTtlSeconds: Number(env.AUTH_EMAIL_OTP_CODE_TTL_SECONDS ?? 600),
       maxAttempts: Number(env.AUTH_EMAIL_OTP_MAX_ATTEMPTS ?? 5),
       maxCodesPerChallenge: Number(env.AUTH_EMAIL_OTP_MAX_CODES ?? 3),
@@ -704,6 +799,7 @@ export default () => {
     secretAccessKey: env.R2_PROTECTED_SECRET_ACCESS_KEY || env.R2_SECRET_ACCESS_KEY,
     signedUrlTtlSeconds: Number(env.PROTECTED_MEDIA_URL_TTL_SECONDS ?? 600),
     maxUploadBytes: Number(env.PROTECTED_MEDIA_MAX_UPLOAD_BYTES ?? 50 * 1024 * 1024),
+    maxVideoUploadBytes: Number(env.VIDEO_MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 * 1024),
   };
 
   const basicVideo: BasicVideoConfig = {
@@ -724,7 +820,7 @@ export default () => {
     signingKeyPem: env.CLOUDFLARE_STREAM_SIGNING_KEY_PEM || undefined,
     webhookSecret: env.CLOUDFLARE_STREAM_WEBHOOK_SECRET || undefined,
     customerSubdomain: env.CLOUDFLARE_STREAM_CUSTOMER_SUBDOMAIN || undefined,
-    playbackTokenTtlSeconds: Number(env.VIDEO_PLAYBACK_TOKEN_TTL_SECONDS ?? 2 * 60 * 60),
+    playbackTokenTtlSeconds: Number(env.VIDEO_PLAYBACK_TOKEN_TTL_SECONDS ?? 10 * 60),
   };
 
   const learningLease: LearningLeaseConfig = {
@@ -749,6 +845,18 @@ export default () => {
   const paymentConfiguration: PaymentConfigurationConfig = {
     credentialEncryptionKeyHex: env.PAYMENT_CREDENTIALS_ENCRYPTION_KEY,
     customerIdentityKeyHex: env.CUSTOMER_IDENTITY_HMAC_KEY || undefined,
+  };
+
+  const forensicWatermark: ForensicWatermarkConfig = {
+    snapshotKeySource: {
+      dedicatedKeyHex: env.WATERMARK_SNAPSHOT_KEY || null,
+      paymentCredentialsKeyHex: env.PAYMENT_CREDENTIALS_ENCRYPTION_KEY ?? '',
+    },
+    retentionDays: Number(env.WATERMARK_RETENTION_DAYS ?? 730),
+    lookupRateLimit: {
+      max: Number(env.WATERMARK_LOOKUP_RATE_LIMIT_MAX ?? 30),
+      windowSeconds: Number(env.WATERMARK_LOOKUP_RATE_LIMIT_WINDOW_SECONDS ?? 600),
+    },
   };
 
   const emailProvider: EmailProviderName = env.EMAIL_PROVIDER ?? 'stub';
@@ -780,6 +888,7 @@ export default () => {
 
   const communications: CommunicationsConfig = {
     platformWebUrl: (env.PLATFORM_WEB_URL || 'http://localhost:3001').replace(/\/+$/, ''),
+    unsubscribeTokenKeyHex: env.UNSUBSCRIBE_TOKEN_KEY || undefined,
     platformName: env.EMAIL_FROM_NAME ?? 'Atlas',
     // Defaults to `off` — see `FLAG_LIFECYCLE_SEQUENCES_MODE`.
     lifecycleSequencesMode: (env.FLAG_LIFECYCLE_SEQUENCES_MODE ??
@@ -813,6 +922,7 @@ export default () => {
     googleAuth,
     billing,
     paymentConfiguration,
+    forensicWatermark,
     email,
   };
 };

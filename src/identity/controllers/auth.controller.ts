@@ -253,8 +253,9 @@ export class AuthController {
   /**
    * Phase 10.1 — completes email verification.
    *
-   * Public by design: the emailed token is the only credential, and its
-   * recipient is by definition not signed in yet. Strictly single-use
+   * Requires the account's own session alongside the emailed token: a link
+   * opened without it is refused with `verificationSignInRequired` and NOT
+   * spent, so the owner can sign in and finish. Strictly single-use
    * underneath — a replayed token matches zero rows and is refused with
    * a generic error. Unknown and malformed tokens are indistinguishable,
    * so this endpoint cannot be used to probe which tokens exist; only the
@@ -268,8 +269,11 @@ export class AuthController {
   @Post('verify-email')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
-  async verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
-    await this.authService.verifyEmail(dto.token);
+  @UseGuards(OptionalJwtAuthGuard)
+  async verifyEmail(@Body() dto: VerifyEmailDto, @Req() request: Request): Promise<void> {
+    // The link completes only for the account's own session (ATO F1
+    // follow-up, see `EmailVerificationTokensRepository.consume`).
+    await this.authService.verifyEmail(dto.token, request.authContext?.userId ?? null);
   }
 
   /**

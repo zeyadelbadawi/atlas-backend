@@ -105,7 +105,8 @@ export class ProvisioningRequestsService {
   }
 
   /**
-   * Only an Organization OWNER may start provisioning.
+   * Only an Organization OWNER may start provisioning — or read, retry,
+   * cancel or attach a logo to a provisioning request.
    *
    * Mirrors `AcademiesService`'s `CREATES_ACADEMY_ROLES` exactly. Read
    * inside the tenant context so the membership lookup is itself
@@ -391,6 +392,11 @@ export class ProvisioningRequestsService {
     userId: string,
     requestId: string,
   ): Promise<ProvisioningRequestResponse> {
+    // Owner only, like every other provisioning route: the frontend's
+    // provisioning screens are gated on the owner-only
+    // `academy.provisioning.view`, and membership alone (a Manager, an
+    // Instructor) must not read the organization's academy pipeline.
+    await this.assertCanCreateAcademy(organizationId, userId);
     const request = await this.tenancyContextService.runInTenantContext(
       organizationId,
       (tx) => this.provisioningRequestsRepository.findById(tx, requestId),
@@ -406,6 +412,8 @@ export class ProvisioningRequestsService {
     userId: string,
     query: CollectionQueryDto,
   ): Promise<PaginatedResult<ProvisioningRequestResponse>> {
+    // Owner only — see `getRequest`.
+    await this.assertCanCreateAcademy(organizationId, userId);
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
@@ -431,6 +439,25 @@ export class ProvisioningRequestsService {
 
   /** Covers both "retry a failed step" and "resume an interrupted request" — the frontend's own single `retryProvisioning` method's doc comment: the backend, not the customer, decides what re-running the request actually means. Refused once the request has reached a real terminal state (`ready`/`cancelled`) — a genuinely failed or crash-stalled request (anything else) is always retryable. */
   async retryRequest(
+    organizationId: string,
+    userId: string,
+    requestId: string,
+  ): Promise<ProvisioningRequestResponse> {
+    // Owner only: re-running a request re-runs academy creation, the same
+    // action `createRequest` reserves for the owner. Checked before the
+    // request is even loaded, so a Manager learns nothing about it.
+    await this.assertCanCreateAcademy(organizationId, userId);
+    return this.retryAuthorizedRequest(organizationId, userId, requestId);
+  }
+
+  /**
+   * The retry itself, for a caller ALREADY authorized for this
+   * organization's request: the tenant route above (organization owner) or
+   * the Platform Owner console (`PlatformProvisioningService`, behind
+   * `PlatformOwnerGuard` and the platform-select RLS policy). Never exposed
+   * to a route without one of those two checks in front of it.
+   */
+  async retryAuthorizedRequest(
     organizationId: string,
     userId: string,
     requestId: string,
@@ -528,6 +555,17 @@ export class ProvisioningRequestsService {
 
   /** Cancels a still-in-progress request. Does NOT roll back an already-created Academy/subdomain allocation — a conservative, "no hard delete" choice (see `Reports/PROGRESS.md`'s P14 section for the documented reasoning), matching every other cancellation in this codebase being a status transition, never a destructive undo. */
   async cancelRequest(
+    organizationId: string,
+    userId: string,
+    requestId: string,
+  ): Promise<ProvisioningRequestResponse> {
+    // Owner only — cancelling the owner's academy creation is the owner's.
+    await this.assertCanCreateAcademy(organizationId, userId);
+    return this.cancelAuthorizedRequest(organizationId, userId, requestId);
+  }
+
+  /** The cancellation itself, for an already-authorized caller — see `retryAuthorizedRequest`. */
+  async cancelAuthorizedRequest(
     organizationId: string,
     userId: string,
     requestId: string,

@@ -44,6 +44,11 @@ const CONSTRAINT_MESSAGE_KEYS: Readonly<Record<string, string>> = {
   matches: 'validation:pattern',
   isInt: 'validation:integer',
   isNumber: 'validation:number',
+  // Phone number on sign-up/profile (`src/identity/phone/phone-number.validators.ts`).
+  isPhoneNumber: 'validation:invalidPhone',
+  isPhoneNumberInCountry: 'validation:phoneCountryMismatch',
+  isMobilePhoneNumber: 'validation:phoneNotMobile',
+  isPhoneCountry: 'validation:invalidPhoneCountry',
 };
 
 /** Generic fallback for constraints with no closer match (`isString`, `isBoolean`, `isIn`, `isArray`, `isObject`, `isBooleanString`, ...) — these almost always indicate a malformed request rather than a user typo, so a plain "not valid" reads correctly. */

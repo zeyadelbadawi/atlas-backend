@@ -23,7 +23,16 @@ import {
   IsUUID,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
+import {
+  IsMobilePhoneNumber,
+  IsPhoneCountry,
+  IsPhoneNumberFor,
+  IsPhoneNumberInCountry,
+  hasPhoneInput,
+} from '../phone/phone-number.validators';
+import { PHONE_INPUT_MAX_LENGTH } from '../phone/phone-number.policy';
 
 // `@IsNotEmpty()` matters beyond its literal name here: class-validator's
 // other decorators (`@IsString`, `@IsEmail`, `@MinLength`, ...) silently
@@ -81,4 +90,28 @@ export class RegisterDto {
   @IsOptional()
   @IsUUID()
   readonly planId?: string;
+
+  /**
+   * The phone number exactly as typed (national or international form) and
+   * the ISO 3166-1 alpha-2 country picked beside it. OPTIONAL on purpose:
+   * the backend deploys before the frontend, so a sign-up page that does not
+   * know these fields yet must keep working, and a Google sign-up has none.
+   * The new sign-up page requires them. When either is present both are
+   * required and strictly validated (`phone-number.policy.ts`); the server
+   * normalises to E.164 itself.
+   */
+  @ValidateIf(hasPhoneInput)
+  @IsNotEmpty()
+  @IsString()
+  @MaxLength(PHONE_INPUT_MAX_LENGTH)
+  @IsPhoneNumberFor('phoneCountry')
+  @IsPhoneNumberInCountry('phoneCountry')
+  @IsMobilePhoneNumber('phoneCountry')
+  readonly phoneNumber?: string;
+
+  @ValidateIf(hasPhoneInput)
+  @IsNotEmpty()
+  @IsString()
+  @IsPhoneCountry()
+  readonly phoneCountry?: string;
 }

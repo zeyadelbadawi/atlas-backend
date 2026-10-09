@@ -61,6 +61,7 @@ not, and in places is prohibited.
 | External bytes (R2 objects, Stream videos) | **Genuinely destroyed**, verified absent, then tombstoned. |
 | Sessions, devices, grants, leases | **Revoked immediately.** |
 | Financial and audit records | **Retained, pointing at an anonymised subject.** Never rewritten. |
+| Forensic video watermark records | **Retained, with the identity at issue time** (encrypted snapshot: name, email, phone). Anti-piracy evidence must outlive the account that leaked; readable only by a Platform Owner lookup; pruned only by retention (`WATERMARK_RETENTION_DAYS`, default 730 days after last shown). See `FORENSIC_WATERMARK.md`. |
 
 "The organization ceases to exist as a live Atlas tenant" is satisfied by rows 2–4.
 Row 5 is the part that must not be faked.

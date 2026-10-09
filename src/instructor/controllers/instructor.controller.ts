@@ -47,6 +47,7 @@ import type {
   TeachingCourseResponse,
 } from '../dto/instructor.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { SubscriptionScope } from '../../plans/decorators/subscription-scope.decorator';
 
 // P64 Phase 1 — the review surface is authorized for course instructors AND
 // the owning academy's owner/administrator/manager (`assertCanReviewCourse`),
@@ -158,6 +159,7 @@ export class InstructorController {
   }
 
   @Post('courses/:id/assignments/:assignmentId/submissions/:submissionId/grade')
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async gradeSubmission(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -192,6 +194,7 @@ export class InstructorController {
 
   @Post('courses/:id/quizzes/:quizId/attempts/:attemptId/grade')
   @HttpCode(200)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async gradeQuizAttempt(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -210,6 +213,7 @@ export class InstructorController {
 
   @Post('courses/:id/quizzes/:quizId/attempts/:attemptId/invalidate')
   @HttpCode(200)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async invalidateQuizAttempt(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -236,6 +240,7 @@ export class InstructorController {
   }
 
   @Put('courses/:id/quizzes/:quizId/overrides')
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async upsertQuizOverride(
     @Req() request: Request,
     @Param('id') courseId: string,
@@ -252,6 +257,7 @@ export class InstructorController {
 
   @Delete('courses/:id/quizzes/:quizId/overrides/:studentId')
   @HttpCode(204)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
   async deleteQuizOverride(
     @Req() request: Request,
     @Param('id') courseId: string,

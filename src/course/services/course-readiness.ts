@@ -20,14 +20,13 @@
  *
  * ENFORCEMENT — PHASE 1 IS ADVISORY ONLY. `PUBLISH_READINESS_ENFORCED` is
  * the one-line switch. While it is `false` (today), `CoursesService.publish`
- * never consults this module and the `PATCH … { status }` path is
- * untouched, so every existing publisher (API journeys that publish empty
+ * never consults this module, so every existing publisher (API journeys that publish empty
  * courses, `courses.e2e-spec.ts`, J6) keeps working. Server enforcement is a
  * pending product decision. Turning it on means, together:
  *   1. set `PUBLISH_READINESS_ENFORCED = true` (publish then refuses with
  *      409 `errors.course.notReady` + the failing checks);
- *   2. close the bypass: `UpdateCourseDto.status` can still set
- *      `published` directly — gate or remove it in the same change;
+ *   2. (done) the `PATCH … { status }` bypass is closed: `UpdateCourseDto`
+ *      no longer accepts `status`, so publish is the only way to publish;
  *   3. update the backend e2e and the FE journeys that publish empty
  *      courses (see the W6 investigation, "Tests to update").
  */

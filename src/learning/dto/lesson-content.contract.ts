@@ -14,6 +14,7 @@
  * cache never holds a copy that outlives them (Phase 2 §I).
  */
 import type { LessonCompletionRule, LessonContentKind } from '@prisma/client';
+import type { ForensicWatermarkDisplay } from '../../forensic-watermark/dto/forensic-watermark.contract';
 
 /**
  * Every machine-readable reason a content decision can carry. CLOSED
@@ -62,19 +63,30 @@ export const CONTENT_ACCESS_REASONS = [
   'noContent',
   /** The lesson's video asset exists but has not finished processing. Same disclosure rule as `noContent`. */
   'processing',
+  /**
+   * The forensic watermark could not be issued, so no video credential was
+   * signed (fail closed — docs/FORENSIC_WATERMARK.md). 503: transient.
+   */
+  'watermarkUnavailable',
 ] as const;
 export type ContentAccessReason = (typeof CONTENT_ACCESS_REASONS)[number];
 
 /**
- * The per-viewer overlay the player draws over protected video.
+ * The forensic watermark the player draws over every video
+ * (docs/FORENSIC_WATERMARK.md). MANDATORY: `enabled` is true on every grant
+ * that carries a playable video (hosted or YouTube embed) and an academy
+ * cannot turn it off.
  *
- * A DETERRENT, AND LABELLED AS ONE (D1). It does not stop a determined
- * person with a camera; what it does is make a casually re-shared
- * recording trace back to the account it came from, which is the actual
- * threat for paid course content. `text` is built server-side from the
- * viewer's own identity so a client cannot blank it by lying.
+ * A DETERRENT AND A TRACE, AND LABELLED AS SUCH (D1). It does not stop a
+ * screen recording; it makes a re-published recording trace back to the
+ * account and session it came from. Everything here is built server-side
+ * from the viewer's own identity, so a client cannot blank it by lying.
+ *
+ * `text` is the legacy field (the previously deployed player draws it
+ * verbatim) and now carries `CODE · masked identity`; the structured fields
+ * (`code`, `kind`, `maskedIdentity`, `host`) are present whenever `enabled`.
  */
-export interface ContentWatermarkContract {
+export interface ContentWatermarkContract extends Partial<ForensicWatermarkDisplay> {
   readonly enabled: boolean;
   readonly text: string;
 }
@@ -183,7 +195,33 @@ export interface LessonContentGrantResponse {
   /** Where this learner left off, so the player can resume without a second round-trip. */
   readonly resumePositionSeconds: number;
   readonly expiresAt: string;
+  /**
+   * Academy offline work — whether the learner's browser may keep a copy
+   * of THIS lesson's text to read without a connection, and until when.
+   *
+   * The server decides, never the client: only a `text` lesson (no video,
+   * no file, no signed URL of any kind is needed to read it), only for a
+   * signed-in learner reading through their own enrolment (never an
+   * anonymous preview, never a staff preview). The client stores
+   * `title` + `bodyHtml` only — never the rest of this grant — per user and
+   * per academy origin, deletes it at `until`, at sign-out, and the moment
+   * the server refuses this lesson again (revoked enrolment, unpublished
+   * lesson). Video is never offered offline: its credentials are short-lived
+   * and not device-bound, and there is no DRM.
+   *
+   * Optional so older clients are unaffected.
+   */
+  readonly offlineReading?: OfflineReadingPermission;
 }
+
+export interface OfflineReadingPermission {
+  readonly allowed: boolean;
+  /** ISO time after which a stored copy must be deleted. Null when not allowed. */
+  readonly until: string | null;
+}
+
+/** How long a learner's browser may keep a text lesson for offline reading. */
+export const OFFLINE_READING_TTL_SECONDS = 72 * 60 * 60;
 
 /** 409 body when another device holds the lease — carries what the takeover dialog needs to name the other device. */
 export interface SessionConflictDetails {

@@ -25,14 +25,24 @@
  * The queue hop is unchanged, so this is no more asynchronous than
  * before: the outbox row is written here and the dispatcher sends it,
  * with the one-minute sweep as the backstop if the enqueue hint is lost.
+ *
+ * ATO review F9 — the account lookup and the token are minted HERE, not in
+ * the request: `POST /auth/password-reset/request` only enqueues the typed
+ * address, so it costs the same whether or not an account exists. An
+ * address with no account simply ends the job.
  */
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
+import type { IdentityConfig } from '../../config/configuration';
 import { CommunicationService } from '../../communications/services/communication.service';
 import { PrincipalResolverService } from '../../tenancy/services/principal-resolver.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { recoveryAcademyId } from '../utils/recovery-surface.util';
+import { generateOpaqueToken, hashOpaqueToken } from '../utils/opaque-token.util';
+import { UsersRepository } from '../repositories/users.repository';
+import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
 import {
   PASSWORD_RESET_EMAIL_QUEUE,
   PasswordResetEmailJobPayload,
@@ -46,15 +56,21 @@ export class PasswordResetEmailProcessor extends WorkerHost {
     private readonly communicationService: CommunicationService,
     private readonly tenancyContextService: TenancyContextService,
     private readonly principalResolver: PrincipalResolverService,
+    private readonly usersRepository: UsersRepository,
+    private readonly passwordResetTokensRepository: PasswordResetTokensRepository,
+    private readonly configService: ConfigService,
   ) {
     super();
   }
 
   async process(job: Job<PasswordResetEmailJobPayload>): Promise<void> {
-    // Deliberately does not log `job.data` — it carries `rawToken`.
+    // Deliberately does not log `job.data` — it names an address (and a
+    // legacy job carries a raw token).
     this.logger.log({ jobId: job.id }, 'Processing password-reset email job');
 
-    const { userId, rawToken, hostAcademyId } = job.data;
+    const delivery = await this.resolveDelivery(job.data);
+    if (!delivery) return; // No account for that address — nothing to send.
+    const { userId, rawToken, hostAcademyId } = delivery;
     // Requested on an academy website by one of that academy's accounts →
     // that academy's email and reset page; otherwise the management one.
     // Decided here, after the request was already answered the same way
@@ -85,5 +101,25 @@ export class PasswordResetEmailProcessor extends WorkerHost {
     );
 
     await this.communicationService.enqueueAfterCommit(outboxId);
+  }
+
+  /**
+   * The account, token and host to deliver. A request job (ATO F9) looks
+   * the address up and mints the token; a legacy job already carries them.
+   */
+  private async resolveDelivery(
+    data: PasswordResetEmailJobPayload,
+  ): Promise<{ userId: string; rawToken: string; hostAcademyId?: string | null } | null> {
+    if (data.kind !== 'request') return data;
+    const user = await this.usersRepository.findByEmail(data.email);
+    if (!user) return null;
+    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
+    const rawToken = generateOpaqueToken();
+    await this.passwordResetTokensRepository.create({
+      userId: user.id,
+      tokenHash: hashOpaqueToken(rawToken),
+      expiresAt: new Date(Date.now() + identity.passwordResetTokenTtlMinutes * 60 * 1000),
+    });
+    return { userId: user.id, rawToken, hostAcademyId: data.hostAcademyId };
   }
 }

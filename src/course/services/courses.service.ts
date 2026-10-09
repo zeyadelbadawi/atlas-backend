@@ -265,7 +265,8 @@ export class CoursesService {
             description: payload.description,
             thumbnailUrl: payload.thumbnail,
             visibility: payload.visibility,
-            status: payload.status,
+            // No `status`: lifecycle changes go through `setPublicationState`
+            // (publish/unpublish) and `archive` only — see `UpdateCourseDto`.
             ...(payload.categoryId !== undefined
               ? {
                   category: payload.categoryId

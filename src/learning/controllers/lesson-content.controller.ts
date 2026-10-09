@@ -30,6 +30,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -47,7 +48,9 @@ import {
   learningRequestContext,
 } from '../dto/learning-request.util';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
+import { ForensicWatermarkService } from '../../forensic-watermark/services/forensic-watermark.service';
 import { PlaybackHeartbeatDto, ReleaseLeaseDto } from '../dto/playback.dto';
+import { LessonOpOrderingDto } from '../dto/complete-lesson.dto';
 import type { LessonContentGrantResponse } from '../dto/lesson-content.contract';
 import type { CourseSequenceResponse } from '../dto/course-sequence.contract';
 import type { PlaybackHeartbeatResponse } from '../services/playback.service';
@@ -62,6 +65,7 @@ export class LessonContentController {
     private readonly courseProgressService: CourseProgressService,
     private readonly academySurfaceService: AcademySurfaceService,
     private readonly metrics: LearningMetricsService,
+    private readonly forensicWatermarks: ForensicWatermarkService,
   ) {}
 
   @Get(':id/lessons/:lessonId/content')
@@ -143,11 +147,23 @@ export class LessonContentController {
     @Param('id') courseId: string,
     @Body() body: PlaybackHeartbeatDto,
   ): Promise<PlaybackHeartbeatResponse> {
-    return this.playbackService.recordHeartbeat(request.authContext!.userId, courseId, {
+    const result = await this.playbackService.recordHeartbeat(
+      request.authContext!.userId,
+      courseId,
+      {
+        lessonId: body.lessonId,
+        positionSeconds: body.positionSeconds,
+        leaseId: body.leaseId,
+      },
+    );
+    // Forensic watermark "still on screen" — best-effort, gated to one write
+    // a minute (docs/FORENSIC_WATERMARK.md). Never fails the heartbeat.
+    await this.forensicWatermarks.touchFromHeartbeat({
+      userId: request.authContext!.userId,
+      sessionId: request.authContext!.sessionId ?? null,
       lessonId: body.lessonId,
-      positionSeconds: body.positionSeconds,
-      leaseId: body.leaseId,
     });
+    return result;
   }
 
   /**
@@ -179,11 +195,14 @@ export class LessonContentController {
     @Req() request: Request,
     @Param('id') courseId: string,
     @Param('lessonId') lessonId: string,
-  ): Promise<CourseProgressResponse> {
+    // Academy offline work — optional `?opId=&clientOpAt=` ordering stamp.
+    @Query() ordering: LessonOpOrderingDto,
+  ): Promise<CourseProgressResponse & { readonly applied?: boolean }> {
     return this.courseProgressService.undoCompleteLesson(
       request.authContext!.userId,
       courseId,
       lessonId,
+      ordering,
     );
   }
 }

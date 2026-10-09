@@ -160,6 +160,14 @@ const EnvSchema = z.object({
   // traffic informs the final numbers.
   AUTH_SIGNIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   AUTH_SIGNIN_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
+  // ATO review F7 — lockout-resistant sign-in throttling.
+  AUTH_SIGNIN_RATE_LIMIT_IP_MAX: z.coerce.number().int().positive().default(30),
+  AUTH_SIGNIN_ACCOUNT_FAILURE_CEILING: z.coerce.number().int().positive().default(50),
+  AUTH_SIGNIN_ACCOUNT_FAILURE_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3600),
 
   // Redis-backed password-reset-request rate limiting (same rationale).
   AUTH_PASSWORD_RESET_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
@@ -231,8 +239,33 @@ const EnvSchema = z.object({
   FLAG_AUTH_EMAIL_OTP_MODE_ACADEMY: z
     .enum(['off', 'new_device', 'always'])
     .default('off'),
+  // ATO review F11 — the emailed-code floor for privileged management
+  // sign-ins without an authenticator app (see `EmailOtpConfig.privilegedFloor`).
+  AUTH_PRIVILEGED_EMAIL_OTP_FLOOR: z
+    .enum(['off', 'new_device', 'always'])
+    .default('new_device'),
+  // ATO review F10 — absolute session lifetimes (days from sign-in).
+  SESSION_ABSOLUTE_MAX_DAYS_MANAGEMENT: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(365)
+    .optional(),
+  SESSION_ABSOLUTE_MAX_DAYS_ACADEMY: z.coerce.number().int().min(1).max(365).optional(),
+  // ATO review F11 — when Platform Owners must have an authenticator app
+  // (ISO 8601 instant), or `never`.
+  PLATFORM_OWNER_TOTP_REQUIRED_FROM: z
+    .string()
+    .refine((value) => value === 'never' || !Number.isNaN(Date.parse(value)), {
+      message: 'must be an ISO 8601 date-time or "never"',
+    })
+    .optional(),
   // New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md §2.
   FLAG_SIGNUP_ORGANIZATION_MODE: z.enum(['off', 'on']).default('off'),
+  // Phone verification (docs/USER_PHONE.md). `off` (default) offers none.
+  // `on` still offers none until an SMS/WhatsApp provider is bound — there is
+  // no provider today, so the flag is a switch for the future, not a sender.
+  FLAG_PHONE_VERIFICATION_MODE: z.enum(['off', 'on']).default('off'),
   // Google Identity (docs/GOOGLE_IDENTITY.md). `off` (default): every
   // `/auth/google/*` route answers 404 and the sign-in pages offer no Google
   // button. `allowlist`: academy websites in FLAG_AUTH_GOOGLE_ACADEMY_IDS
@@ -459,6 +492,14 @@ const EnvSchema = z.object({
     .int()
     .positive()
     .default(50 * 1024 * 1024),
+  // W6 — the largest Normal-tier video a presigned PUT may store. 5 GiB is
+  // also S3/R2's own single-PUT maximum, so it is the ceiling as well.
+  VIDEO_MAX_UPLOAD_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(5 * 1024 * 1024 * 1024)
+    .default(5 * 1024 * 1024 * 1024),
   VIDEO_PROVIDER: z.enum(['fake', 'cloudflare_stream', 'r2_worker']).default('fake'),
   // P64 Phase 2 (DL-19) — the NORMAL tier's delivery gate. Optional: the
   // tier reports itself unconfigured without them rather than failing
@@ -490,10 +531,18 @@ const EnvSchema = z.object({
     .number()
     .int()
     .positive()
-    // 2 hours (Phase 2 §I) — the ceiling, not just the default, for the
-    // same reason as above.
+    // W5 — 10 minutes by default, the same life the Normal tier's gate
+    // token and every protected-file presign already have. The token is an
+    // unbound bearer credential (Stream cannot tie it to a session or
+    // device), so its lifetime IS its revocation window. The learner player
+    // refreshes the grant at 70% of the credential's remaining life and
+    // swaps the source when the attached one expires (atlas
+    // `useLessonGrant`/`useVideoSource`), so a short token costs one
+    // position-preserving re-attach per period, never a dead video.
+    // The 2-hour ceiling is kept only so an environment that still sets the
+    // old value explicitly keeps booting; it should be unset.
     .max(2 * 60 * 60)
-    .default(2 * 60 * 60),
+    .default(10 * 60),
   LEARNING_LEASE_TTL_SECONDS: z.coerce.number().int().positive().max(600).default(60),
   // W2 — how long a non-terminal provisioning request may go without any
   // step starting, finishing or failing before the status endpoint reports
@@ -667,6 +716,49 @@ const EnvSchema = z.object({
       'CUSTOMER_IDENTITY_HMAC_KEY must be a 64-character hex string (32 raw bytes).',
     )
     .optional(),
+  // ATO review F7 — optional dedicated key for the known-device sign-in
+  // cookie; derived from PAYMENT_CREDENTIALS_ENCRYPTION_KEY when unset.
+  SIGNIN_DEVICE_COOKIE_KEY: z
+    .string()
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'SIGNIN_DEVICE_COOKIE_KEY must be a 64-character hex string.',
+    )
+    .optional(),
+  // ATO review key separation — optional dedicated key for one-click
+  // unsubscribe links; derived from PAYMENT_CREDENTIALS_ENCRYPTION_KEY when
+  // unset. No longer tied to JWT_ACCESS_SECRET.
+  UNSUBSCRIBE_TOKEN_KEY: z
+    .string()
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'UNSUBSCRIBE_TOKEN_KEY must be a 64-character hex string.',
+    )
+    .optional(),
+  // Forensic video watermark (docs/FORENSIC_WATERMARK.md) — optional
+  // dedicated AES-256-GCM key for the identity snapshot; HKDF-derived from
+  // PAYMENT_CREDENTIALS_ENCRYPTION_KEY under its own label when unset. Never
+  // rotate whichever source is in use once snapshots exist: every stored
+  // snapshot would become unreadable.
+  WATERMARK_SNAPSHOT_KEY: z
+    .string()
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'WATERMARK_SNAPSHOT_KEY must be a 64-character hex string.',
+    )
+    .optional(),
+  // How long a forensic watermark record is kept after it was last shown.
+  // Bounded below by the 90-day floor the database's delete policy also
+  // enforces, so a configuration mistake cannot erase fresh evidence.
+  WATERMARK_RETENTION_DAYS: z.coerce.number().int().min(90).max(3650).default(730),
+  // Platform Owner watermark lookups per owner per window (rate limit).
+  WATERMARK_LOOKUP_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(1000).default(30),
+  WATERMARK_LOOKUP_RATE_LIMIT_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(10)
+    .max(86400)
+    .default(600),
 
   // --- Phase P17 — Notifications, Email & Search (master plan §12
   // "Transactional email", §21 P17) ---
@@ -808,6 +900,21 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
       'R2_PROTECTED_ACCESS_KEY_ID and R2_PROTECTED_SECRET_ACCESS_KEY must be set together — ' +
         'refusing to start with half a protected-bucket credential, which would silently fall ' +
         'back to the public media token and lose the isolation those variables exist to provide.',
+    );
+  }
+
+  // W15 — the protected tier exists to keep lesson files, submissions and
+  // video out of the publicly-served bucket. Pointing it at that same
+  // bucket boots fine and silently publishes everything it was meant to
+  // protect through `public/media`, so it is refused here instead.
+  if (
+    parsed.data.R2_PROTECTED_BUCKET &&
+    parsed.data.R2_PROTECTED_BUCKET.toLowerCase() ===
+      parsed.data.R2_BUCKET.trim().toLowerCase()
+  ) {
+    throw new Error(
+      'R2_PROTECTED_BUCKET must not be the same bucket as R2_BUCKET — refusing to start with ' +
+        'protected content stored in the publicly-served media bucket.',
     );
   }
 

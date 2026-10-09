@@ -1,4 +1,16 @@
-/** `PATCH /academies/:id/courses/:id` request — matches `UpdateCoursePayload` (`course.types.ts`) field-for-field. `status` here is a general field update (any of the three enum values); the dedicated `publish`/`unpublish` endpoints are the controlled workflow transitions (see `CoursesService`). */
+/**
+ * `PATCH /academies/:id/courses/:id` request — matches `UpdateCoursePayload`
+ * (`course.types.ts`) field-for-field, EXCEPT `status`.
+ *
+ * `status` is deliberately absent: a course's lifecycle moves only through
+ * the dedicated `publish`/`unpublish`/archive (`DELETE`) endpoints, which
+ * are the controlled transitions (`CoursesService.setPublicationState`,
+ * its readiness hook and its audit rows). Accepting `status` here let a
+ * plain field edit publish or archive a course past all of that (the
+ * bypass `course-readiness.ts` flagged). With the global
+ * `forbidNonWhitelisted` pipe a `status` key is now a 400, never a silent
+ * no-op. The dashboard's course editor never sends it.
+ */
 import {
   ArrayMaxSize,
   IsArray,
@@ -14,7 +26,6 @@ import { Type } from 'class-transformer';
 import {
   COURSE_LEVEL_VALUES,
   COURSE_SLUG_REGEX,
-  COURSE_STATUS_VALUES,
   COURSE_VISIBILITY_VALUES,
   MAX_COURSE_DESCRIPTION_LENGTH,
   MAX_COURSE_LANGUAGE_LENGTH,
@@ -67,10 +78,6 @@ export class UpdateCourseDto {
   @IsOptional()
   @IsIn(COURSE_VISIBILITY_VALUES)
   readonly visibility?: (typeof COURSE_VISIBILITY_VALUES)[number];
-
-  @IsOptional()
-  @IsIn(COURSE_STATUS_VALUES)
-  readonly status?: (typeof COURSE_STATUS_VALUES)[number];
 
   // ---- P64 Phase 4 catalog metadata ----
 

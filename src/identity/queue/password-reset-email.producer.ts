@@ -1,8 +1,8 @@
 /**
  * PasswordResetEmailProducer — the `Service → Domain Event → BullMQ Queue`
- * half of master plan §11/§12 for password-reset delivery. Never logs the
- * job payload (it contains `rawToken`) — BullMQ persists it in Redis only,
- * which is expected (that's the queue doing its job), not a log leak.
+ * half of master plan §11/§12 for password-reset delivery. Since ATO F9 the
+ * job carries only the typed address and host academy (the worker mints the
+ * token); it is still never logged, as it names an address.
  */
 import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -10,6 +10,7 @@ import { Queue } from 'bullmq';
 import {
   PASSWORD_RESET_EMAIL_QUEUE,
   PasswordResetEmailJobPayload,
+  PasswordResetRequestJobPayload,
 } from './password-reset-email.types';
 
 @Injectable()
@@ -19,7 +20,7 @@ export class PasswordResetEmailProducer {
     private readonly queue: Queue<PasswordResetEmailJobPayload>,
   ) {}
 
-  async enqueue(payload: PasswordResetEmailJobPayload): Promise<void> {
+  async enqueue(payload: PasswordResetRequestJobPayload): Promise<void> {
     await this.queue.add('send', payload, {
       // Backoff retry, dead-letter-equivalent after N attempts (master plan
       // §12's "Transactional email" row). BullMQ has no built-in
@@ -30,9 +31,8 @@ export class PasswordResetEmailProducer {
       attempts: 5,
       backoff: { type: 'exponential', delay: 2000 },
       removeOnComplete: true,
-      // ATO review F12 — the payload carries the raw reset token. A failed
-      // job is kept long enough to investigate (and outlives the 45-minute
-      // token), then removed, instead of holding a token in Redis forever.
+      // ATO review F12 — a failed job (it names an address) is kept long
+      // enough to investigate, then removed, never held in Redis forever.
       removeOnFail: { age: 24 * 60 * 60 },
     });
   }

@@ -30,12 +30,10 @@
  * `videoStorage` plan-limit check, byte-precise). `PlansModule` depends
  * on neither `MediaModule` nor `AcademyModule`, so this stays a clean DAG.
  *
- * Exports `MediaService` as of Phase 4 (P24) — `LearningModule`'s
- * `AssignmentsService` needs it to wire real assignment-submission
- * attachments through this same R2 pipeline (`uploadForSubmission`), the
- * exact "reuse the existing architecture" instruction that phase's own
- * roadmap entry states explicitly, rather than a second, parallel upload
- * implementation. `MediaModule` depends on neither `LearningModule` nor
+ * Exports `MediaService` as of Phase 4 (P24). Submission attachments
+ * no longer go through it: since P64 Phase 3 they land in the protected
+ * tier (`ProtectedMediaService`), and W1 removed the old public-bucket
+ * `uploadForSubmission` path entirely. `MediaModule` depends on neither `LearningModule` nor
  * `CourseModule`, so `LearningModule` importing `MediaModule` stays a
  * clean, acyclic DAG.
  */
@@ -64,6 +62,8 @@ import { FlagsModule } from '../common/flags/flags.module';
 import { ConfigService } from '@nestjs/config';
 import type { VideoProviderConfig } from '../config/configuration';
 import { MediaService } from './services/media.service';
+import { PublicMediaAccessService } from './services/public-media-access.service';
+import { PublicMediaLinkSigner } from './services/public-media-link.signer';
 import { MediaAssetsRepository } from './repositories/media-assets.repository';
 import { MEDIA_STORAGE_PROVIDER } from './storage/media-storage.interface';
 import { R2StorageProvider } from './storage/r2-media-storage.provider';
@@ -90,6 +90,9 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
   providers: [
     MediaService,
     MediaAssetsRepository,
+    // W1 — what `public/media` may serve, and the signed links for the rest.
+    PublicMediaAccessService,
+    PublicMediaLinkSigner,
     { provide: MEDIA_STORAGE_PROVIDER, useClass: R2StorageProvider },
     MediaProcessingProducer,
     MediaProcessingProcessor,
@@ -151,6 +154,9 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
   // must not be (see the P53 migration's header).
   exports: [
     MediaService,
+    // W1 — `ContentGrantSigner` signs legacy public lesson files and
+    // submission attachments through this instead of returning their URL.
+    PublicMediaLinkSigner,
     // P64 Phase 3 — students upload submission attachments into the protected tier.
     ProtectedMediaService,
     MEDIA_STORAGE_PROVIDER,

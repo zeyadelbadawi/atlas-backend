@@ -220,7 +220,7 @@ describe('Smart member invitation + academy join (e2e)', () => {
   // ==================================================================
 
   describe('SMI-LOOKUP — the staff dialog email check', () => {
-    it('SMI-LOOKUP-01 — answers only a status, plus the display name when an account exists', async () => {
+    it('SMI-LOOKUP-01 — ATO F5: answers only about THIS academy, never whether an Atlas account exists, never a name', async () => {
       const { owner, academy: a } = await freshAcademy('lk-shape');
       const { academy: other } = await freshAcademy('lk-shape-other');
       const learner = await learnerAt(other, 'lk-shape-learner', 'Ahmed Existing');
@@ -228,16 +228,18 @@ describe('Smart member invitation + academy join (e2e)', () => {
       const fresh = await lookup(a, owner.token, uniqueTestEmail('lk-new')).expect(200);
       expect(fresh.body).toEqual({ status: 'new' });
 
-      const existing = await lookup(a, owner.token, learner.email.toUpperCase()).expect(
+      // A learner of ANOTHER organization's academy reads exactly like an
+      // address nobody uses: the lookup is not a directory of Atlas users.
+      const elsewhere = await lookup(a, owner.token, learner.email.toUpperCase()).expect(
         200,
       );
-      expect(existing.body).toEqual({ status: 'existing', name: 'Ahmed Existing' });
-      // Nothing else about the account — no id, email, orgs, academies, roles.
-      expect(JSON.stringify(existing.body)).not.toContain(learner.userId);
-      expect(JSON.stringify(existing.body)).not.toContain(other.id);
+      expect(elsewhere.body).toEqual({ status: 'new' });
+      expect(JSON.stringify(elsewhere.body)).not.toContain('Ahmed');
+      expect(JSON.stringify(elsewhere.body)).not.toContain(learner.userId);
+      expect(JSON.stringify(elsewhere.body)).not.toContain(other.id);
     });
 
-    it('SMI-LOOKUP-02 — pending-setup, already-member and unavailable accounts', async () => {
+    it('SMI-LOOKUP-02 — already-member is the only other answer; pending-setup and suspended accounts are indistinguishable from new', async () => {
       const { owner, academy: a } = await freshAcademy('lk-states');
 
       const invitedEmail = uniqueTestEmail('lk-invited');
@@ -251,13 +253,11 @@ describe('Smart member invitation + academy join (e2e)', () => {
       ).toEqual({
         status: 'already_member',
       });
-      // Same academy, as a learner: the account exists but never finished setup.
+      // Same academy, as a learner: not a learner here yet — no name, no
+      // "never finished setup".
       expect(
         (await lookup(a, owner.token, invitedEmail, 'student').expect(200)).body,
-      ).toEqual({
-        status: 'existing_pending_setup',
-        name: 'Pending Person',
-      });
+      ).toEqual({ status: 'new' });
 
       const suspended = await staffAccount('lk-suspended');
       await admin.user.update({
@@ -265,7 +265,7 @@ describe('Smart member invitation + academy join (e2e)', () => {
         data: { status: 'suspended' },
       });
       expect((await lookup(a, owner.token, suspended.email).expect(200)).body).toEqual({
-        status: 'unavailable',
+        status: 'new',
       });
     });
 
@@ -434,9 +434,10 @@ describe('Smart member invitation + academy join (e2e)', () => {
         data: { emailVerifiedAt: new Date() },
       });
 
-      const res = await add(a, owner.token, 'student', { email: staff.email }).expect(
-        201,
-      );
+      const res = await add(a, owner.token, 'student', {
+        email: staff.email,
+        name: 'Typed Name',
+      }).expect(201);
       expect(res.body.outcome).toBe('added');
       const row = await admin.academyStudent.findFirstOrThrow({
         where: { userId: staff.userId, academyId: a.id },
@@ -448,7 +449,10 @@ describe('Smart member invitation + academy join (e2e)', () => {
       );
       expect(await outboxCount(staff.userId, 'academy.learner.invited')).toBe(0);
 
-      const again = await add(a, owner.token, 'student', { email: staff.email });
+      const again = await add(a, owner.token, 'student', {
+        email: staff.email,
+        name: 'Typed Name',
+      });
       expect(again.status).toBe(409);
       expect(again.body.error.messageKey).toBe('errors.academy.studentAlreadyMember');
     });
@@ -476,25 +480,32 @@ describe('Smart member invitation + academy join (e2e)', () => {
       );
     });
 
-    it('SMI-ADD-05 — a new learner needs a name; a suspended account cannot be added', async () => {
+    it('SMI-ADD-05 — ATO F5: every add needs a name, whether or not the address has an account; a suspended account cannot be added', async () => {
       const { owner, academy: a } = await freshAcademy('add-refuse');
       const email = uniqueTestEmail('add-refuse-noname');
-      const noName = await add(a, owner.token, 'student', { email });
-      expect(noName.status).toBe(400);
-      expect(noName.body.error.messageKey).toBe(
-        'errors.academy.nameRequiredForNewAccount',
-      );
+      const existing = await staffAccount('add-refuse-existing');
+      // A missing name is refused the same way for a new address and for an
+      // existing account — the request cannot tell the two apart.
+      const answers = [];
+      for (const role of ['student', 'manager', 'instructor'] as const) {
+        for (const target of [email, existing.email]) {
+          const response = await add(a, owner.token, role, { email: target });
+          answers.push({ status: response.status, kind: response.body.error?.kind });
+        }
+      }
+      expect(new Set(answers.map((answer) => JSON.stringify(answer))).size).toBe(1);
+      expect(answers[0].status).toBe(400);
       expect(await admin.user.count({ where: { email } })).toBe(0);
-
-      const noNameStaff = await add(a, owner.token, 'manager', { email });
-      expect(noNameStaff.status).toBe(404);
 
       const suspended = await staffAccount('add-refuse-suspended');
       await admin.user.update({
         where: { id: suspended.userId },
         data: { status: 'suspended' },
       });
-      const refused = await add(a, owner.token, 'instructor', { email: suspended.email });
+      const refused = await add(a, owner.token, 'instructor', {
+        email: suspended.email,
+        name: 'Typed Name',
+      });
       expect(refused.status).toBe(409);
       expect(refused.body.error.messageKey).toBe('errors.academy.accountUnavailable');
     });
@@ -513,7 +524,10 @@ describe('Smart member invitation + academy join (e2e)', () => {
       // Already a member: refused inside the same transaction that would
       // have created the account.
       const { owner, academy: b } = await freshAcademy('add-orphan-b');
-      await add(b, owner.token, 'manager', { email: owner.email }).expect(409);
+      await add(b, owner.token, 'manager', {
+        email: owner.email,
+        name: 'Typed Name',
+      }).expect(409);
       expect(await admin.user.count({ where: { email: owner.email } })).toBe(1);
     });
 
@@ -560,7 +574,10 @@ describe('Smart member invitation + academy join (e2e)', () => {
         where: { userId: learner.userId, academyId: a.id },
         data: { blockedAt: new Date() },
       });
-      const res = await add(a, owner.token, 'student', { email: learner.email });
+      const res = await add(a, owner.token, 'student', {
+        email: learner.email,
+        name: 'Typed Name',
+      });
       expect(res.status).toBe(403);
       expect(res.body.error.messageKey).toBe('errors.academy.studentBlocked');
     });

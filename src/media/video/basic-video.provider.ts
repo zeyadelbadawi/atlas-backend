@@ -181,7 +181,12 @@ export class BasicVideoProvider implements VideoProvider {
     });
     return {
       providerId: key,
-      uploadUrl: await this.storage.presignPut(key, 'video/mp4'),
+      uploadUrl: await this.storage.presignPut(
+        key,
+        'video/mp4',
+        undefined,
+        input.contentLength,
+      ),
       // The presign ceiling governs; reporting the real expiry rather than
       // an optimistic one is the D-3 lesson applied here from the start.
       expiresAt: new Date(Date.now() + this.storage.maxTtlSeconds * 1000),

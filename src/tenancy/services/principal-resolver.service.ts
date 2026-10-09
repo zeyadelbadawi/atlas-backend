@@ -45,6 +45,8 @@ export interface Principal {
   readonly kind: PrincipalKind;
   readonly isPlatformOwner: boolean;
   readonly organizationMembershipCount: number;
+  /** Owns at least one organization (ATO review F11 — a privileged account). */
+  readonly ownsAnOrganization: boolean;
   readonly academyStaff: readonly { academyId: string; role: string; status: string }[];
   readonly academies: readonly LearnerAcademy[];
 }
@@ -144,6 +146,7 @@ export class PrincipalResolverService {
       kind,
       isPlatformOwner,
       organizationMembershipCount: memberships.length,
+      ownsAnOrganization: memberships.some((membership) => membership.role === 'owner'),
       academyStaff: activeStaff.map((row) => ({
         academyId: row.academyId,
         role: row.role,

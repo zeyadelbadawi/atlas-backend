@@ -6,8 +6,6 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  HttpException,
-  HttpStatus,
   Inject,
   Injectable,
   Logger,
@@ -19,9 +17,13 @@ import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type { AuthMethod, User } from '@prisma/client';
-import type { IdentityConfig } from '../../config/configuration';
+import type { EmailOtpPolicy, IdentityConfig } from '../../config/configuration';
 import { UsersRepository } from '../repositories/users.repository';
 import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
+import {
+  createPhoneForNewAccount,
+  requireNormalizedPhone,
+} from '../phone/user-phone.service';
 import { deriveDeviceLabel } from '../utils/request-metadata.util';
 import { SessionActivityService } from './session-activity.service';
 import { SessionRevocationService } from './session-revocation.service';
@@ -31,7 +33,7 @@ import {
 } from '../dto/user-session.contract';
 import { PasswordResetTokensRepository } from '../repositories/password-reset-tokens.repository';
 import { PasswordCredentialsService } from './password-credentials.service';
-import { AuthRateLimiterService } from './auth-rate-limiter.service';
+import { SignInThrottleService } from './sign-in-throttle.service';
 import { AccessTokenService } from './access-token.service';
 import { SIGNUP_ORGANIZATION_PORT } from './signup-organization.port';
 import type {
@@ -111,6 +113,7 @@ const VERIFICATION_FAILURE_MESSAGE_KEYS = {
   invalid: 'errors.auth.invalidVerificationToken',
   expired: 'errors.auth.verificationTokenExpired',
   used: 'errors.auth.verificationTokenUsed',
+  signInRequired: 'errors.auth.verificationSignInRequired',
 } as const;
 
 /**
@@ -243,10 +246,11 @@ export class AuthService {
     // `UsersService` already inject this service the same way).
     private readonly communicationService: CommunicationService,
     private readonly staffRecipients: AcademyStaffRecipientsService,
-    // Launch Stabilization A4 — the per-account sign-in budget, shared by
-    // the existing-account academy signup so registration can never be a
-    // second, unmetered password-guessing endpoint.
-    private readonly rateLimiter: AuthRateLimiterService,
+    // Launch Stabilization A4 — the sign-in budgets, shared by the
+    // existing-account academy signup so registration can never be a
+    // second, unmetered password-guessing endpoint; and (ATO F7) where
+    // every failed password is counted toward the address's ceiling.
+    private readonly signInThrottle: SignInThrottleService,
     // New Customer Onboarding — provided by the global `OnboardingModule`;
     // absent in a module graph without it, which leaves the organization
     // signup unavailable (the safe direction). See the port's doc comment.
@@ -408,6 +412,13 @@ export class AuthService {
     /** New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md §3.2. */
     organizationName?: string;
     planId?: string;
+    /**
+     * Phone number as typed + chosen country (docs/USER_PHONE.md). Optional:
+     * an older sign-up page sends neither. Stored only for a brand-new
+     * account; never applied to an existing one from a sign-up form.
+     */
+    phoneNumber?: string;
+    phoneCountry?: string;
     /** Forensic only (recorded on a trial redemption), never a decision input. */
     context?: { readonly ipAddress?: string; readonly userAgent?: string };
   }): Promise<RegistrationResult> {
@@ -506,6 +517,13 @@ export class AuthService {
     },
   ): Promise<RegistrationResult> {
     const email = normalizeEmail(input.email);
+    // Phone number — re-normalised here, never taken from the client as-is
+    // (the DTO has already validated it). Checked before anything is read,
+    // so a bad number is answered identically for every address.
+    const phone =
+      input.phoneNumber !== undefined || input.phoneCountry !== undefined
+        ? requireNormalizedPhone(input.phoneNumber, input.phoneCountry)
+        : undefined;
     // W4 — a name made only of marks, invisibles or spaces has nothing to
     // compare and is refused before anything else (for every address alike).
     if ((await sqlNameKey(this.prisma, input.name)) === '') throw nameInvalid('name');
@@ -517,7 +535,9 @@ export class AuthService {
     // An academy signup can prove an existing account (its own password),
     // so it is metered like a sign-in — for EVERY address, existing or not,
     // so the budget itself says nothing about which addresses exist.
-    if (academySignup) await this.consumeSignupPasswordBudget(email);
+    if (academySignup) {
+      await this.signInThrottle.enforce({ email, ipAddress: input.context?.ipAddress });
+    }
     // Launch Stabilization A4 — one global identity may be a learner at many
     // academies. An academy signup with an email that already has an Atlas
     // account ADDS this academy to that account once the account's own
@@ -660,6 +680,11 @@ export class AuthService {
           });
           if (passwordHash) {
             await this.passwordCredentials.storeHashed(tx, userId, passwordHash);
+          }
+          if (phone) {
+            // Same transaction, same self context: the account and its number
+            // exist together or not at all.
+            await createPhoneForNewAccount(tx, userId, phone);
           }
           if (external) {
             await tx.userAuthIdentity.create({
@@ -916,22 +941,6 @@ export class AuthService {
    * rules. The account owner is told by email (a leaked password must not
    * be able to quietly attach someone to academies).
    */
-  /** The sign-in budget (per address) for a signup that may prove a password. */
-  private async consumeSignupPasswordBudget(email: string): Promise<void> {
-    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
-    const budget = await this.rateLimiter.consume(
-      `signin:account:${email}`,
-      identity.signInRateLimit.max,
-      identity.signInRateLimit.windowSeconds,
-    );
-    if (!budget.allowed) {
-      throw new HttpException(
-        { messageKey: 'errors.auth.rateLimited' },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-  }
-
   /**
    * Decision 3 — the only place an existing address learns that somebody
    * tried to register it: an email to that address, at most one an hour
@@ -969,6 +978,7 @@ export class AuthService {
     input: Parameters<AuthService['register']>[0],
   ): Promise<RegistrationResult | null> {
     const passwordValid = await this.passwordCredentials.verify(user.id, input.password);
+    if (!passwordValid) await this.signInThrottle.recordFailure(email);
     // Not proven (a wrong password, or an invited/deleted account that
     // cannot be joined to anything): the caller answers exactly as for a
     // new address and emails the owner — nothing is disclosed here.
@@ -1010,10 +1020,12 @@ export class AuthService {
     const user = await this.usersRepository.findByEmail(email);
     if (!user) {
       await this.passwordCredentials.verifyForUnknownAccount(input.password);
+      await this.signInThrottle.recordFailure(email);
       recordAcademyJoin('invalid_credentials');
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
     const passwordValid = await this.passwordCredentials.verify(user.id, input.password);
+    if (!passwordValid) await this.signInThrottle.recordFailure(email);
     if (!passwordValid || user.status === 'deleted' || user.status === 'invited') {
       recordAcademyJoin('invalid_credentials');
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
@@ -1284,12 +1296,20 @@ export class AuthService {
    * used, which lets the page say something useful without turning the
    * endpoint into a probe.
    */
-  async verifyEmail(rawToken: string): Promise<void> {
+  async verifyEmail(rawToken: string, callerUserId: string | null): Promise<void> {
     const outcome = VERIFICATION_TOKEN_FORMAT.test(rawToken)
-      ? await this.emailVerificationTokensRepository.consume(hashOpaqueToken(rawToken))
+      ? await this.emailVerificationTokensRepository.consume(
+          hashOpaqueToken(rawToken),
+          callerUserId,
+        )
       : ({ status: 'invalid' } as const);
 
     if (outcome.status === 'verified') return;
+    if (outcome.status === 'signInRequired') {
+      throw new ForbiddenException({
+        messageKey: VERIFICATION_FAILURE_MESSAGE_KEYS.signInRequired,
+      });
+    }
     throw new BadRequestException({
       messageKey: VERIFICATION_FAILURE_MESSAGE_KEYS[outcome.status],
     });
@@ -1356,13 +1376,18 @@ export class AuthService {
     const email = normalizeEmail(input.email);
     const user = await this.usersRepository.findByEmail(email);
 
+    // ATO F7 — every failed password counts toward the address's
+    // account-wide ceiling, known address or not (counting only known ones
+    // would make the ceiling an existence oracle).
     if (!user) {
       await this.passwordCredentials.verifyForUnknownAccount(input.password);
+      await this.signInThrottle.recordFailure(email);
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
 
     const passwordValid = await this.passwordCredentials.verify(user.id, input.password);
     if (!passwordValid) {
+      await this.signInThrottle.recordFailure(email);
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
 
@@ -1473,6 +1498,7 @@ export class AuthService {
         surface: selection.surface,
         academyId: selection.academyId,
         trustCookie: context?.trustCookie,
+        minimumPolicy: await this.privilegedEmailOtpFloor(user, selection.surface),
       })
     ) {
       const challenge = await this.emailOtpService.issue({
@@ -1497,6 +1523,28 @@ export class AuthService {
     await this.usersRepository.touchLastSignInAt(user.id);
 
     return session;
+  }
+
+  /**
+   * ATO review F11 — a Platform Owner, or anyone who owns an organization,
+   * signing in to the management surface without a confirmed authenticator
+   * app (that branch returned above) gets AT LEAST the configured floor
+   * (`new_device` by default), whatever `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT`
+   * says — so a phished or reused password alone never opens the whole
+   * platform or an organization's money and staff. Academy-surface sessions
+   * carry learner access only and keep the academy policy.
+   */
+  private async privilegedEmailOtpFloor(
+    user: User,
+    surface: SignInSurface,
+  ): Promise<EmailOtpPolicy | undefined> {
+    if (surface !== 'management') return undefined;
+    const floor =
+      this.configService.getOrThrow<IdentityConfig>('identity').emailOtp.privilegedFloor;
+    if (floor === 'off') return undefined;
+    if (user.isPlatformOwner) return floor;
+    const principal = await this.principalResolver.resolve(user.id);
+    return principal.ownsAnOrganization ? floor : undefined;
   }
 
   /**
@@ -1800,18 +1848,26 @@ export class AuthService {
       Date.now() + identity.refreshTokenTtlDays * 24 * 60 * 60 * 1000,
     );
 
-    const result = await this.refreshTokensRepository.rotate(presentedHash, {
-      tokenHash: newHash,
-      expiresAt,
-      // Phase 10 — re-read from the LIVE request so `lastUsedAt` reflects
-      // real session activity and a moved/upgraded client updates its own
-      // row. `rotate` falls back to the claimed row's values when a
-      // client sends no User-Agent, so a refresh never blanks these out.
-      ipAddress: context?.ipAddress,
-      locationCountry: context?.locationCountry,
-      userAgent: context?.userAgent,
-      deviceLabel: deriveDeviceLabel(context?.userAgent),
-    });
+    const days = (n: number) => n * 24 * 60 * 60 * 1000;
+    const result = await this.refreshTokensRepository.rotate(
+      presentedHash,
+      {
+        tokenHash: newHash,
+        expiresAt,
+        // Phase 10 — re-read from the LIVE request so `lastUsedAt` reflects
+        // real session activity and a moved/upgraded client updates its own
+        // row. `rotate` falls back to the claimed row's values when a
+        // client sends no User-Agent, so a refresh never blanks these out.
+        ipAddress: context?.ipAddress,
+        locationCountry: context?.locationCountry,
+        userAgent: context?.userAgent,
+        deviceLabel: deriveDeviceLabel(context?.userAgent),
+      },
+      {
+        management: days(identity.sessionAbsoluteMaxDays.management),
+        academy: days(identity.sessionAbsoluteMaxDays.academy),
+      },
+    );
 
     if (!result) {
       // A token that was already rotated away and is presented again later
@@ -1861,16 +1917,30 @@ export class AuthService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
     }
 
+    // ATO review F10 — the session reached its absolute maximum: the
+    // presented token was spent, no replacement was made, and the rest of
+    // the family ends now. The same generic 401 as any dead refresh token;
+    // the person simply signs in again. Not reuse — no reuse audit.
+    const created = result.created;
+    if (!created) {
+      await this.refreshTokensRepository.revokeSessionForUser(
+        result.claimed.sessionId,
+        result.claimed.userId,
+      );
+      await this.sessionRevocationService.markRevoked(result.claimed.sessionId);
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
+    }
+
     // A session outlives nothing about its account: once the account is no
     // longer active (suspended, deleted, back to invited), a refresh ends the
     // session instead of renewing it — the same refusal a new sign-in gets.
-    const owner = await this.usersRepository.findById(result.created.userId);
+    const owner = await this.usersRepository.findById(created.userId);
     if (!owner || owner.status !== 'active') {
       await this.refreshTokensRepository.revokeSessionForUser(
-        result.created.sessionId,
-        result.created.userId,
+        created.sessionId,
+        created.userId,
       );
-      await this.sessionRevocationService.markRevoked(result.created.sessionId);
+      await this.sessionRevocationService.markRevoked(created.sessionId);
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
     }
 
@@ -1884,8 +1954,8 @@ export class AuthService {
     // is also what lets the session list mark the caller's own row
     // `isCurrent` after the token has rotated.
     const accessToken = this.accessTokenService.issue({
-      sub: result.created.userId,
-      sid: result.created.sessionId,
+      sub: created.userId,
+      sid: created.sessionId,
     });
 
     return {
@@ -2015,34 +2085,16 @@ export class AuthService {
     email: string,
     context: { readonly hostname?: string } = {},
   ): Promise<void> {
-    const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     const hostAcademyId = await this.academySurfaceService.resolveHostAcademyId(
       context.hostname,
     );
-    const normalized = normalizeEmail(email);
-    const user = await this.usersRepository.findByEmail(normalized);
-
-    if (!user) {
-      return; // No account — silently succeed, matching the frontend's own copy: "If an account exists with that email...".
-    }
-
-    const rawToken = generateOpaqueToken();
-    const tokenHash = hashOpaqueToken(rawToken);
-    const expiresAt = new Date(
-      Date.now() + identity.passwordResetTokenTtlMinutes * 60 * 1000,
-    );
-
-    await this.passwordResetTokensRepository.create({
-      userId: user.id,
-      tokenHash,
-      expiresAt,
-    });
-
+    // ATO review F9 — the same work for every address: one queue add. The
+    // account lookup, the token and the email happen in the worker, so
+    // neither the response time nor an error can tell an address with an
+    // account from one without ("If an account exists with that email…").
     await this.passwordResetEmailProducer.enqueue({
-      userId: user.id,
-      email: user.email,
-      rawToken,
-      expiresAt: expiresAt.toISOString(),
+      kind: 'request',
+      email: normalizeEmail(email),
       ...(hostAcademyId ? { hostAcademyId } : {}),
     });
   }
@@ -2306,8 +2358,17 @@ export class AuthService {
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     const rawRefreshToken = generateOpaqueToken();
     const tokenHash = hashOpaqueToken(rawRefreshToken);
+    // ATO review F10 — never longer than the surface's absolute maximum.
     const expiresAt = new Date(
-      Date.now() + identity.refreshTokenTtlDays * 24 * 60 * 60 * 1000,
+      Date.now() +
+        Math.min(
+          identity.refreshTokenTtlDays,
+          identity.sessionAbsoluteMaxDays[selection.surface],
+        ) *
+          24 *
+          60 *
+          60 *
+          1000,
     );
 
     // Phase 10 — a new device session begins here. Every later rotation

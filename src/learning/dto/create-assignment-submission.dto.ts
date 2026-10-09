@@ -9,7 +9,7 @@
  * "never trust the client-side check alone" discipline applied to
  * `CoursePricingInputDto` during the P5 closure pass.
  */
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsInt, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
 import { MAX_ASSIGNMENT_RESPONSE_LENGTH } from './learning.constants';
 
 export class CreateAssignmentSubmissionDto {
@@ -27,4 +27,26 @@ export class CreateAssignmentSubmissionDto {
   @IsOptional()
   @IsString()
   readonly attachmentAssetId?: string;
+
+  /**
+   * Academy offline work — the client's id for THIS submit action, reused on
+   * every retry of it (including one replayed from the offline outbox). A
+   * replay returns the original submission instead of submitting again.
+   * Optional: older clients send none and behave exactly as before.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{8,100}$/)
+  readonly idempotencyKey?: string;
+
+  /**
+   * The `submittedRevision` the learner saw when they pressed Submit. If the
+   * server has moved past it, this request is a replay of a submit that
+   * already landed (or a submit made elsewhere since): it is never applied
+   * again, so a grade given in between is never reset.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  readonly baseRevision?: number;
 }

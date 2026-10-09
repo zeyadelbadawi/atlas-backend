@@ -81,6 +81,15 @@ export interface SaveAnswersResponse {
   readonly savedAt: string | null;
   readonly serverNow: string;
   readonly deadlineAt: string | null;
+  /**
+   * Only when `applied` is false: the learner's own answers as the server
+   * holds them at `revision` (no correctness, nothing a session read does
+   * not already return). Lets the client merge its unsaved edits onto the
+   * newer server copy and retry at `revision + 1` instead of silently
+   * dropping them — the stale-revision case is two tabs, or a tab that
+   * reloaded while a save was in flight. Optional: older clients ignore it.
+   */
+  readonly answers?: readonly AttemptAnswerResponse[];
 }
 
 export interface RecordEventsResponse {

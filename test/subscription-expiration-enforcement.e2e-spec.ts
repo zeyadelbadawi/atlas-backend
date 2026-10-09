@@ -25,6 +25,7 @@ import {
   seedAcademy,
   seedAcademyMember,
   seedActiveSubscriptionForOrg,
+  seedCourse,
   seedOrganizationWithOwner,
   seedPlan,
 } from './utils/db-admin';
@@ -175,6 +176,75 @@ describe('Subscription expiration enforcement (e2e)', () => {
       .expect(403);
 
     expect(refused.body.error.code).toBe('SUBSCRIPTION_REQUIRED');
+  });
+
+  // A5 — routes that scope themselves by COURSE or BLOG POST (no tenant
+  // guard, no :academyId) used to be skipped by the interceptor entirely.
+  it('refuses course authoring, grading, moderation and blog mutations once expired', async () => {
+    const { owner, org, academy } = await seedTenant('exp-a5');
+    const course = await seedCourse(admin, academy.id, 'exp-a5-course');
+    const auth = { Authorization: `Bearer ${owner.accessToken}` };
+    const quizId = '00000000-0000-4000-8000-000000000001';
+    const attemptId = '00000000-0000-4000-8000-000000000002';
+
+    const post = await request(app.getHttpServer())
+      .post('/blog-posts')
+      .set(auth)
+      .send({
+        academyId: academy.id,
+        title: 'Before expiry',
+        slug: `before-expiry-${Date.now()}`,
+        content: 'Hello.',
+      })
+      .expect(201);
+
+    const calls: ReadonlyArray<readonly ['post' | 'patch' | 'put', string]> = [
+      ['post', `/courses/${course.id}/quizzes`],
+      ['patch', `/courses/${course.id}/quizzes/${quizId}`],
+      ['post', `/courses/${course.id}/assignments`],
+      ['post', `/courses/${course.id}/announcements`],
+      ['post', `/courses/${course.id}/forum/threads/${quizId}/lock`],
+      ['post', `/courses/${course.id}/reviews/${quizId}/approve`],
+      [
+        'post',
+        `/review/courses/${course.id}/quizzes/${quizId}/attempts/${attemptId}/grade`,
+      ],
+      ['put', `/instructor/courses/${course.id}/quizzes/${quizId}/overrides`],
+      ['post', '/blog-posts'],
+      ['patch', `/blog-posts/${post.body.id as string}`],
+    ];
+    const send = (method: 'post' | 'patch' | 'put', path: string) =>
+      request(app.getHttpServer())
+        [method](path)
+        .set(auth)
+        .send({ academyId: academy.id });
+
+    // While active, none of these is refused for a billing reason (they may
+    // well fail validation or find nothing — that is the handler's answer).
+    for (const [method, path] of calls) {
+      const res = await send(method, path);
+      expect({ path, code: res.body?.error?.code }).not.toEqual({
+        path,
+        code: 'SUBSCRIPTION_REQUIRED',
+      });
+    }
+
+    await expire(org.id);
+
+    for (const [method, path] of calls) {
+      const res = await send(method, path);
+      expect({ path, status: res.status, code: res.body?.error?.code }).toEqual({
+        path,
+        status: 403,
+        code: 'SUBSCRIPTION_REQUIRED',
+      });
+    }
+
+    // Reads are never blocked.
+    await request(app.getHttpServer())
+      .get(`/courses/${course.id}/quizzes`)
+      .set(auth)
+      .expect((res) => expect(res.status).not.toBe(403));
   });
 
   it('refuses a media upload once expired', async () => {

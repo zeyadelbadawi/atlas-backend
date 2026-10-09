@@ -169,8 +169,15 @@ describe('Phase 10.1 signup email security (e2e) — P101-MAIL-001..012', () => 
     await register(email).expect(201);
     const token = await waitForVerificationToken(email);
 
+    // Completed from the account's own session (ATO F1 — a link alone
+    // verifies nothing; see EVL-012).
+    const session = await request(app.getHttpServer())
+      .post('/auth/sign-in')
+      .send({ email, password: PASSWORD })
+      .expect(200);
     await request(app.getHttpServer())
       .post('/auth/verify-email')
+      .set('Authorization', `Bearer ${session.body.accessToken}`)
       .send({ token })
       .expect(200);
 

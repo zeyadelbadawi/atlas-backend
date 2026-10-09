@@ -23,7 +23,7 @@
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
@@ -38,6 +38,7 @@ import {
 } from './utils/db-admin';
 import { hashEmail } from '../src/communications/services/suppression.service';
 import { CampaignWorkerService } from '../src/communications/campaigns/campaign-worker.service';
+import { unsubscribeKey } from '../src/communications/campaigns/unsubscribe-token';
 import { LinkBuilderService } from '../src/communications/services/link-builder.service';
 import { StubEmailProvider } from '../src/identity/services/stub-email.provider';
 
@@ -787,6 +788,47 @@ describe('W3-compose — campaigns (e2e)', () => {
       await request(server())
         .post('/communications/unsubscribe?token=abc.def')
         .expect(400);
+    });
+
+    it('issues v2 links and still honours a v1 link sent before the key change', async () => {
+      const url = links.unsubscribe(learnerIds[0], 'engagement')!;
+      const token = new URL(url).searchParams.get('token')!;
+      const [payload] = token.split('.');
+      expect(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')).v).toBe(2);
+
+      // This fixture is shared with later tests: put its preferences back.
+      const before = await admin.user.findUniqueOrThrow({ where: { id: learnerIds[0] } });
+
+      // A v1 link exactly as the old key (from JWT_ACCESS_SECRET) signed it.
+      const legacyPayload = Buffer.from(
+        JSON.stringify({
+          v: 1,
+          u: learnerIds[0],
+          c: 'engagement',
+          e: Math.floor(Date.now() / 1000) + 3600,
+        }),
+      ).toString('base64url');
+      const legacyMac = createHmac(
+        'sha256',
+        unsubscribeKey(process.env.JWT_ACCESS_SECRET!),
+      )
+        .update(legacyPayload)
+        .digest('base64url');
+      await request(server())
+        .post(`/communications/unsubscribe?token=${legacyPayload}.${legacyMac}`)
+        .expect(200);
+      const user = await admin.user.findUniqueOrThrow({ where: { id: learnerIds[0] } });
+      expect(
+        (
+          user.preferences as {
+            notifications: { categories: { engagement: { email: boolean } } };
+          }
+        ).notifications.categories.engagement.email,
+      ).toBe(false);
+      await admin.user.update({
+        where: { id: learnerIds[0] },
+        data: { preferences: before.preferences ?? undefined },
+      });
     });
   });
 

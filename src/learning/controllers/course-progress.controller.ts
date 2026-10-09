@@ -32,7 +32,7 @@ export class CourseProgressController {
     @Req() request: Request,
     @Param('id') courseId: string,
     @Body() body: CompleteLessonDto,
-  ): Promise<CourseProgressResponse> {
+  ): Promise<CourseProgressResponse & { readonly applied?: boolean }> {
     return this.courseProgressService.completeLesson(
       request.authContext!.userId,
       courseId,

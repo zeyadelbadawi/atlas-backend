@@ -16,9 +16,11 @@
  *
  * The mirror of that rule is equally important and is the easiest thing to
  * break with a naive `{ ...defaults, ...stored }`-style merge in reverse:
- * an owner who deliberately turned something OFF must stay off. A default
- * that overwrote an explicit `false` would silently re-enable a watermark
- * an academy chose not to show.
+ * an owner who deliberately turned a player deterrent OFF must stay off.
+ *
+ * THE WATERMARK IS THE EXCEPTION, ON PURPOSE (docs/FORENSIC_WATERMARK.md):
+ * it is mandatory, so a stored `false` or custom text from before that
+ * change resolves to "on, per viewer" — never honoured.
  */
 import {
   DEFAULT_CONTENT_PROTECTION,
@@ -89,7 +91,7 @@ describe('resolveContentProtection — partial and explicit values', () => {
    * off — a default that won here would re-enable a watermark an academy
    * deliberately removed.
    */
-  it('honours every explicit false rather than overwriting it with a default', () => {
+  it('honours every explicit deterrent false — but never a watermark false', () => {
     expect(
       resolveContentProtection({
         watermark: false,
@@ -98,7 +100,7 @@ describe('resolveContentProtection — partial and explicit values', () => {
         disableContextMenu: false,
       }),
     ).toEqual({
-      watermark: false,
+      watermark: true,
       watermarkText: null,
       disableDownload: false,
       disablePip: false,
@@ -135,7 +137,7 @@ describe('resolveContentProtection — partial and explicit values', () => {
       somethingElse: 'ignored',
     });
     expect(resolved).toEqual({
-      watermark: false,
+      watermark: true,
       watermarkText: null,
       disableDownload: true,
       disablePip: true,
@@ -147,44 +149,26 @@ describe('resolveContentProtection — partial and explicit values', () => {
   });
 });
 
-describe('resolveContentProtection — watermarkText', () => {
+describe('resolveContentProtection — the watermark is mandatory', () => {
   /*
-   * Null means "use the viewer's own short id", which is the identifying
-   * overlay the watermark exists for. A blank string is not an override,
-   * it is an empty overlay — so blank must become null rather than
-   * silently switching the watermark off while claiming it is on.
+   * Custom text used to REPLACE the viewer's identity on screen, which made
+   * a leaked recording untraceable. It is no longer honoured: whatever an
+   * older release stored, the overlay is the per-viewer forensic code.
    */
-  it('resolves a blank string to null', () => {
-    expect(resolveContentProtection({ watermarkText: '' }).watermarkText).toBeNull();
-  });
-
-  it('resolves a whitespace-only string to null', () => {
-    expect(resolveContentProtection({ watermarkText: '   ' }).watermarkText).toBeNull();
-    expect(resolveContentProtection({ watermarkText: '\t\n ' }).watermarkText).toBeNull();
-  });
-
-  it('trims and keeps a real override', () => {
+  it('ignores stored custom text', () => {
     expect(
       resolveContentProtection({ watermarkText: '  Atlas Academy \n' }).watermarkText,
-    ).toBe('Atlas Academy');
+    ).toBeNull();
+    expect(resolveContentProtection({ watermarkText: '' }).watermarkText).toBeNull();
+    expect(resolveContentProtection({ watermarkText: 42 }).watermarkText).toBeNull();
   });
 
-  it('keeps a real override even when the watermark itself is off', () => {
-    // The text is stored settings, not a second switch; `watermark` is the
-    // switch, and the two are resolved independently.
+  it('ignores a stored watermark=false, with or without text', () => {
     const resolved = resolveContentProtection({
       watermark: false,
       watermarkText: 'Atlas Academy',
     });
-    expect(resolved.watermark).toBe(false);
-    expect(resolved.watermarkText).toBe('Atlas Academy');
-  });
-
-  it('resolves a non-string watermarkText to null', () => {
-    expect(resolveContentProtection({ watermarkText: 42 }).watermarkText).toBeNull();
-    expect(resolveContentProtection({ watermarkText: null }).watermarkText).toBeNull();
-    expect(
-      resolveContentProtection({ watermarkText: { text: 'nope' } }).watermarkText,
-    ).toBeNull();
+    expect(resolved.watermark).toBe(true);
+    expect(resolved.watermarkText).toBeNull();
   });
 });
