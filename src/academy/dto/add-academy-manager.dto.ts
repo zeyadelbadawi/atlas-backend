@@ -13,18 +13,22 @@
  * `AcademiesService.addManager`'s doc comment for the full flow this
  * request drives.
  */
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class AddAcademyManagerDto {
   @IsNotEmpty()
   @IsEmail()
   readonly email!: string;
 
-  /** Required only when creating a brand-new account (no existing user for `email`). */
-  @IsOptional()
+  /**
+   * Always required (ATO review F5): it is used only if the address has no
+   * account yet — an existing account keeps its own name — but asking for
+   * it every time means the request can never reveal which case applies.
+   */
   @IsString()
   @MinLength(2)
-  readonly name?: string;
+  @MaxLength(120)
+  readonly name!: string;
 
   /**
    * Launch Stabilization A2 (D2) — DEPRECATED and ignored. A brand-new

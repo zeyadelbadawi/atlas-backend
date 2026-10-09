@@ -111,6 +111,7 @@ const VERIFICATION_FAILURE_MESSAGE_KEYS = {
   invalid: 'errors.auth.invalidVerificationToken',
   expired: 'errors.auth.verificationTokenExpired',
   used: 'errors.auth.verificationTokenUsed',
+  signInRequired: 'errors.auth.verificationSignInRequired',
 } as const;
 
 /**
@@ -1284,12 +1285,20 @@ export class AuthService {
    * used, which lets the page say something useful without turning the
    * endpoint into a probe.
    */
-  async verifyEmail(rawToken: string): Promise<void> {
+  async verifyEmail(rawToken: string, callerUserId: string | null): Promise<void> {
     const outcome = VERIFICATION_TOKEN_FORMAT.test(rawToken)
-      ? await this.emailVerificationTokensRepository.consume(hashOpaqueToken(rawToken))
+      ? await this.emailVerificationTokensRepository.consume(
+          hashOpaqueToken(rawToken),
+          callerUserId,
+        )
       : ({ status: 'invalid' } as const);
 
     if (outcome.status === 'verified') return;
+    if (outcome.status === 'signInRequired') {
+      throw new ForbiddenException({
+        messageKey: VERIFICATION_FAILURE_MESSAGE_KEYS.signInRequired,
+      });
+    }
     throw new BadRequestException({
       messageKey: VERIFICATION_FAILURE_MESSAGE_KEYS[outcome.status],
     });

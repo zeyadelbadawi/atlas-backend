@@ -8,14 +8,18 @@
  * email becomes an invited account, which is the only case that needs
  * `name` (the service answers 400 `nameRequiredForNewAccount` without it).
  */
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateAcademyStudentDto {
-  /** Required only when creating a brand-new account (no existing user for `email`). */
-  @IsOptional()
+  /**
+   * Always required (ATO review F5): it is used only if the address has no
+   * account yet — an existing account keeps its own name — but asking for
+   * it every time means the request can never reveal which case applies.
+   */
   @IsString()
   @MinLength(2)
-  readonly name?: string;
+  @MaxLength(120)
+  readonly name!: string;
 
   @IsNotEmpty()
   @IsEmail()

@@ -20,14 +20,7 @@ function counter(name: string, help: string, labelNames: readonly string[]): Cou
 }
 
 /** What the staff member lookup answered (or why it did not). */
-export type MemberLookupResult =
-  | 'new'
-  | 'existing'
-  | 'pending_setup'
-  | 'already_member'
-  | 'unavailable'
-  | 'denied'
-  | 'rate_limited';
+export type MemberLookupResult = 'new' | 'already_member' | 'denied' | 'rate_limited';
 
 /** The role a member was added with. */
 export type MemberAddRole = 'manager' | 'instructor' | 'student';

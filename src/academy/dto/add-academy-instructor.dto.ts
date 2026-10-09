@@ -5,17 +5,22 @@
  * a brand-new account and grant it in one action via `email` + `name` +
  * `password`. See `AcademiesService.addInstructor`'s doc comment.
  */
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class AddAcademyInstructorDto {
   @IsNotEmpty()
   @IsEmail()
   readonly email!: string;
 
-  @IsOptional()
+  /**
+   * Always required (ATO review F5): it is used only if the address has no
+   * account yet — an existing account keeps its own name — but asking for
+   * it every time means the request can never reveal which case applies.
+   */
   @IsString()
   @MinLength(2)
-  readonly name?: string;
+  @MaxLength(120)
+  readonly name!: string;
 
   /**
    * Launch Stabilization A2 (D2) — DEPRECATED and ignored. A brand-new

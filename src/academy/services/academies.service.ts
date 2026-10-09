@@ -1619,14 +1619,14 @@ export class AcademiesService {
             role,
           );
 
+          // ATO review F5 — the answer is about THIS academy only: whether
+          // the address is already in it, never whether it has an Atlas
+          // account elsewhere, and never a name.
           const user = await tx.user.findUnique({
             where: { email: normalizeEmail(email) },
-            select: { id: true, name: true, status: true },
+            select: { id: true },
           });
           if (!user) return { status: 'new' };
-          if (user.status === 'suspended' || user.status === 'deleted') {
-            return { status: 'unavailable' };
-          }
           const alreadyHere =
             role === 'student'
               ? await this.academyStudentsRepository.findForUserInAcademy(
@@ -1639,15 +1639,10 @@ export class AcademiesService {
                   academyId,
                   user.id,
                 );
-          if (alreadyHere) return { status: 'already_member' };
-          return user.status === 'invited'
-            ? { status: 'existing_pending_setup', name: user.name }
-            : { status: 'existing', name: user.name };
+          return alreadyHere ? { status: 'already_member' } : { status: 'new' };
         },
       );
-      recordMemberLookup(
-        answer.status === 'existing_pending_setup' ? 'pending_setup' : answer.status,
-      );
+      recordMemberLookup(answer.status);
       return answer;
     } catch (error) {
       if (error instanceof ForbiddenException) recordMemberLookup('denied');

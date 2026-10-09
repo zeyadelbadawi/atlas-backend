@@ -68,8 +68,12 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
   let stubEmail: StubEmailProvider;
   let dispatcher: CommunicationDispatchService;
   let flushRateLimitKeys: () => Promise<void>;
+  // EVL-010 signs a learner in on their academy's own host, which needs the
+  // platform base domain those hosts live under.
+  const savedBaseDomain = process.env.PLATFORM_BASE_DOMAIN;
 
   beforeAll(async () => {
+    process.env.PLATFORM_BASE_DOMAIN = 'academies.atlas.test';
     const testApp = await createTestApp({
       overrides: (builder) =>
         builder
@@ -100,6 +104,8 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
     await flushRateLimitKeys();
     await admin.$disconnect();
     await app.close();
+    if (savedBaseDomain === undefined) delete process.env.PLATFORM_BASE_DOMAIN;
+    else process.env.PLATFORM_BASE_DOMAIN = savedBaseDomain;
   });
 
   beforeEach(async () => {
@@ -107,7 +113,12 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
   });
 
   const http = () => request(app.getHttpServer());
-  const verify = (token: unknown) => http().post('/auth/verify-email').send({ token });
+  /** With `accessToken`, submitted from the account's own session (required to verify — ATO F1). */
+  const verify = (token: unknown, accessToken?: string) => {
+    const call = http().post('/auth/verify-email');
+    if (accessToken) call.set('Authorization', `Bearer ${accessToken}`);
+    return call.send({ token });
+  };
   const messageKey = (response: request.Response): string | undefined =>
     response.body?.error?.messageKey;
 
@@ -147,11 +158,20 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
     return token;
   }
 
-  async function signIn(email: string): Promise<string> {
-    const response = await http()
-      .post('/auth/sign-in')
-      .send({ email, password: PASSWORD })
-      .expect(200);
+  async function signIn(
+    email: string,
+    academy?: { readonly host: string; readonly academyId: string },
+  ): Promise<string> {
+    const call = http().post('/auth/sign-in');
+    if (academy) call.set('Host', academy.host);
+    const response = await call.send(
+      academy
+        ? { email, password: PASSWORD, surface: 'academy', academyId: academy.academyId }
+        : { email, password: PASSWORD },
+    );
+    if (response.status !== 200) {
+      throw new Error(`Sign-in failed: ${response.status} ${JSON.stringify(response.body)}`);
+    }
     const accessToken = response.body.accessToken as string | undefined;
     if (!accessToken) throw new Error('Sign-in did not return an access token.');
     return accessToken;
@@ -172,7 +192,7 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
     const { email, userId } = await register('evl001');
     const token = await waitForToken(email);
 
-    await verify(token).expect(200);
+    await verify(token, await signIn(email)).expect(200);
 
     const user = await admin.user.findUniqueOrThrow({ where: { id: userId } });
     expect(user.emailVerifiedAt).toBeInstanceOf(Date);
@@ -200,7 +220,7 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
   it('EVL-003 — a replayed link is refused as already used', async () => {
     const { email } = await register('evl003');
     const token = await waitForToken(email);
-    await verify(token).expect(200);
+    await verify(token, await signIn(email)).expect(200);
 
     const replay = await verify(token).expect(400);
     expect(messageKey(replay)).toBe('errors.auth.verificationTokenUsed');
@@ -244,14 +264,17 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
       (await admin.user.findUniqueOrThrow({ where: { id: userId } })).emailVerifiedAt,
     ).toBeNull();
 
-    await verify(second).expect(200);
+    await verify(second, accessToken).expect(200);
   });
 
   it('EVL-006 — the same link submitted concurrently verifies exactly once', async () => {
     const { email, userId } = await register('evl006');
     const token = await waitForToken(email);
+    const accessToken = await signIn(email);
 
-    const responses = await Promise.all(Array.from({ length: 5 }, () => verify(token)));
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () => verify(token, accessToken)),
+    );
     const statuses = responses.map((response) => response.status).sort();
     expect(statuses).toEqual([200, 400, 400, 400, 400]);
     for (const response of responses.filter((r) => r.status === 400)) {
@@ -304,7 +327,7 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
     expect(values.expiresInHours).toBe(24);
     expect(JSON.stringify(row)).not.toContain(token);
     // …and the link the person received still works.
-    await verify(token).expect(200);
+    await verify(token, await signIn(email)).expect(200);
   });
 
   it('EVL-009 — POST /auth/verify-email is throttled per client', async () => {
@@ -350,7 +373,10 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
     // Never tenant-visible: the row carried a live link.
     expect(row.organizationId).toBeNull();
 
-    await verify(token).expect(200);
+    await verify(
+      token,
+      await signIn(email, { host: academyHost, academyId: academy.id }),
+    ).expect(200);
   });
 
   it('EVL-011 — resend has its own per-account budget, independent of password reset', async () => {
@@ -367,5 +393,41 @@ describe('Email verification link security (e2e) — EVL-001..011', () => {
     }
     const refused = await resend(accessToken).expect(429);
     expect(messageKey(refused)).toBe('errors.auth.rateLimited');
+  });
+  it('EVL-012 — ATO F1: a live link opened without the account\'s session verifies nothing and stays usable', async () => {
+    const { email, userId } = await register('evl012');
+    const token = await waitForToken(email);
+
+    // The victim (or a mail scanner) opens the link a squatter's
+    // registration sent them: refused, nothing verified, link not spent.
+    const anonymous = await verify(token).expect(403);
+    expect(messageKey(anonymous)).toBe('errors.auth.verificationSignInRequired');
+    expect(
+      (await admin.user.findUniqueOrThrow({ where: { id: userId } })).emailVerifiedAt,
+    ).toBeNull();
+    const row = await admin.emailVerificationToken.findUniqueOrThrow({
+      where: { tokenHash: hashOpaqueToken(token) },
+    });
+    expect(row.usedAt).toBeNull();
+
+    // The account's own session completes it.
+    await verify(token, await signIn(email)).expect(200);
+    expect(
+      (await admin.user.findUniqueOrThrow({ where: { id: userId } })).emailVerifiedAt,
+    ).toBeInstanceOf(Date);
+  });
+
+  it("EVL-013 — ATO F1: another account's session cannot verify a link", async () => {
+    const owner = await register('evl013-owner');
+    const other = await register('evl013-other');
+    const token = await waitForToken(owner.email);
+
+    const response = await verify(token, await signIn(other.email)).expect(403);
+    expect(messageKey(response)).toBe('errors.auth.verificationSignInRequired');
+    for (const id of [owner.userId, other.userId]) {
+      expect(
+        (await admin.user.findUniqueOrThrow({ where: { id } })).emailVerifiedAt,
+      ).toBeNull();
+    }
   });
 });

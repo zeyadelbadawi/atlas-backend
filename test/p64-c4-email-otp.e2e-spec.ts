@@ -637,14 +637,19 @@ describe('P64 C4 — email OTP and trusted devices (e2e)', () => {
       },
     });
 
-    await signInWithCode(email, userId);
+    const session = await signInWithCode(email, userId);
     const verifiedAt = (await admin.user.findUniqueOrThrow({ where: { id: userId } }))
       .emailVerifiedAt;
     expect(verifiedAt).toBeInstanceOf(Date);
 
     // The legacy link is still single-use and only ever re-confirms the
-    // same address; it cannot verify anything else.
-    await http().post('/auth/verify-email').send({ token: legacyToken }).expect(200);
+    // same address (from the account's own session); it cannot verify
+    // anything else.
+    await http()
+      .post('/auth/verify-email')
+      .set('Authorization', `Bearer ${session.body.accessToken}`)
+      .send({ token: legacyToken })
+      .expect(200);
     const replay = await http().post('/auth/verify-email').send({ token: legacyToken });
     expect(replay.status).toBe(400);
   });
@@ -668,7 +673,11 @@ describe('P64 C4 — email OTP and trusted devices (e2e)', () => {
     const token = (row.values as { token?: string } | null)?.token;
     expect(token).toEqual(expect.any(String));
 
-    await http().post('/auth/verify-email').send({ token }).expect(200);
+    await http()
+      .post('/auth/verify-email')
+      .set('Authorization', `Bearer ${session.body.accessToken}`)
+      .send({ token })
+      .expect(200);
     expect(
       (await admin.user.findUniqueOrThrow({ where: { id: userId } })).emailVerifiedAt,
     ).toBeInstanceOf(Date);

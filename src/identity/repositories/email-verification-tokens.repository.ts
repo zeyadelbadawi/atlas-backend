@@ -26,7 +26,7 @@ export interface CreateEmailVerificationTokenInput {
 /** What one verification attempt came to. See `consume` for when each is reported. */
 export type EmailVerificationOutcome =
   | { readonly status: 'verified'; readonly userId: string }
-  | { readonly status: 'invalid' | 'expired' | 'used' };
+  | { readonly status: 'invalid' | 'expired' | 'used' | 'signInRequired' };
 
 @Injectable()
 export class EmailVerificationTokensRepository {
@@ -70,11 +70,36 @@ export class EmailVerificationTokensRepository {
    * being verified; that reads as `expired` ("request a new one"), and
    * `used` is reserved for a link whose account is in fact verified.
    */
-  async consume(tokenHash: string): Promise<EmailVerificationOutcome> {
+  /**
+   * Claims the link for its owner — only when the caller is signed in AS
+   * that owner (`callerUserId`).
+   *
+   * ATO F1 follow-up: a verified address is what lets an account receive
+   * roles granted to that address (`UnprovenAccountService`). If a click
+   * from anyone could verify, someone who pre-registered a victim's address
+   * would only need the victim (or a mail scanner) to open the link to make
+   * the squatted account "proven". The link therefore proves the mailbox
+   * only together with the account's own session. A live link opened
+   * without that session is NOT spent — `signInRequired` — so the real
+   * owner can sign in and finish; only the holder of a real link ever
+   * learns this, malformed/unknown tokens stay plain `invalid`.
+   */
+  async consume(
+    tokenHash: string,
+    callerUserId: string | null,
+  ): Promise<EmailVerificationOutcome> {
     const ownerId = await this.identityResolver.emailVerificationTokenOwner(tokenHash);
     if (!ownerId) return { status: 'invalid' };
     const now = new Date();
     return this.asUser(ownerId, async (tx): Promise<EmailVerificationOutcome> => {
+      if (callerUserId !== ownerId) {
+        const live = await tx.emailVerificationToken.findFirst({
+          where: { tokenHash, userId: ownerId, usedAt: null, expiresAt: { gt: now } },
+          select: { id: true },
+        });
+        if (live) return { status: 'signInRequired' };
+        return this.spentOutcome(tx, tokenHash, ownerId);
+      }
       const claim = await tx.emailVerificationToken.updateMany({
         where: { tokenHash, userId: ownerId, usedAt: null, expiresAt: { gt: now } },
         data: { usedAt: now },
@@ -88,18 +113,27 @@ export class EmailVerificationTokensRepository {
         return { status: 'verified', userId: ownerId };
       }
 
-      const token = await tx.emailVerificationToken.findUnique({
-        where: { tokenHash },
-        select: { usedAt: true },
-      });
-      if (!token) return { status: 'invalid' };
-      if (!token.usedAt) return { status: 'expired' };
-      const owner = await tx.user.findUnique({
-        where: { id: ownerId },
-        select: { emailVerifiedAt: true },
-      });
-      return owner?.emailVerifiedAt ? { status: 'used' } : { status: 'expired' };
+      return this.spentOutcome(tx, tokenHash, ownerId);
     });
+  }
+
+  /** Why a real link can no longer be claimed: it expired, or it was used. */
+  private async spentOutcome(
+    tx: Prisma.TransactionClient,
+    tokenHash: string,
+    ownerId: string,
+  ): Promise<EmailVerificationOutcome> {
+    const token = await tx.emailVerificationToken.findUnique({
+      where: { tokenHash },
+      select: { usedAt: true },
+    });
+    if (!token) return { status: 'invalid' };
+    if (!token.usedAt) return { status: 'expired' };
+    const owner = await tx.user.findUnique({
+      where: { id: ownerId },
+      select: { emailVerifiedAt: true },
+    });
+    return owner?.emailVerifiedAt ? { status: 'used' } : { status: 'expired' };
   }
 
   /**
