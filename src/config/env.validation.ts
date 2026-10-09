@@ -236,6 +236,14 @@ const EnvSchema = z.object({
   AUTH_PRIVILEGED_EMAIL_OTP_FLOOR: z
     .enum(['off', 'new_device', 'always'])
     .default('new_device'),
+  // ATO review F10 — absolute session lifetimes (days from sign-in).
+  SESSION_ABSOLUTE_MAX_DAYS_MANAGEMENT: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(365)
+    .optional(),
+  SESSION_ABSOLUTE_MAX_DAYS_ACADEMY: z.coerce.number().int().min(1).max(365).optional(),
   // ATO review F11 — when Platform Owners must have an authenticator app
   // (ISO 8601 instant), or `never`.
   PLATFORM_OWNER_TOTP_REQUIRED_FROM: z

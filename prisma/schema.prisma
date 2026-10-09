@@ -268,6 +268,12 @@ model RefreshToken {
   /// Null for every session minted before this column existed: honestly
   /// unknown, never backfilled with a guess.
   authMethod      AuthMethod?    @map("auth_method")
+  /// ATO review F10 — when the session (the `sessionId` family) began:
+  /// set at sign-in, copied forward by every rotation. A rotation never
+  /// extends a session past this + the surface's absolute maximum
+  /// (`IdentityConfig.sessionAbsoluteMaxDays`). Null only on rows that
+  /// predate the column and were no longer live when it was backfilled.
+  sessionStartedAt DateTime?     @map("session_started_at")
 
   @@index([userId, revokedAt])
   @@index([sessionId])

@@ -1832,18 +1832,26 @@ export class AuthService {
       Date.now() + identity.refreshTokenTtlDays * 24 * 60 * 60 * 1000,
     );
 
-    const result = await this.refreshTokensRepository.rotate(presentedHash, {
-      tokenHash: newHash,
-      expiresAt,
-      // Phase 10 — re-read from the LIVE request so `lastUsedAt` reflects
-      // real session activity and a moved/upgraded client updates its own
-      // row. `rotate` falls back to the claimed row's values when a
-      // client sends no User-Agent, so a refresh never blanks these out.
-      ipAddress: context?.ipAddress,
-      locationCountry: context?.locationCountry,
-      userAgent: context?.userAgent,
-      deviceLabel: deriveDeviceLabel(context?.userAgent),
-    });
+    const days = (n: number) => n * 24 * 60 * 60 * 1000;
+    const result = await this.refreshTokensRepository.rotate(
+      presentedHash,
+      {
+        tokenHash: newHash,
+        expiresAt,
+        // Phase 10 — re-read from the LIVE request so `lastUsedAt` reflects
+        // real session activity and a moved/upgraded client updates its own
+        // row. `rotate` falls back to the claimed row's values when a
+        // client sends no User-Agent, so a refresh never blanks these out.
+        ipAddress: context?.ipAddress,
+        locationCountry: context?.locationCountry,
+        userAgent: context?.userAgent,
+        deviceLabel: deriveDeviceLabel(context?.userAgent),
+      },
+      {
+        management: days(identity.sessionAbsoluteMaxDays.management),
+        academy: days(identity.sessionAbsoluteMaxDays.academy),
+      },
+    );
 
     if (!result) {
       // A token that was already rotated away and is presented again later
@@ -1893,16 +1901,30 @@ export class AuthService {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
     }
 
+    // ATO review F10 — the session reached its absolute maximum: the
+    // presented token was spent, no replacement was made, and the rest of
+    // the family ends now. The same generic 401 as any dead refresh token;
+    // the person simply signs in again. Not reuse — no reuse audit.
+    const created = result.created;
+    if (!created) {
+      await this.refreshTokensRepository.revokeSessionForUser(
+        result.claimed.sessionId,
+        result.claimed.userId,
+      );
+      await this.sessionRevocationService.markRevoked(result.claimed.sessionId);
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
+    }
+
     // A session outlives nothing about its account: once the account is no
     // longer active (suspended, deleted, back to invited), a refresh ends the
     // session instead of renewing it — the same refusal a new sign-in gets.
-    const owner = await this.usersRepository.findById(result.created.userId);
+    const owner = await this.usersRepository.findById(created.userId);
     if (!owner || owner.status !== 'active') {
       await this.refreshTokensRepository.revokeSessionForUser(
-        result.created.sessionId,
-        result.created.userId,
+        created.sessionId,
+        created.userId,
       );
-      await this.sessionRevocationService.markRevoked(result.created.sessionId);
+      await this.sessionRevocationService.markRevoked(created.sessionId);
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
     }
 
@@ -1916,8 +1938,8 @@ export class AuthService {
     // is also what lets the session list mark the caller's own row
     // `isCurrent` after the token has rotated.
     const accessToken = this.accessTokenService.issue({
-      sub: result.created.userId,
-      sid: result.created.sessionId,
+      sub: created.userId,
+      sid: created.sessionId,
     });
 
     return {
@@ -2338,8 +2360,17 @@ export class AuthService {
     const identity = this.configService.getOrThrow<IdentityConfig>('identity');
     const rawRefreshToken = generateOpaqueToken();
     const tokenHash = hashOpaqueToken(rawRefreshToken);
+    // ATO review F10 — never longer than the surface's absolute maximum.
     const expiresAt = new Date(
-      Date.now() + identity.refreshTokenTtlDays * 24 * 60 * 60 * 1000,
+      Date.now() +
+        Math.min(
+          identity.refreshTokenTtlDays,
+          identity.sessionAbsoluteMaxDays[selection.surface],
+        ) *
+          24 *
+          60 *
+          60 *
+          1000,
     );
 
     // Phase 10 — a new device session begins here. Every later rotation

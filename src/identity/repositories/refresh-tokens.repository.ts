@@ -87,6 +87,9 @@ export class RefreshTokensRepository {
           // A brand-new session's last activity is its creation — a real
           // timestamp for a real event, not a placeholder.
           lastUsedAt: new Date(),
+          // ATO review F10 — `create` only ever starts a session (rotations
+          // go through `rotate`), so this is the moment it began.
+          sessionStartedAt: new Date(),
         },
       }),
     );
@@ -369,7 +372,15 @@ export class RefreshTokensRepository {
   async rotate(
     presentedTokenHash: string,
     newToken: Omit<CreateRefreshTokenInput, 'userId' | 'sessionId'>,
-  ): Promise<{ claimed: RefreshToken; created: RefreshToken } | null> {
+    /**
+     * ATO review F10 — each surface's absolute session maximum. A rotation
+     * never runs past `sessionStartedAt` + this; once it would, the
+     * presented token is still claimed (spent) but no replacement is made
+     * and `{ claimed, created: null }` comes back so the caller ends the
+     * session.
+     */
+    absoluteMaxMs: { readonly management: number; readonly academy: number },
+  ): Promise<{ claimed: RefreshToken; created: RefreshToken | null } | null> {
     // The owner is looked up by the presented hash; an unknown token has no
     // owner and simply fails. Everything below runs in that owner's context,
     // so even a wrong owner could only ever see — and claim — its own rows.
@@ -389,6 +400,16 @@ export class RefreshTokensRepository {
       const claimed = await tx.refreshToken.findUniqueOrThrow({
         where: { tokenHash: presentedTokenHash },
       });
+      // A row from before `session_started_at` existed that was not live at
+      // backfill time can only be its own row's age — never more lenient
+      // than the truth.
+      const sessionStartedAt = claimed.sessionStartedAt ?? claimed.createdAt;
+      const absoluteEnd = new Date(
+        sessionStartedAt.getTime() + absoluteMaxMs[claimed.surface],
+      );
+      if (absoluteEnd.getTime() <= now.getTime()) {
+        return { claimed, created: null };
+      }
       // The new token belongs to whoever owned the token just claimed —
       // never supplied by the caller, so there is no way to rotate a
       // presented token into a session for a different user.
@@ -396,7 +417,12 @@ export class RefreshTokensRepository {
         data: {
           userId: claimed.userId,
           tokenHash: newToken.tokenHash,
-          expiresAt: newToken.expiresAt,
+          // Never past the session's absolute end (ATO review F10).
+          expiresAt:
+            newToken.expiresAt.getTime() < absoluteEnd.getTime()
+              ? newToken.expiresAt
+              : absoluteEnd,
+          sessionStartedAt,
           // Phase 10 — the rotated row stays the SAME device session. The
           // family id is inherited from the claimed row, never taken from
           // the caller, so a refresh can neither start a new session nor

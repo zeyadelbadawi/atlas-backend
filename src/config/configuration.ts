@@ -452,6 +452,14 @@ export interface IdentityConfig {
   /** P64 Communications C4 (§12) — email one-time codes and trusted devices. */
   readonly emailOtp: EmailOtpConfig;
   /**
+   * ATO review F10 — the longest a session may live from sign-in, however
+   * often it refreshes (refreshTokenTtlDays is only the idle limit).
+   */
+  readonly sessionAbsoluteMaxDays: {
+    readonly management: number;
+    readonly academy: number;
+  };
+  /**
    * ATO review F11 — from this moment a Platform Owner needs a confirmed
    * authenticator app to use any platform route (`PlatformOwnerGuard`).
    * `null` = not enforced (`PLATFORM_OWNER_TOTP_REQUIRED_FROM=never`).
@@ -595,6 +603,10 @@ export default () => {
     registerRateLimit: {
       max: Number(env.AUTH_REGISTER_RATE_LIMIT_MAX ?? 5),
       windowSeconds: Number(env.AUTH_REGISTER_RATE_LIMIT_WINDOW_SECONDS ?? 3600),
+    },
+    sessionAbsoluteMaxDays: {
+      management: Number(env.SESSION_ABSOLUTE_MAX_DAYS_MANAGEMENT ?? 30),
+      academy: Number(env.SESSION_ABSOLUTE_MAX_DAYS_ACADEMY ?? 90),
     },
     // ATO F11 — two weeks after this release by default; `never` disables.
     platformOwnerTotpRequiredFrom:

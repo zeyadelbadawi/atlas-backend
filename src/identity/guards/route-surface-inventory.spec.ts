@@ -39,6 +39,9 @@ import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.
 const SELF_OR_LEARNER = new Set<string>([
   // --- the caller's own account ------------------------------------------
   'POST auth/sign-out',
+  // ATO review F1 — the session is read only to check the link is being
+  // opened by its own account; the link works signed in or out.
+  'POST auth/verify-email',
   'POST auth/verify-email/resend',
   'GET auth/sessions',
   'DELETE auth/sessions/:id',

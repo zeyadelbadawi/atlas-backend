@@ -19,6 +19,7 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
     // P64 Communications C4 — irrelevant to access tokens, present
     // because `IdentityConfig` is one object; the §12 defaults.
     platformOwnerTotpRequiredFrom: null,
+    sessionAbsoluteMaxDays: { management: 30, academy: 90 },
     emailOtp: {
       management: 'off',
       academy: 'off',
