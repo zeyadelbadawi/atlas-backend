@@ -895,14 +895,23 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
       }
     });
 
-    it('returns a public asset’s durable URL unsigned, and never signs a protected one into one', async () => {
+    it('links a public asset through the same-origin signed media route, and never signs a protected one into it', async () => {
+      // Security review W1: a public asset is served by `/public/media/<key>`
+      // behind a short-lived HMAC link (the DB row decides it is public), not
+      // by its stored durable URL and never by a storage-provider presign.
       const publicAsset = assetFor({
         access: 'public',
         url: 'https://cdn.example/logo.png',
         storageKey: 'academies/a/logo.png',
       });
       const signedPublic = await signer.signFile(publicAsset);
-      expect(signedPublic.url).toBe('https://cdn.example/logo.png');
+      expect(signedPublic.url).toMatch(
+        /^\/api\/v1\/public\/media\/academies\/a\/logo\.png\?exp=\d+&sig=[\w-]+$/,
+      );
+      expect(signedPublic.url).not.toContain('X-Amz-Signature');
+      expect(signedPublic.expiresAt.getTime()).toBeLessThanOrEqual(
+        Date.now() + (signer.fileTtlSeconds + 5) * 1_000,
+      );
 
       const protectedAsset = assetFor({
         access: 'protected',
@@ -910,6 +919,7 @@ describe('P64 Phase 2 — entitlement, grants, devices and tenancy (service + HT
       });
       const signedProtected = await signer.signFile(protectedAsset);
       expect(signedProtected.url).toContain('X-Amz-Signature');
+      expect(signedProtected.url).not.toContain('/public/media/');
       expect(signedProtected.expiresAt.getTime()).toBeLessThanOrEqual(
         Date.now() + (signer.fileTtlSeconds + 5) * 1_000,
       );
