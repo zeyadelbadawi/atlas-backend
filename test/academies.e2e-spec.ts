@@ -157,9 +157,9 @@ describe('Academy Management (e2e) — functional/contract', () => {
       name: crudName,
       slug,
       status: 'draft',
-      timezone: 'UTC',
+      timezone: 'Africa/Cairo',
       language: 'en',
-      currency: 'USD',
+      currency: 'EGP',
     });
     const academyId = created.body.id as string;
 
