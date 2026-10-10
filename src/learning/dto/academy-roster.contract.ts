@@ -24,10 +24,17 @@ export interface AcademyRosterStudentResponse {
   readonly lastActivityAt?: string;
   readonly enrollmentCount: number;
   readonly activeEnrollmentCount: number;
+  /**
+   * The student's phone number (E.164 + chosen country). Present only for
+   * the academy's owner/administrator/manager (and the organization owner);
+   * an instructor's response never carries the key. `null` = no number.
+   */
+  readonly phone?: { readonly e164: string; readonly country: string } | null;
 }
 
 export function toAcademyRosterStudentResponse(
   row: RosterStudentRow,
+  phone?: { readonly e164: string; readonly country: string } | null,
 ): AcademyRosterStudentResponse {
   return {
     membershipId: row.id,
@@ -46,6 +53,7 @@ export function toAcademyRosterStudentResponse(
     lastActivityAt: row.lastActivityAt?.toISOString(),
     enrollmentCount: row.enrollmentCount,
     activeEnrollmentCount: row.activeEnrollmentCount,
+    ...(phone !== undefined ? { phone } : {}),
   };
 }
 

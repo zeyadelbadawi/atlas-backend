@@ -15,6 +15,7 @@
  */
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { readStudentPhones } from '../../identity/phone/user-phone.service';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
 import { UserOrganizationsService } from '../../tenancy/services/user-organizations.service';
 import { PlatformUsersRepository } from '../repositories/platform-users.repository';
@@ -47,7 +48,7 @@ export class PlatformUsersService {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
-    const { items, totalItems, countsByUserId } =
+    const { items, totalItems, countsByUserId, phones } =
       await this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
         const { items, totalItems } = await this.platformUsersRepository.findMany(tx, {
           search: query.search,
@@ -61,12 +62,23 @@ export class PlatformUsersService {
             tx,
             items.map((user) => user.id),
           );
-        return { items, totalItems, countsByUserId };
+        // Academy students' phone numbers — the SQL reader admits only the
+        // Platform Owner and only accounts that study at an academy.
+        const phones = await readStudentPhones(
+          tx,
+          null,
+          items.map((user) => user.id),
+        );
+        return { items, totalItems, countsByUserId, phones };
       });
 
     return {
       items: items.map((user) =>
-        toPlatformUserSummaryResponse(user, countsByUserId.get(user.id) ?? 0),
+        toPlatformUserSummaryResponse(
+          user,
+          countsByUserId.get(user.id) ?? 0,
+          phones.get(user.id) ?? null,
+        ),
       ),
       pagination: buildPaginationMeta(page, pageSize, totalItems),
     };
@@ -76,9 +88,12 @@ export class PlatformUsersService {
     platformOwnerId: string,
     userId: string,
   ): Promise<PlatformUserDetailResponse> {
-    const user = await this.tenancyContextService.runInUserContext(
+    const { user, phones } = await this.tenancyContextService.runInUserContext(
       platformOwnerId,
-      (tx) => this.platformUsersRepository.findById(tx, userId),
+      async (tx) => ({
+        user: await this.platformUsersRepository.findById(tx, userId),
+        phones: await readStudentPhones(tx, null, [userId]),
+      }),
     );
     if (!user) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
@@ -87,6 +102,10 @@ export class PlatformUsersService {
     const organizationMemberships =
       await this.userOrganizationsService.getMembershipsForUser(userId);
 
-    return toPlatformUserDetailResponse(user, organizationMemberships);
+    return toPlatformUserDetailResponse(
+      user,
+      organizationMemberships,
+      phones.get(userId) ?? null,
+    );
   }
 }

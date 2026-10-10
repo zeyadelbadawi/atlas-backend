@@ -25,6 +25,12 @@ export interface PlatformUserSummaryResponse {
   readonly organizationCount: number;
   readonly createdAt: string;
   readonly lastSignInAt?: string;
+  /**
+   * Phone number of an account that studies at an academy (read through
+   * `platform_student_phones`, Platform Owner only). `null` = a student with
+   * no number, or an account that is not an academy student.
+   */
+  readonly phone: { readonly e164: string; readonly country: string } | null;
 }
 
 export interface PlatformUserDetailResponse extends PlatformUserSummaryResponse {
@@ -35,6 +41,7 @@ export interface PlatformUserDetailResponse extends PlatformUserSummaryResponse 
 export function toPlatformUserSummaryResponse(
   user: PlatformUserRow,
   organizationCount: number,
+  phone: { readonly e164: string; readonly country: string } | null = null,
 ): PlatformUserSummaryResponse {
   return {
     id: user.id,
@@ -44,15 +51,17 @@ export function toPlatformUserSummaryResponse(
     organizationCount,
     createdAt: user.createdAt.toISOString(),
     lastSignInAt: user.lastSignInAt?.toISOString(),
+    phone,
   };
 }
 
 export function toPlatformUserDetailResponse(
   user: PlatformUserRow,
   organizationMemberships: readonly OrganizationMembershipResponse[],
+  phone: { readonly e164: string; readonly country: string } | null = null,
 ): PlatformUserDetailResponse {
   return {
-    ...toPlatformUserSummaryResponse(user, organizationMemberships.length),
+    ...toPlatformUserSummaryResponse(user, organizationMemberships.length, phone),
     // Matches `CurrentUser.roles`'s own derivation exactly (master plan
     // §9): `platform_owner` is the only global role string, sourced from
     // the real `is_platform_owner` column, never a fabricated catalog.
