@@ -15,14 +15,14 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
-import { SaasLevelCallerGuard } from '../../tenancy/guards/saas-level-caller.guard';
+import { PlanCatalogReaderGuard } from '../guards/plan-catalog-reader.guard';
 import { PlansService } from '../services/plans.service';
 import type { PlanResponse } from '../dto/plan.contract';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
 @Controller('plans')
-@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, SaasLevelCallerGuard)
+@UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlanCatalogReaderGuard)
 export class PlansController {
   constructor(private readonly plansService: PlansService) {}
 
