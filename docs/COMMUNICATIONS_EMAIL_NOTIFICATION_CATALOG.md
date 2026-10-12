@@ -2,6 +2,13 @@
 
 **The definitive reference for testing every message Atlas sends.**
 
+> **B0-MSG-06 (12 October 2026):** the event list, counts and channel
+> policies are now generated from the code in
+> [`docs/communications/COMMUNICATION_CATALOG_REFERENCE.md`](communications/COMMUNICATION_CATALOG_REFERENCE.md)
+> (`npm run docs:communication-catalog`; a test fails when it is stale).
+> Where this hand-written document and that file disagree — the count of
+> 77 below is out of date — the generated file is right.
+
 Generated from `src/communications/catalog/communication-catalog.ts` on
 25 September 2026, backend `main`. If this document and the code disagree,
 the code is right and this document is stale — regenerate it rather than
