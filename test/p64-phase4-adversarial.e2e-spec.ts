@@ -25,6 +25,7 @@ import {
   seedEnrollment,
   seedOrganizationWithOwner,
   seedPaymentMethod,
+  seedPaymentCollectionMode,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
@@ -129,16 +130,12 @@ describe('P64 Phase 4 — adversarial (e2e)', () => {
   });
 
   it('a buyer cannot set the price of their own order', async () => {
-    const { org, owner, course } = await seedAcademyWithCourse('adv-price', {
+    const { org, course } = await seedAcademyWithCourse('adv-price', {
       pricingType: 'paid',
       pricingAmountMinorUnits: BigInt(9900),
       pricingCurrency: 'USD',
     });
-    await request(app.getHttpServer())
-      .patch(`/organizations/${org.id}/payment-settings`)
-      .set(auth(owner.accessToken))
-      .send({ paymentCollectionMode: 'atlas_payments' })
-      .expect(200);
+    await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
     const buyer = await signUpAndSignIn(app, 'adv-price-buyer');
 
     await request(app.getHttpServer())
@@ -214,16 +211,12 @@ describe('P64 Phase 4 — adversarial (e2e)', () => {
   // --- 3. Another buyer's money objects are unreachable by id ------------
 
   it('a stranger cannot read, pay, or list methods for someone else’s order', async () => {
-    const { org, owner, course } = await seedAcademyWithCourse('adv-idor', {
+    const { org, course } = await seedAcademyWithCourse('adv-idor', {
       pricingType: 'paid',
       pricingAmountMinorUnits: BigInt(4900),
       pricingCurrency: 'USD',
     });
-    await request(app.getHttpServer())
-      .patch(`/organizations/${org.id}/payment-settings`)
-      .set(auth(owner.accessToken))
-      .send({ paymentCollectionMode: 'atlas_payments' })
-      .expect(200);
+    await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
     const method = await seedPaymentMethod(admin, 'adv-idor-method');
 
     const buyer = await signUpAndSignIn(app, 'adv-idor-buyer');
@@ -270,16 +263,12 @@ describe('P64 Phase 4 — adversarial (e2e)', () => {
   });
 
   it('a buyer cannot approve their own payment', async () => {
-    const { org, owner, course } = await seedAcademyWithCourse('adv-selfapprove', {
+    const { org, course } = await seedAcademyWithCourse('adv-selfapprove', {
       pricingType: 'paid',
       pricingAmountMinorUnits: BigInt(4900),
       pricingCurrency: 'USD',
     });
-    await request(app.getHttpServer())
-      .patch(`/organizations/${org.id}/payment-settings`)
-      .set(auth(owner.accessToken))
-      .send({ paymentCollectionMode: 'atlas_payments' })
-      .expect(200);
+    await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
     const method = await seedPaymentMethod(admin, 'adv-selfapprove-method');
 
     const buyer = await signUpAndSignIn(app, 'adv-selfapprove-buyer');

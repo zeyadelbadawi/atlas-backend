@@ -17,6 +17,7 @@ import {
   seedOrganizationWithOwner,
   seedPlan,
   seedTenantSubscription,
+  seedPaymentCollectionMode,
 } from './utils/db-admin';
 
 jest.setTimeout(30000);
@@ -87,11 +88,7 @@ describe('Course orders respect the plan student limit (e2e) — CF-21', () => {
     paidCourseId = paidCourse.id;
 
     // Payment collection configured, so order creation reaches the limit check.
-    await request(app.getHttpServer())
-      .patch(`/organizations/${org.id}/payment-settings`)
-      .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ paymentCollectionMode: 'atlas_payments' })
-      .expect(200);
+    await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
 
     // The organization's one seat is taken by `enrolled`.
     enrolled = await signUpAndSignIn(app, 'cap-enrolled');

@@ -18,6 +18,7 @@ import {
   seedCourse,
   seedOrganizationWithOwner,
   seedPaymentMethod,
+  seedPaymentCollectionMode,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
@@ -98,11 +99,7 @@ describe('Platform ops metrics — commerce & delivery (e2e)', () => {
       pricingAmountMinorUnits: BigInt(priceAmountMinorUnits),
       pricingCurrency: 'USD',
     });
-    await request(app.getHttpServer())
-      .patch(`/organizations/${org.id}/payment-settings`)
-      .set(owner.auth)
-      .send({ paymentCollectionMode: 'atlas_payments' })
-      .expect(200);
+    await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
     const method = await seedPaymentMethod(admin, `${label}-method`);
     return { owner, org, academy, course, method };
   }

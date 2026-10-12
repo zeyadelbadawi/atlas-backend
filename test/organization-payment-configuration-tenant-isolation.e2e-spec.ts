@@ -8,7 +8,11 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
-import { createAdminPrisma, seedOrganizationWithOwner } from './utils/db-admin';
+import {
+  createAdminPrisma,
+  seedOrganizationWithOwner,
+  seedPaymentCollectionMode,
+} from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
 async function signUpAndSignIn(
@@ -60,12 +64,8 @@ describe('Organization Payment Configuration tenant isolation (e2e) — P12.5-TE
   }
 
   it("P12.5-TENANT-001: an Organization B member cannot read Organization A's payment-collection mode through Organization B's own URL", async () => {
-    const { owner: ownerA, org: orgA } = await seedOrgWithOwner('t125-001-a');
-    await request(app.getHttpServer())
-      .patch(`/organizations/${orgA.id}/payment-settings`)
-      .set('Authorization', `Bearer ${ownerA.accessToken}`)
-      .send({ paymentCollectionMode: 'atlas_payments' })
-      .expect(200);
+    const { org: orgA } = await seedOrgWithOwner('t125-001-a');
+    await seedPaymentCollectionMode(admin, orgA.id, 'atlas_payments');
 
     const { owner: ownerB, org: orgB } = await seedOrgWithOwner('t125-001-b');
 
@@ -97,12 +97,8 @@ describe('Organization Payment Configuration tenant isolation (e2e) — P12.5-TE
   });
 
   it("P12.5-TENANT-003: an Organization B member cannot read Organization A's gateway-credential status through Organization B's own URL", async () => {
-    const { owner: ownerA, org: orgA } = await seedOrgWithOwner('t125-003-a');
-    await request(app.getHttpServer())
-      .patch(`/organizations/${orgA.id}/payment-settings`)
-      .set('Authorization', `Bearer ${ownerA.accessToken}`)
-      .send({ paymentCollectionMode: 'organization_gateway' })
-      .expect(200);
+    const { org: orgA } = await seedOrgWithOwner('t125-003-a');
+    await seedPaymentCollectionMode(admin, orgA.id, 'organization_gateway');
 
     const { owner: ownerB, org: orgB } = await seedOrgWithOwner('t125-003-b');
 

@@ -25,6 +25,7 @@ import {
   seedAcademyMember,
   seedActiveSubscriptionForOrg,
   seedOrganizationWithOwner,
+  seedPaymentCollectionMode,
 } from './utils/db-admin';
 import { uniqueName } from './utils/unique-name';
 
@@ -251,10 +252,13 @@ describe('Task 3 — audit activity log (e2e)', () => {
     });
     expect(JSON.stringify(academyRows[0])).not.toContain('contact@example.com');
 
+    // B0-COM-03: an Organization can only clear its mode, so the audited
+    // change starts from a mode seeded outside the tenant API.
+    await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
     await request(app.getHttpServer())
       .patch(`/organizations/${org.id}/payment-settings`)
       .set(auth(owner))
-      .send({ paymentCollectionMode: 'atlas_payments' })
+      .send({ paymentCollectionMode: 'unconfigured' })
       .expect(200);
     const paymentRows = await rows({
       action: 'organization.payment_settings.updated',
@@ -262,7 +266,7 @@ describe('Task 3 — audit activity log (e2e)', () => {
     });
     expect(paymentRows).toHaveLength(1);
     expect(paymentRows[0].changes).toEqual({
-      paymentCollectionMode: { from: 'unconfigured', to: 'atlas_payments' },
+      paymentCollectionMode: { from: 'atlas_payments', to: 'unconfigured' },
     });
 
     const uploaded = await request(app.getHttpServer())

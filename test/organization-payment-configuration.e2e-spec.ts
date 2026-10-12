@@ -10,7 +10,11 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
-import { createAdminPrisma, seedOrganizationWithOwner } from './utils/db-admin';
+import {
+  createAdminPrisma,
+  seedOrganizationWithOwner,
+  seedPaymentCollectionMode,
+} from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
 async function signUpAndSignIn(
@@ -74,41 +78,55 @@ describe('Organization Payment Configuration (e2e)', () => {
     expect(res.body.paymentCollectionMode).toBe('unconfigured');
   });
 
-  // --- 3. Atlas Payments mode ---
+  // --- 3/4. Atlas Payments and Organization-Owned Gateway modes ---
+  //
+  // B0-COM-03: neither mode is offered at launch, so an Organization cannot
+  // switch itself onto either one. Academy manual payment methods do not
+  // depend on this setting.
 
-  it('3: an Organization can select Atlas Payments mode, and it persists on re-read', async () => {
-    const { owner, org } = await seedOrgWithOwner('t-mode-atlas');
+  it.each(['atlas_payments', 'organization_gateway'] as const)(
+    '3/4: an Organization cannot select %s mode itself, and nothing is stored',
+    async (mode) => {
+      const { owner, org } = await seedOrgWithOwner(`t-mode-${mode}`);
 
-    const patch = await request(app.getHttpServer())
-      .patch(`/organizations/${org.id}/payment-settings`)
-      .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ paymentCollectionMode: 'atlas_payments' })
-      .expect(200);
-    expect(patch.body.paymentCollectionMode).toBe('atlas_payments');
+      const patch = await request(app.getHttpServer())
+        .patch(`/organizations/${org.id}/payment-settings`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ paymentCollectionMode: mode })
+        .expect(403);
+      expect(patch.body.error.messageKey).toBe(
+        'errors.payment.collectionModeNotAvailable',
+      );
+
+      expect(
+        await admin.organizationPaymentSettings.findUnique({
+          where: { organizationId: org.id },
+        }),
+      ).toBeNull();
+      const get = await request(app.getHttpServer())
+        .get(`/organizations/${org.id}/payment-settings`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+      expect(get.body.paymentCollectionMode).toBe('unconfigured');
+    },
+  );
+
+  it('3b: a mode set outside the tenant API reads back, and the Organization can clear it to unconfigured', async () => {
+    const { owner, org } = await seedOrgWithOwner('t-mode-clear');
+    await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
 
     const get = await request(app.getHttpServer())
       .get(`/organizations/${org.id}/payment-settings`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(200);
     expect(get.body.paymentCollectionMode).toBe('atlas_payments');
-  });
 
-  // --- 4. Organization-Owned Gateway mode ---
-
-  it('4: an Organization can select Organization-Owned Gateway mode, and it persists on re-read', async () => {
-    const { owner, org } = await seedOrgWithOwner('t-mode-owngw');
-
-    await request(app.getHttpServer())
+    const cleared = await request(app.getHttpServer())
       .patch(`/organizations/${org.id}/payment-settings`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ paymentCollectionMode: 'organization_gateway' })
+      .send({ paymentCollectionMode: 'unconfigured' })
       .expect(200);
-
-    const get = await request(app.getHttpServer())
-      .get(`/organizations/${org.id}/payment-settings`)
-      .set('Authorization', `Bearer ${owner.accessToken}`)
-      .expect(200);
-    expect(get.body.paymentCollectionMode).toBe('organization_gateway');
+    expect(cleared.body.paymentCollectionMode).toBe('unconfigured');
   });
 
   it('4b: saving Organization-Owned Gateway credentials is honestly rejected — no real gateway is registered yet, never a fake success', async () => {

@@ -25,6 +25,7 @@ import {
   seedCourse,
   seedOrganizationWithOwner,
   seedPaymentMethod,
+  seedPaymentCollectionMode,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
@@ -93,11 +94,7 @@ describe('P64 Phase 4 — learner checkout payment methods (e2e)', () => {
       pricingCurrency: 'USD',
     });
     if (atlasPayments) {
-      await request(app.getHttpServer())
-        .patch(`/organizations/${org.id}/payment-settings`)
-        .set('Authorization', `Bearer ${owner.accessToken}`)
-        .send({ paymentCollectionMode: 'atlas_payments' })
-        .expect(200);
+      await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
     }
     const student = await signUpAndSignIn(app, `${label}-student`);
     const order = await request(app.getHttpServer())
