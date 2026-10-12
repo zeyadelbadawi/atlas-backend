@@ -518,6 +518,45 @@ describe('P61 granted entitlements (e2e) — P61-GRANT-001..018', () => {
     ).toBe(true);
   }, 60_000);
 
+  it('B0-BIL-12 — the preview lists a catalog follower over a reduced video-minutes cap', async () => {
+    const { org, plan } = await seedTenant('p61-preview-minutes', {
+      catalogStudents: 50,
+    });
+    await admin.tenantUsage.upsert({
+      where: { organizationId: org.id },
+      create: {
+        organizationId: org.id,
+        academies: 1,
+        students: 0,
+        instructors: 0,
+        staff: 0,
+        courses: 0,
+        generalStorageGb: 0,
+        videoStorageGb: 0,
+        videoStorageMinutes: 500,
+      },
+      update: { videoStorageMinutes: 500 },
+    });
+
+    const preview = await request(app.getHttpServer())
+      .post(`/platform-plans/${plan.key}/limits/preview`)
+      .set('Authorization', `Bearer ${platformOwnerToken}`)
+      .send({ limits: { ...LIMITS(50), videoStorageMinutes: 100 } })
+      .expect(200);
+
+    expect(preview.body.affected).toContainEqual(
+      expect.objectContaining({
+        organizationId: org.id,
+        limitKey: 'videoStorageMinutes',
+        currentUsage: 500,
+        proposedLimit: 100,
+      }),
+    );
+    // Measured now, so no longer reported as unmeasurable.
+    expect(preview.body.unmeasurableLimitKeys).not.toContain('videoStorageMinutes');
+    expect(preview.body.unmeasurableLimitKeys).toContain('recordedSessions');
+  }, 60_000);
+
   // =========================================================================
   // Archive, and repeated/concurrent operations
   // =========================================================================

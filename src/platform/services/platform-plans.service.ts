@@ -102,6 +102,10 @@ const USAGE_COLUMN: Partial<Record<PlanLimitKey, keyof UsageRow>> = {
   courses: 'courses',
   generalStorage: 'generalStorageGb',
   videoStorage: 'videoStorageGb',
+  // B0-BIL-12 — written by the same usage recompute as every other column
+  // (hosted-video minutes, reservations included, rounded up), so it is
+  // as measurable as the rest and must not be reported as unmeasurable.
+  videoStorageMinutes: 'videoStorageMinutes',
 };
 
 interface UsageRow {
@@ -113,6 +117,7 @@ interface UsageRow {
   courses: number;
   generalStorageGb: number;
   videoStorageGb: number;
+  videoStorageMinutes: number;
   updatedAt: Date;
 }
 
