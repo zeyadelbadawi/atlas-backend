@@ -52,8 +52,8 @@ export const PLATFORM_OWNER_PERMISSIONS: readonly string[] = [
  * reading published/public data and creating rows scoped to the caller's
  * own id), so granting them unconditionally to every signed-in user is the
  * correct floor — the same floor `ORGANIZATION_MEMBER_PERMISSIONS` already
- * establishes for `academy.view`/`academy.website.view` at the
- * organization layer. `forum.thread.create`/`forum.view` are included
+ * establishes for `academy.view` at the organization layer.
+ * `forum.thread.create`/`forum.view` are included
  * because a student's own course-scoped discussion access has the exact
  * same "any authenticated user, no membership needed" shape.
  */
