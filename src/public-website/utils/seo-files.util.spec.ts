@@ -21,7 +21,9 @@ describe('publicPagePath', () => {
     expect(publicPagePath(page({ coreType: 'home', slug: 'home' }))).toBe('/');
     expect(publicPagePath(page({ coreType: 'courses' }))).toBe('/courses');
     expect(publicPagePath(page({ coreType: 'courseDetails' }))).toBeUndefined();
-    expect(publicPagePath(page({ pageType: 'custom', slug: 'pricing' }))).toBe('/pricing');
+    expect(publicPagePath(page({ pageType: 'custom', slug: 'pricing' }))).toBe(
+      '/pricing',
+    );
   });
 });
 
