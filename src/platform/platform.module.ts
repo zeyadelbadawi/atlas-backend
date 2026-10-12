@@ -53,6 +53,7 @@ import { PlatformSettingsService } from './services/platform-settings.service';
 import { PlatformAddOnsService } from './services/platform-add-ons.service';
 import { PlatformPlansService } from './services/platform-plans.service';
 import { PlanHistoryService } from './services/plan-history.service';
+import { PlanChangeNoticeService } from './services/plan-change-notice.service';
 import { PlatformUsersRepository } from './repositories/platform-users.repository';
 import { SupportCasesRepository } from './repositories/support-cases.repository';
 import { SupportCaseMessagesRepository } from './repositories/support-case-messages.repository';
@@ -104,6 +105,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     PlatformPlansService,
     PlatformCoursesService,
     PlanHistoryService,
+    PlanChangeNoticeService,
     PlatformUsersRepository,
     SupportCasesRepository,
     SupportCaseMessagesRepository,

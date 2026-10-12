@@ -709,6 +709,7 @@ The sequence is not scheduled anywhere — it is re-derived from live subscripti
 | `lifecycle.subscription.grace_ending` | "Your grace period ends tomorrow" | always |
 | `lifecycle.subscription.expired` | "Your subscription has expired and your site is offline" | always |
 | `lifecycle.subscription.cancel_scheduled` | "Your subscription is set to end" | always |
+| `lifecycle.subscription.price_change_notice` | "A change to your {plan} plan at renewal" | always |
 | `lifecycle.subscription.cancelled` | "Your subscription has ended" | always |
 | `lifecycle.subscription.followup_7d` | "Your academy is still stored" | preference (in-app: never) |
 | `lifecycle.subscription.followup_30d` | "Last note about your Atlas subscription" | preference (in-app: never) |

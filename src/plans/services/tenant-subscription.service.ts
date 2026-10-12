@@ -12,6 +12,7 @@
  * run; RLS proves it again, independently.
  */
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { resolveSubscriptionLimits } from '../utils/granted-limits.util';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { TenantSubscriptionsRepository } from '../repositories/tenant-subscriptions.repository';
@@ -171,6 +172,31 @@ export class TenantSubscriptionService {
     }
 
     return toTenantSubscriptionResponse(subscription, undefined, scheduledPlanName);
+  }
+
+  /**
+   * B0-BIL-07 — hides the price-change banner. The notice itself stays on
+   * the row until the next paid renewal clears it, so dismissing is only a
+   * display choice and never loses the record of what the customer was
+   * told. Idempotent: a second call (or a call with no notice) changes
+   * nothing and reports `false`.
+   */
+  async dismissPriceChangeNotice(
+    organizationId: string,
+  ): Promise<{ dismissed: boolean }> {
+    const result = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) =>
+        tx.tenantSubscription.updateMany({
+          where: {
+            organizationId,
+            priceChangeNotice: { not: Prisma.DbNull },
+            priceChangeNoticeDismissedAt: null,
+          },
+          data: { priceChangeNoticeDismissedAt: this.clock.now() },
+        }),
+    );
+    return { dismissed: result.count > 0 };
   }
 
   async getActiveAddOns(organizationId: string): Promise<TenantAddOnResponse[]> {

@@ -313,6 +313,10 @@ const EXPECTED_DEDUPE: Record<
     values: { anchorAt: PERIOD_END_AT },
     expected: `lifecycle_subscription_cancel_scheduled:${ENTITY_ID}:${PERIOD_END_AT}`,
   },
+  'lifecycle.subscription.price_change_notice': {
+    values: { planVersion: '7' },
+    expected: `lifecycle_subscription_price_change:${ENTITY_ID}:7`,
+  },
   'lifecycle.subscription.cancelled': {
     values: { anchorAt: PERIOD_END_AT },
     expected: `lifecycle_subscription_cancelled:${ENTITY_ID}:${PERIOD_END_AT}`,

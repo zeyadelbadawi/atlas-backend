@@ -262,6 +262,7 @@ writer stores.
 | `plan.created` | platform | platform | no | key |
 | `plan.updated` | platform | platform | no | key |
 | `plan.pricing_changed` | platform | platform | no | key |
+| `plan.subscribers_notified` | platform | platform | no | key, planVersion, notified, cleared, failed |
 | `plan.trial_config_changed` | platform | platform | no | key |
 | `plan.archived` | platform | platform | no | key, subscriptionsAtArchive |
 | `platform_settings.updated` | platform | platform | no | platformName, platformDescription, supportEmail, twoFactorRequired, sessionTimeoutMinutes |

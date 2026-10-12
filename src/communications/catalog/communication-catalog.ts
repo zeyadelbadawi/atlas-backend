@@ -1650,6 +1650,28 @@ const CATALOG = {
     messageKey: 'notifications:events.lifecycleSubscriptionCancelScheduled.message',
     actionUrl: () => TENANT_SUBSCRIPTION_PATH,
   },
+  // B0-BIL-07 — the plan this organisation renews into had its price or
+  // limits edited by the Platform Owner. Terms §9 promises notice in the
+  // product before a change applies; renewal is priced from the live
+  // catalog, so this is that notice. The version is the PLAN's version:
+  // one message per organisation per edit, never two for a retried save.
+  'lifecycle.subscription.price_change_notice': {
+    category: 'transactional',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_price_change', entity.id, str(values, 'planVersion')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.price_change_notice',
+    titleKey: 'notifications:events.lifecycleSubscriptionPriceChangeNotice.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionPriceChangeNotice.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
   // S9 — the cancellation actually took effect.
   'lifecycle.subscription.cancelled': {
     category: 'lifecycle',

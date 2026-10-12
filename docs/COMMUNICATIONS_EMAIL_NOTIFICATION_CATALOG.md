@@ -151,6 +151,7 @@ where to look to find out how to trigger the event by hand.
 | 22 | `lifecycle.subscription.grace_ending` | always | always | Your grace period ends tomorrow | `/dashboard/tenant/subscription` | `plans/services/tenant-lifecycle.service` |
 | 23 | `lifecycle.subscription.expired` | always | always | Your subscription has expired and your site is offline | `/dashboard/tenant/subscription` | `plans/services/tenant-lifecycle.service` |
 | 24 | `lifecycle.subscription.cancel_scheduled` | always | always | Your subscription is set to end | `/dashboard/tenant/subscription` | `plans/services/trial-redemption.service` |
+| 24a | `lifecycle.subscription.price_change_notice` | always | always | A change to your {plan} plan at renewal | `/dashboard/tenant/subscription` | `platform/services/plan-change-notice.service` (B0-BIL-07) |
 | 25 | `lifecycle.subscription.cancelled` | always | always | Your subscription has ended | `/dashboard/tenant/subscription` | `plans/services/tenant-lifecycle.service` |
 | 26 | `lifecycle.subscription.followup_7d` | — | pref | Your academy is still stored | `/dashboard/tenant/subscription` | `plans/services/tenant-lifecycle.service` |
 | 27 | `lifecycle.subscription.followup_30d` | — | pref | Last note about your Atlas subscription | `/dashboard/tenant/subscription` | `plans/services/tenant-lifecycle.service` |

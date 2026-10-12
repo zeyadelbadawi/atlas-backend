@@ -522,6 +522,11 @@ export class TenantSubscriptionsRepository {
           trialEndsAt: null,
           graceEndsAt: null,
           cancelAtPeriodEnd: false,
+          // B0-BIL-07 — this purchase is the renewal a price-change notice
+          // was about (and was charged the live price), so the notice has
+          // done its job.
+          priceChangeNotice: Prisma.DbNull,
+          priceChangeNoticeDismissedAt: null,
           ...giftColumns,
         },
       });

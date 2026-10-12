@@ -90,6 +90,7 @@ import { template as lifecycleSubscriptionGraceEnding } from './keys/lifecycle.s
 import { template as lifecycleSubscriptionExpired } from './keys/lifecycle.subscription.expired';
 import { template as lifecycleSubscriptionCancelScheduled } from './keys/lifecycle.subscription.cancel_scheduled';
 import { template as lifecycleSubscriptionCancelled } from './keys/lifecycle.subscription.cancelled';
+import { template as lifecycleSubscriptionPriceChangeNotice } from './keys/lifecycle.subscription.price_change_notice';
 import { template as lifecycleSubscriptionFollowup7d } from './keys/lifecycle.subscription.followup_7d';
 import { template as lifecycleSubscriptionFollowup30d } from './keys/lifecycle.subscription.followup_30d';
 // P64 C6 — hosted-video retention (plan §31/§32).
@@ -164,6 +165,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'lifecycle.subscription.expired': lifecycleSubscriptionExpired,
   'lifecycle.subscription.cancel_scheduled': lifecycleSubscriptionCancelScheduled,
   'lifecycle.subscription.cancelled': lifecycleSubscriptionCancelled,
+  'lifecycle.subscription.price_change_notice': lifecycleSubscriptionPriceChangeNotice,
   'lifecycle.subscription.followup_7d': lifecycleSubscriptionFollowup7d,
   'lifecycle.subscription.followup_30d': lifecycleSubscriptionFollowup30d,
   'retention.video.warning_30d': retentionVideoWarning30d,

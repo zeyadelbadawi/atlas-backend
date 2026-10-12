@@ -1094,6 +1094,12 @@ model TenantSubscription {
   scheduledPlanId        String?   @map("scheduled_plan_id")
   scheduledGrantedLimits Json?     @map("scheduled_granted_limits")
   scheduledChangeAt      DateTime? @map("scheduled_change_at")
+  /// B0-BIL-07 — what changes for this customer at their next paid
+  /// renewal after a Platform Owner edited their plan's price or limits
+  /// (`PriceChangeNotice` in `price-change-notice.util.ts`). Cleared by the
+  /// next paid purchase; dismissal only hides the banner.
+  priceChangeNotice            Json?     @map("price_change_notice")
+  priceChangeNoticeDismissedAt DateTime? @map("price_change_notice_dismissed_at")
   createdAt          DateTime                  @default(now()) @map("created_at")
   updatedAt          DateTime                  @updatedAt @map("updated_at")
 

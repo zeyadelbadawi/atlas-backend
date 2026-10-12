@@ -1007,6 +1007,14 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('plan.updated', 'platform', 'plan', 'platform', false, ['key']),
   ev('plan.pricing_changed', 'platform', 'plan', 'platform', false, ['key']),
   ev('plan.trial_config_changed', 'platform', 'plan', 'platform', false, ['key']),
+  // B0-BIL-07 — the existing subscribers told about a price/limit edit.
+  ev('plan.subscribers_notified', 'platform', 'plan', 'platform', false, [
+    'key',
+    'planVersion',
+    'notified',
+    'cleared',
+    'failed',
+  ]),
   ev('plan.archived', 'platform', 'plan', 'platform', false, [
     'key',
     'subscriptionsAtArchive',
