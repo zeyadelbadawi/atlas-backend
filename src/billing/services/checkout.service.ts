@@ -25,6 +25,8 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { CheckoutsRepository } from '../repositories/checkouts.repository';
 import { PlansRepository } from '../../plans/repositories/plans.repository';
 import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
+import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
+import { isPlanCompatibleWithAddOn } from '../../plans/utils/add-on-purchase-rules.util';
 import { createCheckoutSchema } from '../validation/checkout.schemas';
 import type { CreateCheckoutInput } from '../validation/checkout.schemas';
 import { parseOrThrow } from '../../common/validation/zod-violations.util';
@@ -48,6 +50,7 @@ export class CheckoutService {
     private readonly checkoutsRepository: CheckoutsRepository,
     private readonly plansRepository: PlansRepository,
     private readonly addOnsRepository: AddOnsRepository,
+    private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
   ) {}
 
   async createCheckout(
@@ -65,6 +68,24 @@ export class CheckoutService {
         input.idempotencyKey,
       );
       if (existing) return toCheckoutResponse(existing);
+
+      // CF-23 — an add-on restricted to some plans (`compatiblePlanKeys`)
+      // can only be bought by an organization on one of those plans; refuse
+      // before a checkout is frozen. Twin of the install/enable rule in
+      // AddOnsLifecycleController.
+      if (input.target.type === 'add_on') {
+        const addOn = await this.addOnsRepository.findByKey(input.target.addOnKey);
+        const subscription =
+          await this.tenantSubscriptionsRepository.findByOrganizationId(
+            tx,
+            organizationId,
+          );
+        if (
+          !isPlanCompatibleWithAddOn(addOn?.compatiblePlanKeys, subscription?.plan.key)
+        ) {
+          throw new ForbiddenException({ messageKey: 'errors.addOns.incompatiblePlan' });
+        }
+      }
 
       const now = new Date();
       const expiresAt = new Date(now.getTime() + CHECKOUT_EXPIRY_MINUTES * 60_000);

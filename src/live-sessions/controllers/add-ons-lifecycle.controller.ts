@@ -37,6 +37,11 @@ import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-m
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
 import { TenantAddOnsRepository } from '../../plans/repositories/tenant-add-ons.repository';
+import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
+import {
+  isPlanCompatibleWithAddOn,
+  isPricedAddOn,
+} from '../../plans/utils/add-on-purchase-rules.util';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { AddOnAccessService } from '../services/add-on-access.service';
 
@@ -61,6 +66,7 @@ export class AddOnsLifecycleController {
     private readonly tenancyContextService: TenancyContextService,
     private readonly addOnsRepository: AddOnsRepository,
     private readonly tenantAddOnsRepository: TenantAddOnsRepository,
+    private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
     private readonly addOnAccessService: AddOnAccessService,
     private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
@@ -99,7 +105,7 @@ export class AddOnsLifecycleController {
           pricing: addOn.pricing ?? undefined,
           // `free` is simply "no price attached" — the same catalog
           // decides it, so no separate flag can drift out of step.
-          isFree: !addOn.pricing,
+          isFree: !isPricedAddOn(addOn.pricing),
           catalogStatus: addOn.catalogStatus,
           // Derived from the authoritative catalog status: the store shows a
           // "Coming Soon" state and hides install. Enforced server-side too.
@@ -190,10 +196,37 @@ export class AddOnsLifecycleController {
       throw new ForbiddenException({ messageKey: 'errors.addOns.comingSoon' });
     }
 
+    // CF-23 — A PRICED add-on is never installed through this route. It
+    // comes into existence only when its checkout is paid and approved
+    // (`PaymentApplicationService` → `TenantAddOnsRepository.activate`).
+    // Without this, any organization owner could take a paid add-on for
+    // free with one request. Free add-ons keep the self-service install.
+    const priced = isPricedAddOn(addOn.pricing);
+    if (action === 'install' && priced) {
+      throw new ForbiddenException({ messageKey: 'errors.addOns.purchaseRequired' });
+    }
+
     return this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       actorUserId,
       async (tx) => {
+        if (action === 'install' || action === 'enable') {
+          // `compatiblePlanKeys` restricts which plans may use the add-on;
+          // an empty list means every plan.
+          const subscription =
+            await this.tenantSubscriptionsRepository.findByOrganizationId(
+              tx,
+              organizationId,
+            );
+          if (
+            !isPlanCompatibleWithAddOn(addOn.compatiblePlanKeys, subscription?.plan.key)
+          ) {
+            throw new ForbiddenException({
+              messageKey: 'errors.addOns.incompatiblePlan',
+            });
+          }
+        }
+
         if (action === 'install') {
           // `activate` is the existing repository method P12 already used
           // for a purchased add-on — reused rather than duplicated, so
@@ -213,6 +246,15 @@ export class AddOnsLifecycleController {
             addOn.id,
           );
           if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+
+          // Re-enabling a priced add-on that was UNINSTALLED would hand it
+          // back without a new purchase; a DISABLED one (still owned) may be
+          // switched back on.
+          if (action === 'enable' && priced && existing.status === 'uninstalled') {
+            throw new ForbiddenException({
+              messageKey: 'errors.addOns.purchaseRequired',
+            });
+          }
 
           await this.tenantAddOnsRepository.setStatus(
             tx,

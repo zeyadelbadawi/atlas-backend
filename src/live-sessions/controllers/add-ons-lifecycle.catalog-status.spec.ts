@@ -21,6 +21,7 @@ import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-m
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AddOnsRepository } from '../../plans/repositories/add-ons.repository';
 import { TenantAddOnsRepository } from '../../plans/repositories/tenant-add-ons.repository';
+import { TenantSubscriptionsRepository } from '../../plans/repositories/tenant-subscriptions.repository';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { AddOnAccessService } from '../services/add-on-access.service';
 
@@ -33,19 +34,31 @@ describe('AddOnsLifecycleController — catalog status enforcement', () => {
   let findByKey: jest.Mock;
   let activate: jest.Mock;
   let runInTenantAndUserContext: jest.Mock;
+  let findSubscription: jest.Mock;
+  let findOne: jest.Mock;
+  let setStatus: jest.Mock;
 
-  const makeAddOn = (catalogStatus: string) => ({
+  const makeAddOn = (
+    catalogStatus: string,
+    extra: { pricing?: unknown; compatiblePlanKeys?: string[] } = {},
+  ) => ({
     id: 'addon-1',
     key: 'demo-addon',
     name: 'Demo',
     effect: { type: 'feature', featureKey: 'liveSessions' },
     catalogStatus,
+    pricing: null,
+    compatiblePlanKeys: [],
+    ...extra,
   });
 
   beforeEach(async () => {
     findByKey = jest.fn();
     activate = jest.fn().mockResolvedValue(undefined);
     runInTenantAndUserContext = jest.fn(async (_o, _u, work) => work({} as never));
+    findSubscription = jest.fn().mockResolvedValue({ plan: { key: 'starter' } });
+    findOne = jest.fn();
+    setStatus = jest.fn().mockResolvedValue(undefined);
 
     const moduleRef = await Test.createTestingModule({
       controllers: [AddOnsLifecycleController],
@@ -56,10 +69,14 @@ describe('AddOnsLifecycleController — catalog status enforcement', () => {
           provide: TenantAddOnsRepository,
           useValue: {
             activate,
-            findOne: jest.fn(),
-            setStatus: jest.fn(),
+            findOne,
+            setStatus,
             findAllForOrganization: jest.fn(),
           },
+        },
+        {
+          provide: TenantSubscriptionsRepository,
+          useValue: { findByOrganizationId: findSubscription },
         },
         { provide: AuditLogWriterService, useValue: { write: jest.fn() } },
         { provide: AddOnAccessService, useValue: { describe: jest.fn() } },
@@ -126,5 +143,155 @@ describe('AddOnsLifecycleController — catalog status enforcement', () => {
     await expect(
       controller.uninstall(ORG_ID, 'demo-addon', request(), { confirm: true }),
     ).resolves.not.toThrow();
+  });
+});
+
+/**
+ * CF-23 — a priced add-on is only ever created by a paid, approved checkout
+ * (PaymentApplicationService → activate), never by the lifecycle route.
+ */
+describe('AddOnsLifecycleController — priced add-ons and plan compatibility', () => {
+  let controller: AddOnsLifecycleController;
+  let findByKey: jest.Mock;
+  let activate: jest.Mock;
+  let findOne: jest.Mock;
+  let setStatus: jest.Mock;
+  let findSubscription: jest.Mock;
+
+  const addOn = (extra: Record<string, unknown> = {}) => ({
+    id: 'addon-1',
+    key: 'extra-academy',
+    name: 'Extra academies',
+    effect: { type: 'limit', limitKey: 'academies', amount: 2 },
+    catalogStatus: 'published',
+    pricing: null,
+    compatiblePlanKeys: [],
+    ...extra,
+  });
+  const PRICED = { pricing: { amount: 15, currency: 'USD', billingCycle: 'monthly' } };
+
+  beforeEach(async () => {
+    findByKey = jest.fn();
+    activate = jest.fn().mockResolvedValue(undefined);
+    findOne = jest.fn();
+    setStatus = jest.fn().mockResolvedValue(undefined);
+    findSubscription = jest.fn().mockResolvedValue({ plan: { key: 'starter' } });
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [AddOnsLifecycleController],
+      providers: [
+        {
+          provide: TenancyContextService,
+          useValue: {
+            runInTenantAndUserContext: jest.fn(async (_o, _u, work) => work({} as never)),
+          },
+        },
+        { provide: AddOnsRepository, useValue: { findByKey, findAll: jest.fn() } },
+        {
+          provide: TenantAddOnsRepository,
+          useValue: { activate, findOne, setStatus, findAllForOrganization: jest.fn() },
+        },
+        {
+          provide: TenantSubscriptionsRepository,
+          useValue: { findByOrganizationId: findSubscription },
+        },
+        { provide: AuditLogWriterService, useValue: { write: jest.fn() } },
+        { provide: AddOnAccessService, useValue: { describe: jest.fn() } },
+      ],
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ManagementSurfaceGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(OrganizationMembershipGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+
+    controller = moduleRef.get(AddOnsLifecycleController);
+  });
+
+  const request = (): Request =>
+    ({
+      tenantContext: { permissions: [BILLING] },
+      authContext: { userId: USER_ID },
+    }) as unknown as Request;
+
+  const forbiddenKey = async (promise: Promise<unknown>) => {
+    try {
+      await promise;
+    } catch (error) {
+      expect(error).toBeInstanceOf(ForbiddenException);
+      return ((error as ForbiddenException).getResponse() as { messageKey: string })
+        .messageKey;
+    }
+    throw new Error('expected a ForbiddenException');
+  };
+
+  it('REFUSES installing a published PRICED add-on without a purchase', async () => {
+    findByKey.mockResolvedValue(addOn(PRICED));
+    expect(
+      await forbiddenKey(
+        controller.install(ORG_ID, 'extra-academy', request(), { confirm: true }),
+      ),
+    ).toBe('errors.addOns.purchaseRequired');
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it('still ALLOWS installing a published FREE add-on', async () => {
+    findByKey.mockResolvedValue(addOn());
+    await controller.install(ORG_ID, 'extra-academy', request(), { confirm: true });
+    expect(activate).toHaveBeenCalledWith(expect.anything(), ORG_ID, 'addon-1');
+  });
+
+  it('REFUSES re-enabling an UNINSTALLED priced add-on (that would be a free re-purchase)', async () => {
+    findByKey.mockResolvedValue(addOn(PRICED));
+    findOne.mockResolvedValue({ id: 'row-1', status: 'uninstalled' });
+    expect(
+      await forbiddenKey(
+        controller.enable(ORG_ID, 'extra-academy', request(), { confirm: true }),
+      ),
+    ).toBe('errors.addOns.purchaseRequired');
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('ALLOWS re-enabling a DISABLED priced add-on the organization still owns', async () => {
+    findByKey.mockResolvedValue(addOn(PRICED));
+    findOne.mockResolvedValue({ id: 'row-1', status: 'disabled' });
+    await controller.enable(ORG_ID, 'extra-academy', request(), { confirm: true });
+    expect(setStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'addon-1',
+      'enabled',
+    );
+  });
+
+  it('REFUSES install when the current plan is not in compatiblePlanKeys', async () => {
+    findByKey.mockResolvedValue(addOn({ compatiblePlanKeys: ['growth'] }));
+    expect(
+      await forbiddenKey(
+        controller.install(ORG_ID, 'extra-academy', request(), { confirm: true }),
+      ),
+    ).toBe('errors.addOns.incompatiblePlan');
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it('ALLOWS install when the current plan is listed', async () => {
+    findSubscription.mockResolvedValue({ plan: { key: 'growth' } });
+    findByKey.mockResolvedValue(addOn({ compatiblePlanKeys: ['growth'] }));
+    await controller.install(ORG_ID, 'extra-academy', request(), { confirm: true });
+    expect(activate).toHaveBeenCalled();
+  });
+
+  it('always ALLOWS uninstalling a priced add-on', async () => {
+    findByKey.mockResolvedValue(addOn(PRICED));
+    findOne.mockResolvedValue({ id: 'row-1', status: 'enabled' });
+    await controller.uninstall(ORG_ID, 'extra-academy', request(), { confirm: true });
+    expect(setStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'addon-1',
+      'uninstalled',
+    );
   });
 });
