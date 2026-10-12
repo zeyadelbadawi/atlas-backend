@@ -22,7 +22,7 @@ groups:
           threshold: "> 20 more orders entered pending_payment than were paid in 24h, for 1h"
           current_value: '{{ $value | humanize }}'
           summary: "Course orders are entering payment review faster than they are approved"
-          description: "Over the last 24h, {{ $value }} more orders reached pending_payment than were approved. Check the platform payment review queue."
+          description: "Over the last 24h, {{ $value }} more orders reached pending_payment than were approved. Who reviews them depends on the organization's payment collection mode: academy_manual orders are approved by that organization's owner (Dashboard → Academy → Payments), platform-collected orders in the Platform Owner's course-payment review queue. Check both before acting."
       - alert: AtlasCheckoutApprovalSlow
         expr: |
           histogram_quantile(0.95, sum(rate(atlas_checkout_approval_latency_seconds_bucket[6h])) by (le)) > 172800
@@ -32,7 +32,7 @@ groups:
           threshold: "p95 proof-to-approval > 48h (172800 s), for 30m"
           current_value: '{{ $value | humanize }}'
           summary: "p95 proof-to-approval latency above 48h"
-          description: "Learners are waiting more than two days for manual payment review (p95 = {{ $value | humanizeDuration }})."
+          description: "Learners are waiting more than two days for manual payment review (p95 = {{ $value | humanizeDuration }}). This combines academy_manual reviews (each organization owner) and platform reviews (Platform Owner queue)."
       - alert: AtlasCheckoutRefundSpike
         expr: |
           sum(increase(atlas_checkout_orders_total{state="refunded"}[24h])) > 5
