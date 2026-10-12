@@ -19,7 +19,7 @@ describe('POST /auth/register (e2e)', () => {
   let flushRateLimitKeys: () => Promise<void>;
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    const testApp = await createTestApp({ fieldViolations: true });
     app = testApp.app;
     // Fixture and verification reads go through the owner connection: the
     // app's own client is RLS-bound and sees identity rows only inside a
@@ -99,6 +99,20 @@ describe('POST /auth/register (e2e)', () => {
       .expect(400);
 
     expect(response.body.error.kind).toBe('validation');
+  });
+
+  it('B0-SEC-11: refuses a common password with the generic validation key and creates nothing', async () => {
+    const email = uniqueTestEmail('register-common-pw');
+    const response = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ name: 'Common Pw', email, password: 'Password123' })
+      .expect(400);
+
+    expect(response.body.error.kind).toBe('validation');
+    expect(response.body.error.violations).toEqual([
+      { field: 'password', messageKey: 'validation:commonPassword' },
+    ]);
+    expect(await admin.user.findUnique({ where: { email } })).toBeNull();
   });
 
   it('rejects an invalid payload (malformed email)', async () => {

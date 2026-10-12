@@ -25,6 +25,7 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { IsNotCommonPassword } from '../password/common-password.validator';
 import {
   IsMobilePhoneNumber,
   IsPhoneCountry,
@@ -57,6 +58,7 @@ export class RegisterDto {
   @IsString()
   @MinLength(8)
   @MaxLength(1024)
+  @IsNotCommonPassword()
   readonly password!: string;
 
   @IsOptional()

@@ -3,6 +3,7 @@
  * `newPassword` floor mirrors `ResetPasswordForm`'s own `min(8)`.
  */
 import { IsNotEmpty, IsString, MinLength, MaxLength } from 'class-validator';
+import { IsNotCommonPassword } from '../password/common-password.validator';
 
 export class PasswordResetConfirmDto {
   @IsNotEmpty()
@@ -14,5 +15,6 @@ export class PasswordResetConfirmDto {
   @IsString()
   @MinLength(8)
   @MaxLength(1024)
+  @IsNotCommonPassword()
   readonly newPassword!: string;
 }
