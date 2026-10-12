@@ -20,6 +20,7 @@ import {
   isEnrollmentActive,
 } from './learning-access.util';
 import type { Prisma } from '@prisma/client';
+import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 
 const base = {
   status: 'enrolled' as const,
@@ -322,26 +323,48 @@ describe('assertCanReviewCourse (the review/grading tier, mirrors can_review_cou
 });
 
 describe('assertCanManageSecurityPolicy (D8 — the Client Owner alone)', () => {
-  it('admits only an active owner', async () => {
-    await expect(
+  // The REAL repository rule (`findManagingRole`) over a hand-built
+  // transaction: an active staff row is read as Prisma would (status
+  // filter included), and `orgOwner` says whether the caller owns the
+  // academy's organization (B0-MED-09 / B0-ORG-03).
+  function policy(membership: Membership, orgOwner = false) {
+    const fakeTx = {
+      academyMember: {
+        findFirst: ({ where }: { where: { status?: string } }) =>
+          Promise.resolve(
+            membership && (!where.status || where.status === membership.status)
+              ? membership
+              : null,
+          ),
+      },
+      academy: {
+        findUnique: () => Promise.resolve({ organizationId: 'org-1' }),
+      },
+      organizationMembership: {
+        findFirst: () => Promise.resolve(orgOwner ? { id: 'om-1' } : null),
+      },
+    } as unknown as Prisma.TransactionClient;
+    return (userId = 'user-1') =>
       assertCanManageSecurityPolicy(
-        tx,
-        academyMembers({ role: 'owner', status: 'active' }),
+        fakeTx,
+        new AcademyMembersRepository(),
         'academy-1',
-        'user-1',
-      ),
-    ).resolves.toBeUndefined();
+        userId,
+      );
+  }
+
+  it('admits an active academy owner', async () => {
+    await expect(policy({ role: 'owner', status: 'active' })()).resolves.toBeUndefined();
+  });
+
+  it('admits the organization owner with no academy row (B0-MED-09)', async () => {
+    await expect(policy(null, true)()).resolves.toBeUndefined();
   });
 
   it('refuses a MANAGER — academy-wide operational authority stops short of security policy', async () => {
-    await expect(
-      assertCanManageSecurityPolicy(
-        tx,
-        academyMembers({ role: 'manager', status: 'active' }),
-        'academy-1',
-        'user-1',
-      ),
-    ).rejects.toMatchObject({ status: 403 });
+    await expect(policy({ role: 'manager', status: 'active' })()).rejects.toMatchObject({
+      status: 403,
+    });
   });
 
   it('refuses administrator, instructor, staff and a non-member alike', async () => {
@@ -351,25 +374,13 @@ describe('assertCanManageSecurityPolicy (D8 — the Client Owner alone)', () => 
       { role: 'staff', status: 'active' },
       null,
     ] as Membership[]) {
-      await expect(
-        assertCanManageSecurityPolicy(
-          tx,
-          academyMembers(membership),
-          'academy-1',
-          'user-1',
-        ),
-      ).rejects.toMatchObject({ status: 403 });
+      await expect(policy(membership)()).rejects.toMatchObject({ status: 403 });
     }
   });
 
   it('refuses an owner whose membership is not active', async () => {
-    await expect(
-      assertCanManageSecurityPolicy(
-        tx,
-        academyMembers({ role: 'owner', status: 'inactive' }),
-        'academy-1',
-        'user-1',
-      ),
-    ).rejects.toMatchObject({ status: 403 });
+    await expect(policy({ role: 'owner', status: 'inactive' })()).rejects.toMatchObject({
+      status: 403,
+    });
   });
 });

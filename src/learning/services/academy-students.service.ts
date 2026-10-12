@@ -116,17 +116,16 @@ export class AcademyStudentsService {
     academyId: string,
     userId: string,
   ): Promise<RosterViewer> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    // B0-ORG-03 — the guard's rule: an active managing row, or the owner of
+    // the academy's organization (with or without a row).
+    const managingRole = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (
-      membership &&
-      membership.status === 'active' &&
-      MANAGING_ROLES.has(membership.role)
-    ) {
-      return { scope: 'academy', role: membership.role };
+    if (managingRole) {
+      return { scope: 'academy', role: managingRole };
     }
     const courseIds = await this.rosterRepository.findCourseIdsTaughtBy(
       tx,
@@ -145,19 +144,17 @@ export class AcademyStudentsService {
     academyId: string,
     userId: string,
   ): Promise<string> {
-    const membership = await this.academyMembersRepository.findForUserInAcademy(
+    // B0-ORG-03 — same rule as `resolveViewer` (organization owner included).
+    const managingRole = await this.academyMembersRepository.findManagingRole(
       tx,
       academyId,
       userId,
+      MANAGING_ROLES,
     );
-    if (
-      !membership ||
-      membership.status !== 'active' ||
-      !MANAGING_ROLES.has(membership.role)
-    ) {
+    if (!managingRole) {
       throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
     }
-    return membership.role;
+    return managingRole;
   }
 
   // ---------------------------------------------------------------------
