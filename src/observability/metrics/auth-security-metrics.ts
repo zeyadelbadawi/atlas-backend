@@ -48,7 +48,9 @@ export type SessionRevocationTrigger =
   | 'unverified_account_grant'
   // ATO review F3 — two-factor authentication turned off: every OTHER
   // session ends with it.
-  | 'two_factor_disabled';
+  | 'two_factor_disabled'
+  // B0-OC-03 — an operator's break-glass second-factor reset.
+  | 'two_factor_reset_by_operator';
 
 const surfaceDenied = counter(
   'atlas_auth_surface_denied_total',

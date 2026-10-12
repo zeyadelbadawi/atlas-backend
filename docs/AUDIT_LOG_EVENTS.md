@@ -246,6 +246,9 @@ writer stores.
 | `auth.identity.linked` | security | platform | no | provider, via |
 | `auth.identity.unlinked` | security | platform | no | provider |
 | `auth.sessions.revoked` | security | platform | no | trigger, sessionsRevoked, trustedDevicesRevoked |
+| `auth.two_factor.enabled` | security | platform | no | — |
+| `auth.two_factor.disabled` | security | platform | no | — |
+| `auth.two_factor.reset_by_operator` | security | platform | no | reason, hadTwoFactor |
 | `password_reset.confirmed` | security | platform | no | trigger, sessionsRevoked, trustedDevicesRevoked |
 | `account.deletion.requested` | security | platform | no | challengeId |
 | `account.deletion.code_failed` | security | platform | no | challengeId, attempts |

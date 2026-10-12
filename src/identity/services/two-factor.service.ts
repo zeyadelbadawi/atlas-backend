@@ -37,8 +37,10 @@
  */
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -50,6 +52,7 @@ import { TotpSecretCipher } from './totp-secret-cipher.service';
 import { PasswordCredentialsService } from './password-credentials.service';
 import { SessionRevocationService } from './session-revocation.service';
 import { CommunicationService } from '../../communications/services/communication.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import type { AppConfig } from '../../config/configuration';
 import type { AuthMethod, Prisma } from '@prisma/client';
 import { runInUserContext } from '../../database/user-context';
@@ -107,6 +110,7 @@ export class TwoFactorService {
     private readonly configService: ConfigService,
     private readonly sessionRevocationService: SessionRevocationService,
     private readonly communicationService: CommunicationService,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   /**
@@ -251,6 +255,13 @@ export class TwoFactorService {
           userId,
           codeHash: hashRecoveryCode(code),
         })),
+      });
+      // B0-OC-03 / IAM-9 — the change is on the record, not only in a log.
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        action: 'auth.two_factor.enabled',
+        targetType: 'user',
+        targetId: userId,
       });
     });
 
@@ -436,6 +447,12 @@ export class TwoFactorService {
     await this.asUser(userId, async (tx) => {
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.userTwoFactor.deleteMany({ where: { userId } });
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        action: 'auth.two_factor.disabled',
+        targetType: 'user',
+        targetId: userId,
+      });
     });
 
     // ATO review F3 — sessions opened while 2FA protected the account were
@@ -450,6 +467,79 @@ export class TwoFactorService {
     }
     await this.notify(userId, 'auth.two_factor.disabled');
     this.logger.log({ userId }, 'Two-factor authentication disabled.');
+  }
+
+  /**
+   * B0-OC-03 — break-glass reset, for a Platform Owner (or anyone) who has
+   * lost BOTH the authenticator and the recovery codes. Reached only from
+   * the operator script `src/scripts/reset-two-factor.ts`; there is no HTTP
+   * route.
+   *
+   * It weakens nothing: the operator must be a Platform Owner and cannot
+   * reset themselves; only the target's own second-factor rows go, in the
+   * target's own RLS context; every session of the target ends; one audit
+   * row names the operator, the target and the reason, in the same
+   * transaction as the delete; the target is emailed. The next sign-in
+   * still needs the password, and the Platform Owner guard still demands
+   * re-enrolment before any platform page opens.
+   */
+  async resetByOperator(
+    actorUserId: string,
+    targetUserId: string,
+    reason: string,
+  ): Promise<{ readonly hadTwoFactor: boolean; readonly sessionsRevoked: number }> {
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      throw new BadRequestException({ messageKey: 'errors.validation' });
+    }
+
+    const actor = await this.asUser(actorUserId, (tx) =>
+      tx.user.findUnique({
+        where: { id: actorUserId },
+        select: { isPlatformOwner: true },
+      }),
+    );
+    if (!actor?.isPlatformOwner) {
+      throw new ForbiddenException({ messageKey: 'errors.forbidden' });
+    }
+    if (actorUserId === targetUserId) {
+      // A second person approves a break-glass reset; the locked-out
+      // operator never resets their own factor.
+      throw new ForbiddenException({ messageKey: 'errors.forbidden' });
+    }
+
+    const hadTwoFactor = await this.asUser(targetUserId, async (tx) => {
+      const target = await tx.user.findUnique({
+        where: { id: targetUserId },
+        select: { id: true },
+      });
+      if (!target) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const removed = await tx.userTwoFactor.deleteMany({
+        where: { userId: targetUserId },
+      });
+      await tx.twoFactorRecoveryCode.deleteMany({ where: { userId: targetUserId } });
+      await this.auditLogWriterService.write(tx, {
+        actorUserId,
+        action: 'auth.two_factor.reset_by_operator',
+        targetType: 'user',
+        targetId: targetUserId,
+        context: { reason: trimmedReason.slice(0, 500), hadTwoFactor: removed.count > 0 },
+      });
+      return removed.count > 0;
+    });
+
+    const sessionsRevoked = await this.sessionRevocationService.revokeAllSessionsForUser(
+      targetUserId,
+      'two_factor_reset_by_operator',
+    );
+    await this.notify(targetUserId, 'auth.two_factor.disabled');
+    this.logger.log(
+      { actorUserId, targetUserId, hadTwoFactor, sessionsRevoked },
+      'Two-factor authentication reset by an operator.',
+    );
+    return { hadTwoFactor, sessionsRevoked };
   }
 
   /** Best-effort security notice after the change — a mail hiccup never undoes it. */

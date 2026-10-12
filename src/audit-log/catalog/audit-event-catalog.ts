@@ -941,6 +941,13 @@ export const AUDIT_EVENT_DEFINITIONS = [
   // ATO review F1 — the first mailbox proof (a reset) on a never-verified
   // account removed the external sign-ins and 2FA its registrant attached.
   ev('auth.sign_in_methods.removed', 'security', 'user', 'platform', false, ['trigger']),
+  // B0-OC-03 / IAM-9 — second-factor changes, self-service and break-glass.
+  ev('auth.two_factor.enabled', 'security', 'user', 'platform', false),
+  ev('auth.two_factor.disabled', 'security', 'user', 'platform', false),
+  ev('auth.two_factor.reset_by_operator', 'security', 'user', 'platform', false, [
+    'reason',
+    'hadTwoFactor',
+  ]),
   ev('auth.sessions.revoked', 'security', 'user', 'platform', false, [
     'trigger',
     'sessionsRevoked',
