@@ -174,6 +174,8 @@ export class PlatformPlansService {
           trialDurationDays: payload.trialDurationDays ?? null,
           giftedDaysMonthly: normalizeGiftedDays(payload.giftedDaysMonthly),
           giftedDaysYearly: normalizeGiftedDays(payload.giftedDaysYearly),
+          ...(payload.family ? { family: payload.family } : {}),
+          ...(payload.tier ? { tier: payload.tier } : {}),
         },
       });
 

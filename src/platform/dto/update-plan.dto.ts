@@ -38,6 +38,7 @@ import {
   PLAN_FEATURE_KEYS,
   PLAN_LIMIT_KEYS,
 } from '../../plans/dto/entitlement.types';
+import { PlanFamily, PlanTier } from '@prisma/client';
 
 /** W8 — the configurable range of gifted setup days (mirrors the DB CHECK). */
 export const GIFTED_DAYS_MIN = 5;
@@ -235,6 +236,20 @@ export class CreatePlanDto {
   /** W8 — gifted setup days on a first yearly subscription. null/0 = none; else 5..15. */
   @IsGiftedDays()
   readonly giftedDaysYearly?: number | null;
+
+  /**
+   * B0-BIL-11 — which family and tier the plan belongs to. Hidden plans
+   * (founding price locks, Enterprise deals) must be able to say they are,
+   * for example, an `enterprise` tier; without these an API-created plan
+   * always got the database defaults (`normal` / `basic`).
+   */
+  @IsOptional()
+  @IsIn(Object.values(PlanFamily))
+  readonly family?: PlanFamily;
+
+  @IsOptional()
+  @IsIn(Object.values(PlanTier))
+  readonly tier?: PlanTier;
 }
 
 /** Every field optional — a partial edit must not require resending the whole plan. */
