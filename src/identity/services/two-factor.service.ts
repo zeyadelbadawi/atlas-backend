@@ -599,6 +599,15 @@ export class TwoFactorService {
   // -----------------------------------------------------------------
 
   private async assertPassword(userId: string, password: string): Promise<void> {
+    // B0-OC-04 — a Google-only account has no password to re-authenticate
+    // with. Say so (to the signed-in owner of the account, nobody else)
+    // instead of "That password isn't correct", so they know to set one
+    // through "Forgot password?" first.
+    if (!(await this.passwordCredentials.has(userId))) {
+      throw new BadRequestException({
+        messageKey: 'errors.auth.setPasswordBeforeTwoFactor',
+      });
+    }
     if (!(await this.passwordCredentials.verify(userId, password))) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }

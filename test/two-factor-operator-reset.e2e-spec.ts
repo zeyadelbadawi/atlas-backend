@@ -16,7 +16,8 @@ import {
 import request from 'supertest';
 import { generate } from 'otplib';
 import type { PrismaClient } from '@prisma/client';
-import { createTestApp, uniqueTestEmail } from './utils/test-app';
+import { createTestApp, uniqueTestEmail, waitFor } from './utils/test-app';
+import type { StubEmailProvider } from '../src/identity/services/stub-email.provider';
 import { createAdminPrisma } from './utils/db-admin';
 import { TwoFactorService } from '../src/identity/services/two-factor.service';
 
@@ -168,5 +169,114 @@ describe('Two-factor operator reset (e2e) — B0-OC-03', () => {
       .post('/auth/sign-in')
       .send({ email: target.email, password: 'not-the-password' })
       .expect(401);
+  });
+});
+
+/**
+ * B0-OC-04 — a Google-only account (no password) cannot confirm TOTP,
+ * because confirmation needs the current password; "Forgot password?"
+ * sets a first password, after which enrolment works.
+ */
+describe('Google-only account and TOTP enrolment (e2e) — B0-OC-04', () => {
+  let app: INestApplication;
+  let admin: PrismaClient;
+  let flush: () => Promise<void>;
+  let stubEmailProvider: StubEmailProvider;
+
+  beforeAll(async () => {
+    const testApp = await createTestApp();
+    app = testApp.app;
+    admin = createAdminPrisma();
+    flush = testApp.flushRateLimitKeys;
+    stubEmailProvider = testApp.stubEmailProvider;
+  });
+
+  afterAll(async () => {
+    await admin.$disconnect();
+    await app.close();
+  });
+
+  beforeEach(async () => {
+    await flush();
+  });
+
+  it('refuses TOTP confirmation without a password, and succeeds after a password reset', async () => {
+    const email = uniqueTestEmail('oc04-google-only');
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ name: 'oc04', email, password: PASSWORD })
+      .expect(201);
+    const signIn = await request(app.getHttpServer())
+      .post('/auth/sign-in')
+      .send({ email, password: PASSWORD })
+      .expect(200);
+    const userId = signIn.body.user.id as string;
+    const token = signIn.body.accessToken as string;
+
+    // Make it a Google-only account: verified, a Google identity, no password.
+    await admin.user.update({
+      where: { id: userId },
+      data: { emailVerifiedAt: new Date() },
+    });
+    await admin.userAuthIdentity.create({
+      data: {
+        userId,
+        provider: 'google',
+        providerSubject: `oc04-${userId}`,
+        emailAtLink: email,
+      },
+    });
+    await admin.userCredential.delete({ where: { userId } });
+
+    const setup = await request(app.getHttpServer())
+      .post('/auth/2fa/setup')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const secret = setup.body.secret as string;
+    const refused = await request(app.getHttpServer())
+      .post('/auth/2fa/confirm')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ token: await generate({ secret }), password: 'any-password-at-all' });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error.messageKey).toBe('errors.auth.setPasswordBeforeTwoFactor');
+    expect(
+      await admin.userTwoFactor.count({ where: { userId, confirmedAt: { not: null } } }),
+    ).toBe(0);
+
+    // "Forgot password?" sets a first password for the Google-only account.
+    await request(app.getHttpServer())
+      .post('/auth/password-reset/request')
+      .send({ email })
+      .expect(200);
+    const raw = await waitFor(() => stubEmailProvider.peekLastPasswordResetToken(email));
+    const newPassword = 'first-password-after-google-1';
+    await request(app.getHttpServer())
+      .post('/auth/password-reset/confirm')
+      .send({ token: raw, newPassword })
+      .expect(200);
+    expect(await admin.userCredential.count({ where: { userId } })).toBe(1);
+    // The Google sign-in survives: the address was already proven.
+    expect(await admin.userAuthIdentity.count({ where: { userId } })).toBe(1);
+
+    const again = await request(app.getHttpServer())
+      .post('/auth/sign-in')
+      .send({ email, password: newPassword })
+      .expect(200);
+    const freshToken = again.body.accessToken as string;
+    const setup2 = await request(app.getHttpServer())
+      .post('/auth/2fa/setup')
+      .set('Authorization', `Bearer ${freshToken}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/auth/2fa/confirm')
+      .set('Authorization', `Bearer ${freshToken}`)
+      .send({
+        token: await generate({ secret: setup2.body.secret as string }),
+        password: newPassword,
+      })
+      .expect(200);
+    expect(
+      await admin.userTwoFactor.count({ where: { userId, confirmedAt: { not: null } } }),
+    ).toBe(1);
   });
 });
