@@ -613,7 +613,12 @@ describe('Manara template v1 — generation', () => {
       // No hand-typed statistics in either mode.
       for (const coreType of ['home', 'about']) {
         const stats = page(coreType).find((section) => section.type === 'statistics')!;
-        expect((stats.config.items as Row[]).length).toBe(3);
+        // B0-WEB-10 — courses and instructors only: the learner count is
+        // public once shown, so a new site never publishes it by default.
+        expect((stats.config.items as Row[]).map((item) => item.metric)).toEqual([
+          'courses',
+          'instructors',
+        ]);
         for (const item of stats.config.items as Row[]) {
           expect(item.metric).toBeDefined();
           expect(item.value).toEqual({ en: '', ar: '' });

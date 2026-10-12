@@ -44,12 +44,6 @@ export const corporateLearningTemplate: WebsiteTemplateDefinition = {
                 label: lt('Training Programs', 'برنامج تدريبي'),
               },
               {
-                id: 'stat-students',
-                metric: 'students',
-                value: lt('0'),
-                label: lt('Professionals Trained', 'محترف تم تدريبه'),
-              },
-              {
                 id: 'stat-instructors',
                 metric: 'instructors',
                 value: lt('0'),
