@@ -1,12 +1,12 @@
 /**
- * B0-LRN-09 — what an enrolled learner gets in two edge states.
+ * B0-LRN-09 / B0-BIL-14 — what an enrolled learner gets in two edge states.
  *
  * (a) The course is unpublished (back to draft, or archived) after they
  *     enrolled: the course stays on My Learn, and their progress is kept and
  *     still readable.
  * (b) The academy's subscription has lapsed: the learner's own progress
- *     writes (mark a lesson complete, the playback heartbeat) still succeed,
- *     like their own submissions and attempts. Only the organization's own
+ *     writes (mark a lesson complete, the playback heartbeat), quiz attempts
+ *     and assignment submissions all still succeed, and lessons still open. Only the organization's own
  *     management mutations are refused (`errors.subscription.required`).
  *     A late renewal therefore never costs a learner progress.
  */
@@ -18,10 +18,14 @@ import {
   seedAcademy,
   seedAcademyStudent,
   seedActiveSubscriptionForOrg,
+  seedAssignment,
   seedCourse,
   seedCourseLesson,
   seedCourseSection,
   seedOrganizationWithOwner,
+  seedQuiz,
+  seedQuizQuestion,
+  seedQuizQuestionOption,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
@@ -170,6 +174,16 @@ describe('B0-LRN-09 learner access edge states (e2e)', () => {
   describe('(b) the academy subscription has lapsed', () => {
     it("the learner's own progress writes still succeed; the owner's management writes are refused", async () => {
       const f = await enrolledLearner('lrn09-lapsed');
+      const quiz = await seedQuiz(admin, f.course.id, 'Lapsed quiz', {
+        status: 'published',
+        passingScore: 50,
+      });
+      const question = await seedQuizQuestion(admin, quiz.id, '2+2?', 'single_choice', 0);
+      const correct = await seedQuizQuestionOption(admin, question.id, '4', true);
+      await seedQuizQuestionOption(admin, question.id, '5', false);
+      const assignment = await seedAssignment(admin, f.course.id, 'Lapsed assignment', {
+        status: 'published',
+      });
       await admin.tenantSubscription.update({
         where: { organizationId: f.org.id },
         data: { status: 'expired' },
@@ -192,6 +206,26 @@ describe('B0-LRN-09 learner access edge states (e2e)', () => {
         .set(as(f.student.token))
         .expect(200);
       expect(progress.body.completedLessons).toBe(2);
+
+      // B0-BIL-14 — a quiz attempt and an assignment submission go through.
+      const attempt = await request(app.getHttpServer())
+        .post(`/courses/${f.course.id}/quizzes/${quiz.id}/attempts`)
+        .set(as(f.student.token));
+      expect(attempt.status).toBe(201);
+      const submitted = await request(app.getHttpServer())
+        .post(
+          `/courses/${f.course.id}/quizzes/${quiz.id}/attempts/${attempt.body.id}/submit`,
+        )
+        .set(as(f.student.token))
+        .send({
+          answers: [{ questionId: question.id, selectedOptionIds: [correct.id] }],
+        });
+      expect(submitted.status).toBe(201);
+      const submission = await request(app.getHttpServer())
+        .post(`/courses/${f.course.id}/assignments/${assignment.id}/submission`)
+        .set(as(f.student.token))
+        .send({ response: 'Submitted while the academy had lapsed.' });
+      expect(submission.status).toBe(201);
 
       // Control: the same lapse does stop the organization's own mutations.
       const refused = await request(app.getHttpServer())
