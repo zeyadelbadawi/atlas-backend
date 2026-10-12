@@ -860,6 +860,33 @@ export const AUDIT_EVENT_DEFINITIONS = [
     true,
     SUBSCRIPTION_TRANSITION,
   ),
+  // B0-BIL-06 — the Platform Owner's audited subscription remedies. Not
+  // tenant-visible: the reason is an internal note; the customer sees the
+  // resulting dates and plan on their own subscription page.
+  ev(
+    'subscription.extended_by_platform',
+    'subscription',
+    'tenant_subscription',
+    'organization',
+    false,
+    ['days', 'reason', 'field', 'previousStatus'],
+  ),
+  ev(
+    'subscription.days_granted_by_platform',
+    'subscription',
+    'tenant_subscription',
+    'organization',
+    false,
+    ['days', 'reason', 'field', 'previousStatus'],
+  ),
+  ev(
+    'subscription.plan_changed_by_platform',
+    'subscription',
+    'tenant_subscription',
+    'organization',
+    false,
+    ['fromPlanId', 'toPlanId', 'toPlanKey', 'applyAt', 'effectiveAt', 'reason'],
+  ),
   // B0-BIL-04 — a mid-period downgrade taking effect at the period end.
   ev(
     'subscription.scheduled_plan_change_applied',

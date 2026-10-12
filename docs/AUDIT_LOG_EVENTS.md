@@ -230,6 +230,9 @@ writer stores.
 | `subscription.expired` | subscription | organization | yes | previousStatus, newStatus, reason, at, currentPeriodEnd, graceEndsAt |
 | `subscription.cancelled_at_period_end` | subscription | organization | yes | previousStatus, newStatus, reason, at, currentPeriodEnd, graceEndsAt |
 | `subscription.scheduled_plan_change_applied` | subscription | organization | yes | fromPlanId, toPlanId, at |
+| `subscription.extended_by_platform` | subscription | organization | no | days, reason, field, previousStatus |
+| `subscription.days_granted_by_platform` | subscription | organization | no | days, reason, field, previousStatus |
+| `subscription.plan_changed_by_platform` | subscription | organization | no | fromPlanId, toPlanId, toPlanKey, applyAt, effectiveAt, reason |
 | `add_on.install` | subscription | organization | yes | addOnKey |
 | `add_on.enable` | subscription | organization | yes | addOnKey |
 | `add_on.disable` | subscription | organization | yes | addOnKey |
