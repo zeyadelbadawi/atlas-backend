@@ -121,16 +121,34 @@ export class PlatformScaleRepository {
   /**
    * `course_orders` created in `[from, now]`, bucketed by CURRENT status.
    * One `GROUP BY`; the service maps every `CourseOrderStatus` value.
+   *
+   * B0-COM-04 — orders expire lazily (only when the learner touches them
+   * again), so a stored `draft`/`pending_payment` past its `expires_at` is
+   * counted as `expired` here: the same rule the checkout applies, which
+   * also means an order with a payment still under review is NOT expired,
+   * however old (`CourseOrderPaymentsService` checks expiry only once
+   * nothing is under review).
    */
   async courseOrdersCreatedByStatus(
     tx: Prisma.TransactionClient,
     from: Date,
   ): Promise<{ status: string; orders: number }[]> {
     return tx.$queryRaw<{ status: string; orders: number }[]>`
-      SELECT "status"::text AS status, COUNT(*)::int AS orders
-      FROM "course_orders"
-      WHERE "created_at" >= ${from}
-      GROUP BY "status"
+      SELECT
+        CASE
+          WHEN o."status" IN ('draft', 'pending_payment')
+            AND o."expires_at" <= now()
+            AND NOT EXISTS (
+              SELECT 1 FROM "payments" p
+              WHERE p."course_order_id" = o."id" AND p."review_status" = 'pending'
+            )
+          THEN 'expired'
+          ELSE o."status"::text
+        END AS status,
+        COUNT(*)::int AS orders
+      FROM "course_orders" o
+      WHERE o."created_at" >= ${from}
+      GROUP BY 1
     `;
   }
 
