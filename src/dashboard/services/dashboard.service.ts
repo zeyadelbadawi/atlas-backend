@@ -64,7 +64,7 @@ export class DashboardService {
 
   /** The Client/Organization Owner's dashboard — every Academy under the Organization. */
   getForOrganization(organizationId: string): Promise<DashboardOverviewResponse> {
-    return this.build({ organizationId });
+    return this.build({ organizationId }, true);
   }
 
   /**
@@ -104,10 +104,17 @@ export class DashboardService {
       }
     }
 
-    return this.build({ organizationId, academyId });
+    // B0-SEC-03 — revenue is finance data: only the organization owner
+    // sees totals. An academy manager, instructor or staff member gets the
+    // same "not tracked here" answer as an organization that does not use
+    // Atlas Payments.
+    return this.build({ organizationId, academyId }, isOrganizationOwner);
   }
 
-  private async build(scope: DashboardScopeFilter): Promise<DashboardOverviewResponse> {
+  private async build(
+    scope: DashboardScopeFilter,
+    includeRevenue: boolean,
+  ): Promise<DashboardOverviewResponse> {
     const { counts, revenueTotals, paymentSettings, activity, activityNames, academy } =
       await this.tenancyContextService.runInTenantContext(
         scope.organizationId,
@@ -178,6 +185,7 @@ export class DashboardService {
       revenue: this.toRevenueResponse(
         paymentSettings?.paymentCollectionMode,
         revenueTotals,
+        includeRevenue,
       ),
       usage: await this.loadUsage(scope.organizationId),
       recentActivity: activity.map((row) => toActivityItemResponse(row, activityNames)),
@@ -209,9 +217,10 @@ export class DashboardService {
       | Prisma.OrganizationPaymentSettingsGetPayload<object>['paymentCollectionMode']
       | undefined,
     totals: readonly { currency: string; amountMinorUnits: bigint }[],
+    includeRevenue: boolean,
   ): DashboardRevenueResponse {
     const paymentCollectionMode = mode ?? 'unconfigured';
-    const tracked = paymentCollectionMode === 'atlas_payments';
+    const tracked = includeRevenue && paymentCollectionMode === 'atlas_payments';
 
     return {
       tracked,

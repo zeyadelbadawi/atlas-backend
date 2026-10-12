@@ -13,11 +13,11 @@
  *     proves only MEMBERSHIP, which an Academy Manager legitimately has —
  *     without this check a Manager of Academy A would read analytics
  *     covering Academy B.
- *   - The academy route delegates to
- *     `StudentAnalyticsService.getForAcademy`, which requires a real
+ *   - The academy route requires the managing tier of that academy
+ *     (`@AcademyRoles`, B0-SEC-03) and delegates to
+ *     `StudentAnalyticsService.getForAcademy`, which also requires a real
  *     `academy_members` row for that specific academy (organization
- *     owners exempted), because `AcademyScopeGuard` grants Academy READ
- *     access on organization membership.
+ *     owners exempted).
  *
  * The existing `AnalyticsController`/`PlatformMetricsController` are
  * Platform-Owner-only and are deliberately NOT reused here — this is a
@@ -29,6 +29,10 @@ import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { OrganizationMembershipGuard } from '../../tenancy/guards/organization-membership.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
+import {
+  ACADEMY_MANAGING_ROLES,
+  AcademyRoles,
+} from '../../academy/decorators/academy-roles.decorator';
 import { StudentAnalyticsService } from '../services/student-analytics.service';
 import type { StudentAnalyticsResponse } from '../dto/student-analytics.contract';
 
@@ -51,8 +55,15 @@ export class StudentAnalyticsController {
     return this.studentAnalyticsService.getForOrganization(organizationId);
   }
 
+  /**
+   * B0-SEC-03 — academy-wide learner analytics are for the managing tier of
+   * THIS academy (owner/administrator/manager; the organization owner
+   * resolves to `owner`). An instructor or staff member is refused: they
+   * are often external assistants, and the analytics cover every course.
+   */
   @Get('academies/:id/student-analytics')
   @UseGuards(AcademyScopeGuard)
+  @AcademyRoles(...ACADEMY_MANAGING_ROLES)
   async getForAcademy(@Req() request: Request): Promise<StudentAnalyticsResponse> {
     const { academyId, organizationId, organizationPermissions } =
       request.academyContext!;
