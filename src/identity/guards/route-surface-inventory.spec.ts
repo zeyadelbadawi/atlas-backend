@@ -192,6 +192,10 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'POST payments/webhook': 'payment provider HMAC signature',
   // --- public website runtime and media (public by design) ----------------
   'GET public/websites/resolve': 'hostname -> academy, published state only',
+  // B0-WEB-01 — per-host crawler files; published pages and courses only.
+  'GET public/websites/host/robots.txt': 'crawler rules for a published academy host',
+  'GET public/websites/host/sitemap.xml':
+    'published pages and courses of an academy host',
   'GET public/websites/:academyId': 'published website only',
   'GET public/websites/:academyId/identity': 'published identity only',
   'GET public/websites/:academyId/pages': 'published pages only',
