@@ -31,6 +31,8 @@ import {
   seedAcademyStudent,
   seedActiveSubscriptionForOrg,
   seedCourse,
+  seedCourseLesson,
+  seedCourseSection,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
@@ -448,6 +450,19 @@ describe('Phase 8 support/audit/dashboard tenant isolation (e2e) — P8-TENANT-0
         pricing: { type: 'free' },
       })
       .expect(201);
+
+    // B0-LRN-03 — publishing needs one deliverable published activity.
+    const seededSection = await seedCourseSection(
+      admin,
+      course.body.id,
+      'P8T009 Seeded',
+      0,
+    );
+    await seedCourseLesson(admin, seededSection.id, course.body.id, 'P8T009 Seeded', 0, {
+      status: 'published',
+      contentType: 'video',
+      contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    });
 
     await request(app.getHttpServer())
       .post(`/academies/${academy.id}/courses/${course.body.id}/publish`)

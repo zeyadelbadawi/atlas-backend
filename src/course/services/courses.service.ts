@@ -493,9 +493,9 @@ export class CoursesService {
         const current = await this.coursesRepository.findById(tx, courseId);
         this.assertBelongsToAcademy(current, academyId);
 
-        // W6 — dormant: `PUBLISH_READINESS_ENFORCED` is false in Phase 1, so
-        // publishing is unchanged. See `course-readiness.ts` before turning
-        // it on (the PATCH `status` bypass must close at the same time).
+        // B0-LRN-03 — enforced: a course with no deliverable published
+        // activity (or a paid course with no price) is refused here with
+        // the failing checks. See `course-readiness.ts`.
         if (status === 'published' && PUBLISH_READINESS_ENFORCED) {
           assertCourseReady(
             await this.readReadiness(tx, courseId, academyId, organizationId),

@@ -113,7 +113,7 @@ describe('Course wizard — readiness, idempotent create, quiz contract (e2e)', 
     expect(empty.body).toMatchObject({
       courseId: course.id,
       ready: false,
-      enforced: false,
+      enforced: true,
     });
     expect(check(empty.body, 'publishedActivity')).toMatchObject({
       status: 'fail',
@@ -169,6 +169,8 @@ describe('Course wizard — readiness, idempotent create, quiz contract (e2e)', 
     const section = await seedCourseSection(admin, course.id, 'Unit 1', 0);
     await seedCourseLesson(admin, section.id, course.id, 'Lesson', 0, {
       status: 'published',
+      contentType: 'video',
+      contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     });
 
     const blocked = await readiness(course.id).expect(200);
@@ -195,15 +197,76 @@ describe('Course wizard — readiness, idempotent create, quiz contract (e2e)', 
     expect(priced.body.ready).toBe(true);
   });
 
-  it('readiness is ADVISORY in Phase 1: publishing an unready course still succeeds', async () => {
-    const course = await seedCourse(admin, academyId, 'W6 Unready Publish');
-    const res = await readiness(course.id).expect(200);
-    expect(res.body.ready).toBe(false);
-    const published = await request(app.getHttpServer())
-      .post(`/academies/${academyId}/courses/${course.id}/publish`)
+  // B0-LRN-03 — readiness is ENFORCED: no path publishes a course with no
+  // deliverable published activity.
+  const publish = (courseId: string) =>
+    request(app.getHttpServer())
+      .post(`/academies/${academyId}/courses/${courseId}/publish`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+  it('refuses to publish an empty course with 409 and the failing check', async () => {
+    const course = await seedCourse(admin, academyId, 'LRN03 Empty');
+    const res = await publish(course.id).expect(409);
+    expect(res.body.error.messageKey).toBe('errors.course.notReady');
+    expect(JSON.stringify(res.body.error)).toContain('publishedActivity');
+    const row = await admin.course.findUniqueOrThrow({ where: { id: course.id } });
+    expect(row.status).toBe('draft');
+  });
+
+  it('refuses a course whose only published lesson has nothing to deliver', async () => {
+    const course = await seedCourse(admin, academyId, 'LRN03 Empty Lesson');
+    const section = await seedCourseSection(admin, course.id, 'S', 0);
+    await seedCourseLesson(admin, section.id, course.id, 'Empty', 0, {
+      status: 'published',
+      contentType: 'text',
+    });
+    await seedCourseLesson(admin, section.id, course.id, 'Draft video', 1, {
+      status: 'draft',
+      contentType: 'video',
+      contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    });
+    await publish(course.id).expect(409);
+  });
+
+  it('publishes a course with one deliverable lesson, and unpublish still works', async () => {
+    const course = await seedCourse(admin, academyId, 'LRN03 Ready');
+    const section = await seedCourseSection(admin, course.id, 'S', 0);
+    await seedCourseLesson(admin, section.id, course.id, 'Video', 0, {
+      status: 'published',
+      contentType: 'video',
+      contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    });
+    const published = await publish(course.id).expect(200);
+    expect(published.body.status).toBe('published');
+    await request(app.getHttpServer())
+      .post(`/academies/${academyId}/courses/${course.id}/unpublish`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(200);
-    expect(published.body.status).toBe('published');
+  });
+
+  it('publishes a text lesson whose body is still in its description, and a quiz-only course', async () => {
+    const textCourse = await seedCourse(admin, academyId, 'LRN03 Text');
+    const section = await seedCourseSection(admin, textCourse.id, 'S', 0);
+    const lesson = await seedCourseLesson(
+      admin,
+      section.id,
+      textCourse.id,
+      'Reading',
+      0,
+      {
+        status: 'published',
+        contentType: 'text',
+      },
+    );
+    await admin.courseLesson.update({
+      where: { id: lesson.id },
+      data: { description: 'Read this.' },
+    });
+    await publish(textCourse.id).expect(200);
+
+    const quizCourse = await seedCourse(admin, academyId, 'LRN03 Quiz Only');
+    await seedQuiz(admin, quizCourse.id, 'Only quiz', { status: 'published' });
+    await publish(quizCourse.id).expect(200);
   });
 
   it('readiness authorization: unauthenticated 401; instructor and plain member refused; other academy 404', async () => {

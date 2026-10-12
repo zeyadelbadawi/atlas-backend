@@ -16,6 +16,8 @@ import {
   seedActiveSubscriptionForOrg,
   seedCourse,
   seedCourseCategory,
+  seedCourseLesson,
+  seedCourseSection,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
@@ -135,6 +137,14 @@ describe('Course Management (e2e) — functional/contract', () => {
     expect(updated.body.title).toBe('Renamed Course');
     expect(updated.body.visibility).toBe('public');
     expect(updated.body.academyId).toBe(academy.id); // never reassignable.
+
+    // B0-LRN-03 — publishing needs one deliverable published activity.
+    const section = await seedCourseSection(admin, courseId, 'Section', 0);
+    await seedCourseLesson(admin, section.id, courseId, 'Lesson', 0, {
+      status: 'published',
+      contentType: 'video',
+      contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    });
 
     const published = await request(app.getHttpServer())
       .post(`/academies/${academy.id}/courses/${courseId}/publish`)

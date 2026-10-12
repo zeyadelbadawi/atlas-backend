@@ -18,23 +18,19 @@
  * WARNINGS are advisory (`severity: 'warning'`) and INFO is neutral
  * (`severity: 'info'`); neither affects `ready`.
  *
- * ENFORCEMENT — PHASE 1 IS ADVISORY ONLY. `PUBLISH_READINESS_ENFORCED` is
- * the one-line switch. While it is `false` (today), `CoursesService.publish`
- * never consults this module, so every existing publisher (API journeys that publish empty
- * courses, `courses.e2e-spec.ts`, J6) keeps working. Server enforcement is a
- * pending product decision. Turning it on means, together:
- *   1. set `PUBLISH_READINESS_ENFORCED = true` (publish then refuses with
- *      409 `errors.course.notReady` + the failing checks);
- *   2. (done) the `PATCH … { status }` bypass is closed: `UpdateCourseDto`
- *      no longer accepts `status`, so publish is the only way to publish;
- *   3. update the backend e2e and the FE journeys that publish empty
- *      courses (see the W6 investigation, "Tests to update").
+ * ENFORCEMENT — ON (B0-LRN-03). `CoursesService.publish` refuses an
+ * unready course with 409 `errors.course.notReady` and the failing checks,
+ * so neither the API nor any screen (wizard or Course Settings) can
+ * publish a course with nothing for learners. `PATCH … { status }` no
+ * longer accepts `status`, so publish is the only way to publish.
+ * `publishedLessons` counts only published lessons with deliverable
+ * content (see `readCourseReadinessFacts`).
  */
 import { ConflictException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
 /** One-line switch for server-side enforcement — see the header comment before flipping it. */
-export const PUBLISH_READINESS_ENFORCED = false;
+export const PUBLISH_READINESS_ENFORCED = true;
 
 /** The wizard step a check deep-links to. */
 export type CourseReadinessStep =
@@ -229,7 +225,7 @@ export function evaluateCourseReadiness(
   };
 }
 
-/** Throws the 409 an enforced publish would return. Unused while `PUBLISH_READINESS_ENFORCED` is false. */
+/** Throws the 409 for an unready course (B0-LRN-03: enforced on every publish). */
 export function assertCourseReady(readiness: CoursePublishReadinessResponse): void {
   if (readiness.ready) return;
   throw new ConflictException({
@@ -255,6 +251,7 @@ export async function readCourseReadinessFacts(
   const [
     sections,
     lessonGroups,
+    deliverableLessons,
     quizGroups,
     assignmentGroups,
     publishedLiveSessions,
@@ -274,6 +271,30 @@ export async function readCourseReadinessFacts(
       by: ['status'],
       where: { courseId },
       _count: { _all: true },
+    }),
+    // B0-LRN-03 — a published lesson counts as ACTIVITY only when it has
+    // something to deliver, by the same rules the learner read uses
+    // (`effectiveLessonContent`): a content row, a hosted video, a link,
+    // or a text body still kept in the description. A published lesson
+    // with none of these would publish a course whose learners see
+    // "no content".
+    tx.courseLesson.count({
+      where: {
+        courseId,
+        status: 'published',
+        OR: [
+          { content: { isNot: null } },
+          { videoAssetId: { not: null } },
+          { AND: [{ contentUrl: { not: null } }, { contentUrl: { not: '' } }] },
+          {
+            AND: [
+              { contentType: 'text' },
+              { description: { not: null } },
+              { description: { not: '' } },
+            ],
+          },
+        ],
+      },
     }),
     tx.quiz.groupBy({ by: ['status'], where: { courseId }, _count: { _all: true } }),
     tx.assignment.groupBy({
@@ -321,7 +342,7 @@ export async function readCourseReadinessFacts(
       sections: sections.length,
       emptySections,
       lessons: lessons.total,
-      publishedLessons: lessons.published,
+      publishedLessons: deliverableLessons,
       quizzes: quizzes.total,
       publishedQuizzes: quizzes.published,
       assignments: assignments.total,

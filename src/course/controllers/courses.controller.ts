@@ -87,8 +87,8 @@ export class CoursesController {
    * W6 — publish readiness (blocking checks + warnings) for the guided
    * course wizard. Same audience as every course write: the managing tier
    * of THIS academy, re-checked in the service (`assertCanManage`).
-   * Advisory in Phase 1 — `publish` does not enforce it (see
-   * `course-readiness.ts`, `PUBLISH_READINESS_ENFORCED`).
+   * B0-LRN-03 — `publish` enforces the same verdict (409 with the failing
+   * checks), see `course-readiness.ts`.
    */
   @Get(':id/courses/:courseId/publish-readiness')
   @AcademyRoles(...ACADEMY_MANAGING_ROLES)

@@ -20,6 +20,8 @@ import {
   seedAcademyMember,
   seedActiveSubscriptionForOrg,
   seedCourse,
+  seedCourseLesson,
+  seedCourseSection,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 
@@ -89,6 +91,13 @@ describe('Course PATCH cannot change the lifecycle status (e2e)', () => {
       .send({ title: 'CSPB Renamed' })
       .expect(200);
 
+    // B0-LRN-03 — publishing needs one deliverable published activity.
+    const section = await seedCourseSection(admin, course.id, 'CSPB Section', 0);
+    await seedCourseLesson(admin, section.id, course.id, 'CSPB Lesson', 0, {
+      status: 'published',
+      contentType: 'video',
+      contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    });
     await request(app.getHttpServer()).post(`${path}/publish`).set(auth).expect(200);
     const published = await admin.course.findUniqueOrThrow({ where: { id: course.id } });
     expect(published.status).toBe('published');
