@@ -26,6 +26,7 @@ import { PasswordResetTokensRepository } from './repositories/password-reset-tok
 import { EmailVerificationTokensRepository } from './repositories/email-verification-tokens.repository';
 import { EmailRiskService } from './services/email-risk.service';
 import { AccountDeletionService } from './services/account-deletion.service';
+import { AccountSuspensionService } from './services/account-suspension.service';
 import { AccountDeletionChallengeService } from './services/account-deletion-challenge.service';
 import { DeletionPlanService } from './services/deletion-plan.service';
 import { TwoFactorService } from './services/two-factor.service';
@@ -114,6 +115,7 @@ import { PhoneVerificationService } from './phone/phone-verification.service';
     EmailVerificationTokensRepository,
     EmailRiskService,
     AccountDeletionService,
+    AccountSuspensionService,
     AccountDeletionChallengeService,
     DeletionPlanService,
     TwoFactorService,
@@ -170,6 +172,8 @@ import { PhoneVerificationService } from './phone/phone-verification.service';
     // this line existed. `deletion-module-graph.spec.ts` now fails if it
     // is removed again.
     AccountDeletionService,
+    // B0-SEC-07 — the Platform Owner's suspend/reinstate surface, same reason.
+    AccountSuspensionService,
     // Exported because the Platform Owner's administrative deletion
     // surface must preview the SAME plan the account holder sees. Two
     // implementations of "what will this destroy" would drift, and the

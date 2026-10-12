@@ -52,7 +52,9 @@ export type SessionRevocationTrigger =
   // B0-OC-03 — an operator's break-glass second-factor reset.
   | 'two_factor_reset_by_operator'
   // B0-IAM-06 — the user ended every other session themselves.
-  | 'sign_out_other_sessions';
+  | 'sign_out_other_sessions'
+  // B0-SEC-07 — a Platform Owner suspended the account.
+  | 'account_suspended';
 
 const surfaceDenied = counter(
   'atlas_auth_surface_denied_total',

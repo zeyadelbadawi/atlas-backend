@@ -1020,6 +1020,12 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'wasVerified',
   ]),
   ev('account.deleted', 'security', 'user', 'platform', false, ACCOUNT_DELETED_CONTEXT),
+  // B0-SEC-07 — Platform Owner suspension; the operator's reason is kept.
+  ev('account.suspended', 'security', 'user', 'platform', false, [
+    'reason',
+    'sessionsRevoked',
+  ]),
+  ev('account.unsuspended', 'security', 'user', 'platform', false, ['reason']),
   ev(
     'account.deleted_by_platform_owner',
     'security',
