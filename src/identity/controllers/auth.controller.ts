@@ -327,6 +327,24 @@ export class AuthController {
    * Revocation is immediate in the real token-validation path, not just
    * in the database — see `SessionRevocationService`.
    */
+  /**
+   * B0-IAM-06 — ends every OTHER session of the caller's account (the
+   * calling session survives). No ids in the request: the account and the
+   * session to keep both come from the verified access token.
+   */
+  @Post('sessions/revoke-others')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async revokeOtherSessions(
+    @CurrentAuthContext() auth: AuthContext,
+  ): Promise<{ readonly sessionsRevoked: number }> {
+    const sessionsRevoked = await this.authService.revokeOtherSessions(
+      auth.userId,
+      auth.sessionId,
+    );
+    return { sessionsRevoked };
+  }
+
   @Delete('sessions/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(JwtAuthGuard)

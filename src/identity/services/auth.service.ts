@@ -2051,6 +2051,33 @@ export class AuthService {
     await this.sessionRevocationService.markRevoked(sessionId);
   }
 
+  /**
+   * B0-IAM-06 — "Sign out of all other sessions": ends every session of
+   * the caller's account except the one making the request, in the
+   * database and in the access-token denylist (the same tool a 2FA
+   * disable uses). Audited as `auth.sessions.revoked`, best-effort, after
+   * the revocation (an audit failure never undoes it). Returns how many
+   * sessions ended.
+   */
+  async revokeOtherSessions(userId: string, sessionId: string): Promise<number> {
+    const sessionsRevoked =
+      await this.sessionRevocationService.revokeOtherSessionsForUser(
+        userId,
+        sessionId,
+        'sign_out_other_sessions',
+      );
+    await this.tenancyContextService.runInUserContext(userId, (tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: userId,
+        action: 'auth.sessions.revoked',
+        targetType: 'user',
+        targetId: userId,
+        context: { trigger: 'sign_out_other_sessions', sessionsRevoked },
+      }),
+    );
+    return sessionsRevoked;
+  }
+
   async signOut(userId: string, sessionId: string): Promise<void> {
     // Phase 10 — `sid` is now the SESSION id, so revoke the whole
     // rotation family rather than a single row, and deny the access token

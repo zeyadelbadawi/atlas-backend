@@ -44,6 +44,7 @@ const SELF_OR_LEARNER = new Set<string>([
   'POST auth/verify-email/resend',
   'GET auth/sessions',
   'DELETE auth/sessions/:id',
+  'POST auth/sessions/revoke-others',
   'GET auth/validate',
   'GET auth/trusted-devices',
   'DELETE auth/trusted-devices/:id',
