@@ -50,6 +50,7 @@ import {
   readCourseReadinessFacts,
   type CoursePublishReadinessResponse,
 } from './course-readiness';
+import { assertCurrencyAllowed } from '../../common/currency/supported-currency';
 
 /** See `AcademiesService.MANAGING_ROLES` — identical rule, applied here to Course writes. */
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
@@ -170,6 +171,13 @@ export class CoursesService {
             'courses',
           );
 
+          if (payload.pricing.type === 'paid') {
+            assertCurrencyAllowed(
+              payload.pricing.currency,
+              undefined,
+              'pricing.currency',
+            );
+          }
           const created = await this.coursesRepository.create(tx, {
             academy: { connect: { id: academyId } },
             // P60 — record the creator at the moment of creation. Previously
@@ -257,6 +265,13 @@ export class CoursesService {
 
           const current = await this.coursesRepository.findById(tx, courseId);
           this.assertBelongsToAcademy(current, academyId);
+          if (payload.pricing?.type === 'paid') {
+            assertCurrencyAllowed(
+              payload.pricing.currency,
+              current?.pricingCurrency,
+              'pricing.currency',
+            );
+          }
 
           const data: Prisma.CourseUpdateInput = {
             title: payload.title,

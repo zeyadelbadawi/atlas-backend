@@ -121,6 +121,7 @@ import {
   requireNameKey,
   sqlNameKey,
 } from '../../common/name-uniqueness/name-uniqueness';
+import { assertCurrencyAllowed } from '../../common/currency/supported-currency';
 
 /** W4 — the API limit on an academy name (`CreateAcademyDto`). */
 const MAX_ACADEMY_NAME_LENGTH = 100;
@@ -723,6 +724,7 @@ export class AcademiesService {
             );
             claimedNameKey = claimed.key;
 
+            assertCurrencyAllowed(payload.currency, undefined, 'currency');
             const created = await this.academiesRepository.create(tx, {
               organization: { connect: { id: payload.organizationId } },
               name: claimed.name,
@@ -878,6 +880,7 @@ export class AcademiesService {
               }
             : undefined;
 
+          assertCurrencyAllowed(payload.currency, current.currency, 'currency');
           const data: Prisma.AcademyUpdateInput = {
             name,
             slug: payload.slug,

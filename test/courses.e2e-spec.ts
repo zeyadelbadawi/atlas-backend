@@ -206,13 +206,13 @@ describe('Course Management (e2e) — functional/contract', () => {
         title: 'Paid Course',
         slug: `course-pricing-${Date.now()}`,
         visibility: 'public',
-        pricing: { type: 'paid', amount: 29.99, currency: 'USD' },
+        pricing: { type: 'paid', amount: 29.99, currency: 'EGP' },
       })
       .expect(201);
     expect(created.body.pricing).toEqual({
       type: 'paid',
       amount: 29.99,
-      currency: 'USD',
+      currency: 'EGP',
     });
 
     const row = await admin.course.findUniqueOrThrow({ where: { id: created.body.id } });

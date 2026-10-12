@@ -190,7 +190,7 @@ describe('Course wizard — readiness, idempotent create, quiz contract (e2e)', 
     await request(app.getHttpServer())
       .patch(`/academies/${academyId}/courses/${course.id}`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ pricing: { type: 'paid', amount: 49.5, currency: 'USD' } })
+      .send({ pricing: { type: 'paid', amount: 49.5, currency: 'EGP' } })
       .expect(200);
     const priced = await readiness(course.id).expect(200);
     expect(check(priced.body, 'paidPrice').status).toBe('pass');
