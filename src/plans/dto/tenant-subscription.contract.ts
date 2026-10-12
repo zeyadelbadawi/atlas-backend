@@ -31,11 +31,22 @@ export interface TenantSubscriptionResponse {
   readonly giftedDays?: number;
   readonly giftedStartsAt?: string;
   readonly giftedEndsAt?: string;
+  /**
+   * B0-BIL-04 — a smaller plan already bought and paid for that takes over
+   * at `effectiveAt` (the end of the current paid period). Until then the
+   * current plan and its limits apply.
+   */
+  readonly scheduledChange?: {
+    readonly planId: string;
+    readonly planName: string;
+    readonly effectiveAt: string;
+  };
 }
 
 export function toTenantSubscriptionResponse(
   subscription: PrismaTenantSubscription & { plan: PrismaPlan },
   defaultTrialDurationDays?: number,
+  scheduledPlanName?: string,
 ): TenantSubscriptionResponse {
   return {
     organizationId: subscription.organizationId,
@@ -55,6 +66,17 @@ export function toTenantSubscriptionResponse(
           giftedDays: subscription.giftedDays,
           giftedStartsAt: subscription.giftedStartsAt.toISOString(),
           giftedEndsAt: subscription.giftedEndsAt.toISOString(),
+        }
+      : {}),
+    ...(subscription.scheduledPlanId &&
+    subscription.scheduledChangeAt &&
+    scheduledPlanName
+      ? {
+          scheduledChange: {
+            planId: subscription.scheduledPlanId,
+            planName: scheduledPlanName,
+            effectiveAt: subscription.scheduledChangeAt.toISOString(),
+          },
         }
       : {}),
   };

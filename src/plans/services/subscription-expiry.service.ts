@@ -55,6 +55,7 @@ export const SUBSCRIPTION_EXPIRY_AUDIT_ACTIONS = {
   graceStarted: 'subscription.grace_started',
   expired: 'subscription.expired',
   cancelledAtPeriodEnd: 'subscription.cancelled_at_period_end',
+  scheduledPlanChangeApplied: 'subscription.scheduled_plan_change_applied',
 } as const;
 
 export interface PaidPeriodSweepResult {
@@ -269,5 +270,60 @@ export class SubscriptionExpiryService {
     }
 
     return result;
+  }
+
+  /**
+   * B0-BIL-04 — applies every scheduled plan change that is now due (a
+   * downgrade bought mid-period, waiting for the end of the period the
+   * customer had already paid for). Each change is one guarded write plus
+   * its audit row in the same transaction; a schedule replaced or cleared
+   * in the meantime is skipped, never applied on top of newer state.
+   */
+  async applyDueScheduledPlanChanges(now: Date = this.clock.now()): Promise<number> {
+    const platformOwner = await this.usersRepository.findFirstPlatformOwnerId();
+    if (!platformOwner) return 0;
+    const actorUserId = platformOwner.id;
+    let applied = 0;
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await this.tenancyContextService.runInUserContext(actorUserId, (tx) =>
+        this.tenantSubscriptionsRepository.findManyDueScheduledChanges(
+          tx,
+          now,
+          cursor,
+          SUBSCRIPTION_SWEEP_QUERY_PAGE_SIZE,
+        ),
+      );
+      for (const subscription of page) {
+        const written = await this.tenancyContextService.runInUserContext(
+          actorUserId,
+          async (tx) => {
+            const ok = await this.tenantSubscriptionsRepository.applyScheduledChange(
+              tx,
+              subscription,
+            );
+            if (!ok) return false;
+            await this.auditLogWriterService.write(tx, {
+              actorUserId,
+              organizationId: subscription.organizationId,
+              action: SUBSCRIPTION_EXPIRY_AUDIT_ACTIONS.scheduledPlanChangeApplied,
+              targetType: 'tenant_subscription',
+              targetId: subscription.organizationId,
+              context: {
+                fromPlanId: subscription.planId,
+                toPlanId: subscription.scheduledPlanId,
+                at: now.toISOString(),
+              },
+            });
+            return true;
+          },
+        );
+        if (written) applied++;
+      }
+      if (page.length < SUBSCRIPTION_SWEEP_QUERY_PAGE_SIZE) break;
+      cursor = page[page.length - 1].organizationId;
+    }
+    if (applied > 0) this.logger.log({ applied }, 'Applied scheduled plan changes.');
+    return applied;
   }
 }

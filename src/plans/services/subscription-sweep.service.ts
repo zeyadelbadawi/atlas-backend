@@ -171,6 +171,9 @@ export class SubscriptionSweepService {
 
   async run(): Promise<void> {
     const expiredCount = await this.subscriptionExpiryService.expireDueTrials();
+    // B0-BIL-04 — a scheduled downgrade lands at the end of the period the
+    // customer paid for; applied before the paid-period transitions below.
+    await this.subscriptionExpiryService.applyDueScheduledPlanChanges();
     // Expiry enforcement — the paid half of the lifecycle, beside the
     // trial half. Same platform-owner context, same tick.
     const paidPeriods = await this.subscriptionExpiryService.expireDuePaidPeriods();

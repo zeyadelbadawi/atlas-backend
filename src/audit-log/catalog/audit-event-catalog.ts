@@ -860,6 +860,15 @@ export const AUDIT_EVENT_DEFINITIONS = [
     true,
     SUBSCRIPTION_TRANSITION,
   ),
+  // B0-BIL-04 — a mid-period downgrade taking effect at the period end.
+  ev(
+    'subscription.scheduled_plan_change_applied',
+    'subscription',
+    'tenant_subscription',
+    'organization',
+    true,
+    ['fromPlanId', 'toPlanId', 'at'],
+  ),
   ev('add_on.install', 'subscription', 'tenant_add_on', 'organization', true, [
     'addOnKey',
   ]),

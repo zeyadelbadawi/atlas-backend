@@ -169,7 +169,12 @@ describe('PaymentApplicationService.applySuccessfulPayment (W8)', () => {
   it('renewal while active extends from the current end and asks the gift service with extendsCurrentPeriod=true', async () => {
     const currentEnd = new Date('2027-02-10T00:00:00.000Z');
     const t = setup({
-      existing: { status: 'active', currentPeriodEnd: currentEnd, giftedDays: 7 },
+      existing: {
+        planId: 'plan-1',
+        status: 'active',
+        currentPeriodEnd: currentEnd,
+        giftedDays: 7,
+      },
     });
     await t.service.applySuccessfulPayment(t.tx as never, t.payment as never);
     const giftInput = t.gift.claimFirstPaidGift.mock.calls[0][1];

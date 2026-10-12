@@ -150,10 +150,17 @@ export class TenantSubscriptionService {
   }
 
   async getSubscription(organizationId: string): Promise<TenantSubscriptionResponse> {
-    const subscription = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) => this.tenantSubscriptionsRepository.findByOrganizationId(tx, organizationId),
-    );
+    const { subscription, scheduledPlanName } =
+      await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+        const row = await this.tenantSubscriptionsRepository.findByOrganizationId(
+          tx,
+          organizationId,
+        );
+        const name = row?.scheduledPlanId
+          ? await this.tenantSubscriptionsRepository.findPlanName(tx, row.scheduledPlanId)
+          : null;
+        return { subscription: row, scheduledPlanName: name ?? undefined };
+      });
 
     if (!subscription) {
       // Honest empty state — no subscription-creation endpoint exists in
@@ -163,7 +170,7 @@ export class TenantSubscriptionService {
       throw new NotFoundException({ messageKey: 'errors.tenant.noSubscription' });
     }
 
-    return toTenantSubscriptionResponse(subscription);
+    return toTenantSubscriptionResponse(subscription, undefined, scheduledPlanName);
   }
 
   async getActiveAddOns(organizationId: string): Promise<TenantAddOnResponse[]> {

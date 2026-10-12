@@ -229,6 +229,7 @@ writer stores.
 | `subscription.grace_started` | subscription | organization | yes | previousStatus, newStatus, reason, at, currentPeriodEnd, graceEndsAt |
 | `subscription.expired` | subscription | organization | yes | previousStatus, newStatus, reason, at, currentPeriodEnd, graceEndsAt |
 | `subscription.cancelled_at_period_end` | subscription | organization | yes | previousStatus, newStatus, reason, at, currentPeriodEnd, graceEndsAt |
+| `subscription.scheduled_plan_change_applied` | subscription | organization | yes | fromPlanId, toPlanId, at |
 | `add_on.install` | subscription | organization | yes | addOnKey |
 | `add_on.enable` | subscription | organization | yes | addOnKey |
 | `add_on.disable` | subscription | organization | yes | addOnKey |

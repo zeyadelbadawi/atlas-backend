@@ -1085,10 +1085,20 @@ model TenantSubscription {
   giftedStartsAt     DateTime?                 @map("gifted_starts_at")
   giftedEndsAt       DateTime?                 @map("gifted_ends_at")
   giftedPaymentId    String?                   @map("gifted_payment_id")
+  /// B0-BIL-04 — a smaller plan bought mid-period is SCHEDULED, not applied:
+  /// the customer keeps the plan they paid for until `scheduledChangeAt`
+  /// (the end of that paid period), when the subscription sweep moves
+  /// `planId` and `grantedLimits` to these values. All three are set or
+  /// cleared together. `scheduledPlanId` is a plain id (like
+  /// `giftedPaymentId`); the sweep resolves it before applying.
+  scheduledPlanId        String?   @map("scheduled_plan_id")
+  scheduledGrantedLimits Json?     @map("scheduled_granted_limits")
+  scheduledChangeAt      DateTime? @map("scheduled_change_at")
   createdAt          DateTime                  @default(now()) @map("created_at")
   updatedAt          DateTime                  @updatedAt @map("updated_at")
 
   @@index([planId])
+  @@index([scheduledChangeAt])
   // P64 C5 — the lifecycle sweep filters by `status` plus ONE of these
   // dates on every tick (trial steps by `trial_ends_at`, renewal and
   // grace by `current_period_end`, expiry and the post-expiry follow-ups
