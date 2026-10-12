@@ -74,7 +74,12 @@ import type {
   CourseRatingSummary,
   CourseReviewResponse,
 } from '../../learning/dto/course-review.contract';
-import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
+import {
+  DEFAULT_PAGE,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+} from '../../common/dto/collection-query.dto';
+import { buildSitemapUrls, type SitemapUrl } from '../utils/seo-files.util';
 import type { PublicWebsiteStatisticsResponse } from '../dto/public-statistics.contract';
 import type { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
 import type { AcademyIdentityResponse } from '../dto/public-identity.contract';
@@ -100,6 +105,9 @@ import {
   collectLibraryEntryIds,
   expandLibraryEntries,
 } from '../utils/library-entries.util';
+
+/** B0-WEB-01 — at most 50 × 100 courses in one sitemap (well under the 50,000-URL limit). */
+const SITEMAP_MAX_COURSE_PAGES = 50;
 
 @Injectable()
 export class PublicWebsiteService {
@@ -328,6 +336,45 @@ export class PublicWebsiteService {
       await this.subscriptionAccessService.isServingEligible(organizationId);
     await this.cacheService.setServingEligibility(organizationId, eligible);
     return eligible;
+  }
+
+  /**
+   * B0-WEB-01 — what the Academy behind `host` publishes to search engines:
+   * whether it may be indexed, whether it has a sitemap, its canonical
+   * origin and the URLs to list. An unknown host, an unpublished (Coming
+   * Soon) site or one that is not serving answers "not indexable" with no
+   * sitemap — never an error and never another site's content.
+   */
+  async getSeoFiles(host: string): Promise<{
+    readonly indexable: boolean;
+    readonly sitemapEnabled: boolean;
+    readonly origin?: string;
+    readonly urls: readonly SitemapUrl[];
+  }> {
+    const closed = { indexable: false, sitemapEnabled: false, urls: [] };
+    const resolved = await this.resolveHostname(host);
+    if (!resolved) return closed;
+    const configuration = await this.getPublishedWebsite(resolved.academyId);
+    if (!configuration) return closed;
+
+    const seo = (configuration.seo ?? {}) as Record<string, unknown>;
+    const indexable = seo.robotsIndexable !== false;
+    const sitemapEnabled = indexable && seo.sitemapEnabled !== false;
+    const origin = `https://${resolved.canonicalHost ?? normalizeHostname(host)}`;
+    if (!sitemapEnabled) return { indexable, sitemapEnabled, origin, urls: [] };
+
+    const pages = (await this.getPublishedPages(resolved.academyId)) ?? [];
+    const courses: CourseResponse[] = [];
+    for (let page = 1; page <= SITEMAP_MAX_COURSE_PAGES; page += 1) {
+      const result = await this.getPublicCourses(resolved.academyId, {
+        page,
+        pageSize: MAX_PAGE_SIZE,
+      } as CourseListQueryDto);
+      if (!result) break;
+      courses.push(...result.items);
+      if (result.items.length < MAX_PAGE_SIZE) break;
+    }
+    return { indexable, sitemapEnabled, origin, urls: buildSitemapUrls(pages, courses) };
   }
 
   async getPublishedWebsite(
