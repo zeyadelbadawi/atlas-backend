@@ -25,6 +25,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
+import { CommunicationService } from '../../communications/services/communication.service';
+import { AcademyStaffRecipientsService } from '../../communications/services/academy-staff-recipients.service';
 import type { CourseWithRelations } from '../../course/repositories/courses.repository';
 import { Injectable } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -135,6 +137,9 @@ export class PublicWebsiteService {
     private readonly websiteFaqEntriesRepository: WebsiteFaqEntriesRepository,
     private readonly websiteTestimonialEntriesRepository: WebsiteTestimonialEntriesRepository,
     private readonly libraryRevisionService: WebsiteLibraryRevisionService,
+    // B0-WEB-05 — Contact-form notices to the website's managers.
+    private readonly communicationService: CommunicationService,
+    private readonly staffRecipients: AcademyStaffRecipientsService,
   ) {}
 
   /** P63g — the effective base domain (environment first, then the configured row), never only the env var. */
@@ -945,17 +950,56 @@ export class PublicWebsiteService {
       return this.toDiscardedSubmissionResponse(academyId, payload);
     }
 
-    const created = await this.tenancyContextService.runInTenantContext(
+    const { created, outboxIds } = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) =>
-        this.contactSubmissionsRepository.create(tx, {
+      async (tx) => {
+        const created = await this.contactSubmissionsRepository.create(tx, {
           academyId,
           name: payload.name,
           email: payload.email,
           message: payload.message,
-        }),
+        });
+        // B0-WEB-05 — tell the people who manage the website, in the same
+        // transaction as the insert (a rolled-back insert leaves no
+        // notice). The visitor's details stay out of the notice; it only
+        // links to the inbox.
+        const outboxIds: (string | null)[] = [];
+        for (const recipientUserId of await this.contactRecipients(tx, academyId)) {
+          const emitted = await this.communicationService.emit(tx, {
+            key: 'academy.contact_submission.received',
+            recipientUserId,
+            organizationId,
+            academyId,
+            entity: { type: 'contact_submission', id: created.id },
+            values: { academyId },
+          });
+          outboxIds.push(emitted.outboxId);
+        }
+        return { created, outboxIds };
+      },
     );
+    for (const outboxId of outboxIds) {
+      await this.communicationService.enqueueAfterCommit(outboxId);
+    }
     return toContactSubmissionResponse(created);
+  }
+
+  /**
+   * Who reads the website's Contact messages: the academy's owner /
+   * administrator / manager members and the organization owner — the
+   * same tier the inbox serves. Looked up through the narrow
+   * user-ids-only definer functions because this public request has no
+   * user context.
+   */
+  private async contactRecipients(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+  ): Promise<string[]> {
+    const [moderators, owners] = await Promise.all([
+      this.staffRecipients.moderators(tx, academyId),
+      this.staffRecipients.organizationOwners(tx, academyId),
+    ]);
+    return [...new Set([...moderators, ...owners])];
   }
 
   /**

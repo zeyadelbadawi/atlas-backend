@@ -16,6 +16,16 @@ patching it by hand.
 > All emitted by `course-commerce/services/academy-course-payments.service`
 > and `course-order-payments.service`. See `docs/ACADEMY_MANUAL_PAYMENTS.md`.
 > Regenerate this document to fold them into the matrix.
+>
+> **Addendum (12 October 2026) — B0-WEB-05** added
+> `academy.contact_submission.received` (staff: the academy's owner /
+> administrator / manager members and the organization owner; in-app
+> always, email digest; platform-branded with the academy identity;
+> "New message from the <academy> website";
+> `/dashboard/academy/ACADEMY/website/messages`). Emitted by
+> `public-website/services/public-website.service` in the same transaction
+> as the Contact-form insert, deduped per submission; a honeypot hit emits
+> nothing. The visitor's name, address and message are not in the notice.
 
 ## The exact count
 

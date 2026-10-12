@@ -499,6 +499,68 @@ describe('Public Website Runtime (e2e)', () => {
       .expect(403);
   });
 
+  it("B0-WEB-05: a contact submission notifies that academy's website managers once each (not instructors, not another academy); a honeypot hit notifies nobody", async () => {
+    const { owner, academy } = await seedManagedAcademy('pub-contact-notify-a');
+    const { owner: otherOwner } = await seedManagedAcademy('pub-contact-notify-b');
+    const manager = await signUpAndSignIn(app, 'pub-contact-notify-manager');
+    const instructor = await signUpAndSignIn(app, 'pub-contact-notify-instructor');
+    await seedAcademyMember(admin, academy.id, manager.userId, 'manager');
+    await seedAcademyMember(admin, academy.id, instructor.userId, 'instructor');
+    await createPublishedPage(owner, academy.id, 'contact-notify');
+
+    const submitted = await request(app.getHttpServer())
+      .post(`/public/websites/${academy.id}/contact`)
+      .send({ name: 'Jane Visitor', email: 'jane@example.com', message: 'Secret detail' })
+      .expect(201);
+
+    const rows = await admin.communicationOutbox.findMany({
+      where: { key: 'academy.contact_submission.received', entityId: submitted.body.id },
+    });
+    // The owner is both the organization owner and an academy `owner`
+    // member: one row, not two.
+    expect(rows.map((row) => row.recipientUserId).sort()).toEqual(
+      [owner.userId, manager.userId].sort(),
+    );
+    for (const row of rows) {
+      expect(row.academyId).toBe(academy.id);
+      expect(row.dedupeKey).toBe(`academy_contact_received:${submitted.body.id}`);
+      // The visitor's details are not copied into the notice.
+      const values = JSON.stringify(row.values);
+      expect(values).not.toContain('jane@example.com');
+      expect(values).not.toContain('Secret detail');
+      expect(values).not.toContain('Jane Visitor');
+    }
+    const strangers = await admin.communicationOutbox.count({
+      where: {
+        key: 'academy.contact_submission.received',
+        recipientUserId: { in: [instructor.userId, otherOwner.userId] },
+      },
+    });
+    expect(strangers).toBe(0);
+
+    // A filled honeypot is discarded silently: no row, no notice.
+    const before = await admin.communicationOutbox.count({
+      where: { key: 'academy.contact_submission.received', academyId: academy.id },
+    });
+    const bot = await request(app.getHttpServer())
+      .post(`/public/websites/${academy.id}/contact`)
+      .send({
+        name: 'Bot',
+        email: 'bot@example.com',
+        message: 'spam',
+        company: 'Spam Corp',
+      })
+      .expect(201);
+    expect(
+      await admin.contactSubmission.findUnique({ where: { id: bot.body.id } }),
+    ).toBeNull();
+    expect(
+      await admin.communicationOutbox.count({
+        where: { key: 'academy.contact_submission.received', academyId: academy.id },
+      }),
+    ).toBe(before);
+  });
+
   it('a contact submission to a manipulated/unknown academyId is rejected, never silently attributed to a real academy', async () => {
     const response = await request(app.getHttpServer())
       .post('/public/websites/00000000-0000-0000-0000-000000000000/contact')

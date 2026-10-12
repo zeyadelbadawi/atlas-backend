@@ -1345,6 +1345,41 @@ const CATALOG = {
     actionUrl: ({ values }) =>
       `/dashboard/academy/${str(values, 'academyId')}/courses/${str(values, 'courseId')}/reviews`,
   },
+  /**
+   * B0-WEB-05 — a visitor sent a message through the academy website's
+   * Contact form. A STAFF work item for the people who manage the
+   * website (owner / administrator / manager, and the organization
+   * owner), the same tier that can read the Messages inbox.
+   *
+   * Emitted in the same transaction as the insert, deduped per
+   * submission. The visitor's name, address and message are NOT carried
+   * in `values`: the notice only says that a message arrived and links to
+   * the inbox, where the message is read under the inbox's own access
+   * rules. `digest`, like the other staff work items, so a busy contact
+   * form does not become one mail per message.
+   *
+   * Platform-branded with the academy's identity for the same reason as
+   * `review.submitted`: the link is a `/dashboard/*` route, which only
+   * the management host serves.
+   */
+  'academy.contact_submission.received': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'digest' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `academy_contact_received:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'platform',
+    identity: 'academy',
+    template: 'academy.contact_submission.received',
+    titleKey: 'notifications:events.academyContactSubmissionReceived.title',
+    messageKey: 'notifications:events.academyContactSubmissionReceived.message',
+    actionUrl: ({ values }) =>
+      `/dashboard/academy/${str(values, 'academyId')}/website/messages`,
+  },
   'review.moderated': {
     category: 'engagement',
     audience: 'learner',

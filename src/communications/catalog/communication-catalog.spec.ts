@@ -422,6 +422,11 @@ const EXPECTED_DEDUPE: Record<
     values: { submittedAtMs: 1790000000000, courseTitle: 'Algebra' },
     expected: `course_review.submitted:${ENTITY_ID}:1790000000000`,
   },
+  // B0-WEB-05 — one work item per Contact-form submission.
+  'academy.contact_submission.received': {
+    values: { academyId: 'a1' },
+    expected: `academy_contact_received:${ENTITY_ID}`,
+  },
 
   // --- P64 Communications C3, second pass (plan §8 B1-B4/C1/D1-D2/E4-E6/H1).
   // New keys again: what is pinned is the shape chosen, which becomes the
