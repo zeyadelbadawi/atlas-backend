@@ -28,6 +28,10 @@ import {
 import { ArchivedMediaPurgeService } from '../src/retention/services/archived-media-purge.service';
 import type { PrismaClient } from '@prisma/client';
 
+/** A 1×1 PNG — only reaches the role check, which refuses first. */
+const TINY_PNG_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
 describe('Media delete — authorization, usage guard, lifecycle (e2e)', () => {
   let app: INestApplication;
   let admin: PrismaClient;
@@ -145,6 +149,28 @@ describe('Media delete — authorization, usage guard, lifecycle (e2e)', () => {
       await bulk(w.academy.id, [a.id], caller.token).expect(403);
     }
     expect(await status(a.id)).toBe('active');
+  });
+
+  // B0-MED-08 — what an instructor's library picker can do: browse the
+  // academy's files (to attach one to a lesson) but not upload or delete.
+  it('an instructor can browse the library but cannot upload to it', async () => {
+    const w = await world('md-instructor');
+    await asset(w.academy.id);
+    const list = await request(app.getHttpServer())
+      .get(`/academies/${w.academy.id}/media`)
+      .set('Authorization', `Bearer ${w.instructor.token}`)
+      .expect(200);
+    expect(list.body.items.length).toBeGreaterThan(0);
+    await request(app.getHttpServer())
+      .post(`/academies/${w.academy.id}/media`)
+      .set('Authorization', `Bearer ${w.instructor.token}`)
+      .send({
+        fileName: 'notes.png',
+        mimeType: 'image/png',
+        sizeBytes: 68,
+        dataUrl: TINY_PNG_DATA_URL,
+      })
+      .expect(403);
   });
 
   it('refuses anonymous, sibling-academy manager and cross-organization callers', async () => {
