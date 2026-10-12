@@ -1262,6 +1262,31 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     expect(res.body.video).toBeDefined();
   });
 
+  it('a text lesson saved with its body in description (no content row) delivers it as escaped paragraphs', async () => {
+    const w = await world('builder-text-legacy', { family: 'normal', tier: 'basic' });
+    const lesson = await seedCourseLesson(
+      admin,
+      w.section.id,
+      w.course.id,
+      'legacy-text',
+      0,
+      {
+        status: 'published',
+        contentType: 'text',
+      },
+    );
+    await admin.courseLesson.update({
+      where: { id: lesson.id },
+      data: { description: '<b>Not markup</b>\n\nSecond paragraph' },
+    });
+    const student = await enrolledLearner(w, 'builder-text-legacy-student');
+    const res = await getContent(student, w.course.id, lesson.id).expect(200);
+    expect(res.body.kind).toBe('text');
+    expect(res.body.bodyHtml).toBe(
+      '<p>&lt;b&gt;Not markup&lt;/b&gt;</p><p>Second paragraph</p>',
+    );
+  });
+
   it('a lesson with neither a content row nor any legacy content is still noContent', async () => {
     const w = await world('builder-empty', { family: 'normal', tier: 'basic' });
     const lesson = await seedCourseLesson(admin, w.section.id, w.course.id, 'empty', 0, {
@@ -2137,28 +2162,146 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       }).expect(400);
     });
 
-    it('refuses kind: text with a reason, and cannot be sent a body at all', async () => {
+    // B0-LRN-01 — text lessons are authored through this endpoint, with the
+    // body rebuilt by the reviewed allowlist sanitiser before it is stored.
+    async function textLesson(w: Awaited<ReturnType<typeof world>>, label: string) {
+      return seedCourseLesson(admin, w.section.id, w.course.id, label, 0, {
+        contentType: 'text',
+        status: 'published',
+      });
+    }
+
+    const getStaffContent = (
+      w: { academy: { id: string }; course: { id: string }; section: { id: string } },
+      auth: Record<string, string>,
+      lessonId: string,
+    ) =>
+      request(app.getHttpServer())
+        .get(
+          `/academies/${w.academy.id}/courses/${w.course.id}/sections/${w.section.id}/lessons/${lessonId}/content`,
+        )
+        .set(auth);
+
+    it('stores a text body sanitised, delivers it to an enrolled learner, and returns it to staff', async () => {
       const w = await world('authoring-text', { family: 'normal', tier: 'growth' });
-      const { lesson } = await lessonAwaitingContent(w, 'text-refused');
+      const lesson = await textLesson(w, 'text-body');
 
-      // The kind itself is refused with a reason the caller can act on:
-      // the field is legitimate, the authoring path for it is not built,
-      // and no sanitiser was invented to pretend otherwise.
-      const res = await putContent(w, w.owner.auth, lesson.id, { kind: 'text' }).expect(
-        400,
-      );
-      expect(res.body.error.messageKey).toBe('errors.lessonContent.textNotYetSupported');
-
-      // And `bodyHtml` is not a field this DTO has, so `forbidNonWhitelisted`
-      // rejects it before any handler runs. That is the stronger guarantee:
-      // unsanitised HTML cannot reach the column even by mistake, because
-      // there is no parameter that carries it.
       await putContent(w, w.owner.auth, lesson.id, {
         kind: 'text',
+        bodyHtml:
+          '<p onclick="steal()">Read <strong>this</strong></p><script>alert(1)</script>' +
+          '<img src=x onerror="alert(1)"><a href="javascript:alert(1)">bad</a>' +
+          '<a href="https://example.com/notes">notes</a>',
+      }).expect(200);
+
+      const row = await admin.lessonContent.findUniqueOrThrow({
+        where: { lessonId: lesson.id },
+      });
+      expect(row.kind).toBe('text');
+      expect(row.bodyHtml).toContain('<strong>this</strong>');
+      expect(row.bodyHtml).toContain('href="https://example.com/notes"');
+      for (const forbidden of ['<script', 'onclick', 'onerror', '<img', 'javascript:']) {
+        expect(row.bodyHtml).not.toContain(forbidden);
+      }
+
+      const student = await enrolledLearner(w, 'authoring-text-student');
+      const grant = await getContent(student, w.course.id, lesson.id).expect(200);
+      expect(grant.body.kind).toBe('text');
+      expect(grant.body.bodyHtml).toBe(row.bodyHtml);
+
+      const staff = await getStaffContent(w, w.owner.auth, lesson.id).expect(200);
+      expect(staff.body.bodyHtml).toBe(row.bodyHtml);
+
+      // The staff read is not a learner door to the body.
+      const refused = await getStaffContent(w, student.auth, lesson.id);
+      expect([403, 404]).toContain(refused.status);
+    });
+
+    it('refuses a text body that sanitises to nothing, and a body on any other kind', async () => {
+      const w = await world('authoring-text-refusals', {
+        family: 'normal',
+        tier: 'growth',
+      });
+      const lesson = await textLesson(w, 'text-refused');
+
+      const empty = await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'text',
+        bodyHtml: '<p> </p><script>only()</script>',
+      }).expect(400);
+      expect(empty.body.error.messageKey).toBe('errors.lessonContent.bodyRequired');
+      await putContent(w, w.owner.auth, lesson.id, { kind: 'text' }).expect(400);
+
+      const misplaced = await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'external',
+        externalUrl: 'https://example.com/page',
         bodyHtml: '<p>hello</p>',
       }).expect(400);
+      expect(misplaced.body.error.messageKey).toBe('errors.lessonContent.unexpectedBody');
 
       expect(await admin.lessonContent.count({ where: { lessonId: lesson.id } })).toBe(0);
+    });
+
+    it('drops the text row when the lesson stops being a text lesson', async () => {
+      const w = await world('authoring-text-switch', {
+        family: 'normal',
+        tier: 'growth',
+      });
+      const lesson = await textLesson(w, 'text-switch');
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'text',
+        bodyHtml: '<p>Old reading</p>',
+      }).expect(200);
+
+      await request(app.getHttpServer())
+        .patch(
+          `/academies/${w.academy.id}/courses/${w.course.id}/sections/${w.section.id}/lessons/${lesson.id}`,
+        )
+        .set(w.owner.auth)
+        .send({
+          contentType: 'video',
+          contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        })
+        .expect(200);
+
+      expect(await admin.lessonContent.count({ where: { lessonId: lesson.id } })).toBe(0);
+      const student = await enrolledLearner(w, 'authoring-text-switch-student');
+      const grant = await getContent(student, w.course.id, lesson.id).expect(200);
+      expect(grant.body.kind).toBe('external');
+      expect(grant.body.externalEmbed?.videoId).toBe('dQw4w9WgXcQ');
+    });
+
+    it('drops a stale backfilled external row when the author changes the URL', async () => {
+      const w = await world('authoring-external-switch', {
+        family: 'normal',
+        tier: 'growth',
+      });
+      const lesson = await seedCourseLesson(admin, w.section.id, w.course.id, 'ext', 0, {
+        contentType: 'video',
+        status: 'published',
+        contentUrl: 'https://www.youtube.com/watch?v=aaaaaaaaaaa',
+      });
+      // The Phase 2 backfill's shape for a legacy URL.
+      await admin.lessonContent.create({
+        data: {
+          lessonId: lesson.id,
+          courseId: w.course.id,
+          academyId: w.academy.id,
+          kind: 'external',
+          externalUrl: 'https://www.youtube.com/watch?v=aaaaaaaaaaa',
+        },
+      });
+
+      await request(app.getHttpServer())
+        .patch(
+          `/academies/${w.academy.id}/courses/${w.course.id}/sections/${w.section.id}/lessons/${lesson.id}`,
+        )
+        .set(w.owner.auth)
+        .send({ contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' })
+        .expect(200);
+
+      const student = await enrolledLearner(w, 'authoring-external-switch-student');
+      const grant = await getContent(student, w.course.id, lesson.id).expect(200);
+      expect(grant.body.externalEmbed?.videoId).toBe('dQw4w9WgXcQ');
     });
 
     it('refuses an incomplete payload for each kind', async () => {

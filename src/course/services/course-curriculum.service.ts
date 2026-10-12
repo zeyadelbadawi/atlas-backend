@@ -27,6 +27,7 @@ import { CoursesRepository } from '../repositories/courses.repository';
 import { CourseSectionsRepository } from '../repositories/course-sections.repository';
 import { CourseLessonsRepository } from '../repositories/course-lessons.repository';
 import { LessonContentsRepository } from '../repositories/lesson-contents.repository';
+import { sanitizeRichText } from '../../communications/campaigns/rich-text-sanitizer';
 import { toCourseSectionResponse } from '../dto/course-section.contract';
 import type { CourseSectionResponse } from '../dto/course-section.contract';
 import { toCourseLessonResponse } from '../dto/course-lesson.contract';
@@ -409,6 +410,26 @@ export class CourseCurriculumService {
             : {}),
         });
 
+        // B0-LRN-01 — at read time a content row WINS over the legacy
+        // fields this endpoint edits (`effectiveLessonContent`), so a row
+        // that no longer describes the lesson must go, or learners keep
+        // getting the old body:
+        //   - a `text` row when the lesson is no longer a text lesson;
+        //   - an `external` row (the Phase 2 backfill's shape for a legacy
+        //     URL) when the author changed that URL here.
+        // `video`/`file` rows point at protected assets written through
+        // the content endpoint and are left alone.
+        const content = await this.lessonContentsRepository.findByLessonId(tx, lessonId);
+        if (
+          content &&
+          ((content.kind === 'text' && updated.contentType !== 'text') ||
+            (content.kind === 'external' &&
+              payload.contentUrl !== undefined &&
+              content.externalUrl !== (updated.contentUrl ?? null)))
+        ) {
+          await this.lessonContentsRepository.deleteForLesson(tx, lessonId);
+        }
+
         await this.auditLogWriterService.write(tx, {
           actorUserId: userId,
           organizationId,
@@ -439,6 +460,38 @@ export class CourseCurriculumService {
   }
 
   /**
+   * B0-LRN-01 — the staff read of a lesson's content row, so the builder
+   * can show an existing text body for editing.
+   *
+   * Same ladder as the write below (manage permission, then course,
+   * section, lesson): anyone who can read the body here can already
+   * replace it through `upsertLessonContent`, so this read is never wider
+   * than the write. Learners never reach it; they read bodies only
+   * through the grant path.
+   */
+  async getLessonContent(
+    lessonId: string,
+    sectionId: string,
+    courseId: string,
+    academyId: string,
+    organizationId: string,
+    userId: string,
+  ): Promise<LessonContentResponse> {
+    const content = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId, courseId);
+        await this.assertCourseInAcademy(tx, courseId, academyId);
+        await this.assertSectionInCourse(tx, sectionId, courseId);
+        await this.assertLessonInSection(tx, lessonId, sectionId);
+        return this.lessonContentsRepository.findByLessonId(tx, lessonId);
+      },
+    );
+    if (!content) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return toLessonContentResponse(content, { includeBody: true });
+  }
+
+  /**
    * Creates or replaces the lesson's protected content row.
    *
    * This is the writer `lesson_contents` never had. The table, its RLS
@@ -463,13 +516,22 @@ export class CourseCurriculumService {
     userId: string,
     payload: UpsertLessonContentDto,
   ): Promise<LessonContentResponse> {
-    // `text` parses (it is a real column value) and is refused HERE rather
-    // than by the DTO, so the caller gets a reason instead of "not one of
-    // the allowed values" — the field IS allowed, the authoring path for
-    // it is not built. See the DTO header for why no sanitiser is invented.
+    // B0-LRN-01 — a text body is sanitised BEFORE the transaction opens:
+    // the stored HTML is the sanitiser's rebuilt output, never the input,
+    // and a body that sanitises to nothing readable is refused rather than
+    // stored as a lesson that delivers an empty page.
+    let bodyHtml: string | null = null;
     if (payload.kind === 'text') {
+      const sanitized = sanitizeRichText(payload.bodyHtml ?? '');
+      if (sanitized.text.trim().length === 0) {
+        throw new BadRequestException({
+          messageKey: 'errors.lessonContent.bodyRequired',
+        });
+      }
+      bodyHtml = sanitized.html;
+    } else if (payload.bodyHtml !== undefined) {
       throw new BadRequestException({
-        messageKey: 'errors.lessonContent.textNotYetSupported',
+        messageKey: 'errors.lessonContent.unexpectedBody',
       });
     }
 
@@ -541,6 +603,7 @@ export class CourseCurriculumService {
           courseId,
           academyId,
           kind: payload.kind,
+          bodyHtml,
           mediaAssetId,
           externalUrl,
         });

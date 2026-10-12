@@ -155,6 +155,29 @@ export class CourseCurriculumController {
   }
 
   /**
+   * B0-LRN-01 — the staff read of a lesson's content row (with the text
+   * body), so the builder can edit an existing text lesson. Same
+   * manage-permission checks as the `PUT` below.
+   */
+  @Get(':id/courses/:courseId/sections/:sectionId/lessons/:lessonId/content')
+  async getLessonContent(
+    @Req() request: Request,
+    @Param('courseId') courseId: string,
+    @Param('sectionId') sectionId: string,
+    @Param('lessonId') lessonId: string,
+  ): Promise<LessonContentResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.curriculumService.getLessonContent(
+      lessonId,
+      sectionId,
+      courseId,
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+    );
+  }
+
+  /**
    * Creates or replaces a lesson's protected content body.
    *
    * `PUT` because `lesson_contents.lessonId` is UNIQUE: there is exactly
