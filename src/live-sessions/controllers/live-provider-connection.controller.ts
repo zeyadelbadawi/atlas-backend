@@ -32,6 +32,7 @@ import {
 } from '../../academy/decorators/academy-roles.decorator';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { LiveProviderConnectionService } from '../services/live-provider-connection.service';
+import { AddOnAccessService } from '../services/add-on-access.service';
 
 /**
  * Connection management is OWNER-ONLY.
@@ -59,6 +60,7 @@ export class LiveProviderConnectionController {
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly connectionService: LiveProviderConnectionService,
+    private readonly addOnAccessService: AddOnAccessService,
   ) {}
 
   /** Health only — never credentials. W5 (F12): the teaching tier of THIS academy, like `live-sessions/status`. */
@@ -98,6 +100,8 @@ export class LiveProviderConnectionController {
   async check(@Req() request: Request) {
     const { academyId, organizationId } = request.academyContext!;
     this.assertOwner(request);
+    // B0-LIV-01 — no call to Zoom for an unlaunched add-on.
+    await this.addOnAccessService.assertPublished();
     return this.connectionService.checkHealth(academyId, organizationId);
   }
 

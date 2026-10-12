@@ -203,6 +203,22 @@ export class AddOnAccessService {
   }
 
   /**
+   * B0-LIV-01 — the catalog gate alone, for steps that come BEFORE the
+   * add-on can be usable (connecting the Zoom account): while the add-on
+   * is not `published` (draft or coming soon), no customer may link an
+   * external account to it. Same refusal shape as `assertUsable`.
+   */
+  async assertPublished(addOnKey: string = LIVE_SESSIONS_ADD_ON_KEY): Promise<void> {
+    const catalogAddOn = await this.addOnsRepository.findByKey(addOnKey);
+    if (catalogAddOn && catalogAddOn.catalogStatus === 'published') return;
+    throw new ForbiddenException({
+      messageKey: 'errors.liveSessions.addOnNotUsable',
+      code: ADD_ON_NOT_USABLE_CODE,
+      details: { reason: 'coming_soon' },
+    });
+  }
+
+  /**
    * The enforcement point. Every Live Sessions mutation goes through this
    * before doing anything, so a client that hid the UI state or called the
    * API directly is refused identically.
