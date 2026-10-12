@@ -115,62 +115,72 @@ export class DashboardService {
     scope: DashboardScopeFilter,
     includeRevenue: boolean,
   ): Promise<DashboardOverviewResponse> {
-    const { counts, revenueTotals, paymentSettings, activity, activityNames, academy } =
-      await this.tenancyContextService.runInTenantContext(
-        scope.organizationId,
-        async (tx) => {
-          const [
-            academies,
+    const {
+      counts,
+      revenueTotals,
+      paymentSettings,
+      manualMethodsEnabled,
+      activity,
+      activityNames,
+      academy,
+    } = await this.tenancyContextService.runInTenantContext(
+      scope.organizationId,
+      async (tx) => {
+        const [
+          academies,
+          courses,
+          publishedCourses,
+          students,
+          instructors,
+          revenueRows,
+          settings,
+          hasManualMethod,
+          activityRows,
+          academyRow,
+        ] = await Promise.all([
+          this.dashboardMetricsRepository.countAcademies(tx, scope.organizationId),
+          this.dashboardMetricsRepository.countCourses(tx, scope),
+          this.dashboardMetricsRepository.countPublishedCourses(tx, scope),
+          this.dashboardMetricsRepository.countStudents(tx, scope),
+          this.dashboardMetricsRepository.countInstructors(tx, scope),
+          this.dashboardMetricsRepository.sumRevenueByCurrency(tx, scope),
+          this.organizationPaymentSettingsRepository.findByOrganizationId(
+            tx,
+            scope.organizationId,
+          ),
+          this.dashboardMetricsRepository.hasEnabledManualPaymentMethod(tx, scope),
+          this.dashboardMetricsRepository.findRecentActivity(
+            tx,
+            scope,
+            RECENT_ACTIVITY_LIMIT,
+          ),
+          scope.academyId
+            ? this.academiesRepository.findById(tx, scope.academyId)
+            : Promise.resolve(null),
+        ]);
+
+        return {
+          counts: {
+            // An Academy-scoped dashboard reports itself, never the
+            // Organization's total — see the contract's own doc comment.
+            academies: scope.academyId ? 1 : academies,
             courses,
             publishedCourses,
             students,
             instructors,
-            revenueRows,
-            settings,
+          },
+          revenueTotals: revenueRows,
+          paymentSettings: settings,
+          manualMethodsEnabled: hasManualMethod,
+          activity: activityRows,
+          activityNames: await this.auditLogEntriesRepository.loadReferenceNames(
+            tx,
             activityRows,
-            academyRow,
-          ] = await Promise.all([
-            this.dashboardMetricsRepository.countAcademies(tx, scope.organizationId),
-            this.dashboardMetricsRepository.countCourses(tx, scope),
-            this.dashboardMetricsRepository.countPublishedCourses(tx, scope),
-            this.dashboardMetricsRepository.countStudents(tx, scope),
-            this.dashboardMetricsRepository.countInstructors(tx, scope),
-            this.dashboardMetricsRepository.sumRevenueByCurrency(tx, scope),
-            this.organizationPaymentSettingsRepository.findByOrganizationId(
-              tx,
-              scope.organizationId,
-            ),
-            this.dashboardMetricsRepository.findRecentActivity(
-              tx,
-              scope,
-              RECENT_ACTIVITY_LIMIT,
-            ),
-            scope.academyId
-              ? this.academiesRepository.findById(tx, scope.academyId)
-              : Promise.resolve(null),
-          ]);
-
-          return {
-            counts: {
-              // An Academy-scoped dashboard reports itself, never the
-              // Organization's total — see the contract's own doc comment.
-              academies: scope.academyId ? 1 : academies,
-              courses,
-              publishedCourses,
-              students,
-              instructors,
-            },
-            revenueTotals: revenueRows,
-            paymentSettings: settings,
-            activity: activityRows,
-            activityNames: await this.auditLogEntriesRepository.loadReferenceNames(
-              tx,
-              activityRows,
-            ),
-            academy: academyRow,
-          };
-        },
-      );
+          ),
+          academy: academyRow,
+        };
+      },
+    );
 
     if (scope.academyId && !academy) {
       // Structurally unreachable — `AcademyScopeGuard` already read this
@@ -186,6 +196,7 @@ export class DashboardService {
         paymentSettings?.paymentCollectionMode,
         revenueTotals,
         includeRevenue,
+        manualMethodsEnabled,
       ),
       usage: await this.loadUsage(scope.organizationId),
       recentActivity: activity.map((row) => toActivityItemResponse(row, activityNames)),
@@ -218,6 +229,7 @@ export class DashboardService {
       | undefined,
     totals: readonly { currency: string; amountMinorUnits: bigint }[],
     includeRevenue: boolean,
+    manualPaymentMethodsEnabled: boolean,
   ): DashboardRevenueResponse {
     const paymentCollectionMode = mode ?? 'unconfigured';
     const tracked = includeRevenue && paymentCollectionMode === 'atlas_payments';
@@ -225,6 +237,7 @@ export class DashboardService {
     return {
       tracked,
       paymentCollectionMode,
+      manualPaymentMethodsEnabled,
       // Deliberately emptied rather than reported when Atlas is not the
       // party to these transactions — never a fabricated or misleading
       // figure. (In practice the ledger is already empty in that mode; this

@@ -65,6 +65,13 @@ export interface DashboardRevenueResponse {
   /** See this file's header comment — `false` means Atlas genuinely has no revenue data for this Organization, never "zero revenue". */
   readonly tracked: boolean;
   readonly paymentCollectionMode: PaymentCollectionMode;
+  /**
+   * B0-CPY-15 — an academy in scope has an enabled manual payment method.
+   * With `tracked: false` this lets the card say "manual-payment earnings
+   * aren't shown here yet" instead of asking the owner to set up payments
+   * they already set up.
+   */
+  readonly manualPaymentMethodsEnabled: boolean;
   /** Empty when `tracked` is false, or when the ledger genuinely holds no entries yet. */
   readonly totals: readonly DashboardRevenueTotalResponse[];
 }

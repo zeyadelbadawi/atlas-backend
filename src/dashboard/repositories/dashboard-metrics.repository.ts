@@ -104,6 +104,27 @@ export class DashboardMetricsRepository {
    * Never estimated, never defaulted to zero by this method: an empty
    * array means the ledger truly holds no matching rows.
    */
+  /**
+   * B0-CPY-15 — whether any academy in scope has an ENABLED manual payment
+   * method (bank transfer, wallet, InstaPay). Only a yes/no for the
+   * revenue card's wording; manual-payment revenue itself is not summed
+   * here yet (B0-COM-02).
+   */
+  async hasEnabledManualPaymentMethod(
+    tx: Prisma.TransactionClient,
+    scope: DashboardScopeFilter,
+  ): Promise<boolean> {
+    const row = await tx.academyPaymentMethod.findFirst({
+      where: {
+        organizationId: scope.organizationId,
+        ...(scope.academyId ? { academyId: scope.academyId } : {}),
+        enabled: true,
+      },
+      select: { id: true },
+    });
+    return row !== null;
+  }
+
   async sumRevenueByCurrency(
     tx: Prisma.TransactionClient,
     scope: DashboardScopeFilter,
