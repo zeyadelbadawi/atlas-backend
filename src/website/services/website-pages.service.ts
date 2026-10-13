@@ -43,6 +43,7 @@ import { StaleResourceVersionException } from '../../concurrency/errors/stale-re
 import { EditingPresenceService } from '../../concurrency/services/editing-presence.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { diffListCounts } from '../../audit-log/utils/audit-diff.util';
+import { pruneDeletedPageReferences } from '../utils/deleted-page-references.util';
 import type { EditingParticipant } from '../../concurrency/services/editing-presence.service';
 import {
   toManagedWebsitePageResponse,
@@ -552,6 +553,7 @@ export class WebsitePagesService {
           });
         }
         await this.websitePagesRepository.delete(tx, pageId);
+        await this.forgetDeletedPage(tx, academyId, pageId);
         await this.auditLogWriterService.record(tx, {
           actorUserId: userId,
           organizationId,
@@ -564,6 +566,63 @@ export class WebsitePagesService {
         });
       },
     );
+  }
+
+  /**
+   * B0-WEB-11 — a deleted page is gone from the live site at once (the row
+   * is hard-deleted), so:
+   *   - menu entries, footer links and the header call to action that
+   *     pointed at it are removed from the working copy AND the published
+   *     snapshot — otherwise the Owner's next save of those areas is
+   *     refused (`errors.website.pageNotFound`) by the reference validator;
+   *   - `configVersion` moves, which changes every public cache key (Redis
+   *     and the SSR render cache), so visitors stop getting the deleted
+   *     page on the next request instead of after the content TTL.
+   * Section call-to-action links on OTHER pages are not rewritten; the
+   * public renderer drops a link whose page is missing.
+   */
+  private async forgetDeletedPage(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    pageId: string,
+  ): Promise<void> {
+    const configuration = await this.websiteConfigurationRepository.findByAcademyId(
+      tx,
+      academyId,
+    );
+    if (!configuration) return;
+    const draft = pruneDeletedPageReferences(configuration, pageId);
+    const snapshot = configuration.publishedSnapshot as Record<string, unknown> | null;
+    const live = snapshot
+      ? pruneDeletedPageReferences(
+          {
+            navigation: snapshot.navigation,
+            header: snapshot.header,
+            footer: snapshot.footer,
+          },
+          pageId,
+        )
+      : null;
+    await this.websiteConfigurationRepository.update(tx, academyId, {
+      configVersion: { increment: 1 },
+      ...(draft.changed
+        ? {
+            navigation: draft.navigation as Prisma.InputJsonValue,
+            header: draft.header as Prisma.InputJsonValue,
+            footer: draft.footer as Prisma.InputJsonValue,
+          }
+        : {}),
+      ...(snapshot && live?.changed
+        ? {
+            publishedSnapshot: {
+              ...snapshot,
+              navigation: live.navigation,
+              header: live.header,
+              footer: live.footer,
+            } as Prisma.InputJsonValue,
+          }
+        : {}),
+    });
   }
 
   async reorderSections(
