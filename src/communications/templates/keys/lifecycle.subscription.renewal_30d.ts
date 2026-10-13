@@ -7,12 +7,12 @@ import type { CommunicationTemplate } from '../layout';
  * else's approval; the 7-day (S3) and 1-day (S4) reminders still follow.
  */
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
     subject: () => 'Your yearly plan renews in 30 days',
     paragraphs: (v) => [
       `Your ${str(v, 'planName', 'Atlas')} yearly period ends on ${str(v, 'periodEndDate')}.`,
-      'Payments are reviewed by a person and transfers can take a few working days. A month gives you time to arrange the payment before the period ends.',
+      'Payments are reviewed by a person and a transfer takes time to arrive. A month gives you time to arrange the payment before the period ends.',
       'We will remind you again 7 days and 1 day before the period ends.',
     ],
     ctaLabel: 'Renew now',
@@ -21,7 +21,7 @@ export const template: CommunicationTemplate = {
     subject: () => 'يُجدَّد اشتراكك السنوي خلال 30 يومًا',
     paragraphs: (v) => [
       `تنتهي الفترة السنوية لخطتك ${str(v, 'planName', 'أطلس')} في ${str(v, 'periodEndDate')}.`,
-      'تتم مراجعة المدفوعات بواسطة موظف وقد تستغرق التحويلات أيام عمل. يمنحك الشهر وقتًا لترتيب الدفع قبل انتهاء الفترة.',
+      'تتم مراجعة المدفوعات بواسطة موظف ويحتاج التحويل إلى وقت حتى يصل. يمنحك الشهر وقتًا لترتيب الدفع قبل انتهاء الفترة.',
       'سنذكّرك مرة أخرى قبل انتهاء الفترة بـ 7 أيام وبيوم واحد.',
     ],
     ctaLabel: 'تجديد الآن',

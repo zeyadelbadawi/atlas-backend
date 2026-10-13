@@ -55,8 +55,8 @@ function render(locale: 'en' | 'ar', values: Record<string, unknown>) {
 }
 
 describe('lifecycle.subscription.activated — gifted days', () => {
-  it('is version 2 (the gifted-days copy)', () => {
-    expect(template.version).toBe('2');
+  it('is version 3 (gifted-days copy without "free", B0-MSG-04)', () => {
+    expect(template.version).toBe('3');
   });
 
   describe('en', () => {
@@ -64,7 +64,7 @@ describe('lifecycle.subscription.activated — gifted days', () => {
       const { text, html, subject } = render('en', WITH_GIFT);
       expect(subject).toBe('Your Growth subscription is active');
       expect(text).toContain(
-        `Gifted days: 7 days, from ${GIFT_START} to ${GIFT_END}. These days are free and are not taken from the period you paid for.`,
+        `Gifted days: 7 days, from ${GIFT_START} to ${GIFT_END}. These days are a gift: they come before the period you paid for and are never taken from it.`,
       );
       expect(text).toContain(
         `Paid subscription period: from ${GIFT_END} to ${PAID_END}. Your subscription expires on ${PAID_END} unless you renew it.`,
@@ -106,7 +106,9 @@ describe('lifecycle.subscription.activated — gifted days', () => {
       const { text, html, subject } = render('ar', WITH_GIFT);
       expect(subject).toBe('اشتراكك في Growth فعّال الآن');
       expect(text).toContain('الأيام المُهداة: 7 أيام');
-      expect(text).toContain('هذه الأيام مجانية ولا تُخصم من الفترة التي دفعت مقابلها.');
+      expect(text).toContain(
+        'هذه الأيام هدية: تأتي قبل الفترة التي دفعت مقابلها ولا تُخصم منها أبدًا.',
+      );
       expect(text).toContain('فترة الاشتراك المدفوعة: من');
       expect(text).toContain('ما لم تجدّده.');
       // Every date is present, isolated left-to-right inside the RTL text.

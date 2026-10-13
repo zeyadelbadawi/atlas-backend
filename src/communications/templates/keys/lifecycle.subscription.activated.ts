@@ -16,11 +16,14 @@ import type { CommunicationTemplate, TemplateValues } from '../layout';
  * granted the first-paid-subscription gift, the producer adds `giftedDays`,
  * `giftStartDate` and `giftEndDate`, read from the `tenant_subscriptions`
  * row that same transaction wrote. The receipt then separates the two
- * segments the customer actually has: the free gifted days first, then the
+ * segments the customer actually has: the gifted days first, then the
  * paid period (`periodStartDate` is the gift's end, `periodEndDate` the
  * renewal/expiry date). Without all three gift values — a renewal, an
  * ineligible customer, a plan without a gift — the copy is the plain
  * receipt and says nothing about gifted days at all, never "0 days".
+ *
+ * v3 (B0-MSG-04) — no "free"/«مجاني» next to the plan (R-03): the gifted
+ * days are described as a gift added before the paid period.
  *
  * v2 — the gifted-days copy, and (Arabic only) dates wrapped as
  * left-to-right isolates so `2026-10-04 10:00 UTC` reads as one unit
@@ -90,7 +93,7 @@ function arabicDays(days: number): string {
 }
 
 export const template: CommunicationTemplate = {
-  version: '2',
+  version: '3',
   en: defineLocale({
     subject: (v) => `Your ${str(v, 'planName', 'Atlas')} subscription is active`,
     paragraphs: (v) => {
@@ -106,7 +109,7 @@ export const template: CommunicationTemplate = {
       const period = gift
         ? [
             `Your subscription to ${plan} is active now. It starts with gifted days, followed by the period you paid for.`,
-            `Gifted days: ${gift.days} ${gift.days === 1 ? 'day' : 'days'}, from ${gift.startDate} to ${gift.endDate}. These days are free and are not taken from the period you paid for.`,
+            `Gifted days: ${gift.days} ${gift.days === 1 ? 'day' : 'days'}, from ${gift.startDate} to ${gift.endDate}. These days are a gift: they come before the period you paid for and are never taken from it.`,
             `Paid subscription period: from ${start} to ${end}. Your subscription expires on ${end} unless you renew it.`,
           ]
         : [`Your subscription to ${plan} is active from ${start} to ${end}.`];
@@ -135,7 +138,7 @@ export const template: CommunicationTemplate = {
       const period = gift
         ? [
             `اشتراكك في ${plan} فعّال الآن. يبدأ بأيام مُهداة، تليها الفترة التي دفعت مقابلها.`,
-            `الأيام المُهداة: ${arabicDays(gift.days)}، من ${ltr(gift.startDate)} حتى ${ltr(gift.endDate)}. هذه الأيام مجانية ولا تُخصم من الفترة التي دفعت مقابلها.`,
+            `الأيام المُهداة: ${arabicDays(gift.days)}، من ${ltr(gift.startDate)} حتى ${ltr(gift.endDate)}. هذه الأيام هدية: تأتي قبل الفترة التي دفعت مقابلها ولا تُخصم منها أبدًا.`,
             `فترة الاشتراك المدفوعة: من ${start} حتى ${end}. ينتهي اشتراكك في ${end} ما لم تجدّده.`,
           ]
         : [`اشتراكك في ${plan} فعّال من ${start} حتى ${end}.`];

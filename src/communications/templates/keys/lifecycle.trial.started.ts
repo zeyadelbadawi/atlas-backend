@@ -8,13 +8,13 @@ import type { CommunicationTemplate } from '../layout';
  * reason the later steps in this sequence exist.
  */
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
     subject: (v) => `Your ${str(v, 'planName', 'Atlas')} trial has started`,
     paragraphs: (v) => [
       `Your trial of ${str(v, 'planName', 'Atlas')} is active until ${str(v, 'trialEndsAtDate')}.`,
       'Everything is unlocked until then: create academies, build courses and invite students.',
-      'If no plan is chosen before that date, your public website goes offline and changes are blocked. Your data is kept — choosing a plan brings the site straight back.',
+      'If no plan is chosen before that date, your public website goes offline and changes are blocked. Your data is kept — once you choose a plan and your payment is approved, the site comes straight back.',
     ],
     ctaLabel: 'Choose a plan',
   }),
@@ -23,7 +23,7 @@ export const template: CommunicationTemplate = {
     paragraphs: (v) => [
       `فترتك التجريبية على ${str(v, 'planName', 'أطلس')} فعّالة حتى ${str(v, 'trialEndsAtDate')}.`,
       'كل الميزات متاحة حتى ذلك التاريخ: أنشئ الأكاديميات وابنِ الدورات وادعُ الطلاب.',
-      'إذا لم تختر خطة قبل ذلك التاريخ، سيتوقف عرض موقعك العام وستُمنع التعديلات. بياناتك محفوظة، واختيار خطة يعيد الموقع فورًا.',
+      'إذا لم تختر خطة قبل ذلك التاريخ، سيتوقف عرض موقعك العام وستُمنع التعديلات. بياناتك محفوظة، وبمجرد اختيار خطة والموافقة على الدفع يعود الموقع فورًا.',
     ],
     ctaLabel: 'اختيار خطة',
   }),
