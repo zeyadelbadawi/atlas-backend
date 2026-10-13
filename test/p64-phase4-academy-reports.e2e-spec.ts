@@ -26,6 +26,10 @@ import {
   seedQuiz,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import {
+  AcademyReportsService,
+  REPORT_LIST_SAMPLE_LIMITS,
+} from '../src/dashboard/services/academy-reports.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS);
@@ -281,6 +285,48 @@ describe('Owner reports (e2e)', () => {
       expect(res.body.topUsers[0].userName).toBe(`rep-share-learner-a`);
       expect(JSON.stringify(res.body)).not.toContain('@');
       expect(res.body.truncated).toBe(false);
+    }
+  });
+
+  it('B0-ANL-03: when the list sample hits its ceiling, the headline figures stay exact', async () => {
+    const w = await world('rep-cap');
+    await seedSignals(w);
+    const service = app.get(AcademyReportsService);
+    service.sampleLimits = { eventRows: 2, accessRows: 2 };
+    try {
+      const integrity = await request(app.getHttpServer())
+        .get(integrityPath(w.academy.id))
+        .set(w.owner.auth)
+        .expect(200);
+      expect(integrity.body.truncated).toBe(true);
+      expect(integrity.body.totalEvents).toBe(5);
+      expect(integrity.body.countedEvents).toBe(4);
+      expect(integrity.body.attemptsWithEvents).toBe(2);
+      expect(integrity.body.byType).toEqual({
+        blur: 1,
+        copy: 1,
+        heartbeat: 1,
+        paste: 1,
+        visibility_hidden: 1,
+      });
+      // The list ranks only the sampled (newest) rows.
+      expect(integrity.body.topCourses[0].events).toBe(2);
+
+      const sharing = await request(app.getHttpServer())
+        .get(sharingPath(w.academy.id))
+        .set(w.owner.auth)
+        .expect(200);
+      expect(sharing.body.truncated).toBe(true);
+      expect(sharing.body.granted).toBe(3);
+      expect(sharing.body.refused).toBe(3);
+      expect(sharing.body.refusedByReason).toEqual({
+        deviceLimit: 2,
+        sessionConflict: 1,
+      });
+      expect(sharing.body.distinctUsersRefused).toBe(2);
+      expect(sharing.body.distinctDevicesRefused).toBe(3);
+    } finally {
+      service.sampleLimits = { ...REPORT_LIST_SAMPLE_LIMITS };
     }
   });
 

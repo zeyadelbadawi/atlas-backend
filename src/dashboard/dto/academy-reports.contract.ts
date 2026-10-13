@@ -6,10 +6,10 @@
  * existing `GET organizations/:id/usage` (`TenantUsageResponse`) already
  * answers it and the reports page reads that directly.
  *
- * Every number is derived from ONE bounded read aggregated in memory (the
- * `StudentAnalyticsService` precedent), so the totals, the breakdowns and
- * the top-N lists can never disagree with each other. `truncated` says the
- * read hit its row ceiling, so the caller knows the numbers are a floor.
+ * B0-ANL-03 — the headline numbers (totals, breakdowns, distinct counts)
+ * are exact grouped counts over the whole window. The top-N lists are
+ * ranked from a bounded, newest-first read; `truncated` says that read hit
+ * its row ceiling, so the lists rank the window's most recent rows only.
  *
  * PII discipline: rows carry ids plus the same display name the roster
  * already shows — never emails, device fingerprints, or IPs.
