@@ -145,6 +145,13 @@ if [ "$MODE" = "sync-env" ]; then
 fi
 
 set -a; source .env; set +a
+# B0-OPS-03 — the superuser DATABASE_URL may live in .env.migrate instead
+# of .env, so the long-lived backend (env_file: .env) never holds it. Only
+# this script reads it, to pass it explicitly to `prisma migrate deploy`.
+# See docs/SUPERUSER_DATABASE_URL_SPLIT.md.
+if [ -f .env.migrate ]; then
+  set -a; source .env.migrate; set +a
+fi
 
 # --- Phase 8: public website server renderer (the `ssr` service) ----------
 # ATLAS_SSR=on in .env is the one switch: Caddy reads the same value and

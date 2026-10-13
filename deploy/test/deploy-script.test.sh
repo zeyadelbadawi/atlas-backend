@@ -21,6 +21,10 @@
 # no container uses and .last-good does not record (never postgres/redis),
 # and a deploy refuses to pull below its free-space floor, changing nothing.
 #
+# B0-OPS-03: with DATABASE_URL moved from .env to .env.migrate, a migration
+# deploy still hands it to `prisma migrate deploy`, and the running backend's
+# environment no longer carries it.
+#
 # And the W8B identity-key pin (4 Oct 2026): a missing
 # CUSTOMER_IDENTITY_HMAC_KEY is derived inside the running backend
 # (cross-checked against .env; refused if they differ) or, with no backend
@@ -105,7 +109,7 @@ RUN if [ -n "$NODE_STUB" ]; then cp /opt/fake-node /bin/node && chmod +x /bin/no
  && for m in $MIGRATIONS; do mkdir -p "/app/prisma/migrations/$m"; done \
  && if [ "$HEALTHY" = 1 ]; then echo ok > /www/health; fi \
  && echo "$VERSION" > /www/version \
- && printf '#!/bin/sh\necho "FAKE-PRISMA $* (backend %s)"\n' "$VERSION" > /bin/npx \
+ && printf '#!/bin/sh\necho "FAKE-PRISMA $* (backend %s) dburl=${DATABASE_URL:+set}"\n' "$VERSION" > /bin/npx \
  && chmod +x /bin/npx
 LABEL test.version=$VERSION
 CMD ["httpd", "-f", "-p", "3000", "-h", "/www"]
@@ -490,6 +494,20 @@ check "a frontend-only deploy refuses the same way" \
   bash -c "! DEPLOY_MIN_FREE_MB=999999999 ATLAS_DIR='$W' bash '$W/deploy.sh' --frontend-only >'$W/log15' 2>&1 && grep -q 'Refusing to deploy' '$W/log15'"
 check "with room, the deploy reports the free space and proceeds" \
   bash -c "ATLAS_DIR='$W' bash '$W/deploy.sh' >'$W/log16' 2>&1 && grep -q 'Free disk space:' '$W/log16'"
+
+# =============================================================================
+echo "# 9. superuser DATABASE_URL kept out of the running backend (B0-OPS-03)"
+grep '^DATABASE_URL=' "$W/.env" >"$W/.env.migrate"
+sed -i '/^DATABASE_URL=/d' "$W/.env"
+build_push atlas-backend:latest "$B/backend" --build-arg VERSION=v6 --build-arg NODE_STUB=1 \
+  --build-arg "MIGRATIONS=20260101000000_m1 20260201000000_m2 20260301000000_m3 20260401000000_m4"
+check "a migration deploy with DATABASE_URL only in .env.migrate succeeds" run_deploy "$W/log17" --with-migrations
+check "prisma migrate deploy still received DATABASE_URL" \
+  log_has "$W/log17" "FAKE-PRISMA prisma migrate deploy (backend v6) dburl=set"
+check "the running backend's environment has no DATABASE_URL" \
+  bash -c "! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' '$(cid backend)' | grep -q '^DATABASE_URL='"
+check "the value never appears in the deploy output" \
+  bash -c "! grep -qF \"\$(sed -n 's/^DATABASE_URL=//p' '$W/.env.migrate')\" '$W/log17'"
 
 echo
 echo "# $PASS passed, $FAIL failed"
