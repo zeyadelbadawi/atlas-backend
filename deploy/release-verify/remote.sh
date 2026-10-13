@@ -17,6 +17,12 @@
 #                        (B0-OPS-01): host-only settings, secret presence
 #                        (set / not set, never a value), academy-ID lists as
 #                        counts, and the Platform Owner authenticator counts
+#   remote.sh video   -> Normal-tier hosted video readiness (B0-MED-11 /
+#                        B0-OC-34): tier settings, the protected bucket's
+#                        CORS rules and a browser-style CORS preflight
+#                        (OPTIONS only — nothing is uploaded), the delivery
+#                        Worker's answer to a token-less request, and
+#                        hosted-video usage as counts
 #
 # Read-only: every statement is a SELECT, every probe a GET. Prints
 # non-secret facts only — no secret value, no personal data, no bank detail,
@@ -97,6 +103,109 @@ config_facts() {
   else
     info "$confirmed of $owners Platform Owner(s) have a confirmed authenticator; enforcement: $effective"
   fi
+}
+
+# --- B0-MED-11 / B0-OC-34: Normal-tier hosted video readiness ---------------
+#
+# What the course builder's direct upload needs before the tier is turned
+# on: the browser PUTs the file to a presigned URL on the PROTECTED bucket,
+# so that bucket must answer the CORS preflight for the dashboard origin.
+# Read-only throughout: GetBucketCors (a read; the app's token may not be
+# allowed it, which is reported, not worked around), OPTIONS preflights
+# against a presigned PUT URL for a key that is never written (signing is
+# local; no PUT is ever sent), one token-less GET to the delivery host, and
+# SELECT counts. Prints no bucket name, account ID, key or URL.
+video_facts() {
+  echo "== Normal-tier video settings (host .env; secrets as set/not set only)"
+  for k in VIDEO_PROVIDER FLAG_VIDEO_NORMAL_MODE BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_PLAYBACK_TTL_SECONDS \
+    BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED VIDEO_MAX_UPLOAD_BYTES PROTECTED_MEDIA_URL_TTL_SECONDS \
+    PROTECTED_MEDIA_MAX_UPLOAD_BYTES PLATFORM_BASE_DOMAIN CORS_ALLOWED_ORIGINS FRONTEND_URL; do
+    if env_has "$k"; then info "$k=$(env_value "$k")"; else info "$k=<unset>"; fi
+  done
+  info "FLAG_VIDEO_NORMAL_ACADEMY_IDS entries=$(env_value FLAG_VIDEO_NORMAL_ACADEMY_IDS | tr ',' '\n' | grep -c .)"
+  if [ -n "$(env_value R2_PROTECTED_BUCKET)" ]; then info "R2_PROTECTED_BUCKET: set (name not printed)"; else info "R2_PROTECTED_BUCKET: default (<R2_BUCKET>-protected)"; fi
+  secret_presence R2_PROTECTED_ACCESS_KEY_ID
+  secret_presence BASIC_VIDEO_SIGNING_SECRET
+
+  echo "== Protected bucket CORS (read-only; no upload is made)"
+  cors=$(docker compose exec -T backend node -e '
+    const { S3Client, PutObjectCommand, GetBucketCorsCommand } = require("@aws-sdk/client-s3");
+    const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+    const e = process.env;
+    const bucket = e.R2_PROTECTED_BUCKET || e.R2_BUCKET + "-protected";
+    const c = new S3Client({ region: e.R2_REGION, endpoint: e.R2_ENDPOINT,
+      forcePathStyle: e.R2_FORCE_PATH_STYLE !== "false",
+      credentials: { accessKeyId: e.R2_PROTECTED_ACCESS_KEY_ID || e.R2_ACCESS_KEY_ID,
+        secretAccessKey: e.R2_PROTECTED_SECRET_ACCESS_KEY || e.R2_SECRET_ACCESS_KEY },
+      requestChecksumCalculation: "WHEN_REQUIRED", responseChecksumValidation: "WHEN_REQUIRED" });
+    // The dashboard origin(s) must pass; other API origins are reported
+    // for information (the course builder may never run on them).
+    const origins = [], extra = [];
+    const add = (list, o) => { try { const u = new URL(o.trim()); if (/^https?:$/.test(u.protocol) && !origins.includes(u.origin) && !extra.includes(u.origin)) list.push(u.origin); } catch {} };
+    if (e.FRONTEND_URL) add(origins, e.FRONTEND_URL);
+    if (e.PLATFORM_BASE_DOMAIN) add(origins, "https://" + e.PLATFORM_BASE_DOMAIN);
+    (e.CORS_ALLOWED_ORIGINS || "").split(",").filter(Boolean).slice(0, 6).forEach((o) => add(extra, o));
+    const foreign = "https://cors-probe.invalid";
+    (async () => {
+      try {
+        const r = await c.send(new GetBucketCorsCommand({ Bucket: bucket }));
+        const rules = r.CORSRules || [];
+        console.log("INFO  bucket CORS rules: " + rules.length);
+        rules.forEach((x, i) => console.log("INFO  rule " + (i + 1) + ": origins=" + JSON.stringify(x.AllowedOrigins || []) +
+          " methods=" + JSON.stringify(x.AllowedMethods || []) + " headers=" + JSON.stringify(x.AllowedHeaders || []) +
+          " expose=" + JSON.stringify(x.ExposeHeaders || []) + " maxAge=" + (x.MaxAgeSeconds ?? "-")));
+      } catch (err) {
+        const st = err.$metadata && err.$metadata.httpStatusCode;
+        console.log("INFO  bucket CORS rules not readable with the app token: " + (err.name || err.Code || "Error") + (st ? " (" + st + ")" : ""));
+      }
+      let url;
+      try {
+        url = await getSignedUrl(c, new PutObjectCommand({ Bucket: bucket, Key: "release-verify/cors-preflight-never-written",
+          ContentType: "video/mp4", ContentLength: 1 }), { expiresIn: 120 });
+      } catch (err) { console.log("FAIL  could not presign a probe URL: " + (err.name || "Error")); return; }
+      const probe = async (origin) => {
+        try {
+          const res = await fetch(url, { method: "OPTIONS", headers: { Origin: origin,
+            "Access-Control-Request-Method": "PUT", "Access-Control-Request-Headers": "content-type" } });
+          const h = (n) => res.headers.get(n) || "";
+          const aco = h("access-control-allow-origin"), acm = h("access-control-allow-methods"), ach = h("access-control-allow-headers");
+          const ok = res.status < 300 && (aco === "*" || aco === origin) && /(^|[ ,])(PUT|\*)([ ,]|$)/i.test(acm) && (ach === "*" || /content-type/i.test(ach));
+          return { ok, line: "origin=" + origin + " status=" + res.status + " allow-origin=" + (aco || "-") + " allow-methods=" + (acm || "-") +
+            " allow-headers=" + (ach || "-") + " max-age=" + (h("access-control-max-age") || "-") };
+        } catch (err) { return { ok: false, line: "origin=" + origin + " request failed: " + (err.cause && err.cause.code || err.name) }; }
+      };
+      if (!origins.length) console.log("FAIL  no dashboard origin to test (FRONTEND_URL / PLATFORM_BASE_DOMAIN / CORS_ALLOWED_ORIGINS unset)");
+      for (const o of origins) { const r = await probe(o); console.log((r.ok ? "PASS  " : "FAIL  ") + "preflight PUT " + r.line); }
+      for (const o of extra) { const r = await probe(o); console.log("INFO  preflight PUT (other API origin) " + (r.ok ? "allowed: " : "not allowed: ") + r.line); }
+      const f = await probe(foreign);
+      console.log((f.ok ? "INFO  " : "PASS  ") + "preflight PUT from a foreign origin " + (f.ok ? "is ALLOWED (wildcard or too broad): " : "is refused: ") + f.line);
+    })();' 2>/dev/null) || cors="FAIL  CORS check could not run"
+  printf '%s\n' "$cors"
+  FAILS=$((FAILS + $(printf '%s\n' "$cors" | grep -c '^FAIL')))
+
+  echo "== Delivery Worker (token-less request; expect a refusal)"
+  local dh code
+  dh=$(env_value BASIC_VIDEO_DELIVERY_HOST)
+  if [ -z "$dh" ]; then
+    info "BASIC_VIDEO_DELIVERY_HOST unset: no delivery Worker configured"
+  else
+    code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "https://${dh#https://}/v/release-verify-probe" || true)
+    case "$code" in
+      401|403) pass "delivery host answers a token-less request with $code" ;;
+      000|"") fail "delivery host unreachable" ;;
+      *) info "delivery host answered $code to a token-less request" ;;
+    esac
+  fi
+
+  echo "== Hosted video usage (counts only)"
+  sql "select 'videos|' || count(*) || '|' || count(*) filter (where processing_status = 'ready') || '|' ||
+       count(*) filter (where processing_status in ('pending','processing')) || '|' || count(*) filter (where processing_status = 'failed') || '|' ||
+       coalesce(sum(size_bytes),0) || '|' || coalesce(sum(duration_seconds),0)
+       from media_assets where type = 'video' and access = 'protected'" |
+    awk -F'|' 'NF>=7 {printf "INFO  protected videos=%s ready=%s in-progress=%s failed=%s bytes=%s seconds=%s\n",$2,$3,$4,$5,$6,$7}'
+  sql "select 'limits|' || key || '|' || status || '|' || coalesce(limits->>'videoStorageMinutes','-') || '|' || coalesce(limits->>'videoStorage','-')
+       from plans order by display_order, key" |
+    awk -F'|' 'NF>=5 {printf "INFO  plan %s (%s): videoStorageMinutes=%s videoStorage=%s\n",$2,$3,$4,$5}'
 }
 
 case "${1:-}" in
@@ -250,6 +359,12 @@ case "${1:-}" in
 
     config_facts
 
+    # Reported, not gating (a subshell keeps its FAIL count out of this
+    # mode's exit): the tier stays off until every line passes and the
+    # owner turns it on (B0-OC-34). `remote.sh video` alone does gate.
+    echo "== Normal-tier video readiness follows (B0-MED-11; reported, not gating)"
+    ( video_facts ) || true
+
     echo "== Website published copy"
     IFS='|' read -r _ all snap <<< "$(sql "select 'published_sites', count(*), count(published_snapshot) from website_configurations where status='published'")"
     if [ "$all" = "$snap" ]; then pass "every published site has a published snapshot ($snap/$all)"; else fail "published sites with a snapshot: $snap/$all"; fi
@@ -350,5 +465,9 @@ SQL
     config_facts
     [ "$FAILS" = 0 ]
     ;;
-  *) echo "usage: remote.sh facts|hosts|rum|dups|config" >&2; exit 2 ;;
+  video)
+    video_facts
+    [ "$FAILS" = 0 ]
+    ;;
+  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video" >&2; exit 2 ;;
 esac
