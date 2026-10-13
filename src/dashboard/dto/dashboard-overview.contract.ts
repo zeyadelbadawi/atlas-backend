@@ -74,6 +74,27 @@ export interface DashboardRevenueResponse {
   readonly manualPaymentMethodsEnabled: boolean;
   /** Empty when `tracked` is false, or when the ledger genuinely holds no entries yet. */
   readonly totals: readonly DashboardRevenueTotalResponse[];
+  /**
+   * B0-COM-02 — sales the academy collected itself by manual payment and
+   * approved in Atlas (not ledger revenue: gross, no platform fee). `null`
+   * for anyone but the organization owner (B0-SEC-03).
+   */
+  readonly manualSales: DashboardManualSalesResponse | null;
+}
+
+export interface DashboardManualSalesTotalResponse {
+  readonly currency: string;
+  readonly amountMinorUnits: number;
+  /** Approved orders in the period. */
+  readonly count: number;
+}
+
+export interface DashboardManualSalesResponse {
+  /** One entry per window, newest-first windows ending now: 7, 30, 90 days. */
+  readonly periods: readonly {
+    readonly days: number;
+    readonly totals: readonly DashboardManualSalesTotalResponse[];
+  }[];
 }
 
 export interface DashboardActivityItemResponse {

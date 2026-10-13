@@ -23,11 +23,18 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { TENANT_VISIBLE_AUDIT_ACTIONS } from '../../audit-log/catalog/audit-event-catalog';
+import { ACADEMY_MANUAL_PROVIDER_KEY } from '../../billing/dto/billing.constants';
 
 /** Narrows every aggregation below to one Academy, or to every Academy under one Organization. */
 export interface DashboardScopeFilter {
   readonly organizationId: string;
   readonly academyId?: string;
+}
+
+export interface DashboardManualSalesTotal {
+  readonly currency: string;
+  readonly amountMinorUnits: bigint;
+  readonly count: number;
 }
 
 export interface DashboardRevenueTotal {
@@ -123,6 +130,43 @@ export class DashboardMetricsRepository {
       select: { id: true },
     });
     return row !== null;
+  }
+
+  /**
+   * B0-COM-02 — sales an academy collected itself through a manual payment
+   * method (bank transfer, wallet, InstaPay) and approved in Atlas. These
+   * never reach the revenue ledger (Atlas is not a party to the money), so
+   * they are summed from the payments themselves: succeeded academy-manual
+   * payments whose course order is still `paid` (a refunded order drops
+   * out), counted by the order's `paidAt`. Gross amounts, no commission.
+   */
+  async sumManualSalesSince(
+    tx: Prisma.TransactionClient,
+    scope: DashboardScopeFilter,
+    since: Date,
+  ): Promise<DashboardManualSalesTotal[]> {
+    const groups = await tx.payment.groupBy({
+      by: ['currency'],
+      where: {
+        provider: ACADEMY_MANUAL_PROVIDER_KEY,
+        status: 'succeeded',
+        courseOrder: {
+          is: {
+            organizationId: scope.organizationId,
+            ...(scope.academyId ? { academyId: scope.academyId } : {}),
+            status: 'paid',
+            paidAt: { gte: since },
+          },
+        },
+      },
+      _sum: { amountMinorUnits: true },
+      _count: { _all: true },
+    });
+    return groups.map((group) => ({
+      currency: group.currency,
+      amountMinorUnits: group._sum.amountMinorUnits ?? 0n,
+      count: group._count._all,
+    }));
   }
 
   async sumRevenueByCurrency(

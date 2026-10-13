@@ -30,6 +30,7 @@ import { TenantSubscriptionService } from '../../plans/services/tenant-subscript
 import {
   DashboardMetricsRepository,
   type DashboardActivityRow,
+  type DashboardManualSalesTotal,
   type DashboardScopeFilter,
 } from '../repositories/dashboard-metrics.repository';
 import {
@@ -49,6 +50,10 @@ import type {
 } from '../dto/dashboard-overview.contract';
 
 const RECENT_ACTIVITY_LIMIT = 10;
+
+/** B0-COM-02 — the manual-sales windows the revenue card offers. */
+const MANUAL_SALES_WINDOWS_DAYS = [7, 30, 90] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class DashboardService {
@@ -118,6 +123,7 @@ export class DashboardService {
     const {
       counts,
       revenueTotals,
+      manualSales,
       paymentSettings,
       manualMethodsEnabled,
       activity,
@@ -137,6 +143,7 @@ export class DashboardService {
           hasManualMethod,
           activityRows,
           academyRow,
+          manualSalesPeriods,
         ] = await Promise.all([
           this.dashboardMetricsRepository.countAcademies(tx, scope.organizationId),
           this.dashboardMetricsRepository.countCourses(tx, scope),
@@ -157,6 +164,19 @@ export class DashboardService {
           scope.academyId
             ? this.academiesRepository.findById(tx, scope.academyId)
             : Promise.resolve(null),
+          // B0-COM-02 / B0-SEC-03 — finance data, read only for the owner.
+          includeRevenue
+            ? Promise.all(
+                MANUAL_SALES_WINDOWS_DAYS.map(async (days) => ({
+                  days,
+                  totals: await this.dashboardMetricsRepository.sumManualSalesSince(
+                    tx,
+                    scope,
+                    new Date(Date.now() - days * DAY_MS),
+                  ),
+                })),
+              )
+            : Promise.resolve(null),
         ]);
 
         return {
@@ -170,6 +190,7 @@ export class DashboardService {
             instructors,
           },
           revenueTotals: revenueRows,
+          manualSales: manualSalesPeriods,
           paymentSettings: settings,
           manualMethodsEnabled: hasManualMethod,
           activity: activityRows,
@@ -197,6 +218,7 @@ export class DashboardService {
         revenueTotals,
         includeRevenue,
         manualMethodsEnabled,
+        manualSales,
       ),
       usage: await this.loadUsage(scope.organizationId),
       recentActivity: activity.map((row) => toActivityItemResponse(row, activityNames)),
@@ -230,6 +252,8 @@ export class DashboardService {
     totals: readonly { currency: string; amountMinorUnits: bigint }[],
     includeRevenue: boolean,
     manualPaymentMethodsEnabled: boolean,
+    manualSales:
+      readonly { days: number; totals: readonly DashboardManualSalesTotal[] }[] | null,
   ): DashboardRevenueResponse {
     const paymentCollectionMode = mode ?? 'unconfigured';
     const tracked = includeRevenue && paymentCollectionMode === 'atlas_payments';
@@ -248,6 +272,19 @@ export class DashboardService {
             amountMinorUnits: Number(total.amountMinorUnits),
           }))
         : [],
+      manualSales:
+        includeRevenue && manualSales
+          ? {
+              periods: manualSales.map((period) => ({
+                days: period.days,
+                totals: period.totals.map((total) => ({
+                  currency: total.currency,
+                  amountMinorUnits: Number(total.amountMinorUnits),
+                  count: total.count,
+                })),
+              })),
+            }
+          : null,
     };
   }
 
