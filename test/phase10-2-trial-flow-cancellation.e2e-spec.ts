@@ -636,7 +636,7 @@ describe('Phase 10.2 trial flow, cancellation & admin (e2e) — P102-001..026', 
     // (see platform-mrr.e2e-spec.ts); never a list-price figure.
     expect(overview.body.revenue).toMatchObject({
       tracked: true,
-      excludesInternalOrganizations: false,
+      excludesInternalOrganizations: true,
     });
     expect(Array.isArray(overview.body.revenue.mrr)).toBe(true);
     expect(typeof overview.body.revenue.activeWithoutPayment).toBe('number');

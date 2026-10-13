@@ -81,15 +81,16 @@ export interface AdminSubscriptionOverview {
    * plan payment (granted or extended by the platform, migrated) are
    * counted in `activeWithoutPayment`, not valued.
    *
-   * Every organization is included: there is no internal/test flag yet
-   * (B0-ANL-04), so `excludesInternalOrganizations` is `false`.
+   * Organizations the Platform Owner marked internal (test, demo, staff —
+   * B0-ANL-04) are left out of `mrr`, `activeSubscriptions` and
+   * `activeWithoutPayment`.
    */
   readonly revenue: {
     readonly tracked: true;
     readonly mrr: readonly AdminRecurringRevenueRow[];
     readonly activeSubscriptions: number;
     readonly activeWithoutPayment: number;
-    readonly excludesInternalOrganizations: false;
+    readonly excludesInternalOrganizations: true;
   };
 
   readonly generatedAt: string;

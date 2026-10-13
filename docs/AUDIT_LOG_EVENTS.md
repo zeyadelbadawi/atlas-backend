@@ -280,6 +280,7 @@ writer stores.
 | `commission_config.global_default_updated` | platform | platform | no | defaultCommissionBasisPoints |
 | `commission_config.plan_updated` | platform | platform | no | planKey, commissionBasisPoints, previousCommissionBasisPoints |
 | `commission_config.organization_updated` | platform | platform | no | commissionMode, customPercentageBasisPoints, previousCommissionMode, previousCustomPercentageBasisPoints |
+| `organization.internal_flag_changed` | platform | platform | no | isInternal, previousIsInternal |
 | `trial_policy.updated` | platform | platform | no | enabled, durationDays, previousEnabled, previousDurationDays |
 | `payout.created` | platform | platform | no | academyId, currency, amountMinorUnits, periodStart, periodEnd, items |
 | `payout.marked_paid` | platform | platform | no | academyId, currency, amountMinorUnits, providerReference |

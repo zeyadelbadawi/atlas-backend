@@ -1146,6 +1146,15 @@ export const AUDIT_EVENT_DEFINITIONS = [
       'previousCustomPercentageBasisPoints',
     ],
   ),
+  // B0-ANL-04 — an organization marked internal (test/demo/staff) or not.
+  ev(
+    'organization.internal_flag_changed',
+    'platform',
+    'organization',
+    'platform',
+    false,
+    ['isInternal', 'previousIsInternal'],
+  ),
   ev('trial_policy.updated', 'platform', 'trial_policy', 'platform', false, [
     'enabled',
     'durationDays',

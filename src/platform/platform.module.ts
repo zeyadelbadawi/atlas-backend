@@ -55,6 +55,8 @@ import { PlatformPlansService } from './services/platform-plans.service';
 import { PlanHistoryService } from './services/plan-history.service';
 import { PlanChangeNoticeService } from './services/plan-change-notice.service';
 import { PlatformSubscriptionAdjustmentsService } from './services/platform-subscription-adjustments.service';
+import { PlatformOrganizationFlagsService } from './services/platform-organization-flags.service';
+import { PlatformOrganizationFlagsController } from './controllers/platform-organization-flags.controller';
 import { PlatformUsersRepository } from './repositories/platform-users.repository';
 import { SupportCasesRepository } from './repositories/support-cases.repository';
 import { SupportCaseMessagesRepository } from './repositories/support-case-messages.repository';
@@ -91,6 +93,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     PlatformAddOnsController,
     PlatformPlansController,
     PlatformCoursesController,
+    PlatformOrganizationFlagsController,
   ],
   providers: [
     AdminSubscriptionsService,
@@ -108,6 +111,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     PlanHistoryService,
     PlanChangeNoticeService,
     PlatformSubscriptionAdjustmentsService,
+    PlatformOrganizationFlagsService,
     PlatformUsersRepository,
     SupportCasesRepository,
     SupportCaseMessagesRepository,

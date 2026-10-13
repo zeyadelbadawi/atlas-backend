@@ -14,6 +14,7 @@ import request from 'supertest';
 import type { PrismaClient } from '@prisma/client';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma, seedOrganizationWithOwner, seedPlan } from './utils/db-admin';
+import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 
 const DAY = 24 * 60 * 60 * 1000;
 const PASSWORD = 'correct-horse-battery';
@@ -150,7 +151,7 @@ describe('B0-ANL-01 platform MRR (e2e)', () => {
 
     const before = await overview();
     expect(before.revenue.tracked).toBe(true);
-    expect(before.revenue.excludesInternalOrganizations).toBe(false);
+    expect(before.revenue.excludesInternalOrganizations).toBe(true);
 
     // Monthly: 1,190.00 a month.
     const monthly = await tenant('anl01-monthly', {
@@ -212,6 +213,108 @@ describe('B0-ANL-01 platform MRR (e2e)', () => {
     expect(cycle(after, 'expired', 'monthly') - cycle(before, 'expired', 'monthly')).toBe(
       1,
     );
+  });
+
+  it('B0-ANL-04: an organization marked internal leaves MRR and the active counts; the change is audited once', async () => {
+    const internal = await tenant('anl04-internal', {
+      status: 'active',
+      billingCycle: 'monthly',
+    });
+    await payment(internal.org.id, { amount: 50_000n, cycle: 'monthly' });
+    const counted = await overview();
+
+    const flagged = await request(app.getHttpServer())
+      .patch(`/platform-organizations/${internal.org.id}/flags`)
+      .set(operatorAuth)
+      .send({ isInternal: true })
+      .expect(200);
+    expect(flagged.body).toMatchObject({
+      organizationId: internal.org.id,
+      isInternal: true,
+    });
+    // Setting the same value again changes and audits nothing.
+    await request(app.getHttpServer())
+      .patch(`/platform-organizations/${internal.org.id}/flags`)
+      .set(operatorAuth)
+      .send({ isInternal: true })
+      .expect(200);
+
+    const excluded = await overview();
+    expect(
+      xts(counted).monthlyAmountMinorUnits - xts(excluded).monthlyAmountMinorUnits,
+    ).toBe(50_000);
+    expect(
+      counted.revenue.activeSubscriptions - excluded.revenue.activeSubscriptions,
+    ).toBe(1);
+
+    const audit = await admin.auditLogEntry.findMany({
+      where: { action: 'organization.internal_flag_changed', targetId: internal.org.id },
+    });
+    expect(audit).toHaveLength(1);
+    expect(audit[0].context).toEqual({ isInternal: true, previousIsInternal: false });
+
+    const read = await request(app.getHttpServer())
+      .get(`/platform-organizations/${internal.org.id}/flags`)
+      .set(operatorAuth)
+      .expect(200);
+    expect(read.body.isInternal).toBe(true);
+
+    // Switching it back counts the organization again.
+    await request(app.getHttpServer())
+      .patch(`/platform-organizations/${internal.org.id}/flags`)
+      .set(operatorAuth)
+      .send({ isInternal: false })
+      .expect(200);
+    const restored = await overview();
+    expect(xts(restored).monthlyAmountMinorUnits).toBe(
+      xts(counted).monthlyAmountMinorUnits,
+    );
+  });
+
+  it('B0-ANL-04: tenants can neither call the flags API nor read the flags table', async () => {
+    const internal = await tenant('anl04-tenant', {
+      status: 'active',
+      billingCycle: 'monthly',
+    });
+    await request(app.getHttpServer())
+      .patch(`/platform-organizations/${internal.org.id}/flags`)
+      .set(operatorAuth)
+      .send({ isInternal: true })
+      .expect(200);
+
+    const owner = await admin.organization.findUniqueOrThrow({
+      where: { id: internal.org.id },
+      select: { ownerUserId: true },
+    });
+    const tenancy = app.get(TenancyContextService);
+    const asTenant = await tenancy.runInTenantAndUserContext(
+      internal.org.id,
+      owner.ownerUserId,
+      (tx) =>
+        tx.organizationPlatformFlags.findMany({
+          where: { organizationId: internal.org.id },
+        }),
+    );
+    expect(asTenant).toEqual([]);
+    await expect(
+      tenancy.runInTenantAndUserContext(internal.org.id, owner.ownerUserId, (tx) =>
+        tx.organizationPlatformFlags.update({
+          where: { organizationId: internal.org.id },
+          data: { isInternal: false },
+        }),
+      ),
+    ).rejects.toThrow();
+
+    const someone = await signUp('anl04-someone');
+    await request(app.getHttpServer())
+      .patch(`/platform-organizations/${internal.org.id}/flags`)
+      .set(someone.auth)
+      .send({ isInternal: false })
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(`/platform-organizations/${internal.org.id}/flags`)
+      .set(someone.auth)
+      .expect(403);
   });
 
   it('is refused to anyone who is not a Platform Owner', async () => {

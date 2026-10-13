@@ -167,7 +167,13 @@ export class AdminSubscriptionsService {
         _count: { _all: true },
       }),
       tx.tenantSubscription.count({
-        where: { status: 'active', currentPeriodEnd: { gt: now } },
+        where: {
+          status: 'active',
+          currentPeriodEnd: { gt: now },
+          organization: {
+            OR: [{ platformFlags: null }, { platformFlags: { isInternal: false } }],
+          },
+        },
       }),
       this.monthlyRecurringRevenue(tx, now),
     ]);
@@ -248,7 +254,7 @@ export class AdminSubscriptionsService {
         mrr,
         activeSubscriptions,
         activeWithoutPayment: Math.max(0, activeSubscriptions - valued),
-        excludesInternalOrganizations: false,
+        excludesInternalOrganizations: true,
       },
 
       generatedAt: now.toISOString(),
@@ -259,12 +265,13 @@ export class AdminSubscriptionsService {
    * B0-ANL-01 — per currency, the sum over every `active` subscription whose
    * period has not ended of its LATEST approved plan payment (a payment on
    * a `plan_subscription` checkout with status `succeeded`), yearly
-   * payments divided by 12 (rounded per subscription). One aggregate query
+   * payments divided by 12 (rounded per subscription), leaving out
+   * organizations marked internal (B0-ANL-04). One aggregate query
    * (`DISTINCT ON` per organization), never an id list passed back in —
    * the same scaling rule `countConvertedTrials` follows. Runs under the
    * platform owner's context: `payments_platform_review_select`,
-   * `checkouts_platform_select` and the subscription platform policy grant
-   * the reads.
+   * `checkouts_platform_select`, `organization_platform_flags_platform_select`
+   * and the subscription platform policy grant the reads.
    */
   private async monthlyRecurringRevenue(
     tx: Prisma.TransactionClient,
@@ -285,8 +292,11 @@ export class AdminSubscriptionsService {
         JOIN "checkouts" c
           ON c."id" = p."checkout_id"
          AND c."target_type" = 'plan_subscription'
+        LEFT JOIN "organization_platform_flags" f
+          ON f."organization_id" = s."organization_id"
         WHERE s."status" = 'active'
           AND s."current_period_end" > ${now}
+          AND COALESCE(f."is_internal", false) = false
         ORDER BY s."organization_id", p."created_at" DESC
       )
       SELECT currency,
