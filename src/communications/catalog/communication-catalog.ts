@@ -2346,6 +2346,118 @@ const CATALOG = {
     // feed row keeps `topic` and nothing that identifies the visitor.
     personalValues: ['name', 'email', 'organizationName', 'message'],
   },
+  // B0-SUP-01 — Platform Owner work alerts (`PlatformOwnerAlertService`).
+  // Each goes to every active Platform Owner, in-app + email, after the
+  // triggering write committed. Values are ids, names of the organization
+  // or academy, amounts and course titles — never a learner's or a
+  // requester's personal data; the linked record holds that.
+  'platform.subscription_payment.submitted': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    // Per PROOF: a corrected re-upload is new work to review.
+    dedupe: ({ entity, values }) =>
+      `platform_subscription_payment:${entity.id}:${String(values.proofId ?? '')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.subscription_payment.submitted',
+    titleKey: 'notifications:events.platformSubscriptionPaymentSubmitted.title',
+    messageKey: 'notifications:events.platformSubscriptionPaymentSubmitted.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/payments/${entity.id}`,
+  },
+  'platform.support_case.created': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `platform_support_case_created:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.support_case.created',
+    titleKey: 'notifications:events.platformSupportCaseCreated.title',
+    messageKey: 'notifications:events.platformSupportCaseCreated.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/support/${entity.id}`,
+  },
+  'platform.support_case.customer_replied': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    // Per MESSAGE: every customer reply is a new thing to answer.
+    dedupe: ({ entity, values }) =>
+      `platform_support_case_replied:${entity.id}:${String(values.messageId ?? '')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.support_case.customer_replied',
+    titleKey: 'notifications:events.platformSupportCaseCustomerReplied.title',
+    messageKey: 'notifications:events.platformSupportCaseCustomerReplied.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/support/${entity.id}`,
+  },
+  'platform.organization.signed_up': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'low',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `platform_organization_signed_up:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.organization.signed_up',
+    titleKey: 'notifications:events.platformOrganizationSignedUp.title',
+    messageKey: 'notifications:events.platformOrganizationSignedUp.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/organizations/${entity.id}`,
+  },
+  // Atlas-collected course payments only: an academy-collected proof is the
+  // Client Owner's to review (`academy.payment.submitted`), not Atlas's.
+  'platform.course_payment.submitted': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `platform_course_payment:${entity.id}:${String(values.proofId ?? '')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.course_payment.submitted',
+    titleKey: 'notifications:events.platformCoursePaymentSubmitted.title',
+    messageKey: 'notifications:events.platformCoursePaymentSubmitted.message',
+    actionUrl: ({ entity }) =>
+      `/dashboard/platform/commerce/course-payments/${entity.id}`,
+  },
+  // Atlas-collected payments only: Atlas holds that money and must return
+  // it. An academy-collected payment is refunded by the academy itself.
+  'platform.refund.recorded': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `platform_refund_recorded:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.refund.recorded',
+    titleKey: 'notifications:events.platformRefundRecorded.title',
+    messageKey: 'notifications:events.platformRefundRecorded.message',
+    actionUrl: ({ values }) =>
+      `/dashboard/platform/commerce/course-payments/${String(values.paymentId ?? '')}`,
+  },
   // Customer Requests — an academy asked the Atlas team for a custom
   // service. `routed` goes to the TEAM INBOX the Platform Owner configured
   // for the request type (an address recipient, `emitToAddress`) — once per

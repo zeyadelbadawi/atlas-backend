@@ -38,6 +38,13 @@ const NOT_LAUNCHED: readonly {
       key === 'course.order.refunded',
     reason: 'Atlas Payments (gateway checkout) not launched',
   },
+  {
+    // B0-SUP-01 alerts that only an Atlas-collected course payment raises;
+    // `atlas_payments` is not tenant-selectable at launch (B0-COM-03).
+    match: (key) =>
+      key === 'platform.course_payment.submitted' || key === 'platform.refund.recorded',
+    reason: 'Atlas-collected course payments not offered at launch',
+  },
 ];
 
 export function notLaunchedReason(key: string): string | null {

@@ -75,6 +75,10 @@ import type { CourseOrderPaymentResponse } from '../dto/course-order-payment.con
 import type { CreateCourseOrderPaymentDto } from '../dto/create-course-order-payment.dto';
 import type { SubmitCourseOrderPaymentProofDto } from '../dto/submit-course-order-payment-proof.dto';
 import { CommunicationService } from '../../communications/services/communication.service';
+import {
+  PlatformOwnerAlertService,
+  type PlatformOwnerAlert,
+} from '../../communications/services/platform-owner-alert.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { randomUUID } from 'node:crypto';
 
@@ -134,6 +138,8 @@ export class CourseOrderPaymentsService {
     private readonly academyPaymentMethodsRepository: AcademyPaymentMethodsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly academyStaffRecipientsService: AcademyStaffRecipientsService,
+    // B0-SUP-01 — Atlas reviews Atlas-collected proofs; tell its owners.
+    private readonly platformOwnerAlertService: PlatformOwnerAlertService,
   ) {}
 
   /**
@@ -651,6 +657,7 @@ export class CourseOrderPaymentsService {
 
     let emitted: EmitResult = { created: false, outboxId: null };
     const ownerOutboxIds: string[] = [];
+    let platformAlert = null as PlatformOwnerAlert | null;
     const response = await this.tenancyContextService.runInUserContext(
       studentId,
       async (tx) => {
@@ -744,6 +751,21 @@ export class CourseOrderPaymentsService {
           },
         });
 
+        if (!isAcademyManual) {
+          platformAlert = {
+            key: 'platform.course_payment.submitted',
+            entity: { type: 'payment', id: paymentId },
+            academyId: order.academyId,
+            values: {
+              proofId: id,
+              courseTitle: snapshot?.course?.title ?? '',
+              amount: (Number(payment.amountMinorUnits) / 100).toFixed(2),
+              currency: payment.currency,
+              methodType: payment.methodType,
+            },
+          };
+        }
+
         if (isAcademyManual) {
           await this.auditLogWriterService.write(tx, {
             actorUserId: studentId,
@@ -800,6 +822,7 @@ export class CourseOrderPaymentsService {
     for (const outboxId of ownerOutboxIds) {
       await this.communicationService.enqueueAfterCommit(outboxId);
     }
+    if (platformAlert) this.platformOwnerAlertService.notify(platformAlert);
     return response;
   }
 

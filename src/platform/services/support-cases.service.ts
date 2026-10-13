@@ -50,6 +50,10 @@ import type { MediaStorageConfig } from '../../config/configuration';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { CommunicationService } from '../../communications/services/communication.service';
 import {
+  PlatformOwnerAlertService,
+  type PlatformOwnerAlert,
+} from '../../communications/services/platform-owner-alert.service';
+import {
   toSupportCaseDetailResponse,
   toSupportCaseSummaryResponse,
 } from '../dto/support-case.contract';
@@ -82,6 +86,8 @@ export class SupportCasesService {
     @Inject(MEDIA_STORAGE_PROVIDER)
     private readonly storageProvider: MediaStorageProvider,
     configService: ConfigService,
+    // B0-SUP-01 — a new case or a customer reply is work for Atlas support.
+    private readonly platformOwnerAlertService: PlatformOwnerAlertService,
   ) {
     this.storageConfig = configService.getOrThrow<MediaStorageConfig>('media');
   }
@@ -294,7 +300,7 @@ export class SupportCasesService {
     // first. Rather than restructure `create`, the attachment is stored
     // after the case row exists and before the message row references it —
     // see `storeAttachment`'s own note on ordering.
-    return this.tenancyContextService.runInTenantAndUserContext(
+    const response = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -348,6 +354,12 @@ export class SupportCasesService {
         );
       },
     );
+    this.platformOwnerAlertService.notify({
+      key: 'platform.support_case.created',
+      entity: { type: 'support_case', id: response.id },
+      organizationId,
+    });
+    return response;
   }
 
   /**
@@ -437,59 +449,72 @@ export class SupportCasesService {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
 
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
-      const supportCase = await this.loadCaseOrThrow(tx, caseId);
+    let alert = null as PlatformOwnerAlert | null;
+    const response = await this.tenancyContextService.runInUserContext(
+      userId,
+      async (tx) => {
+        const supportCase = await this.loadCaseOrThrow(tx, caseId);
 
-      if (supportCase.status === 'closed') {
-        throw new ConflictException({
-          messageKey: 'errors.support.caseClosed',
+        if (supportCase.status === 'closed') {
+          throw new ConflictException({
+            messageKey: 'errors.support.caseClosed',
+          });
+        }
+
+        const message = await this.supportCaseMessagesRepository.create(tx, {
+          caseId,
+          authorName: requester.name,
+          authorRole: 'requester',
+          body: payload.body,
         });
-      }
 
-      const message = await this.supportCaseMessagesRepository.create(tx, {
-        caseId,
-        authorName: requester.name,
-        authorRole: 'requester',
-        body: payload.body,
-      });
+        if (payload.attachment) {
+          const stored = await this.storeAttachment(caseId, payload.attachment);
+          await this.supportCaseMessageAttachmentsRepository.create(tx, {
+            id: stored.id,
+            messageId: message.id,
+            fileName: stored.fileName,
+            storageKey: stored.storageKey,
+            mimeType: stored.mimeType,
+            sizeBytes: stored.sizeBytes,
+          });
+        }
 
-      if (payload.attachment) {
-        const stored = await this.storeAttachment(caseId, payload.attachment);
-        await this.supportCaseMessageAttachmentsRepository.create(tx, {
-          id: stored.id,
-          messageId: message.id,
-          fileName: stored.fileName,
-          storageKey: stored.storageKey,
-          mimeType: stored.mimeType,
-          sizeBytes: stored.sizeBytes,
+        // Moves `updatedAt`, which is what orders the agent's queue —
+        // without it a customer's reply would never surface to support.
+        // `touchAsRequester`, not `touch`: a requester has no UPDATE policy
+        // on `support_cases`, by design. See that method's doc comment.
+        const touched = await this.supportCasesRepository.touchAsRequester(tx, caseId);
+
+        await this.auditLogWriterService.writeBestEffort(tx, {
+          actorUserId: userId,
+          organizationId: supportCase.organizationId ?? undefined,
+          action: 'support_case.replied',
+          targetType: 'support_case',
+          targetId: caseId,
+          targetLabel: supportCase.subject,
         });
-      }
 
-      // Moves `updatedAt`, which is what orders the agent's queue —
-      // without it a customer's reply would never surface to support.
-      // `touchAsRequester`, not `touch`: a requester has no UPDATE policy
-      // on `support_cases`, by design. See that method's doc comment.
-      const touched = await this.supportCasesRepository.touchAsRequester(tx, caseId);
+        alert = {
+          key: 'platform.support_case.customer_replied',
+          entity: { type: 'support_case', id: caseId },
+          organizationId: supportCase.organizationId,
+          values: { messageId: message.id },
+        };
 
-      await this.auditLogWriterService.writeBestEffort(tx, {
-        actorUserId: userId,
-        organizationId: supportCase.organizationId ?? undefined,
-        action: 'support_case.replied',
-        targetType: 'support_case',
-        targetId: caseId,
-        targetLabel: supportCase.subject,
-      });
-
-      const messages = await this.supportCaseMessagesRepository.findManyForCase(
-        tx,
-        caseId,
-      );
-      return toSupportCaseDetailResponse(
-        touched,
-        messages,
-        await this.findThreadAttachments(tx, messages),
-      );
-    });
+        const messages = await this.supportCaseMessagesRepository.findManyForCase(
+          tx,
+          caseId,
+        );
+        return toSupportCaseDetailResponse(
+          touched,
+          messages,
+          await this.findThreadAttachments(tx, messages),
+        );
+      },
+    );
+    if (alert) this.platformOwnerAlertService.notify(alert);
+    return response;
   }
 
   /**

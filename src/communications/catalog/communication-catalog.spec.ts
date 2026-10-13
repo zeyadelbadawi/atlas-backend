@@ -363,6 +363,31 @@ const EXPECTED_DEDUPE: Record<
     values: { name: 'Visitor', topic: 'sales' },
     expected: `platform_contact_received:${ENTITY_ID}`,
   },
+  // B0-SUP-01 — Platform Owner work alerts.
+  'platform.subscription_payment.submitted': {
+    values: { proofId: 'proof-1' },
+    expected: `platform_subscription_payment:${ENTITY_ID}:proof-1`,
+  },
+  'platform.support_case.created': {
+    values: {},
+    expected: `platform_support_case_created:${ENTITY_ID}`,
+  },
+  'platform.support_case.customer_replied': {
+    values: { messageId: 'msg-1' },
+    expected: `platform_support_case_replied:${ENTITY_ID}:msg-1`,
+  },
+  'platform.organization.signed_up': {
+    values: { trialStarted: true },
+    expected: `platform_organization_signed_up:${ENTITY_ID}`,
+  },
+  'platform.course_payment.submitted': {
+    values: { proofId: 'proof-2' },
+    expected: `platform_course_payment:${ENTITY_ID}:proof-2`,
+  },
+  'platform.refund.recorded': {
+    values: { paymentId: 'pay-1' },
+    expected: `platform_refund_recorded:${ENTITY_ID}`,
+  },
   'customer_request.routed': {
     values: { eventId: 'ev-1', event: 'created' },
     expected: `customer_request_routed:${ENTITY_ID}:ev-1`,

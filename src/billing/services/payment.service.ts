@@ -53,6 +53,7 @@ import type { PaymentIntentResponse } from '../dto/payment-intent.contract';
 import type { CreatePaymentDto } from '../dto/create-payment.dto';
 import type { SubmitPaymentProofDto } from '../dto/submit-payment-proof.dto';
 import { CommunicationService } from '../../communications/services/communication.service';
+import { PlatformOwnerAlertService } from '../../communications/services/platform-owner-alert.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { formatLifecycleInstant } from '../../plans/services/tenant-lifecycle.service';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
@@ -90,6 +91,8 @@ export class PaymentService {
     private readonly communicationService: CommunicationService,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly configService: ConfigService,
+    // B0-SUP-01 — tells Platform Owners a proof is waiting, after commit.
+    private readonly platformOwnerAlertService: PlatformOwnerAlertService,
   ) {}
 
   /**
@@ -276,6 +279,11 @@ export class PaymentService {
     }
 
     let emitted: EmitResult = { created: false, outboxId: null };
+    let alertValues = null as {
+      proofId: string;
+      amount: number;
+      currency: string;
+    } | null;
     const result = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
@@ -351,6 +359,11 @@ export class PaymentService {
           where: { id: organizationId },
           select: { ownerUserId: true },
         });
+        alertValues = {
+          proofId: id,
+          amount: Number(payment.amountMinorUnits) / 100,
+          currency: payment.currency,
+        };
         if (organization) {
           emitted = await this.communicationService.emit(tx, {
             key: 'lifecycle.subscription.payment_submitted',
@@ -376,6 +389,14 @@ export class PaymentService {
     );
 
     await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    if (alertValues) {
+      this.platformOwnerAlertService.notify({
+        key: 'platform.subscription_payment.submitted',
+        entity: { type: 'payment', id: paymentId },
+        organizationId,
+        values: alertValues,
+      });
+    }
     return result;
   }
 

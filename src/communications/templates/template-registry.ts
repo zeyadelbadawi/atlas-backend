@@ -103,6 +103,13 @@ import { template as retentionVideoDeleted } from './keys/retention.video.delete
 import { template as retentionVideoDeletionFailed } from './keys/retention.video.deletion_failed';
 // TASK 7 — Atlas marketing contact form.
 import { template as platformContactSubmissionReceived } from './keys/platform.contact_submission.received';
+// B0-SUP-01 — Platform Owner work alerts.
+import { template as platformSubscriptionPaymentSubmitted } from './keys/platform.subscription_payment.submitted';
+import { template as platformSupportCaseCreated } from './keys/platform.support_case.created';
+import { template as platformSupportCaseCustomerReplied } from './keys/platform.support_case.customer_replied';
+import { template as platformOrganizationSignedUp } from './keys/platform.organization.signed_up';
+import { template as platformCoursePaymentSubmitted } from './keys/platform.course_payment.submitted';
+import { template as platformRefundRecorded } from './keys/platform.refund.recorded';
 // W3-compose — person-authored messages (campaigns).
 import { template as academyMessageSent } from './keys/academy.message.sent';
 import { template as platformBroadcastSent } from './keys/platform.broadcast.sent';
@@ -176,6 +183,12 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'retention.video.deleted': retentionVideoDeleted,
   'retention.video.deletion_failed': retentionVideoDeletionFailed,
   'platform.contact_submission.received': platformContactSubmissionReceived,
+  'platform.subscription_payment.submitted': platformSubscriptionPaymentSubmitted,
+  'platform.support_case.created': platformSupportCaseCreated,
+  'platform.support_case.customer_replied': platformSupportCaseCustomerReplied,
+  'platform.organization.signed_up': platformOrganizationSignedUp,
+  'platform.course_payment.submitted': platformCoursePaymentSubmitted,
+  'platform.refund.recorded': platformRefundRecorded,
   'academy.member.invited': academyMemberInvited,
   'academy.member.added': academyMemberAdded,
   'review.submitted': reviewSubmitted,
