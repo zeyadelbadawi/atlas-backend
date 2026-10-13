@@ -22,8 +22,17 @@
  *     put in these alerts — the Platform Owner opens the record for that.
  *   - Dedupe is the catalogue's, per entity (and per proof / message where
  *     a second submission is genuinely new work).
+ *   - `FLAG_PLATFORM_OWNER_ALERTS_MODE` (`on` unless set) switches it off.
+ *     Shutdown waits a bounded time for queued alerts, then drops the rest.
  */
-import { Injectable, Logger, type BeforeApplicationShutdown } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  type BeforeApplicationShutdown,
+  type OnModuleDestroy,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { CommunicationsConfig } from '../../config/configuration';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { CommunicationService } from './communication.service';
@@ -60,19 +69,42 @@ export interface PlatformOwnerAlert {
  */
 const NOTIFY_BATCH_SIZE = 1;
 
+/**
+ * How long shutdown waits for queued alerts. Bounded so a deploy restart is
+ * never held up by a long fan-out; anything still queued is dropped with a
+ * warning — the queue pages remain the source of truth.
+ */
+const SHUTDOWN_DRAIN_MS = 10_000;
+
+/**
+ * A fan-out stops after this many owners in a row fail: the cause is then
+ * the database or the outbox, not one recipient, and retrying it for every
+ * remaining owner only adds load (and, at shutdown, delay).
+ */
+const MAX_CONSECUTIVE_FAILURES = 3;
+
 @Injectable()
-export class PlatformOwnerAlertService implements BeforeApplicationShutdown {
+export class PlatformOwnerAlertService
+  implements OnModuleDestroy, BeforeApplicationShutdown
+{
   private readonly logger = new Logger(PlatformOwnerAlertService.name);
   private lane: Promise<void> = Promise.resolve();
+  private closing = false;
+  /** The live config object, so a flag change applies to the next alert. */
+  private readonly config: CommunicationsConfig;
 
   constructor(
     private readonly tenancyContextService: TenancyContextService,
     private readonly usersRepository: UsersRepository,
     private readonly communicationService: CommunicationService,
-  ) {}
+    configService: ConfigService,
+  ) {
+    this.config = configService.getOrThrow<CommunicationsConfig>('communications');
+  }
 
   /** Queues the alert and returns at once. Never throws. */
   notify(alert: PlatformOwnerAlert): void {
+    if (this.config.platformOwnerAlertsMode !== 'on') return;
     // `deliver` never rejects; the catch only keeps one unexpected failure
     // from breaking the lane for every later alert.
     this.lane = this.lane.then(() => this.deliver(alert)).catch(() => undefined);
@@ -83,8 +115,26 @@ export class PlatformOwnerAlertService implements BeforeApplicationShutdown {
     await this.lane;
   }
 
+  /**
+   * Nest runs `onModuleDestroy` (where the database client disconnects)
+   * before `beforeApplicationShutdown`, so new work stops here: an alert
+   * still on the lane would otherwise run against a closed client.
+   */
+  onModuleDestroy(): void {
+    this.closing = true;
+  }
+
   async beforeApplicationShutdown(): Promise<void> {
-    await this.drain();
+    this.closing = true;
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      this.drain(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SHUTDOWN_DRAIN_MS);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
   }
 
   private async deliver(alert: PlatformOwnerAlert): Promise<void> {
@@ -93,6 +143,10 @@ export class PlatformOwnerAlertService implements BeforeApplicationShutdown {
       entityType: alert.entity.type,
       entityId: alert.entity.id,
     };
+    if (this.closing) {
+      this.logger.warn(log, 'Shutting down; queued Platform Owner alert dropped.');
+      return;
+    }
     try {
       const anchor = await this.usersRepository.findFirstPlatformOwnerId();
       if (!anchor) {
@@ -133,8 +187,16 @@ export class PlatformOwnerAlertService implements BeforeApplicationShutdown {
           };
         },
       );
-      // A failed batch does not stop the others.
+      // A failed batch does not stop the others, unless failures repeat.
+      let consecutiveFailures = 0;
       for (let start = 0; start < ownerIds.length; start += NOTIFY_BATCH_SIZE) {
+        if (this.closing) {
+          this.logger.warn(
+            log,
+            'Shutting down; remaining Platform Owner alerts dropped.',
+          );
+          return;
+        }
         const batch = ownerIds.slice(start, start + NOTIFY_BATCH_SIZE);
         try {
           const outboxIds = await this.tenancyContextService.runInUserContext(
@@ -153,14 +215,23 @@ export class PlatformOwnerAlertService implements BeforeApplicationShutdown {
               return ids;
             },
           );
+          consecutiveFailures = 0;
           for (const outboxId of outboxIds) {
             await this.communicationService.enqueueAfterCommit(outboxId);
           }
         } catch (error) {
+          consecutiveFailures += 1;
           this.logger.error(
             { ...log, error: error instanceof Error ? error.message : String(error) },
             'Notifying a batch of platform owners failed.',
           );
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            this.logger.error(
+              log,
+              'Repeated failures; remaining Platform Owner alerts dropped.',
+            );
+            return;
+          }
         }
       }
     } catch (error) {

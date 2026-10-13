@@ -410,7 +410,16 @@ export interface CommunicationsConfig {
   readonly videoRetentionMode: VideoRetentionMode;
   /** `FLAG_MEDIA_ARCHIVE_PURGE_MODE` — see `ArchivedMediaPurgeService`. */
   readonly mediaArchivePurgeMode: MediaArchivePurgeMode;
+  /**
+   * B0-SUP-01 — `FLAG_PLATFORM_OWNER_ALERTS_MODE`, read on every alert by
+   * `PlatformOwnerAlertService`. `on` unless set, except under
+   * NODE_ENV=test (see env.validation.ts).
+   */
+  readonly platformOwnerAlertsMode: PlatformOwnerAlertsMode;
 }
+
+/** B0-SUP-01 — Platform Owner work alerts on/off. */
+export type PlatformOwnerAlertsMode = 'off' | 'on';
 
 /** P64 C5 — the staged rollout of the lifecycle sequences (§43). */
 export type LifecycleSequencesMode = 'off' | 'dry_run' | 'on';
@@ -898,6 +907,8 @@ export default () => {
     videoRetentionMode: (env.FLAG_VIDEO_RETENTION_MODE ?? 'off') as VideoRetentionMode,
     mediaArchivePurgeMode: (env.FLAG_MEDIA_ARCHIVE_PURGE_MODE ??
       'dry_run') as MediaArchivePurgeMode,
+    platformOwnerAlertsMode: (env.FLAG_PLATFORM_OWNER_ALERTS_MODE ??
+      (nodeEnv === 'test' ? 'off' : 'on')) as PlatformOwnerAlertsMode,
   };
 
   return {

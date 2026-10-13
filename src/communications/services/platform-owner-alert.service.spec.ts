@@ -1,3 +1,4 @@
+import type { ConfigService } from '@nestjs/config';
 import type { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import type { UsersRepository } from '../../identity/repositories/users.repository';
 import type { CommunicationService } from './communication.service';
@@ -13,6 +14,7 @@ function build(
     owner?: boolean;
     owners?: string[];
     emit?: jest.Mock;
+    mode?: 'on' | 'off';
   } = {},
 ) {
   const owners = options.owners ?? ['po-1', 'po-2'];
@@ -33,6 +35,7 @@ function build(
       outboxId: `outbox-${input.recipientUserId}`,
     }));
   const enqueueAfterCommit = jest.fn().mockResolvedValue(undefined);
+  const config = { platformOwnerAlertsMode: options.mode ?? 'on' };
   const service = new PlatformOwnerAlertService(
     tenancy as unknown as TenancyContextService,
     {
@@ -41,8 +44,11 @@ function build(
         .mockResolvedValue(options.owner === false ? null : { id: 'po-1' }),
     } as unknown as UsersRepository,
     { emit, enqueueAfterCommit } as unknown as CommunicationService,
+    {
+      getOrThrow: () => config,
+    } as unknown as ConfigService,
   );
-  return { service, tx, tenancy, emit, enqueueAfterCommit };
+  return { service, tx, tenancy, emit, enqueueAfterCommit, config };
 }
 
 describe('PlatformOwnerAlertService (B0-SUP-01)', () => {
@@ -155,6 +161,60 @@ describe('PlatformOwnerAlertService (B0-SUP-01)', () => {
     expect(emit).toHaveBeenCalledTimes(45);
     // 1 resolve transaction + one per owner.
     expect(tenancy.runInUserContext).toHaveBeenCalledTimes(46);
+  });
+
+  it('does nothing while FLAG_PLATFORM_OWNER_ALERTS_MODE is off, and reads the flag live', async () => {
+    const { service, emit, config } = build({ mode: 'off', owners: ['po-1'] });
+    const alert = {
+      key: 'platform.support_case.created' as const,
+      entity: { type: 'support_case', id: 'case-1' },
+      organizationId: 'org-1',
+    };
+    service.notify(alert);
+    await service.drain();
+    expect(emit).not.toHaveBeenCalled();
+    config.platformOwnerAlertsMode = 'on';
+    service.notify(alert);
+    await service.drain();
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops a fan-out after repeated failures instead of trying every owner', async () => {
+    const emit = jest.fn().mockRejectedValue(new Error('database gone'));
+    const owners = Array.from({ length: 50 }, (_, i) => `po-${i}`);
+    const { service } = build({ owners, emit });
+    service.notify({
+      key: 'platform.support_case.created',
+      entity: { type: 'support_case', id: 'case-1' },
+      organizationId: 'org-1',
+    });
+    await service.drain();
+    expect(emit).toHaveBeenCalledTimes(3);
+  });
+
+  it('stops new work once module teardown starts (the database client closes first)', async () => {
+    const { service, emit } = build({ owners: ['po-1'] });
+    service.onModuleDestroy();
+    service.notify({
+      key: 'platform.support_case.created',
+      entity: { type: 'support_case', id: 'case-1' },
+      organizationId: 'org-1',
+    });
+    await service.drain();
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('at shutdown, drops what is still queued instead of holding the process', async () => {
+    const { service, emit } = build({ owners: ['po-1'] });
+    // Shutdown starts before the queued alert gets its turn on the lane.
+    service.notify({
+      key: 'platform.organization.signed_up',
+      entity: { type: 'organization', id: 'org-1' },
+      organizationId: 'org-1',
+      values: { trialStarted: false },
+    });
+    await service.beforeApplicationShutdown();
+    expect(emit).not.toHaveBeenCalled();
   });
 
   describe.each(PLATFORM_OWNER_ALERT_KEYS)('%s', (key) => {

@@ -16,7 +16,7 @@ import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma, seedOrganizationWithOwner } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
-import type { IdentityConfig } from '../src/config/configuration';
+import type { CommunicationsConfig, IdentityConfig } from '../src/config/configuration';
 import { PlatformOwnerAlertService } from '../src/communications/services/platform-owner-alert.service';
 import {
   COMMUNICATION_CATALOG,
@@ -31,6 +31,9 @@ describe('B0-SUP-01 Platform Owner alerts (e2e)', () => {
   let app: INestApplication;
   let admin: PrismaClient;
   let alerts: PlatformOwnerAlertService;
+  let communications: {
+    platformOwnerAlertsMode: CommunicationsConfig['platformOwnerAlertsMode'];
+  };
   let flushRateLimitKeys: () => Promise<void>;
   let platform: { email: string; userId: string; token: string };
   let secondPlatform: { userId: string };
@@ -71,6 +74,14 @@ describe('B0-SUP-01 Platform Owner alerts (e2e)', () => {
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
     alerts = app.get(PlatformOwnerAlertService, { strict: false });
+    // Off by default under NODE_ENV=test (every other suite would fan out
+    // to the shared database's many Platform Owners); on for this suite.
+    communications = app
+      .get(ConfigService)
+      .getOrThrow<CommunicationsConfig>('communications') as {
+      platformOwnerAlertsMode: CommunicationsConfig['platformOwnerAlertsMode'];
+    };
+    communications.platformOwnerAlertsMode = 'on';
 
     platform = await account('sup01-platform');
     secondPlatform = await account('sup01-platform-2');
@@ -90,6 +101,7 @@ describe('B0-SUP-01 Platform Owner alerts (e2e)', () => {
 
   afterAll(async () => {
     await alerts.drain();
+    communications.platformOwnerAlertsMode = 'off';
     await admin.$disconnect();
     await app.close();
   });

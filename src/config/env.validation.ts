@@ -312,6 +312,11 @@ const EnvSchema = z.object({
   // and destroys nothing; `on` destroys. Defaults to `dry_run` so a
   // deploy never starts deleting customer bytes on its own.
   FLAG_MEDIA_ARCHIVE_PURGE_MODE: z.enum(['off', 'dry_run', 'on']).default('dry_run'),
+  // B0-SUP-01 — Platform Owner work alerts. Unset: `on`, except under
+  // NODE_ENV=test, where the shared e2e database holds hundreds of
+  // Platform Owner accounts and every suite would fan out to all of them;
+  // the alert suite turns it on itself.
+  FLAG_PLATFORM_OWNER_ALERTS_MODE: z.enum(['off', 'on']).optional(),
   // §12's approved numbers. Configurable so a load-testing pass can tune
   // them, bounded so a typo cannot turn the control off: the ceiling on
   // attempts and codes is validated as a positive integer, and the code
