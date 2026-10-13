@@ -7,6 +7,7 @@ import { ObservabilityController } from './observability.controller';
 import { ObservabilityService } from './observability.service';
 import { MonitoringSourcesClient } from './monitoring-sources.client';
 import { SystemProbesService } from './system-probes.service';
+import { BackupStatusMetrics } from './backup-status.metrics';
 import { HttpMetricsMiddleware } from './http-metrics.middleware';
 
 import { WebVitalsService } from './web-vitals.service';
@@ -22,6 +23,7 @@ import { WebVitalsService } from './web-vitals.service';
     ObservabilityService,
     MonitoringSourcesClient,
     SystemProbesService,
+    BackupStatusMetrics,
     WebVitalsService,
   ],
 })

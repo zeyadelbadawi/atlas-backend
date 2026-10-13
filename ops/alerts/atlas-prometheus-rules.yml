@@ -260,6 +260,30 @@ groups:
           description: "The {{ $labels.dependency }} probe has failed for 2 minutes."
           threshold: "probe failing for 2m"
           current_value: '{{ $value | humanize }}'
+      # B0-OPS-06 — `deploy/backup.sh` records each fully successful backup
+      # (dumped, verified, uploaded); the backend exposes it from a
+      # read-only mount. The daily timer runs at 03:00 ± 10 min, so 26 h
+      # means one backup was missed.
+      - alert: AtlasBackupStale
+        expr: |
+          time() - max(atlas_backup_last_success_timestamp_seconds) > 93600
+        for: 15m
+        labels: { severity: critical, team: atlas, service: backups }
+        annotations:
+          summary: "No successful database backup in 26 hours"
+          description: "The last successful backup finished {{ $value | humanizeDuration }} ago. Check `journalctl -u atlas-backup` on the host and the R2 backup bucket."
+          threshold: "last success older than 26 h, for 15m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasBackupStatusMissing
+        expr: |
+          absent(atlas_backup_last_success_timestamp_seconds)
+        for: 26h
+        labels: { severity: warning, team: atlas, service: backups }
+        annotations:
+          summary: "No backup status has been recorded for 26 hours"
+          description: "The backend cannot read the backup status file (never written, or the backups/status mount is missing). A backup may be failing silently."
+          threshold: "status absent for 26 h"
+          current_value: '{{ $value | humanize }}'
       - alert: AtlasQueueBacklog
         expr: |
           max by (queue) (atlas_queue_oldest_waiting_seconds) > 900

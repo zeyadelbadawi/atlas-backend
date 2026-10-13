@@ -93,6 +93,10 @@ const EnvSchema = z.object({
     (value) => (value === '' ? undefined : value),
     z.string().url().optional(),
   ),
+  // B0-OPS-06 — where `deploy/backup.sh` writes the last-success status
+  // (mounted read-only into the backend). Default:
+  // /var/lib/atlas/backup-status/last-success.
+  BACKUP_STATUS_FILE: z.string().min(1).optional(),
 
   SENTRY_DSN: z
     .string()

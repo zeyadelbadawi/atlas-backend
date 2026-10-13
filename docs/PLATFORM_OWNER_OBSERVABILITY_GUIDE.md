@@ -116,7 +116,7 @@ All four live under **Platform → Observability** in the sidebar.
 
 | Group | Rules |
 |---|---|
-| `atlas-platform` | AtlasBackendDown, AtlasApiHighErrorRate, AtlasApiHighLatency, AtlasDependencyDown, AtlasQueueBacklog, AtlasAlertDeliveryFailing, AtlasSyntheticAlert |
+| `atlas-platform` | AtlasBackendDown, AtlasApiHighErrorRate, AtlasApiHighLatency, AtlasDependencyDown, AtlasBackupStale, AtlasBackupStatusMissing, AtlasQueueBacklog, AtlasAlertDeliveryFailing, AtlasSyntheticAlert |
 | `atlas-communications` | AtlasEmailQuotaHigh, AtlasEmailQuotaCritical, AtlasEmailBounceRate, AtlasEmailDispatcherStalled, AtlasEmailDeadLetters, AtlasAuthOtpFailureSurge, AtlasEmailWebhookSignatureFailures |
 | `atlas-learning` | AtlasGrantRefusalSurge, AtlasVideoWebhookSignatureFailures, AtlasQuizIntegrityEventSurge, AtlasCertificateRenderFailures |
 | `atlas-commerce` | AtlasCheckoutApprovalBacklog, AtlasCheckoutApprovalSlow, AtlasCheckoutRefundSpike |
@@ -352,6 +352,7 @@ Click **Resolve** (or let the TTL expire). Then check:
 | Malformed or slow source response | Treated as `unavailable` after a 3 s timeout. Never shown as data. |
 | Backend down | `AtlasBackendDown` (critical) fires in Prometheus; Alertmanager still notifies Slack. |
 | Redis down | Health: Redis `down`; `AtlasDependencyDown`; queue metrics absent. |
+| Backup failing or not running | `AtlasBackupStale` (critical) after 26 h without a successful backup; `AtlasBackupStatusMissing` (warning) if the backend cannot read `backups/status/last-success` for 26 h. Check `journalctl -u atlas-backup` and the R2 backup bucket. |
 
 ## 22. Production operational procedures
 

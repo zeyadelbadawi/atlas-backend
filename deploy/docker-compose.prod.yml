@@ -46,6 +46,11 @@ services:
     environment:
       PROMETHEUS_URL: ${OBS_PROMETHEUS_URL:-}
       ALERTMANAGER_URL: ${OBS_ALERTMANAGER_URL:-}
+    # B0-OPS-06 — ONLY the backup status directory (never the dumps), read
+    # only, so `/metrics` can report backup freshness. Created by deploy.sh
+    # as the deploy user before the stack starts, so the timer can write it.
+    volumes:
+      - ./backups/status:/var/lib/atlas/backup-status:ro
     depends_on:
       postgres:
         condition: service_healthy

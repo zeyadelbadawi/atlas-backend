@@ -739,6 +739,11 @@ echo "==> Pulling the application images (postgres/redis are never pulled here)"
 resolve_app_services
 docker compose pull $APP_SERVICES
 
+# B0-OPS-06 — the backend mounts backups/status read-only. Created here,
+# as the deploy user, so Docker never creates it as root (which would stop
+# backup.sh from writing the status file).
+mkdir -p "$ATLAS_DIR/backups/status"
+
 echo "==> Starting postgres + redis first (migrations need a live
     database — --no-deps alone won't start them on a fresh stack)"
 report_stateful_drift

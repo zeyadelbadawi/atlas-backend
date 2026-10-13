@@ -31,6 +31,8 @@ const SERVICE_PATHS = [
   resolve(__dirname, '../platform/http-metrics.middleware.ts'),
   resolve(__dirname, '../platform/system-probes.service.ts'),
   resolve(__dirname, '../platform/observability.service.ts'),
+  // B0-OPS-06 backup freshness.
+  resolve(__dirname, '../platform/backup-status.metrics.ts'),
   // Launch Stabilization A1/A3 authentication security series.
   resolve(__dirname, 'auth-security-metrics.ts'),
   resolve(__dirname, 'google-auth-metrics.ts'),

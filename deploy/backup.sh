@@ -126,4 +126,23 @@ docker run --rm \
       s3 rm "s3://${R2_BACKUP_BUCKET}/${key}"
   done
 
+# --- B0-OPS-06: record the success for the freshness alert ---------------
+#
+# Written LAST, only after the dump, the verification, the upload and the
+# pruning all succeeded (`set -e` stops the script before this on any
+# failure). The backend reads it through a read-only mount and exposes
+# `atlas_backup_last_success_timestamp_seconds`; `AtlasBackupStale` fires
+# when it is older than 26 h. Atomic (temp file + rename) so a scrape never
+# reads half a file. A failure to write it must not turn a good backup into
+# a failed one, so it only warns — the stale alert then says so.
+STATUS_DIR="${LOCAL_DIR}/status"
+if mkdir -p "$STATUS_DIR" 2>/dev/null \
+  && printf 'timestamp=%s\nsize_bytes=%s\nfile=%s\n' "$(date -u +%s)" "$SIZE" "$FILENAME" \
+    > "${STATUS_DIR}/.last-success.tmp" \
+  && mv -f "${STATUS_DIR}/.last-success.tmp" "${STATUS_DIR}/last-success"; then
+  echo "Recorded backup status for monitoring."
+else
+  echo "WARNING: could not record backup status in ${STATUS_DIR}; the freshness alert will report this backup as missing." >&2
+fi
+
 echo "Backup complete: ${FILENAME}"
