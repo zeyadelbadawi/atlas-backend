@@ -299,12 +299,15 @@ export async function expandAudiencePage(
     }
   }
 
+  // No NULL inside a bound array (Prisma types it from its first element:
+  // a first person with no exclusion followed by an excluded one failed
+  // with 22P03). '' stands for "none" and NULLIF restores the NULL.
   const written = await tx.$queryRaw<
     { user_id: string; email_eligible: boolean; exclusion: string | null }[]
   >`
     INSERT INTO "campaign_recipients" ("campaign_id", "user_id", "email_eligible", "exclusion", "state")
-    SELECT ${input.campaignId}, t.user_id, t.email_eligible, t.exclusion, 0
-      FROM unnest(${ids}::text[], ${eligible}::boolean[], ${exclusions}::text[])
+    SELECT ${input.campaignId}, t.user_id, t.email_eligible, NULLIF(t.exclusion, ''), 0
+      FROM unnest(${ids}::text[], ${eligible}::boolean[], ${exclusions.map((value) => value ?? '')}::text[])
            AS t(user_id, email_eligible, exclusion)
     ON CONFLICT ("campaign_id", "user_id") DO NOTHING
     RETURNING "user_id", "email_eligible", "exclusion"

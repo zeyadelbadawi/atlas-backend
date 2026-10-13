@@ -301,10 +301,14 @@ export class CampaignWorkerService {
               FROM unnest(${userIds}::text[]) AS t(user_id)
           `;
           }
-          const outboxColumn = userIds.map((userId) => outboxByUser.get(userId) ?? null);
+          // No NULL inside a bound array: Prisma types an array from its
+          // first element, so a batch whose first recipient (by user id)
+          // gets no email failed with 22P03 and left the campaign stuck.
+          // '' stands for "no outbox row" and NULLIF restores the NULL.
+          const outboxColumn = userIds.map((userId) => outboxByUser.get(userId) ?? '');
           await tx.$executeRaw`
           UPDATE "campaign_recipients" r
-             SET "state" = 1, "released_at" = now(), "outbox_id" = m.outbox_id
+             SET "state" = 1, "released_at" = now(), "outbox_id" = NULLIF(m.outbox_id, '')
             FROM unnest(${userIds}::text[], ${outboxColumn}::text[]) AS m(user_id, outbox_id)
            WHERE r."campaign_id" = ${campaign.id} AND r."user_id" = m.user_id AND r."state" = 0
         `;
