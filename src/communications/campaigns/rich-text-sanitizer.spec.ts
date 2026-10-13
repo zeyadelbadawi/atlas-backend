@@ -157,20 +157,34 @@ describe('helpers', () => {
   });
 
   describe('linear time (security review finding 3)', () => {
-    // ~50 KB of each shape that used to be quadratic (text-twin re-joins per
-    // block, ambiguous tag-attribute quantifiers, `<!` and blank-run scans).
-    const SIZE = 50_000;
-    const ADVERSARIAL: Record<string, string> = {
-      paragraphs: '<p>x'.repeat(SIZE / 4),
-      listItems: '<ol>' + '<li>x'.repeat(SIZE / 5),
-      breaks: 'x<br>'.repeat(SIZE / 5),
-      closedParagraphs: '<p>x</p>'.repeat(SIZE / 8),
-      tagThenSpaces: '<a' + ' '.repeat(SIZE),
-      unterminatedBang: '<!x'.repeat(SIZE / 3),
-      blankRuns: ' <b>'.repeat(SIZE / 4),
-      quotes: '<a href=' + '"'.repeat(SIZE),
-      nestedLists: '<ul><li>'.repeat(SIZE / 8),
+    // Each shape used to be quadratic (text-twin re-joins per block,
+    // ambiguous tag-attribute quantifiers, `<!` and blank-run scans).
+    // Budgets are relative to the runner, not absolute: a shared CI runner is
+    // several times slower than a laptop, so "50 KB in under 100 ms" failed
+    // on runner speed alone (102-113 ms on 13 Oct 2026). A quadratic
+    // regression is still caught twice over: it grows ~100x when the input
+    // grows 10x, and at the 50 KB body cap it costs far more than a normal
+    // 50 KB message measured on the same runner.
+    const SIZE = 50_000; // CAMPAIGN_BODY_HTML_MAX_BYTES
+    const ADVERSARIAL: Record<string, (size: number) => string> = {
+      paragraphs: (n) => '<p>x'.repeat(n / 4),
+      listItems: (n) => '<ol>' + '<li>x'.repeat(n / 5),
+      breaks: (n) => 'x<br>'.repeat(n / 5),
+      closedParagraphs: (n) => '<p>x</p>'.repeat(n / 8),
+      tagThenSpaces: (n) => '<a' + ' '.repeat(n),
+      unterminatedBang: (n) => '<!x'.repeat(n / 3),
+      blankRuns: (n) => ' <b>'.repeat(n / 4),
+      quotes: (n) => '<a href=' + '"'.repeat(n),
+      nestedLists: (n) => '<ul><li>'.repeat(n / 8),
     };
+    /** 10x the input may cost at most this many times as much (linear ≈ 10, quadratic ≈ 100). */
+    const MAX_GROWTH_FOR_10X = 25;
+    /** An adversarial 50 KB body may cost at most this many times a normal 50 KB message (measured: 1-4x). */
+    const MAX_COST_VS_BENIGN = 15;
+    /** Hard ceiling at full size: catches a catastrophic regression on any runner. */
+    const CEILING_MS = 1_000;
+    /** Below this a measurement is timer noise, so growth is measured from here. */
+    const NOISE_FLOOR_MS = 1;
 
     /** Best of three, so a GC pause on a shared runner is not a failure. */
     function fastestMs(input: string): number {
@@ -183,22 +197,39 @@ describe('helpers', () => {
       return best;
     }
 
+    /** A normal message body of the same size, timed on the same runner (set in beforeAll). */
+    let benignMs = NOISE_FLOOR_MS;
+
+    function expectLinear(build: (size: number) => string): void {
+      const small = fastestMs(build(SIZE / 10));
+      const full = fastestMs(build(SIZE));
+      expect(full).toBeLessThan(CEILING_MS);
+      expect(full / Math.max(small, NOISE_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_10X);
+      expect(full / benignMs).toBeLessThan(MAX_COST_VS_BENIGN);
+    }
+
     beforeAll(() => {
       sanitizeRichText('<p>warm-up</p>'.repeat(200));
+      const paragraph =
+        '<p>Hello <strong>class</strong>, the next lesson is on ' +
+        '<a href="https://example.com/schedule">Thursday</a>.</p>';
+      const benign = paragraph.repeat(Math.ceil(SIZE / paragraph.length)).slice(0, SIZE);
+      benignMs = Math.max(fastestMs(benign), NOISE_FLOOR_MS);
     });
 
     it.each(Object.entries(ADVERSARIAL))(
-      '%s (~50 KB) sanitises in under 100 ms',
-      (_label, input) => {
-        expect(input.length).toBeGreaterThanOrEqual(SIZE * 0.99);
-        expect(fastestMs(input)).toBeLessThan(100);
+      '%s (~50 KB) sanitises in linear time',
+      (_label, build) => {
+        expect(build(SIZE).length).toBeGreaterThanOrEqual(SIZE * 0.99);
+        expectLinear(build);
       },
     );
 
-    it('re-sanitising stored output stays fast and idempotent', () => {
-      const first = sanitizeRichText('<p>x'.repeat(SIZE / 4));
-      expect(fastestMs(first.html)).toBeLessThan(100);
-      expect(sanitizeRichText(first.html).html).toBe(first.html);
+    it('re-sanitising stored output stays linear and idempotent', () => {
+      const stored = (n: number) => sanitizeRichText('<p>x'.repeat(n / 4)).html;
+      expectLinear(stored);
+      const first = stored(SIZE);
+      expect(sanitizeRichText(first).html).toBe(first);
     });
 
     it('keeps the text twin identical to the block structure', () => {
