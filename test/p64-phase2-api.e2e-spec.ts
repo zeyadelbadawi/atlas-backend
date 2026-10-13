@@ -2162,6 +2162,109 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
       }).expect(400);
     });
 
+    // B0-MED-05 — the builder's protected-file path, over HTTP end to end:
+    // upload to the protected tier, attach it to a File lesson, deliver it
+    // to an enrolled learner through a short-lived signed link.
+    const PDF_DATA_URL = `data:application/pdf;base64,${Buffer.from(
+      '%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n',
+    ).toString('base64')}`;
+
+    const uploadProtected = (
+      w: { academy: { id: string } },
+      auth: Record<string, string>,
+      body: Record<string, unknown>,
+    ) =>
+      request(app.getHttpServer())
+        .post(`/academies/${w.academy.id}/media/protected`)
+        .set(auth)
+        .send(body);
+
+    it('uploads a protected PDF, attaches it to a File lesson, and delivers it only as a signed link (B0-MED-05)', async () => {
+      const w = await world('med05-file', { family: 'normal', tier: 'growth' });
+      const uploaded = await uploadProtected(w, w.owner.auth, {
+        fileName: 'worksheet.pdf',
+        file: PDF_DATA_URL,
+        courseId: w.course.id,
+      }).expect(201);
+      expect(uploaded.body).toMatchObject({
+        access: 'protected',
+        courseId: w.course.id,
+        fileName: 'worksheet.pdf',
+        mimeType: 'application/pdf',
+      });
+      expect(uploaded.body.url).toBeUndefined();
+
+      const lesson = await seedCourseLesson(admin, w.section.id, w.course.id, 'file', 0, {
+        contentType: 'file',
+        status: 'published',
+      });
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'file',
+        mediaAssetId: uploaded.body.id,
+      }).expect(200);
+
+      const student = await enrolledLearner(w, 'med05-file-student');
+      const grant = await getContent(student, w.course.id, lesson.id).expect(200);
+      expect(grant.body.kind).toBe('file');
+      expect(grant.body.fileName).toBe('worksheet.pdf');
+      expect(typeof grant.body.fileUrl).toBe('string');
+      expect(grant.body.expiresAt).toBeTruthy();
+      // The asset row never carries a public URL.
+      const stored = await admin.mediaAsset.findUniqueOrThrow({
+        where: { id: uploaded.body.id },
+      });
+      expect(stored.url).toBe('');
+
+      // Switching the lesson away from File stops delivering the file.
+      await request(app.getHttpServer())
+        .patch(
+          `/academies/${w.academy.id}/courses/${w.course.id}/sections/${w.section.id}/lessons/${lesson.id}`,
+        )
+        .set(w.owner.auth)
+        .send({ contentType: 'text' })
+        .expect(200);
+      expect(await admin.lessonContent.count({ where: { lessonId: lesson.id } })).toBe(0);
+    });
+
+    it('refuses a course id from another academy on upload, and a file from another course on attach (B0-MED-05)', async () => {
+      const w = await world('med05-scope', { family: 'normal', tier: 'growth' });
+      const other = await world('med05-scope-other', {
+        family: 'normal',
+        tier: 'growth',
+      });
+      await uploadProtected(w, w.owner.auth, {
+        fileName: 'notes.pdf',
+        file: PDF_DATA_URL,
+        courseId: other.course.id,
+      }).expect(404);
+
+      const secondCourse = await seedCourse(admin, w.academy.id, 'med05 second course', {
+        status: 'published',
+        visibility: 'public',
+        pricingType: 'free',
+      });
+      const forSecond = await uploadProtected(w, w.owner.auth, {
+        fileName: 'second.pdf',
+        file: PDF_DATA_URL,
+        courseId: secondCourse.id,
+      }).expect(201);
+      const lesson = await seedCourseLesson(
+        admin,
+        w.section.id,
+        w.course.id,
+        'scope',
+        0,
+        {
+          contentType: 'file',
+          status: 'published',
+        },
+      );
+      await putContent(w, w.owner.auth, lesson.id, {
+        kind: 'file',
+        mediaAssetId: forSecond.body.id,
+      }).expect(404);
+    });
+
     // B0-LRN-01 — text lessons are authored through this endpoint, with the
     // body rebuilt by the reviewed allowlist sanitiser before it is stored.
     async function textLesson(w: Awaited<ReturnType<typeof world>>, label: string) {

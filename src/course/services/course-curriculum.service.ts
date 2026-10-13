@@ -416,13 +416,17 @@ export class CourseCurriculumService {
         // getting the old body:
         //   - a `text` row when the lesson is no longer a text lesson;
         //   - an `external` row (the Phase 2 backfill's shape for a legacy
-        //     URL) when the author changed that URL here.
-        // `video`/`file` rows point at protected assets written through
-        // the content endpoint and are left alone.
+        //     URL) when the author changed that URL here;
+        //   - a `file` row when the lesson is no longer a file lesson
+        //     (B0-MED-05: switching a File lesson to Text or Video kept
+        //     serving the file, since the row wins).
+        // A `video` row points at a protected video written through the
+        // content endpoint and is left alone.
         const content = await this.lessonContentsRepository.findByLessonId(tx, lessonId);
         if (
           content &&
           ((content.kind === 'text' && updated.contentType !== 'text') ||
+            (content.kind === 'file' && updated.contentType !== 'file') ||
             (content.kind === 'external' &&
               payload.contentUrl !== undefined &&
               content.externalUrl !== (updated.contentUrl ?? null)))
@@ -560,9 +564,16 @@ export class CourseCurriculumService {
           // "wrong academy" — the two must be indistinguishable.
           const asset = await tx.mediaAsset.findFirst({
             where: { id: payload.mediaAssetId, academyId },
-            select: { id: true, type: true, access: true },
+            select: { id: true, type: true, access: true, courseId: true },
           });
           if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+          // B0-MED-05 — a protected file uploaded for one course cannot be
+          // attached to another course's lesson (its object sits under that
+          // course's key prefix). Indistinguishable from a miss, like the
+          // academy check above.
+          if (asset.courseId !== null && asset.courseId !== courseId) {
+            throw new NotFoundException({ messageKey: 'errors.notFound' });
+          }
 
           if (payload.kind === 'video' && asset.type !== 'video') {
             throw new BadRequestException({

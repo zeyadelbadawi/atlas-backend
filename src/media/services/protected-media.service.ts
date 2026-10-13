@@ -204,6 +204,16 @@ export class ProtectedMediaService {
     // unauthorized or over-limit caller must never cause a real write.
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
       await this.assertCanManage(tx, academyId, userId);
+      if (input.courseId) {
+        // B0-MED-05 — the same rule as `createVideoUpload`: a course id
+        // from another academy would put this academy's file under that
+        // academy's key prefix and `course_id`.
+        const course = await tx.course.findFirst({
+          where: { id: input.courseId, academyId },
+          select: { id: true },
+        });
+        if (!course) throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
       await this.entitlementEnforcementService.assertStorageWithinLimit(
         tx,
         organizationId,
