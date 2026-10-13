@@ -20,8 +20,12 @@ export interface AppConfig {
 }
 
 export interface DatabaseConfig {
-  /** Superuser connection — Prisma CLI (migrations) only. Never used for application queries; see `appUrl`. */
-  readonly url: string;
+  /**
+   * Superuser connection — Prisma CLI (migrations) and operator scripts only.
+   * Never used for application queries (see `appUrl`), and absent from the
+   * long-lived server once the host keeps it out of its environment (B0-OPS-03).
+   */
+  readonly url: string | undefined;
   /** Non-superuser, non-BYPASSRLS connection — what `PrismaService` actually connects with at runtime, so RLS applies to every application query (Phase P2). */
   readonly appUrl: string;
 }
@@ -633,7 +637,7 @@ export default () => {
   };
 
   const database: DatabaseConfig = {
-    url: env.DATABASE_URL,
+    url: env.DATABASE_URL || undefined,
     appUrl: env.APP_DATABASE_URL,
   };
 

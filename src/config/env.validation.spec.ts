@@ -34,10 +34,18 @@ describe('validateEnv', () => {
     expect(result.LOG_LEVEL).toBe('info');
   });
 
-  it('throws when DATABASE_URL is missing', () => {
-    expect(() => validateEnv({ REDIS_URL: VALID_BASE.REDIS_URL })).toThrow(
-      /DATABASE_URL/,
-    );
+  it('B0-OPS-03: boots without DATABASE_URL (the server connects only with APP_DATABASE_URL)', () => {
+    const withoutSuperuser: Record<string, string> = { ...VALID_BASE };
+    delete withoutSuperuser.DATABASE_URL;
+    const result = validateEnv(withoutSuperuser);
+    expect(result.DATABASE_URL).toBeUndefined();
+    expect(result.APP_DATABASE_URL).toBe(VALID_BASE.APP_DATABASE_URL);
+  });
+
+  it('B0-OPS-03: still refuses to boot without APP_DATABASE_URL', () => {
+    const withoutApp: Record<string, string> = { ...VALID_BASE };
+    delete withoutApp.APP_DATABASE_URL;
+    expect(() => validateEnv(withoutApp)).toThrow(/APP_DATABASE_URL/);
   });
 
   it('throws when REDIS_URL is missing', () => {

@@ -16,18 +16,22 @@ const EnvSchema = z.object({
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
 
+  // B0-OPS-03 — OPTIONAL for the server. The running backend connects only
+  // with APP_DATABASE_URL (non-superuser, RLS applies); DATABASE_URL is the
+  // superuser connection that `prisma migrate deploy` and the operator
+  // scripts need, and each of those checks for it itself. Keeping it out of
+  // the long-lived container's environment means a compromised backend
+  // process cannot read a connection that bypasses row security. Still
+  // format-checked whenever it is set.
   DATABASE_URL: z
     .string()
-    .min(
-      1,
-      'DATABASE_URL is required — the backend cannot start without a database connection string.',
-    )
     .refine(
       (value) => value.startsWith('postgresql://') || value.startsWith('postgres://'),
       {
         message: 'DATABASE_URL must be a postgresql:// connection string.',
       },
-    ),
+    )
+    .optional(),
 
   REDIS_URL: z
     .string()
