@@ -11,4 +11,12 @@ export class MediaListQueryDto extends CollectionQueryDto {
   @IsOptional()
   @IsIn(MEDIA_ASSET_TYPE_VALUES)
   readonly type?: (typeof MEDIA_ASSET_TYPE_VALUES)[number];
+
+  /**
+   * B0-MED-11 — `protected` narrows the list to watermarked, signed-grant
+   * assets (the hosted videos a lesson may attach); `public` to library media.
+   */
+  @IsOptional()
+  @IsIn(['public', 'protected'])
+  readonly access?: 'public' | 'protected';
 }

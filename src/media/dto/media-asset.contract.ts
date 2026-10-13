@@ -48,6 +48,15 @@ export interface MediaAssetResponse {
   readonly sizeBytes: number;
   readonly dimensions?: MediaAssetDimensionsResponse;
   readonly createdAt: string;
+  /**
+   * B0-MED-11 — what the builder needs to offer a hosted video: whether the
+   * asset is protected (its `url` is then meaningless — bytes are reachable
+   * only through a lesson's signed grant), whether processing finished, and
+   * its duration.
+   */
+  readonly access: PrismaMediaAsset['access'];
+  readonly processingStatus: PrismaMediaAsset['processingStatus'];
+  readonly durationSeconds: number | null;
 }
 
 export function toMediaAssetResponse(asset: PrismaMediaAsset): MediaAssetResponse {
@@ -70,5 +79,8 @@ export function toMediaAssetResponse(asset: PrismaMediaAsset): MediaAssetRespons
         ? { width: asset.width, height: asset.height }
         : undefined,
     createdAt: asset.createdAt.toISOString(),
+    access: asset.access,
+    processingStatus: asset.processingStatus,
+    durationSeconds: asset.durationSeconds,
   };
 }

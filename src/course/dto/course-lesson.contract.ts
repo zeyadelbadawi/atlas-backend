@@ -35,6 +35,12 @@ export interface CourseLessonResponse {
   readonly isPreview?: boolean;
   /** P64 Phase 2 — for the curriculum's duration labels and the watched-ratio denominator. */
   readonly durationSeconds?: number | null;
+  /**
+   * B0-MED-11 — the attached hosted video, so the builder can show it when
+   * editing. Authoring projection only (omitted with `contentUrl` on the
+   * learner projection, which reaches the video through the content grant).
+   */
+  readonly videoAssetId?: string | null;
   /** P64 Phase 2 — drip date, so the curriculum can say WHEN rather than just "locked". */
   readonly availableAt?: string | null;
   /** P64 Phase 2 — per-learner state, present only on the student-facing projection. */
@@ -71,7 +77,9 @@ export function toCourseLessonResponse(
     description: lesson.description ?? undefined,
     order: lesson.order,
     contentType: lesson.contentType,
-    ...(includeContentUrl ? { contentUrl: lesson.contentUrl ?? undefined } : {}),
+    ...(includeContentUrl
+      ? { contentUrl: lesson.contentUrl ?? undefined, videoAssetId: lesson.videoAssetId }
+      : {}),
     status: lesson.status,
     isPreview: lesson.isPreview,
     durationSeconds: lesson.durationSeconds,

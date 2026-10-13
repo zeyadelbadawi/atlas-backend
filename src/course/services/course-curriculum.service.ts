@@ -13,6 +13,7 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -286,11 +287,7 @@ export class CourseCurriculumService {
         // could attach another academy's video by guessing and the grant
         // path would sign it because the lesson claims it.
         if (payload.videoAssetId) {
-          const asset = await tx.mediaAsset.findFirst({
-            where: { id: payload.videoAssetId, academyId, type: 'video' },
-            select: { id: true },
-          });
-          if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+          await assertAttachableLessonVideo(tx, academyId, payload.videoAssetId);
         }
 
         // Append after the LAST item of the unit across all types — the
@@ -378,11 +375,7 @@ export class CourseCurriculumService {
         // attach another academy's video by guessing, and the grant path
         // would then happily sign it because the lesson says it is theirs.
         if (payload.videoAssetId) {
-          const asset = await tx.mediaAsset.findFirst({
-            where: { id: payload.videoAssetId, academyId, type: 'video' },
-            select: { id: true, durationSeconds: true, processingStatus: true },
-          });
-          if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+          await assertAttachableLessonVideo(tx, academyId, payload.videoAssetId);
         }
 
         const updated = await this.lessonsRepository.update(tx, lessonId, {
@@ -585,7 +578,12 @@ export class CourseCurriculumService {
           // forwarded to, which is the durable-link problem this whole
           // phase exists to remove — accepting one here would reintroduce
           // it behind a field named "protected content".
-          if (payload.kind === 'file' && asset.access !== 'protected') {
+          // B0-MED-11 — the same holds for a hosted video: a public one
+          // would skip the signed grant, the device rules and the watermark.
+          if (
+            (payload.kind === 'file' || payload.kind === 'video') &&
+            asset.access !== 'protected'
+          ) {
             throw new BadRequestException({
               messageKey: 'errors.lessonContent.assetNotProtected',
             });
@@ -808,5 +806,35 @@ export class CourseCurriculumService {
     if (!isExactPermutation(existingIds, orderedIds)) {
       throw new BadRequestException({ messageKey: 'errors.course.invalidReorderSet' });
     }
+  }
+}
+
+/**
+ * B0-MED-11 — what a lesson may point at as its hosted video.
+ *
+ *   - this academy's own video asset (tenancy — an id alone proves nothing);
+ *   - a PROTECTED one: a public library video is served from a public URL,
+ *     so attaching it would bypass the signed grant, the device rules and
+ *     the watermark the learner path enforces for `videoAssetId`;
+ *   - whose upload has finished: `pending` means the bytes never arrived
+ *     (the completion call was not made), `failed` means they never will.
+ *     `processing` is accepted — the learner path already answers
+ *     "processing" until the asset is ready.
+ */
+export async function assertAttachableLessonVideo(
+  tx: Prisma.TransactionClient,
+  academyId: string,
+  videoAssetId: string,
+): Promise<void> {
+  const asset = await tx.mediaAsset.findFirst({
+    where: { id: videoAssetId, academyId, type: 'video' },
+    select: { id: true, access: true, processingStatus: true },
+  });
+  if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+  if (asset.access !== 'protected') {
+    throw new BadRequestException({ messageKey: 'errors.media.videoNotAttachable' });
+  }
+  if (asset.processingStatus === 'pending' || asset.processingStatus === 'failed') {
+    throw new ConflictException({ messageKey: 'errors.media.videoNotReady' });
   }
 }
