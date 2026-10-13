@@ -985,6 +985,13 @@ export const AUDIT_EVENT_DEFINITIONS = [
     false,
     ACCOUNT_DELETED_CONTEXT,
   ),
+  // B0-OC-01 — an operator removed the Platform Owner role on the owner
+  // connection (`remove-platform-owner-role.ts`); the account itself stays.
+  ev('platform_owner.role_removed_by_operator', 'security', 'user', 'platform', false, [
+    'reason',
+    'hadConfirmedAuthenticator',
+    'ownedOrganizations',
+  ]),
 
   /* --------------------- Platform operator actions --------------------- */
   ev('plan.created', 'platform', 'plan', 'platform', false, ['key']),

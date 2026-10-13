@@ -48,7 +48,10 @@ export type SessionRevocationTrigger =
   | 'unverified_account_grant'
   // ATO review F3 — two-factor authentication turned off: every OTHER
   // session ends with it.
-  | 'two_factor_disabled';
+  | 'two_factor_disabled'
+  // B0-OC-01 — an operator removed the Platform Owner role from an account
+  // (`remove-platform-owner-role.ts`); its sessions end with the role.
+  | 'platform_owner_role_removed';
 
 const surfaceDenied = counter(
   'atlas_auth_surface_denied_total',

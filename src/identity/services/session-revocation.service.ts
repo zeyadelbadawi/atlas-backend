@@ -43,7 +43,9 @@ import {
   type SessionRevocationTrigger,
 } from '../../observability/metrics/auth-security-metrics';
 
-const KEY_PREFIX = 'session:revoked:';
+/** Exported for operator scripts that run without the application context. */
+export const SESSION_REVOKED_KEY_PREFIX = 'session:revoked:';
+const KEY_PREFIX = SESSION_REVOKED_KEY_PREFIX;
 
 @Injectable()
 export class SessionRevocationService {
