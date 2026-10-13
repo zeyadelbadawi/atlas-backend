@@ -68,7 +68,7 @@ env:
 jobs:
   static:
     name: Lint, typecheck, migrations, unit tests, build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -82,8 +82,8 @@ jobs:
           --health-cmd "pg_isready -U atlas -d atlas_ci"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
@@ -115,7 +115,7 @@ jobs:
 
   e2e:
     name: Database e2e (shard ${{ matrix.shard }}/3, run twice)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -139,8 +139,8 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
@@ -173,7 +173,7 @@ jobs:
         run: npx jest --config ./test/jest-e2e.json --ci --shard=${{ matrix.shard }}/3 --logHeapUsage 2>&1 | tee e2e-run2.log; exit ${PIPESTATUS[0]}
       - name: Keep the logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: e2e-logs-shard-${{ matrix.shard }}
           path: e2e-run*.log
@@ -184,7 +184,7 @@ jobs:
     name: Backend CI passed
     if: always()
     needs: [static, e2e]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Every job succeeded
         run: |

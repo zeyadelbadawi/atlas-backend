@@ -35,11 +35,11 @@ permissions:
 jobs:
   api:
     if: inputs.scope != 'deliverability'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Prepare the deploy identity
@@ -62,13 +62,13 @@ jobs:
 
   browser:
     if: inputs.scope != 'deliverability'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       OUT: ${{ github.workspace }}/launch-verify-out
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Install Playwright (Chromium)
@@ -96,7 +96,7 @@ jobs:
         run: node verify.mjs
       - name: Upload screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: launch-verify-screenshots
           path: launch-verify-out
@@ -104,11 +104,11 @@ jobs:
 
   smi:
     if: inputs.scope != 'deliverability'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Prepare the deploy identity
@@ -131,13 +131,13 @@ jobs:
 
   smi-browser:
     if: inputs.scope != 'deliverability'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       OUT: ${{ github.workspace }}/launch-verify-out
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Install Playwright (Chromium)
@@ -165,18 +165,18 @@ jobs:
         run: node verify.mjs
       - name: Upload screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: launch-verify-smi-screenshots
           path: launch-verify-out
           retention-days: 14
 
   deliverability:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Prepare the deploy identity
