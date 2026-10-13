@@ -13,12 +13,18 @@
 #                        histograms' _count series in Prometheus
 #   remote.sh dups    -> "w4dups|<entity>|<groups>|<rows>|<to rename>": the
 #                        W4 duplicate-name report (counts only)
+#   remote.sh config  -> the "Configuration facts" section of `facts` alone
+#                        (B0-OPS-01): host-only settings, secret presence
+#                        (set / not set, never a value), academy-ID lists as
+#                        counts, and the Platform Owner authenticator counts
 #
 # Read-only: every statement is a SELECT, every probe a GET. Prints
 # non-secret facts only — no secret value, no personal data, no bank detail,
 # and no sign-in code (this verifier never reads one).
 set -uo pipefail
-cd /opt/atlas
+# RELEASE_VERIFY_DIR exists for the unit test (fixture .env, stubbed docker);
+# production always runs from /opt/atlas.
+cd "${RELEASE_VERIFY_DIR:-/opt/atlas}"
 export COMPOSE_PROFILES=monitoring
 
 FAILS=0
@@ -32,6 +38,66 @@ PGDB_=$(env_value POSTGRES_DB)
 sql() { docker compose exec -T postgres psql -U "$PGUSER_" -d "$PGDB_" -t -A -F'|' -c "$1"; }
 prom() { docker compose exec -T prometheus wget -qO- "http://localhost:9090$1"; }
 count_json() { docker compose exec -T backend node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{const d=JSON.parse(s);console.log($1)})"; }
+
+# --- B0-OPS-01: configuration facts ---------------------------------------
+#
+# Settings that only the host .env can carry (the deploy workflow never
+# passes them) and secret PRESENCE. Three kinds of name, and nothing else is
+# printed:
+#   - plain settings print their value;
+#   - secrets print "set" / "not set in .env", never a character of the value;
+#   - academy-ID lists print an entry count, never an ID.
+# Then the Platform Owner authenticator counts (B0-OC-02): two integers from
+# `users` and `user_two_factor`, reading no column but `confirmed_at`, and
+# the effective enforcement instant.
+TOTP_DEFAULT_FROM=2026-10-24T00:00:00.000Z
+env_has() { grep -qE "^$1=" .env; }
+secret_presence() {
+  if [ -n "$(env_value "$1")" ]; then info "$1: set"; else info "$1: not set in .env"; fi
+}
+config_facts() {
+  echo "== Configuration facts (host .env; secrets as set/not set only)"
+  for k in $(grep -oE '^FLAG_[A-Z0-9_]+' .env | sort -u); do
+    v=$(env_value "$k")
+    # `*_ACADEMY_IDS` lists are academy IDs, like the allowlists: counts only.
+    # (The mask used to match ALLOWLIST alone and printed the IDs.)
+    case "$k" in *ACADEMY_IDS*|*ALLOWLIST*) info "$k entries=$(printf '%s' "$v" | tr ',' '\n' | grep -c .)";; *) info "$k=$v";; esac
+  done
+  for k in VIDEO_PROVIDER AUTH_PRIVILEGED_EMAIL_OTP_FLOOR SURFACE_ENFORCE_MODE WATERMARK_RETENTION_DAYS EMAIL_PROVIDERS EMAIL_PROVIDER EMAIL_FROM_NAME EMAIL_DELIVERABILITY_CHECK_ENABLED SENTRY_ENVIRONMENT FLAG_PHONE_VERIFICATION_MODE; do
+    if env_has "$k"; then info "$k=$(env_value "$k")"; else info "$k=<unset>"; fi
+  done
+  for k in $(grep -oE '^[A-Z0-9_]*ACADEMY_IDS[A-Z0-9_]*' .env | grep -v '^FLAG_' | sort -u); do
+    info "$k entries=$(env_value "$k" | tr ',' '\n' | grep -c .)"
+  done
+  for k in SENTRY_DSN METRICS_SCRAPE_TOKEN ALERT_SLACK_WEBHOOK_URL BREVO_API_KEY RESEND_API_KEY ZOOM_WEBHOOK_SECRET_TOKEN \
+    $(grep -oE '^(BASIC_VIDEO_|CLOUDFLARE_STREAM_|ZOOM_OAUTH_|ZOOM_SDK_)[A-Z0-9_]*' .env | sort -u); do
+    secret_presence "$k"
+  done
+
+  echo "== Platform Owner authenticator (counts only)"
+  local from effective
+  from=$(env_value PLATFORM_OWNER_TOTP_REQUIRED_FROM)
+  if ! env_has PLATFORM_OWNER_TOTP_REQUIRED_FROM || [ -z "$from" ]; then
+    effective=$TOTP_DEFAULT_FROM; info "PLATFORM_OWNER_TOTP_REQUIRED_FROM=default ($TOTP_DEFAULT_FROM)"
+  elif [ "$from" = never ]; then
+    effective=never; info "PLATFORM_OWNER_TOTP_REQUIRED_FROM=never (not enforced)"
+  elif [ "$from" = "$TOTP_DEFAULT_FROM" ]; then
+    effective=$from; info "PLATFORM_OWNER_TOTP_REQUIRED_FROM=default ($from, set explicitly)"
+  else
+    effective=$from; info "PLATFORM_OWNER_TOTP_REQUIRED_FROM=$from (overrides the default $TOTP_DEFAULT_FROM)"
+  fi
+  local owners confirmed
+  IFS='|' read -r owners confirmed <<< "$(sql "select count(*), count(t.confirmed_at) from users u left join user_two_factor t on t.user_id = u.id where u.is_platform_owner" | tr -d '[:space:]')"
+  if ! [[ "$owners" =~ ^[0-9]+$ && "$confirmed" =~ ^[0-9]+$ ]]; then
+    fail "Platform Owner authenticator counts could not be read"
+  elif [ "$owners" -gt 0 ] && [ "$owners" = "$confirmed" ]; then
+    pass "every Platform Owner has a confirmed authenticator ($confirmed of $owners)"
+  elif [ "$effective" != never ] && [ "$(date -u +%s)" -ge "$(date -u -d "$effective" +%s 2>/dev/null || echo 0)" ]; then
+    fail "$confirmed of $owners Platform Owner(s) have a confirmed authenticator, and enforcement began $effective"
+  else
+    info "$confirmed of $owners Platform Owner(s) have a confirmed authenticator; enforcement: $effective"
+  fi
+}
 
 case "${1:-}" in
   facts)
@@ -177,13 +243,12 @@ case "${1:-}" in
     for k in ATLAS_SSR RUM_ENABLED SSR_CACHE_TTL_MS SSR_CACHE_MAX; do
       v=$(env_value "$k"); info "$k=${v:-<unset>}"
     done
-    for k in $(grep -oE '^FLAG_[A-Z0-9_]+' .env | sort -u); do
-      v=$(env_value "$k")
-      case "$k" in *ALLOWLIST*) info "$k entries=$(printf '%s' "$v" | tr ',' '\n' | grep -c .)";; *) info "$k=$v";; esac
-    done
+    # FLAG_* values print in the configuration facts below.
     if [ "$(env_value ATLAS_SSR)" = on ]; then
       if [ -n "$(docker compose ps -q ssr 2>/dev/null)" ]; then pass "ATLAS_SSR=on and the renderer is running"; else fail "ATLAS_SSR=on but the renderer is not running"; fi
     fi
+
+    config_facts
 
     echo "== Website published copy"
     IFS='|' read -r _ all snap <<< "$(sql "select 'published_sites', count(*), count(published_snapshot) from website_configurations where status='published'")"
@@ -281,5 +346,9 @@ SELECT 'w4totals', (SELECT count(*) FROM organizations), (SELECT count(*) FROM a
 ROLLBACK;
 SQL
     ;;
-  *) echo "usage: remote.sh facts|hosts|rum|dups" >&2; exit 2 ;;
+  config)
+    config_facts
+    [ "$FAILS" = 0 ]
+    ;;
+  *) echo "usage: remote.sh facts|hosts|rum|dups|config" >&2; exit 2 ;;
 esac
