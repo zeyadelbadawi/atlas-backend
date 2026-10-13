@@ -19,6 +19,7 @@
  */
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { AcademiesRepository } from '../../academy/repositories/academies.repository';
 import {
   AcademyPayoutItemsRepository,
@@ -43,6 +44,7 @@ export class PlatformAcademyPayoutsService {
     private readonly academyPayoutsRepository: AcademyPayoutsRepository,
     private readonly academyPayoutItemsRepository: AcademyPayoutItemsRepository,
     private readonly revenueLedgerEntriesRepository: RevenueLedgerEntriesRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
 
   async listAll(
@@ -140,6 +142,23 @@ export class PlatformAcademyPayoutsService {
               revenueLedgerEntryId: entry.id,
             })),
           );
+          // B0-ANL-02 — same transaction as the payout and its items.
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: platformOwnerUserId,
+            organizationId,
+            role: 'platform_owner',
+            action: 'payout.created',
+            targetType: 'academy_payout',
+            targetId: payout.id,
+            context: {
+              academyId: payload.academyId,
+              currency,
+              amountMinorUnits: total.toString(),
+              periodStart: periodStart.toISOString(),
+              periodEnd: periodEnd.toISOString(),
+              items: entries.length,
+            },
+          });
           const withItems = await this.academyPayoutsRepository.findById(tx, payout.id);
           created.push(toAcademyPayoutResponse(withItems!));
         }
@@ -168,6 +187,21 @@ export class PlatformAcademyPayoutsService {
           status: 'paid',
           paidAt: new Date(),
           providerReference,
+        });
+        // B0-ANL-02 — same transaction as the status change; the replay of
+        // an already-paid payout above writes nothing.
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: platformOwnerUserId,
+          role: 'platform_owner',
+          action: 'payout.marked_paid',
+          targetType: 'academy_payout',
+          targetId: payout.id,
+          context: {
+            academyId: payout.academyId,
+            currency: payout.currency,
+            amountMinorUnits: payout.amountMinorUnits.toString(),
+            providerReference: providerReference ?? null,
+          },
         });
         const withItems = await this.academyPayoutsRepository.findById(tx, updated.id);
         return toAcademyPayoutResponse(withItems!);

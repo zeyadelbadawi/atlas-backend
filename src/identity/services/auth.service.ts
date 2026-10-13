@@ -1409,6 +1409,13 @@ export class AuthService {
     const passwordValid = await this.passwordCredentials.verify(user.id, input.password);
     if (!passwordValid) {
       await this.signInThrottle.recordFailure(email);
+      if (user.status !== 'deleted') {
+        await this.recordSignInAudit('auth.sign_in.failed', user.id, input.context, {
+          method: 'password',
+          surface: input.surface ?? 'management',
+          reason: 'invalid_password',
+        });
+      }
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
 
@@ -1453,12 +1460,22 @@ export class AuthService {
     // setup link. Refused exactly like a wrong password, so nothing about
     // the account's state is disclosed.
     if (user.status === 'invited') {
+      await this.recordSignInAudit('auth.sign_in.failed', user.id, context, {
+        method: authMethod,
+        surface: requested.surface,
+        reason: 'not_activated',
+      });
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidCredentials' });
     }
 
     // Suspension is only ever revealed to someone who already proved they
     // know the correct password — no enumeration signal added.
     if (user.status === 'suspended') {
+      await this.recordSignInAudit('auth.sign_in.failed', user.id, context, {
+        method: authMethod,
+        surface: requested.surface,
+        reason: 'suspended',
+      });
       throw new ForbiddenException({ messageKey: 'errors.auth.accountSuspended' });
     }
 
@@ -2397,6 +2414,49 @@ export class AuthService {
     }
   }
 
+  /**
+   * B0-ANL-02 — the operator's sign-in record (`visibleToTenant: false`).
+   * Best-effort: an audit failure never blocks or fails a sign-in. Carries
+   * the method, surface, outcome reason, session id and IP only — never the
+   * password, the address or a token.
+   */
+  private async recordSignInAudit(
+    action: 'auth.sign_in.succeeded' | 'auth.sign_in.failed',
+    userId: string,
+    context: SessionRequestContext | undefined,
+    details: {
+      readonly method: AuthMethod;
+      readonly surface: SignInSurface;
+      readonly reason?: string;
+      readonly sessionId?: string;
+      readonly academyId?: string | null;
+    },
+  ): Promise<void> {
+    try {
+      await this.tenancyContextService.runInUserContext(userId, (tx) =>
+        this.auditLogWriterService.writeBestEffort(tx, {
+          actorUserId: userId,
+          action,
+          targetType: 'user',
+          targetId: userId,
+          ...(details.academyId ? { academyId: details.academyId } : {}),
+          context: {
+            method: details.method,
+            surface: details.surface,
+            reason: details.reason,
+            sessionId: details.sessionId,
+            ipAddress: context?.ipAddress ?? null,
+          },
+        }),
+      );
+    } catch (error) {
+      this.logger.warn(
+        { action, userId, error: error instanceof Error ? error.message : error },
+        'Sign-in audit write failed; the sign-in itself was not affected.',
+      );
+    }
+  }
+
   private async issueSession(
     user: User,
     context: SessionRequestContext | undefined,
@@ -2452,6 +2512,15 @@ export class AuthService {
       academyId: selection.academyId ?? null,
       deviceId,
       authMethod,
+    });
+
+    // B0-ANL-02 — every minted session (password, Google, after 2FA or the
+    // emailed code) is one `auth.sign_in.succeeded` row.
+    await this.recordSignInAudit('auth.sign_in.succeeded', user.id, context, {
+      method: authMethod,
+      surface: selection.surface,
+      sessionId: refreshToken.sessionId,
+      academyId: selection.academyId ?? null,
     });
 
     const accessToken = this.accessTokenService.issue({

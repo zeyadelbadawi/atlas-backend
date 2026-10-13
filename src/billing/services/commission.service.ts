@@ -110,10 +110,28 @@ export class CommissionService {
     if (!plan)
       throw new NotFoundException({ messageKey: 'errors.checkout.planNotFound' });
 
+    const previous = await this.planCommissionSettingsRepository.findByPlanId(plan.id);
     const settings = await this.planCommissionSettingsRepository.upsert(
       plan.id,
       commissionBasisPoints,
       platformOwnerUserId,
+    );
+
+    // B0-ANL-02 — best-effort for the same reason as the global default
+    // above: the upsert is its own atomic write.
+    await this.prisma.$transaction((tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: platformOwnerUserId,
+        action: 'commission_config.plan_updated',
+        targetType: 'plan',
+        targetId: plan.id,
+        targetLabel: plan.name,
+        context: {
+          planKey,
+          commissionBasisPoints: settings.commissionBasisPoints,
+          previousCommissionBasisPoints: previous?.commissionBasisPoints ?? null,
+        },
+      }),
     );
     return {
       planKey,
@@ -211,6 +229,11 @@ export class CommissionService {
     return this.tenancyContextService.runInUserContext(
       platformOwnerUserId,
       async (tx) => {
+        const previous =
+          await this.organizationCommissionSettingsRepository.findByOrganizationId(
+            tx,
+            organizationId,
+          );
         const settings = await this.organizationCommissionSettingsRepository.upsert(
           tx,
           organizationId,
@@ -225,6 +248,22 @@ export class CommissionService {
             updatedBy: platformOwnerUserId,
           },
         );
+        // B0-ANL-02 — same transaction as the override itself.
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: platformOwnerUserId,
+          organizationId,
+          role: 'platform_owner',
+          action: 'commission_config.organization_updated',
+          targetType: 'organization',
+          targetId: organizationId,
+          context: {
+            commissionMode: settings.commissionMode,
+            customPercentageBasisPoints: settings.customPercentageBasisPoints,
+            previousCommissionMode: previous?.commissionMode ?? null,
+            previousCustomPercentageBasisPoints:
+              previous?.customPercentageBasisPoints ?? null,
+          },
+        });
         const planCommissionBasisPoints = await this.findPlanCommissionForOrganization(
           tx,
           organizationId,

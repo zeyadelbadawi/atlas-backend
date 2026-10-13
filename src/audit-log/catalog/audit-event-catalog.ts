@@ -113,6 +113,15 @@ const OTP_CONTEXT = [
   // Platform-only (visibleToTenant: false) forensic field.
   'ipAddress',
 ] as const;
+/** B0-ANL-02 — sign-in outcomes; never a password, an email or a token. */
+const SIGN_IN_CONTEXT = [
+  'method',
+  'surface',
+  'reason',
+  'sessionId',
+  // Platform-only (visibleToTenant: false) forensic field.
+  'ipAddress',
+] as const;
 const ACCOUNT_DELETED_CONTEXT = [
   'initiatedBy',
   'reason',
@@ -803,6 +812,40 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'organization',
     true,
   ),
+  // B0-ANL-02 — retry / cancel. The owner's own action is in their feed;
+  // the Platform Owner's console action is the operator's record only.
+  ev(
+    'provisioning_request.retried',
+    'subscription',
+    'provisioning_request',
+    'organization',
+    true,
+    ['step'],
+  ),
+  ev(
+    'provisioning_request.cancelled',
+    'subscription',
+    'provisioning_request',
+    'organization',
+    true,
+    ['previousStatus'],
+  ),
+  ev(
+    'provisioning_request.retried_by_platform',
+    'subscription',
+    'provisioning_request',
+    'organization',
+    false,
+    ['step'],
+  ),
+  ev(
+    'provisioning_request.cancelled_by_platform',
+    'subscription',
+    'provisioning_request',
+    'organization',
+    false,
+    ['previousStatus'],
+  ),
   ev(
     'subscription.trial.redeemed',
     'subscription',
@@ -962,6 +1005,13 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('auth.otp.failed', 'security', 'user', 'platform', false, OTP_CONTEXT),
   ev('auth.otp.locked_out', 'security', 'user', 'platform', false, OTP_CONTEXT),
   ev('auth.otp.verified', 'security', 'user', 'platform', false, OTP_CONTEXT),
+  // B0-ANL-02 — first-factor outcomes for a known account. `succeeded` is
+  // written when a session is minted (after any second factor); `failed`
+  // when the password is wrong or the account cannot sign in. Unknown
+  // addresses write nothing (no target, and the sign-in throttle already
+  // counts them).
+  ev('auth.sign_in.succeeded', 'security', 'user', 'platform', false, SIGN_IN_CONTEXT),
+  ev('auth.sign_in.failed', 'security', 'user', 'platform', false, SIGN_IN_CONTEXT),
   ev('auth.device.trusted', 'security', 'trusted_device', 'platform', false, [
     'surface',
     'trustDays',
@@ -1076,6 +1126,47 @@ export const AUDIT_EVENT_DEFINITIONS = [
     false,
     ['defaultCommissionBasisPoints'],
   ),
+  // B0-ANL-02 — the plan- and organization-level overrides, and the
+  // platform trial policy.
+  ev('commission_config.plan_updated', 'platform', 'plan', 'platform', false, [
+    'planKey',
+    'commissionBasisPoints',
+    'previousCommissionBasisPoints',
+  ]),
+  ev(
+    'commission_config.organization_updated',
+    'platform',
+    'organization',
+    'platform',
+    false,
+    [
+      'commissionMode',
+      'customPercentageBasisPoints',
+      'previousCommissionMode',
+      'previousCustomPercentageBasisPoints',
+    ],
+  ),
+  ev('trial_policy.updated', 'platform', 'trial_policy', 'platform', false, [
+    'enabled',
+    'durationDays',
+    'previousEnabled',
+    'previousDurationDays',
+  ]),
+  // B0-ANL-02 — academy payouts (Atlas-collected course revenue).
+  ev('payout.created', 'platform', 'academy_payout', 'platform', false, [
+    'academyId',
+    'currency',
+    'amountMinorUnits',
+    'periodStart',
+    'periodEnd',
+    'items',
+  ]),
+  ev('payout.marked_paid', 'platform', 'academy_payout', 'platform', false, [
+    'academyId',
+    'currency',
+    'amountMinorUnits',
+    'providerReference',
+  ]),
   ev('add_on.catalog_status_changed', 'platform', 'add_on', 'platform', false, [
     'addOnKey',
     'previousStatus',

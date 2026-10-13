@@ -77,6 +77,9 @@ function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
+/** Who asked for a retry / cancel: the organization owner, or the Platform Owner console. */
+export type ProvisioningActor = 'owner' | 'platform';
+
 @Injectable()
 export class ProvisioningRequestsService {
   constructor(
@@ -447,7 +450,7 @@ export class ProvisioningRequestsService {
     // action `createRequest` reserves for the owner. Checked before the
     // request is even loaded, so a Manager learns nothing about it.
     await this.assertCanCreateAcademy(organizationId, userId);
-    return this.retryAuthorizedRequest(organizationId, userId, requestId);
+    return this.retryAuthorizedRequest(organizationId, userId, requestId, 'owner');
   }
 
   /**
@@ -461,6 +464,7 @@ export class ProvisioningRequestsService {
     organizationId: string,
     userId: string,
     requestId: string,
+    actor: ProvisioningActor,
   ): Promise<ProvisioningRequestResponse> {
     const request = await this.loadOwnedRequestOrThrow(organizationId, requestId);
 
@@ -474,6 +478,7 @@ export class ProvisioningRequestsService {
       if (!retried) {
         throw new ConflictException({ messageKey: 'errors.provisioning.notRetryable' });
       }
+      await this.recordRetry(organizationId, userId, request, actor, 'branding');
       const fresh = await this.loadOwnedRequestOrThrow(organizationId, requestId);
       return this.toResponse(organizationId, userId, fresh);
     }
@@ -484,8 +489,38 @@ export class ProvisioningRequestsService {
       provisioningRequestId: request.id,
       organizationId,
     });
+    await this.recordRetry(organizationId, userId, request, actor, 'resume');
 
     return this.toResponse(organizationId, userId, request);
+  }
+
+  /**
+   * B0-ANL-02 — best-effort: the retry has already been queued (or the
+   * branding step re-run in its own transaction), so a failed audit write
+   * must not report the retry itself as failed.
+   */
+  private async recordRetry(
+    organizationId: string,
+    userId: string,
+    request: ProvisioningRequest,
+    actor: ProvisioningActor,
+    step: 'branding' | 'resume',
+  ): Promise<void> {
+    await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: userId,
+        organizationId,
+        ...(actor === 'platform' ? { role: 'platform_owner' } : {}),
+        action:
+          actor === 'platform'
+            ? 'provisioning_request.retried_by_platform'
+            : 'provisioning_request.retried',
+        targetType: 'provisioning_request',
+        targetId: request.id,
+        targetLabel: request.requestedAcademyName,
+        context: { step },
+      }),
+    );
   }
 
   /**
@@ -561,7 +596,7 @@ export class ProvisioningRequestsService {
   ): Promise<ProvisioningRequestResponse> {
     // Owner only — cancelling the owner's academy creation is the owner's.
     await this.assertCanCreateAcademy(organizationId, userId);
-    return this.cancelAuthorizedRequest(organizationId, userId, requestId);
+    return this.cancelAuthorizedRequest(organizationId, userId, requestId, 'owner');
   }
 
   /** The cancellation itself, for an already-authorized caller — see `retryAuthorizedRequest`. */
@@ -569,6 +604,7 @@ export class ProvisioningRequestsService {
     organizationId: string,
     userId: string,
     requestId: string,
+    actor: ProvisioningActor,
   ): Promise<ProvisioningRequestResponse> {
     await this.loadOwnedRequestOrThrow(organizationId, requestId);
 
@@ -582,9 +618,26 @@ export class ProvisioningRequestsService {
             messageKey: 'errors.provisioning.notCancellable',
           });
         }
-        return this.provisioningRequestsRepository.update(tx, requestId, {
-          status: 'cancelled',
+        const cancelled = await this.provisioningRequestsRepository.update(
+          tx,
+          requestId,
+          { status: 'cancelled' },
+        );
+        // B0-ANL-02 — same transaction as the status change.
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: userId,
+          organizationId,
+          ...(actor === 'platform' ? { role: 'platform_owner' } : {}),
+          action:
+            actor === 'platform'
+              ? 'provisioning_request.cancelled_by_platform'
+              : 'provisioning_request.cancelled',
+          targetType: 'provisioning_request',
+          targetId: requestId,
+          targetLabel: fresh.requestedAcademyName,
+          context: { previousStatus: fresh.status },
         });
+        return cancelled;
       },
     );
 

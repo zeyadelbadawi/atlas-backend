@@ -222,6 +222,10 @@ writer stores.
 | `organization.created` | subscription | organization | yes | — |
 | `organization.onboarding.completed` | subscription | organization | yes | mode, requiredComplete |
 | `provisioning_request.created` | subscription | organization | yes | — |
+| `provisioning_request.retried` | subscription | organization | yes | step |
+| `provisioning_request.cancelled` | subscription | organization | yes | previousStatus |
+| `provisioning_request.retried_by_platform` | subscription | organization | no | step |
+| `provisioning_request.cancelled_by_platform` | subscription | organization | no | previousStatus |
 | `subscription.trial.redeemed` | subscription | organization | yes | planKey, trialEndsAt, durationDays |
 | `subscription.gift.granted` | subscription | organization | yes | planKey, billingCycle, giftedDays, giftedEndsAt, paymentId |
 | `subscription.trial.cancelled` | subscription | organization | yes | reason, hasFeedback, effectiveAt |
@@ -245,6 +249,8 @@ writer stores.
 | `auth.otp.failed` | security | platform | no | surface, challengeId, outboxId, resend, attempts, attemptsRemaining, reason, ipAddress |
 | `auth.otp.locked_out` | security | platform | no | surface, challengeId, outboxId, resend, attempts, attemptsRemaining, reason, ipAddress |
 | `auth.otp.verified` | security | platform | no | surface, challengeId, outboxId, resend, attempts, attemptsRemaining, reason, ipAddress |
+| `auth.sign_in.succeeded` | security | platform | no | method, surface, reason, sessionId, ipAddress |
+| `auth.sign_in.failed` | security | platform | no | method, surface, reason, sessionId, ipAddress |
 | `auth.device.trusted` | security | platform | no | surface, trustDays, label |
 | `auth.device.revoked` | security | platform | no | scope, count, reason |
 | `auth.identity.linked` | security | platform | no | provider, via |
@@ -272,6 +278,11 @@ writer stores.
 | `payment_method.created` | platform | platform | no | key, type, enabled |
 | `payment_method.updated` | platform | platform | no | fields, enabled |
 | `commission_config.global_default_updated` | platform | platform | no | defaultCommissionBasisPoints |
+| `commission_config.plan_updated` | platform | platform | no | planKey, commissionBasisPoints, previousCommissionBasisPoints |
+| `commission_config.organization_updated` | platform | platform | no | commissionMode, customPercentageBasisPoints, previousCommissionMode, previousCustomPercentageBasisPoints |
+| `trial_policy.updated` | platform | platform | no | enabled, durationDays, previousEnabled, previousDurationDays |
+| `payout.created` | platform | platform | no | academyId, currency, amountMinorUnits, periodStart, periodEnd, items |
+| `payout.marked_paid` | platform | platform | no | academyId, currency, amountMinorUnits, providerReference |
 | `add_on.catalog_status_changed` | platform | platform | no | addOnKey, previousStatus, newStatus |
 | `observability.synthetic_alert.armed` | platform | platform | no | minutes |
 | `observability.synthetic_alert.resolved` | platform | platform | no | — |
