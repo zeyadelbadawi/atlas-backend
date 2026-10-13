@@ -17,6 +17,10 @@
 #                        (B0-OPS-01): host-only settings, secret presence
 #                        (set / not set, never a value), academy-ID lists as
 #                        counts, and the Platform Owner authenticator counts
+#   remote.sh b0      -> the B0 release (atlas-backend#46): its five
+#                        migrations, and when all are applied, RLS forced
+#                        and the expected policies on the three new/changed
+#                        tables (also part of `facts`)
 #   remote.sh video   -> Normal-tier hosted video readiness (B0-MED-11 /
 #                        B0-OC-34): tier settings, the protected bucket's
 #                        CORS rules and a browser-style CORS preflight
@@ -103,6 +107,63 @@ config_facts() {
   else
     info "$confirmed of $owners Platform Owner(s) have a confirmed authenticator; enforcement: $effective"
   fi
+}
+
+# --- B0 release (atlas-backend#46): the five migrations and their RLS ------
+#
+# Read-only catalog checks. Before the release is deployed none of the five
+# migrations is recorded: that prints INFO and fails nothing, so a run
+# between now and the deploy stays green. All five applied: each RLS table
+# must be enabled AND forced with its expected policies, and the privacy
+# table must have no DELETE policy. Some but not all applied is a FAIL (a
+# half-applied release).
+B0_MIGRATIONS="20261112000100_subscription_scheduled_plan_change 20261113000100_subscription_price_change_notice 20261114000100_live_provider_events_rls 20261115000100_organization_platform_flags 20261116000100_privacy_requests"
+b0_release_facts() {
+  echo "== B0 release migrations (atlas-backend#46)"
+  local applied=0 total=0 m state
+  for m in $B0_MIGRATIONS; do
+    total=$((total + 1))
+    state=$(sql "select coalesce((select case when finished_at is not null and rolled_back_at is null then 'applied' else 'unfinished' end from _prisma_migrations where migration_name='$m'), 'absent')")
+    case "$state" in
+      applied) applied=$((applied + 1)) ;;
+      absent) ;;
+      unfinished) fail "$m unfinished or rolled back" ;;
+      # An unreadable database is never mistaken for "not deployed yet".
+      *) fail "$m migration state could not be read"; return 0 ;;
+    esac
+  done
+  if [ "$applied" = 0 ]; then
+    info "B0 release not deployed yet: 0 of $total migrations recorded"
+    return 0
+  fi
+  if [ "$applied" != "$total" ]; then
+    fail "B0 release half-applied: $applied of $total migrations recorded"
+    return 0
+  fi
+  pass "all $total B0 release migrations applied"
+  local t rls
+  for t in privacy_requests live_provider_events organization_platform_flags; do
+    rls=$(sql "select relrowsecurity::text || ',' || relforcerowsecurity::text from pg_class where relname='$t' and relnamespace='public'::regnamespace")
+    if [ "$rls" = "true,true" ]; then pass "$t RLS enabled and forced"; else fail "$t RLS state '$rls'"; fi
+  done
+  local expected name table want cmd
+  for expected in privacy_requests_self_select:privacy_requests:SELECT privacy_requests_self_insert:privacy_requests:INSERT \
+    privacy_requests_platform_select:privacy_requests:SELECT privacy_requests_platform_update:privacy_requests:UPDATE \
+    live_provider_events_system_insert:live_provider_events:INSERT live_provider_events_platform_select:live_provider_events:SELECT \
+    live_provider_events_platform_update:live_provider_events:UPDATE \
+    organization_platform_flags_platform_select:organization_platform_flags:SELECT \
+    organization_platform_flags_platform_insert:organization_platform_flags:INSERT \
+    organization_platform_flags_platform_update:organization_platform_flags:UPDATE; do
+    name=${expected%%:*}; table=${expected#*:}; want=${table#*:}; table=${table%%:*}
+    cmd=$(sql "select coalesce((select cmd from pg_policies where schemaname='public' and tablename='$table' and policyname='$name'), 'absent')")
+    if [ "$cmd" = "$want" ]; then pass "policy $name on $table is $want"; else fail "policy $name on $table: $cmd (expected $want)"; fi
+  done
+  local deletes
+  deletes=$(sql "select count(*) from pg_policies where schemaname='public' and tablename in ('privacy_requests','live_provider_events','organization_platform_flags') and cmd in ('DELETE','ALL')")
+  if [ "$deletes" = 0 ]; then pass "no DELETE (or ALL) policy on the three B0 tables"; else fail "$deletes DELETE/ALL policies on the B0 tables"; fi
+  local purpose
+  purpose=$(sql "select count(*) from pg_constraint where conname='account_deletion_challenges_purpose_check'")
+  if [ "$purpose" = 1 ]; then pass "account_deletion_challenges purpose check present"; else fail "account_deletion_challenges purpose check missing"; fi
 }
 
 # --- B0-MED-11 / B0-OC-34: Normal-tier hosted video readiness ---------------
@@ -359,6 +420,8 @@ case "${1:-}" in
 
     config_facts
 
+    b0_release_facts
+
     # Reported, not gating (a subshell keeps its FAIL count out of this
     # mode's exit): the tier stays off until every line passes and the
     # owner turns it on (B0-OC-34). `remote.sh video` alone does gate.
@@ -469,5 +532,9 @@ SQL
     video_facts
     [ "$FAILS" = 0 ]
     ;;
-  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video" >&2; exit 2 ;;
+  b0)
+    b0_release_facts
+    [ "$FAILS" = 0 ]
+    ;;
+  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video|b0" >&2; exit 2 ;;
 esac
