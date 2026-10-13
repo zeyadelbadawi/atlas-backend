@@ -161,6 +161,23 @@ owners_facts() {
     echo "INFO  references: owner#|table.column|on-delete(r=restrict a=no-action c=cascade n=set-null)|rows"
     printf '%s\n' "$refs" | sed 's/^ref|/INFO  ref|/'
   fi
+  # Organizations a Platform Owner owns: deleting that account archives the
+  # organization's academies (AccountDeletionService), so show what would go
+  # offline. Ids are 8-character prefixes; no name is printed.
+  local orgs
+  orgs=$(sql "BEGIN READ ONLY;
+    WITH po AS (SELECT id, row_number() OVER (ORDER BY created_at, id) n FROM users WHERE is_platform_owner)
+    SELECT 'org', po.n, left(o.id::text, 8), o.status, to_char(o.created_at,'YYYY-MM-DD'),
+      (SELECT count(*) FROM academies a WHERE a.organization_id = o.id),
+      (SELECT count(*) FROM academies a WHERE a.organization_id = o.id AND a.archived_at IS NULL AND a.status::text NOT IN ('archived','draft')),
+      (SELECT count(*) FROM organization_memberships m WHERE m.organization_id = o.id),
+      coalesce((SELECT s.status::text FROM tenant_subscriptions s WHERE s.organization_id = o.id), 'none')
+    FROM po JOIN organizations o ON o.owner_user_id = po.id ORDER BY 2, 3;
+    COMMIT;" 2>/dev/null | grep '^org|')
+  if [ -n "$orgs" ]; then
+    echo "INFO  owned organizations: owner#|org-id8|status|created|academies|academies-not-draft-or-archived|members|subscription"
+    printf '%s\n' "$orgs" | sed 's/^org|/INFO  org|/'
+  fi
 }
 
 # --- B0 release (atlas-backend#46): the five migrations and their RLS ------
