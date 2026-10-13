@@ -213,6 +213,10 @@ mark_applied() {
 echo "# 1. first deploy, one migration pending (--with-migrations)"
 check "deploy succeeds" run_deploy "$W/log1" --with-migrations
 check "the pending migration was applied after the backup" log_has "$W/log1" "FAKE-PRISMA prisma migrate deploy (backend v1)"
+# B0-OPS-06: the backup status directory exists before the first compose
+# call (this deploy's identity-key `compose run` would otherwise create it
+# as root), so backup.sh, running as the deploy user, can write into it.
+check "backups/status exists and is owned by the deploy user" test -d "$W/backups/status" -a -O "$W/backups/status"
 check "the backup ran first" log_has "$W/log1" "STUB-BACKUP verified"
 mark_applied 20260201000000_m2
 check ".last-good BACKEND_IMAGE is the registry digest of the running backend" \

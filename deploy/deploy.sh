@@ -86,6 +86,15 @@ if ! flock -w 900 9; then
   exit 1
 fi
 
+# --- B0-OPS-06: the backup status directory ---------------------------------
+# The backend mounts backups/status read-only. It must exist, owned by the
+# deploy user, BEFORE the first compose call of ANY mode: `docker compose run`
+# (the identity-key derivation, the image listing) and the rollback path
+# create a missing bind-mount source as root, and backup.sh could then never
+# write the status file. Creating an empty directory is the only change, and
+# a no-op once it exists.
+mkdir -p "$ATLAS_DIR/backups/status"
+
 # --- P50: propagate CI-managed environment into /opt/atlas/.env ---
 #
 # The four Zoom production variables (client id/secret, redirect URI,
@@ -738,11 +747,6 @@ fi
 echo "==> Pulling the application images (postgres/redis are never pulled here)"
 resolve_app_services
 docker compose pull $APP_SERVICES
-
-# B0-OPS-06 — the backend mounts backups/status read-only. Created here,
-# as the deploy user, so Docker never creates it as root (which would stop
-# backup.sh from writing the status file).
-mkdir -p "$ATLAS_DIR/backups/status"
 
 echo "==> Starting postgres + redis first (migrations need a live
     database — --no-deps alone won't start them on a fresh stack)"
