@@ -210,16 +210,22 @@ describe('Customer Requests (e2e)', () => {
     });
 
     // The real pipeline (outbox → worker → provider) delivers it to the inbox.
+    // The worker records `dispatched` just after the provider call returns, so
+    // wait for both: reading the row the moment the mail appears races it.
     let delivered: { to: string; subject: string } | undefined;
-    for (let attempt = 0; attempt < 60 && !delivered; attempt += 1) {
+    let state: string | undefined;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
       delivered = sent.find((mail) => mail.to === 'domain-team@example.test');
-      if (!delivered) await new Promise((resolve) => setTimeout(resolve, 250));
+      state = (
+        await admin.communicationOutbox.findUniqueOrThrow({
+          where: { id: routed[0].id },
+        })
+      ).state;
+      if (delivered && state === 'dispatched') break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
     expect(delivered?.subject).toContain('Use our own domain');
-    const row = await admin.communicationOutbox.findUniqueOrThrow({
-      where: { id: routed[0].id },
-    });
-    expect(row.state).toBe('dispatched');
+    expect(state).toBe('dispatched');
     // Delivered once — a manual re-dispatch of the same row sends nothing.
     expect(await dispatcher.dispatch(routed[0].id, { made: 1, max: 6 })).toBe('skipped');
     expect(sent.filter((mail) => mail.to === 'domain-team@example.test')).toHaveLength(1);

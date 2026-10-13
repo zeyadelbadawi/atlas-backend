@@ -45,7 +45,7 @@ permissions:
 
 jobs:
   backfill:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Check the inputs
@@ -64,7 +64,7 @@ jobs:
               echo "Mode: apply (confirmed)" ;;
             *) echo "::error::unknown mode '$MODE'" >&2; exit 1 ;;
           esac
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Prepare the deploy identity
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}

@@ -31,14 +31,14 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       BASE_URL: https://atlass.dpdns.org
       OUT: ${{ github.workspace }}/release-verify-out
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Install Playwright (Chromium)
@@ -94,7 +94,7 @@ jobs:
           exit $rc
       - name: Upload screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-verify
           path: ${{ env.OUT }}

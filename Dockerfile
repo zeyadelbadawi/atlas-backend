@@ -8,7 +8,7 @@
 # supplied at container-start via environment variables (docker-compose
 # `env_file`).
 
-FROM node:20-alpine AS build
+FROM mirror.gcr.io/library/node:20-alpine AS build
 WORKDIR /app
 # Prisma's engine-detection on Alpine needs a real openssl present to pick
 # the right engine binary — without it, `prisma generate` falls back to a
@@ -24,7 +24,7 @@ COPY . .
 RUN npm run prisma:generate
 RUN npm run build
 
-FROM node:20-alpine AS runtime
+FROM mirror.gcr.io/library/node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apk add --no-cache openssl
