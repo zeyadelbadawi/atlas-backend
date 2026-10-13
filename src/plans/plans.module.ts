@@ -44,6 +44,7 @@ import { SubscriptionAccessService } from './services/subscription-access.servic
 import { PublicHostnameResolutionRepository } from '../public-website/repositories/public-hostname-resolution.repository';
 import { PublicWebsiteCacheService } from '../public-website/services/public-website-cache.service';
 import { PLANS_CLOCK, SystemClock } from './utils/clock';
+import { UsageLimitWarningService } from './services/usage-limit-warning.service';
 import { TenantUsageRecomputeService } from './services/tenant-usage-recompute.service';
 import { SubscriptionExpiryService } from './services/subscription-expiry.service';
 import { SubscriptionSweepService } from './services/subscription-sweep.service';
@@ -103,6 +104,8 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     OrganizationsController,
   ],
   providers: [
+    // B0-BIL-13 — plan limit warnings after each usage recompute.
+    UsageLimitWarningService,
     // P64 Phase 2 (D10) — plan family → entitled video security tier.
     // Lives here because it reads the SUBSCRIPTION's plan, which is this
     // module's own data; `MediaModule` already depends on it one-way.

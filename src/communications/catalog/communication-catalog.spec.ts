@@ -363,6 +363,15 @@ const EXPECTED_DEDUPE: Record<
     values: { name: 'Visitor', topic: 'sales' },
     expected: `platform_contact_received:${ENTITY_ID}`,
   },
+  // B0-BIL-13 — plan limit warnings, once per limit and billing period.
+  'billing.limit.approaching': {
+    values: { limitKey: 'students', periodKey: '2026-10-01' },
+    expected: `limit_approaching:${ENTITY_ID}:students:2026-10-01`,
+  },
+  'billing.limit.reached': {
+    values: { limitKey: 'courses', periodKey: '2026-10-01' },
+    expected: `limit_reached:${ENTITY_ID}:courses:2026-10-01`,
+  },
   // B0-SUP-01 — Platform Owner work alerts.
   'platform.subscription_payment.submitted': {
     values: { proofId: 'proof-1' },
@@ -569,14 +578,46 @@ function context(values: Record<string, unknown> = {}): CommunicationRuleContext
   return { entity: { type: 'fixture', id: ENTITY_ID }, values };
 }
 
+describe('B0-BIL-13 limit warning copy', () => {
+  it.each(['billing.limit.approaching', 'billing.limit.reached'] as const)(
+    '%s names the limit that is running out, and falls back to generic copy',
+    (key) => {
+      const entry = COMMUNICATION_CATALOG[key];
+      const event =
+        key === 'billing.limit.reached'
+          ? 'billingLimitReached'
+          : 'billingLimitApproaching';
+      for (const [limitKey, name] of [
+        ['students', 'Students'],
+        ['courses', 'Courses'],
+        ['academies', 'Academies'],
+        ['generalStorage', 'Storage'],
+      ]) {
+        expect(catalogCopy(entry, context({ limitKey })).titleKey).toBe(
+          `notifications:events.${event}${name}.title`,
+        );
+      }
+      expect(catalogCopy(entry, context({ limitKey: 'other' })).titleKey).toBe(
+        `notifications:events.${event}.title`,
+      );
+    },
+  );
+});
+
 describe('the learner-exception copy variant', () => {
   const entry = COMMUNICATION_CATALOG['assessment.exception.granted'];
 
-  it('is the only entry that declares one, and declares exactly one', () => {
+  it('declares exactly one; only it and the B0-BIL-13 limit warnings declare any', () => {
     const withVariants = COMMUNICATION_EVENT_KEYS.filter(
       (key) => (COMMUNICATION_CATALOG[key].variants ?? []).length > 0,
     );
-    expect(withVariants).toEqual(['assessment.exception.granted']);
+    expect([...withVariants].sort()).toEqual(
+      [
+        'assessment.exception.granted',
+        'billing.limit.approaching',
+        'billing.limit.reached',
+      ].sort(),
+    );
     expect(entry.variants).toHaveLength(1);
   });
 

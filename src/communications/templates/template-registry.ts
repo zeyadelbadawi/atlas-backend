@@ -103,6 +103,9 @@ import { template as retentionVideoDeleted } from './keys/retention.video.delete
 import { template as retentionVideoDeletionFailed } from './keys/retention.video.deletion_failed';
 // TASK 7 — Atlas marketing contact form.
 import { template as platformContactSubmissionReceived } from './keys/platform.contact_submission.received';
+// B0-BIL-13 — plan limit warnings.
+import { template as billingLimitApproaching } from './keys/billing.limit.approaching';
+import { template as billingLimitReached } from './keys/billing.limit.reached';
 // B0-SUP-01 — Platform Owner work alerts.
 import { template as platformSubscriptionPaymentSubmitted } from './keys/platform.subscription_payment.submitted';
 import { template as platformSupportCaseCreated } from './keys/platform.support_case.created';
@@ -183,6 +186,8 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'retention.video.deleted': retentionVideoDeleted,
   'retention.video.deletion_failed': retentionVideoDeletionFailed,
   'platform.contact_submission.received': platformContactSubmissionReceived,
+  'billing.limit.approaching': billingLimitApproaching,
+  'billing.limit.reached': billingLimitReached,
   'platform.subscription_payment.submitted': platformSubscriptionPaymentSubmitted,
   'platform.support_case.created': platformSupportCaseCreated,
   'platform.support_case.customer_replied': platformSupportCaseCustomerReplied,

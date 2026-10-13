@@ -192,6 +192,28 @@ const FORGOT_PASSWORD_PATH = '/auth/forgot-password';
 /** `PublicWebsiteRouter`'s `/forgot-password` — the academy host's own page. */
 const ACADEMY_FORGOT_PASSWORD_PATH = '/forgot-password';
 const TENANT_SUBSCRIPTION_PATH = '/dashboard/tenant/subscription';
+/** B0-BIL-13 — where an owner compares plans and upgrades. */
+const PLANS_PATH = '/dashboard/plans';
+
+/**
+ * B0-BIL-13 — one feed copy per limit, so the notification names what is
+ * running out (the feed cannot translate a raw `limitKey` value).
+ */
+function limitVariants(
+  event: 'billingLimitApproaching' | 'billingLimitReached',
+): readonly CommunicationCopyVariant[] {
+  const suffix: Record<string, string> = {
+    students: 'Students',
+    courses: 'Courses',
+    academies: 'Academies',
+    generalStorage: 'Storage',
+  };
+  return Object.entries(suffix).map(([limitKey, name]) => ({
+    when: ({ values }) => values.limitKey === limitKey,
+    titleKey: `notifications:events.${event}${name}.title`,
+    messageKey: `notifications:events.${event}${name}.message`,
+  }));
+}
 
 /**
  * P64 C6 — the deep link every retention warning points at (plan §31:
@@ -1708,6 +1730,45 @@ const CATALOG = {
     actionUrl: () => TENANT_SUBSCRIPTION_PATH,
   },
   // S9 — the cancellation actually took effect.
+  // B0-BIL-13 — a plan limit the owner is close to or at
+  // (`UsageLimitWarningService`, after each usage recompute). Once per
+  // limit, threshold and billing period; the link opens the plans page.
+  'billing.limit.approaching': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `limit_approaching:${entity.id}:${str(values, 'limitKey')}:${str(values, 'periodKey')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'billing.limit.approaching',
+    titleKey: 'notifications:events.billingLimitApproaching.title',
+    messageKey: 'notifications:events.billingLimitApproaching.message',
+    variants: limitVariants('billingLimitApproaching'),
+    actionUrl: () => PLANS_PATH,
+  },
+  'billing.limit.reached': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `limit_reached:${entity.id}:${str(values, 'limitKey')}:${str(values, 'periodKey')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'billing.limit.reached',
+    titleKey: 'notifications:events.billingLimitReached.title',
+    messageKey: 'notifications:events.billingLimitReached.message',
+    variants: limitVariants('billingLimitReached'),
+    actionUrl: () => PLANS_PATH,
+  },
   'lifecycle.subscription.cancelled': {
     category: 'lifecycle',
     audience: 'staff',
