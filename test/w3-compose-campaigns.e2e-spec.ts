@@ -835,6 +835,96 @@ describe('W3-compose — campaigns (e2e)', () => {
   // -------------------------------------------------------------- platform
 
   describe('platform campaigns', () => {
+    it('releases after an in-app-only campaign and with a first recipient without email (no NULL in a bound array)', async () => {
+      const audience = { type: 'organization', organizationId };
+      const sendAndRun = async (
+        subject: string,
+        channels = { email: true, inApp: true },
+      ): Promise<string> => {
+        const preview = await request(server())
+          .post('/platform-communications/campaigns/preview')
+          .set('Authorization', `Bearer ${platformOwner.token}`)
+          .send({ audience, channels })
+          .expect(200);
+        const res = await request(server())
+          .post('/platform-communications/campaigns')
+          .set('Authorization', `Bearer ${platformOwner.token}`)
+          .send({
+            idempotencyKey: randomUUID(),
+            subject,
+            bodyHtml: '<p>Hello.</p>',
+            audience,
+            channels,
+            expectedRecipientCount: preview.body.recipientCount,
+          })
+          .expect(202);
+        const campaignId: string = res.body.campaignId;
+        const deadline = Date.now() + 90_000;
+        let outcome = '';
+        while (Date.now() < deadline) {
+          outcome = await worker.run(campaignId);
+          if (outcome === 'completed') break;
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        expect(outcome).toBe('completed');
+        // No step failed along the way (a failed step is retried, so only
+        // the recorded error shows it).
+        const [{ last_error }] = await admin.$queryRaw<{ last_error: string | null }[]>`
+          SELECT "last_error" FROM "communication_campaigns" WHERE "id" = ${campaignId}`;
+        expect(last_error).toBeNull();
+        return campaignId;
+      };
+      const recipientsOf = (campaignId: string) =>
+        admin.$queryRaw<
+          {
+            user_id: string;
+            state: number;
+            email_eligible: boolean;
+            outbox_id: string | null;
+          }[]
+        >`SELECT "user_id", "state", "email_eligible", "outbox_id" FROM "campaign_recipients"
+           WHERE "campaign_id" = ${campaignId} ORDER BY "user_id"`;
+
+      // Prisma reuses a prepared statement per connection: once the release
+      // ran with an all-NULL outbox column (an in-app-only campaign), the
+      // next email campaign on that connection failed (22P03 / 08P01).
+      await sendAndRun('In-app only', { email: false, inApp: true });
+
+      // The worker releases recipients in user-id order. Suppress the first
+      // one's email, as a hard bounce would, so the first element of the
+      // batch has no outbox row.
+      const [first] = await recipientsOf(await sendAndRun('Audience order'));
+      const firstUser = await admin.user.findUniqueOrThrow({
+        where: { id: first.user_id },
+      });
+      const emailHash = hashEmail(firstUser.email);
+      const existing = await admin.communicationSuppression.findUnique({
+        where: { emailHash },
+      });
+      const added = existing
+        ? null
+        : await admin.communicationSuppression.create({
+            data: { emailHash, reason: 'hard_bounce', source: 'test' },
+          });
+      try {
+        const campaignId = await sendAndRun('First recipient without email');
+        const recipients = await recipientsOf(campaignId);
+        expect(recipients[0].user_id).toBe(first.user_id);
+        expect(recipients[0].email_eligible).toBe(false);
+        expect(recipients.every((row) => row.state === 1)).toBe(true);
+        // An outbox row for exactly the email-eligible recipients.
+        expect(
+          recipients.every((row) => (row.outbox_id !== null) === row.email_eligible),
+        ).toBe(true);
+        const rows = await admin.communicationOutbox.findMany({ where: { campaignId } });
+        expect(rows.length).toBe(recipients.filter((row) => row.email_eligible).length);
+        expect(rows.some((row) => row.recipientUserId === first.user_id)).toBe(false);
+      } finally {
+        if (added)
+          await admin.communicationSuppression.delete({ where: { id: added.id } });
+      }
+    });
+
     it('previews, sends (202) and releases org-owner email without touching any quota', async () => {
       const audience = { type: 'organization', organizationId };
       const preview = await request(server())
