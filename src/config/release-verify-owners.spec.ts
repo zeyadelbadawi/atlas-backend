@@ -88,7 +88,10 @@ describe('Release verify — Platform Owner inventory', () => {
       src.indexOf('owners_facts() {'),
       src.indexOf('\n}\n', src.indexOf('owners_facts() {')),
     );
-    expect(body.match(/BEGIN READ ONLY;/g)).toHaveLength(2);
+    const queries = body.match(/\$\(sql "/g) ?? [];
+    expect(queries.length).toBeGreaterThan(0);
+    // Every query in the section opens a READ ONLY transaction.
+    expect(body.match(/\$\(sql "BEGIN READ ONLY;/g)).toHaveLength(queries.length);
     for (const secret of [
       'encrypted_secret',
       'code_hash',

@@ -120,8 +120,12 @@ config_facts() {
 # the id, a MASKED email (first two characters of the local part, its
 # length, the domain), status, created / last sign-in dates, which sign-in
 # methods exist (password row yes/no, Google link yes/no), whether TOTP is
-# confirmed, the NUMBER of unused recovery codes and live sessions. Never a
-# secret, a hash, a code, a full email or a name.
+# confirmed, the NUMBER of unused recovery codes and live sessions, the day
+# the authenticator was confirmed, the 30-second window of the last
+# authenticator code the server accepted (`last_time_step` x 30 — a time, not
+# a code; recovery-code sign-ins don't move it), and the full account id the
+# owner needs to name accounts exactly. Never a secret, a hash, a code, a
+# full email or a name.
 # Then every foreign key that points at `users`, swept generically from the
 # catalog (so nothing is missed by a hand-made list): per account, the
 # tables/columns that still reference it, with the row count and the FK's
@@ -139,12 +143,15 @@ owners_facts() {
       CASE WHEN t.confirmed_at IS NOT NULL THEN 'totp-confirmed' WHEN t.user_id IS NOT NULL THEN 'totp-pending' ELSE 'no-totp' END,
       (SELECT count(*) FROM two_factor_recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL),
       (SELECT count(*) FROM refresh_tokens r WHERE r.user_id = u.id AND r.revoked_at IS NULL AND r.expires_at > now()),
-      CASE WHEN u.email_verified_at IS NULL THEN 'email-unverified' ELSE 'email-verified' END
+      CASE WHEN u.email_verified_at IS NULL THEN 'email-unverified' ELSE 'email-verified' END,
+      coalesce(to_char(t.confirmed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), '-'),
+      coalesce(to_char(to_timestamp(t.last_time_step::bigint * 30) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI\"Z\"'), 'never'),
+      u.id
     FROM users u LEFT JOIN user_two_factor t ON t.user_id = u.id
     WHERE u.is_platform_owner ORDER BY 2;
     COMMIT;" 2>/dev/null | grep '^po|')
   if [ -z "$rows" ]; then fail "Platform Owner inventory could not be read"; return; fi
-  echo "INFO  columns: #|id8|email(masked)|status|state|created|last-sign-in|password|google|totp|recovery-codes-unused|live-sessions|email"
+  echo "INFO  columns: #|id8|email(masked)|status|state|created|last-sign-in|password|google|totp|recovery-codes-unused|live-sessions|email|totp-confirmed-on|last-authenticator-code-accepted(30s window, UTC)|full-id"
   printf '%s\n' "$rows" | sed 's/^po|/INFO  owner|/'
   refs=$(sql "BEGIN READ ONLY;
     WITH po AS (SELECT id, row_number() OVER (ORDER BY created_at, id) n FROM users WHERE is_platform_owner),
