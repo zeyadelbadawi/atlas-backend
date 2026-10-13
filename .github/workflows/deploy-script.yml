@@ -21,10 +21,10 @@ permissions:
 
 jobs:
   deploy-script:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: deploy.sh — syntax
         run: bash -n deploy/deploy.sh && bash -n deploy/test/deploy-script.test.sh
