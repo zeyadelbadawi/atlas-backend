@@ -89,6 +89,7 @@ import { PaymentProofStorageService } from './storage/payment-proof-storage.serv
 import { CredentialEncryptionService } from './utils/credential-encryption.util';
 import { PaymentProviderRegistry } from './providers/payment-provider.registry';
 import { ManualTransferProvider } from './providers/manual-transfer.provider';
+import { SubscriptionProofBacklogMetrics } from './metrics/subscription-proof-backlog.metrics';
 import { PaymentWebhookProducer } from './queue/payment-webhook.producer';
 import { PaymentWebhookProcessor } from './queue/payment-webhook.processor';
 import { PAYMENT_WEBHOOK_QUEUE } from './queue/payment-webhook.types';
@@ -129,6 +130,8 @@ import { PublicWebsiteCacheService } from '../public-website/services/public-web
     OrganizationConnectedAccountService,
     CommissionService,
     AtlasSubscriptionPaymentProviderService,
+    // B0-OPS-10: subscription proof backlog gauges (read at scrape time).
+    SubscriptionProofBacklogMetrics,
     PaymentMethodsRepository,
     AcademyPaymentMethodsRepository,
     CheckoutsRepository,

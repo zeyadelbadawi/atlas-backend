@@ -33,6 +33,19 @@ groups:
           current_value: '{{ $value | humanize }}'
           summary: "p95 proof-to-approval latency above 48h"
           description: "Learners are waiting more than two days for manual payment review (p95 = {{ $value | humanizeDuration }}). This combines academy_manual reviews (each organization owner) and platform reviews (Platform Owner queue)."
+      # B0-OPS-10: a subscription payment proof nobody has reviewed for a
+      # day. Read at scrape time from the Platform Owner review queue; the
+      # per-proof in-app/email notification (B0-SUP-01) is the first nudge,
+      # this is the one that does not depend on someone reading it.
+      - alert: AtlasSubscriptionProofWaiting
+        expr: max(atlas_subscription_proof_oldest_pending_seconds) > 86400
+        for: 15m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          threshold: "oldest pending subscription proof > 24h (86400 s), for 15m"
+          current_value: '{{ $value | humanizeDuration }}'
+          summary: "A subscription payment proof has waited more than 24h for review"
+          description: "The oldest subscription payment proof has waited {{ $value | humanizeDuration }} (atlas_subscription_proofs_pending has the total). These are Atlas subscription payments, reviewed only by a Platform Owner: Dashboard → Platform → Payments, filter Review status = Pending."
       - alert: AtlasCheckoutRefundSpike
         expr: |
           sum(increase(atlas_checkout_orders_total{state="refunded"}[24h])) > 5

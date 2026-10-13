@@ -119,7 +119,7 @@ All four live under **Platform → Observability** in the sidebar.
 | `atlas-platform` | AtlasBackendDown, AtlasApiHighErrorRate, AtlasApiHighLatency, AtlasDependencyDown, AtlasBackupStale, AtlasBackupStatusMissing, AtlasQueueBacklog, AtlasAlertDeliveryFailing, AtlasSyntheticAlert |
 | `atlas-communications` | AtlasEmailQuotaHigh, AtlasEmailQuotaCritical, AtlasEmailBounceRate, AtlasEmailDispatcherStalled, AtlasEmailDeadLetters, AtlasAuthOtpFailureSurge, AtlasEmailWebhookSignatureFailures |
 | `atlas-learning` | AtlasGrantRefusalSurge, AtlasVideoWebhookSignatureFailures, AtlasQuizIntegrityEventSurge, AtlasCertificateRenderFailures |
-| `atlas-commerce` | AtlasCheckoutApprovalBacklog, AtlasCheckoutApprovalSlow, AtlasCheckoutRefundSpike |
+| `atlas-commerce` | AtlasCheckoutApprovalBacklog, AtlasCheckoutApprovalSlow, AtlasSubscriptionProofWaiting, AtlasCheckoutRefundSpike |
 | `atlas-catalog` | AtlasPublicCatalogSlow |
 | `atlas-retention` | AtlasRetentionSweepFailing, AtlasRetentionSweepSilent |
 
@@ -353,6 +353,7 @@ Click **Resolve** (or let the TTL expire). Then check:
 | Backend down | `AtlasBackendDown` (critical) fires in Prometheus; Alertmanager still notifies Slack. |
 | Redis down | Health: Redis `down`; `AtlasDependencyDown`; queue metrics absent. |
 | Backup failing or not running | `AtlasBackupStale` (critical) after 26 h without a successful backup; `AtlasBackupStatusMissing` (warning) if the backend cannot read `backups/status/last-success` for 26 h. Check `journalctl -u atlas-backup` and the R2 backup bucket. |
+| A subscription payment proof is not reviewed | `AtlasSubscriptionProofWaiting` (warning) when the oldest pending subscription proof has waited more than 24 h (`atlas_subscription_proof_oldest_pending_seconds`, read at scrape time from the Platform Owner review queue; `atlas_subscription_proofs_pending` has the count). Review it in Dashboard → Platform → Payments (Review status = Pending). The age runs from the latest proof, so a resubmission restarts it. No sample at all means the backend could not read the queue (no Platform Owner account, or a database error in the backend log). |
 
 ## 22. Production operational procedures
 

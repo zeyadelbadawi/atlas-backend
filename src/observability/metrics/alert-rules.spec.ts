@@ -33,6 +33,8 @@ const SERVICE_PATHS = [
   resolve(__dirname, '../platform/observability.service.ts'),
   // B0-OPS-06 backup freshness.
   resolve(__dirname, '../platform/backup-status.metrics.ts'),
+  // B0-OPS-10 subscription proof backlog.
+  resolve(__dirname, '../../billing/metrics/subscription-proof-backlog.metrics.ts'),
   // Launch Stabilization A1/A3 authentication security series.
   resolve(__dirname, 'auth-security-metrics.ts'),
   resolve(__dirname, 'google-auth-metrics.ts'),
