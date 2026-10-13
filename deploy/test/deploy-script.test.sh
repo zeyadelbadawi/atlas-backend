@@ -551,8 +551,11 @@ check "the record names the pinned frontend" eq "$(record_value CADDY_IMAGE)" "$
 check "the backend was not touched by the pin" eq "$(cid backend)" "$BACKEND_CID"
 check "the healthy pin pruned the unrecorded image" \
   bash -c "! docker image inspect '$ORPHAN_ID' >/dev/null 2>&1"
+# The containerd image store keeps an untagged image addressable only by
+# its ID (= the manifest digest), not by repository@digest; deploy.sh's
+# local_image_ref handles both stores, and so does this check.
 check "every record's images survive the prune" \
-  bash -c "for f in '$W/.last-good' '$W/.last-good.1' '$W/.last-good.2' '$W/.last-good.3'; do [ -f \"\$f\" ] || continue; for d in \$(sed -n 's/^\(BACKEND\|CADDY\)_IMAGE=//p' \"\$f\"); do docker image inspect \"\$d\" >/dev/null 2>&1 || exit 1; done; done"
+  bash -c "for f in '$W/.last-good' '$W/.last-good.1' '$W/.last-good.2' '$W/.last-good.3'; do [ -f \"\$f\" ] || continue; for d in \$(sed -n 's/^\(BACKEND\|CADDY\)_IMAGE=//p' \"\$f\"); do docker image inspect \"\$d\" >/dev/null 2>&1 || docker image inspect \"sha256:\${d##*@sha256:}\" >/dev/null 2>&1 || exit 1; done; done"
 
 echo
 echo "# $PASS passed, $FAIL failed"

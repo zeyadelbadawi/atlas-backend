@@ -342,6 +342,27 @@ is_pinned_digest() {
   printf '%s\n' "$1" | grep -Eq '^[^@[:space:]]+@sha256:[0-9a-f]{64}$'
 }
 
+# A reference this host can use for a recorded `<repository>@sha256:<d>`,
+# or failure when the image is not here. Docker's containerd image store
+# drops the `repository@digest` name once the image's tag moves to a newer
+# image, but keeps the image itself, whose ID there IS the manifest digest,
+# so it stays addressable as `sha256:<d>`. The classic store keeps the
+# name. Rollback, check mode, re-tagging and the prune all go through this,
+# so both stores behave the same.
+local_image_ref() {
+  local id
+  if docker image inspect "$1" >/dev/null 2>&1; then
+    printf '%s\n' "$1"
+    return 0
+  fi
+  case "$1" in
+    *@sha256:*) id="sha256:${1##*@sha256:}" ;;
+    *) return 1 ;;
+  esac
+  docker image inspect "$id" >/dev/null 2>&1 || return 1
+  printf '%s\n' "$id"
+}
+
 # Prints the immutable `<repository>@sha256:<digest>` of the image the
 # service's container is running, or fails (prints nothing).
 running_image_digest() {
@@ -429,12 +450,15 @@ finish_with_record() {
 prune_app_images() {
   local keep="" id refs ref repo removed=0 failed=0 digest record
   for id in $(docker ps -aq 2>/dev/null); do
-    keep="$keep $(docker inspect --format '{{.Image}}' "$id" 2>/dev/null)"
+    keep="$keep $(docker inspect --format '{{.Image}}' "$id" 2>/dev/null || true)"
   done
   for record in "$ATLAS_DIR/.last-good" "$ATLAS_DIR/.last-good.1" "$ATLAS_DIR/.last-good.2" "$ATLAS_DIR/.last-good.3"; do
     [ -f "$record" ] || continue
     for digest in $(sed -n 's/^\(BACKEND\|CADDY\|SSR\)_IMAGE=//p' "$record"); do
-      keep="$keep $(docker image inspect --format '{{.Id}}' "$digest" 2>/dev/null)"
+      # A record may name an image this host no longer has: skip it (under
+      # `set -e` a failed lookup must never abort the deploy after its record).
+      ref=$(local_image_ref "$digest") || continue
+      keep="$keep $(docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true)"
     done
   done
   for id in $(docker image ls -aq --no-trunc 2>/dev/null | sort -u); do
@@ -721,14 +745,15 @@ last_good_value() {
 # Re-points a service's compose image reference at a recorded digest, and
 # proves the reference now resolves to exactly that image.
 pin_service_image() {
-  local service=$1 digest=$2 ref
+  local service=$1 digest=$2 ref source
   ref=$(service_image_ref "$service")
   if [ -z "$ref" ]; then
     echo "==> Refusing to roll back: no image reference for '$service' in the compose file." >&2
     exit 1
   fi
-  docker tag "$digest" "$ref"
-  if [ "$(docker image inspect --format '{{.Id}}' "$ref")" != "$(docker image inspect --format '{{.Id}}' "$digest")" ]; then
+  source=$(local_image_ref "$digest") || source=$digest
+  docker tag "$source" "$ref"
+  if [ "$(docker image inspect --format '{{.Id}}' "$ref")" != "$(docker image inspect --format '{{.Id}}' "$source")" ]; then
     echo "==> Refusing to continue: $ref does not resolve to $digest after re-tagging." >&2
     exit 1
   fi
@@ -792,7 +817,7 @@ if [ "$MODE" = "check-rollback-record" ]; then
   check_failed=0
   for service in $rollback_services; do
     digest=$(recorded_digest "$service")
-    if docker image inspect "$digest" >/dev/null 2>&1; then
+    if local_image_ref "$digest" >/dev/null; then
       where="present on this host"
     elif docker manifest inspect "$digest" >/dev/null 2>&1; then
       where="not on this host, readable in the registry"
@@ -826,7 +851,7 @@ if [ "$MODE" = "rollback" ]; then
   rollback_digests="$BACKEND_IMAGE $CADDY_IMAGE"
   [ "$SSR_ENABLED" = "1" ] && rollback_digests="$rollback_digests $SSR_IMAGE"
   for digest in $rollback_digests; do
-    if docker image inspect "$digest" >/dev/null 2>&1; then
+    if local_image_ref "$digest" >/dev/null; then
       echo "    $digest: present on this host"
     else
       docker pull -q "$digest" >/dev/null
