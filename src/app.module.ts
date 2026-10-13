@@ -66,6 +66,7 @@ import { PlatformModule } from './platform/platform.module';
 import { PlatformContactModule } from './platform-contact/platform-contact.module';
 import { ForensicWatermarkModule } from './forensic-watermark/forensic-watermark.module';
 import { CustomerRequestsModule } from './customer-requests/customer-requests.module';
+import { PrivacyRequestsModule } from './privacy-requests/privacy-requests.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { NotificationEventsModule } from './notification-events/notification-events.module';
 import { CommunicationsModule } from './communications/communications.module';
@@ -209,6 +210,8 @@ import { SecurityMonitoringModule } from './security-events/security-monitoring.
     // Mandatory forensic video watermark (docs/FORENSIC_WATERMARK.md).
     ForensicWatermarkModule,
     CustomerRequestsModule,
+    // B0-SEC-13 — request-based data deletion and data export.
+    PrivacyRequestsModule,
     AnalyticsModule,
     NotificationsModule,
     SearchModule,

@@ -24,6 +24,12 @@ import { template as accountAcademyJoined } from './keys/account.academy.joined'
 import { template as authEmailVerification } from './keys/auth.email.verification';
 import { template as authEmailOtp } from './keys/auth.email.otp';
 import { template as authAccountDeletionCode } from './keys/auth.account.deletion_code';
+import { template as authAccountPrivacyRequestCode } from './keys/auth.account.privacy_request_code';
+import { template as privacyRequestReceived } from './keys/privacy_request.received';
+import { template as privacyRequestExportReady } from './keys/privacy_request.export_ready';
+import { template as privacyRequestRejected } from './keys/privacy_request.rejected';
+import { template as privacyRequestDeletionCompleted } from './keys/privacy_request.deletion_completed';
+import { template as platformPrivacyRequestCreated } from './keys/platform.privacy_request.created';
 import { template as authAccountSignupAttempt } from './keys/auth.account.signup_attempt';
 import { template as authPasswordReset } from './keys/auth.password.reset';
 import { template as authPasswordResetConfirmed } from './keys/auth.password.reset_confirmed';
@@ -138,6 +144,11 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'auth.email.verification': authEmailVerification,
   'auth.email.otp': authEmailOtp,
   'auth.account.deletion_code': authAccountDeletionCode,
+  'auth.account.privacy_request_code': authAccountPrivacyRequestCode,
+  'privacy_request.received': privacyRequestReceived,
+  'privacy_request.export_ready': privacyRequestExportReady,
+  'privacy_request.rejected': privacyRequestRejected,
+  'privacy_request.deletion_completed': privacyRequestDeletionCompleted,
   'auth.account.signup_attempt': authAccountSignupAttempt,
   'auth.password.reset': authPasswordReset,
   'auth.password.reset_confirmed': authPasswordResetConfirmed,
@@ -198,6 +209,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'platform.organization.signed_up': platformOrganizationSignedUp,
   'platform.course_payment.submitted': platformCoursePaymentSubmitted,
   'platform.refund.recorded': platformRefundRecorded,
+  'platform.privacy_request.created': platformPrivacyRequestCreated,
   'academy.member.invited': academyMemberInvited,
   'academy.member.added': academyMemberAdded,
   'review.submitted': reviewSubmitted,

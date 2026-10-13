@@ -1057,6 +1057,45 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('account.deletion.confirmed', 'security', 'user', 'platform', false, [
     'challengeId',
   ]),
+  // B0-SEC-13 — privacy requests (data deletion / export). The emailed code
+  // that confirms filing one, then the request's own lifecycle. Platform
+  // scope only: an academy never sees a learner's privacy request.
+  ev('privacy_request.code.requested', 'security', 'user', 'platform', false, [
+    'challengeId',
+  ]),
+  ev('privacy_request.code.code_failed', 'security', 'user', 'platform', false, [
+    'challengeId',
+    'attempts',
+  ]),
+  ev('privacy_request.code.locked_out', 'security', 'user', 'platform', false, [
+    'challengeId',
+  ]),
+  ev('privacy_request.code.confirmed', 'security', 'user', 'platform', false, [
+    'challengeId',
+  ]),
+  ev('privacy_request.submitted', 'security', 'privacy_request', 'platform', false, [
+    'requestType',
+    'userId',
+  ]),
+  ev('privacy_request.status_changed', 'security', 'privacy_request', 'platform', false, [
+    'requestType',
+    'userId',
+    'fromStatus',
+    'toStatus',
+  ]),
+  ev('privacy_request.fulfilled', 'security', 'privacy_request', 'platform', false, [
+    'requestType',
+    'userId',
+    'exportAvailableUntil',
+  ]),
+  ev(
+    'privacy_request.export_downloaded',
+    'security',
+    'privacy_request',
+    'platform',
+    false,
+    ['requestType'],
+  ),
   // Phone number (docs/USER_PHONE.md) — the country and the kind of change
   // only; the number itself is never written to an audit row.
   ev('account.phone.updated', 'security', 'user', 'platform', false, [

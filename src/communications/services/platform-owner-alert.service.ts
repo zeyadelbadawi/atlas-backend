@@ -45,6 +45,7 @@ export const PLATFORM_OWNER_ALERT_KEYS = [
   'platform.organization.signed_up',
   'platform.course_payment.submitted',
   'platform.refund.recorded',
+  'platform.privacy_request.created',
 ] as const satisfies readonly CommunicationEventKey[];
 
 export type PlatformOwnerAlertKey = (typeof PLATFORM_OWNER_ALERT_KEYS)[number];

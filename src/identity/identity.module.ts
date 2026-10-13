@@ -174,6 +174,9 @@ import { PhoneVerificationService } from './phone/phone-verification.service';
     AccountDeletionService,
     // B0-SEC-07 — the Platform Owner's suspend/reinstate surface, same reason.
     AccountSuspensionService,
+    // B0-SEC-13 — `PrivacyRequestsModule` confirms filing a privacy request
+    // with the same emailed-code mechanism (purpose `privacy_request`).
+    AccountDeletionChallengeService,
     // Exported because the Platform Owner's administrative deletion
     // surface must preview the SAME plan the account holder sees. Two
     // implementations of "what will this destroy" would drift, and the

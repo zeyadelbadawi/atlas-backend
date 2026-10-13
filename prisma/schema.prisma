@@ -195,6 +195,8 @@ model User {
   campaignRecipients        CampaignRecipient[]
   authEmailChallenges       AuthEmailChallenge[]
   accountDeletionChallenges AccountDeletionChallenge[]
+  /// B0-SEC-13 — data deletion / export requests this person filed.
+  privacyRequests           PrivacyRequest[]
   trustedDevices            TrustedDevice[]
   /// Google Identity — the external sign-in identities bound to this account.
   authIdentities            UserAuthIdentity[]
@@ -708,6 +710,8 @@ model Academy {
   supportCases           SupportCase[]
   /// Customer Requests — custom services this academy asked Atlas for.
   customerRequests       CustomerRequest[]
+  /// B0-SEC-13 — the academy a privacy request was filed from (branding only).
+  privacyRequests        PrivacyRequest[]
 
   /// Phase 12 — Live Sessions add-on.
   liveProviderConnection  AcademyLiveProviderConnection?
@@ -5533,6 +5537,10 @@ model AccountDeletionChallenge {
   /// The requesting session (`refresh_tokens.session_id`); another session of
   /// the same account cannot complete it.
   sessionId  String    @map("session_id")
+  /// B0-SEC-13 — what the code confirms: `account_deletion` (self-service
+  /// deletion) or `privacy_request` (filing a data deletion/export request).
+  /// A code is only ever accepted for the purpose it was issued for.
+  purpose    String    @default("account_deletion")
   codeHash   String    @map("code_hash")
   salt       String
   attempts   Int       @default(0)
@@ -6578,4 +6586,55 @@ model OrganizationPlatformFlags {
   updatedAt       DateTime     @default(now()) @updatedAt @map("updated_at")
 
   @@map("organization_platform_flags")
+}
+
+// ---------------------------------------------------------------------------
+// B0-SEC-13 — request-based data deletion and data export.
+// ---------------------------------------------------------------------------
+
+enum PrivacyRequestType {
+  deletion
+  export
+
+  @@map("privacy_request_type")
+}
+
+enum PrivacyRequestStatus {
+  submitted
+  in_progress
+  completed
+  rejected
+
+  @@map("privacy_request_status")
+}
+
+/// A person asked for their data to be deleted or exported. Confirmed by an
+/// emailed code when filed; handled by a Platform Owner. Readable only by
+/// the requester and by Platform Owners (RLS) — never by an academy.
+model PrivacyRequest {
+  id                   String               @id @default(uuid())
+  /// `null` once the row outlives the account (it is never hard-deleted today).
+  userId               String?              @map("user_id")
+  user                 User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Where it was filed from, for the email's branding. Not a tenant scope.
+  academyId            String?              @map("academy_id")
+  academy              Academy?             @relation(fields: [academyId], references: [id], onDelete: SetNull)
+  type                 PrivacyRequestType
+  status               PrivacyRequestStatus @default(submitted)
+  /// Snapshot so the completion email still has an address after deletion
+  /// anonymises the account; masked once a deletion request completes.
+  requesterEmail       String               @map("requester_email")
+  requesterName        String               @map("requester_name")
+  /// Operator's note to the requester (shown and emailed on rejection).
+  resolutionNote       String?              @map("resolution_note")
+  handledByUserId      String?              @map("handled_by_user_id")
+  /// Export only: the requester may download until this moment.
+  exportAvailableUntil DateTime?            @map("export_available_until")
+  completedAt          DateTime?            @map("completed_at")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("privacy_requests")
 }

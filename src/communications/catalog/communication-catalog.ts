@@ -841,6 +841,97 @@ const CATALOG = {
     // W3 security fix — same as `auth.email.otp`: a live deletion code.
     credentialValues: ['code'],
   },
+  // B0-SEC-13 — the emailed code that confirms FILING a privacy request
+  // (data deletion or export). Its own key and wording: it is not the
+  // account-deletion code, and cannot be used as one (see
+  // `AccountDeletionChallengeService`).
+  'auth.account.privacy_request_code': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'auth.account.privacy_request_code',
+    titleKey: 'notifications:events.privacyRequestCode.title',
+    messageKey: 'notifications:events.privacyRequestCode.message',
+    credentialValues: ['code'],
+  },
+  // B0-SEC-13 — to the requester, about their own privacy request. Email
+  // only: the profile page shows the live status. Rendered under the
+  // academy the request was filed from, when there is one.
+  'privacy_request.received': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `privacy_request_received:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'privacy_request.received',
+    titleKey: 'notifications:events.privacyRequestReceived.title',
+    messageKey: 'notifications:events.privacyRequestReceived.message',
+    actionUrl: () => '/my/profile',
+  },
+  'privacy_request.export_ready': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `privacy_request_export_ready:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'privacy_request.export_ready',
+    titleKey: 'notifications:events.privacyRequestExportReady.title',
+    messageKey: 'notifications:events.privacyRequestExportReady.message',
+    // No download link in the email: the file is fetched from the signed-in
+    // profile page, so a forwarded email does not hand over the data.
+    actionUrl: () => '/my/profile',
+  },
+  'privacy_request.rejected': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `privacy_request_rejected:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'privacy_request.rejected',
+    titleKey: 'notifications:events.privacyRequestRejected.title',
+    messageKey: 'notifications:events.privacyRequestRejected.message',
+    actionUrl: () => '/my/profile',
+  },
+  // Sent AFTER the account is anonymised, so to the address snapshot on the
+  // request, not to the (now anonymised) account.
+  'privacy_request.deletion_completed': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `privacy_request_deletion_completed:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'platform',
+    branding: 'platform',
+    template: 'privacy_request.deletion_completed',
+    titleKey: 'notifications:events.privacyRequestDeletionCompleted.title',
+    messageKey: 'notifications:events.privacyRequestDeletionCompleted.message',
+    addressRecipient: true,
+  },
   'auth.account.signup_attempt': {
     category: 'security',
     audience: 'platform',
@@ -2554,6 +2645,23 @@ const CATALOG = {
     messageKey: 'notifications:events.platformRefundRecorded.message',
     actionUrl: ({ values }) =>
       `/dashboard/platform/commerce/course-payments/${String(values.paymentId ?? '')}`,
+  },
+  // B0-SEC-13 — a person filed a privacy request (data deletion or export).
+  'platform.privacy_request.created': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `platform_privacy_request_created:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.privacy_request.created',
+    titleKey: 'notifications:events.platformPrivacyRequestCreated.title',
+    messageKey: 'notifications:events.platformPrivacyRequestCreated.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/privacy-requests/${entity.id}`,
   },
   // Customer Requests — an academy asked the Atlas team for a custom
   // service. `routed` goes to the TEAM INBOX the Platform Owner configured

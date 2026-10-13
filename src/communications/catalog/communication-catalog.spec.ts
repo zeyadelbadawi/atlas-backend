@@ -156,6 +156,27 @@ const EXPECTED_DEDUPE: Record<
     values: { code: '123456', expiresInMinutes: 10 },
     expected: null,
   },
+  // B0-SEC-13 — privacy requests.
+  'auth.account.privacy_request_code': {
+    values: { code: '123456', expiresInMinutes: 10 },
+    expected: null,
+  },
+  'privacy_request.received': {
+    values: { requestType: 'export' },
+    expected: `privacy_request_received:${ENTITY_ID}`,
+  },
+  'privacy_request.export_ready': {
+    values: { availableUntilDate: '2026-10-20 09:00 UTC' },
+    expected: `privacy_request_export_ready:${ENTITY_ID}`,
+  },
+  'privacy_request.rejected': {
+    values: { requestType: 'deletion', note: 'Open payment dispute.' },
+    expected: `privacy_request_rejected:${ENTITY_ID}`,
+  },
+  'privacy_request.deletion_completed': {
+    values: {},
+    expected: `privacy_request_deletion_completed:${ENTITY_ID}`,
+  },
   'auth.email.verification': { values: { token: 'tok' }, expected: null },
   'auth.password.reset': { values: { token: 'tok' }, expected: null },
   'auth.password.reset_confirmed': { values: {}, expected: null },
@@ -389,6 +410,10 @@ const EXPECTED_DEDUPE: Record<
     values: {},
     expected: `platform_support_case_created:${ENTITY_ID}`,
   },
+  'platform.privacy_request.created': {
+    values: { requestType: 'deletion' },
+    expected: `platform_privacy_request_created:${ENTITY_ID}`,
+  },
   'platform.support_case.customer_replied': {
     values: { messageId: 'msg-1' },
     expected: `platform_support_case_replied:${ENTITY_ID}:msg-1`,
@@ -576,6 +601,7 @@ const NEVER_DEDUPED_KEYS: readonly CommunicationEventKey[] = [
   'auth.two_factor.disabled',
   'auth.email.otp',
   'auth.account.deletion_code',
+  'auth.account.privacy_request_code',
   'auth.email.verification',
   'auth.password.reset',
   'auth.password.reset_confirmed',
