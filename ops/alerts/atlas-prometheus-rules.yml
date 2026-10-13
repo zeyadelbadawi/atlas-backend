@@ -273,6 +273,30 @@ groups:
           description: "The {{ $labels.dependency }} probe has failed for 2 minutes."
           threshold: "probe failing for 2m"
           current_value: '{{ $value | humanize }}'
+      # B0-OPS-07 — the host filesystem holding /opt/atlas (and, on a
+      # single-disk VPS, Docker's images). It filled on 9 Oct 2026 and
+      # stopped deploys with nothing alerting. Measured by the backend
+      # through its read-only backups/status mount.
+      - alert: AtlasDiskUsageHigh
+        expr: |
+          1 - max(atlas_host_filesystem_avail_bytes) / max(atlas_host_filesystem_size_bytes) > 0.80
+        for: 15m
+        labels: { severity: warning, team: atlas, service: infrastructure }
+        annotations:
+          summary: "Host disk more than 80% full"
+          description: "The filesystem holding /opt/atlas is {{ $value | humanizePercentage }} full. Run `docker system df` on the host; deploy.sh prunes unused application images after each healthy deploy, and `docker image prune` removes dangling ones."
+          threshold: "used > 80%, for 15m"
+          current_value: '{{ $value | humanizePercentage }}'
+      - alert: AtlasDiskUsageCritical
+        expr: |
+          1 - max(atlas_host_filesystem_avail_bytes) / max(atlas_host_filesystem_size_bytes) > 0.90
+        for: 5m
+        labels: { severity: critical, team: atlas, service: infrastructure }
+        annotations:
+          summary: "Host disk more than 90% full"
+          description: "The filesystem holding /opt/atlas is {{ $value | humanizePercentage }} full. Deploys refuse to pull below their free-space floor, and Postgres writes and backups fail when it fills. Free space now (`docker system df`, old backups in /opt/atlas/backups)."
+          threshold: "used > 90%, for 5m"
+          current_value: '{{ $value | humanizePercentage }}'
       # B0-OPS-06 — `deploy/backup.sh` records each fully successful backup
       # (dumped, verified, uploaded); the backend exposes it from a
       # read-only mount. The daily timer runs at 03:00 ± 10 min, so 26 h

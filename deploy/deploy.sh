@@ -359,6 +359,84 @@ finish_with_record() {
   exit 1
 }
 
+# --- B0-OPS-07: disk -----------------------------------------------------------
+#
+# On 9 Oct 2026 the disk filled with 421 old images (42 GB) and two deploys
+# failed until someone ran `docker image prune -a` by hand.
+#
+# prune_app_images removes APPLICATION images (atlas-backend,
+# atlas-frontend, atlas-frontend-ssr, from any registry) that no container
+# uses and that `.last-good` does not record. Called only after a healthy
+# deploy has written its record, so the rollback digests are always kept on
+# the host and `--rollback` still works with the registry unreachable.
+# Postgres, Redis and monitoring images are never touched. Best effort: a
+# failure to remove an image is reported and never fails the deploy.
+prune_app_images() {
+  local keep="" id refs ref repo removed=0 failed=0 digest
+  for id in $(docker ps -aq 2>/dev/null); do
+    keep="$keep $(docker inspect --format '{{.Image}}' "$id" 2>/dev/null)"
+  done
+  if [ -f "$ATLAS_DIR/.last-good" ]; then
+    for digest in $(sed -n 's/^\(BACKEND\|CADDY\|SSR\)_IMAGE=//p' "$ATLAS_DIR/.last-good"); do
+      keep="$keep $(docker image inspect --format '{{.Id}}' "$digest" 2>/dev/null)"
+    done
+  fi
+  for id in $(docker image ls -aq --no-trunc 2>/dev/null | sort -u); do
+    case " $keep " in *" $id "*) continue ;; esac
+    refs=$(docker image inspect --format '{{range .RepoTags}}{{println .}}{{end}}{{range .RepoDigests}}{{println .}}{{end}}' "$id" 2>/dev/null) || continue
+    repo=""
+    for ref in $refs; do
+      case "$(image_repository "$ref")" in
+        */atlas-backend|*/atlas-frontend|*/atlas-frontend-ssr|atlas-backend|atlas-frontend|atlas-frontend-ssr)
+          repo=$(image_repository "$ref"); break ;;
+      esac
+    done
+    [ -n "$repo" ] || continue
+    if docker image rm -f "$id" >/dev/null 2>&1; then
+      removed=$((removed + 1))
+    else
+      failed=$((failed + 1))
+    fi
+  done
+  echo "==> Pruned $removed unused application image(s) (kept: running containers and .last-good)."
+  [ "$failed" = 0 ] || echo "WARNING: $failed unused application image(s) could not be removed." >&2
+  return 0
+}
+
+# Free space, in MiB, on the filesystem holding Docker's data root (where
+# pulls land), falling back to $ATLAS_DIR.
+free_space_mb() {
+  local root
+  root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
+  [ -n "$root" ] && [ -d "$root" ] || root=$ATLAS_DIR
+  df -Pk "$root" | awk 'NR==2 { print int($4 / 1024) }'
+}
+
+# Refuses to start pulling below DEPLOY_MIN_FREE_MB (default 2048): a pull
+# that fills the disk half way leaves the host worse than a deploy that
+# never started. Prunes unused application images once and re-checks before
+# giving up. Nothing has changed when it refuses.
+DEPLOY_MIN_FREE_MB=${DEPLOY_MIN_FREE_MB:-2048}
+require_free_space() {
+  local free
+  free=$(free_space_mb)
+  if [ -z "$free" ]; then
+    echo "WARNING: could not measure free disk space; continuing." >&2
+    return 0
+  fi
+  if [ "$free" -lt "$DEPLOY_MIN_FREE_MB" ]; then
+    echo "==> Only ${free} MiB free (floor ${DEPLOY_MIN_FREE_MB} MiB); pruning unused application images first"
+    prune_app_images
+    free=$(free_space_mb)
+  fi
+  if [ -n "$free" ] && [ "$free" -lt "$DEPLOY_MIN_FREE_MB" ]; then
+    echo "==> Refusing to deploy: ${free} MiB free on the Docker filesystem, below the ${DEPLOY_MIN_FREE_MB} MiB floor." >&2
+    echo "    Nothing was pulled or changed. Free space (docker system df; old files in $ATLAS_DIR/backups) and deploy again." >&2
+    exit 1
+  fi
+  echo "==> Free disk space: ${free} MiB (floor ${DEPLOY_MIN_FREE_MB} MiB)"
+}
+
 # --- P64 Phase 1: pre-migration safety ------------------------------------
 #
 # All three helpers below are used ONLY when a migration is actually
@@ -725,6 +803,7 @@ if [ "$MODE" = "rollback" ]; then
 fi
 
 if [ "$MODE" = "frontend-only" ]; then
+  require_free_space
   echo "==> Frontend-only deploy: pulling the Caddy/SPA image"
   docker compose pull caddy
   if [ "$SSR_ENABLED" = "1" ]; then
@@ -739,11 +818,13 @@ if [ "$MODE" = "frontend-only" ]; then
   if wait_healthy; then
     check_ssr
     finish_with_record
+    prune_app_images
     exit 0
   fi
   exit 1
 fi
 
+require_free_space
 echo "==> Pulling the application images (postgres/redis are never pulled here)"
 resolve_app_services
 docker compose pull $APP_SERVICES
@@ -879,6 +960,7 @@ fi
 if wait_healthy; then
   check_ssr
   finish_with_record
+  prune_app_images
   echo "==> Deploy complete; last-good digests recorded (use --rollback to revert)."
   exit 0
 fi

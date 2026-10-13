@@ -8,6 +8,7 @@ import { ObservabilityService } from './observability.service';
 import { MonitoringSourcesClient } from './monitoring-sources.client';
 import { SystemProbesService } from './system-probes.service';
 import { BackupStatusMetrics } from './backup-status.metrics';
+import { HostDiskMetrics } from './host-disk.metrics';
 import { HttpMetricsMiddleware } from './http-metrics.middleware';
 
 import { WebVitalsService } from './web-vitals.service';
@@ -24,6 +25,7 @@ import { WebVitalsService } from './web-vitals.service';
     MonitoringSourcesClient,
     SystemProbesService,
     BackupStatusMetrics,
+    HostDiskMetrics,
     WebVitalsService,
   ],
 })

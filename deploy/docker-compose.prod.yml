@@ -9,8 +9,20 @@
 # reverse_proxy over the compose network.
 name: atlas
 
+# B0-OPS-07 — log rotation for every container. Docker's json-file driver
+# keeps logs forever by default, one of the reasons the disk filled on
+# 9 Oct 2026: at most 3 × 20 MB per container. postgres and redis pick this
+# up only when they are next recreated, because deploys never recreate
+# them (--no-recreate); every other service gets it on its next deploy.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '20m'
+    max-file: '3'
+
 services:
   postgres:
+    logging: *default-logging
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -26,6 +38,7 @@ services:
       retries: 10
 
   redis:
+    logging: *default-logging
     image: redis:7-alpine
     restart: unless-stopped
     command: ['redis-server', '--requirepass', '${REDIS_PASSWORD}']
@@ -38,6 +51,7 @@ services:
       retries: 10
 
   backend:
+    logging: *default-logging
     image: ghcr.io/zeyadelbadawi/atlas-backend:latest
     restart: unless-stopped
     env_file: .env
@@ -64,6 +78,7 @@ services:
       start_period: 20s
 
   caddy:
+    logging: *default-logging
     image: ghcr.io/zeyadelbadawi/atlas-frontend:latest
     restart: unless-stopped
     # Docker's init (tini) as PID 1, so orphaned processes are reaped. Without
@@ -128,6 +143,7 @@ services:
   #   * init: true — tini as PID 1 reaps orphaned processes (see caddy) and
   #     forwards SIGTERM to the server, which closes gracefully.
   ssr:
+    logging: *default-logging
     image: ghcr.io/zeyadelbadawi/atlas-frontend-ssr:latest
     profiles: ['ssr']
     restart: unless-stopped
@@ -154,6 +170,7 @@ services:
   # `api_url_file`; neither appears in any config, image or environment.
   # No published ports: both are reachable on the compose network only.
   prometheus:
+    logging: *default-logging
     image: prom/prometheus:v2.53.0
     profiles: ['monitoring']
     restart: unless-stopped
@@ -169,6 +186,7 @@ services:
       - prometheus_data:/prometheus
 
   alertmanager:
+    logging: *default-logging
     image: prom/alertmanager:v0.27.0
     profiles: ['monitoring']
     restart: unless-stopped

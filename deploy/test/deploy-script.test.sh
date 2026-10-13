@@ -17,6 +17,10 @@
 #   H4  caddy and ssr run with an init process: healthchecks leave no
 #       zombies, and SIGTERM still stops them gracefully.
 #
+# B0-OPS-07 (13 Oct 2026): a healthy deploy prunes application images that
+# no container uses and .last-good does not record (never postgres/redis),
+# and a deploy refuses to pull below its free-space floor, changing nothing.
+#
 # And the W8B identity-key pin (4 Oct 2026): a missing
 # CUSTOMER_IDENTITY_HMAC_KEY is derived inside the running backend
 # (cross-checked against .env; refused if they differ) or, with no backend
@@ -228,6 +232,7 @@ check "both recorded images are <repository>@sha256:<64 hex>" \
   bash -c "[ \"\$(grep -cE '^(BACKEND|CADDY)_IMAGE=[^@[:space:]]+@sha256:[0-9a-f]{64}$' '$W/.last-good')\" = 2 ]"
 check "the recorded digests can be pulled back" \
   bash -c "docker pull -q '$(record_value BACKEND_IMAGE)' >/dev/null && docker pull -q '$(record_value CADDY_IMAGE)' >/dev/null"
+BACKEND_V1_ID=$(running_image backend); CADDY_V1_ID=$(running_image caddy)
 
 # =============================================================================
 echo "# 2. migration deploy while the postgres/redis tags have moved (H2)"
@@ -262,6 +267,16 @@ check "postgres/redis images were not pulled by the deploy" \
 check "the backend was rolled to v2" eq "$(running_image backend)" "$(docker image inspect -f '{{.Id}}' "$REG/atlas-backend@$BACKEND_V2")"
 check ".last-good now records v2" eq "$(record_value BACKEND_IMAGE)|$(record_value CADDY_IMAGE)" \
   "$REG/atlas-backend@$BACKEND_V2|$REG/atlas-frontend@$CADDY_V2"
+# B0-OPS-07: v1 is neither running nor recorded any more, so the healthy
+# deploy removed it; v2 (running and recorded) and every postgres/redis
+# image (including the drifted tags nothing runs) stay.
+check "the healthy deploy reported its prune" log_has "$W/log2" "Pruned"
+check "it removed the unused v1 application images" \
+  bash -c "! docker image inspect '$BACKEND_V1_ID' >/dev/null 2>&1 && ! docker image inspect '$CADDY_V1_ID' >/dev/null 2>&1"
+check "it kept the running and recorded v2 images" \
+  bash -c "docker image inspect '$REG/atlas-backend@$BACKEND_V2' >/dev/null && docker image inspect '$REG/atlas-frontend@$CADDY_V2' >/dev/null"
+check "it never prunes postgres/redis images, used or not" \
+  bash -c "docker image inspect '$REG/postgres:16-alpine' >/dev/null && docker image inspect '$REG/redis:7-alpine' >/dev/null && docker image inspect '$PG_IMAGE' >/dev/null"
 # Control: the drift was real — the previous flow WOULD have recreated postgres.
 dc up -d postgres >/dev/null 2>&1
 check "control: a plain 'compose up -d postgres' (the old flow) recreates it" \
@@ -460,6 +475,21 @@ check "running backend differing from .env: refused with a warning, no forced re
   bash -c "grep -q 'derive DIFFERENT keys' '$W/log13' && ! grep -q 'Env changed' '$W/log13'"
 check "no key value ever appears in any deploy output" \
   bash -c "! grep -rqE '$DERIVED|$OTHER|$MATCH|$DRIFT' '$W'/log*"
+
+# =============================================================================
+echo "# 8. free-space floor (B0-OPS-07)"
+BACKEND_CID=$(cid backend); CADDY_CID=$(cid caddy); RECORD_SUM=$(sha256sum <"$W/.last-good")
+check "a deploy below the free-space floor fails" \
+  bash -c "! DEPLOY_MIN_FREE_MB=999999999 ATLAS_DIR='$W' bash '$W/deploy.sh' >'$W/log14' 2>&1"
+check "it says why" log_has "$W/log14" "Refusing to deploy"
+check "it tried a prune before refusing" log_has "$W/log14" "pruning unused application images first"
+check "it changed nothing: same containers and record" \
+  eq "$(cid backend)|$(cid caddy)|$(sha256sum <"$W/.last-good")" "$BACKEND_CID|$CADDY_CID|$RECORD_SUM"
+check "it pulled nothing" bash -c "! grep -q 'Pulling the application images' '$W/log14'"
+check "a frontend-only deploy refuses the same way" \
+  bash -c "! DEPLOY_MIN_FREE_MB=999999999 ATLAS_DIR='$W' bash '$W/deploy.sh' --frontend-only >'$W/log15' 2>&1 && grep -q 'Refusing to deploy' '$W/log15'"
+check "with room, the deploy reports the free space and proceeds" \
+  bash -c "ATLAS_DIR='$W' bash '$W/deploy.sh' >'$W/log16' 2>&1 && grep -q 'Free disk space:' '$W/log16'"
 
 echo
 echo "# $PASS passed, $FAIL failed"
