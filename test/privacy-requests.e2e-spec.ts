@@ -33,6 +33,8 @@ import {
 } from './utils/db-admin';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
+import { ConfigService } from '@nestjs/config';
+import type { CommunicationsConfig } from '../src/config/configuration';
 import { PlatformOwnerAlertService } from '../src/communications/services/platform-owner-alert.service';
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
@@ -548,9 +550,26 @@ describe('B0-SEC-13 privacy requests (e2e)', () => {
   });
 
   it('PRIV-07 — every active Platform Owner is alerted, with no personal data', async () => {
-    const l = await learner('priv07');
-    const filed = await file(l.siteToken, 'export');
-    await app.get(PlatformOwnerAlertService).drain();
+    // Off by default under NODE_ENV=test (every suite would otherwise fan
+    // out to the shared database's Platform Owners); on for this case only,
+    // as in platform-owner-alerts.e2e-spec.ts.
+    const communications = app
+      .get(ConfigService)
+      .getOrThrow<CommunicationsConfig>('communications') as {
+      platformOwnerAlertsMode: CommunicationsConfig['platformOwnerAlertsMode'];
+    };
+    const previousMode = communications.platformOwnerAlertsMode;
+    communications.platformOwnerAlertsMode = 'on';
+    const alertService = app.get(PlatformOwnerAlertService);
+    let filed: { id: string };
+    let l: Awaited<ReturnType<typeof learner>>;
+    try {
+      l = await learner('priv07');
+      filed = await file(l.siteToken, 'export');
+      await alertService.drain();
+    } finally {
+      communications.platformOwnerAlertsMode = previousMode;
+    }
     const alerts = await admin.communicationOutbox.findMany({
       where: { key: 'platform.privacy_request.created', entityId: filed.id },
     });
