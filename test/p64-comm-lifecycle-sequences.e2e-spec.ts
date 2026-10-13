@@ -180,6 +180,9 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
       currentPeriodEnd?: Date | null;
       graceEndsAt?: Date | null;
       cancelAtPeriodEnd?: boolean;
+      billingCycle?: 'monthly' | 'yearly' | null;
+      /** B0-MSG-05 — seeds the trial's redemption (its start instant). */
+      trialStartedAt?: Date;
     },
     owner: { preferences?: Record<string, unknown>; email?: string } = {},
   ): Promise<Tenant> {
@@ -203,8 +206,20 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
         currentPeriodEnd: subscription.currentPeriodEnd ?? null,
         graceEndsAt: subscription.graceEndsAt ?? null,
         cancelAtPeriodEnd: subscription.cancelAtPeriodEnd ?? false,
+        billingCycle: subscription.billingCycle ?? null,
       },
     });
+    if (subscription.trialStartedAt) {
+      await admin.trialRedemption.create({
+        data: {
+          subjectHash: `msg05-${org.id}`,
+          organizationId: org.id,
+          redeemedByUserId: user.id,
+          redeemedAt: subscription.trialStartedAt,
+          trialEndsAt: subscription.trialEndsAt ?? null,
+        },
+      });
+    }
     seededOrganizationIds.push(org.id);
     return {
       organizationId: org.id,
@@ -345,6 +360,59 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
 
       await tick(dueAt);
       expect(await keysFor(tenant)).toEqual(['lifecycle.trial.ending_soon']);
+    });
+
+    it('B0-MSG-05: a 14-day trial gets T2a at −3 d once, then T2 at −1 d; a 3-day trial never gets T2a', async () => {
+      const trialEndsAt = new Date('2026-10-20T12:00:00.000Z');
+      const long = await seedTenant('t2a-14d', {
+        status: 'trialing',
+        trialEndsAt,
+        trialStartedAt: new Date(trialEndsAt.getTime() - 14 * DAY),
+      });
+      const short = await seedTenant('t2a-3d', {
+        status: 'trialing',
+        trialEndsAt,
+        trialStartedAt: new Date(trialEndsAt.getTime() - 3 * DAY),
+      });
+      const dueAt = new Date(trialEndsAt.getTime() - 3 * DAY);
+
+      await tick(new Date(dueAt.getTime() - 1));
+      expect(await keysFor(long)).toEqual([]);
+      await tick(dueAt);
+      await tick(new Date(dueAt.getTime() + 15 * 60 * 1000));
+      expect(await keysFor(long)).toEqual(['lifecycle.trial.ending_in_3_days']);
+      expect(await keysFor(short)).toEqual([]);
+
+      await tick(new Date(trialEndsAt.getTime() - DAY));
+      expect(await keysFor(long)).toEqual([
+        'lifecycle.trial.ending_in_3_days',
+        'lifecycle.trial.ending_soon',
+      ]);
+      expect(await keysFor(short)).toEqual(['lifecycle.trial.ending_soon']);
+    });
+
+    it('B0-MSG-05: a yearly subscription gets the 30-day renewal reminder; a monthly one does not', async () => {
+      const currentPeriodEnd = new Date('2027-01-15T12:00:00.000Z');
+      const yearly = await seedTenant('s3a-yearly', {
+        status: 'active',
+        currentPeriodStart: new Date(currentPeriodEnd.getTime() - 365 * DAY),
+        currentPeriodEnd,
+        billingCycle: 'yearly',
+      });
+      const monthly = await seedTenant('s3a-monthly', {
+        status: 'active',
+        currentPeriodStart: new Date(currentPeriodEnd.getTime() - 30 * DAY),
+        currentPeriodEnd,
+        billingCycle: 'monthly',
+      });
+      const dueAt = new Date(currentPeriodEnd.getTime() - 30 * DAY);
+
+      await tick(new Date(dueAt.getTime() - 1));
+      expect(await keysFor(yearly)).toEqual([]);
+      await tick(dueAt);
+      await tick(new Date(dueAt.getTime() + 15 * 60 * 1000));
+      expect(await keysFor(yearly)).toEqual(['lifecycle.subscription.renewal_30d']);
+      expect(await keysFor(monthly)).toEqual([]);
     });
 
     it('refuses a step that fell due longer ago than the lateness horizon', async () => {

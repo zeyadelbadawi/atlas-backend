@@ -2,10 +2,10 @@ import { defineLocale, str } from '../layout';
 import type { CommunicationTemplate } from '../layout';
 
 /**
- * §26 T2 — one reminder, a day ahead. With a 72-hour trial a "3 days
- * left" mail would duplicate T1 and a 48-hour one is noise; this is the
- * single reminder that leaves enough time to start a manual transfer,
- * which itself needs review time.
+ * §26 T2 — the last reminder, a day ahead. A trial of a week or more
+ * (the 14-day trial) also gets T2a three days ahead
+ * (`lifecycle.trial.ending_in_3_days`, B0-MSG-05); a short trial gets only
+ * this one, since a "3 days left" mail would arrive as it started.
  */
 export const template: CommunicationTemplate = {
   version: '1',

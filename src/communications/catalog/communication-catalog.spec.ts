@@ -261,6 +261,10 @@ const EXPECTED_DEDUPE: Record<
     values: { anchorAt: TRIAL_ENDS_AT },
     expected: `lifecycle_trial_started:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
   },
+  'lifecycle.trial.ending_in_3_days': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_trial_ending_3d:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
   'lifecycle.trial.ending_soon': {
     values: { anchorAt: TRIAL_ENDS_AT },
     expected: `lifecycle_trial_ending_soon:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
@@ -288,6 +292,10 @@ const EXPECTED_DEDUPE: Record<
   'lifecycle.subscription.payment_submitted': {
     values: { proofId: PROOF_ID },
     expected: `lifecycle_subscription_payment_submitted:${ENTITY_ID}:${PROOF_ID}`,
+  },
+  'lifecycle.subscription.renewal_30d': {
+    values: { anchorAt: PERIOD_END_AT },
+    expected: `lifecycle_subscription_renewal_30d:${ENTITY_ID}:${PERIOD_END_AT}`,
   },
   'lifecycle.subscription.renewal_due': {
     values: { anchorAt: PERIOD_END_AT },

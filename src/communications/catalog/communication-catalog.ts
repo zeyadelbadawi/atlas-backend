@@ -1459,6 +1459,24 @@ const CATALOG = {
     actionUrl: () => TENANT_SUBSCRIPTION_PATH,
   },
   // T2 — `trialEndsAt − 24 h`.
+  // T2a (B0-MSG-05) — three days ahead, only for a trial a week or longer.
+  'lifecycle.trial.ending_in_3_days': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('trial_ending_3d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.trial.ending_in_3_days',
+    titleKey: 'notifications:events.lifecycleTrialEndingIn3Days.title',
+    messageKey: 'notifications:events.lifecycleTrialEndingIn3Days.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
   'lifecycle.trial.ending_soon': {
     category: 'lifecycle',
     audience: 'staff',
@@ -1600,6 +1618,24 @@ const CATALOG = {
   },
   // S3/S4 — renewal lead time. NOT suppressible: a manual bank transfer
   // plus a human review cannot be started after the fact.
+  // S3a (B0-MSG-05) — yearly subscriptions only, 30 days ahead.
+  'lifecycle.subscription.renewal_30d': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_renewal_30d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.renewal_30d',
+    titleKey: 'notifications:events.lifecycleSubscriptionRenewal30d.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionRenewal30d.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
   'lifecycle.subscription.renewal_due': {
     category: 'lifecycle',
     audience: 'staff',

@@ -82,8 +82,13 @@ export const LIFECYCLE_STEP_MAX_LATENESS_MS = 2 * DAY_MS;
  */
 export const LIFECYCLE_SHORT_NOTICE_LATENESS_MS = 6 * HOUR_MS;
 
-/** The three steps whose subject line says "tomorrow". */
+/**
+ * The steps whose copy is only true close to `dueAt`: the three whose
+ * subject line says "tomorrow", and B0-MSG-05's "ends in 3 days" (two
+ * days late it would arrive beside T2 and say the wrong thing).
+ */
 const SHORT_NOTICE_STEPS = new Set<string>([
+  'trial_ending_3d',
   'trial_ending_soon',
   'subscription_renewal_tomorrow',
   'subscription_grace_ending',
@@ -91,6 +96,14 @@ const SHORT_NOTICE_STEPS = new Set<string>([
 
 /** §26 T2 — one reminder, a day ahead. */
 export const TRIAL_ENDING_SOON_LEAD_MS = 24 * HOUR_MS;
+/**
+ * B0-MSG-05 T2a — three days ahead, for trials long enough that it is not
+ * noise (a 3-day trial would get it at the moment it started). Manual
+ * payment needs a person to review it, so one day's notice is too short
+ * for the 14-day trial.
+ */
+export const TRIAL_ENDING_3D_LEAD_MS = 3 * DAY_MS;
+export const TRIAL_ENDING_3D_MIN_TRIAL_MS = 7 * DAY_MS;
 /** §26 T4/T5/T6 — measured from the instant the trial site went offline. */
 export const TRIAL_FOLLOWUP_3D_MS = 3 * DAY_MS;
 export const TRIAL_FOLLOWUP_14D_MS = 14 * DAY_MS;
@@ -98,6 +111,12 @@ export const TRIAL_REACTIVATION_45D_MS = 45 * DAY_MS;
 /** §27 S3/S4 — manual bank transfer plus platform review needs days, not hours. */
 export const RENEWAL_REMINDER_LEAD_MS = 7 * DAY_MS;
 export const RENEWAL_FINAL_LEAD_MS = 24 * HOUR_MS;
+/**
+ * B0-MSG-05 — yearly subscriptions only: a year's renewal by bank transfer
+ * is a bigger payment, often needing someone else's approval, so a month's
+ * notice comes before the 7-day and 1-day reminders.
+ */
+export const ANNUAL_RENEWAL_LEAD_MS = 30 * DAY_MS;
 /** §27 S6 — one day before the grace window closes. */
 export const GRACE_ENDING_LEAD_MS = 24 * HOUR_MS;
 /** §27 S10 — "+7 d / +30 d only (a paying customer already knows the product)". */
@@ -113,12 +132,14 @@ export const SUBSCRIPTION_FOLLOWUP_30D_MS = 30 * DAY_MS;
  */
 export type LifecycleStepId =
   // --- §26 trial
+  | 'trial_ending_3d' // T2a (B0-MSG-05)
   | 'trial_ending_soon' // T2
   | 'trial_expired' // T3
   | 'trial_followup_3d' // T4
   | 'trial_followup_14d' // T5
   | 'trial_reactivation_45d' // T6
   // --- §27 subscription
+  | 'subscription_renewal_30d' // S3a, yearly only (B0-MSG-05)
   | 'subscription_renewal_due' // S3
   | 'subscription_renewal_tomorrow' // S4
   | 'subscription_grace_started' // S5
@@ -159,6 +180,13 @@ export interface LifecycleEvaluationInput {
   readonly trialCancelledAt: Date | null;
   /** `effectiveAt` of a recorded `paid`-kind cancellation, or null. */
   readonly paidCancelledAt: Date | null;
+  /**
+   * B0-MSG-05 — when the current trial started (its redemption instant),
+   * so T2a can tell a 14-day trial from a 3-day one. Absent → no T2a.
+   */
+  readonly trialStartedAt?: Date | null;
+  /** B0-MSG-05 — the paid period's cycle; only `yearly` gets S3a. */
+  readonly billingCycle?: 'monthly' | 'yearly' | null;
 }
 
 function isWithinWindow(step: LifecycleStepId, dueAt: Date, now: Date): boolean {
@@ -216,6 +244,20 @@ export function evaluateLifecycleSteps(
     // still running. The status condition, not the horizon, is what stops
     // "your trial ends tomorrow" arriving after it already ended.
     if (effective === 'trialing' && !anyCancellationRecorded) {
+      // T2a — only for a trial at least a week long, measured from its
+      // own start; without a known start there is no T2a.
+      const trialStartedAt = input.trialStartedAt;
+      if (
+        trialStartedAt &&
+        trialEndsAt.getTime() - trialStartedAt.getTime() >= TRIAL_ENDING_3D_MIN_TRIAL_MS
+      ) {
+        push(
+          'trial_ending_3d',
+          'trial',
+          offset(trialEndsAt, -TRIAL_ENDING_3D_LEAD_MS),
+          trialEndsAt,
+        );
+      }
       push(
         'trial_ending_soon',
         'trial',
@@ -271,6 +313,14 @@ export function evaluateLifecycleSteps(
   // `currentPeriodEnd` forward, so the old anchor stops being due and the
   // new one is not due yet.
   if (effective === 'active' && currentPeriodEnd && !subscription.cancelAtPeriodEnd) {
+    if (input.billingCycle === 'yearly') {
+      push(
+        'subscription_renewal_30d',
+        'subscription',
+        offset(currentPeriodEnd, -ANNUAL_RENEWAL_LEAD_MS),
+        currentPeriodEnd,
+      );
+    }
     push(
       'subscription_renewal_due',
       'subscription',

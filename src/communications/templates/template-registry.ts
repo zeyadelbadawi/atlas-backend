@@ -77,6 +77,7 @@ import { template as announcementPublished } from './keys/announcement.published
 import { template as digestDaily } from './keys/digest.daily';
 // P64 C5 — tenant lifecycle sequences (plan §26 T1–T6, §27 S1–S10).
 import { template as lifecycleTrialStarted } from './keys/lifecycle.trial.started';
+import { template as lifecycleTrialEndingIn3Days } from './keys/lifecycle.trial.ending_in_3_days';
 import { template as lifecycleTrialEndingSoon } from './keys/lifecycle.trial.ending_soon';
 import { template as lifecycleTrialExpired } from './keys/lifecycle.trial.expired';
 import { template as lifecycleTrialFollowup3d } from './keys/lifecycle.trial.followup_3d';
@@ -84,6 +85,7 @@ import { template as lifecycleTrialFollowup14d } from './keys/lifecycle.trial.fo
 import { template as lifecycleTrialReactivation45d } from './keys/lifecycle.trial.reactivation_45d';
 import { template as lifecycleSubscriptionActivated } from './keys/lifecycle.subscription.activated';
 import { template as lifecycleSubscriptionPaymentSubmitted } from './keys/lifecycle.subscription.payment_submitted';
+import { template as lifecycleSubscriptionRenewal30d } from './keys/lifecycle.subscription.renewal_30d';
 import { template as lifecycleSubscriptionRenewalDue } from './keys/lifecycle.subscription.renewal_due';
 import { template as lifecycleSubscriptionRenewalTomorrow } from './keys/lifecycle.subscription.renewal_tomorrow';
 import { template as lifecycleSubscriptionGraceStarted } from './keys/lifecycle.subscription.grace_started';
@@ -162,6 +164,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'course.order.proof_submitted': courseOrderProofSubmitted,
   'review.moderated': reviewModerated,
   'lifecycle.trial.started': lifecycleTrialStarted,
+  'lifecycle.trial.ending_in_3_days': lifecycleTrialEndingIn3Days,
   'lifecycle.trial.ending_soon': lifecycleTrialEndingSoon,
   'lifecycle.trial.expired': lifecycleTrialExpired,
   'lifecycle.trial.followup_3d': lifecycleTrialFollowup3d,
@@ -169,6 +172,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'lifecycle.trial.reactivation_45d': lifecycleTrialReactivation45d,
   'lifecycle.subscription.activated': lifecycleSubscriptionActivated,
   'lifecycle.subscription.payment_submitted': lifecycleSubscriptionPaymentSubmitted,
+  'lifecycle.subscription.renewal_30d': lifecycleSubscriptionRenewal30d,
   'lifecycle.subscription.renewal_due': lifecycleSubscriptionRenewalDue,
   'lifecycle.subscription.renewal_tomorrow': lifecycleSubscriptionRenewalTomorrow,
   'lifecycle.subscription.grace_started': lifecycleSubscriptionGraceStarted,

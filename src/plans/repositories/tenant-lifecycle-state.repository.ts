@@ -20,8 +20,10 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import {
+  ANNUAL_RENEWAL_LEAD_MS,
   LIFECYCLE_STEP_MAX_LATENESS_MS,
   RENEWAL_REMINDER_LEAD_MS,
+  TRIAL_ENDING_3D_LEAD_MS,
   SUBSCRIPTION_FOLLOWUP_30D_MS,
   TRIAL_ENDING_SOON_LEAD_MS,
   TRIAL_REACTIVATION_45D_MS,
@@ -38,6 +40,7 @@ export type LifecycleCandidate = Prisma.TenantSubscriptionGetPayload<{
     currentPeriodStart: true;
     graceEndsAt: true;
     cancelAtPeriodEnd: true;
+    billingCycle: true;
     grantedLimits: true;
     plan: { select: { name: true } };
     organization: {
@@ -47,6 +50,7 @@ export type LifecycleCandidate = Prisma.TenantSubscriptionGetPayload<{
         ownerUserId: true;
         owner: { select: { id: true; email: true; status: true; deletedAt: true } };
         cancellations: { select: { kind: true; effectiveAt: true } };
+        trialRedemptions: { select: { redeemedAt: true } };
       };
     };
   };
@@ -98,10 +102,15 @@ export class TenantLifecycleStateRepository {
         // a lifecycle nudge is not the way someone should learn about one.
         organization: { status: 'active' },
         OR: [
-          // T2 — from one day before the trial ends until it ends.
+          // T2a/T2 — from three days before the trial ends until it ends
+          // (T2a is evaluated only for a trial of a week or more).
           {
             status: 'trialing',
-            trialEndsAt: { lte: new Date(at + TRIAL_ENDING_SOON_LEAD_MS) },
+            trialEndsAt: {
+              lte: new Date(
+                at + Math.max(TRIAL_ENDING_3D_LEAD_MS, TRIAL_ENDING_SOON_LEAD_MS),
+              ),
+            },
           },
           // T3–T6 — the trial tail.
           { status: 'trial_expired', trialEndsAt: { gte: trialTail } },
@@ -121,6 +130,12 @@ export class TenantLifecycleStateRepository {
             status: 'active',
             currentPeriodEnd: { lte: new Date(at + RENEWAL_REMINDER_LEAD_MS) },
           },
+          // S3a (B0-MSG-05) — yearly periods, from 30 days out.
+          {
+            status: 'active',
+            billingCycle: 'yearly',
+            currentPeriodEnd: { lte: new Date(at + ANNUAL_RENEWAL_LEAD_MS) },
+          },
           // S5/S6/S7 — anywhere inside or just past the grace window.
           {
             status: 'grace_period',
@@ -139,6 +154,7 @@ export class TenantLifecycleStateRepository {
         currentPeriodStart: true,
         graceEndsAt: true,
         cancelAtPeriodEnd: true,
+        billingCycle: true,
         grantedLimits: true,
         plan: { select: { name: true } },
         organization: {
@@ -148,6 +164,8 @@ export class TenantLifecycleStateRepository {
             ownerUserId: true,
             owner: { select: { id: true, email: true, status: true, deletedAt: true } },
             cancellations: { select: { kind: true, effectiveAt: true } },
+            // B0-MSG-05 — the trial's start, for T2a's "a week or longer".
+            trialRedemptions: { select: { redeemedAt: true } },
           },
         },
       },
