@@ -381,7 +381,30 @@ export interface EmailConfig {
   readonly replyTo?: string;
   readonly brevoWebhookSecret?: string;
   readonly resendWebhookSecret?: string;
+  /** B0-MSG-01 — per-provider sending limits; defaults are the free tiers. */
+  readonly limits: {
+    readonly brevo: EmailProviderLimits;
+    readonly resend: EmailProviderLimits;
+  };
 }
+
+export interface EmailProviderLimits {
+  readonly dailyLimit: number;
+  readonly monthlyLimit: number;
+  readonly perSecond: number;
+}
+
+/** Published free-tier limits: what the adapters use when no limit variable is set. */
+export const BREVO_FREE_LIMITS: EmailProviderLimits = {
+  dailyLimit: 300,
+  monthlyLimit: 9000,
+  perSecond: 5,
+};
+export const RESEND_FREE_LIMITS: EmailProviderLimits = {
+  dailyLimit: 100,
+  monthlyLimit: 3000,
+  perSecond: 2,
+};
 
 /** P64 Communications — link building and platform branding for outbound email. */
 export interface CommunicationsConfig {
@@ -893,6 +916,20 @@ export default () => {
     replyTo: env.EMAIL_REPLY_TO || undefined,
     brevoWebhookSecret: env.BREVO_WEBHOOK_SECRET || undefined,
     resendWebhookSecret: env.RESEND_WEBHOOK_SECRET || undefined,
+    // Raw `process.env` strings (validated as positive integers at boot);
+    // an unset or empty variable keeps the free-tier value.
+    limits: {
+      brevo: {
+        dailyLimit: Number(env.BREVO_DAILY_LIMIT || BREVO_FREE_LIMITS.dailyLimit),
+        monthlyLimit: Number(env.BREVO_MONTHLY_LIMIT || BREVO_FREE_LIMITS.monthlyLimit),
+        perSecond: Number(env.BREVO_PER_SECOND || BREVO_FREE_LIMITS.perSecond),
+      },
+      resend: {
+        dailyLimit: Number(env.RESEND_DAILY_LIMIT || RESEND_FREE_LIMITS.dailyLimit),
+        monthlyLimit: Number(env.RESEND_MONTHLY_LIMIT || RESEND_FREE_LIMITS.monthlyLimit),
+        perSecond: Number(env.RESEND_PER_SECOND || RESEND_FREE_LIMITS.perSecond),
+      },
+    },
   };
 
   const communications: CommunicationsConfig = {

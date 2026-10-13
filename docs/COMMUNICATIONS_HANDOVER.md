@@ -104,6 +104,8 @@ keep correct.
 |---|---|---|
 | `EMAIL_PROVIDERS` | `brevo` | Comma-separated fallback chain. |
 | `BREVO_API_KEY`, `BREVO_WEBHOOK_SECRET`, `EMAIL_FROM_EMAIL` | GitHub secrets | Never printed, logged, or committed. |
+| `BREVO_DAILY_LIMIT`, `BREVO_MONTHLY_LIMIT`, `BREVO_PER_SECOND` | unset (Brevo Free: 300 / 9,000 / 5) | B0-MSG-01. Set to the purchased tier's numbers; the quota service defers over them and `AtlasEmailQuotaHigh/Critical` divide by them. Positive integers only (boot refuses anything else). Not passed by the deploy workflow today: set them in the host `/opt/atlas/.env`, which `vps-deploy` leaves alone. `Release verify` prints their values. |
+| `RESEND_DAILY_LIMIT`, `RESEND_MONTHLY_LIMIT`, `RESEND_PER_SECOND` | unset (Resend Free: 100 / 3,000 / 2) | Same, for Resend. |
 
 Resend is **not** configured — see BL-3.
 

@@ -38,7 +38,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import type { EmailConfig } from '../../config/configuration';
+import { RESEND_FREE_LIMITS, type EmailConfig } from '../../config/configuration';
 import { EmailProviderError } from '../../identity/services/email-provider.interface';
 import type {
   EmailProviderAdapter,
@@ -218,12 +218,18 @@ export class ResendEmailProvider implements EmailProviderAdapter {
 
   constructor(private readonly configService: ConfigService) {}
 
-  /** Resend's published free tier: 100 emails/day, 3,000/month, 2 requests/second. */
+  /**
+   * Resend's published free tier (100 emails/day, 3,000/month, 2 requests/second)
+   * unless `RESEND_DAILY_LIMIT` / `_MONTHLY_LIMIT` / `_PER_SECOND` say otherwise (B0-MSG-01).
+   */
   capabilities(): EmailProviderCapabilities {
+    const limits =
+      this.configService.getOrThrow<EmailConfig>('email').limits?.resend ??
+      RESEND_FREE_LIMITS;
     return {
-      dailyLimit: 100,
-      monthlyLimit: 3000,
-      perSecond: 2,
+      dailyLimit: limits.dailyLimit,
+      monthlyLimit: limits.monthlyLimit,
+      perSecond: limits.perSecond,
       supportsWebhooks: true,
       supportsHtml: true,
       supportsIdempotencyKey: true,

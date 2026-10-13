@@ -131,6 +131,22 @@ describe('ResendEmailProvider', () => {
     });
   });
 
+  it('B0-MSG-01: uses the configured limits when a paid tier is set', () => {
+    const provider = new ResendEmailProvider(
+      configWith({
+        limits: {
+          brevo: { dailyLimit: 300, monthlyLimit: 9000, perSecond: 5 },
+          resend: { dailyLimit: 1667, monthlyLimit: 50000, perSecond: 5 },
+        },
+      }),
+    );
+    expect(provider.capabilities()).toMatchObject({
+      dailyLimit: 1667,
+      monthlyLimit: 50000,
+      perSecond: 5,
+    });
+  });
+
   // --- Request shape ------------------------------------------------------
 
   describe('request shape', () => {

@@ -815,6 +815,17 @@ const EnvSchema = z.object({
   // everything (fail closed).
   BREVO_WEBHOOK_SECRET: z.string().min(16).optional(),
   RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
+  // B0-MSG-01 — provider sending limits. Unset = the free tier's published
+  // limits (Brevo 300/day, 9,000/month, 5/s; Resend 100/day, 3,000/month,
+  // 2/s), so nothing changes until a paid tier is bought and these are set
+  // to match it. The quota service defers mail over these numbers and the
+  // AtlasEmailQuota* alerts divide by them.
+  BREVO_DAILY_LIMIT: z.coerce.number().int().positive().optional(),
+  BREVO_MONTHLY_LIMIT: z.coerce.number().int().positive().optional(),
+  BREVO_PER_SECOND: z.coerce.number().int().positive().optional(),
+  RESEND_DAILY_LIMIT: z.coerce.number().int().positive().optional(),
+  RESEND_MONTHLY_LIMIT: z.coerce.number().int().positive().optional(),
+  RESEND_PER_SECOND: z.coerce.number().int().positive().optional(),
 
   // --- P64 Communications ---
   // The platform web app's public origin, used by the email link builder
