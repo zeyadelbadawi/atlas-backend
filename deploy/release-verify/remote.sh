@@ -21,6 +21,9 @@
 #                        migrations, and when all are applied, RLS forced
 #                        and the expected policies on the three new/changed
 #                        tables (also part of `facts`)
+#   remote.sh owners  -> Platform Owner inventory (B0-OC-01): masked, per
+#                        account sign-in methods / TOTP / sessions as counts,
+#                        and every row that still references each account
 #   remote.sh video   -> Normal-tier hosted video readiness (B0-MED-11 /
 #                        B0-OC-34): tier settings, the protected bucket's
 #                        CORS rules and a browser-style CORS preflight
@@ -106,6 +109,57 @@ config_facts() {
     fail "$confirmed of $owners Platform Owner(s) have a confirmed authenticator, and enforcement began $effective"
   else
     info "$confirmed of $owners Platform Owner(s) have a confirmed authenticator; enforcement: $effective"
+  fi
+}
+
+# --- B0-OC-01: Platform Owner inventory (read-only) ---------------------
+#
+# Before the owner decides which Platform Owner accounts to keep, list each
+# one with what it would take to remove it. One SELECT per section, inside a
+# READ ONLY transaction. Per account: an ordinal, the first 8 characters of
+# the id, a MASKED email (first two characters of the local part, its
+# length, the domain), status, created / last sign-in dates, which sign-in
+# methods exist (password row yes/no, Google link yes/no), whether TOTP is
+# confirmed, the NUMBER of unused recovery codes and live sessions. Never a
+# secret, a hash, a code, a full email or a name.
+# Then every foreign key that points at `users`, swept generically from the
+# catalog (so nothing is missed by a hand-made list): per account, the
+# tables/columns that still reference it, with the row count and the FK's
+# ON DELETE rule (r = restrict, a = no action, c = cascade, n = set null).
+owners_facts() {
+  echo "== Platform Owner inventory (read-only; masked, no secrets)"
+  local rows refs
+  rows=$(sql "BEGIN READ ONLY;
+    SELECT 'po', row_number() OVER (ORDER BY u.created_at, u.id), left(u.id::text, 8),
+      left(split_part(u.email,'@',1), 2) || '…(' || length(split_part(u.email,'@',1)) || ')@' || split_part(u.email,'@',2),
+      u.status, CASE WHEN u.deleted_at IS NULL THEN 'live' ELSE 'deleted' END,
+      to_char(u.created_at,'YYYY-MM-DD'), coalesce(to_char(u.last_sign_in_at,'YYYY-MM-DD'),'never'),
+      CASE WHEN EXISTS (SELECT 1 FROM user_credentials c WHERE c.user_id = u.id) THEN 'password' ELSE 'no-password' END,
+      CASE WHEN EXISTS (SELECT 1 FROM user_auth_identities i WHERE i.user_id = u.id AND i.provider = 'google') THEN 'google' ELSE 'no-google' END,
+      CASE WHEN t.confirmed_at IS NOT NULL THEN 'totp-confirmed' WHEN t.user_id IS NOT NULL THEN 'totp-pending' ELSE 'no-totp' END,
+      (SELECT count(*) FROM two_factor_recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL),
+      (SELECT count(*) FROM refresh_tokens r WHERE r.user_id = u.id AND r.revoked_at IS NULL AND r.expires_at > now()),
+      CASE WHEN u.email_verified_at IS NULL THEN 'email-unverified' ELSE 'email-verified' END
+    FROM users u LEFT JOIN user_two_factor t ON t.user_id = u.id
+    WHERE u.is_platform_owner ORDER BY 2;
+    COMMIT;" 2>/dev/null | grep '^po|')
+  if [ -z "$rows" ]; then fail "Platform Owner inventory could not be read"; return; fi
+  echo "INFO  columns: #|id8|email(masked)|status|state|created|last-sign-in|password|google|totp|recovery-codes-unused|live-sessions|email"
+  printf '%s\n' "$rows" | sed 's/^po|/INFO  owner|/'
+  refs=$(sql "BEGIN READ ONLY;
+    WITH po AS (SELECT id, row_number() OVER (ORDER BY created_at, id) n FROM users WHERE is_platform_owner),
+    fks AS (
+      SELECT c.conrelid::regclass::text tbl, a.attname col, c.confdeltype del
+      FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+      WHERE c.contype = 'f' AND c.confrelid = 'public.users'::regclass AND cardinality(c.conkey) = 1)
+    SELECT 'ref', po.n, f.tbl || '.' || f.col, f.del, x.c
+    FROM po CROSS JOIN fks f CROSS JOIN LATERAL (
+      SELECT (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %s WHERE %I = %L', f.tbl, f.col, po.id), false, true, '')))[1]::text::bigint c) x
+    WHERE x.c > 0 ORDER BY 2, 3;
+    COMMIT;" 2>/dev/null | grep '^ref|')
+  if [ -z "$refs" ]; then info "no rows reference any Platform Owner (or the sweep could not run)"; else
+    echo "INFO  references: owner#|table.column|on-delete(r=restrict a=no-action c=cascade n=set-null)|rows"
+    printf '%s\n' "$refs" | sed 's/^ref|/INFO  ref|/'
   fi
 }
 
@@ -421,6 +475,7 @@ case "${1:-}" in
     config_facts
 
     b0_release_facts
+    owners_facts
 
     # Reported, not gating (a subshell keeps its FAIL count out of this
     # mode's exit): the tier stays off until every line passes and the
@@ -536,5 +591,9 @@ SQL
     b0_release_facts
     [ "$FAILS" = 0 ]
     ;;
-  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video|b0" >&2; exit 2 ;;
+  owners)
+    owners_facts
+    [ "$FAILS" = 0 ]
+    ;;
+  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video|b0|owners" >&2; exit 2 ;;
 esac
