@@ -25,6 +25,10 @@
 # deploy still hands it to `prisma migrate deploy`, and the running backend's
 # environment no longer carries it.
 #
+# B0-OPS-13: the three previous records are kept (.last-good.1..3) and
+# `--rollback --to N` returns to one of them; `--pin-frontend <tag>` pins
+# Caddy to an earlier image tag without touching the backend.
+#
 # And the W8B identity-key pin (4 Oct 2026): a missing
 # CUSTOMER_IDENTITY_HMAC_KEY is derived inside the running backend
 # (cross-checked against .env; refused if they differ) or, with no backend
@@ -271,12 +275,17 @@ check "postgres/redis images were not pulled by the deploy" \
 check "the backend was rolled to v2" eq "$(running_image backend)" "$(docker image inspect -f '{{.Id}}' "$REG/atlas-backend@$BACKEND_V2")"
 check ".last-good now records v2" eq "$(record_value BACKEND_IMAGE)|$(record_value CADDY_IMAGE)" \
   "$REG/atlas-backend@$BACKEND_V2|$REG/atlas-frontend@$CADDY_V2"
-# B0-OPS-07: v1 is neither running nor recorded any more, so the healthy
-# deploy removed it; v2 (running and recorded) and every postgres/redis
-# image (including the drifted tags nothing runs) stay.
+# B0-OPS-07: v2 (running and recorded) and every postgres/redis image
+# (including the drifted tags nothing runs) stay.
 check "the healthy deploy reported its prune" log_has "$W/log2" "Pruned"
-check "it removed the unused v1 application images" \
-  bash -c "! docker image inspect '$BACKEND_V1_ID' >/dev/null 2>&1 && ! docker image inspect '$CADDY_V1_ID' >/dev/null 2>&1"
+# B0-OPS-13: v1 is no longer running, but it is the previous record
+# (.last-good.1), so the prune keeps it for `--rollback --to 1`. An image
+# that nothing runs and no record names is removed (section 10).
+check "the previous release is kept as .last-good.1" \
+  eq "$(sed -n 's/^BACKEND_IMAGE=//p' "$W/.last-good.1")|$(sed -n 's/^CADDY_IMAGE=//p' "$W/.last-good.1")" \
+  "$REG/atlas-backend@$BACKEND_V1|$REG/atlas-frontend@$CADDY_V1"
+check "the prune keeps the images of the previous record" \
+  bash -c "docker image inspect '$BACKEND_V1_ID' >/dev/null 2>&1 && docker image inspect '$CADDY_V1_ID' >/dev/null 2>&1"
 check "it kept the running and recorded v2 images" \
   bash -c "docker image inspect '$REG/atlas-backend@$BACKEND_V2' >/dev/null && docker image inspect '$REG/atlas-frontend@$CADDY_V2' >/dev/null"
 check "it never prunes postgres/redis images, used or not" \
@@ -508,6 +517,42 @@ check "the running backend's environment has no DATABASE_URL" \
   bash -c "! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' '$(cid backend)' | grep -q '^DATABASE_URL='"
 check "the value never appears in the deploy output" \
   bash -c "! grep -qF \"\$(sed -n 's/^DATABASE_URL=//p' '$W/.env.migrate')\" '$W/log17'"
+
+# =============================================================================
+echo "# 10. previous records, --rollback --to N, --pin-frontend (B0-OPS-13)"
+check "--to outside 1..3 is refused" bash -c "! ATLAS_DIR='$W' bash '$W/deploy.sh' --rollback --to 4 >/dev/null 2>&1"
+check "--to without --rollback is refused" bash -c "! ATLAS_DIR='$W' bash '$W/deploy.sh' --to 1 >/dev/null 2>&1"
+check "a record history exists after several deploys" test -s "$W/.last-good.1"
+CUR_BACKEND=$(sed -n 's/^BACKEND_IMAGE=//p' "$W/.last-good")
+PREV_BACKEND=$(sed -n 's/^BACKEND_IMAGE=//p' "$W/.last-good.1")
+check "precondition: the previous record names a different backend" bash -c "[ '$CUR_BACKEND' != '$PREV_BACKEND' ]"
+check "check mode reads the previous record with --to 1" \
+  bash -c "ATLAS_DIR='$W' bash '$W/deploy.sh' --check-rollback-record --to 1 >'$W/log18' 2>&1 && grep -q '.last-good.1 is valid for --rollback --to 1' '$W/log18'"
+check "--rollback --to 1 succeeds" run_deploy "$W/log19" --rollback --to 1
+check "the backend runs the previous record's image" \
+  eq "$(running_image backend)" "$(docker image inspect -f '{{.Id}}' "$PREV_BACKEND")"
+check "the previous record became the current one" eq "$(record_value BACKEND_IMAGE)" "$PREV_BACKEND"
+check "the release rolled away from is now .last-good.1" \
+  eq "$(sed -n 's/^BACKEND_IMAGE=//p' "$W/.last-good.1")" "$CUR_BACKEND"
+# An application image that nothing runs and no record names: pruned by the
+# next healthy deploy.
+build_push atlas-backend:orphan "$B/backend" --build-arg VERSION=orphan \
+  --build-arg "MIGRATIONS=20260101000000_m1 20260201000000_m2 20260301000000_m3 20260401000000_m4"
+ORPHAN_ID=$(docker image inspect -f '{{.Id}}' "$REG/atlas-backend:orphan")
+build_push atlas-frontend:pinme "$B/caddy" --build-arg VERSION=pinme
+PIN_DIGEST=$(registry_digest atlas-frontend pinme)
+BACKEND_CID=$(cid backend)
+check "pinning to a tag that does not exist fails" \
+  bash -c "! ATLAS_DIR='$W' bash '$W/deploy.sh' --pin-frontend no-such-tag >'$W/log20' 2>&1 && grep -q 'Nothing was changed' '$W/log20'"
+check "--pin-frontend <tag> succeeds" run_deploy "$W/log21" --pin-frontend pinme
+check "caddy runs the pinned image" \
+  eq "$(running_image caddy)" "$(docker image inspect -f '{{.Id}}' "$REG/atlas-frontend@$PIN_DIGEST")"
+check "the record names the pinned frontend" eq "$(record_value CADDY_IMAGE)" "$REG/atlas-frontend@$PIN_DIGEST"
+check "the backend was not touched by the pin" eq "$(cid backend)" "$BACKEND_CID"
+check "the healthy pin pruned the unrecorded image" \
+  bash -c "! docker image inspect '$ORPHAN_ID' >/dev/null 2>&1"
+check "every record's images survive the prune" \
+  bash -c "for f in '$W/.last-good' '$W/.last-good.1' '$W/.last-good.2' '$W/.last-good.3'; do [ -f \"\$f\" ] || continue; for d in \$(sed -n 's/^\(BACKEND\|CADDY\)_IMAGE=//p' \"\$f\"); do docker image inspect \"\$d\" >/dev/null 2>&1 || exit 1; done; done"
 
 echo
 echo "# $PASS passed, $FAIL failed"
