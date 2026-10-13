@@ -526,8 +526,14 @@ check "a record history exists after several deploys" test -s "$W/.last-good.1"
 CUR_BACKEND=$(sed -n 's/^BACKEND_IMAGE=//p' "$W/.last-good")
 PREV_BACKEND=$(sed -n 's/^BACKEND_IMAGE=//p' "$W/.last-good.1")
 check "precondition: the previous record names a different backend" bash -c "[ '$CUR_BACKEND' != '$PREV_BACKEND' ]"
+# Whether every recorded image is still on this host depends on the image
+# store (a locally BUILT image on the containerd store is not addressable by
+# its registry digest once untagged), and check mode's registry probe
+# (`docker manifest inspect`) cannot read this plain-HTTP test registry. So
+# this asserts that `--to 1` reads .last-good.1; the rollback below proves
+# its images can be obtained.
 check "check mode reads the previous record with --to 1" \
-  bash -c "ATLAS_DIR='$W' bash '$W/deploy.sh' --check-rollback-record --to 1 >'$W/log18' 2>&1 && grep -q '.last-good.1 is valid for --rollback --to 1' '$W/log18'"
+  bash -c "ATLAS_DIR='$W' bash '$W/deploy.sh' --check-rollback-record --to 1 >'$W/log18' 2>&1; grep -q '.last-good.1 is valid for --rollback --to 1' '$W/log18'"
 check "--rollback --to 1 succeeds" run_deploy "$W/log19" --rollback --to 1
 check "the backend runs the previous record's image" \
   eq "$(running_image backend)" "$(docker image inspect -f '{{.Id}}' "$PREV_BACKEND")"
