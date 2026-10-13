@@ -620,6 +620,13 @@ describe('Google Identity — Phase 1 flow (e2e)', () => {
         (await complete(PLATFORM, consumer.handoff, consumer.binder).expect(200)).body
           .googleStep,
       ).toBe('link_required');
+      // Sign-ins write audit rows (B0-ANL-02) that reference the user; clear
+      // them first, as phase10-1-trial-abuse does, before hard-deleting.
+      await admin.auditLogEntry.deleteMany({
+        where: {
+          actor: { email: { in: [gmailInvited, workspaceInvited, consumerInvited] } },
+        },
+      });
       await admin.user.deleteMany({
         where: { email: { in: [gmailInvited, workspaceInvited, consumerInvited] } },
       });
@@ -1828,6 +1835,9 @@ describe('Google Identity — flag gating (e2e)', () => {
     } finally {
       // Cascades to the academies, their domain connections and the membership.
       await admin.organization.delete({ where: { id: org.id } }).catch(() => undefined);
+      await admin.auditLogEntry
+        .deleteMany({ where: { actorUserId: flagOwner.id } })
+        .catch(() => undefined);
       await admin.user.delete({ where: { id: flagOwner.id } }).catch(() => undefined);
     }
   });

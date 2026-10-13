@@ -322,6 +322,9 @@ describe('Registration does not enumerate accounts (e2e)', () => {
         statuses.push(res.status);
         // Both keep answering identically until the per-address budget ends.
         if (res.status === 429) break;
+        // Sign-ins write audit rows (B0-ANL-02) that reference the user; clear
+        // them first, as phase10-1-trial-abuse does, before hard-deleting.
+        await admin.auditLogEntry.deleteMany({ where: { actor: { email: fresh } } });
         await admin.user.deleteMany({ where: { email: fresh } });
       }
       expect(statuses.at(-1)).toBe(429);

@@ -347,6 +347,11 @@ describe('Identity tables — row-level security (e2e)', () => {
     await expect(
       tenancy.runInTenantContext(orgId, insert(active, 'active')),
     ).rejects.toThrow(/row-level security/);
+    // Sign-ins write audit rows (B0-ANL-02) that reference the user; clear
+    // them first, as phase10-1-trial-abuse does, before hard-deleting.
+    await admin.auditLogEntry.deleteMany({
+      where: { actorUserId: { in: [self, invited] } },
+    });
     await admin.user.deleteMany({ where: { id: { in: [self, invited] } } });
   });
 
