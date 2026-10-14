@@ -25,6 +25,9 @@ import { AccountDeletionService } from './account-deletion.service';
 import type { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import type { SessionRevocationService } from './session-revocation.service';
 import type { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { StudentDeviceService } from '../../tenancy/services/student-device.service';
+import type { LearningLeaseService } from '../../learning/services/learning-lease.service';
+import type { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
 
 interface AuditRow {
   actorUserId: string;
@@ -38,6 +41,9 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
   const audits: AuditRow[] = [];
   const revoked: string[] = [];
   const enqueued: unknown[] = [];
+  const gateRevoked: { sessionIds: readonly string[]; reason: string }[] = [];
+  const leasesDropped: string[] = [];
+  const deviceUpdates: unknown[] = [];
 
   const tx = {
     organization: { findMany: async () => [] },
@@ -58,6 +64,14 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
     passwordResetToken: { deleteMany: async () => ({}) },
     emailVerificationToken: { deleteMany: async () => ({}) },
     trustedDevice: { updateMany: async () => ({}) },
+    // Two devices at two academies, both still active.
+    studentDevice: {
+      findMany: async () => [{ academyId: 'academy-a' }, { academyId: 'academy-b' }],
+      updateMany: async (args: unknown) => {
+        deviceUpdates.push(args);
+        return { count: 2 };
+      },
+    },
     authEmailChallenge: { updateMany: async () => ({}) },
     authOAuthFlow: { updateMany: async () => ({}) },
     accountDeletionChallenge: { deleteMany: async () => ({}) },
@@ -95,9 +109,20 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
     {
       writeBestEffort: async (_t: unknown, row: AuditRow) => audits.push(row),
     } as unknown as AuditLogWriterService,
+    // The real service over the fake transaction: the statement it issues
+    // is part of what is under test.
+    new StudentDeviceService(),
+    {
+      revokeAll: async (userId: string, academyId: string) =>
+        leasesDropped.push(`${userId}:${academyId}`),
+    } as unknown as LearningLeaseService,
+    {
+      revokeSessions: async (sessionIds: readonly string[], reason: string) =>
+        gateRevoked.push({ sessionIds, reason }),
+    } as unknown as VideoGateRevocationService,
   );
 
-  return { service, audits, revoked };
+  return { service, audits, revoked, gateRevoked, leasesDropped, deviceUpdates };
 }
 
 describe('AccountDeletionService — who may delete whom', () => {
@@ -178,14 +203,39 @@ describe('AccountDeletionService — who may delete whom', () => {
       expect(row?.context?.initiatedBy).toBe('self');
     });
 
+    it('D5-1 — revokes every learner device, drops every lease and tells the delivery gate', async () => {
+      const { service, audits, revoked, gateRevoked, leasesDropped, deviceUpdates } =
+        build({ learner: {} });
+      await service.deleteOwnAccount('learner', {});
+
+      // Every ACTIVE device of the person, at every academy — not scoped
+      // to one academy the way an owner's registry reset is.
+      expect(deviceUpdates).toEqual([
+        {
+          where: { userId: 'learner', revokedAt: null },
+          data: { revokedAt: expect.any(Date) },
+        },
+      ]);
+      expect(leasesDropped).toEqual(['learner:academy-a', 'learner:academy-b']);
+      // The same sessions the denylist receives, so a playback credential
+      // already in a player stops with the account.
+      expect(revoked).toEqual(['s1']);
+      expect(gateRevoked).toEqual([{ sessionIds: ['s1'], reason: 'account_deleted' }]);
+      expect(audits.at(-1)?.context?.devicesRevoked).toBe(2);
+    });
+
     it('is idempotent — deleting an already-deleted account is not an error', async () => {
-      const { service, audits } = build({ gone: { status: 'deleted' } });
+      const { service, audits, gateRevoked, deviceUpdates } = build({
+        gone: { status: 'deleted' },
+      });
       await expect(service.deleteOwnAccount('gone', {})).resolves.toEqual({
         deleted: true,
         academiesArchived: 0,
       });
       // A no-op must not write a second deletion into the audit trail.
       expect(audits).toHaveLength(0);
+      expect(deviceUpdates).toHaveLength(0);
+      expect(gateRevoked).toHaveLength(0);
     });
   });
 });

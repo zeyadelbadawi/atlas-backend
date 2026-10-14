@@ -86,6 +86,15 @@ Row 5 is the part that must not be faked.
 - Destroys 2FA secret, recovery codes, password-reset and email-verification tokens.
 - Revokes every session in-transaction, then writes the Redis denylist **after commit**
   — a Redis failure must not roll back a completed deletion.
+- Revokes every device identity in the same transaction, in the person's own context:
+  remembered browsers (`trusted_devices`) and, since D5-1 (Oct 2026), every learner
+  device (`student_devices`) at **every** academy — revoked, not deleted, like every
+  other device removal. Before D5-1 the device rows stayed active after deletion even
+  though the refresh tokens bound to them were revoked. After commit the revoked
+  sessions are also published to the Normal-tier video delivery gate (reason
+  `account_deleted`; a no-op while no revocation endpoint is configured) and the
+  learning lease is dropped at each academy the person held a device at. The
+  `account.deleted*` audit row records `devicesRevoked`.
 - Removes memberships **inside per-organization tenant context**, because a
   context-free `deleteMany` matches zero rows and reports success.
 - Archives owned academies with a direct status update (`status='archived'`). This is

@@ -27,7 +27,9 @@
  * Concretely:
  *   - identifying fields are replaced with values that cannot be reversed
  *   - the account can never authenticate again
- *   - every session is revoked immediately, not merely expired
+ *   - every session is revoked immediately, not merely expired — and with
+ *     it every device identity (learner devices, remembered browsers),
+ *     the learning lease and the delivery gate's view of those sessions
  *   - authentication material (2FA secret, recovery codes, reset and
  *     verification tokens) is destroyed
  *   - rows that must persist keep a valid foreign key to an anonymised
@@ -60,8 +62,11 @@ import {
   type CertificateAnonymizeJobPayload,
 } from '../../certificates/queue/certificate-jobs.types';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { StudentDeviceService } from '../../tenancy/services/student-device.service';
 import { SessionRevocationService } from './session-revocation.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { LearningLeaseService } from '../../learning/services/learning-lease.service';
+import { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
 
 /** Closed vocabulary, mirroring subscription cancellation so both "why did you leave" signals aggregate the same way. */
 export const ACCOUNT_DELETION_REASONS = [
@@ -110,6 +115,9 @@ export class AccountDeletionService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly sessionRevocationService: SessionRevocationService,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly studentDeviceService: StudentDeviceService,
+    private readonly learningLeaseService: LearningLeaseService,
+    private readonly videoGateRevocationService: VideoGateRevocationService,
   ) {}
 
   /**
@@ -234,7 +242,8 @@ export class AccountDeletionService {
     // imports the certificates module (which imports identity).
     await this.enqueueCertificateAnonymisation(userId);
 
-    const sessionIds = await this.anonymiseAndRevoke(userId, input, actor);
+    const { sessionIds, deviceAcademyIds, devicesRevoked } =
+      await this.anonymiseAndRevoke(userId, input, actor);
 
     // Revocation is written to the denylist AFTER the transaction commits:
     // the database state is already authoritative, and a Redis failure
@@ -244,12 +253,25 @@ export class AccountDeletionService {
       await this.sessionRevocationService.markRevoked(sessionId);
     }
 
+    // D5-1 — and everything a revoked session could still be carrying,
+    // exactly as removing a device or blocking a learner already does
+    // (`LearnerSessionService.removeDevice`, `AcademyStudentsService.block`):
+    // the delivery gate stops honouring playback credentials already in a
+    // player, and the learning lease at every academy the person held a
+    // device at is dropped. Both are best-effort by contract and never
+    // throw — the deletion has already committed.
+    await this.videoGateRevocationService.revokeSessions(sessionIds, 'account_deleted');
+    for (const academyId of deviceAcademyIds) {
+      await this.learningLeaseService.revokeAll(userId, academyId);
+    }
+
     this.logger.log(
       {
         userId,
         initiatedBy: actor.initiatedBy,
         academiesArchived,
         sessionsRevoked: sessionIds.length,
+        devicesRevoked,
       },
       'Account deleted.',
     );
@@ -387,13 +409,19 @@ export class AccountDeletionService {
    * The deletion itself, in one transaction.
    *
    * Returns the session ids that were revoked so the caller can add them
-   * to the fast-path denylist once the transaction has committed.
+   * to the fast-path denylist (and the delivery gate) once the
+   * transaction has committed, plus the academies the person held a
+   * learner device at, whose learning leases the caller drops.
    */
   private async anonymiseAndRevoke(
     userId: string,
     input: DeleteAccountInput,
     actor: DeletionActor,
-  ): Promise<string[]> {
+  ): Promise<{
+    readonly sessionIds: string[];
+    readonly deviceAcademyIds: readonly string[];
+    readonly devicesRevoked: number;
+  }> {
     // The deleted account's OWN context: every per-user table below is
     // row-level secured to its owner, and a context-free statement would
     // silently match nothing.
@@ -434,6 +462,16 @@ export class AccountDeletionService {
         where: { userId, revokedAt: null },
         data: { revokedAt: now },
       });
+      // D5-1 — learner devices (`student_devices`, the content device cap)
+      // die with the account too. They used to survive deletion: every
+      // refresh row bound to them was revoked above, but the device rows
+      // themselves stayed active at every academy, contradicting the
+      // documented treatment ("sessions, devices, grants, leases: revoked
+      // immediately", docs/ACCOUNT_DELETION_AND_DATA_LIFECYCLE.md §1). In
+      // this same transaction and the person's own context, like the
+      // trusted-device revocation above; revoked rather than deleted, as
+      // every device removal is.
+      const devices = await this.studentDeviceService.revokeAllForUser(tx, userId);
       await tx.authEmailChallenge.updateMany({
         where: { userId, consumedAt: null },
         data: { consumedAt: now },
@@ -498,10 +536,15 @@ export class AccountDeletionService {
           reason: input.reason ?? 'not_given',
           hasFeedback: Boolean(input.feedback),
           sessionsRevoked: liveSessions.length,
+          devicesRevoked: devices.revoked,
         },
       });
 
-      return liveSessions.map((session) => session.sessionId);
+      return {
+        sessionIds: liveSessions.map((session) => session.sessionId),
+        deviceAcademyIds: devices.academyIds,
+        devicesRevoked: devices.revoked,
+      };
     });
   }
 }
