@@ -30,15 +30,15 @@
  *
  * Safety:
  *   - Every email is `@*.dev`/`@atlas.dev` and every password is the same
- *     obviously-fake literal (`DevPassword123!`) — printed once at the end
- *     so a human running this locally has it, never silently assumed.
+ *     obviously-fake literal (`DEV_PASSWORD` below, also used by the
+ *     frontend Playwright journeys). It is never printed: logs from CI and
+ *     shared terminals outlive the run.
  *   - Never runs automatically — this file is only ever invoked by
- *     `npm run db:seed`, a manual, explicit local command.
- *   - No production guard is needed beyond that: it connects to whatever
- *     `DATABASE_URL`/`APP_DATABASE_URL` the local `.env` points at, the
- *     same as every other script in this repo — running it against a
- *     production database would be an operator error, not something this
- *     script can detect from inside itself.
+ *     `npm run db:seed` / `prisma db seed`, a manual local or CI command.
+ *   - Production guard: before connecting anywhere it refuses
+ *     `NODE_ENV=production` and any `DATABASE_URL`/`APP_DATABASE_URL`
+ *     that is not loopback (`assertLocalDatabaseTarget`), because a
+ *     known-password Platform Owner must never reach a real database.
  *
  * Run: `npm run db:seed`
  */
@@ -56,6 +56,7 @@ import { BlogPostsService } from '../src/community/services/blog-posts.service';
 import { ForumsService } from '../src/community/services/forums.service';
 import { permissionsForRole } from '../src/tenancy/constants/organization-permissions.constants';
 import { PLAN_CATALOG, planKeysForTiers } from '../src/plans/utils/plan-catalog.util';
+import { assertLocalDatabaseTarget } from '../src/common/database/local-database-guard';
 
 const DEV_PASSWORD = 'DevPassword123!';
 
@@ -68,6 +69,7 @@ function requireAdminDatabaseUrl(): string {
 }
 
 async function main(): Promise<void> {
+  assertLocalDatabaseTarget('prisma/seed.ts');
   const adminPrisma = new PrismaClient({ datasources: { db: { url: requireAdminDatabaseUrl() } } });
   const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn'] });
 
@@ -112,7 +114,7 @@ async function main(): Promise<void> {
     await recomputeService.recomputeOne(orgs.orgB.id);
 
     console.log('\n✔ Seed complete.\n');
-    console.log('Sign in with any seeded user below, password for all: ' + DEV_PASSWORD);
+    console.log('Sign in with any seeded user below; all share the dev password (DEV_PASSWORD in prisma/seed.ts):');
     console.log('  admin@atlas.dev            — platform owner');
     console.log('  sarah.chen@acme-academy.dev — owns Org A, owner of Academy A1, member of Org B');
     console.log('  omar.hassan@nextgen-learning.dev — owns Org B, owner of Academy B1');
