@@ -1287,6 +1287,52 @@ describe('P64 Phase 2 — protected content, video tiers and the provider regist
     );
   });
 
+  it('a text lesson with both a stale URL and a body (no content row) delivers the body, readable offline', async () => {
+    // B0-LRN-01 — the old dialog showed the URL field for Text lessons and
+    // kept the URL when a Video lesson was switched to Text.
+    const w = await world('builder-text-stale-url', { family: 'normal', tier: 'basic' });
+    const lesson = await seedCourseLesson(
+      admin,
+      w.section.id,
+      w.course.id,
+      'legacy-text-stale-url',
+      0,
+      {
+        status: 'published',
+        contentType: 'text',
+        contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      },
+    );
+    await admin.courseLesson.update({
+      where: { id: lesson.id },
+      data: { description: 'The lesson body' },
+    });
+    const student = await enrolledLearner(w, 'builder-text-stale-url-student');
+    const res = await getContent(student, w.course.id, lesson.id).expect(200);
+    expect(res.body.kind).toBe('text');
+    expect(res.body.bodyHtml).toBe('<p>The lesson body</p>');
+    expect(res.body.offlineReading.allowed).toBe(true);
+  });
+
+  it('a text lesson with a URL and no body still delivers the URL as a link-out', async () => {
+    const w = await world('builder-text-url-only', { family: 'normal', tier: 'basic' });
+    const lesson = await seedCourseLesson(
+      admin,
+      w.section.id,
+      w.course.id,
+      'legacy-text-url-only',
+      0,
+      {
+        status: 'published',
+        contentType: 'text',
+        contentUrl: 'https://example.com/reading',
+      },
+    );
+    const student = await enrolledLearner(w, 'builder-text-url-only-student');
+    const res = await getContent(student, w.course.id, lesson.id).expect(200);
+    expect(res.body.kind).toBe('external');
+  });
+
   it('a lesson with neither a content row nor any legacy content is still noContent', async () => {
     const w = await world('builder-empty', { family: 'normal', tier: 'basic' });
     const lesson = await seedCourseLesson(admin, w.section.id, w.course.id, 'empty', 0, {

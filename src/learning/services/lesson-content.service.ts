@@ -174,20 +174,16 @@ function effectiveLessonContent(lesson: {
     return { kind: 'video', bodyHtml: null, externalUrl: null, mediaAsset: null };
   }
 
-  const url = lesson.contentUrl?.trim();
-  if (url) {
-    // The builder stores every non-hosted source in one opaque URL. A
-    // YouTube link becomes an embed in `buildGrant`; anything else stays a
-    // link-out. Either way it is an unprotected external embed, reported
-    // honestly as such.
-    return { kind: 'external', bodyHtml: null, externalUrl: url, mediaAsset: null };
-  }
-
   // B0-LRN-01 — a text lesson saved before the builder could write a body
   // row kept its body in `description` (the old dialog had no other
   // field — the same rule the Phase 2 backfill applied). It is delivered
   // as plain text: escaped and split into paragraphs by the sanitiser
   // module's own `plainTextToHtml`, so no stored markup is ever trusted.
+  // It is checked before the URL: the old dialog also showed the URL field
+  // for Text lessons and kept a stale URL when a Video lesson was switched
+  // to Text, so a text lesson with a body must deliver the body, not a
+  // link-out to that URL (the Phase 2 backfill likewise took a text
+  // lesson's description as its body and ignored its URL).
   if (lesson.contentType === 'text') {
     const body = lesson.description?.trim();
     if (body) {
@@ -198,6 +194,15 @@ function effectiveLessonContent(lesson: {
         mediaAsset: null,
       };
     }
+  }
+
+  const url = lesson.contentUrl?.trim();
+  if (url) {
+    // The builder stores every non-hosted source in one opaque URL. A
+    // YouTube link becomes an embed in `buildGrant`; anything else stays a
+    // link-out. Either way it is an unprotected external embed, reported
+    // honestly as such.
+    return { kind: 'external', bodyHtml: null, externalUrl: url, mediaAsset: null };
   }
 
   return null;
