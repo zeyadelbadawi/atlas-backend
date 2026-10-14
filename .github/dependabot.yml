@@ -1,0 +1,41 @@
+# B0-OPS-12 — every GitHub Action is pinned to a full commit SHA and the
+# Dockerfile's base image to a multi-arch index digest. Pins that nobody
+# updates trade one risk (a moving tag) for another (missed security
+# fixes), so Dependabot proposes the updates as reviewable pull requests:
+# weekly, one grouped PR per ecosystem, at most a few open at once.
+# Each PR goes through Backend CI like any other change; nothing here
+# merges or deploys by itself.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # `/` covers .github/workflows; the composite actions are listed too so
+    # an external action added to one of them is kept current as well.
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ['*']
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: build
+    # Digest and in-major updates only: moving the runtime off Node 20 is
+    # its own decision (B0-OPS-12 follow-up, out of scope), not a weekly PR.
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    groups:
+      base-images:
+        patterns: ['*']
