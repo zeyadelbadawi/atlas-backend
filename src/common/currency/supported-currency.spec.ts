@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
-import { assertCurrencyAllowed, SUPPORTED_CURRENCIES } from './supported-currency';
+import {
+  assertCurrencyAllowed,
+  defaultPriceCurrency,
+  SUPPORTED_CURRENCIES,
+} from './supported-currency';
 
 describe('assertCurrencyAllowed (B0-LRN-05 / B0-COM-05)', () => {
   it('supports EGP only for now', () => {
@@ -33,5 +37,19 @@ describe('assertCurrencyAllowed (B0-LRN-05 / B0-COM-05)', () => {
         { field: 'pricing.currency', messageKey: 'validation:unsupportedCurrency' },
       ],
     });
+  });
+});
+
+describe('defaultPriceCurrency (D5-3)', () => {
+  it("is the academy's currency when it is a supported one", () => {
+    expect(defaultPriceCurrency('EGP')).toBe('EGP');
+  });
+
+  it.each([
+    ['a legacy unsupported academy currency', 'USD'],
+    ['no academy currency', null],
+    ['an absent academy', undefined],
+  ])('falls back to the platform default for %s', (_label, academyCurrency) => {
+    expect(defaultPriceCurrency(academyCurrency)).toBe('EGP');
   });
 });

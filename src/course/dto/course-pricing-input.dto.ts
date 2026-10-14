@@ -27,6 +27,8 @@ export class CoursePricingInputDto {
   @IsPositive()
   readonly amount?: number;
 
+  // D5-3 — optional: a paid price sent without one keeps the course's
+  // current currency, or takes the academy's (`CoursesService`).
   @IsOptional()
   @IsString()
   readonly currency?: string;
