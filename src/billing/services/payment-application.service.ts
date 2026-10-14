@@ -26,7 +26,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { limitsToGrant } from '../../plans/utils/granted-limits.util';
+import {
+  limitsToGrant,
+  resolveSubscriptionLimits,
+} from '../../plans/utils/granted-limits.util';
+import { shouldScheduleDowngrade } from '../utils/scheduled-plan-change.util';
 import { Prisma } from '@prisma/client';
 import type { Checkout, Payment } from '@prisma/client';
 import { CheckoutsRepository } from '../repositories/checkouts.repository';
@@ -229,6 +233,23 @@ export class PaymentApplicationService {
         billingCycle,
         giftedDays: gift.granted ? gift.days : null,
       });
+      // B0-BIL-04 — a smaller plan bought while a paid period still has
+      // more than a week to run waits for that period's end: the customer
+      // keeps the capacity they already paid for, and the subscription
+      // sweep switches the plan at `existing.currentPeriodEnd`.
+      const scheduleAt =
+        extendsCurrentPeriod &&
+        existing!.planId !== plan.id &&
+        shouldScheduleDowngrade({
+          currentPlanId: existing!.planId,
+          nextPlanId: plan.id,
+          currentLimits: resolveSubscriptionLimits(existing!),
+          nextLimits: limitsToGrant(plan),
+          currentPeriodEnd: existing!.currentPeriodEnd!,
+          now,
+        })
+          ? existing!.currentPeriodEnd!
+          : undefined;
       // Phase P19 (`Reports/DEVELOPMENT_E2E_FLOW_AUDIT.md` P0-3):
       // `upsertForPlanPurchase` now creates the Organization's first-ever
       // `tenant_subscriptions` row itself when none exists yet, rather
@@ -249,13 +270,14 @@ export class PaymentApplicationService {
           //
           // An UPGRADE and a DOWNGRADE both land here, and both are
           // intentional customer decisions: each one re-grants from the
-          // newly chosen plan. There is no grandfathering across a
-          // deliberate plan change — only across catalog edits the
-          // customer did not ask for.
+          // newly chosen plan (a mid-period downgrade at the period end,
+          // B0-BIL-04). There is no grandfathering across a deliberate plan
+          // change — only across catalog edits the customer did not ask for.
           grantedLimits: limitsToGrant(plan) as unknown as Prisma.InputJsonValue,
           billingCycle,
           currentPeriodStart: dates.currentPeriodStart,
           currentPeriodEnd: dates.currentPeriodEnd,
+          ...(scheduleAt ? { scheduleAt } : {}),
           ...(dates.gift
             ? {
                 gift: {

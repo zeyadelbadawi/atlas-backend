@@ -64,6 +64,7 @@ import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { LiveProviderConnectionService } from '../services/live-provider-connection.service';
 import { ZoomOAuthService } from '../services/zoom-oauth.service';
+import { AddOnAccessService } from '../services/add-on-access.service';
 import { CompleteZoomAuthorizationDto } from '../dto/zoom-oauth.dto';
 
 /**
@@ -92,6 +93,7 @@ export class LiveProviderOAuthController {
   constructor(
     private readonly oauthService: ZoomOAuthService,
     private readonly connectionService: LiveProviderConnectionService,
+    private readonly addOnAccessService: AddOnAccessService,
   ) {}
 
   /**
@@ -107,6 +109,8 @@ export class LiveProviderOAuthController {
   async authorize(@Req() request: Request) {
     const { academyId, organizationId } = request.academyContext!;
     this.assertOwner(request);
+    // B0-LIV-01 — no Zoom account is linked to an unlaunched add-on.
+    await this.addOnAccessService.assertPublished();
 
     const { authorizationUrl, expiresAt } = await this.oauthService.createAuthorization({
       // Both derived from the AUTHENTICATED context, never from the body.
@@ -142,6 +146,8 @@ export class LiveProviderOAuthController {
     @Body() body: CompleteZoomAuthorizationDto,
   ): Promise<{ status: string }> {
     const userId = request.authContext!.userId;
+    // B0-LIV-01 — refused before the state is spent or Zoom is called.
+    await this.addOnAccessService.assertPublished();
 
     const resolved = await this.oauthService.consumeState(body.state, userId);
     if (!resolved) {

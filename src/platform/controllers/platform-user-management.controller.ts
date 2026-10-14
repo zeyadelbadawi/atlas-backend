@@ -46,6 +46,12 @@ import type { AccountDeletionReason } from '../../identity/services/account-dele
 import { DeletionPlanService } from '../../identity/services/deletion-plan.service';
 import type { DeletionPlan } from '../../identity/services/deletion-plan.service';
 import { DeleteAccountBaseDto } from '../../identity/dto/delete-account.dto';
+import { AccountSuspensionService } from '../../identity/services/account-suspension.service';
+import type { AccountSuspensionResult } from '../../identity/services/account-suspension.service';
+import {
+  SuspendAccountDto,
+  UnsuspendAccountDto,
+} from '../../identity/dto/account-suspension.dto';
 
 @Controller('platform-user-management')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
@@ -53,7 +59,33 @@ export class PlatformUserManagementController {
   constructor(
     private readonly accountDeletionService: AccountDeletionService,
     private readonly deletionPlanService: DeletionPlanService,
+    private readonly accountSuspensionService: AccountSuspensionService,
   ) {}
+
+  /**
+   * B0-SEC-07 — suspends the user: sign-in is refused and every session
+   * ends now. Reason required; audited as `account.suspended`.
+   */
+  @Post(':userId/suspend')
+  @HttpCode(HttpStatus.OK)
+  async suspendUser(
+    @CurrentAuthContext() auth: AuthContext,
+    @Param('userId') userId: string,
+    @Body() dto: SuspendAccountDto,
+  ): Promise<AccountSuspensionResult> {
+    return this.accountSuspensionService.suspend(auth.userId, userId, dto.reason);
+  }
+
+  /** B0-SEC-07 — reinstates a suspended user; audited as `account.unsuspended`. */
+  @Post(':userId/unsuspend')
+  @HttpCode(HttpStatus.OK)
+  async unsuspendUser(
+    @CurrentAuthContext() auth: AuthContext,
+    @Param('userId') userId: string,
+    @Body() dto: UnsuspendAccountDto,
+  ): Promise<AccountSuspensionResult> {
+    return this.accountSuspensionService.unsuspend(auth.userId, userId, dto.reason);
+  }
 
   /**
    * What deleting this user would destroy, keep and revoke.

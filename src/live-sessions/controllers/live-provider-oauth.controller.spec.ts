@@ -20,6 +20,7 @@ import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { LiveProviderConnectionService } from '../services/live-provider-connection.service';
 import { ZoomOAuthService } from '../services/zoom-oauth.service';
+import { AddOnAccessService } from '../services/add-on-access.service';
 import { CompleteZoomAuthorizationDto } from '../dto/zoom-oauth.dto';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
@@ -46,6 +47,7 @@ describe('LiveProviderOAuthController', () => {
   let createAuthorization: jest.Mock;
   let consumeState: jest.Mock;
   let completeOAuthConnection: jest.Mock;
+  let assertPublished: jest.Mock;
 
   beforeEach(async () => {
     createAuthorization = jest.fn().mockResolvedValue({
@@ -56,6 +58,7 @@ describe('LiveProviderOAuthController', () => {
       .fn()
       .mockResolvedValue({ academyId: ACADEMY_ID, organizationId: ORG_ID });
     completeOAuthConnection = jest.fn().mockResolvedValue({ status: 'connected' });
+    assertPublished = jest.fn().mockResolvedValue(undefined);
 
     const moduleRef = await Test.createTestingModule({
       controllers: [LiveProviderOAuthController],
@@ -68,6 +71,7 @@ describe('LiveProviderOAuthController', () => {
           provide: LiveProviderConnectionService,
           useValue: { completeOAuthConnection },
         },
+        { provide: AddOnAccessService, useValue: { assertPublished } },
       ],
     })
       /*
@@ -99,6 +103,35 @@ describe('LiveProviderOAuthController', () => {
       },
       authContext: { userId: USER_ID },
     }) as unknown as Request;
+
+  /*
+   * B0-LIV-01 — while the Live Sessions add-on is not published (coming
+   * soon), even the owner cannot link a Zoom account: nothing is minted,
+   * no state is spent and Zoom is never called.
+   */
+  describe('unlaunched add-on', () => {
+    const notUsable = Object.assign(new Error('forbidden'), { status: 403 });
+
+    it('refuses to start an authorization', async () => {
+      assertPublished.mockRejectedValue(notUsable);
+      await expect(
+        controller.authorize(requestWith([OWNER, ...MANAGER_PERMISSIONS])),
+      ).rejects.toBe(notUsable);
+      expect(createAuthorization).not.toHaveBeenCalled();
+    });
+
+    it('refuses a callback before spending the state or exchanging the code', async () => {
+      assertPublished.mockRejectedValue(notUsable);
+      await expect(
+        controller.callback({ authContext: { userId: USER_ID } } as unknown as Request, {
+          code: 'auth-code',
+          state: 'state-value',
+        }),
+      ).rejects.toBe(notUsable);
+      expect(consumeState).not.toHaveBeenCalled();
+      expect(completeOAuthConnection).not.toHaveBeenCalled();
+    });
+  });
 
   describe('authorize — owner only', () => {
     it('lets an Organization Owner start the authorization', async () => {

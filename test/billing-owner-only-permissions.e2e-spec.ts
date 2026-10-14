@@ -177,7 +177,7 @@ describe('Organization billing & payments — owner only (e2e)', () => {
         family: 'payment-settings',
         method: 'patch',
         path: `${base}/payment-settings`,
-        body: { paymentCollectionMode: 'atlas_payments' },
+        body: { paymentCollectionMode: 'unconfigured' },
       },
       {
         family: 'payment-settings',

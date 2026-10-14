@@ -171,6 +171,9 @@ describe('P64 C6 — hosted-video retention (e2e, fake clock, fake provider)', (
     await admin.organization.deleteMany({
       where: { id: { in: seededOrganizationIds } },
     });
+    // Sign-ins write audit rows (B0-ANL-02) that reference the user; clear
+    // them first, as phase10-1-trial-abuse does, before hard-deleting.
+    await admin.auditLogEntry.deleteMany({ where: { actorUserId: platformOwnerId } });
     await admin.user.deleteMany({ where: { id: platformOwnerId } });
     await admin.$disconnect();
     await app.close();

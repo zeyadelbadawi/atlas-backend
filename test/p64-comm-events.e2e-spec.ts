@@ -43,6 +43,7 @@ import {
   seedOrganizationWithOwner,
   seedPaymentMethod,
   seedOrganizationCommission,
+  seedPaymentCollectionMode,
 } from './utils/db-admin';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { CommunicationService } from '../src/communications/services/communication.service';
@@ -601,11 +602,7 @@ describe('P64 Communications C3 — new transactional events and digests (e2e)',
         pricingCurrency: 'USD',
       });
       const server = app.getHttpServer();
-      await request(server)
-        .patch(`/organizations/${org.id}/payment-settings`)
-        .set(owner.auth)
-        .send({ paymentCollectionMode: 'atlas_payments' })
-        .expect(200);
+      await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
       await seedOrganizationCommission(admin, org.id);
       const method = await seedPaymentMethod(admin, 'c3-proof-method');
       const student = await account('c3-proof-student');

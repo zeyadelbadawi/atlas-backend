@@ -171,6 +171,47 @@ describe('Phase 10 session security (e2e) — P10-SEC-001..014', () => {
       .expect(401);
   });
 
+  // B0-IAM-06 — one action ends every OTHER session; the caller survives.
+  it('P10-SEC-015 — "sign out all other sessions" ends the rest, keeps the caller, and is audited', async () => {
+    const email = await registerUser('p10-015');
+    const laptop = await signInAs(email, CHROME_MAC);
+    const desktop = await signInAs(email, FIREFOX_WINDOWS);
+    const phone = await signInAs(email, CHROME_MAC);
+    expect((await listSessions(laptop.accessToken).expect(200)).body).toHaveLength(3);
+
+    const res = await request(app.getHttpServer())
+      .post('/auth/sessions/revoke-others')
+      .set('Authorization', `Bearer ${laptop.accessToken}`)
+      .expect(200);
+    expect(res.body).toEqual({ sessionsRevoked: 2 });
+
+    // The caller still works and is the only session left.
+    const after = await listSessions(laptop.accessToken).expect(200);
+    expect(after.body).toHaveLength(1);
+    expect(after.body[0].isCurrent).toBe(true);
+
+    // The others can neither refresh nor use their access tokens.
+    for (const other of [desktop, phone]) {
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .send({ refreshToken: other.refreshToken })
+        .expect(401);
+      await listSessions(other.accessToken).expect(401);
+    }
+
+    const audit = await admin.auditLogEntry.findFirst({
+      where: { actorUserId: laptop.userId, action: 'auth.sessions.revoked' },
+      orderBy: { occurredAt: 'desc' },
+    });
+    expect(audit?.context).toMatchObject({
+      trigger: 'sign_out_other_sessions',
+      sessionsRevoked: 2,
+    });
+
+    // Unauthenticated callers get nothing.
+    await request(app.getHttpServer()).post('/auth/sessions/revoke-others').expect(401);
+  });
+
   it("P10-SEC-005 — a revoked session's ACCESS token is refused on the very next request", async () => {
     const email = await registerUser('p10-005');
     const laptop = await signInAs(email, CHROME_MAC);

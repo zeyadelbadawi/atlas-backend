@@ -460,3 +460,46 @@ existing Redis.
 - The HTTPS probe measures transport (TLS + any response), not content.
 - The sweep uses the first platform owner as its actor, like every other
   cross-tenant job.
+
+## 14. Customer DNS guidance: subdomain, apex, proxied records (B0-WEB-03)
+
+What Atlas asks for is fixed by the code above: **one CNAME** from the
+customer's hostname to the zone's fallback origin (§3, "DNS instructions"),
+plus the TXT records Cloudflare returns for ownership/SSL. Everything below
+follows from that.
+
+- **Recommend a subdomain.** `www.example.com` or `learn.example.com` takes a
+  CNAME at any DNS provider. This is the path the e2e suites exercise
+  (`P63-DOM-*`) and the one production verified (ACD-6.3, 18 Sep 2026).
+- **The bare apex (`example.com`) cannot hold a standard CNAME.** The DNS
+  rules do not allow a CNAME next to the zone's SOA/NS records. Some
+  providers offer a workaround at the apex, such as "CNAME flattening",
+  `ALIAS` or `ANAME`. Whether Cloudflare then activates the custom hostname
+  depends on the provider's resolution, and Atlas has **not** verified
+  this. The status mapper accepts `test_active_apex` as connected, but no
+  apex domain has been tested end to end. Until one is, advise customers to
+  connect `www.` and have their registrar redirect the apex to it.
+- **If the customer's own DNS is on Cloudflare**, create the CNAME as
+  **DNS only** (grey cloud) unless the Platform Owner has confirmed that a
+  proxied (orange-cloud) record works for this zone. A proxied record makes
+  the hostname resolve to Cloudflare's edge for the customer's own zone,
+  which changes how validation and routing behave. It is not covered by
+  the tests here.
+- **TXT records** must be created exactly as shown, including the full name.
+  Some providers append the zone to the name automatically.
+- **When a connected domain stops working** (the production `rawc.ae` 404
+  of 12 Oct 2026, cause not yet established), check in order: the CNAME
+  still exists and points at the target shown in the Domain tab; the
+  hostname's status in the Platform Owner domain console; the academy is
+  published and its organization not lapsed (an unpublished or lapsed
+  academy is not served on any host).
+
+### 14a. E2E status (13 Oct 2026)
+
+The four `p63-domain-operations` failures recorded on 26 Sep 2026 no longer
+reproduce. They came from test isolation (a suite left the platform domain
+changed and P63 used a stale base domain), fixed in `7d84492` ("E2E
+isolation: domain.e2e restores the platform domain; P63 uses the effective
+base domain…"). Local run, 13 Oct 2026: `p63-domain-operations` + `domain`
+54/54, `phase10-4-academy-subdomain` + `rls-domain` 25/25. They also run in
+the CI e2e shards, which are green on the PR head.

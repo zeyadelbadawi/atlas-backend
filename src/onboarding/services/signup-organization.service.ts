@@ -20,6 +20,7 @@ import { OrganizationsService } from '../../tenancy/services/organizations.servi
 import { OrganizationSubscriptionBootstrapService } from '../../plans/services/organization-subscription-bootstrap.service';
 import { TrialRedemptionService } from '../../plans/services/trial-redemption.service';
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
+import { PlatformOwnerAlertService } from '../../communications/services/platform-owner-alert.service';
 import type {
   PreparedSignupOrganization,
   SignupOrganizationPort,
@@ -35,6 +36,8 @@ export class SignupOrganizationService implements SignupOrganizationPort {
     private readonly subscriptionBootstrapService: OrganizationSubscriptionBootstrapService,
     private readonly trialRedemptionService: TrialRedemptionService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
+    // B0-SUP-01 — Platform Owners hear about every new organization.
+    private readonly platformOwnerAlertService: PlatformOwnerAlertService,
   ) {}
 
   async prepare(input: {
@@ -98,6 +101,12 @@ export class SignupOrganizationService implements SignupOrganizationPort {
   }
 
   async afterCommit(result: SignupOrganizationResult): Promise<void> {
+    this.platformOwnerAlertService.notify({
+      key: 'platform.organization.signed_up',
+      entity: { type: 'organization', id: result.organizationId },
+      organizationId: result.organizationId,
+      values: { trialStarted: result.trialStarted },
+    });
     try {
       await this.tenantUsageRecomputeProducer.enqueueOne(result.organizationId);
     } catch (error) {

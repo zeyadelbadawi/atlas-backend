@@ -156,6 +156,27 @@ const EXPECTED_DEDUPE: Record<
     values: { code: '123456', expiresInMinutes: 10 },
     expected: null,
   },
+  // B0-SEC-13 — privacy requests.
+  'auth.account.privacy_request_code': {
+    values: { code: '123456', expiresInMinutes: 10 },
+    expected: null,
+  },
+  'privacy_request.received': {
+    values: { requestType: 'export' },
+    expected: `privacy_request_received:${ENTITY_ID}`,
+  },
+  'privacy_request.export_ready': {
+    values: { availableUntilDate: '2026-10-20 09:00 UTC' },
+    expected: `privacy_request_export_ready:${ENTITY_ID}`,
+  },
+  'privacy_request.rejected': {
+    values: { requestType: 'deletion', note: 'Open payment dispute.' },
+    expected: `privacy_request_rejected:${ENTITY_ID}`,
+  },
+  'privacy_request.deletion_completed': {
+    values: {},
+    expected: `privacy_request_deletion_completed:${ENTITY_ID}`,
+  },
   'auth.email.verification': { values: { token: 'tok' }, expected: null },
   'auth.password.reset': { values: { token: 'tok' }, expected: null },
   'auth.password.reset_confirmed': { values: {}, expected: null },
@@ -261,6 +282,10 @@ const EXPECTED_DEDUPE: Record<
     values: { anchorAt: TRIAL_ENDS_AT },
     expected: `lifecycle_trial_started:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
   },
+  'lifecycle.trial.ending_in_3_days': {
+    values: { anchorAt: TRIAL_ENDS_AT },
+    expected: `lifecycle_trial_ending_3d:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
+  },
   'lifecycle.trial.ending_soon': {
     values: { anchorAt: TRIAL_ENDS_AT },
     expected: `lifecycle_trial_ending_soon:${ENTITY_ID}:${TRIAL_ENDS_AT}`,
@@ -289,6 +314,10 @@ const EXPECTED_DEDUPE: Record<
     values: { proofId: PROOF_ID },
     expected: `lifecycle_subscription_payment_submitted:${ENTITY_ID}:${PROOF_ID}`,
   },
+  'lifecycle.subscription.renewal_30d': {
+    values: { anchorAt: PERIOD_END_AT },
+    expected: `lifecycle_subscription_renewal_30d:${ENTITY_ID}:${PERIOD_END_AT}`,
+  },
   'lifecycle.subscription.renewal_due': {
     values: { anchorAt: PERIOD_END_AT },
     expected: `lifecycle_subscription_renewal_due:${ENTITY_ID}:${PERIOD_END_AT}`,
@@ -312,6 +341,10 @@ const EXPECTED_DEDUPE: Record<
   'lifecycle.subscription.cancel_scheduled': {
     values: { anchorAt: PERIOD_END_AT },
     expected: `lifecycle_subscription_cancel_scheduled:${ENTITY_ID}:${PERIOD_END_AT}`,
+  },
+  'lifecycle.subscription.price_change_notice': {
+    values: { planVersion: '7' },
+    expected: `lifecycle_subscription_price_change:${ENTITY_ID}:7`,
   },
   'lifecycle.subscription.cancelled': {
     values: { anchorAt: PERIOD_END_AT },
@@ -358,6 +391,44 @@ const EXPECTED_DEDUPE: Record<
   'platform.contact_submission.received': {
     values: { name: 'Visitor', topic: 'sales' },
     expected: `platform_contact_received:${ENTITY_ID}`,
+  },
+  // B0-BIL-13 — plan limit warnings, once per limit and billing period.
+  'billing.limit.approaching': {
+    values: { limitKey: 'students', periodKey: '2026-10-01' },
+    expected: `limit_approaching:${ENTITY_ID}:students:2026-10-01`,
+  },
+  'billing.limit.reached': {
+    values: { limitKey: 'courses', periodKey: '2026-10-01' },
+    expected: `limit_reached:${ENTITY_ID}:courses:2026-10-01`,
+  },
+  // B0-SUP-01 — Platform Owner work alerts.
+  'platform.subscription_payment.submitted': {
+    values: { proofId: 'proof-1' },
+    expected: `platform_subscription_payment:${ENTITY_ID}:proof-1`,
+  },
+  'platform.support_case.created': {
+    values: {},
+    expected: `platform_support_case_created:${ENTITY_ID}`,
+  },
+  'platform.privacy_request.created': {
+    values: { requestType: 'deletion' },
+    expected: `platform_privacy_request_created:${ENTITY_ID}`,
+  },
+  'platform.support_case.customer_replied': {
+    values: { messageId: 'msg-1' },
+    expected: `platform_support_case_replied:${ENTITY_ID}:msg-1`,
+  },
+  'platform.organization.signed_up': {
+    values: { trialStarted: true },
+    expected: `platform_organization_signed_up:${ENTITY_ID}`,
+  },
+  'platform.course_payment.submitted': {
+    values: { proofId: 'proof-2' },
+    expected: `platform_course_payment:${ENTITY_ID}:proof-2`,
+  },
+  'platform.refund.recorded': {
+    values: { paymentId: 'pay-1' },
+    expected: `platform_refund_recorded:${ENTITY_ID}`,
   },
   'customer_request.routed': {
     values: { eventId: 'ev-1', event: 'created' },
@@ -417,6 +488,11 @@ const EXPECTED_DEDUPE: Record<
   'review.submitted': {
     values: { submittedAtMs: 1790000000000, courseTitle: 'Algebra' },
     expected: `course_review.submitted:${ENTITY_ID}:1790000000000`,
+  },
+  // B0-WEB-05 — one work item per Contact-form submission.
+  'academy.contact_submission.received': {
+    values: { academyId: 'a1' },
+    expected: `academy_contact_received:${ENTITY_ID}`,
   },
 
   // --- P64 Communications C3, second pass (plan §8 B1-B4/C1/D1-D2/E4-E6/H1).
@@ -525,6 +601,7 @@ const NEVER_DEDUPED_KEYS: readonly CommunicationEventKey[] = [
   'auth.two_factor.disabled',
   'auth.email.otp',
   'auth.account.deletion_code',
+  'auth.account.privacy_request_code',
   'auth.email.verification',
   'auth.password.reset',
   'auth.password.reset_confirmed',
@@ -535,14 +612,46 @@ function context(values: Record<string, unknown> = {}): CommunicationRuleContext
   return { entity: { type: 'fixture', id: ENTITY_ID }, values };
 }
 
+describe('B0-BIL-13 limit warning copy', () => {
+  it.each(['billing.limit.approaching', 'billing.limit.reached'] as const)(
+    '%s names the limit that is running out, and falls back to generic copy',
+    (key) => {
+      const entry = COMMUNICATION_CATALOG[key];
+      const event =
+        key === 'billing.limit.reached'
+          ? 'billingLimitReached'
+          : 'billingLimitApproaching';
+      for (const [limitKey, name] of [
+        ['students', 'Students'],
+        ['courses', 'Courses'],
+        ['academies', 'Academies'],
+        ['generalStorage', 'Storage'],
+      ]) {
+        expect(catalogCopy(entry, context({ limitKey })).titleKey).toBe(
+          `notifications:events.${event}${name}.title`,
+        );
+      }
+      expect(catalogCopy(entry, context({ limitKey: 'other' })).titleKey).toBe(
+        `notifications:events.${event}.title`,
+      );
+    },
+  );
+});
+
 describe('the learner-exception copy variant', () => {
   const entry = COMMUNICATION_CATALOG['assessment.exception.granted'];
 
-  it('is the only entry that declares one, and declares exactly one', () => {
+  it('declares exactly one; only it and the B0-BIL-13 limit warnings declare any', () => {
     const withVariants = COMMUNICATION_EVENT_KEYS.filter(
       (key) => (COMMUNICATION_CATALOG[key].variants ?? []).length > 0,
     );
-    expect(withVariants).toEqual(['assessment.exception.granted']);
+    expect([...withVariants].sort()).toEqual(
+      [
+        'assessment.exception.granted',
+        'billing.limit.approaching',
+        'billing.limit.reached',
+      ].sort(),
+    );
     expect(entry.variants).toHaveLength(1);
   });
 

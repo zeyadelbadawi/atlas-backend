@@ -1127,6 +1127,24 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       .send({ attachmentAssetId: foreignUpload.body.assetId })
       .expect(400);
 
+    // B0-LRN-02 / CF-32 — a Word document is refused by its bytes (the
+    // picker no longer offers it; this pins the server half). A .docx is a
+    // ZIP container, so its bytes start with "PK\x03\x04".
+    const docxBytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00]);
+    const docx = await http()
+      .post(`/courses/${w.course.id}/assignments/${assignment.id}/submission/attachment`)
+      .set(auth(w.student.token))
+      .send({
+        fileName: 'essay.docx',
+        mimeType:
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        sizeBytes: docxBytes.length,
+        dataUrl: `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${docxBytes.toString('base64')}`,
+      });
+    expect(docx.status).toBeGreaterThanOrEqual(400);
+    expect(docx.status).toBeLessThan(500);
+    expect(docx.body.error.messageKey).toBe('errors.media.unsupportedFileType');
+
     // Own protected upload → submission accepted late and FLAGGED (default policy).
     const upload = await http()
       .post(`/courses/${w.course.id}/assignments/${assignment.id}/submission/attachment`)

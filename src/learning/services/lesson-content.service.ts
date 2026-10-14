@@ -48,6 +48,7 @@
  * still yields zero rows rather than another tenant's content. Guard
  * decides, RLS independently agrees.
  */
+import { plainTextToHtml } from '../../communications/campaigns/rich-text-sanitizer';
 import {
   ConflictException,
   ForbiddenException,
@@ -163,6 +164,7 @@ function effectiveLessonContent(lesson: {
   videoAsset: { id: string } | null;
   contentType: string | null;
   contentUrl: string | null;
+  description: string | null;
 }): EffectiveLessonContent | null {
   if (lesson.content) return lesson.content;
 
@@ -179,6 +181,23 @@ function effectiveLessonContent(lesson: {
     // link-out. Either way it is an unprotected external embed, reported
     // honestly as such.
     return { kind: 'external', bodyHtml: null, externalUrl: url, mediaAsset: null };
+  }
+
+  // B0-LRN-01 — a text lesson saved before the builder could write a body
+  // row kept its body in `description` (the old dialog had no other
+  // field — the same rule the Phase 2 backfill applied). It is delivered
+  // as plain text: escaped and split into paragraphs by the sanitiser
+  // module's own `plainTextToHtml`, so no stored markup is ever trusted.
+  if (lesson.contentType === 'text') {
+    const body = lesson.description?.trim();
+    if (body) {
+      return {
+        kind: 'text',
+        bodyHtml: plainTextToHtml(body),
+        externalUrl: null,
+        mediaAsset: null,
+      };
+    }
   }
 
   return null;

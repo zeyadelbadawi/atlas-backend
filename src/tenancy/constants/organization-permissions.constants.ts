@@ -166,11 +166,15 @@ export const ORGANIZATION_OWNER_PERMISSIONS: readonly string[] = [
  * `'manager'`, never plain `'member'`) — kept as the safe fallback
  * `permissionsForRole` reaches for on any role string it does not
  * recognize, rather than a silent `permissions: []`.
+ *
+ * B0-WEB-04: `academy.website.view` is no longer here. Every website API
+ * refuses anyone below owner/administrator/manager
+ * (`errors.website.insufficientRole`), so the string only made the
+ * Website pages appear to a seeded or legacy academy `staff` member and
+ * then fail. The fix is to stop advertising the pages, not to open the
+ * APIs to this tier.
  */
-export const ORGANIZATION_MEMBER_PERMISSIONS: readonly string[] = [
-  'academy.view',
-  'academy.website.view',
-];
+export const ORGANIZATION_MEMBER_PERMISSIONS: readonly string[] = ['academy.view'];
 
 export function permissionsForRole(role: string): readonly string[] {
   switch (role) {

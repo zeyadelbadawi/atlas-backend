@@ -1207,6 +1207,85 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
 
   // --- 18. A ready request cannot be retried -------------------------------------
 
+  it("B0-SUP-05: a second consecutive failure opens exactly one support case on the owner's behalf, audited; a third failure opens no second case", async () => {
+    const { owner, org } = await arrangeOrg('auto-case');
+    const { org: blockerOrg } = await arrangeOrg('auto-case-blocker');
+    const subdomain = uniqueSubdomain('autocase');
+    // Same genuine, unrecoverable-until-fixed failure as test 13: another
+    // organization's academy already holds the slug.
+    await admin.academy.create({
+      data: {
+        organizationId: blockerOrg.id,
+        name: uniqueName('Auto Case Blocker'),
+        slug: subdomain,
+      },
+    });
+
+    const created = await createRequest(owner, org.id, {
+      academyName: uniqueName('Auto Case Academy'),
+      requestedSubdomain: subdomain,
+    });
+
+    const casesFor = () =>
+      admin.supportCase.findMany({
+        where: { organizationId: org.id, requesterUserId: owner.userId },
+      });
+
+    /** Retries and waits for a NEW failure (a fresh `failedAt`). */
+    async function failAgain(previousFailedAt: string) {
+      await request(app.getHttpServer())
+        .post(`/organizations/${org.id}/provisioning-requests/${created.id}/retry`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(201);
+      return waitForAsync(async () => {
+        const body = await getRequest(owner, org.id, created.id);
+        return body.status === 'failed' && body.failedAt !== previousFailedAt
+          ? body
+          : undefined;
+      });
+    }
+
+    // Attempt 1 fails: below the threshold, no case yet.
+    const first = await waitForTerminal(owner, org.id, created.id);
+    expect(first.status).toBe('failed');
+    expect(await casesFor()).toHaveLength(0);
+
+    // Attempt 2 fails: the case is opened (best-effort, after the failure
+    // commits — so wait for it rather than assume it is synchronous).
+    const second = await failAgain(first.failedAt);
+    const cases = await waitForAsync(async () => {
+      const rows = await casesFor();
+      return rows.length > 0 ? rows : undefined;
+    });
+    expect(cases).toHaveLength(1);
+    expect(cases[0].priority).toBe('high');
+
+    const stored = await admin.provisioningRequest.findUniqueOrThrow({
+      where: { id: created.id },
+    });
+    expect(stored.autoSupportCaseId).toBe(cases[0].id);
+
+    const audit = await admin.auditLogEntry.findMany({
+      where: { action: 'support_case.auto_created', targetId: cases[0].id },
+    });
+    expect(audit).toHaveLength(1);
+    expect(audit[0].organizationId).toBe(org.id);
+    expect(
+      (audit[0].context as { provisioningRequestId?: string }).provisioningRequestId,
+    ).toBe(created.id);
+
+    // The customer-facing message carries no internal error detail.
+    const messages = await admin.supportCaseMessage.findMany({
+      where: { caseId: cases[0].id },
+    });
+    expect(messages).toHaveLength(1);
+    expect(messages[0].body).not.toMatch(/slug|unique|constraint|P20\d\d|stack/i);
+
+    // Attempt 3 fails too: still exactly one case for this episode.
+    await failAgain(second.failedAt);
+    expect(await casesFor()).toHaveLength(1);
+  }, 120_000);
+
   it('18: retrying an already-ready request is refused with 409', async () => {
     const { owner, org } = await arrangeOrg('retry-ready');
     const created = await createRequest(owner, org.id);

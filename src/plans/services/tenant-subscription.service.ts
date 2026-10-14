@@ -12,6 +12,7 @@
  * run; RLS proves it again, independently.
  */
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { resolveSubscriptionLimits } from '../utils/granted-limits.util';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { TenantSubscriptionsRepository } from '../repositories/tenant-subscriptions.repository';
@@ -150,10 +151,17 @@ export class TenantSubscriptionService {
   }
 
   async getSubscription(organizationId: string): Promise<TenantSubscriptionResponse> {
-    const subscription = await this.tenancyContextService.runInTenantContext(
-      organizationId,
-      (tx) => this.tenantSubscriptionsRepository.findByOrganizationId(tx, organizationId),
-    );
+    const { subscription, scheduledPlanName } =
+      await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+        const row = await this.tenantSubscriptionsRepository.findByOrganizationId(
+          tx,
+          organizationId,
+        );
+        const name = row?.scheduledPlanId
+          ? await this.tenantSubscriptionsRepository.findPlanName(tx, row.scheduledPlanId)
+          : null;
+        return { subscription: row, scheduledPlanName: name ?? undefined };
+      });
 
     if (!subscription) {
       // Honest empty state — no subscription-creation endpoint exists in
@@ -163,7 +171,32 @@ export class TenantSubscriptionService {
       throw new NotFoundException({ messageKey: 'errors.tenant.noSubscription' });
     }
 
-    return toTenantSubscriptionResponse(subscription);
+    return toTenantSubscriptionResponse(subscription, undefined, scheduledPlanName);
+  }
+
+  /**
+   * B0-BIL-07 — hides the price-change banner. The notice itself stays on
+   * the row until the next paid renewal clears it, so dismissing is only a
+   * display choice and never loses the record of what the customer was
+   * told. Idempotent: a second call (or a call with no notice) changes
+   * nothing and reports `false`.
+   */
+  async dismissPriceChangeNotice(
+    organizationId: string,
+  ): Promise<{ dismissed: boolean }> {
+    const result = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      (tx) =>
+        tx.tenantSubscription.updateMany({
+          where: {
+            organizationId,
+            priceChangeNotice: { not: Prisma.DbNull },
+            priceChangeNoticeDismissedAt: null,
+          },
+          data: { priceChangeNoticeDismissedAt: this.clock.now() },
+        }),
+    );
+    return { dismissed: result.count > 0 };
   }
 
   async getActiveAddOns(organizationId: string): Promise<TenantAddOnResponse[]> {

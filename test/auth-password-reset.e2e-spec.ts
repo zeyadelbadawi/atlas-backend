@@ -23,7 +23,7 @@ describe('Password reset (e2e)', () => {
   let stubEmailProvider: StubEmailProvider;
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    const testApp = await createTestApp({ fieldViolations: true });
     app = testApp.app;
     // Fixture and verification reads go through the owner connection: the
     // app's own client is RLS-bound and sees identity rows only inside a
@@ -160,6 +160,16 @@ describe('Password reset (e2e)', () => {
       .post('/auth/password-reset/confirm')
       .send({ token: rawToken, newPassword: 'irrelevant-new-password' })
       .expect(401);
+  });
+
+  it('B0-SEC-11: refuses a common new password before the token is looked at', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/auth/password-reset/confirm')
+      .send({ token: uniqueRawTokenFixture('common-pw'), newPassword: 'qwertyuiop' })
+      .expect(400);
+    expect(response.body.error.violations).toEqual([
+      { field: 'newPassword', messageKey: 'validation:commonPassword' },
+    ]);
   });
 
   it('rejects an unknown reset token', async () => {

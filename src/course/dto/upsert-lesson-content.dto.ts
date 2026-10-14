@@ -16,15 +16,13 @@
  * column says which asset a lesson plays; `lesson_contents` is the row the
  * grant path resolves. Both are required, and only the first had a writer.
  *
- * `kind: text` IS DELIBERATELY REFUSED HERE. The column's own schema
- * comment is "Sanitised rich text for `kind: text`. Server-sanitised on
- * write", and this repository has no HTML sanitiser and no sanitisation
- * dependency. Accepting rich text without one would mean either storing
- * unsanitised HTML behind a field that promises otherwise, or shipping a
- * hand-rolled sanitiser — and a hand-rolled HTML sanitiser is a security
- * control invented under deadline, which is the worse of the two. Text
- * lessons backfilled by the migration keep working; authoring new ones
- * waits for a reviewed sanitiser.
+ * `kind: text` (B0-LRN-01). The body arrives as author HTML from the
+ * builder's rich-text editor and is stored only after
+ * `sanitizeRichText` (`communications/campaigns/rich-text-sanitizer.ts`)
+ * has REBUILT it from an allowlist — the same reviewed sanitiser Academy
+ * Messages uses, so no second sanitiser is invented. The column's
+ * "server-sanitised on write" promise is therefore kept for every row
+ * this endpoint writes.
  */
 import {
   IsIn,
@@ -35,12 +33,19 @@ import {
   MaxLength,
 } from 'class-validator';
 
-/** Every kind the column models. `text` parses here and is refused in the service, so the refusal carries a reason rather than a validation error that cannot explain itself. */
+/** Every kind the column models. */
 export const LESSON_CONTENT_KINDS = ['text', 'video', 'file', 'external'] as const;
 export type LessonContentKindInput = (typeof LESSON_CONTENT_KINDS)[number];
 
 /** Matches the `external_url` column and leaves room for a long signed third-party address. */
 const MAX_EXTERNAL_URL_LENGTH = 2048;
+
+/**
+ * A long reading lesson is a few thousand words; 200 000 characters of
+ * HTML is far above that and keeps one save bounded (the sanitiser is
+ * linear, but an unbounded body is still an unbounded row).
+ */
+export const MAX_LESSON_BODY_HTML_LENGTH = 200_000;
 
 export class UpsertLessonContentDto {
   @IsNotEmpty()
@@ -71,4 +76,10 @@ export class UpsertLessonContentDto {
   @IsUrl({ protocols: ['https'], require_protocol: true })
   @MaxLength(MAX_EXTERNAL_URL_LENGTH)
   readonly externalUrl?: string;
+
+  /** `kind: text` only — author HTML, sanitised by the service before it is stored. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_LESSON_BODY_HTML_LENGTH)
+  readonly bodyHtml?: string;
 }

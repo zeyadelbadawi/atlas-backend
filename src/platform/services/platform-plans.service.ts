@@ -37,6 +37,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
@@ -44,6 +45,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import type { AuditFieldChange } from '../../audit-log/services/audit-log-writer.service';
+import { PlanChangeNoticeService } from './plan-change-notice.service';
 import { StaleResourceVersionException } from '../../concurrency/errors/stale-resource-version.exception';
 import { toPlanResponse } from '../../plans/dto/plan.contract';
 import type { PlanResponse } from '../../plans/dto/plan.contract';
@@ -100,6 +102,10 @@ const USAGE_COLUMN: Partial<Record<PlanLimitKey, keyof UsageRow>> = {
   courses: 'courses',
   generalStorage: 'generalStorageGb',
   videoStorage: 'videoStorageGb',
+  // B0-BIL-12 — written by the same usage recompute as every other column
+  // (hosted-video minutes, reservations included, rounded up), so it is
+  // as measurable as the rest and must not be reported as unmeasurable.
+  videoStorageMinutes: 'videoStorageMinutes',
 };
 
 interface UsageRow {
@@ -111,6 +117,7 @@ interface UsageRow {
   courses: number;
   generalStorageGb: number;
   videoStorageGb: number;
+  videoStorageMinutes: number;
   updatedAt: Date;
 }
 
@@ -121,10 +128,13 @@ function normalizeGiftedDays(value: number | null | undefined): number | null {
 
 @Injectable()
 export class PlatformPlansService {
+  private readonly logger = new Logger(PlatformPlansService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenancyContextService: TenancyContextService,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly planChangeNoticeService: PlanChangeNoticeService,
   ) {}
 
   private assertCatalogShape(
@@ -174,6 +184,8 @@ export class PlatformPlansService {
           trialDurationDays: payload.trialDurationDays ?? null,
           giftedDaysMonthly: normalizeGiftedDays(payload.giftedDaysMonthly),
           giftedDaysYearly: normalizeGiftedDays(payload.giftedDaysYearly),
+          ...(payload.family ? { family: payload.family } : {}),
+          ...(payload.tier ? { tier: payload.tier } : {}),
         },
       });
 
@@ -207,7 +219,7 @@ export class PlatformPlansService {
   ): Promise<PlanResponse> {
     this.assertCatalogShape(payload.limits, payload.features);
 
-    return this.prisma.$transaction(async (tx) => {
+    const outcome = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.plan.findUnique({ where: { key } });
       if (!existing) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
@@ -370,8 +382,32 @@ export class PlatformPlansService {
 
       const updated = await tx.plan.findUniqueOrThrow({ where: { id: existing.id } });
       void changedCount;
-      return toPlanResponse(updated);
+      return {
+        existing,
+        updated,
+        // B0-BIL-07 — the two facets a renewal re-reads from the live row.
+        reachesSubscribers:
+          Object.keys(pricingChanges).length > 0 || 'limits' in generalChanges,
+      };
     });
+
+    if (outcome.reachesSubscribers) {
+      // After the commit, never inside it: see `PlanChangeNoticeService`.
+      // The price change is already saved, so a failure here is logged
+      // rather than reported as a failed save.
+      try {
+        await this.planChangeNoticeService.notifySubscribers(
+          platformOwnerId,
+          outcome.existing,
+          outcome.updated,
+        );
+      } catch (error) {
+        this.logger.error(
+          `subscriber notices for plan ${outcome.updated.key} v${outcome.updated.version} failed: ${(error as Error).message}`,
+        );
+      }
+    }
+    return toPlanResponse(outcome.updated);
   }
 
   /**

@@ -19,6 +19,8 @@ export interface MediaAssetListFilter {
   readonly search?: string;
   readonly status?: MediaAssetStatus;
   readonly type?: MediaAssetType;
+  /** B0-MED-11 — public library media vs. protected (signed-grant) assets. */
+  readonly access?: 'public' | 'protected';
   readonly skip: number;
   readonly take: number;
 }
@@ -42,6 +44,7 @@ export class MediaAssetsRepository {
       academyId,
       ...(filter.status ? { status: filter.status } : {}),
       ...(filter.type ? { type: filter.type } : {}),
+      ...(filter.access ? { access: filter.access } : {}),
       ...(filter.search
         ? { fileName: { contains: filter.search, mode: 'insensitive' as const } }
         : {}),

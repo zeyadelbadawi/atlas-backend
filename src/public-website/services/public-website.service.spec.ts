@@ -75,6 +75,15 @@ function build(options: BuildOptions = {}) {
   const subscriptionAccessService = {
     isServingEligible: jest.fn(async () => servingEligible),
   };
+  let outboxSeq = 0;
+  const communicationService = {
+    emit: jest.fn(async () => ({ created: true, outboxId: `outbox-${++outboxSeq}` })),
+    enqueueAfterCommit: jest.fn(async () => undefined),
+  };
+  const staffRecipients = {
+    moderators: jest.fn(async () => ['manager-1', 'owner-1']),
+    organizationOwners: jest.fn(async () => ['owner-1']),
+  };
 
   const service = new PublicWebsiteService(
     tenancyContextService as never,
@@ -96,6 +105,8 @@ function build(options: BuildOptions = {}) {
     websiteFaqEntriesRepository as never,
     websiteTestimonialEntriesRepository as never,
     libraryRevisionService as never,
+    communicationService as never,
+    staffRecipients as never,
   );
 
   return {
@@ -109,6 +120,8 @@ function build(options: BuildOptions = {}) {
     websitePagesRepository,
     websiteFaqEntriesRepository,
     websiteTestimonialEntriesRepository,
+    communicationService,
+    staffRecipients,
   };
 }
 
@@ -144,6 +157,43 @@ describe('PublicWebsiteService.submitContactMessage', () => {
       status: 'new',
       createdAt: '2026-01-01T00:00:00.000Z',
     });
+  });
+
+  it('notifies each website manager once, in the insert transaction, without the visitor details (B0-WEB-05)', async () => {
+    const { service, tx, communicationService, staffRecipients } = build();
+
+    await service.submitContactMessage(ACADEMY_ID, message);
+
+    expect(staffRecipients.moderators).toHaveBeenCalledWith(tx, ACADEMY_ID);
+    expect(staffRecipients.organizationOwners).toHaveBeenCalledWith(tx, ACADEMY_ID);
+    expect(communicationService.emit).toHaveBeenCalledTimes(2);
+    for (const recipientUserId of ['manager-1', 'owner-1']) {
+      expect(communicationService.emit).toHaveBeenCalledWith(tx, {
+        key: 'academy.contact_submission.received',
+        recipientUserId,
+        organizationId: ORGANIZATION_ID,
+        academyId: ACADEMY_ID,
+        entity: { type: 'contact_submission', id: 'submission-1' },
+        values: { academyId: ACADEMY_ID },
+      });
+    }
+    expect(communicationService.enqueueAfterCommit.mock.calls).toEqual([
+      ['outbox-1'],
+      ['outbox-2'],
+    ]);
+  });
+
+  it('notifies nobody for a honeypot hit or an unpublished website', async () => {
+    const honeypot = build();
+    await honeypot.service.submitContactMessage(ACADEMY_ID, {
+      ...message,
+      company: 'Spam Corp',
+    });
+    expect(honeypot.communicationService.emit).not.toHaveBeenCalled();
+
+    const unpublished = build({ published: false });
+    await unpublished.service.submitContactMessage(ACADEMY_ID, message);
+    expect(unpublished.communicationService.emit).not.toHaveBeenCalled();
   });
 
   it('returns null (→ 404) and stores nothing when the website is not published', async () => {

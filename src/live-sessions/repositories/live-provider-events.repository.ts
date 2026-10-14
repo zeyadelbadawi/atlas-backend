@@ -7,17 +7,24 @@
  * redelivered webhook loses the insert and is skipped, without any
  * "have I seen this?" read that would race with itself.
  *
- * `live_provider_events` is PLATFORM-OWNED and carries no RLS — the same
- * position `payment_webhook_events` occupies, and for the same reason: a
- * webhook arrives with no tenant context at all (it is authenticated by
- * signature, not by session), so the row must be written before any tenant
- * is known. The academy is resolved FROM stored provider identifiers
- * afterwards, never from anything the request claimed.
+ * `live_provider_events` is PLATFORM-OWNED. A webhook arrives with no
+ * tenant context at all (it is authenticated by signature, not by
+ * session), so the row must be written before any tenant is known. The
+ * academy is resolved FROM stored provider identifiers afterwards, never
+ * from anything the request claimed.
+ *
+ * B0-LIV-03 — the table now has FORCE RLS: INSERT is open, SELECT and
+ * UPDATE are the Platform Owner's only. So `tryInsert` stays context-free
+ * and the read and status update run under the platform-owner user
+ * context, exactly as the communications dispatcher and the subscription
+ * sweeps do.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { LiveProviderEvent } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
+import { UsersRepository } from '../../identity/repositories/users.repository';
 
 export interface RecordEventInput {
   readonly providerEventId: string;
@@ -27,7 +34,13 @@ export interface RecordEventInput {
 
 @Injectable()
 export class LiveProviderEventsRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(LiveProviderEventsRepository.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly tenancyContextService: TenancyContextService,
+    private readonly usersRepository: UsersRepository,
+  ) {}
 
   /**
    * Records an inbound event.
@@ -55,8 +68,14 @@ export class LiveProviderEventsRepository {
     return inserted.count === 1;
   }
 
-  findByProviderEventId(providerEventId: string): Promise<LiveProviderEvent | null> {
-    return this.prisma.liveProviderEvent.findUnique({ where: { providerEventId } });
+  async findByProviderEventId(
+    providerEventId: string,
+  ): Promise<LiveProviderEvent | null> {
+    return (
+      (await this.asPlatformOwner((tx) =>
+        tx.liveProviderEvent.findUnique({ where: { providerEventId } }),
+      )) ?? null
+    );
   }
 
   /**
@@ -76,16 +95,36 @@ export class LiveProviderEventsRepository {
       readonly failureReason?: string;
     },
   ): Promise<void> {
-    await this.prisma.liveProviderEvent.updateMany({
-      where: { providerEventId },
-      data: {
-        status,
-        processedAt: new Date(),
-        ...(context?.academyId ? { academyId: context.academyId } : {}),
-        ...(context?.liveSessionId ? { liveSessionId: context.liveSessionId } : {}),
-        // Provider-agnostic summary only — never a raw provider payload.
-        ...(context?.failureReason ? { failureReason: context.failureReason } : {}),
-      },
-    });
+    await this.asPlatformOwner((tx) =>
+      tx.liveProviderEvent.updateMany({
+        where: { providerEventId },
+        data: {
+          status,
+          processedAt: new Date(),
+          ...(context?.academyId ? { academyId: context.academyId } : {}),
+          ...(context?.liveSessionId ? { liveSessionId: context.liveSessionId } : {}),
+          // Provider-agnostic summary only — never a raw provider payload.
+          ...(context?.failureReason ? { failureReason: context.failureReason } : {}),
+        },
+      }),
+    );
+  }
+
+  /**
+   * Runs `work` as the Platform Owner — the only context the table's
+   * SELECT/UPDATE policies admit. With no Platform Owner account (a fresh
+   * install) the event stays as recorded and a warning says why.
+   */
+  private async asPlatformOwner<T>(
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T | undefined> {
+    const owner = await this.usersRepository.findFirstPlatformOwnerId();
+    if (!owner) {
+      this.logger.warn(
+        'No platform owner account exists yet — live provider events cannot be read or marked.',
+      );
+      return undefined;
+    }
+    return this.tenancyContextService.runInUserContext(owner.id, work);
   }
 }

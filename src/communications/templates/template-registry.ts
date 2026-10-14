@@ -24,6 +24,12 @@ import { template as accountAcademyJoined } from './keys/account.academy.joined'
 import { template as authEmailVerification } from './keys/auth.email.verification';
 import { template as authEmailOtp } from './keys/auth.email.otp';
 import { template as authAccountDeletionCode } from './keys/auth.account.deletion_code';
+import { template as authAccountPrivacyRequestCode } from './keys/auth.account.privacy_request_code';
+import { template as privacyRequestReceived } from './keys/privacy_request.received';
+import { template as privacyRequestExportReady } from './keys/privacy_request.export_ready';
+import { template as privacyRequestRejected } from './keys/privacy_request.rejected';
+import { template as privacyRequestDeletionCompleted } from './keys/privacy_request.deletion_completed';
+import { template as platformPrivacyRequestCreated } from './keys/platform.privacy_request.created';
 import { template as authAccountSignupAttempt } from './keys/auth.account.signup_attempt';
 import { template as authPasswordReset } from './keys/auth.password.reset';
 import { template as authPasswordResetConfirmed } from './keys/auth.password.reset_confirmed';
@@ -51,6 +57,7 @@ import { template as courseOrderProofSubmitted } from './keys/course.order.proof
 import { template as reviewModerated } from './keys/review.moderated';
 import { template as academyMemberInvited } from './keys/academy.member.invited';
 import { template as academyMemberAdded } from './keys/academy.member.added';
+import { template as academyContactSubmissionReceived } from './keys/academy.contact_submission.received';
 import { template as reviewSubmitted } from './keys/review.submitted';
 import { template as rosterStudentAwaitingApproval } from './keys/roster.student.awaiting_approval';
 import { template as enrollmentSelfEnrolled } from './keys/enrollment.self_enrolled';
@@ -76,6 +83,7 @@ import { template as announcementPublished } from './keys/announcement.published
 import { template as digestDaily } from './keys/digest.daily';
 // P64 C5 — tenant lifecycle sequences (plan §26 T1–T6, §27 S1–S10).
 import { template as lifecycleTrialStarted } from './keys/lifecycle.trial.started';
+import { template as lifecycleTrialEndingIn3Days } from './keys/lifecycle.trial.ending_in_3_days';
 import { template as lifecycleTrialEndingSoon } from './keys/lifecycle.trial.ending_soon';
 import { template as lifecycleTrialExpired } from './keys/lifecycle.trial.expired';
 import { template as lifecycleTrialFollowup3d } from './keys/lifecycle.trial.followup_3d';
@@ -83,6 +91,7 @@ import { template as lifecycleTrialFollowup14d } from './keys/lifecycle.trial.fo
 import { template as lifecycleTrialReactivation45d } from './keys/lifecycle.trial.reactivation_45d';
 import { template as lifecycleSubscriptionActivated } from './keys/lifecycle.subscription.activated';
 import { template as lifecycleSubscriptionPaymentSubmitted } from './keys/lifecycle.subscription.payment_submitted';
+import { template as lifecycleSubscriptionRenewal30d } from './keys/lifecycle.subscription.renewal_30d';
 import { template as lifecycleSubscriptionRenewalDue } from './keys/lifecycle.subscription.renewal_due';
 import { template as lifecycleSubscriptionRenewalTomorrow } from './keys/lifecycle.subscription.renewal_tomorrow';
 import { template as lifecycleSubscriptionGraceStarted } from './keys/lifecycle.subscription.grace_started';
@@ -90,6 +99,7 @@ import { template as lifecycleSubscriptionGraceEnding } from './keys/lifecycle.s
 import { template as lifecycleSubscriptionExpired } from './keys/lifecycle.subscription.expired';
 import { template as lifecycleSubscriptionCancelScheduled } from './keys/lifecycle.subscription.cancel_scheduled';
 import { template as lifecycleSubscriptionCancelled } from './keys/lifecycle.subscription.cancelled';
+import { template as lifecycleSubscriptionPriceChangeNotice } from './keys/lifecycle.subscription.price_change_notice';
 import { template as lifecycleSubscriptionFollowup7d } from './keys/lifecycle.subscription.followup_7d';
 import { template as lifecycleSubscriptionFollowup30d } from './keys/lifecycle.subscription.followup_30d';
 // P64 C6 — hosted-video retention (plan §31/§32).
@@ -101,6 +111,16 @@ import { template as retentionVideoDeleted } from './keys/retention.video.delete
 import { template as retentionVideoDeletionFailed } from './keys/retention.video.deletion_failed';
 // TASK 7 — Atlas marketing contact form.
 import { template as platformContactSubmissionReceived } from './keys/platform.contact_submission.received';
+// B0-BIL-13 — plan limit warnings.
+import { template as billingLimitApproaching } from './keys/billing.limit.approaching';
+import { template as billingLimitReached } from './keys/billing.limit.reached';
+// B0-SUP-01 — Platform Owner work alerts.
+import { template as platformSubscriptionPaymentSubmitted } from './keys/platform.subscription_payment.submitted';
+import { template as platformSupportCaseCreated } from './keys/platform.support_case.created';
+import { template as platformSupportCaseCustomerReplied } from './keys/platform.support_case.customer_replied';
+import { template as platformOrganizationSignedUp } from './keys/platform.organization.signed_up';
+import { template as platformCoursePaymentSubmitted } from './keys/platform.course_payment.submitted';
+import { template as platformRefundRecorded } from './keys/platform.refund.recorded';
 // W3-compose — person-authored messages (campaigns).
 import { template as academyMessageSent } from './keys/academy.message.sent';
 import { template as platformBroadcastSent } from './keys/platform.broadcast.sent';
@@ -124,6 +144,11 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'auth.email.verification': authEmailVerification,
   'auth.email.otp': authEmailOtp,
   'auth.account.deletion_code': authAccountDeletionCode,
+  'auth.account.privacy_request_code': authAccountPrivacyRequestCode,
+  'privacy_request.received': privacyRequestReceived,
+  'privacy_request.export_ready': privacyRequestExportReady,
+  'privacy_request.rejected': privacyRequestRejected,
+  'privacy_request.deletion_completed': privacyRequestDeletionCompleted,
   'auth.account.signup_attempt': authAccountSignupAttempt,
   'auth.password.reset': authPasswordReset,
   'auth.password.reset_confirmed': authPasswordResetConfirmed,
@@ -150,6 +175,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'course.order.proof_submitted': courseOrderProofSubmitted,
   'review.moderated': reviewModerated,
   'lifecycle.trial.started': lifecycleTrialStarted,
+  'lifecycle.trial.ending_in_3_days': lifecycleTrialEndingIn3Days,
   'lifecycle.trial.ending_soon': lifecycleTrialEndingSoon,
   'lifecycle.trial.expired': lifecycleTrialExpired,
   'lifecycle.trial.followup_3d': lifecycleTrialFollowup3d,
@@ -157,6 +183,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'lifecycle.trial.reactivation_45d': lifecycleTrialReactivation45d,
   'lifecycle.subscription.activated': lifecycleSubscriptionActivated,
   'lifecycle.subscription.payment_submitted': lifecycleSubscriptionPaymentSubmitted,
+  'lifecycle.subscription.renewal_30d': lifecycleSubscriptionRenewal30d,
   'lifecycle.subscription.renewal_due': lifecycleSubscriptionRenewalDue,
   'lifecycle.subscription.renewal_tomorrow': lifecycleSubscriptionRenewalTomorrow,
   'lifecycle.subscription.grace_started': lifecycleSubscriptionGraceStarted,
@@ -164,6 +191,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'lifecycle.subscription.expired': lifecycleSubscriptionExpired,
   'lifecycle.subscription.cancel_scheduled': lifecycleSubscriptionCancelScheduled,
   'lifecycle.subscription.cancelled': lifecycleSubscriptionCancelled,
+  'lifecycle.subscription.price_change_notice': lifecycleSubscriptionPriceChangeNotice,
   'lifecycle.subscription.followup_7d': lifecycleSubscriptionFollowup7d,
   'lifecycle.subscription.followup_30d': lifecycleSubscriptionFollowup30d,
   'retention.video.warning_30d': retentionVideoWarning30d,
@@ -173,9 +201,19 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'retention.video.deleted': retentionVideoDeleted,
   'retention.video.deletion_failed': retentionVideoDeletionFailed,
   'platform.contact_submission.received': platformContactSubmissionReceived,
+  'billing.limit.approaching': billingLimitApproaching,
+  'billing.limit.reached': billingLimitReached,
+  'platform.subscription_payment.submitted': platformSubscriptionPaymentSubmitted,
+  'platform.support_case.created': platformSupportCaseCreated,
+  'platform.support_case.customer_replied': platformSupportCaseCustomerReplied,
+  'platform.organization.signed_up': platformOrganizationSignedUp,
+  'platform.course_payment.submitted': platformCoursePaymentSubmitted,
+  'platform.refund.recorded': platformRefundRecorded,
+  'platform.privacy_request.created': platformPrivacyRequestCreated,
   'academy.member.invited': academyMemberInvited,
   'academy.member.added': academyMemberAdded,
   'review.submitted': reviewSubmitted,
+  'academy.contact_submission.received': academyContactSubmissionReceived,
   'roster.student.awaiting_approval': rosterStudentAwaitingApproval,
   'enrollment.self_enrolled': enrollmentSelfEnrolled,
   'course.order.created': courseOrderCreated,

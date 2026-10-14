@@ -113,6 +113,15 @@ const OTP_CONTEXT = [
   // Platform-only (visibleToTenant: false) forensic field.
   'ipAddress',
 ] as const;
+/** B0-ANL-02 — sign-in outcomes; never a password, an email or a token. */
+const SIGN_IN_CONTEXT = [
+  'method',
+  'surface',
+  'reason',
+  'sessionId',
+  // Platform-only (visibleToTenant: false) forensic field.
+  'ipAddress',
+] as const;
 const ACCOUNT_DELETED_CONTEXT = [
   'initiatedBy',
   'reason',
@@ -803,6 +812,40 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'organization',
     true,
   ),
+  // B0-ANL-02 — retry / cancel. The owner's own action is in their feed;
+  // the Platform Owner's console action is the operator's record only.
+  ev(
+    'provisioning_request.retried',
+    'subscription',
+    'provisioning_request',
+    'organization',
+    true,
+    ['step'],
+  ),
+  ev(
+    'provisioning_request.cancelled',
+    'subscription',
+    'provisioning_request',
+    'organization',
+    true,
+    ['previousStatus'],
+  ),
+  ev(
+    'provisioning_request.retried_by_platform',
+    'subscription',
+    'provisioning_request',
+    'organization',
+    false,
+    ['step'],
+  ),
+  ev(
+    'provisioning_request.cancelled_by_platform',
+    'subscription',
+    'provisioning_request',
+    'organization',
+    false,
+    ['previousStatus'],
+  ),
   ev(
     'subscription.trial.redeemed',
     'subscription',
@@ -859,6 +902,42 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'organization',
     true,
     SUBSCRIPTION_TRANSITION,
+  ),
+  // B0-BIL-06 — the Platform Owner's audited subscription remedies. Not
+  // tenant-visible: the reason is an internal note; the customer sees the
+  // resulting dates and plan on their own subscription page.
+  ev(
+    'subscription.extended_by_platform',
+    'subscription',
+    'tenant_subscription',
+    'organization',
+    false,
+    ['days', 'reason', 'field', 'previousStatus'],
+  ),
+  ev(
+    'subscription.days_granted_by_platform',
+    'subscription',
+    'tenant_subscription',
+    'organization',
+    false,
+    ['days', 'reason', 'field', 'previousStatus'],
+  ),
+  ev(
+    'subscription.plan_changed_by_platform',
+    'subscription',
+    'tenant_subscription',
+    'organization',
+    false,
+    ['fromPlanId', 'toPlanId', 'toPlanKey', 'applyAt', 'effectiveAt', 'reason'],
+  ),
+  // B0-BIL-04 — a mid-period downgrade taking effect at the period end.
+  ev(
+    'subscription.scheduled_plan_change_applied',
+    'subscription',
+    'tenant_subscription',
+    'organization',
+    true,
+    ['fromPlanId', 'toPlanId', 'at'],
   ),
   ev('add_on.install', 'subscription', 'tenant_add_on', 'organization', true, [
     'addOnKey',
@@ -926,6 +1005,13 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('auth.otp.failed', 'security', 'user', 'platform', false, OTP_CONTEXT),
   ev('auth.otp.locked_out', 'security', 'user', 'platform', false, OTP_CONTEXT),
   ev('auth.otp.verified', 'security', 'user', 'platform', false, OTP_CONTEXT),
+  // B0-ANL-02 — first-factor outcomes for a known account. `succeeded` is
+  // written when a session is minted (after any second factor); `failed`
+  // when the password is wrong or the account cannot sign in. Unknown
+  // addresses write nothing (no target, and the sign-in throttle already
+  // counts them).
+  ev('auth.sign_in.succeeded', 'security', 'user', 'platform', false, SIGN_IN_CONTEXT),
+  ev('auth.sign_in.failed', 'security', 'user', 'platform', false, SIGN_IN_CONTEXT),
   ev('auth.device.trusted', 'security', 'trusted_device', 'platform', false, [
     'surface',
     'trustDays',
@@ -941,6 +1027,13 @@ export const AUDIT_EVENT_DEFINITIONS = [
   // ATO review F1 — the first mailbox proof (a reset) on a never-verified
   // account removed the external sign-ins and 2FA its registrant attached.
   ev('auth.sign_in_methods.removed', 'security', 'user', 'platform', false, ['trigger']),
+  // B0-OC-03 / IAM-9 — second-factor changes, self-service and break-glass.
+  ev('auth.two_factor.enabled', 'security', 'user', 'platform', false),
+  ev('auth.two_factor.disabled', 'security', 'user', 'platform', false),
+  ev('auth.two_factor.reset_by_operator', 'security', 'user', 'platform', false, [
+    'reason',
+    'hadTwoFactor',
+  ]),
   ev('auth.sessions.revoked', 'security', 'user', 'platform', false, [
     'trigger',
     'sessionsRevoked',
@@ -964,6 +1057,45 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('account.deletion.confirmed', 'security', 'user', 'platform', false, [
     'challengeId',
   ]),
+  // B0-SEC-13 — privacy requests (data deletion / export). The emailed code
+  // that confirms filing one, then the request's own lifecycle. Platform
+  // scope only: an academy never sees a learner's privacy request.
+  ev('privacy_request.code.requested', 'security', 'user', 'platform', false, [
+    'challengeId',
+  ]),
+  ev('privacy_request.code.code_failed', 'security', 'user', 'platform', false, [
+    'challengeId',
+    'attempts',
+  ]),
+  ev('privacy_request.code.locked_out', 'security', 'user', 'platform', false, [
+    'challengeId',
+  ]),
+  ev('privacy_request.code.confirmed', 'security', 'user', 'platform', false, [
+    'challengeId',
+  ]),
+  ev('privacy_request.submitted', 'security', 'privacy_request', 'platform', false, [
+    'requestType',
+    'userId',
+  ]),
+  ev('privacy_request.status_changed', 'security', 'privacy_request', 'platform', false, [
+    'requestType',
+    'userId',
+    'fromStatus',
+    'toStatus',
+  ]),
+  ev('privacy_request.fulfilled', 'security', 'privacy_request', 'platform', false, [
+    'requestType',
+    'userId',
+    'exportAvailableUntil',
+  ]),
+  ev(
+    'privacy_request.export_downloaded',
+    'security',
+    'privacy_request',
+    'platform',
+    false,
+    ['requestType'],
+  ),
   // Phone number (docs/USER_PHONE.md) — the country and the kind of change
   // only; the number itself is never written to an audit row.
   ev('account.phone.updated', 'security', 'user', 'platform', false, [
@@ -977,6 +1109,12 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'wasVerified',
   ]),
   ev('account.deleted', 'security', 'user', 'platform', false, ACCOUNT_DELETED_CONTEXT),
+  // B0-SEC-07 — Platform Owner suspension; the operator's reason is kept.
+  ev('account.suspended', 'security', 'user', 'platform', false, [
+    'reason',
+    'sessionsRevoked',
+  ]),
+  ev('account.unsuspended', 'security', 'user', 'platform', false, ['reason']),
   ev(
     'account.deleted_by_platform_owner',
     'security',
@@ -991,6 +1129,14 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('plan.updated', 'platform', 'plan', 'platform', false, ['key']),
   ev('plan.pricing_changed', 'platform', 'plan', 'platform', false, ['key']),
   ev('plan.trial_config_changed', 'platform', 'plan', 'platform', false, ['key']),
+  // B0-BIL-07 — the existing subscribers told about a price/limit edit.
+  ev('plan.subscribers_notified', 'platform', 'plan', 'platform', false, [
+    'key',
+    'planVersion',
+    'notified',
+    'cleared',
+    'failed',
+  ]),
   ev('plan.archived', 'platform', 'plan', 'platform', false, [
     'key',
     'subscriptionsAtArchive',
@@ -1019,6 +1165,56 @@ export const AUDIT_EVENT_DEFINITIONS = [
     false,
     ['defaultCommissionBasisPoints'],
   ),
+  // B0-ANL-02 — the plan- and organization-level overrides, and the
+  // platform trial policy.
+  ev('commission_config.plan_updated', 'platform', 'plan', 'platform', false, [
+    'planKey',
+    'commissionBasisPoints',
+    'previousCommissionBasisPoints',
+  ]),
+  ev(
+    'commission_config.organization_updated',
+    'platform',
+    'organization',
+    'platform',
+    false,
+    [
+      'commissionMode',
+      'customPercentageBasisPoints',
+      'previousCommissionMode',
+      'previousCustomPercentageBasisPoints',
+    ],
+  ),
+  // B0-ANL-04 — an organization marked internal (test/demo/staff) or not.
+  ev(
+    'organization.internal_flag_changed',
+    'platform',
+    'organization',
+    'platform',
+    false,
+    ['isInternal', 'previousIsInternal'],
+  ),
+  ev('trial_policy.updated', 'platform', 'trial_policy', 'platform', false, [
+    'enabled',
+    'durationDays',
+    'previousEnabled',
+    'previousDurationDays',
+  ]),
+  // B0-ANL-02 — academy payouts (Atlas-collected course revenue).
+  ev('payout.created', 'platform', 'academy_payout', 'platform', false, [
+    'academyId',
+    'currency',
+    'amountMinorUnits',
+    'periodStart',
+    'periodEnd',
+    'items',
+  ]),
+  ev('payout.marked_paid', 'platform', 'academy_payout', 'platform', false, [
+    'academyId',
+    'currency',
+    'amountMinorUnits',
+    'providerReference',
+  ]),
   ev('add_on.catalog_status_changed', 'platform', 'add_on', 'platform', false, [
     'addOnKey',
     'previousStatus',

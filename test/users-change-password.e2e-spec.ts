@@ -10,7 +10,7 @@ describe('POST /users/me/password (e2e)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    const testApp = await createTestApp({ fieldViolations: true });
     app = testApp.app;
   });
 
@@ -85,6 +85,33 @@ describe('POST /users/me/password (e2e)', () => {
       .expect(401);
 
     // The original password still works.
+    await request(app.getHttpServer())
+      .post('/auth/sign-in')
+      .send({ email, password })
+      .expect(200);
+  });
+
+  it('B0-SEC-11: refuses a common new password and leaves the password unchanged', async () => {
+    const email = uniqueTestEmail('changepw-common');
+    const password = 'correct-horse-battery';
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ name: 'Common New Fixture', email, password })
+      .expect(201);
+    const signIn = await request(app.getHttpServer())
+      .post('/auth/sign-in')
+      .send({ email, password })
+      .expect(200);
+
+    const refused = await request(app.getHttpServer())
+      .post('/users/me/password')
+      .set('Authorization', `Bearer ${signIn.body.accessToken}`)
+      .send({ currentPassword: password, newPassword: 'password123' })
+      .expect(400);
+    expect(refused.body.error.violations).toEqual([
+      { field: 'newPassword', messageKey: 'validation:commonPassword' },
+    ]);
+
     await request(app.getHttpServer())
       .post('/auth/sign-in')
       .send({ email, password })

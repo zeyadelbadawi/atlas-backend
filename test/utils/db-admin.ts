@@ -430,6 +430,23 @@ export async function seedOrganizationCommission(
   });
 }
 
+/**
+ * B0-COM-03 — sets an Organization's payment-collection mode directly. The
+ * tenant `PATCH .../payment-settings` only accepts `unconfigured` now, so a
+ * suite that exercises Atlas Payments or gateway mode seeds it here.
+ */
+export async function seedPaymentCollectionMode(
+  admin: PrismaClient,
+  organizationId: string,
+  paymentCollectionMode: 'atlas_payments' | 'organization_gateway' | 'unconfigured',
+) {
+  return admin.organizationPaymentSettings.upsert({
+    where: { organizationId },
+    create: { organizationId, paymentCollectionMode },
+    update: { paymentCollectionMode },
+  });
+}
+
 export async function seedPaymentMethod(
   admin: PrismaClient,
   keyLabel: string,

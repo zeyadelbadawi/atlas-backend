@@ -28,9 +28,11 @@ import {
   Param,
   Post,
   Query,
+  Req,
   Res,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { buildRobotsTxt, buildSitemapXml } from '../utils/seo-files.util';
 import { Throttle } from '@nestjs/throttler';
 import { EmailLogoService } from '../../communications/services/email-logo.service';
 import { PublicWebsiteService } from '../services/public-website.service';
@@ -50,6 +52,13 @@ import type { AcademyIdentityResponse } from '../dto/public-identity.contract';
 import type { CourseResponse } from '../../course/dto/course.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import type { PublicCourseCurriculumSectionResponse } from '../dto/public-course-curriculum.contract';
+
+/** The host the visitor reached: Caddy's `X-Forwarded-Host` (set from `{host}`), else the request's own. */
+function requestHost(request: Request): string {
+  const forwarded = request.headers['x-forwarded-host'];
+  const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return (value ?? request.headers.host ?? '').split(',')[0].trim();
+}
 
 const UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -79,6 +88,42 @@ export class PublicWebsiteController implements OnModuleInit {
     this.emailLogoService.registerServingReference((academyId) =>
       this.publicWebsiteService.findLogoReference(academyId),
     );
+  }
+
+  /**
+   * B0-WEB-01 — the Academy's own robots.txt and sitemap.xml. Caddy sends
+   * `/robots.txt` and `/sitemap.xml` on academy hosts (subdomains and
+   * connected domains, never the platform host) here, with the host the
+   * visitor reached in `X-Forwarded-Host`. Settings are honoured:
+   * not indexable → `Disallow: /` and no sitemap; sitemap off → no
+   * `Sitemap:` line and a 404 sitemap. Unpublished (Coming Soon), unknown
+   * and non-serving hosts are closed the same way.
+   */
+  @Get('host/robots.txt')
+  async getHostRobots(@Req() request: Request, @Res() response: Response): Promise<void> {
+    const files = await this.publicWebsiteService.getSeoFiles(requestHost(request));
+    const body = buildRobotsTxt({
+      indexable: files.indexable,
+      sitemapUrl:
+        files.sitemapEnabled && files.origin ? `${files.origin}/sitemap.xml` : undefined,
+    });
+    response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    response.setHeader('Cache-Control', 'public, max-age=300');
+    response.status(200).send(body);
+  }
+
+  @Get('host/sitemap.xml')
+  async getHostSitemap(
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const files = await this.publicWebsiteService.getSeoFiles(requestHost(request));
+    if (!files.sitemapEnabled || !files.origin) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    response.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    response.setHeader('Cache-Control', 'public, max-age=300');
+    response.status(200).send(buildSitemapXml(files.urls, files.origin));
   }
 
   @Get('resolve')

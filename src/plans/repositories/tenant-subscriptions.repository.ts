@@ -129,6 +129,75 @@ export class TenantSubscriptionsRepository {
     });
   }
 
+  /** B0-BIL-04 — the display name of a scheduled plan, for the subscription response. */
+  async findPlanName(
+    tx: Prisma.TransactionClient,
+    planId: string,
+  ): Promise<string | null> {
+    const plan = await tx.plan.findUnique({
+      where: { id: planId },
+      select: { name: true },
+    });
+    return plan?.name ?? null;
+  }
+
+  /** B0-BIL-04 — rows whose scheduled plan change is due (`scheduledChangeAt <= now`). */
+  findManyDueScheduledChanges(
+    tx: Prisma.TransactionClient,
+    now: Date,
+    cursor: string | undefined,
+    take: number,
+  ): Promise<TenantSubscription[]> {
+    return tx.tenantSubscription.findMany({
+      where: {
+        scheduledChangeAt: { lte: now },
+        ...(cursor ? { organizationId: { gt: cursor } } : {}),
+      },
+      orderBy: { organizationId: 'asc' },
+      take,
+    });
+  }
+
+  /**
+   * B0-BIL-04 — moves `planId` and `grantedLimits` to the scheduled values
+   * and clears the schedule, in one guarded `updateMany`: the predicate
+   * names the exact schedule being applied, so a purchase or cancellation
+   * that replaced or cleared it in the meantime matches nothing.
+   */
+  async applyScheduledChange(
+    tx: Prisma.TransactionClient,
+    subscription: Pick<
+      TenantSubscription,
+      | 'organizationId'
+      | 'scheduledPlanId'
+      | 'scheduledGrantedLimits'
+      | 'scheduledChangeAt'
+    >,
+  ): Promise<boolean> {
+    if (
+      !subscription.scheduledPlanId ||
+      !subscription.scheduledChangeAt ||
+      subscription.scheduledGrantedLimits === null
+    ) {
+      return false;
+    }
+    const result = await tx.tenantSubscription.updateMany({
+      where: {
+        organizationId: subscription.organizationId,
+        scheduledPlanId: subscription.scheduledPlanId,
+        scheduledChangeAt: subscription.scheduledChangeAt,
+      },
+      data: {
+        planId: subscription.scheduledPlanId,
+        grantedLimits: subscription.scheduledGrantedLimits as Prisma.InputJsonValue,
+        scheduledPlanId: null,
+        scheduledGrantedLimits: Prisma.DbNull,
+        scheduledChangeAt: null,
+      },
+    });
+    return result.count === 1;
+  }
+
   findManyDueForGraceExpiry(
     tx: Prisma.TransactionClient,
     now: Date,
@@ -352,7 +421,14 @@ export class TenantSubscriptionsRepository {
   ): Promise<void> {
     await tx.tenantSubscription.updateMany({
       where: { organizationId, status: { in: ['active', 'past_due', 'grace_period'] } },
-      data: { cancelAtPeriodEnd: true },
+      // B0-BIL-04 — a subscription that ends at the period close has no
+      // later plan to move to; a scheduled downgrade is dropped with it.
+      data: {
+        cancelAtPeriodEnd: true,
+        scheduledPlanId: null,
+        scheduledGrantedLimits: Prisma.DbNull,
+        scheduledChangeAt: null,
+      },
     });
   }
 
@@ -399,6 +475,14 @@ export class TenantSubscriptionsRepository {
         readonly endsAt: Date;
         readonly paymentId: string;
       };
+      /**
+       * B0-BIL-04 — present when this purchase is a downgrade that must
+       * wait for the end of the period already paid for: `planId` and
+       * `grantedLimits` are then STORED as the scheduled change and the
+       * row keeps its current plan until `changeAt`. Absent on every
+       * other purchase, which applies at once and clears any schedule.
+       */
+      readonly scheduleAt?: Date;
     },
   ): Promise<TenantSubscription> {
     const giftColumns = data.gift
@@ -410,15 +494,27 @@ export class TenantSubscriptionsRepository {
         }
       : {};
     try {
+      const planColumns = data.scheduleAt
+        ? {
+            scheduledPlanId: data.planId,
+            scheduledGrantedLimits: data.grantedLimits,
+            scheduledChangeAt: data.scheduleAt,
+          }
+        : {
+            planId: data.planId,
+            // Set in the SAME statement as `planId` — an upgrade, an
+            // immediate downgrade and a first purchase all move both facts
+            // together or neither, so the row can never name one plan
+            // while holding another's grant.
+            grantedLimits: data.grantedLimits,
+            scheduledPlanId: null,
+            scheduledGrantedLimits: Prisma.DbNull,
+            scheduledChangeAt: null,
+          };
       return await tx.tenantSubscription.update({
         where: { organizationId },
         data: {
-          planId: data.planId,
-          // Set in the SAME statement as `planId` — an upgrade, a
-          // downgrade and a first purchase all move both facts together or
-          // neither, so the row can never name one plan while holding
-          // another's grant.
-          grantedLimits: data.grantedLimits,
+          ...planColumns,
           status: 'active',
           billingCycle: data.billingCycle,
           currentPeriodStart: data.currentPeriodStart,
@@ -426,6 +522,11 @@ export class TenantSubscriptionsRepository {
           trialEndsAt: null,
           graceEndsAt: null,
           cancelAtPeriodEnd: false,
+          // B0-BIL-07 — this purchase is the renewal a price-change notice
+          // was about (and was charged the live price), so the notice has
+          // done its job.
+          priceChangeNotice: Prisma.DbNull,
+          priceChangeNoticeDismissedAt: null,
           ...giftColumns,
         },
       });

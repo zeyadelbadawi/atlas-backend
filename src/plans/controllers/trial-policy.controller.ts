@@ -12,6 +12,8 @@ import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { PlatformOwnerGuard } from '../../identity/guards/platform-owner.guard';
+import { CurrentAuthContext } from '../../identity/decorators/auth-context.decorator';
+import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { PlansService } from '../services/plans.service';
 import { UpdateTrialPolicyDto } from '../dto/trial-policy.contract';
 import type { TrialPolicyResponse } from '../dto/trial-policy.contract';
@@ -28,7 +30,14 @@ export class TrialPolicyController {
 
   @Patch()
   @UseGuards(PlatformOwnerGuard)
-  async update(@Body() body: UpdateTrialPolicyDto): Promise<TrialPolicyResponse> {
-    return this.plansService.updateTrialPolicy(body.enabled, body.durationDays);
+  async update(
+    @CurrentAuthContext() auth: AuthContext,
+    @Body() body: UpdateTrialPolicyDto,
+  ): Promise<TrialPolicyResponse> {
+    return this.plansService.updateTrialPolicy(
+      auth.userId,
+      body.enabled,
+      body.durationDays,
+    );
   }
 }

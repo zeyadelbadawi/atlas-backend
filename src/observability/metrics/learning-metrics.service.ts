@@ -228,10 +228,10 @@ export class LearningMetricsService {
     'Course-checkout orders, by lifecycle state (created, then each transition).',
     ['state'],
   );
-  /** Seconds between a buyer submitting a payment proof and a platform reviewer approving it — the manual-review queue's latency, which is the buyer's wait. Buckets run from a minute to a week because that is the honest range of a human review. */
+  /** Seconds between a buyer submitting a payment proof and its approval — by the Platform Owner (platform collection) or by the organization owner (`academy_manual`); both feed this one series. The manual-review latency, which is the buyer's wait. Buckets run from a minute to a week because that is the honest range of a human review. */
   private readonly checkoutApprovalLatency = histogram(
     'atlas_checkout_approval_latency_seconds',
-    'Seconds from a payment proof being submitted to its platform approval.',
+    'Seconds from a payment proof being submitted to its approval (platform or academy review).',
     [],
     [
       60,

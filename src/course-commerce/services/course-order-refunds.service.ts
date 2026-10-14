@@ -41,6 +41,10 @@ import { CourseOrdersRepository } from '../repositories/course-orders.repository
 import { CourseOrderRefundsRepository } from '../repositories/course-order-refunds.repository';
 import { RevenueLedgerEntriesRepository } from '../repositories/revenue-ledger-entries.repository';
 import { CommunicationService } from '../../communications/services/communication.service';
+import {
+  PlatformOwnerAlertService,
+  type PlatformOwnerAlert,
+} from '../../communications/services/platform-owner-alert.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { REFUND_WINDOW_DAYS } from '../dto/course-commerce.constants';
@@ -66,6 +70,8 @@ export class CourseOrderRefundsService {
     private readonly communicationService: CommunicationService,
     private readonly metrics: LearningMetricsService,
     private readonly auditLogWriterService: AuditLogWriterService,
+    // B0-SUP-01 — Atlas must return money it collected; tell its owners.
+    private readonly platformOwnerAlertService: PlatformOwnerAlertService,
   ) {}
 
   async requestRefund(
@@ -82,6 +88,7 @@ export class CourseOrderRefundsService {
     if (!order) throw new NotFoundException({ messageKey: 'errors.notFound' });
 
     let emitted: EmitResult = { created: false, outboxId: null };
+    let platformAlert = null as PlatformOwnerAlert | null;
     const courseTitle =
       (order.snapshot as { course?: { title?: string } } | null)?.course?.title ??
       'your course';
@@ -260,11 +267,26 @@ export class CourseOrderRefundsService {
           },
         });
 
+        if (succeededPayment.paymentCollectionModeSnapshot === 'atlas_payments') {
+          platformAlert = {
+            key: 'platform.refund.recorded',
+            entity: { type: 'course_order_refund', id: refund.id },
+            academyId: fresh.academyId,
+            values: {
+              paymentId: succeededPayment.id,
+              courseTitle,
+              amount: (Number(amountMinorUnits) / 100).toFixed(2),
+              currency: snapshot.price.currency,
+            },
+          };
+        }
+
         return toCourseOrderRefundResponse(refund);
       },
     );
 
     await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    if (platformAlert) this.platformOwnerAlertService.notify(platformAlert);
 
     return result;
   }

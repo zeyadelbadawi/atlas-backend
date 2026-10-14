@@ -121,6 +121,7 @@ export class MediaService {
           search: query.search,
           status: query.status,
           type: query.type,
+          access: query.access,
           skip: (page - 1) * pageSize,
           take: pageSize,
         }),

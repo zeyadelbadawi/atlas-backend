@@ -2,6 +2,13 @@
 
 **The definitive reference for testing every message Atlas sends.**
 
+> **B0-MSG-06 (12 October 2026):** the event list, counts and channel
+> policies are now generated from the code in
+> [`docs/communications/COMMUNICATION_CATALOG_REFERENCE.md`](communications/COMMUNICATION_CATALOG_REFERENCE.md)
+> (`npm run docs:communication-catalog`; a test fails when it is stale).
+> Where this hand-written document and that file disagree — the count of
+> 77 below is out of date — the generated file is right.
+
 Generated from `src/communications/catalog/communication-catalog.ts` on
 25 September 2026, backend `main`. If this document and the code disagree,
 the code is right and this document is stale — regenerate it rather than
@@ -16,6 +23,16 @@ patching it by hand.
 > All emitted by `course-commerce/services/academy-course-payments.service`
 > and `course-order-payments.service`. See `docs/ACADEMY_MANUAL_PAYMENTS.md`.
 > Regenerate this document to fold them into the matrix.
+>
+> **Addendum (12 October 2026) — B0-WEB-05** added
+> `academy.contact_submission.received` (staff: the academy's owner /
+> administrator / manager members and the organization owner; in-app
+> always, email digest; platform-branded with the academy identity;
+> "New message from the <academy> website";
+> `/dashboard/academy/ACADEMY/website/messages`). Emitted by
+> `public-website/services/public-website.service` in the same transaction
+> as the Contact-form insert, deduped per submission; a honeypot hit emits
+> nothing. The visitor's name, address and message are not in the notice.
 
 ## The exact count
 
@@ -151,6 +168,7 @@ where to look to find out how to trigger the event by hand.
 | 22 | `lifecycle.subscription.grace_ending` | always | always | Your grace period ends tomorrow | `/dashboard/tenant/subscription` | `plans/services/tenant-lifecycle.service` |
 | 23 | `lifecycle.subscription.expired` | always | always | Your subscription has expired and your site is offline | `/dashboard/tenant/subscription` | `plans/services/tenant-lifecycle.service` |
 | 24 | `lifecycle.subscription.cancel_scheduled` | always | always | Your subscription is set to end | `/dashboard/tenant/subscription` | `plans/services/trial-redemption.service` |
+| 24a | `lifecycle.subscription.price_change_notice` | always | always | A change to your {plan} plan at renewal | `/dashboard/tenant/subscription` | `platform/services/plan-change-notice.service` (B0-BIL-07) |
 | 25 | `lifecycle.subscription.cancelled` | always | always | Your subscription has ended | `/dashboard/tenant/subscription` | `plans/services/tenant-lifecycle.service` |
 | 26 | `lifecycle.subscription.followup_7d` | — | pref | Your academy is still stored | `/dashboard/tenant/subscription` | `plans/services/tenant-lifecycle.service` |
 | 27 | `lifecycle.subscription.followup_30d` | — | pref | Last note about your Atlas subscription | `/dashboard/tenant/subscription` | `plans/services/tenant-lifecycle.service` |

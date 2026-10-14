@@ -18,6 +18,7 @@ import {
   seedCourse,
   seedOrganizationWithOwner,
   seedPaymentMethod,
+  seedPaymentCollectionMode,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
@@ -98,11 +99,7 @@ describe('Platform ops metrics — commerce & delivery (e2e)', () => {
       pricingAmountMinorUnits: BigInt(priceAmountMinorUnits),
       pricingCurrency: 'USD',
     });
-    await request(app.getHttpServer())
-      .patch(`/organizations/${org.id}/payment-settings`)
-      .set(owner.auth)
-      .send({ paymentCollectionMode: 'atlas_payments' })
-      .expect(200);
+    await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
     const method = await seedPaymentMethod(admin, `${label}-method`);
     return { owner, org, academy, course, method };
   }
@@ -270,6 +267,61 @@ describe('Platform ops metrics — commerce & delivery (e2e)', () => {
     ]) {
       expect(json).not.toContain(id);
     }
+  });
+
+  it('B0-COM-04: an open order past its expiry counts as expired, unless a payment is still under review', async () => {
+    const reviewer = await platformOwnerAccount('pom-expiry-reviewer');
+    const read = async () =>
+      (
+        await request(app.getHttpServer())
+          .get('/platform-metrics/commerce?days=7')
+          .set(reviewer.auth)
+          .expect(200)
+      ).body.orders as Record<string, number>;
+    const before = await read();
+
+    // E: a draft order nobody came back to. F: a proof under review.
+    // G: a draft order still inside its window.
+    const fixtureE = await arrangePaidCourse('pom-exp-e', 900);
+    const studentE = await account('pom-exp-e-student');
+    const orderE = await request(app.getHttpServer())
+      .post(`/courses/${fixtureE.course.id}/course-orders`)
+      .set(studentE.auth)
+      .send({ idempotencyKey: 'pom-exp-e-idem' })
+      .expect(201);
+    const f = await orderWithProof('pom-exp-f', 800);
+    const fixtureG = await arrangePaidCourse('pom-exp-g', 700);
+    const studentG = await account('pom-exp-g-student');
+    const orderG = await request(app.getHttpServer())
+      .post(`/courses/${fixtureG.course.id}/course-orders`)
+      .set(studentG.auth)
+      .send({ idempotencyKey: 'pom-exp-g-idem' })
+      .expect(201);
+
+    // E and F pass their expiry; nobody touches them, so nothing flips
+    // the stored status (expiry is lazy).
+    const past = new Date(Date.now() - 60_000);
+    await admin.courseOrder.updateMany({
+      where: { id: { in: [orderE.body.id, f.orderId] } },
+      data: { expiresAt: past },
+    });
+    const stored = await admin.courseOrder.findMany({
+      where: { id: { in: [orderE.body.id, f.orderId, orderG.body.id] } },
+      select: { id: true, status: true },
+    });
+    const storedStatus = Object.fromEntries(stored.map((o) => [o.id, o.status]));
+    expect(storedStatus[orderE.body.id]).toBe('draft');
+    expect(storedStatus[orderG.body.id]).toBe('draft');
+
+    const after = await read();
+    expect(after.created - before.created).toBe(3);
+    // E counts as expired; G stays draft.
+    expect(after.expired - before.expired).toBe(1);
+    expect(after.draft - before.draft).toBe(1);
+    // F keeps its stored status: a proof under review is never expired.
+    const fKey = ORDER_STATUS_KEY[storedStatus[f.orderId]];
+    expect(fKey).not.toBe('expired');
+    expect(after[fKey] - before[fKey]).toBe(1);
   });
 
   it('commerce: honours days=1 and reports null percentiles when the window holds no approvals', async () => {

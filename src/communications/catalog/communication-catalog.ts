@@ -192,6 +192,28 @@ const FORGOT_PASSWORD_PATH = '/auth/forgot-password';
 /** `PublicWebsiteRouter`'s `/forgot-password` — the academy host's own page. */
 const ACADEMY_FORGOT_PASSWORD_PATH = '/forgot-password';
 const TENANT_SUBSCRIPTION_PATH = '/dashboard/tenant/subscription';
+/** B0-BIL-13 — where an owner compares plans and upgrades. */
+const PLANS_PATH = '/dashboard/plans';
+
+/**
+ * B0-BIL-13 — one feed copy per limit, so the notification names what is
+ * running out (the feed cannot translate a raw `limitKey` value).
+ */
+function limitVariants(
+  event: 'billingLimitApproaching' | 'billingLimitReached',
+): readonly CommunicationCopyVariant[] {
+  const suffix: Record<string, string> = {
+    students: 'Students',
+    courses: 'Courses',
+    academies: 'Academies',
+    generalStorage: 'Storage',
+  };
+  return Object.entries(suffix).map(([limitKey, name]) => ({
+    when: ({ values }) => values.limitKey === limitKey,
+    titleKey: `notifications:events.${event}${name}.title`,
+    messageKey: `notifications:events.${event}${name}.message`,
+  }));
+}
 
 /**
  * P64 C6 — the deep link every retention warning points at (plan §31:
@@ -819,6 +841,97 @@ const CATALOG = {
     // W3 security fix — same as `auth.email.otp`: a live deletion code.
     credentialValues: ['code'],
   },
+  // B0-SEC-13 — the emailed code that confirms FILING a privacy request
+  // (data deletion or export). Its own key and wording: it is not the
+  // account-deletion code, and cannot be used as one (see
+  // `AccountDeletionChallengeService`).
+  'auth.account.privacy_request_code': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'auth.account.privacy_request_code',
+    titleKey: 'notifications:events.privacyRequestCode.title',
+    messageKey: 'notifications:events.privacyRequestCode.message',
+    credentialValues: ['code'],
+  },
+  // B0-SEC-13 — to the requester, about their own privacy request. Email
+  // only: the profile page shows the live status. Rendered under the
+  // academy the request was filed from, when there is one.
+  'privacy_request.received': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `privacy_request_received:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'privacy_request.received',
+    titleKey: 'notifications:events.privacyRequestReceived.title',
+    messageKey: 'notifications:events.privacyRequestReceived.message',
+    actionUrl: () => '/my/profile',
+  },
+  'privacy_request.export_ready': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `privacy_request_export_ready:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'privacy_request.export_ready',
+    titleKey: 'notifications:events.privacyRequestExportReady.title',
+    messageKey: 'notifications:events.privacyRequestExportReady.message',
+    // No download link in the email: the file is fetched from the signed-in
+    // profile page, so a forwarded email does not hand over the data.
+    actionUrl: () => '/my/profile',
+  },
+  'privacy_request.rejected': {
+    category: 'security',
+    audience: 'learner',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `privacy_request_rejected:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'academy',
+    template: 'privacy_request.rejected',
+    titleKey: 'notifications:events.privacyRequestRejected.title',
+    messageKey: 'notifications:events.privacyRequestRejected.message',
+    actionUrl: () => '/my/profile',
+  },
+  // Sent AFTER the account is anonymised, so to the address snapshot on the
+  // request, not to the (now anonymised) account.
+  'privacy_request.deletion_completed': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `privacy_request_deletion_completed:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'platform',
+    branding: 'platform',
+    template: 'privacy_request.deletion_completed',
+    titleKey: 'notifications:events.privacyRequestDeletionCompleted.title',
+    messageKey: 'notifications:events.privacyRequestDeletionCompleted.message',
+    addressRecipient: true,
+  },
   'auth.account.signup_attempt': {
     category: 'security',
     audience: 'platform',
@@ -1345,6 +1458,41 @@ const CATALOG = {
     actionUrl: ({ values }) =>
       `/dashboard/academy/${str(values, 'academyId')}/courses/${str(values, 'courseId')}/reviews`,
   },
+  /**
+   * B0-WEB-05 — a visitor sent a message through the academy website's
+   * Contact form. A STAFF work item for the people who manage the
+   * website (owner / administrator / manager, and the organization
+   * owner), the same tier that can read the Messages inbox.
+   *
+   * Emitted in the same transaction as the insert, deduped per
+   * submission. The visitor's name, address and message are NOT carried
+   * in `values`: the notice only says that a message arrived and links to
+   * the inbox, where the message is read under the inbox's own access
+   * rules. `digest`, like the other staff work items, so a busy contact
+   * form does not become one mail per message.
+   *
+   * Platform-branded with the academy's identity for the same reason as
+   * `review.submitted`: the link is a `/dashboard/*` route, which only
+   * the management host serves.
+   */
+  'academy.contact_submission.received': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'digest' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `academy_contact_received:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'academy',
+    branding: 'platform',
+    identity: 'academy',
+    template: 'academy.contact_submission.received',
+    titleKey: 'notifications:events.academyContactSubmissionReceived.title',
+    messageKey: 'notifications:events.academyContactSubmissionReceived.message',
+    actionUrl: ({ values }) =>
+      `/dashboard/academy/${str(values, 'academyId')}/website/messages`,
+  },
   'review.moderated': {
     category: 'engagement',
     audience: 'learner',
@@ -1402,6 +1550,24 @@ const CATALOG = {
     actionUrl: () => TENANT_SUBSCRIPTION_PATH,
   },
   // T2 — `trialEndsAt − 24 h`.
+  // T2a (B0-MSG-05) — three days ahead, only for a trial a week or longer.
+  'lifecycle.trial.ending_in_3_days': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('trial_ending_3d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.trial.ending_in_3_days',
+    titleKey: 'notifications:events.lifecycleTrialEndingIn3Days.title',
+    messageKey: 'notifications:events.lifecycleTrialEndingIn3Days.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
   'lifecycle.trial.ending_soon': {
     category: 'lifecycle',
     audience: 'staff',
@@ -1543,6 +1709,24 @@ const CATALOG = {
   },
   // S3/S4 — renewal lead time. NOT suppressible: a manual bank transfer
   // plus a human review cannot be started after the fact.
+  // S3a (B0-MSG-05) — yearly subscriptions only, 30 days ahead.
+  'lifecycle.subscription.renewal_30d': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_renewal_30d', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.renewal_30d',
+    titleKey: 'notifications:events.lifecycleSubscriptionRenewal30d.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionRenewal30d.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
   'lifecycle.subscription.renewal_due': {
     category: 'lifecycle',
     audience: 'staff',
@@ -1650,7 +1834,68 @@ const CATALOG = {
     messageKey: 'notifications:events.lifecycleSubscriptionCancelScheduled.message',
     actionUrl: () => TENANT_SUBSCRIPTION_PATH,
   },
+  // B0-BIL-07 — the plan this organisation renews into had its price or
+  // limits edited by the Platform Owner. Terms §9 promises notice in the
+  // product before a change applies; renewal is priced from the live
+  // catalog, so this is that notice. The version is the PLAN's version:
+  // one message per organisation per edit, never two for a retried save.
+  'lifecycle.subscription.price_change_notice': {
+    category: 'transactional',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('subscription_price_change', entity.id, str(values, 'planVersion')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.subscription.price_change_notice',
+    titleKey: 'notifications:events.lifecycleSubscriptionPriceChangeNotice.title',
+    messageKey: 'notifications:events.lifecycleSubscriptionPriceChangeNotice.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
   // S9 — the cancellation actually took effect.
+  // B0-BIL-13 — a plan limit the owner is close to or at
+  // (`UsageLimitWarningService`, after each usage recompute). Once per
+  // limit, threshold and billing period; the link opens the plans page.
+  'billing.limit.approaching': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `limit_approaching:${entity.id}:${str(values, 'limitKey')}:${str(values, 'periodKey')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'billing.limit.approaching',
+    titleKey: 'notifications:events.billingLimitApproaching.title',
+    messageKey: 'notifications:events.billingLimitApproaching.message',
+    variants: limitVariants('billingLimitApproaching'),
+    actionUrl: () => PLANS_PATH,
+  },
+  'billing.limit.reached': {
+    category: 'operational',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `limit_reached:${entity.id}:${str(values, 'limitKey')}:${str(values, 'periodKey')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'billing.limit.reached',
+    titleKey: 'notifications:events.billingLimitReached.title',
+    messageKey: 'notifications:events.billingLimitReached.message',
+    variants: limitVariants('billingLimitReached'),
+    actionUrl: () => PLANS_PATH,
+  },
   'lifecycle.subscription.cancelled': {
     category: 'lifecycle',
     audience: 'staff',
@@ -2288,6 +2533,135 @@ const CATALOG = {
     // The visitor's details go to the owner's inbox by email only; the
     // feed row keeps `topic` and nothing that identifies the visitor.
     personalValues: ['name', 'email', 'organizationName', 'message'],
+  },
+  // B0-SUP-01 — Platform Owner work alerts (`PlatformOwnerAlertService`).
+  // Each goes to every active Platform Owner, in-app + email, after the
+  // triggering write committed. Values are ids, names of the organization
+  // or academy, amounts and course titles — never a learner's or a
+  // requester's personal data; the linked record holds that.
+  'platform.subscription_payment.submitted': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    // Per PROOF: a corrected re-upload is new work to review.
+    dedupe: ({ entity, values }) =>
+      `platform_subscription_payment:${entity.id}:${String(values.proofId ?? '')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.subscription_payment.submitted',
+    titleKey: 'notifications:events.platformSubscriptionPaymentSubmitted.title',
+    messageKey: 'notifications:events.platformSubscriptionPaymentSubmitted.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/payments/${entity.id}`,
+  },
+  'platform.support_case.created': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `platform_support_case_created:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.support_case.created',
+    titleKey: 'notifications:events.platformSupportCaseCreated.title',
+    messageKey: 'notifications:events.platformSupportCaseCreated.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/support/${entity.id}`,
+  },
+  'platform.support_case.customer_replied': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    // Per MESSAGE: every customer reply is a new thing to answer.
+    dedupe: ({ entity, values }) =>
+      `platform_support_case_replied:${entity.id}:${String(values.messageId ?? '')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.support_case.customer_replied',
+    titleKey: 'notifications:events.platformSupportCaseCustomerReplied.title',
+    messageKey: 'notifications:events.platformSupportCaseCustomerReplied.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/support/${entity.id}`,
+  },
+  'platform.organization.signed_up': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'low',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `platform_organization_signed_up:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.organization.signed_up',
+    titleKey: 'notifications:events.platformOrganizationSignedUp.title',
+    messageKey: 'notifications:events.platformOrganizationSignedUp.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/organizations/${entity.id}`,
+  },
+  // Atlas-collected course payments only: an academy-collected proof is the
+  // Client Owner's to review (`academy.payment.submitted`), not Atlas's.
+  'platform.course_payment.submitted': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `platform_course_payment:${entity.id}:${String(values.proofId ?? '')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.course_payment.submitted',
+    titleKey: 'notifications:events.platformCoursePaymentSubmitted.title',
+    messageKey: 'notifications:events.platformCoursePaymentSubmitted.message',
+    actionUrl: ({ entity }) =>
+      `/dashboard/platform/commerce/course-payments/${entity.id}`,
+  },
+  // Atlas-collected payments only: Atlas holds that money and must return
+  // it. An academy-collected payment is refunded by the academy itself.
+  'platform.refund.recorded': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `platform_refund_recorded:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.refund.recorded',
+    titleKey: 'notifications:events.platformRefundRecorded.title',
+    messageKey: 'notifications:events.platformRefundRecorded.message',
+    actionUrl: ({ values }) =>
+      `/dashboard/platform/commerce/course-payments/${String(values.paymentId ?? '')}`,
+  },
+  // B0-SEC-13 — a person filed a privacy request (data deletion or export).
+  'platform.privacy_request.created': {
+    category: 'operational',
+    audience: 'platform',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'activity',
+    retentionClass: 'standard',
+    dedupe: ({ entity }) => `platform_privacy_request_created:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.privacy_request.created',
+    titleKey: 'notifications:events.platformPrivacyRequestCreated.title',
+    messageKey: 'notifications:events.platformPrivacyRequestCreated.message',
+    actionUrl: ({ entity }) => `/dashboard/platform/privacy-requests/${entity.id}`,
   },
   // Customer Requests — an academy asked the Atlas team for a custom
   // service. `routed` goes to the TEAM INBOX the Platform Owner configured

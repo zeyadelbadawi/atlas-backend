@@ -219,6 +219,22 @@ export class TenantSubscriptionController {
   }
 
   /**
+   * B0-BIL-07 — the owner dismisses the "your plan changes at renewal"
+   * banner. Billing-owner only, like every other mutation here: a manager
+   * can read the subscription but must not hide a notice addressed to the
+   * owner.
+   */
+  @Post(':id/subscription/price-change-notice/dismiss')
+  @HttpCode(HttpStatus.OK)
+  async dismissPriceChangeNotice(
+    @Param('id') id: string,
+    @Req() request: Request,
+  ): Promise<{ dismissed: boolean }> {
+    this.assertCanManageBilling(request);
+    return this.tenantSubscriptionService.dismissPriceChangeNotice(id);
+  }
+
+  /**
    * The real billing authorization boundary for every mutating route
    * above.
    *

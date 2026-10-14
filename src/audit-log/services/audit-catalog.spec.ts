@@ -97,6 +97,34 @@ describe('audit event catalogue', () => {
     }
   });
 
+  it('B0-ANL-02: covers sign-in, trial policy, provisioning, commission and payouts', () => {
+    const operatorOnly = [
+      'auth.sign_in.succeeded',
+      'auth.sign_in.failed',
+      'trial_policy.updated',
+      'provisioning_request.retried_by_platform',
+      'provisioning_request.cancelled_by_platform',
+      'commission_config.plan_updated',
+      'commission_config.organization_updated',
+      'payout.created',
+      'payout.marked_paid',
+    ];
+    for (const action of operatorOnly) {
+      expect(getAuditEventDefinition(action)).toBeDefined();
+      expect(TENANT_VISIBLE_AUDIT_ACTIONS).not.toContain(action);
+    }
+    // The owner's own retry / cancel stays in the owner's feed.
+    for (const action of [
+      'provisioning_request.retried',
+      'provisioning_request.cancelled',
+    ]) {
+      expect(TENANT_VISIBLE_AUDIT_ACTIONS).toContain(action);
+    }
+    // A sign-in row never carries credentials or an address.
+    const signIn = getAuditEventDefinition('auth.sign_in.failed')!;
+    expect(signIn.context.some((key) => /password|email|token/i.test(key))).toBe(false);
+  });
+
   it('expands a category for tenant and platform filters', () => {
     expect(tenantVisibleActionsInCategory('website')).toContain('website_page.updated');
     expect(tenantVisibleActionsInCategory('security')).toEqual([]);

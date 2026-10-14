@@ -44,6 +44,7 @@ const SELF_OR_LEARNER = new Set<string>([
   'POST auth/verify-email/resend',
   'GET auth/sessions',
   'DELETE auth/sessions/:id',
+  'POST auth/sessions/revoke-others',
   'GET auth/validate',
   'GET auth/trusted-devices',
   'DELETE auth/trusted-devices/:id',
@@ -68,6 +69,14 @@ const SELF_OR_LEARNER = new Set<string>([
   'GET users/me/phone',
   'PUT users/me/phone',
   'DELETE users/me/phone',
+  // B0-SEC-13 — a learner's own privacy request (data deletion / export).
+  // The subject is the token's account; filing needs a code emailed to the
+  // verified address; the export is the caller's own rows under their own
+  // RLS context. Deletion itself is carried out by a Platform Owner.
+  'POST privacy-requests/code',
+  'POST privacy-requests',
+  'GET privacy-requests/mine',
+  'GET privacy-requests/mine/:id/export',
   'POST users/me/password',
   'GET users/me/communication-preferences',
   'PATCH users/me/communication-preferences',
@@ -192,6 +201,10 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'POST payments/webhook': 'payment provider HMAC signature',
   // --- public website runtime and media (public by design) ----------------
   'GET public/websites/resolve': 'hostname -> academy, published state only',
+  // B0-WEB-01 — per-host crawler files; published pages and courses only.
+  'GET public/websites/host/robots.txt': 'crawler rules for a published academy host',
+  'GET public/websites/host/sitemap.xml':
+    'published pages and courses of an academy host',
   'GET public/websites/:academyId': 'published website only',
   'GET public/websites/:academyId/identity': 'published identity only',
   'GET public/websites/:academyId/pages': 'published pages only',

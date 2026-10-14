@@ -5,7 +5,7 @@
  * `TenancyContextService.runInTenantContext`, matching every other billing
  * service's own "never trust the guard's own read" discipline.
  */
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { OrganizationPaymentSettingsRepository } from '../repositories/organization-payment-settings.repository';
 import {
@@ -14,6 +14,10 @@ import {
 } from '../dto/organization-payment-settings.contract';
 import type { UpdateOrganizationPaymentSettingsDto } from '../dto/update-organization-payment-settings.dto';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import type { PaymentCollectionMode } from '@prisma/client';
+
+/** The modes an Organization may set for itself today (see `updatePaymentSettings`). */
+const TENANT_SELECTABLE_MODES: readonly PaymentCollectionMode[] = ['unconfigured'];
 
 @Injectable()
 export class OrganizationPaymentSettingsService {
@@ -40,12 +44,24 @@ export class OrganizationPaymentSettingsService {
   /**
    * Task 3 — audited in the same transaction as the upsert, with the mode's
    * before/after ("no row" reads as `unconfigured`, matching the response).
+   *
+   * B0-COM-03 — an Organization can only clear its mode back to
+   * `unconfigured`. `atlas_payments` (Atlas collects the learner's money on
+   * its own accounts and takes a commission) and `organization_gateway` (no
+   * adapter is registered) are not offered at launch, so a tenant must not
+   * be able to switch learner payments onto them. Academy manual payment
+   * methods do not depend on this mode and are unaffected.
    */
   async updatePaymentSettings(
     organizationId: string,
     payload: UpdateOrganizationPaymentSettingsDto,
     actorUserId: string,
   ): Promise<OrganizationPaymentSettingsResponse> {
+    if (!TENANT_SELECTABLE_MODES.includes(payload.paymentCollectionMode)) {
+      throw new ForbiddenException({
+        messageKey: 'errors.payment.collectionModeNotAvailable',
+      });
+    }
     const settings = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {

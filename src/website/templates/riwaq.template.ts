@@ -56,12 +56,6 @@ const LIVE_STATISTICS: WebsiteTemplateSection = {
         label: lt('Programmes', 'البرامج'),
       },
       {
-        id: 'stat-students',
-        metric: 'students',
-        value: lt(''),
-        label: lt('Learners', 'المتعلّمون'),
-      },
-      {
         id: 'stat-instructors',
         metric: 'instructors',
         value: lt(''),

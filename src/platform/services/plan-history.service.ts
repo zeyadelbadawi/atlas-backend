@@ -46,6 +46,7 @@ export const PLAN_HISTORY_ACTIONS: readonly string[] = [
   'plan.updated',
   'plan.pricing_changed',
   'plan.trial_config_changed',
+  'plan.subscribers_notified',
   'plan.archived',
 ];
 

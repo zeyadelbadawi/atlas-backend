@@ -97,6 +97,59 @@ describe('lifecycle sequence evaluator (§26 trial, §27 subscription)', () => {
     });
   });
 
+  describe('T2a — trial ends in 3 days (B0-MSG-05)', () => {
+    const dueAt = new Date(TRIAL_ENDS_AT.getTime() - 3 * DAY);
+    const fourteenDay = input(
+      { status: 'trialing', trialEndsAt: TRIAL_ENDS_AT },
+      { trialStartedAt: new Date(TRIAL_ENDS_AT.getTime() - 14 * DAY) },
+    );
+
+    it('fires exactly at `trialEndsAt − 3 d` for a 14-day trial, and not 1 ms earlier', () => {
+      expect(stepsAt(fourteenDay, justBefore(dueAt))).toEqual([]);
+      expect(stepsAt(fourteenDay, dueAt)).toEqual(['trial_ending_3d']);
+    });
+
+    it('a 14-day trial gets T2a and then T2, a day apart', () => {
+      expect(stepsAt(fourteenDay, new Date(TRIAL_ENDS_AT.getTime() - DAY))).toEqual([
+        'trial_ending_soon',
+      ]);
+    });
+
+    it('is never sent for a trial shorter than 7 days', () => {
+      const short = input(
+        { status: 'trialing', trialEndsAt: TRIAL_ENDS_AT },
+        { trialStartedAt: new Date(TRIAL_ENDS_AT.getTime() - 3 * DAY) },
+      );
+      expect(stepsAt(short, dueAt)).toEqual([]);
+      const almostAWeek = input(
+        { status: 'trialing', trialEndsAt: TRIAL_ENDS_AT },
+        { trialStartedAt: new Date(TRIAL_ENDS_AT.getTime() - 7 * DAY + 1) },
+      );
+      expect(stepsAt(almostAWeek, dueAt)).toEqual([]);
+    });
+
+    it('is not sent without a known trial start', () => {
+      const unknown = input({ status: 'trialing', trialEndsAt: TRIAL_ENDS_AT });
+      expect(stepsAt(unknown, dueAt)).toEqual([]);
+    });
+
+    it('uses the short horizon: after a long outage it is dropped, not sent beside T2', () => {
+      const late = new Date(dueAt.getTime() + LIFECYCLE_SHORT_NOTICE_LATENESS_MS + 1);
+      expect(stepsAt(fourteenDay, late)).toEqual([]);
+    });
+
+    it('is not sent to someone who already cancelled their trial', () => {
+      const cancelled = input(
+        { status: 'trialing', trialEndsAt: TRIAL_ENDS_AT },
+        {
+          trialStartedAt: new Date(TRIAL_ENDS_AT.getTime() - 14 * DAY),
+          trialCancelledAt: new Date(dueAt.getTime() - HOUR),
+        },
+      );
+      expect(stepsAt(cancelled, dueAt)).toEqual([]);
+    });
+  });
+
   describe('T3 — trial expired', () => {
     const expired = input({ status: 'trial_expired', trialEndsAt: TRIAL_ENDS_AT });
 
@@ -283,6 +336,44 @@ describe('lifecycle sequence evaluator (§26 trial, §27 subscription)', () => {
         cancelAtPeriodEnd: true,
       });
       expect(stepsAt(cancelling, new Date(PERIOD_END.getTime() - 7 * DAY))).toEqual([]);
+    });
+  });
+
+  describe('S3a — yearly renewal 30 days ahead (B0-MSG-05)', () => {
+    const dueAt = new Date(PERIOD_END.getTime() - 30 * DAY);
+    const yearly = input(
+      { status: 'active', currentPeriodEnd: PERIOD_END },
+      { billingCycle: 'yearly' },
+    );
+
+    it('fires at `currentPeriodEnd − 30 d` for a yearly period, and not 1 ms earlier', () => {
+      expect(stepsAt(yearly, justBefore(dueAt))).toEqual([]);
+      expect(stepsAt(yearly, dueAt)).toEqual(['subscription_renewal_30d']);
+    });
+
+    it('is followed by the usual 7-day reminder', () => {
+      expect(stepsAt(yearly, new Date(PERIOD_END.getTime() - 7 * DAY))).toEqual([
+        'subscription_renewal_due',
+      ]);
+    });
+
+    it('is never sent for a monthly or unknown cycle', () => {
+      const monthly = input(
+        { status: 'active', currentPeriodEnd: PERIOD_END },
+        { billingCycle: 'monthly' },
+      );
+      expect(stepsAt(monthly, dueAt)).toEqual([]);
+      expect(
+        stepsAt(input({ status: 'active', currentPeriodEnd: PERIOD_END }), dueAt),
+      ).toEqual([]);
+    });
+
+    it('is skipped for a yearly subscription already set to cancel at period end', () => {
+      const cancelling = input(
+        { status: 'active', currentPeriodEnd: PERIOD_END, cancelAtPeriodEnd: true },
+        { billingCycle: 'yearly' },
+      );
+      expect(stepsAt(cancelling, dueAt)).toEqual([]);
     });
   });
 

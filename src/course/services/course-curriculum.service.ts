@@ -13,6 +13,7 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -27,6 +28,7 @@ import { CoursesRepository } from '../repositories/courses.repository';
 import { CourseSectionsRepository } from '../repositories/course-sections.repository';
 import { CourseLessonsRepository } from '../repositories/course-lessons.repository';
 import { LessonContentsRepository } from '../repositories/lesson-contents.repository';
+import { sanitizeRichText } from '../../communications/campaigns/rich-text-sanitizer';
 import { toCourseSectionResponse } from '../dto/course-section.contract';
 import type { CourseSectionResponse } from '../dto/course-section.contract';
 import { toCourseLessonResponse } from '../dto/course-lesson.contract';
@@ -285,11 +287,7 @@ export class CourseCurriculumService {
         // could attach another academy's video by guessing and the grant
         // path would sign it because the lesson claims it.
         if (payload.videoAssetId) {
-          const asset = await tx.mediaAsset.findFirst({
-            where: { id: payload.videoAssetId, academyId, type: 'video' },
-            select: { id: true },
-          });
-          if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+          await assertAttachableLessonVideo(tx, academyId, payload.videoAssetId);
         }
 
         // Append after the LAST item of the unit across all types — the
@@ -377,11 +375,7 @@ export class CourseCurriculumService {
         // attach another academy's video by guessing, and the grant path
         // would then happily sign it because the lesson says it is theirs.
         if (payload.videoAssetId) {
-          const asset = await tx.mediaAsset.findFirst({
-            where: { id: payload.videoAssetId, academyId, type: 'video' },
-            select: { id: true, durationSeconds: true, processingStatus: true },
-          });
-          if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+          await assertAttachableLessonVideo(tx, academyId, payload.videoAssetId);
         }
 
         const updated = await this.lessonsRepository.update(tx, lessonId, {
@@ -408,6 +402,30 @@ export class CourseCurriculumService {
             ? { completionRule: payload.completionRule }
             : {}),
         });
+
+        // B0-LRN-01 — at read time a content row WINS over the legacy
+        // fields this endpoint edits (`effectiveLessonContent`), so a row
+        // that no longer describes the lesson must go, or learners keep
+        // getting the old body:
+        //   - a `text` row when the lesson is no longer a text lesson;
+        //   - an `external` row (the Phase 2 backfill's shape for a legacy
+        //     URL) when the author changed that URL here;
+        //   - a `file` row when the lesson is no longer a file lesson
+        //     (B0-MED-05: switching a File lesson to Text or Video kept
+        //     serving the file, since the row wins).
+        // A `video` row points at a protected video written through the
+        // content endpoint and is left alone.
+        const content = await this.lessonContentsRepository.findByLessonId(tx, lessonId);
+        if (
+          content &&
+          ((content.kind === 'text' && updated.contentType !== 'text') ||
+            (content.kind === 'file' && updated.contentType !== 'file') ||
+            (content.kind === 'external' &&
+              payload.contentUrl !== undefined &&
+              content.externalUrl !== (updated.contentUrl ?? null)))
+        ) {
+          await this.lessonContentsRepository.deleteForLesson(tx, lessonId);
+        }
 
         await this.auditLogWriterService.write(tx, {
           actorUserId: userId,
@@ -439,6 +457,38 @@ export class CourseCurriculumService {
   }
 
   /**
+   * B0-LRN-01 — the staff read of a lesson's content row, so the builder
+   * can show an existing text body for editing.
+   *
+   * Same ladder as the write below (manage permission, then course,
+   * section, lesson): anyone who can read the body here can already
+   * replace it through `upsertLessonContent`, so this read is never wider
+   * than the write. Learners never reach it; they read bodies only
+   * through the grant path.
+   */
+  async getLessonContent(
+    lessonId: string,
+    sectionId: string,
+    courseId: string,
+    academyId: string,
+    organizationId: string,
+    userId: string,
+  ): Promise<LessonContentResponse> {
+    const content = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId, courseId);
+        await this.assertCourseInAcademy(tx, courseId, academyId);
+        await this.assertSectionInCourse(tx, sectionId, courseId);
+        await this.assertLessonInSection(tx, lessonId, sectionId);
+        return this.lessonContentsRepository.findByLessonId(tx, lessonId);
+      },
+    );
+    if (!content) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return toLessonContentResponse(content, { includeBody: true });
+  }
+
+  /**
    * Creates or replaces the lesson's protected content row.
    *
    * This is the writer `lesson_contents` never had. The table, its RLS
@@ -463,13 +513,22 @@ export class CourseCurriculumService {
     userId: string,
     payload: UpsertLessonContentDto,
   ): Promise<LessonContentResponse> {
-    // `text` parses (it is a real column value) and is refused HERE rather
-    // than by the DTO, so the caller gets a reason instead of "not one of
-    // the allowed values" — the field IS allowed, the authoring path for
-    // it is not built. See the DTO header for why no sanitiser is invented.
+    // B0-LRN-01 — a text body is sanitised BEFORE the transaction opens:
+    // the stored HTML is the sanitiser's rebuilt output, never the input,
+    // and a body that sanitises to nothing readable is refused rather than
+    // stored as a lesson that delivers an empty page.
+    let bodyHtml: string | null = null;
     if (payload.kind === 'text') {
+      const sanitized = sanitizeRichText(payload.bodyHtml ?? '');
+      if (sanitized.text.trim().length === 0) {
+        throw new BadRequestException({
+          messageKey: 'errors.lessonContent.bodyRequired',
+        });
+      }
+      bodyHtml = sanitized.html;
+    } else if (payload.bodyHtml !== undefined) {
       throw new BadRequestException({
-        messageKey: 'errors.lessonContent.textNotYetSupported',
+        messageKey: 'errors.lessonContent.unexpectedBody',
       });
     }
 
@@ -498,9 +557,16 @@ export class CourseCurriculumService {
           // "wrong academy" — the two must be indistinguishable.
           const asset = await tx.mediaAsset.findFirst({
             where: { id: payload.mediaAssetId, academyId },
-            select: { id: true, type: true, access: true },
+            select: { id: true, type: true, access: true, courseId: true },
           });
           if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+          // B0-MED-05 — a protected file uploaded for one course cannot be
+          // attached to another course's lesson (its object sits under that
+          // course's key prefix). Indistinguishable from a miss, like the
+          // academy check above.
+          if (asset.courseId !== null && asset.courseId !== courseId) {
+            throw new NotFoundException({ messageKey: 'errors.notFound' });
+          }
 
           if (payload.kind === 'video' && asset.type !== 'video') {
             throw new BadRequestException({
@@ -512,7 +578,12 @@ export class CourseCurriculumService {
           // forwarded to, which is the durable-link problem this whole
           // phase exists to remove — accepting one here would reintroduce
           // it behind a field named "protected content".
-          if (payload.kind === 'file' && asset.access !== 'protected') {
+          // B0-MED-11 — the same holds for a hosted video: a public one
+          // would skip the signed grant, the device rules and the watermark.
+          if (
+            (payload.kind === 'file' || payload.kind === 'video') &&
+            asset.access !== 'protected'
+          ) {
             throw new BadRequestException({
               messageKey: 'errors.lessonContent.assetNotProtected',
             });
@@ -541,6 +612,7 @@ export class CourseCurriculumService {
           courseId,
           academyId,
           kind: payload.kind,
+          bodyHtml,
           mediaAssetId,
           externalUrl,
         });
@@ -734,5 +806,35 @@ export class CourseCurriculumService {
     if (!isExactPermutation(existingIds, orderedIds)) {
       throw new BadRequestException({ messageKey: 'errors.course.invalidReorderSet' });
     }
+  }
+}
+
+/**
+ * B0-MED-11 — what a lesson may point at as its hosted video.
+ *
+ *   - this academy's own video asset (tenancy — an id alone proves nothing);
+ *   - a PROTECTED one: a public library video is served from a public URL,
+ *     so attaching it would bypass the signed grant, the device rules and
+ *     the watermark the learner path enforces for `videoAssetId`;
+ *   - whose upload has finished: `pending` means the bytes never arrived
+ *     (the completion call was not made), `failed` means they never will.
+ *     `processing` is accepted — the learner path already answers
+ *     "processing" until the asset is ready.
+ */
+export async function assertAttachableLessonVideo(
+  tx: Prisma.TransactionClient,
+  academyId: string,
+  videoAssetId: string,
+): Promise<void> {
+  const asset = await tx.mediaAsset.findFirst({
+    where: { id: videoAssetId, academyId, type: 'video' },
+    select: { id: true, access: true, processingStatus: true },
+  });
+  if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+  if (asset.access !== 'protected') {
+    throw new BadRequestException({ messageKey: 'errors.media.videoNotAttachable' });
+  }
+  if (asset.processingStatus === 'pending' || asset.processingStatus === 'failed') {
+    throw new ConflictException({ messageKey: 'errors.media.videoNotReady' });
   }
 }

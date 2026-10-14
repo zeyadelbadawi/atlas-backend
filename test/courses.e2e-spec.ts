@@ -16,6 +16,8 @@ import {
   seedActiveSubscriptionForOrg,
   seedCourse,
   seedCourseCategory,
+  seedCourseLesson,
+  seedCourseSection,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
@@ -136,6 +138,14 @@ describe('Course Management (e2e) — functional/contract', () => {
     expect(updated.body.visibility).toBe('public');
     expect(updated.body.academyId).toBe(academy.id); // never reassignable.
 
+    // B0-LRN-03 — publishing needs one deliverable published activity.
+    const section = await seedCourseSection(admin, courseId, 'Section', 0);
+    await seedCourseLesson(admin, section.id, courseId, 'Lesson', 0, {
+      status: 'published',
+      contentType: 'video',
+      contentUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    });
+
     const published = await request(app.getHttpServer())
       .post(`/academies/${academy.id}/courses/${courseId}/publish`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
@@ -196,13 +206,13 @@ describe('Course Management (e2e) — functional/contract', () => {
         title: 'Paid Course',
         slug: `course-pricing-${Date.now()}`,
         visibility: 'public',
-        pricing: { type: 'paid', amount: 29.99, currency: 'USD' },
+        pricing: { type: 'paid', amount: 29.99, currency: 'EGP' },
       })
       .expect(201);
     expect(created.body.pricing).toEqual({
       type: 'paid',
       amount: 29.99,
-      currency: 'USD',
+      currency: 'EGP',
     });
 
     const row = await admin.course.findUniqueOrThrow({ where: { id: created.body.id } });

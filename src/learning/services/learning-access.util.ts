@@ -223,6 +223,9 @@ export async function assertCanReviewCourse(
   throw new NotFoundException({ messageKey: 'errors.notFound' });
 }
 
+/** The only role that may change security-sensitive academy policies. */
+const SECURITY_POLICY_ROLES: ReadonlySet<string> = new Set(['owner']);
+
 /**
  * P64 Phase 1 (D8) — security-sensitive academy policies (registration
  * policy, content protection, device/session enforcement) are the Client
@@ -236,12 +239,16 @@ export async function assertCanManageSecurityPolicy(
   academyId: string,
   userId: string,
 ): Promise<void> {
-  const membership = await academyMembersRepository.findForUserInAcademy(
+  // B0-MED-09 / B0-ORG-03 — the academy owner row, or the owner of the
+  // academy's organization without one (the guard's rule). Managers stay
+  // refused: only `owner` is in the set.
+  const role = await academyMembersRepository.findManagingRole(
     tx,
     academyId,
     userId,
+    SECURITY_POLICY_ROLES,
   );
-  if (!membership || membership.status !== 'active' || membership.role !== 'owner') {
+  if (role !== 'owner') {
     throw new ForbiddenException({ messageKey: 'errors.academy.insufficientRole' });
   }
 }

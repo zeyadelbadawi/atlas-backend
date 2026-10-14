@@ -632,8 +632,14 @@ describe('Phase 10.2 trial flow, cancellation & admin (e2e) — P102-001..026', 
     expect(overview.body.organizations).toBeGreaterThan(0);
     expect(typeof overview.body.trials.everRedeemed).toBe('number');
     expect(Array.isArray(overview.body.plans)).toBe(true);
-    // Revenue is reported as untracked, never fabricated.
-    expect(overview.body.revenue).toEqual({ tracked: false });
+    // B0-ANL-01 — revenue comes from approved subscription payments only
+    // (see platform-mrr.e2e-spec.ts); never a list-price figure.
+    expect(overview.body.revenue).toMatchObject({
+      tracked: true,
+      excludesInternalOrganizations: true,
+    });
+    expect(Array.isArray(overview.body.revenue.mrr)).toBe(true);
+    expect(typeof overview.body.revenue.activeWithoutPayment).toBe('number');
     // Cancellation rows carry no email addresses.
     expect(JSON.stringify(overview.body)).not.toContain('@atlas.test');
   });

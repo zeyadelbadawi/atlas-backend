@@ -59,6 +59,22 @@ describe('BrevoEmailProvider', () => {
     });
   });
 
+  it('B0-MSG-01: uses the configured limits when a paid tier is set', () => {
+    const provider = new BrevoEmailProvider(
+      configWith({
+        limits: {
+          brevo: { dailyLimit: 20000, monthlyLimit: 600000, perSecond: 10 },
+          resend: { dailyLimit: 100, monthlyLimit: 3000, perSecond: 2 },
+        },
+      }),
+    );
+    expect(provider.capabilities()).toMatchObject({
+      dailyLimit: 20000,
+      monthlyLimit: 600000,
+      perSecond: 10,
+    });
+  });
+
   it('POSTs the Brevo body shape with the api-key header and returns the messageId on 201', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(201, { messageId: '<abc@smtp-relay.mailin.fr>' }),

@@ -33,6 +33,7 @@ export class LessonContentsRepository {
       readonly courseId: string;
       readonly academyId: string;
       readonly kind: LessonContent['kind'];
+      readonly bodyHtml: string | null;
       readonly mediaAssetId: string | null;
       readonly externalUrl: string | null;
     },
@@ -44,14 +45,21 @@ export class LessonContentsRepository {
         courseId: data.courseId,
         academyId: data.academyId,
         kind: data.kind,
+        bodyHtml: data.bodyHtml,
         mediaAssetId: data.mediaAssetId,
         externalUrl: data.externalUrl,
       },
       update: {
         kind: data.kind,
+        bodyHtml: data.bodyHtml,
         mediaAssetId: data.mediaAssetId,
         externalUrl: data.externalUrl,
       },
     });
+  }
+
+  /** Removes the lesson's content row, if any. */
+  async deleteForLesson(tx: Prisma.TransactionClient, lessonId: string): Promise<void> {
+    await tx.lessonContent.deleteMany({ where: { lessonId } });
   }
 }

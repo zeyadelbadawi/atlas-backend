@@ -32,6 +32,7 @@ import { CommunicationsProducer } from './queue/communications.producer';
 import { CommunicationsProcessor } from './queue/communications.processor';
 import { CommunicationsScheduler } from './queue/communications.scheduler';
 import { CommunicationService } from './services/communication.service';
+import { PlatformOwnerAlertService } from './services/platform-owner-alert.service';
 import { CommunicationDispatchService } from './services/communication-dispatch.service';
 import { QuizExceptionActivationService } from './services/quiz-exception-activation.service';
 import { CommunicationBrandingService } from './services/communication-branding.service';
@@ -85,6 +86,9 @@ import { MediaModule } from '../media/media.module';
     CommunicationService,
     CommunicationDispatchService,
     CommunicationPreferencesService,
+    // B0-SUP-01 — Platform Owner work alerts, used by billing, support,
+    // signup and course commerce.
+    PlatformOwnerAlertService,
     /*
       W-EXC — the scheduled-exception sweep needs a pinnable instant.
 
@@ -106,6 +110,7 @@ import { MediaModule } from '../media/media.module';
   ],
   exports: [
     CommunicationService,
+    PlatformOwnerAlertService,
     // W3 — the public logo route (`PublicWebsiteController`) renders the
     // same PNG the email layout links to.
     EmailLogoService,

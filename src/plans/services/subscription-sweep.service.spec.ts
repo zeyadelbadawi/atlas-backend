@@ -52,6 +52,7 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
   let subscriptionExpiryService: {
     expireDueTrials: jest.Mock;
     expireDuePaidPeriods: jest.Mock;
+    applyDueScheduledPlanChanges: jest.Mock;
   };
   let announcementsRepository: { publishDueScheduled: jest.Mock };
   let blogPostsRepository: { publishDueScheduled: jest.Mock };
@@ -65,6 +66,7 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
     };
     subscriptionExpiryService = {
       expireDueTrials: jest.fn().mockResolvedValue(0),
+      applyDueScheduledPlanChanges: jest.fn().mockResolvedValue(0),
       expireDuePaidPeriods: jest
         .fn()
         .mockResolvedValue({ graceStarted: 0, cancelled: 0, expired: 0 }),

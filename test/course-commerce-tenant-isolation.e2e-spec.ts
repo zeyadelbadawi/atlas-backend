@@ -17,6 +17,7 @@ import {
   seedMembership,
   seedOrganizationWithOwner,
   seedPaymentMethod,
+  seedPaymentCollectionMode,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
@@ -82,11 +83,7 @@ describe('Course Commerce — tenant isolation (e2e)', () => {
       pricingCurrency: 'USD',
     });
     const student = await signUpAndSignIn(app, `${label}-student`);
-    await request(app.getHttpServer())
-      .patch(`/organizations/${org.id}/payment-settings`)
-      .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ paymentCollectionMode: 'atlas_payments' })
-      .expect(200);
+    await seedPaymentCollectionMode(admin, org.id, 'atlas_payments');
 
     const orderRes = await request(app.getHttpServer())
       .post(`/courses/${course.id}/course-orders`)

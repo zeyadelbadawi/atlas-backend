@@ -30,6 +30,7 @@ import { TenantSubscriptionService } from '../../plans/services/tenant-subscript
 import {
   DashboardMetricsRepository,
   type DashboardActivityRow,
+  type DashboardManualSalesTotal,
   type DashboardScopeFilter,
 } from '../repositories/dashboard-metrics.repository';
 import {
@@ -50,6 +51,10 @@ import type {
 
 const RECENT_ACTIVITY_LIMIT = 10;
 
+/** B0-COM-02 — the manual-sales windows the revenue card offers. */
+const MANUAL_SALES_WINDOWS_DAYS = [7, 30, 90] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -64,7 +69,7 @@ export class DashboardService {
 
   /** The Client/Organization Owner's dashboard — every Academy under the Organization. */
   getForOrganization(organizationId: string): Promise<DashboardOverviewResponse> {
-    return this.build({ organizationId });
+    return this.build({ organizationId }, true);
   }
 
   /**
@@ -104,66 +109,99 @@ export class DashboardService {
       }
     }
 
-    return this.build({ organizationId, academyId });
+    // B0-SEC-03 — revenue is finance data: only the organization owner
+    // sees totals. An academy manager, instructor or staff member gets the
+    // same "not tracked here" answer as an organization that does not use
+    // Atlas Payments.
+    return this.build({ organizationId, academyId }, isOrganizationOwner);
   }
 
-  private async build(scope: DashboardScopeFilter): Promise<DashboardOverviewResponse> {
-    const { counts, revenueTotals, paymentSettings, activity, activityNames, academy } =
-      await this.tenancyContextService.runInTenantContext(
-        scope.organizationId,
-        async (tx) => {
-          const [
-            academies,
+  private async build(
+    scope: DashboardScopeFilter,
+    includeRevenue: boolean,
+  ): Promise<DashboardOverviewResponse> {
+    const {
+      counts,
+      revenueTotals,
+      manualSales,
+      paymentSettings,
+      manualMethodsEnabled,
+      activity,
+      activityNames,
+      academy,
+    } = await this.tenancyContextService.runInTenantContext(
+      scope.organizationId,
+      async (tx) => {
+        const [
+          academies,
+          courses,
+          publishedCourses,
+          students,
+          instructors,
+          revenueRows,
+          settings,
+          hasManualMethod,
+          activityRows,
+          academyRow,
+          manualSalesPeriods,
+        ] = await Promise.all([
+          this.dashboardMetricsRepository.countAcademies(tx, scope.organizationId),
+          this.dashboardMetricsRepository.countCourses(tx, scope),
+          this.dashboardMetricsRepository.countPublishedCourses(tx, scope),
+          this.dashboardMetricsRepository.countStudents(tx, scope),
+          this.dashboardMetricsRepository.countInstructors(tx, scope),
+          this.dashboardMetricsRepository.sumRevenueByCurrency(tx, scope),
+          this.organizationPaymentSettingsRepository.findByOrganizationId(
+            tx,
+            scope.organizationId,
+          ),
+          this.dashboardMetricsRepository.hasEnabledManualPaymentMethod(tx, scope),
+          this.dashboardMetricsRepository.findRecentActivity(
+            tx,
+            scope,
+            RECENT_ACTIVITY_LIMIT,
+          ),
+          scope.academyId
+            ? this.academiesRepository.findById(tx, scope.academyId)
+            : Promise.resolve(null),
+          // B0-COM-02 / B0-SEC-03 — finance data, read only for the owner.
+          includeRevenue
+            ? Promise.all(
+                MANUAL_SALES_WINDOWS_DAYS.map(async (days) => ({
+                  days,
+                  totals: await this.dashboardMetricsRepository.sumManualSalesSince(
+                    tx,
+                    scope,
+                    new Date(Date.now() - days * DAY_MS),
+                  ),
+                })),
+              )
+            : Promise.resolve(null),
+        ]);
+
+        return {
+          counts: {
+            // An Academy-scoped dashboard reports itself, never the
+            // Organization's total — see the contract's own doc comment.
+            academies: scope.academyId ? 1 : academies,
             courses,
             publishedCourses,
             students,
             instructors,
-            revenueRows,
-            settings,
+          },
+          revenueTotals: revenueRows,
+          manualSales: manualSalesPeriods,
+          paymentSettings: settings,
+          manualMethodsEnabled: hasManualMethod,
+          activity: activityRows,
+          activityNames: await this.auditLogEntriesRepository.loadReferenceNames(
+            tx,
             activityRows,
-            academyRow,
-          ] = await Promise.all([
-            this.dashboardMetricsRepository.countAcademies(tx, scope.organizationId),
-            this.dashboardMetricsRepository.countCourses(tx, scope),
-            this.dashboardMetricsRepository.countPublishedCourses(tx, scope),
-            this.dashboardMetricsRepository.countStudents(tx, scope),
-            this.dashboardMetricsRepository.countInstructors(tx, scope),
-            this.dashboardMetricsRepository.sumRevenueByCurrency(tx, scope),
-            this.organizationPaymentSettingsRepository.findByOrganizationId(
-              tx,
-              scope.organizationId,
-            ),
-            this.dashboardMetricsRepository.findRecentActivity(
-              tx,
-              scope,
-              RECENT_ACTIVITY_LIMIT,
-            ),
-            scope.academyId
-              ? this.academiesRepository.findById(tx, scope.academyId)
-              : Promise.resolve(null),
-          ]);
-
-          return {
-            counts: {
-              // An Academy-scoped dashboard reports itself, never the
-              // Organization's total — see the contract's own doc comment.
-              academies: scope.academyId ? 1 : academies,
-              courses,
-              publishedCourses,
-              students,
-              instructors,
-            },
-            revenueTotals: revenueRows,
-            paymentSettings: settings,
-            activity: activityRows,
-            activityNames: await this.auditLogEntriesRepository.loadReferenceNames(
-              tx,
-              activityRows,
-            ),
-            academy: academyRow,
-          };
-        },
-      );
+          ),
+          academy: academyRow,
+        };
+      },
+    );
 
     if (scope.academyId && !academy) {
       // Structurally unreachable — `AcademyScopeGuard` already read this
@@ -178,6 +216,9 @@ export class DashboardService {
       revenue: this.toRevenueResponse(
         paymentSettings?.paymentCollectionMode,
         revenueTotals,
+        includeRevenue,
+        manualMethodsEnabled,
+        manualSales,
       ),
       usage: await this.loadUsage(scope.organizationId),
       recentActivity: activity.map((row) => toActivityItemResponse(row, activityNames)),
@@ -209,13 +250,18 @@ export class DashboardService {
       | Prisma.OrganizationPaymentSettingsGetPayload<object>['paymentCollectionMode']
       | undefined,
     totals: readonly { currency: string; amountMinorUnits: bigint }[],
+    includeRevenue: boolean,
+    manualPaymentMethodsEnabled: boolean,
+    manualSales:
+      readonly { days: number; totals: readonly DashboardManualSalesTotal[] }[] | null,
   ): DashboardRevenueResponse {
     const paymentCollectionMode = mode ?? 'unconfigured';
-    const tracked = paymentCollectionMode === 'atlas_payments';
+    const tracked = includeRevenue && paymentCollectionMode === 'atlas_payments';
 
     return {
       tracked,
       paymentCollectionMode,
+      manualPaymentMethodsEnabled,
       // Deliberately emptied rather than reported when Atlas is not the
       // party to these transactions — never a fabricated or misleading
       // figure. (In practice the ledger is already empty in that mode; this
@@ -226,6 +272,19 @@ export class DashboardService {
             amountMinorUnits: Number(total.amountMinorUnits),
           }))
         : [],
+      manualSales:
+        includeRevenue && manualSales
+          ? {
+              periods: manualSales.map((period) => ({
+                days: period.days,
+                totals: period.totals.map((total) => ({
+                  currency: total.currency,
+                  amountMinorUnits: Number(total.amountMinorUnits),
+                  count: total.count,
+                })),
+              })),
+            }
+          : null,
     };
   }
 

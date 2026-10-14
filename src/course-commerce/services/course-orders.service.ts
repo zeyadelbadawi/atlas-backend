@@ -31,6 +31,7 @@ import { AcademyPaymentMethodsRepository } from '../../billing/repositories/acad
 import { ACADEMY_MANUAL_PROVIDER_KEY } from '../../billing/dto/billing.constants';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { CourseOrdersRepository } from '../repositories/course-orders.repository';
+import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
 import { COURSE_ORDER_EXPIRY_MINUTES } from '../dto/course-commerce.constants';
 import { toCourseOrderResponse } from '../dto/course-order.contract';
 import type {
@@ -61,6 +62,7 @@ export class CourseOrdersService {
     private readonly metrics: LearningMetricsService,
     private readonly communications: CommunicationService,
     private readonly academyPaymentMethodsRepository: AcademyPaymentMethodsRepository,
+    private readonly entitlementEnforcementService: EntitlementEnforcementService,
   ) {}
 
   async createOrder(
@@ -156,6 +158,11 @@ export class CourseOrdersService {
             messageKey: 'errors.courseOrder.paymentSetupIncomplete',
           });
         }
+
+        // CF-21 — the plan's `students` limit fences NEW paid enrollments
+        // too. Checked when the order is STARTED, never at approval: a
+        // learner who has already paid is always enrolled.
+        await this.assertAcceptingNewStudent(organizationId, studentId);
 
         const snapshot = this.buildSnapshot(course);
         const now = new Date();
@@ -299,6 +306,64 @@ export class CourseOrdersService {
     );
     if (!order) throw new NotFoundException({ messageKey: 'errors.notFound' });
     return order;
+  }
+
+  /**
+   * CF-21 / B0-BIL-05 — refuses to START a paid order when the academy's
+   * organization is already at its plan's `students` limit.
+   *
+   * Before this, order creation and payment approval deliberately never
+   * consulted the limit, so paid sales (the main way an academy grows)
+   * could take a Teacher-plan academy past 100 students without an
+   * upgrade. The check runs in its own tenant-and-user transaction (the
+   * buyer is not an organization member, so the order transaction cannot
+   * read the subscription), exactly the context self-enrollment already
+   * uses for the same check.
+   *
+   * - A learner already counted in this organization (enrolled in another
+   *   of its courses) occupies no new seat, so is never refused.
+   * - Only "limit reached" refuses. An inactive or missing subscription is
+   *   NOT handled here: that behaviour is unchanged by this fix.
+   * - Approval of an order created before the limit was reached stays
+   *   honoured (`CourseOrderPaymentApplicationService` is untouched).
+   */
+  private async assertAcceptingNewStudent(
+    organizationId: string,
+    studentId: string,
+  ): Promise<void> {
+    await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      studentId,
+      async (tx) => {
+        const alreadyCounted =
+          await this.enrollmentsRepository.countActiveForStudentInOrganization(
+            tx,
+            organizationId,
+            studentId,
+          );
+        if (alreadyCounted > 0) return;
+        try {
+          await this.entitlementEnforcementService.assertWithinLimit(
+            tx,
+            organizationId,
+            'students',
+            1,
+          );
+        } catch (error) {
+          if (
+            error instanceof ConflictException &&
+            (error.getResponse() as { code?: string }).code ===
+              'ENTITLEMENT_LIMIT_REACHED'
+          ) {
+            throw new ConflictException({
+              messageKey: 'errors.courseOrder.notAcceptingEnrollments',
+            });
+          }
+          if (error instanceof ForbiddenException) return;
+          throw error;
+        }
+      },
+    );
   }
 
   private buildSnapshot(course: Course): CourseOrderSnapshotResponse {

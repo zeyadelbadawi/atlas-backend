@@ -20,8 +20,12 @@ export interface AppConfig {
 }
 
 export interface DatabaseConfig {
-  /** Superuser connection — Prisma CLI (migrations) only. Never used for application queries; see `appUrl`. */
-  readonly url: string;
+  /**
+   * Superuser connection — Prisma CLI (migrations) and operator scripts only.
+   * Never used for application queries (see `appUrl`), and absent from the
+   * long-lived server once the host keeps it out of its environment (B0-OPS-03).
+   */
+  readonly url: string | undefined;
   /** Non-superuser, non-BYPASSRLS connection — what `PrismaService` actually connects with at runtime, so RLS applies to every application query (Phase P2). */
   readonly appUrl: string;
 }
@@ -381,7 +385,30 @@ export interface EmailConfig {
   readonly replyTo?: string;
   readonly brevoWebhookSecret?: string;
   readonly resendWebhookSecret?: string;
+  /** B0-MSG-01 — per-provider sending limits; defaults are the free tiers. */
+  readonly limits: {
+    readonly brevo: EmailProviderLimits;
+    readonly resend: EmailProviderLimits;
+  };
 }
+
+export interface EmailProviderLimits {
+  readonly dailyLimit: number;
+  readonly monthlyLimit: number;
+  readonly perSecond: number;
+}
+
+/** Published free-tier limits: what the adapters use when no limit variable is set. */
+export const BREVO_FREE_LIMITS: EmailProviderLimits = {
+  dailyLimit: 300,
+  monthlyLimit: 9000,
+  perSecond: 5,
+};
+export const RESEND_FREE_LIMITS: EmailProviderLimits = {
+  dailyLimit: 100,
+  monthlyLimit: 3000,
+  perSecond: 2,
+};
 
 /** P64 Communications — link building and platform branding for outbound email. */
 export interface CommunicationsConfig {
@@ -410,7 +437,16 @@ export interface CommunicationsConfig {
   readonly videoRetentionMode: VideoRetentionMode;
   /** `FLAG_MEDIA_ARCHIVE_PURGE_MODE` — see `ArchivedMediaPurgeService`. */
   readonly mediaArchivePurgeMode: MediaArchivePurgeMode;
+  /**
+   * B0-SUP-01 — `FLAG_PLATFORM_OWNER_ALERTS_MODE`, read on every alert by
+   * `PlatformOwnerAlertService`. `on` unless set, except under
+   * NODE_ENV=test (see env.validation.ts).
+   */
+  readonly platformOwnerAlertsMode: PlatformOwnerAlertsMode;
 }
+
+/** B0-SUP-01 — Platform Owner work alerts on/off. */
+export type PlatformOwnerAlertsMode = 'off' | 'on';
 
 /** P64 C5 — the staged rollout of the lifecycle sequences (§43). */
 export type LifecycleSequencesMode = 'off' | 'dry_run' | 'on';
@@ -601,7 +637,7 @@ export default () => {
   };
 
   const database: DatabaseConfig = {
-    url: env.DATABASE_URL,
+    url: env.DATABASE_URL || undefined,
     appUrl: env.APP_DATABASE_URL,
   };
 
@@ -884,6 +920,20 @@ export default () => {
     replyTo: env.EMAIL_REPLY_TO || undefined,
     brevoWebhookSecret: env.BREVO_WEBHOOK_SECRET || undefined,
     resendWebhookSecret: env.RESEND_WEBHOOK_SECRET || undefined,
+    // Raw `process.env` strings (validated as positive integers at boot);
+    // an unset or empty variable keeps the free-tier value.
+    limits: {
+      brevo: {
+        dailyLimit: Number(env.BREVO_DAILY_LIMIT || BREVO_FREE_LIMITS.dailyLimit),
+        monthlyLimit: Number(env.BREVO_MONTHLY_LIMIT || BREVO_FREE_LIMITS.monthlyLimit),
+        perSecond: Number(env.BREVO_PER_SECOND || BREVO_FREE_LIMITS.perSecond),
+      },
+      resend: {
+        dailyLimit: Number(env.RESEND_DAILY_LIMIT || RESEND_FREE_LIMITS.dailyLimit),
+        monthlyLimit: Number(env.RESEND_MONTHLY_LIMIT || RESEND_FREE_LIMITS.monthlyLimit),
+        perSecond: Number(env.RESEND_PER_SECOND || RESEND_FREE_LIMITS.perSecond),
+      },
+    },
   };
 
   const communications: CommunicationsConfig = {
@@ -898,6 +948,8 @@ export default () => {
     videoRetentionMode: (env.FLAG_VIDEO_RETENTION_MODE ?? 'off') as VideoRetentionMode,
     mediaArchivePurgeMode: (env.FLAG_MEDIA_ARCHIVE_PURGE_MODE ??
       'dry_run') as MediaArchivePurgeMode,
+    platformOwnerAlertsMode: (env.FLAG_PLATFORM_OWNER_ALERTS_MODE ??
+      (nodeEnv === 'test' ? 'off' : 'on')) as PlatformOwnerAlertsMode,
   };
 
   return {

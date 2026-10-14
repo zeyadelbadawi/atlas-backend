@@ -48,6 +48,7 @@ import {
   seedQuiz,
   seedQuizQuestion,
   seedQuizQuestionOption,
+  seedPaymentCollectionMode,
 } from './utils/db-admin';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { CommunicationService } from '../src/communications/services/communication.service';
@@ -705,11 +706,7 @@ describe('P64 Communications C3 (second pass) — devices, commerce, learning, a
     it('D1 — starting a course order records it in the feed and mails nobody', async () => {
       const w = await academyWorld('evt2-d1', { pricingType: 'paid' });
       const server = app.getHttpServer();
-      await request(server)
-        .patch(`/organizations/${w.org.id}/payment-settings`)
-        .set(w.owner.auth)
-        .send({ paymentCollectionMode: 'atlas_payments' })
-        .expect(200);
+      await seedPaymentCollectionMode(admin, w.org.id, 'atlas_payments');
       await seedOrganizationCommission(admin, w.org.id);
       const student = await account('evt2-d1-student');
 
@@ -737,11 +734,7 @@ describe('P64 Communications C3 (second pass) — devices, commerce, learning, a
     it('D2 — an expired order is COMMITTED as expired and the learner is told, once', async () => {
       const w = await academyWorld('evt2-d2', { pricingType: 'paid' });
       const server = app.getHttpServer();
-      await request(server)
-        .patch(`/organizations/${w.org.id}/payment-settings`)
-        .set(w.owner.auth)
-        .send({ paymentCollectionMode: 'atlas_payments' })
-        .expect(200);
+      await seedPaymentCollectionMode(admin, w.org.id, 'atlas_payments');
       await seedOrganizationCommission(admin, w.org.id);
       const method = await seedPaymentMethod(admin, 'evt2-d2-method');
       const student = await account('evt2-d2-student');

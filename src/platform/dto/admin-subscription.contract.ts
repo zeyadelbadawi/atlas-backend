@@ -1,11 +1,20 @@
 /**
  * Admin subscription/trial operations contract.
  *
- * Every field is a real aggregate. Where Atlas does not track something,
- * the contract says so explicitly (`revenue.tracked: false`) rather than
- * offering a zero that a reader would reasonably mistake for a measured
- * value — the same honest shape the tenant dashboard already uses.
+ * Every field is a real aggregate. Revenue (B0-ANL-01) is derived from
+ * approved subscription payments only — never from plan list prices — and
+ * says how many active periods have no approved payment behind them.
  */
+
+/** One currency's monthly recurring revenue. Never summed across currencies. */
+export interface AdminRecurringRevenueRow {
+  readonly currency: string;
+  /** Sum of each counted period's latest approved plan payment; yearly payments ÷ 12. */
+  readonly monthlyAmountMinorUnits: number;
+  readonly subscriptions: number;
+}
+
+export type AdminBillingCycleKey = 'monthly' | 'yearly' | 'none';
 
 export interface AdminCancellationRow {
   readonly id: string;
@@ -37,6 +46,8 @@ export interface AdminSubscriptionOverview {
     readonly byStatus: Record<string, number>;
     /** `active` + `past_due` + `grace_period` — every state where a paid subscription still exists. */
     readonly activePaid: number;
+    /** B0-ANL-01 — status × billing cycle (`none` = no cycle recorded, e.g. trials). */
+    readonly byStatusAndCycle: Record<string, Record<AdminBillingCycleKey, number>>;
   };
 
   readonly trials: {
@@ -63,12 +74,24 @@ export interface AdminSubscriptionOverview {
   readonly totalPlansWithSubscriptions: number;
 
   /**
-   * Atlas does not track subscription revenue: plan prices are catalog
-   * metadata and no ledger ties a subscription to money received.
-   * Reported as untracked rather than derived from list prices, which
-   * would be a fabricated figure presented as a measurement.
+   * B0-ANL-01 — monthly recurring revenue from APPROVED subscription
+   * payments: for every `active` subscription whose period has not ended,
+   * its latest approved plan payment, yearly payments divided by 12, per
+   * currency. Never derived from plan list prices. Periods with no approved
+   * plan payment (granted or extended by the platform, migrated) are
+   * counted in `activeWithoutPayment`, not valued.
+   *
+   * Organizations the Platform Owner marked internal (test, demo, staff —
+   * B0-ANL-04) are left out of `mrr`, `activeSubscriptions` and
+   * `activeWithoutPayment`.
    */
-  readonly revenue: { readonly tracked: false };
+  readonly revenue: {
+    readonly tracked: true;
+    readonly mrr: readonly AdminRecurringRevenueRow[];
+    readonly activeSubscriptions: number;
+    readonly activeWithoutPayment: number;
+    readonly excludesInternalOrganizations: true;
+  };
 
   readonly generatedAt: string;
 }

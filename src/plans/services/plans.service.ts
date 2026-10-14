@@ -10,6 +10,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PlansRepository } from '../repositories/plans.repository';
 import { AddOnsRepository } from '../repositories/add-ons.repository';
 import { TrialPolicyRepository } from '../repositories/trial-policy.repository';
+import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { PrismaService } from '../../database/prisma.service';
 import { toPlanResponse } from '../dto/plan.contract';
 import type { PlanResponse } from '../dto/plan.contract';
 import { toAddOnResponse } from '../dto/add-on.contract';
@@ -27,6 +29,8 @@ export class PlansService {
     private readonly plansRepository: PlansRepository,
     private readonly addOnsRepository: AddOnsRepository,
     private readonly trialPolicyRepository: TrialPolicyRepository,
+    private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /** Phase 4.5.3 (Change 4) — paginated; see `PlansRepository.findManyPaginated`'s own doc comment for why. */
@@ -80,10 +84,31 @@ export class PlansService {
   }
 
   async updateTrialPolicy(
+    platformOwnerUserId: string,
     enabled: boolean,
     durationDays: number,
   ): Promise<TrialPolicyResponse> {
+    const previous = await this.trialPolicyRepository.findSingleton();
     const policy = await this.trialPolicyRepository.update(enabled, durationDays);
+
+    // B0-ANL-02 — the platform-wide trial length is a pricing decision;
+    // record who changed it and from what. Best-effort, like the commission
+    // default: the upsert above is its own atomic write.
+    await this.prisma.$transaction((tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: platformOwnerUserId,
+        role: 'platform_owner',
+        action: 'trial_policy.updated',
+        targetType: 'trial_policy',
+        targetId: policy.id,
+        context: {
+          enabled: policy.enabled,
+          durationDays: policy.durationDays,
+          previousEnabled: previous.enabled,
+          previousDurationDays: previous.durationDays,
+        },
+      }),
+    );
     return toTrialPolicyResponse(policy);
   }
 }

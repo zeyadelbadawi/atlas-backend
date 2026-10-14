@@ -45,6 +45,7 @@ import { SaasLevelCallerGuard } from '../../tenancy/guards/saas-level-caller.gua
 import { OrganizationsService } from '../../tenancy/services/organizations.service';
 import { OrganizationSubscriptionBootstrapService } from '../services/organization-subscription-bootstrap.service';
 import { TenantUsageRecomputeProducer } from '../queue/tenant-usage-recompute.producer';
+import { PlatformOwnerAlertService } from '../../communications/services/platform-owner-alert.service';
 import { CreateOrganizationDto } from '../../tenancy/dto/create-organization.dto';
 import type { OrganizationResponse } from '../../tenancy/dto/organization.contract';
 
@@ -55,6 +56,7 @@ export class OrganizationsController {
     private readonly organizationsService: OrganizationsService,
     private readonly subscriptionBootstrapService: OrganizationSubscriptionBootstrapService,
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
+    private readonly platformOwnerAlertService: PlatformOwnerAlertService,
   ) {}
 
   @Post()
@@ -81,6 +83,15 @@ export class OrganizationsController {
     // "Usage page shows live, current numbers ... without a manual ops
     // script" criterion for the earliest possible moment it applies.
     await this.tenantUsageRecomputeProducer.enqueueOne(organization.id);
+
+    // B0-SUP-01 — the same Platform Owner alert as a signup organization;
+    // this path never starts a trial.
+    this.platformOwnerAlertService.notify({
+      key: 'platform.organization.signed_up',
+      entity: { type: 'organization', id: organization.id },
+      organizationId: organization.id,
+      values: { trialStarted: false },
+    });
 
     return organization;
   }

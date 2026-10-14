@@ -190,6 +190,40 @@ describe('Organization owner manages academies without a staff row (e2e)', () =>
     });
   });
 
+  // B0-ORG-03 / B0-MED-09 — the student roster, the registration policy
+  // and the owner-only protection settings used to read `academy_members`
+  // only, so this owner was refused on their own academy.
+  it('the organization owner manages students, registration policy and protection (200)', async () => {
+    for (const path of [
+      `/academies/${academyId}/students`,
+      `/academies/${academyId}/registration-policy`,
+      `/academies/${academyId}/content-protection`,
+      `/academies/${academyId}/video-tier`,
+      `/academies/${academyId}/device-policy`,
+    ]) {
+      const res = await get(owner, path);
+      expect({ path, status: res.status }).toEqual({ path, status: 200 });
+    }
+    const policy = await get(owner, `/academies/${academyId}/registration-policy`);
+    await request(app.getHttpServer())
+      .patch(`/academies/${academyId}/registration-policy`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ registrationPolicy: policy.body.registrationPolicy })
+      .expect(200);
+  });
+
+  it('the security settings stay the owner’s alone: an instructor here is refused (403)', async () => {
+    for (const path of [
+      `/academies/${academyId}/students`,
+      `/academies/${academyId}/registration-policy`,
+      `/academies/${academyId}/content-protection`,
+      `/academies/${academyId}/device-policy`,
+    ]) {
+      const res = await get(orgManagerInstructor, path);
+      expect({ path, status: res.status }).toEqual({ path, status: 403 });
+    }
+  });
+
   it('an organization manager with no row for this academy is refused (403)', async () => {
     for (const path of managedReads) {
       const res = await get(orgManager, path);

@@ -195,10 +195,14 @@ model User {
   campaignRecipients        CampaignRecipient[]
   authEmailChallenges       AuthEmailChallenge[]
   accountDeletionChallenges AccountDeletionChallenge[]
+  /// B0-SEC-13 — data deletion / export requests this person filed.
+  privacyRequests           PrivacyRequest[]
   trustedDevices            TrustedDevice[]
   /// Google Identity — the external sign-in identities bound to this account.
   authIdentities            UserAuthIdentity[]
   authOAuthFlowsToLink      AuthOAuthFlow[]            @relation("AuthOAuthFlowLinkUser")
+
+  organizationPlatformFlagsUpdated OrganizationPlatformFlags[] @relation("OrganizationPlatformFlagsUpdatedBy")
 
   @@index([status])
   @@index([searchVector], type: Gin)
@@ -209,11 +213,11 @@ model User {
 /// SHA-256 hash of the raw token is ever persisted — a database leak alone
 /// never yields a usable token (master plan §5.1, §8, §16).
 model RefreshToken {
-  id              String         @id @default(uuid())
-  userId          String         @map("user_id")
-  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash       String         @unique @map("token_hash")
-  deviceLabel     String?        @map("device_label")
+  id               String         @id @default(uuid())
+  userId           String         @map("user_id")
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash        String         @unique @map("token_hash")
+  deviceLabel      String?        @map("device_label")
   /// Phase 10 — the stable identity of one DEVICE SESSION, constant across
   /// every rotation of that session's refresh token.
   ///
@@ -227,34 +231,34 @@ model RefreshToken {
   /// change non-breaking: an access token already in circulation carries
   /// `sid` = its row id, and that value is now exactly the `sessionId` of
   /// the same session, so previously-issued tokens keep resolving.
-  sessionId       String         @map("session_id")
+  sessionId        String         @map("session_id")
   /// Real client IP at the moment this token was issued, resolved from the
   /// production reverse proxy's forwarding header (never client-supplied
   /// body data). Null for rows created before Phase 10 — honestly unknown
   /// rather than backfilled with a fabricated address.
-  ipAddress       String?        @map("ip_address")
+  ipAddress        String?        @map("ip_address")
   /// Raw `User-Agent` header, stored verbatim and parsed for display only.
-  userAgent       String?        @map("user_agent")
+  userAgent        String?        @map("user_agent")
   /// ISO 3166-1 alpha-2 country, resolved from Cloudflare's `CF-IPCountry`
   /// edge header. Null when Cloudflare did not supply a usable country
   /// (local development, or its `XX`/`T1` sentinels) — honestly unknown
   /// rather than guessed. Deliberately country-only: Atlas has no
   /// trustworthy city source, and inventing one is worse than saying
   /// nothing.
-  locationCountry String?        @map("location_country") @db.VarChar(2)
+  locationCountry  String?        @map("location_country") @db.VarChar(2)
   /// Real last activity for this session: set at sign-in, on every
   /// refresh, and — since Phase 11.10 — coalesced from ordinary
   /// authenticated request activity. Never a frontend-supplied or
   /// render-time value.
-  lastUsedAt      DateTime?      @map("last_used_at")
-  expiresAt       DateTime       @map("expires_at")
-  revokedAt       DateTime?      @map("revoked_at")
-  createdAt       DateTime       @default(now()) @map("created_at")
+  lastUsedAt       DateTime?      @map("last_used_at")
+  expiresAt        DateTime       @map("expires_at")
+  revokedAt        DateTime?      @map("revoked_at")
+  createdAt        DateTime       @default(now()) @map("created_at")
   /// P64 Phase 1 (AD-5) — the surface this session was minted on and,
   /// for the academy surface, which academy. Copied forward on every
   /// rotation; a learner never holds a `management` session.
-  surface         SessionSurface @default(management)
-  academyId       String?        @map("academy_id")
+  surface          SessionSurface @default(management)
+  academyId        String?        @map("academy_id")
   /// P64 Phase 2 (AD-10, D4) — the `student_devices` row this session was
   /// minted on, when the sign-in carried an `atlas_device` cookie.
   ///
@@ -263,20 +267,20 @@ model RefreshToken {
   /// retro-fitting a device identity onto a session that never had one
   /// would be an invention. Copied forward on rotation exactly like
   /// `sessionId`, so a device's session survives refreshes.
-  deviceId        String?        @map("device_id")
-  device          StudentDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  deviceId         String?        @map("device_id")
+  device           StudentDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
   /// Google Identity — the FIRST factor this session was established with
   /// (`password` | `google`). The emailed code, TOTP and a trusted device are
   /// additional factors and never change it. Copied forward on rotation.
   /// Null for every session minted before this column existed: honestly
   /// unknown, never backfilled with a guess.
-  authMethod      AuthMethod?    @map("auth_method")
+  authMethod       AuthMethod?    @map("auth_method")
   /// ATO review F10 — when the session (the `sessionId` family) began:
   /// set at sign-in, copied forward by every rotation. A rotation never
   /// extends a session past this + the surface's absolute maximum
   /// (`IdentityConfig.sessionAbsoluteMaxDays`). Null only on rows that
   /// predate the column and were no longer live when it was backfilled.
-  sessionStartedAt DateTime?     @map("session_started_at")
+  sessionStartedAt DateTime?      @map("session_started_at")
 
   @@index([userId, revokedAt])
   @@index([sessionId])
@@ -519,6 +523,8 @@ model Organization {
   paidGiftRedemptions    PaidGiftRedemption[]
   /// Phase 10.2 — trial/subscription cancellations for this organization.
   cancellations          SubscriptionCancellation[]
+  /// B0-ANL-04 — operator-only flags (internal/test organization).
+  platformFlags          OrganizationPlatformFlags?
   /// Phase P15 — Platform Owner Control Plane (master plan §5.12/§21).
   auditLogEntries        AuditLogEntry[]
   supportCases           SupportCase[]
@@ -704,6 +710,8 @@ model Academy {
   supportCases           SupportCase[]
   /// Customer Requests — custom services this academy asked Atlas for.
   customerRequests       CustomerRequest[]
+  /// B0-SEC-13 — the academy a privacy request was filed from (branding only).
+  privacyRequests        PrivacyRequest[]
 
   /// Phase 12 — Live Sessions add-on.
   liveProviderConnection  AcademyLiveProviderConnection?
@@ -1041,10 +1049,10 @@ model AddOn {
 /// P14 provisioning); test fixtures seed this table via the admin
 /// superuser connection, exactly like `organizations`/`academies`.
 model TenantSubscription {
-  organizationId     String                    @id @map("organization_id")
-  organization       Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  planId             String                    @map("plan_id")
-  plan               Plan                      @relation(fields: [planId], references: [id])
+  organizationId               String                    @id @map("organization_id")
+  organization                 Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  planId                       String                    @map("plan_id")
+  plan                         Plan                      @relation(fields: [planId], references: [id])
   /// P61 — the limits this subscription was actually GRANTED, captured at
   /// the moment the entitlement was granted (paid activation or trial
   /// start). A `PlanResourceLimits` object, the same shape and keys as
@@ -1061,34 +1069,50 @@ model TenantSubscription {
   /// subscription was bought, and a guessed value would be a fabricated
   /// commercial fact. Resolved through `resolveSubscriptionLimits`, never
   /// read raw.
-  grantedLimits      Json?                     @map("granted_limits")
-  status             TenantSubscriptionStatus  @default(trialing)
+  grantedLimits                Json?                     @map("granted_limits")
+  status                       TenantSubscriptionStatus  @default(trialing)
   /// Present only while `status` is `'trialing'` — not schema-enforced
   /// (mirrors the frontend type's own comment), validated at the service
   /// layer where meaningful.
-  trialEndsAt        DateTime?                 @map("trial_ends_at")
+  trialEndsAt                  DateTime?                 @map("trial_ends_at")
   /// Present only while `status` is `'grace_period'`.
-  graceEndsAt        DateTime?                 @map("grace_ends_at")
-  currentPeriodStart DateTime?                 @map("current_period_start")
-  currentPeriodEnd   DateTime?                 @map("current_period_end")
-  cancelAtPeriodEnd  Boolean                   @default(false) @map("cancel_at_period_end")
+  graceEndsAt                  DateTime?                 @map("grace_ends_at")
+  currentPeriodStart           DateTime?                 @map("current_period_start")
+  currentPeriodEnd             DateTime?                 @map("current_period_end")
+  cancelAtPeriodEnd            Boolean                   @default(false) @map("cancel_at_period_end")
   /// Nullable — "a subscription can exist before any real Checkout ever
   /// set one" (`TenantSubscription.billingCycle`'s own doc comment).
-  billingCycle       SubscriptionBillingCycle? @map("billing_cycle")
+  billingCycle                 SubscriptionBillingCycle? @map("billing_cycle")
   /// W8 — the gifted setup-day segment `[giftedStartsAt, giftedEndsAt)` granted
   /// on this organization's first-ever paid subscription. The paid period
   /// starts at `giftedEndsAt` (== `currentPeriodStart` of that purchase).
   /// Written only by the gift-granting approval, never cleared by renewals,
   /// plan changes or cancellation. All-or-nothing (DB CHECK
   /// `tenant_subscriptions_gift_shape_chk`). `giftedPaymentId` is a plain id.
-  giftedDays         Int?                      @map("gifted_days")
-  giftedStartsAt     DateTime?                 @map("gifted_starts_at")
-  giftedEndsAt       DateTime?                 @map("gifted_ends_at")
-  giftedPaymentId    String?                   @map("gifted_payment_id")
-  createdAt          DateTime                  @default(now()) @map("created_at")
-  updatedAt          DateTime                  @updatedAt @map("updated_at")
+  giftedDays                   Int?                      @map("gifted_days")
+  giftedStartsAt               DateTime?                 @map("gifted_starts_at")
+  giftedEndsAt                 DateTime?                 @map("gifted_ends_at")
+  giftedPaymentId              String?                   @map("gifted_payment_id")
+  /// B0-BIL-04 — a smaller plan bought mid-period is SCHEDULED, not applied:
+  /// the customer keeps the plan they paid for until `scheduledChangeAt`
+  /// (the end of that paid period), when the subscription sweep moves
+  /// `planId` and `grantedLimits` to these values. All three are set or
+  /// cleared together. `scheduledPlanId` is a plain id (like
+  /// `giftedPaymentId`); the sweep resolves it before applying.
+  scheduledPlanId              String?                   @map("scheduled_plan_id")
+  scheduledGrantedLimits       Json?                     @map("scheduled_granted_limits")
+  scheduledChangeAt            DateTime?                 @map("scheduled_change_at")
+  /// B0-BIL-07 — what changes for this customer at their next paid
+  /// renewal after a Platform Owner edited their plan's price or limits
+  /// (`PriceChangeNotice` in `price-change-notice.util.ts`). Cleared by the
+  /// next paid purchase; dismissal only hides the banner.
+  priceChangeNotice            Json?                     @map("price_change_notice")
+  priceChangeNoticeDismissedAt DateTime?                 @map("price_change_notice_dismissed_at")
+  createdAt                    DateTime                  @default(now()) @map("created_at")
+  updatedAt                    DateTime                  @updatedAt @map("updated_at")
 
   @@index([planId])
+  @@index([scheduledChangeAt])
   // P64 C5 — the lifecycle sweep filters by `status` plus ONE of these
   // dates on every tick (trial steps by `trial_ends_at`, renewal and
   // grace by `current_period_end`, expiry and the post-expiry follow-ups
@@ -5513,6 +5537,10 @@ model AccountDeletionChallenge {
   /// The requesting session (`refresh_tokens.session_id`); another session of
   /// the same account cannot complete it.
   sessionId  String    @map("session_id")
+  /// B0-SEC-13 — what the code confirms: `account_deletion` (self-service
+  /// deletion) or `privacy_request` (filing a data deletion/export request).
+  /// A code is only ever accepted for the purpose it was issued for.
+  purpose    String    @default("account_deletion")
   codeHash   String    @map("code_hash")
   salt       String
   attempts   Int       @default(0)
@@ -6544,4 +6572,69 @@ model ForensicWatermark {
   @@index([deviceCookieHash])
   @@index([lastSeenAt])
   @@map("forensic_watermarks")
+}
+
+/// B0-ANL-04 — operator-only flags per organization (platform RLS only; no
+/// tenant policy). `isInternal` marks a test, demo or staff organization so
+/// platform metrics (MRR) can leave it out.
+model OrganizationPlatformFlags {
+  organizationId  String       @id @map("organization_id")
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  isInternal      Boolean      @default(false) @map("is_internal")
+  updatedByUserId String?      @map("updated_by_user_id")
+  updatedBy       User?        @relation("OrganizationPlatformFlagsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  updatedAt       DateTime     @default(now()) @updatedAt @map("updated_at")
+
+  @@map("organization_platform_flags")
+}
+
+// ---------------------------------------------------------------------------
+// B0-SEC-13 — request-based data deletion and data export.
+// ---------------------------------------------------------------------------
+
+enum PrivacyRequestType {
+  deletion
+  export
+
+  @@map("privacy_request_type")
+}
+
+enum PrivacyRequestStatus {
+  submitted
+  in_progress
+  completed
+  rejected
+
+  @@map("privacy_request_status")
+}
+
+/// A person asked for their data to be deleted or exported. Confirmed by an
+/// emailed code when filed; handled by a Platform Owner. Readable only by
+/// the requester and by Platform Owners (RLS) — never by an academy.
+model PrivacyRequest {
+  id                   String               @id @default(uuid())
+  /// `null` once the row outlives the account (it is never hard-deleted today).
+  userId               String?              @map("user_id")
+  user                 User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Where it was filed from, for the email's branding. Not a tenant scope.
+  academyId            String?              @map("academy_id")
+  academy              Academy?             @relation(fields: [academyId], references: [id], onDelete: SetNull)
+  type                 PrivacyRequestType
+  status               PrivacyRequestStatus @default(submitted)
+  /// Snapshot so the completion email still has an address after deletion
+  /// anonymises the account; masked once a deletion request completes.
+  requesterEmail       String               @map("requester_email")
+  requesterName        String               @map("requester_name")
+  /// Operator's note to the requester (shown and emailed on rejection).
+  resolutionNote       String?              @map("resolution_note")
+  handledByUserId      String?              @map("handled_by_user_id")
+  /// Export only: the requester may download until this moment.
+  exportAvailableUntil DateTime?            @map("export_available_until")
+  completedAt          DateTime?            @map("completed_at")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("privacy_requests")
 }

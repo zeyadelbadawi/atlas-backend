@@ -21,6 +21,15 @@
 #                             in the registry, and reports whether it is
 #                             what runs now. Pulls, tags, starts, stops and
 #                             writes nothing.
+#   deploy.sh --rollback --to N   (N = 1..3; also with --check-rollback-record)
+#                             B0-OPS-13: use the Nth PREVIOUS record
+#                             (.last-good.N) instead, to undo a release that
+#                             was healthy but wrong and so already became
+#                             .last-good. On success it becomes the record.
+#   deploy.sh --pin-frontend <tag>
+#                             B0-OPS-13: pin Caddy (and the renderer when
+#                             ATLAS_SSR=on) to an earlier frontend image tag,
+#                             normally a commit SHA; backend untouched.
 #   deploy.sh --preflight     P64 Phase 1 — take a VERIFIED backup and
 #                             record the pre-migration counts, then stop.
 #                             Rolls nothing, migrates nothing; this is how
@@ -67,17 +76,38 @@ MODE="full"
 # one), which a single positional arm cannot express. Every previously
 # valid invocation still parses to exactly the same MODE.
 WITH_MIGRATIONS=0
-for arg in "$@"; do
-  case "$arg" in
+# B0-OPS-13: `--rollback --to N` / `--check-rollback-record --to N` use the
+# Nth previous record (.last-good.N, N = 1..3); `--pin-frontend <tag>` pins
+# the frontend (Caddy, and the renderer when ATLAS_SSR=on) to an earlier
+# image tag, normally a commit SHA the frontend deploy pushed.
+ROLLBACK_TO=0
+PIN_TAG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --sync-env) MODE="sync-env" ;;
     --frontend-only) MODE="frontend-only" ;;
     --rollback) MODE="rollback" ;;
     --preflight) MODE="preflight" ;;
     --check-rollback-record) MODE="check-rollback-record" ;;
     --with-migrations) WITH_MIGRATIONS=1 ;;
-    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+    --to) ROLLBACK_TO=${2:-}; shift ;;
+    --pin-frontend) MODE="pin-frontend"; PIN_TAG=${2:-}; shift ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
+  shift
 done
+case "$ROLLBACK_TO" in
+  0|1|2|3) ;;
+  *) echo "--to takes 1, 2 or 3 (the previous records kept)" >&2; exit 2 ;;
+esac
+if [ "$ROLLBACK_TO" != 0 ] && [ "$MODE" != rollback ] && [ "$MODE" != check-rollback-record ]; then
+  echo "--to is only valid with --rollback or --check-rollback-record" >&2; exit 2
+fi
+if [ "$MODE" = pin-frontend ] && ! printf '%s' "$PIN_TAG" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
+  echo "--pin-frontend needs an image tag (for example the frontend commit SHA)" >&2; exit 2
+fi
+# The record --rollback / --check-rollback-record read.
+if [ "$ROLLBACK_TO" = 0 ]; then RECORD_NAME=.last-good; else RECORD_NAME=.last-good.$ROLLBACK_TO; fi
 
 # --- one deploy at a time on this host (cross-repository) ---
 exec 9>"$ATLAS_DIR/.deploy.lock"
@@ -85,6 +115,15 @@ if ! flock -w 900 9; then
   echo "==> Another deploy holds the lock (waited 15 min). Aborting." >&2
   exit 1
 fi
+
+# --- B0-OPS-06: the backup status directory ---------------------------------
+# The backend mounts backups/status read-only. It must exist, owned by the
+# deploy user, BEFORE the first compose call of ANY mode: `docker compose run`
+# (the identity-key derivation, the image listing) and the rollback path
+# create a missing bind-mount source as root, and backup.sh could then never
+# write the status file. Creating an empty directory is the only change, and
+# a no-op once it exists.
+mkdir -p "$ATLAS_DIR/backups/status"
 
 # --- P50: propagate CI-managed environment into /opt/atlas/.env ---
 #
@@ -136,6 +175,13 @@ if [ "$MODE" = "sync-env" ]; then
 fi
 
 set -a; source .env; set +a
+# B0-OPS-03 — the superuser DATABASE_URL may live in .env.migrate instead
+# of .env, so the long-lived backend (env_file: .env) never holds it. Only
+# this script reads it, to pass it explicitly to `prisma migrate deploy`.
+# See docs/SUPERUSER_DATABASE_URL_SPLIT.md.
+if [ -f .env.migrate ]; then
+  set -a; source .env.migrate; set +a
+fi
 
 # --- Phase 8: public website server renderer (the `ssr` service) ----------
 # ATLAS_SSR=on in .env is the one switch: Caddy reads the same value and
@@ -296,6 +342,27 @@ is_pinned_digest() {
   printf '%s\n' "$1" | grep -Eq '^[^@[:space:]]+@sha256:[0-9a-f]{64}$'
 }
 
+# A reference this host can use for a recorded `<repository>@sha256:<d>`,
+# or failure when the image is not here. Docker's containerd image store
+# drops the `repository@digest` name once the image's tag moves to a newer
+# image, but keeps the image itself, whose ID there IS the manifest digest,
+# so it stays addressable as `sha256:<d>`. The classic store keeps the
+# name. Rollback, check mode, re-tagging and the prune all go through this,
+# so both stores behave the same.
+local_image_ref() {
+  local id
+  if docker image inspect "$1" >/dev/null 2>&1; then
+    printf '%s\n' "$1"
+    return 0
+  fi
+  case "$1" in
+    *@sha256:*) id="sha256:${1##*@sha256:}" ;;
+    *) return 1 ;;
+  esac
+  docker image inspect "$id" >/dev/null 2>&1 || return 1
+  printf '%s\n' "$id"
+}
+
 # Prints the immutable `<repository>@sha256:<digest>` of the image the
 # service's container is running, or fails (prints nothing).
 running_image_digest() {
@@ -310,6 +377,23 @@ running_image_digest() {
     | awk -v p="${repository}@sha256:" 'index($0, p) == 1 { print; exit }')
   is_pinned_digest "$digest" || return 1
   printf '%s\n' "$digest"
+}
+
+# B0-OPS-13 — keeps the three previous records (.last-good.1 newest …
+# .last-good.3 oldest), so a healthy-but-wrong release, which has already
+# become .last-good, can still be undone with `--rollback --to 1`. Rotates
+# only when the images actually change, so a redeploy of the same images
+# does not push real history out.
+rotate_last_good() {
+  local record="$ATLAS_DIR/.last-good" n
+  [ -f "$record" ] || return 0
+  if [ "$(sed -n 's/^BACKEND_IMAGE=//p' "$record")|$(sed -n 's/^CADDY_IMAGE=//p' "$record")|$(sed -n 's/^SSR_IMAGE=//p' "$record")" = "$1|$2|$3" ]; then
+    return 0
+  fi
+  for n in 2 1; do
+    [ -f "$record.$n" ] && mv -f "$record.$n" "$record.$((n + 1))"
+  done
+  cp -p "$record" "$record.1"
 }
 
 # Persists the digests of the application images now running, for
@@ -327,6 +411,7 @@ record_last_good() {
     return 1
   fi
   record="$ATLAS_DIR/.last-good"
+  rotate_last_good "$backend" "$caddy" "$ssr"
   {
     echo "BACKEND_IMAGE=$backend"
     echo "CADDY_IMAGE=$caddy"
@@ -348,6 +433,88 @@ finish_with_record() {
   fi
   echo "==> The stack is live and healthy, but its rollback record could not be written." >&2
   exit 1
+}
+
+# --- B0-OPS-07: disk -----------------------------------------------------------
+#
+# On 9 Oct 2026 the disk filled with 421 old images (42 GB) and two deploys
+# failed until someone ran `docker image prune -a` by hand.
+#
+# prune_app_images removes APPLICATION images (atlas-backend,
+# atlas-frontend, atlas-frontend-ssr, from any registry) that no container
+# uses and that `.last-good` does not record. Called only after a healthy
+# deploy has written its record, so the rollback digests are always kept on
+# the host and `--rollback` still works with the registry unreachable.
+# Postgres, Redis and monitoring images are never touched. Best effort: a
+# failure to remove an image is reported and never fails the deploy.
+prune_app_images() {
+  local keep="" id refs ref repo removed=0 failed=0 digest record
+  for id in $(docker ps -aq 2>/dev/null); do
+    keep="$keep $(docker inspect --format '{{.Image}}' "$id" 2>/dev/null || true)"
+  done
+  for record in "$ATLAS_DIR/.last-good" "$ATLAS_DIR/.last-good.1" "$ATLAS_DIR/.last-good.2" "$ATLAS_DIR/.last-good.3"; do
+    [ -f "$record" ] || continue
+    for digest in $(sed -n 's/^\(BACKEND\|CADDY\|SSR\)_IMAGE=//p' "$record"); do
+      # A record may name an image this host no longer has: skip it (under
+      # `set -e` a failed lookup must never abort the deploy after its record).
+      ref=$(local_image_ref "$digest") || continue
+      keep="$keep $(docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true)"
+    done
+  done
+  for id in $(docker image ls -aq --no-trunc 2>/dev/null | sort -u); do
+    case " $keep " in *" $id "*) continue ;; esac
+    refs=$(docker image inspect --format '{{range .RepoTags}}{{println .}}{{end}}{{range .RepoDigests}}{{println .}}{{end}}' "$id" 2>/dev/null) || continue
+    repo=""
+    for ref in $refs; do
+      case "$(image_repository "$ref")" in
+        */atlas-backend|*/atlas-frontend|*/atlas-frontend-ssr|atlas-backend|atlas-frontend|atlas-frontend-ssr)
+          repo=$(image_repository "$ref"); break ;;
+      esac
+    done
+    [ -n "$repo" ] || continue
+    if docker image rm -f "$id" >/dev/null 2>&1; then
+      removed=$((removed + 1))
+    else
+      failed=$((failed + 1))
+    fi
+  done
+  echo "==> Pruned $removed unused application image(s) (kept: running containers and .last-good)."
+  [ "$failed" = 0 ] || echo "WARNING: $failed unused application image(s) could not be removed." >&2
+  return 0
+}
+
+# Free space, in MiB, on the filesystem holding Docker's data root (where
+# pulls land), falling back to $ATLAS_DIR.
+free_space_mb() {
+  local root
+  root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
+  [ -n "$root" ] && [ -d "$root" ] || root=$ATLAS_DIR
+  df -Pk "$root" | awk 'NR==2 { print int($4 / 1024) }'
+}
+
+# Refuses to start pulling below DEPLOY_MIN_FREE_MB (default 2048): a pull
+# that fills the disk half way leaves the host worse than a deploy that
+# never started. Prunes unused application images once and re-checks before
+# giving up. Nothing has changed when it refuses.
+DEPLOY_MIN_FREE_MB=${DEPLOY_MIN_FREE_MB:-2048}
+require_free_space() {
+  local free
+  free=$(free_space_mb)
+  if [ -z "$free" ]; then
+    echo "WARNING: could not measure free disk space; continuing." >&2
+    return 0
+  fi
+  if [ "$free" -lt "$DEPLOY_MIN_FREE_MB" ]; then
+    echo "==> Only ${free} MiB free (floor ${DEPLOY_MIN_FREE_MB} MiB); pruning unused application images first"
+    prune_app_images
+    free=$(free_space_mb)
+  fi
+  if [ -n "$free" ] && [ "$free" -lt "$DEPLOY_MIN_FREE_MB" ]; then
+    echo "==> Refusing to deploy: ${free} MiB free on the Docker filesystem, below the ${DEPLOY_MIN_FREE_MB} MiB floor." >&2
+    echo "    Nothing was pulled or changed. Free space (docker system df; old files in $ATLAS_DIR/backups) and deploy again." >&2
+    exit 1
+  fi
+  echo "==> Free disk space: ${free} MiB (floor ${DEPLOY_MIN_FREE_MB} MiB)"
 }
 
 # --- P64 Phase 1: pre-migration safety ------------------------------------
@@ -572,20 +739,21 @@ report_stateful_drift() {
 
 # One value from the rollback record. The record is parsed, never sourced.
 last_good_value() {
-  sed -n "s/^$1=//p" "$ATLAS_DIR/.last-good" | tail -1
+  sed -n "s/^$1=//p" "$ATLAS_DIR/$RECORD_NAME" | tail -1
 }
 
 # Re-points a service's compose image reference at a recorded digest, and
 # proves the reference now resolves to exactly that image.
 pin_service_image() {
-  local service=$1 digest=$2 ref
+  local service=$1 digest=$2 ref source
   ref=$(service_image_ref "$service")
   if [ -z "$ref" ]; then
     echo "==> Refusing to roll back: no image reference for '$service' in the compose file." >&2
     exit 1
   fi
-  docker tag "$digest" "$ref"
-  if [ "$(docker image inspect --format '{{.Id}}' "$ref")" != "$(docker image inspect --format '{{.Id}}' "$digest")" ]; then
+  source=$(local_image_ref "$digest") || source=$digest
+  docker tag "$source" "$ref"
+  if [ "$(docker image inspect --format '{{.Id}}' "$ref")" != "$(docker image inspect --format '{{.Id}}' "$source")" ]; then
     echo "==> Refusing to continue: $ref does not resolve to $digest after re-tagging." >&2
     exit 1
   fi
@@ -601,8 +769,8 @@ pin_service_image() {
 # the rollback would accept. Exits non-zero, having changed nothing.
 validate_rollback_record() {
   local pair service digest
-  if [ ! -f "$ATLAS_DIR/.last-good" ]; then
-    echo "==> No .last-good record exists; nothing to roll back to." >&2
+  if [ ! -f "$ATLAS_DIR/$RECORD_NAME" ]; then
+    echo "==> No $RECORD_NAME record exists; nothing to roll back to." >&2
     exit 1
   fi
   BACKEND_IMAGE=$(last_good_value BACKEND_IMAGE)
@@ -645,11 +813,11 @@ recorded_digest() {
 
 if [ "$MODE" = "check-rollback-record" ]; then
   validate_rollback_record
-  echo "==> .last-good is valid for --rollback (recorded ${RECORDED_AT:-unknown}; ATLAS_SSR=${ATLAS_SSR:-off})"
+  echo "==> $RECORD_NAME is valid for --rollback$( [ "$ROLLBACK_TO" = 0 ] || echo " --to $ROLLBACK_TO") (recorded ${RECORDED_AT:-unknown}; ATLAS_SSR=${ATLAS_SSR:-off})"
   check_failed=0
   for service in $rollback_services; do
     digest=$(recorded_digest "$service")
-    if docker image inspect "$digest" >/dev/null 2>&1; then
+    if local_image_ref "$digest" >/dev/null; then
       where="present on this host"
     elif docker manifest inspect "$digest" >/dev/null 2>&1; then
       where="not on this host, readable in the registry"
@@ -683,7 +851,7 @@ if [ "$MODE" = "rollback" ]; then
   rollback_digests="$BACKEND_IMAGE $CADDY_IMAGE"
   [ "$SSR_ENABLED" = "1" ] && rollback_digests="$rollback_digests $SSR_IMAGE"
   for digest in $rollback_digests; do
-    if docker image inspect "$digest" >/dev/null 2>&1; then
+    if local_image_ref "$digest" >/dev/null; then
       echo "    $digest: present on this host"
     else
       docker pull -q "$digest" >/dev/null
@@ -710,12 +878,63 @@ if [ "$MODE" = "rollback" ]; then
   echo "==> Running images match the record."
   if wait_healthy; then
     check_ssr
+    # B0-OPS-13: rolling back to an OLDER record makes it the current one
+    # (the release rolled away from becomes .last-good.1), so a later plain
+    # --rollback does not return to the release just undone.
+    if [ "$ROLLBACK_TO" != 0 ]; then
+      finish_with_record
+    fi
     exit 0
   fi
   exit 1
 fi
 
+# --- B0-OPS-13: pin the frontend to an earlier image tag ----------------------
+# For a release that is healthy but wrong (copy, CSP, academy rendering):
+# the frontend deploy pushes every image under its commit SHA as well as
+# :latest, so `--pin-frontend <sha>` brings that release back without a
+# revert-and-rebuild cycle. Caddy, and the renderer when ATLAS_SSR=on, move
+# together (they must come from the same build). The backend is not touched.
+# On a healthy result the record is rewritten (the previous one is kept as
+# .last-good.1). The next normal frontend deploy returns to :latest.
+if [ "$MODE" = "pin-frontend" ]; then
+  require_free_space
+  pin_services="caddy"
+  [ "$SSR_ENABLED" = "1" ] && pin_services="ssr caddy"
+  echo "==> Pinning the frontend to tag $PIN_TAG"
+  for service in $pin_services; do
+    current_ref=$(service_image_ref "$service")
+    if [ -z "$current_ref" ]; then
+      echo "==> Refusing to pin: no image reference for '$service' in the compose file." >&2
+      exit 1
+    fi
+    pinned_ref="$(image_repository "$current_ref"):$PIN_TAG"
+    # Obtain every image before changing anything, like --rollback.
+    if ! docker image inspect "$pinned_ref" >/dev/null 2>&1 && ! docker pull -q "$pinned_ref" >/dev/null; then
+      echo "==> Refusing to pin: $pinned_ref is neither on this host nor in the registry. Nothing was changed." >&2
+      exit 1
+    fi
+  done
+  for service in $pin_services; do
+    pin_service_image "$service" "$(image_repository "$(service_image_ref "$service")"):$PIN_TAG"
+  done
+  if [ "$SSR_ENABLED" = "1" ]; then
+    docker compose up -d --no-deps ssr
+  fi
+  docker compose up -d --no-deps caddy
+  if wait_healthy; then
+    check_ssr
+    finish_with_record
+    prune_app_images
+    echo "==> Frontend pinned to $PIN_TAG; record written (the previous one is .last-good.1)."
+    exit 0
+  fi
+  echo "==> The pinned frontend failed health checks. Roll back with: deploy.sh --rollback" >&2
+  exit 1
+fi
+
 if [ "$MODE" = "frontend-only" ]; then
+  require_free_space
   echo "==> Frontend-only deploy: pulling the Caddy/SPA image"
   docker compose pull caddy
   if [ "$SSR_ENABLED" = "1" ]; then
@@ -730,11 +949,13 @@ if [ "$MODE" = "frontend-only" ]; then
   if wait_healthy; then
     check_ssr
     finish_with_record
+    prune_app_images
     exit 0
   fi
   exit 1
 fi
 
+require_free_space
 echo "==> Pulling the application images (postgres/redis are never pulled here)"
 resolve_app_services
 docker compose pull $APP_SERVICES
@@ -870,6 +1091,7 @@ fi
 if wait_healthy; then
   check_ssr
   finish_with_record
+  prune_app_images
   echo "==> Deploy complete; last-good digests recorded (use --rollback to revert)."
   exit 0
 fi

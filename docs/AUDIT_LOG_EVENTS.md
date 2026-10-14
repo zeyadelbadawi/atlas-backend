@@ -222,6 +222,10 @@ writer stores.
 | `organization.created` | subscription | organization | yes | — |
 | `organization.onboarding.completed` | subscription | organization | yes | mode, requiredComplete |
 | `provisioning_request.created` | subscription | organization | yes | — |
+| `provisioning_request.retried` | subscription | organization | yes | step |
+| `provisioning_request.cancelled` | subscription | organization | yes | previousStatus |
+| `provisioning_request.retried_by_platform` | subscription | organization | no | step |
+| `provisioning_request.cancelled_by_platform` | subscription | organization | no | previousStatus |
 | `subscription.trial.redeemed` | subscription | organization | yes | planKey, trialEndsAt, durationDays |
 | `subscription.gift.granted` | subscription | organization | yes | planKey, billingCycle, giftedDays, giftedEndsAt, paymentId |
 | `subscription.trial.cancelled` | subscription | organization | yes | reason, hasFeedback, effectiveAt |
@@ -229,6 +233,10 @@ writer stores.
 | `subscription.grace_started` | subscription | organization | yes | previousStatus, newStatus, reason, at, currentPeriodEnd, graceEndsAt |
 | `subscription.expired` | subscription | organization | yes | previousStatus, newStatus, reason, at, currentPeriodEnd, graceEndsAt |
 | `subscription.cancelled_at_period_end` | subscription | organization | yes | previousStatus, newStatus, reason, at, currentPeriodEnd, graceEndsAt |
+| `subscription.scheduled_plan_change_applied` | subscription | organization | yes | fromPlanId, toPlanId, at |
+| `subscription.extended_by_platform` | subscription | organization | no | days, reason, field, previousStatus |
+| `subscription.days_granted_by_platform` | subscription | organization | no | days, reason, field, previousStatus |
+| `subscription.plan_changed_by_platform` | subscription | organization | no | fromPlanId, toPlanId, toPlanKey, applyAt, effectiveAt, reason |
 | `add_on.install` | subscription | organization | yes | addOnKey |
 | `add_on.enable` | subscription | organization | yes | addOnKey |
 | `add_on.disable` | subscription | organization | yes | addOnKey |
@@ -241,11 +249,16 @@ writer stores.
 | `auth.otp.failed` | security | platform | no | surface, challengeId, outboxId, resend, attempts, attemptsRemaining, reason, ipAddress |
 | `auth.otp.locked_out` | security | platform | no | surface, challengeId, outboxId, resend, attempts, attemptsRemaining, reason, ipAddress |
 | `auth.otp.verified` | security | platform | no | surface, challengeId, outboxId, resend, attempts, attemptsRemaining, reason, ipAddress |
+| `auth.sign_in.succeeded` | security | platform | no | method, surface, reason, sessionId, ipAddress |
+| `auth.sign_in.failed` | security | platform | no | method, surface, reason, sessionId, ipAddress |
 | `auth.device.trusted` | security | platform | no | surface, trustDays, label |
 | `auth.device.revoked` | security | platform | no | scope, count, reason |
 | `auth.identity.linked` | security | platform | no | provider, via |
 | `auth.identity.unlinked` | security | platform | no | provider |
 | `auth.sessions.revoked` | security | platform | no | trigger, sessionsRevoked, trustedDevicesRevoked |
+| `auth.two_factor.enabled` | security | platform | no | — |
+| `auth.two_factor.disabled` | security | platform | no | — |
+| `auth.two_factor.reset_by_operator` | security | platform | no | reason, hadTwoFactor |
 | `password_reset.confirmed` | security | platform | no | trigger, sessionsRevoked, trustedDevicesRevoked |
 | `account.deletion.requested` | security | platform | no | challengeId |
 | `account.deletion.code_failed` | security | platform | no | challengeId, attempts |
@@ -258,12 +271,19 @@ writer stores.
 | `plan.created` | platform | platform | no | key |
 | `plan.updated` | platform | platform | no | key |
 | `plan.pricing_changed` | platform | platform | no | key |
+| `plan.subscribers_notified` | platform | platform | no | key, planVersion, notified, cleared, failed |
 | `plan.trial_config_changed` | platform | platform | no | key |
 | `plan.archived` | platform | platform | no | key, subscriptionsAtArchive |
 | `platform_settings.updated` | platform | platform | no | platformName, platformDescription, supportEmail, twoFactorRequired, sessionTimeoutMinutes |
 | `payment_method.created` | platform | platform | no | key, type, enabled |
 | `payment_method.updated` | platform | platform | no | fields, enabled |
 | `commission_config.global_default_updated` | platform | platform | no | defaultCommissionBasisPoints |
+| `commission_config.plan_updated` | platform | platform | no | planKey, commissionBasisPoints, previousCommissionBasisPoints |
+| `commission_config.organization_updated` | platform | platform | no | commissionMode, customPercentageBasisPoints, previousCommissionMode, previousCustomPercentageBasisPoints |
+| `organization.internal_flag_changed` | platform | platform | no | isInternal, previousIsInternal |
+| `trial_policy.updated` | platform | platform | no | enabled, durationDays, previousEnabled, previousDurationDays |
+| `payout.created` | platform | platform | no | academyId, currency, amountMinorUnits, periodStart, periodEnd, items |
+| `payout.marked_paid` | platform | platform | no | academyId, currency, amountMinorUnits, providerReference |
 | `add_on.catalog_status_changed` | platform | platform | no | addOnKey, previousStatus, newStatus |
 | `observability.synthetic_alert.armed` | platform | platform | no | minutes |
 | `observability.synthetic_alert.resolved` | platform | platform | no | — |

@@ -709,6 +709,7 @@ The sequence is not scheduled anywhere — it is re-derived from live subscripti
 | `lifecycle.subscription.grace_ending` | "Your grace period ends tomorrow" | always |
 | `lifecycle.subscription.expired` | "Your subscription has expired and your site is offline" | always |
 | `lifecycle.subscription.cancel_scheduled` | "Your subscription is set to end" | always |
+| `lifecycle.subscription.price_change_notice` | "A change to your {plan} plan at renewal" | always |
 | `lifecycle.subscription.cancelled` | "Your subscription has ended" | always |
 | `lifecycle.subscription.followup_7d` | "Your academy is still stored" | preference (in-app: never) |
 | `lifecycle.subscription.followup_30d` | "Last note about your Atlas subscription" | preference (in-app: never) |
@@ -982,6 +983,7 @@ catalogue's `actionUrl` resolved through `LinkBuilderService`:
 | `review.submitted` | A review is waiting for moderation at `<academy>` | LINK (digest) | PLATFORM `/dashboard/academy/:academyId/courses/:courseId/reviews` |
 | `review.moderated` | "Your review of `<course>` is now published" / "… was not published" (branches on `values.status === 'approved'`) | LINK (in-app only) | ACADEMY `/my/courses/:courseId` |
 | `roster.student.awaiting_approval` | Someone is waiting to join `<academy>` | LINK (digest) | PLATFORM `/dashboard/academy/:academyId/members` |
+| `academy.contact_submission.received` | New message from the `<academy>` website | LINK (digest) | PLATFORM `/dashboard/academy/:academyId/website/messages` |
 | `roster.student.approved` | Your registration at `<academy>` has been approved | LINK | ACADEMY `/my/courses` |
 | `roster.student.rejected` | Your registration at `<academy>` was not approved | **neither** | — |
 | `roster.student.blocked` | Your access to `<academy>` has been suspended | **neither** | — |
@@ -1309,7 +1311,7 @@ ORDER BY d.created_at DESC;
 | **The outbox row exists but was not dispatched** | `state = 'pending'` with `available_at` in the past, and `attempts` not increasing | Console: `outbox.oldestPendingSeconds` climbing and `outbox.overdue > 0`. This is a **stalled dispatcher**: the Redis/BullMQ `communications` worker is not draining. The sweep runs every 60 s; a claimed row holds a **10-minute lease**. Check that exactly one processor is registered on the `communications` queue — two workers on that queue silently drop half the jobs |
 | **Deliberately not sent: preference off** | `state = 'dispatched'`, `last_error = 'preference_off'`, delivery row `status = 'suppressed'`, in-app row present | `GET /users/me/communication-preferences` as that recipient. Only `engagement`, `operational` and the `lifecycle.reminders` follow-ups can be switched off |
 | **Deliberately not sent: daily cap** | `state = 'dispatched'`, `last_error = 'daily_cap'`, delivery `suppressed` | Learner cap 5/day, staff 10/day, outside `security`/`transactional`. Normally the row is digested instead; it only settles like this when the learner set digest to `off` |
-| **Batched into a digest** | `state = 'deferred'` with a non-null `digest_id` | `communication_digests` — `state`, `window_start`, `window_end`, `item_count`. Windows close at local hour **08:00** in the academy timezone; the digest job runs hourly. `review.submitted` and `roster.student.awaiting_approval` are always digested |
+| **Batched into a digest** | `state = 'deferred'` with a non-null `digest_id` | `communication_digests` — `state`, `window_start`, `window_end`, `item_count`. Windows close at local hour **08:00** in the academy timezone; the digest job runs hourly. `review.submitted`, `roster.student.awaiting_approval` and `academy.contact_submission.received` are always digested |
 | **Waiting on a cooldown** | `state = 'deferred'`, `digest_id IS NULL`, `available_at` in the future | The catalogue's `cooldownSeconds` for that key; Redis `comm:cooldown:<userId>:<key>`. The sweep brings it back when the window elapses. **Every catalogue entry currently declares `cooldownSeconds: 0`, so this state cannot arise today** — if you see it, a key gained a cooldown |
 | **The address is suppressed** | `state = 'suppressed'`, `last_error = 'address_suppressed'` | `communication_suppressions` by `email_hash = sha256(lower(trim(address)))`; console `suppressions.byReason`; Brevo's own suppression list. Check `expires_at` — a soft bounce lapses after 30 days |
 | **The recipient is gone or anonymised** | `state = 'suppressed'`, `last_error = 'recipient_unavailable'` or `'no_recipient'` | The account was deleted or anonymised (its address was rewritten to `@account.invalid`) |
@@ -1418,4 +1420,4 @@ Any scenario missing steps 5 and 6 is "accepted by the provider", **not** "deliv
 | **`course.order.expired` for historical orders** | will not fire | BL-4 residue: those rows never transitioned. Nothing should backfill the event — telling people their months-old order just expired would be worse than the residue |
 | **Certificate email linking to the public verification sheet** | not implemented | the layout supports one CTA; recorded rather than bodged. The code is printed as text for a third party to type |
 | **A tenant seeing a retention hold opened by someone else** | not visible | `support_cases` has no tenant-scoped SELECT policy. The page can only over-warn, never under-warn |
-| **Digest delivery for staff at scale** | partially shipped | two entries use `email: 'digest'` (`review.submitted`, `roster.student.awaiting_approval`). Other staff/platform digests were escalated rather than improvised |
+| **Digest delivery for staff at scale** | partially shipped | three entries use `email: 'digest'` (`review.submitted`, `roster.student.awaiting_approval`, `academy.contact_submission.received`). Other staff/platform digests were escalated rather than improvised |

@@ -203,6 +203,11 @@ describe('P64 C6 — tenant retention page read (e2e)', () => {
     await admin.organization.deleteMany({
       where: { id: { in: seededOrganizationIds } },
     });
+    // Sign-ins write audit rows (B0-ANL-02) that reference the user; clear
+    // them first, as phase10-1-trial-abuse does, before hard-deleting.
+    await admin.auditLogEntry.deleteMany({
+      where: { actorUserId: { in: seededUserIds } },
+    });
     await admin.user.deleteMany({ where: { id: { in: seededUserIds } } });
     await admin.$disconnect();
     await app.close();

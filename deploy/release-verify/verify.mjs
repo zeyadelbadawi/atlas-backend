@@ -301,6 +301,23 @@ console.log('== Legal pages and pricing (Chromium, EN + AR, desktop + 390 px)');
           () =>
             document.documentElement.scrollWidth - document.documentElement.clientWidth,
         );
+      // A failed "no sideways scroll" check names the overflow and the
+      // widest elements past the right edge, so the cause is in the log.
+      const overflowCheck = async (message) => {
+        const px = await overflow();
+        if (px <= 1) return check(true, message);
+        const culprits = await page.evaluate(() => {
+          const vw = document.documentElement.clientWidth;
+          return [...document.querySelectorAll('body *')]
+            .map((el) => ({ el, r: el.getBoundingClientRect() }))
+            .filter(({ el, r }) => r.width > 0 && r.right > vw + 1 && getComputedStyle(el).position !== 'fixed')
+            .sort((a, b) => b.r.right - a.r.right)
+            .slice(0, 3)
+            .map(({ el, r }) => `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}.${String(el.className).trim().split(/\s+/).slice(0, 4).join('.')} right=${Math.round(r.right)}`)
+            .join(' | ');
+        });
+        return check(false, `${message} (${px}px past the edge: ${culprits || 'no element found'})`);
+      };
       const textOf = async (selector) =>
         (await page
           .locator(selector)
@@ -316,15 +333,21 @@ console.log('== Legal pages and pricing (Chromium, EN + AR, desktop + 390 px)');
         .catch(() => undefined);
       const privacy = await textOf('article');
       check(res?.status() === 200, `${label} privacy policy loads (${res?.status()})`);
+      // The closure disclosures date from 4 October 2026; later revisions
+      // keep them (checked below), so any October 2026 date from the 4th on
+      // passes. Arabic-Indic digits are normalised first.
+      const revision = privacy
+        .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+        .match(locale === 'ar' ? /(\d{1,2})\s+أكتوبر\s+2026/ : /(\d{1,2})\s+October\s+2026/);
       check(
-        privacy.includes(t.updated),
-        `${label} privacy policy is the ${TEXT.en.updated} revision`,
+        Boolean(revision) && Number(revision[1]) >= 4,
+        `${label} privacy policy is the ${TEXT.en.updated} revision or later (${revision ? revision[0] : 'no date found'})`,
       );
       check(
         privacy.includes(t.privacy) && privacy.includes(t.privacyDevices),
         `${label} privacy policy carries the closure disclosures`,
       );
-      check((await overflow()) <= 1, `${label} privacy policy has no sideways scroll`);
+      await overflowCheck(`${label} privacy policy has no sideways scroll`);
 
       res = await page.goto(`${BASE}/terms`, { waitUntil: 'load' });
       await page
@@ -338,7 +361,7 @@ console.log('== Legal pages and pricing (Chromium, EN + AR, desktop + 390 px)');
         trials.includes(t.terms) && !trials.includes(t.termsOld),
         `${label} terms describe the signup trial`,
       );
-      check((await overflow()) <= 1, `${label} terms have no sideways scroll`);
+      await overflowCheck(`${label} terms have no sideways scroll`);
 
       res = await page.goto(`${BASE}/pricing`, { waitUntil: 'load' });
       const faq = page.getByText(t.faq, { exact: false }).first();
@@ -398,7 +421,7 @@ console.log('== Legal pages and pricing (Chromium, EN + AR, desktop + 390 px)');
         giftOk,
         `${label} gifted days shown only on priced cycles that include them (${giftPlans} plans with a gift)`,
       );
-      check((await overflow()) <= 1, `${label} pricing has no sideways scroll`);
+      await overflowCheck(`${label} pricing has no sideways scroll`);
       check(
         errors.length === 0,
         `${label} legal and pricing pages raise no page errors (${errors.length})`,

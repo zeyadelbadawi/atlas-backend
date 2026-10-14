@@ -16,18 +16,22 @@ const EnvSchema = z.object({
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
 
+  // B0-OPS-03 — OPTIONAL for the server. The running backend connects only
+  // with APP_DATABASE_URL (non-superuser, RLS applies); DATABASE_URL is the
+  // superuser connection that `prisma migrate deploy` and the operator
+  // scripts need, and each of those checks for it itself. Keeping it out of
+  // the long-lived container's environment means a compromised backend
+  // process cannot read a connection that bypasses row security. Still
+  // format-checked whenever it is set.
   DATABASE_URL: z
     .string()
-    .min(
-      1,
-      'DATABASE_URL is required — the backend cannot start without a database connection string.',
-    )
     .refine(
       (value) => value.startsWith('postgresql://') || value.startsWith('postgres://'),
       {
         message: 'DATABASE_URL must be a postgresql:// connection string.',
       },
-    ),
+    )
+    .optional(),
 
   REDIS_URL: z
     .string()
@@ -93,6 +97,10 @@ const EnvSchema = z.object({
     (value) => (value === '' ? undefined : value),
     z.string().url().optional(),
   ),
+  // B0-OPS-06 — where `deploy/backup.sh` writes the last-success status
+  // (mounted read-only into the backend). Default:
+  // /var/lib/atlas/backup-status/last-success.
+  BACKUP_STATUS_FILE: z.string().min(1).optional(),
 
   SENTRY_DSN: z
     .string()
@@ -312,6 +320,11 @@ const EnvSchema = z.object({
   // and destroys nothing; `on` destroys. Defaults to `dry_run` so a
   // deploy never starts deleting customer bytes on its own.
   FLAG_MEDIA_ARCHIVE_PURGE_MODE: z.enum(['off', 'dry_run', 'on']).default('dry_run'),
+  // B0-SUP-01 — Platform Owner work alerts. Unset: `on`, except under
+  // NODE_ENV=test, where the shared e2e database holds hundreds of
+  // Platform Owner accounts and every suite would fan out to all of them;
+  // the alert suite turns it on itself.
+  FLAG_PLATFORM_OWNER_ALERTS_MODE: z.enum(['off', 'on']).optional(),
   // §12's approved numbers. Configurable so a load-testing pass can tune
   // them, bounded so a typo cannot turn the control off: the ceiling on
   // attempts and codes is validated as a positive integer, and the code
@@ -806,6 +819,17 @@ const EnvSchema = z.object({
   // everything (fail closed).
   BREVO_WEBHOOK_SECRET: z.string().min(16).optional(),
   RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
+  // B0-MSG-01 — provider sending limits. Unset = the free tier's published
+  // limits (Brevo 300/day, 9,000/month, 5/s; Resend 100/day, 3,000/month,
+  // 2/s), so nothing changes until a paid tier is bought and these are set
+  // to match it. The quota service defers mail over these numbers and the
+  // AtlasEmailQuota* alerts divide by them.
+  BREVO_DAILY_LIMIT: z.coerce.number().int().positive().optional(),
+  BREVO_MONTHLY_LIMIT: z.coerce.number().int().positive().optional(),
+  BREVO_PER_SECOND: z.coerce.number().int().positive().optional(),
+  RESEND_DAILY_LIMIT: z.coerce.number().int().positive().optional(),
+  RESEND_MONTHLY_LIMIT: z.coerce.number().int().positive().optional(),
+  RESEND_PER_SECOND: z.coerce.number().int().positive().optional(),
 
   // --- P64 Communications ---
   // The platform web app's public origin, used by the email link builder

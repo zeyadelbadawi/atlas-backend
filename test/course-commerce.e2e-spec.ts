@@ -22,6 +22,7 @@ import {
   seedCourse,
   seedOrganizationWithOwner,
   seedPaymentMethod,
+  seedPaymentCollectionMode,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 
@@ -106,12 +107,8 @@ describe('Course Commerce — P13 (e2e)', () => {
     return { owner, org, academy, course, student };
   }
 
-  async function setAtlasPaymentsMode(orgId: string, accessToken: string): Promise<void> {
-    await request(app.getHttpServer())
-      .patch(`/organizations/${orgId}/payment-settings`)
-      .set('Authorization', `Bearer ${accessToken}`)
-      .send({ paymentCollectionMode: 'atlas_payments' })
-      .expect(200);
+  async function setAtlasPaymentsMode(orgId: string): Promise<void> {
+    await seedPaymentCollectionMode(admin, orgId, 'atlas_payments');
   }
 
   async function setGlobalCommission(basisPoints: number): Promise<void> {
@@ -127,7 +124,7 @@ describe('Course Commerce — P13 (e2e)', () => {
   /** Full happy-path purchase, through Platform Owner approval — returns everything a later assertion/step might need. */
   async function purchaseCourseToApproval(label: string, priceAmountMinorUnits = 4900) {
     const fixture = await arrangePaidCourse(label, priceAmountMinorUnits);
-    await setAtlasPaymentsMode(fixture.org.id, fixture.owner.accessToken);
+    await setAtlasPaymentsMode(fixture.org.id);
     const method = await seedPaymentMethod(admin, `${label}-method`);
 
     const orderRes = await request(app.getHttpServer())
@@ -208,8 +205,8 @@ describe('Course Commerce — P13 (e2e)', () => {
   });
 
   it('CourseOrder creation is idempotent on (student, idempotencyKey)', async () => {
-    const { org, owner, course, student } = await arrangePaidCourse('order-idem');
-    await setAtlasPaymentsMode(org.id, owner.accessToken);
+    const { org, course, student } = await arrangePaidCourse('order-idem');
+    await setAtlasPaymentsMode(org.id);
 
     const first = await request(app.getHttpServer())
       .post(`/courses/${course.id}/course-orders`)
@@ -228,7 +225,7 @@ describe('Course Commerce — P13 (e2e)', () => {
 
   it('3: Platform Owner rejection marks the Payment failed and never creates an Enrollment', async () => {
     const fixture = await arrangePaidCourse('reject-flow');
-    await setAtlasPaymentsMode(fixture.org.id, fixture.owner.accessToken);
+    await setAtlasPaymentsMode(fixture.org.id);
     const method = await seedPaymentMethod(admin, 'reject-flow-method');
 
     const orderRes = await request(app.getHttpServer())
@@ -302,12 +299,8 @@ describe('Course Commerce — P13 (e2e)', () => {
   });
 
   it('6: Organization-Owned Gateway mode never resolves a commission — no real gateway is registered, so payment creation honestly fails rather than silently defaulting to Atlas Payments', async () => {
-    const { org, owner, course, student } = await arrangePaidCourse('org-gateway');
-    await request(app.getHttpServer())
-      .patch(`/organizations/${org.id}/payment-settings`)
-      .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ paymentCollectionMode: 'organization_gateway' })
-      .expect(200);
+    const { org, course, student } = await arrangePaidCourse('org-gateway');
+    await seedPaymentCollectionMode(admin, org.id, 'organization_gateway');
     const method = await seedPaymentMethod(admin, 'org-gateway-method');
 
     await setGlobalCommission(1500);
@@ -420,7 +413,7 @@ describe('Course Commerce — P13 (e2e)', () => {
     // override: it used to fall through to the global default.
     await setGlobalCommission(1000);
     const fixture = await arrangePaidCourse('org-rate-checkout', 10000);
-    await setAtlasPaymentsMode(fixture.org.id, fixture.owner.accessToken);
+    await setAtlasPaymentsMode(fixture.org.id);
     const method = await seedPaymentMethod(admin, 'org-rate-checkout-method');
     const platformOwner = await signUpAndSignIn(app, 'org-rate-checkout-admin');
     await makePlatformOwner(admin, platformOwner.userId);
@@ -639,8 +632,8 @@ describe('Course Commerce — P13 (e2e)', () => {
   });
 
   it('a refund request for an order that was never paid is rejected', async () => {
-    const { org, owner, course, student } = await arrangePaidCourse('refund-unpaid');
-    await setAtlasPaymentsMode(org.id, owner.accessToken);
+    const { org, course, student } = await arrangePaidCourse('refund-unpaid');
+    await setAtlasPaymentsMode(org.id);
     const orderRes = await request(app.getHttpServer())
       .post(`/courses/${course.id}/course-orders`)
       .set('Authorization', `Bearer ${student.accessToken}`)
@@ -678,7 +671,7 @@ describe('Course Commerce — P13 (e2e)', () => {
 
   it('a reviewer who is a member of the selling Organization cannot approve/reject its own course-order payments (self-review guard)', async () => {
     const fixture = await arrangePaidCourse('self-review');
-    await setAtlasPaymentsMode(fixture.org.id, fixture.owner.accessToken);
+    await setAtlasPaymentsMode(fixture.org.id);
     const method = await seedPaymentMethod(admin, 'self-review-method');
 
     const orderRes = await request(app.getHttpServer())

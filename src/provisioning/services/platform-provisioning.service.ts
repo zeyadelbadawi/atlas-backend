@@ -92,6 +92,7 @@ export class PlatformProvisioningService {
       request.organizationId,
       reviewerId,
       requestId,
+      'platform',
     );
   }
 
@@ -104,6 +105,7 @@ export class PlatformProvisioningService {
       request.organizationId,
       reviewerId,
       requestId,
+      'platform',
     );
   }
 

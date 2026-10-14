@@ -49,6 +49,8 @@ const CONSTRAINT_MESSAGE_KEYS: Readonly<Record<string, string>> = {
   isPhoneNumberInCountry: 'validation:phoneCountryMismatch',
   isMobilePhoneNumber: 'validation:phoneNotMobile',
   isPhoneCountry: 'validation:invalidPhoneCountry',
+  // B0-SEC-11 — new passwords (`src/identity/password/common-password.validator.ts`).
+  isNotCommonPassword: 'validation:commonPassword',
 };
 
 /** Generic fallback for constraints with no closer match (`isString`, `isBoolean`, `isIn`, `isArray`, `isObject`, `isBooleanString`, ...) — these almost always indicate a malformed request rather than a user typo, so a plain "not valid" reads correctly. */

@@ -25,6 +25,12 @@
  *
  * The code is never logged and never audited; the audit trail records
  * requested / failed / locked-out / confirmed.
+ *
+ * B0-SEC-13 — the same mechanism also confirms FILING a privacy request
+ * (data deletion or export). That is a second PURPOSE, recorded on the row:
+ * a code is accepted only for the purpose it was issued for, a new code
+ * retires only open codes of its own purpose, and the budgets count per
+ * purpose. A privacy-request code can therefore never delete an account.
  */
 import {
   ConflictException,
@@ -53,6 +59,35 @@ export const DELETION_CODE_MAX_ATTEMPTS = 5;
 export const DELETION_RESEND_COOLDOWN_MS = 60 * 1000;
 export const DELETION_MAX_REQUESTS_PER_HOUR = 5;
 
+export type EmailedCodePurpose = 'account_deletion' | 'privacy_request';
+
+interface PurposeSpec {
+  readonly template: 'auth.account.deletion_code' | 'auth.account.privacy_request_code';
+  readonly entityType: string;
+  /** Audit action prefix: `<prefix>.requested`, `.code_failed`, `.locked_out`, `.confirmed`. */
+  readonly auditPrefix: string;
+  /** The W3 security events are defined for account deletion only. */
+  readonly securityEvents: boolean;
+  readonly platformOwnerRefusal: string;
+}
+
+const PURPOSES: Readonly<Record<EmailedCodePurpose, PurposeSpec>> = {
+  account_deletion: {
+    template: 'auth.account.deletion_code',
+    entityType: 'account_deletion_challenge',
+    auditPrefix: 'account.deletion',
+    securityEvents: true,
+    platformOwnerRefusal: 'errors.auth.platformOwnerCannotSelfDelete',
+  },
+  privacy_request: {
+    template: 'auth.account.privacy_request_code',
+    entityType: 'privacy_request_challenge',
+    auditPrefix: 'privacy_request.code',
+    securityEvents: false,
+    platformOwnerRefusal: 'errors.forbidden',
+  },
+};
+
 export interface AccountDeletionChallengeContract {
   readonly challengeId: string;
   readonly expiresAt: string;
@@ -78,15 +113,21 @@ export class AccountDeletionChallengeService {
     @Optional() private readonly securityEvents?: SecurityEventsService,
   ) {}
 
-  private async track(event: SecurityEventInput): Promise<void> {
+  private async track(event: SecurityEventInput, spec: PurposeSpec): Promise<void> {
+    if (!spec.securityEvents) return;
     await this.securityEvents?.record(event);
   }
 
-  /** `POST /users/me/delete/request` — emails a fresh code; nothing is deleted. */
+  /**
+   * `POST /users/me/delete/request` — emails a fresh code; nothing is deleted.
+   * `POST /privacy-requests/code` passes `privacy_request` (B0-SEC-13).
+   */
   async issue(
     userId: string,
     sessionId: string,
+    purpose: EmailedCodePurpose = 'account_deletion',
   ): Promise<AccountDeletionChallengeContract> {
+    const spec = PURPOSES[purpose];
     const now = Date.now();
     const code = String(randomInt(0, 10 ** CODE_DIGITS)).padStart(CODE_DIGITS, '0');
     const salt = randomBytes(16).toString('hex');
@@ -112,9 +153,7 @@ export class AccountDeletionChallengeService {
       // The same refusal the deletion itself makes — no code is mailed
       // for a deletion that could never happen.
       if (user.isPlatformOwner) {
-        throw new ForbiddenException({
-          messageKey: 'errors.auth.platformOwnerCannotSelfDelete',
-        });
+        throw new ForbiddenException({ messageKey: spec.platformOwnerRefusal });
       }
       // The code goes to a VERIFIED address only: an unverified one is
       // not yet proven to be the owner's mailbox.
@@ -125,7 +164,7 @@ export class AccountDeletionChallengeService {
       }
 
       const recent = await tx.accountDeletionChallenge.findMany({
-        where: { userId, createdAt: { gt: new Date(now - 60 * 60 * 1000) } },
+        where: { userId, purpose, createdAt: { gt: new Date(now - 60 * 60 * 1000) } },
         orderBy: { createdAt: 'desc' },
         select: { createdAt: true },
       });
@@ -154,9 +193,10 @@ export class AccountDeletionChallengeService {
         );
       }
 
-      // A new code retires every open one: only the latest email works.
+      // A new code retires every open one of its purpose: only the latest
+      // email works.
       await tx.accountDeletionChallenge.updateMany({
-        where: { userId, consumedAt: null },
+        where: { userId, purpose, consumedAt: null },
         data: { consumedAt: new Date(now) },
       });
       await tx.accountDeletionChallenge.create({
@@ -164,17 +204,18 @@ export class AccountDeletionChallengeService {
           id: challengeId,
           userId,
           sessionId,
+          purpose,
           salt,
           codeHash: this.cipher.hashCode({ challengeRowId: challengeId, salt, code }),
           expiresAt,
         },
       });
       const emitted = await this.communicationService.emit(tx, {
-        key: 'auth.account.deletion_code',
+        key: spec.template,
         recipientUserId: userId,
-        // Never tenant-visible: the row carries a live deletion code.
+        // Never tenant-visible: the row carries a live code.
         organizationId: null,
-        entity: { type: 'account_deletion_challenge', id: challengeId },
+        entity: { type: spec.entityType, id: challengeId },
         values: {
           code,
           expiresInMinutes: Math.round(DELETION_CODE_TTL_MS / 60_000),
@@ -182,7 +223,7 @@ export class AccountDeletionChallengeService {
       });
       await this.auditLogWriterService.write(tx, {
         actorUserId: userId,
-        action: 'account.deletion.requested',
+        action: `${spec.auditPrefix}.requested`,
         targetType: 'user',
         targetId: userId,
         context: { challengeId },
@@ -195,22 +236,28 @@ export class AccountDeletionChallengeService {
       ({ email, outboxId } = await issued);
     } catch (error) {
       if (refusedFor) {
-        await this.track({
-          type: 'deletion_code_rate_limited',
-          surface: 'management',
-          userId,
-          reason: refusedFor,
-        });
+        await this.track(
+          {
+            type: 'deletion_code_rate_limited',
+            surface: 'management',
+            userId,
+            reason: refusedFor,
+          },
+          spec,
+        );
       }
       throw error;
     }
     await this.communicationService.enqueueAfterCommit(outboxId);
-    await this.track({
-      type: 'deletion_code_sent',
-      surface: 'management',
-      userId,
-      challengeId,
-    });
+    await this.track(
+      {
+        type: 'deletion_code_sent',
+        surface: 'management',
+        userId,
+        challengeId,
+      },
+      spec,
+    );
 
     return {
       challengeId,
@@ -230,7 +277,9 @@ export class AccountDeletionChallengeService {
     sessionId: string,
     challengeId: string,
     code: string,
+    purpose: EmailedCodePurpose = 'account_deletion',
   ): Promise<void> {
+    const spec = PURPOSES[purpose];
     const outcome = await this.tenancyContextService.runInUserContext(
       userId,
       async (tx) => {
@@ -240,6 +289,7 @@ export class AccountDeletionChallengeService {
          WHERE "id" = ${challengeId}
            AND "user_id" = ${userId}
            AND "session_id" = ${sessionId}
+           AND "purpose" = ${purpose}
            AND "consumed_at" IS NULL
            AND "expires_at" > now()
         RETURNING "id", "code_hash", "salt", "attempts"
@@ -254,7 +304,7 @@ export class AccountDeletionChallengeService {
           });
           await this.auditLogWriterService.write(tx, {
             actorUserId: userId,
-            action: 'account.deletion.locked_out',
+            action: `${spec.auditPrefix}.locked_out`,
             targetType: 'user',
             targetId: userId,
             context: { challengeId },
@@ -270,7 +320,7 @@ export class AccountDeletionChallengeService {
         if (!this.cipher.digestsEqual(candidate, row.code_hash)) {
           await this.auditLogWriterService.write(tx, {
             actorUserId: userId,
-            action: 'account.deletion.code_failed',
+            action: `${spec.auditPrefix}.code_failed`,
             targetType: 'user',
             targetId: userId,
             context: { challengeId, attempts: row.attempts },
@@ -289,7 +339,7 @@ export class AccountDeletionChallengeService {
         if (claimed.count !== 1) return { kind: 'invalid' as const };
         await this.auditLogWriterService.write(tx, {
           actorUserId: userId,
-          action: 'account.deletion.confirmed',
+          action: `${spec.auditPrefix}.confirmed`,
           targetType: 'user',
           targetId: userId,
           context: { challengeId },
@@ -301,30 +351,39 @@ export class AccountDeletionChallengeService {
     const base = { surface: 'management', userId, challengeId } as const;
     switch (outcome.kind) {
       case 'ok':
-        await this.track({ ...base, type: 'deletion_code_verified' });
+        await this.track({ ...base, type: 'deletion_code_verified' }, spec);
         break;
       case 'wrong':
-        await this.track({
-          ...base,
-          type: 'deletion_code_failed',
-          reason: 'invalid_code',
-          attemptsRemaining: outcome.attemptsRemaining,
-        });
+        await this.track(
+          {
+            ...base,
+            type: 'deletion_code_failed',
+            reason: 'invalid_code',
+            attemptsRemaining: outcome.attemptsRemaining,
+          },
+          spec,
+        );
         break;
       case 'locked':
-        await this.track({
-          ...base,
-          type: 'deletion_code_locked',
-          reason: 'attempts_exhausted',
-          attemptsRemaining: 0,
-        });
+        await this.track(
+          {
+            ...base,
+            type: 'deletion_code_locked',
+            reason: 'attempts_exhausted',
+            attemptsRemaining: 0,
+          },
+          spec,
+        );
         break;
       default:
-        await this.track({
-          ...base,
-          type: 'deletion_code_failed',
-          reason: 'dead_challenge',
-        });
+        await this.track(
+          {
+            ...base,
+            type: 'deletion_code_failed',
+            reason: 'dead_challenge',
+          },
+          spec,
+        );
     }
 
     switch (outcome.kind) {

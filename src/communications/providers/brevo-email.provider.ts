@@ -1,6 +1,7 @@
 /**
  * BrevoEmailProvider — PRIMARY transactional-email adapter (owner
- * decision, P64 Communications). Brevo Free: 300/day, single-sender
+ * decision, P64 Communications). Brevo Free: 300/day by default (limits
+ * configurable since B0-MSG-01), single-sender
  * verification against the owner's Gmail address (no domain DNS), footer
  * accepted. `POST https://api.brevo.com/v3/smtp/email`, `api-key` header,
  * Node 20 `fetch` only.
@@ -15,7 +16,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import type { EmailConfig } from '../../config/configuration';
+import { BREVO_FREE_LIMITS, type EmailConfig } from '../../config/configuration';
 import {
   EmailProviderError,
   WEBHOOK_URL_SECRET_HEADER,
@@ -73,11 +74,15 @@ export class BrevoEmailProvider implements EmailProviderAdapter {
 
   constructor(private readonly configService: ConfigService) {}
 
+  /** Brevo Free unless `BREVO_DAILY_LIMIT` / `_MONTHLY_LIMIT` / `_PER_SECOND` say otherwise (B0-MSG-01). */
   capabilities(): EmailProviderCapabilities {
+    const limits =
+      this.configService.getOrThrow<EmailConfig>('email').limits?.brevo ??
+      BREVO_FREE_LIMITS;
     return {
-      dailyLimit: 300,
-      monthlyLimit: 9000,
-      perSecond: 5,
+      dailyLimit: limits.dailyLimit,
+      monthlyLimit: limits.monthlyLimit,
+      perSecond: limits.perSecond,
       supportsWebhooks: true,
       supportsHtml: true,
       supportsIdempotencyKey: false,

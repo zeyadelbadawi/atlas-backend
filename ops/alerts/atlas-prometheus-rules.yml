@@ -22,7 +22,7 @@ groups:
           threshold: "> 20 more orders entered pending_payment than were paid in 24h, for 1h"
           current_value: '{{ $value | humanize }}'
           summary: "Course orders are entering payment review faster than they are approved"
-          description: "Over the last 24h, {{ $value }} more orders reached pending_payment than were approved. Check the platform payment review queue."
+          description: "Over the last 24h, {{ $value }} more orders reached pending_payment than were approved. Who reviews them depends on the organization's payment collection mode: academy_manual orders are approved by that organization's owner (Dashboard → Academy → Payments), platform-collected orders in the Platform Owner's course-payment review queue. Check both before acting."
       - alert: AtlasCheckoutApprovalSlow
         expr: |
           histogram_quantile(0.95, sum(rate(atlas_checkout_approval_latency_seconds_bucket[6h])) by (le)) > 172800
@@ -32,7 +32,20 @@ groups:
           threshold: "p95 proof-to-approval > 48h (172800 s), for 30m"
           current_value: '{{ $value | humanize }}'
           summary: "p95 proof-to-approval latency above 48h"
-          description: "Learners are waiting more than two days for manual payment review (p95 = {{ $value | humanizeDuration }})."
+          description: "Learners are waiting more than two days for manual payment review (p95 = {{ $value | humanizeDuration }}). This combines academy_manual reviews (each organization owner) and platform reviews (Platform Owner queue)."
+      # B0-OPS-10: a subscription payment proof nobody has reviewed for a
+      # day. Read at scrape time from the Platform Owner review queue; the
+      # per-proof in-app/email notification (B0-SUP-01) is the first nudge,
+      # this is the one that does not depend on someone reading it.
+      - alert: AtlasSubscriptionProofWaiting
+        expr: max(atlas_subscription_proof_oldest_pending_seconds) > 86400
+        for: 15m
+        labels: { severity: warning, team: atlas }
+        annotations:
+          threshold: "oldest pending subscription proof > 24h (86400 s), for 15m"
+          current_value: '{{ $value | humanizeDuration }}'
+          summary: "A subscription payment proof has waited more than 24h for review"
+          description: "The oldest subscription payment proof has waited {{ $value | humanizeDuration }} (atlas_subscription_proofs_pending has the total). These are Atlas subscription payments, reviewed only by a Platform Owner: Dashboard → Platform → Payments, filter Review status = Pending."
       - alert: AtlasCheckoutRefundSpike
         expr: |
           sum(increase(atlas_checkout_orders_total{state="refunded"}[24h])) > 5
@@ -259,6 +272,54 @@ groups:
           summary: "{{ $labels.dependency }} is not answering its probe"
           description: "The {{ $labels.dependency }} probe has failed for 2 minutes."
           threshold: "probe failing for 2m"
+          current_value: '{{ $value | humanize }}'
+      # B0-OPS-07 — the host filesystem holding /opt/atlas (and, on a
+      # single-disk VPS, Docker's images). It filled on 9 Oct 2026 and
+      # stopped deploys with nothing alerting. Measured by the backend
+      # through its read-only backups/status mount.
+      - alert: AtlasDiskUsageHigh
+        expr: |
+          1 - max(atlas_host_filesystem_avail_bytes) / max(atlas_host_filesystem_size_bytes) > 0.80
+        for: 15m
+        labels: { severity: warning, team: atlas, service: infrastructure }
+        annotations:
+          summary: "Host disk more than 80% full"
+          description: "The filesystem holding /opt/atlas is {{ $value | humanizePercentage }} full. Run `docker system df` on the host; deploy.sh prunes unused application images after each healthy deploy, and `docker image prune` removes dangling ones."
+          threshold: "used > 80%, for 15m"
+          current_value: '{{ $value | humanizePercentage }}'
+      - alert: AtlasDiskUsageCritical
+        expr: |
+          1 - max(atlas_host_filesystem_avail_bytes) / max(atlas_host_filesystem_size_bytes) > 0.90
+        for: 5m
+        labels: { severity: critical, team: atlas, service: infrastructure }
+        annotations:
+          summary: "Host disk more than 90% full"
+          description: "The filesystem holding /opt/atlas is {{ $value | humanizePercentage }} full. Deploys refuse to pull below their free-space floor, and Postgres writes and backups fail when it fills. Free space now (`docker system df`, old backups in /opt/atlas/backups)."
+          threshold: "used > 90%, for 5m"
+          current_value: '{{ $value | humanizePercentage }}'
+      # B0-OPS-06 — `deploy/backup.sh` records each fully successful backup
+      # (dumped, verified, uploaded); the backend exposes it from a
+      # read-only mount. The daily timer runs at 03:00 ± 10 min, so 26 h
+      # means one backup was missed.
+      - alert: AtlasBackupStale
+        expr: |
+          time() - max(atlas_backup_last_success_timestamp_seconds) > 93600
+        for: 15m
+        labels: { severity: critical, team: atlas, service: backups }
+        annotations:
+          summary: "No successful database backup in 26 hours"
+          description: "The last successful backup finished {{ $value | humanizeDuration }} ago. Check `journalctl -u atlas-backup` on the host and the R2 backup bucket."
+          threshold: "last success older than 26 h, for 15m"
+          current_value: '{{ $value | humanize }}'
+      - alert: AtlasBackupStatusMissing
+        expr: |
+          absent(atlas_backup_last_success_timestamp_seconds)
+        for: 26h
+        labels: { severity: warning, team: atlas, service: backups }
+        annotations:
+          summary: "No backup status has been recorded for 26 hours"
+          description: "The backend cannot read the backup status file (never written, or the backups/status mount is missing). A backup may be failing silently."
+          threshold: "status absent for 26 h"
           current_value: '{{ $value | humanize }}'
       - alert: AtlasQueueBacklog
         expr: |

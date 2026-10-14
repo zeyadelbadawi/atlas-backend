@@ -25,6 +25,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
+import { CommunicationService } from '../../communications/services/communication.service';
+import { AcademyStaffRecipientsService } from '../../communications/services/academy-staff-recipients.service';
 import type { CourseWithRelations } from '../../course/repositories/courses.repository';
 import { Injectable } from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -74,7 +76,12 @@ import type {
   CourseRatingSummary,
   CourseReviewResponse,
 } from '../../learning/dto/course-review.contract';
-import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
+import {
+  DEFAULT_PAGE,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+} from '../../common/dto/collection-query.dto';
+import { buildSitemapUrls, type SitemapUrl } from '../utils/seo-files.util';
 import type { PublicWebsiteStatisticsResponse } from '../dto/public-statistics.contract';
 import type { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
 import type { AcademyIdentityResponse } from '../dto/public-identity.contract';
@@ -100,6 +107,9 @@ import {
   collectLibraryEntryIds,
   expandLibraryEntries,
 } from '../utils/library-entries.util';
+
+/** B0-WEB-01 — at most 50 × 100 courses in one sitemap (well under the 50,000-URL limit). */
+const SITEMAP_MAX_COURSE_PAGES = 50;
 
 @Injectable()
 export class PublicWebsiteService {
@@ -127,6 +137,9 @@ export class PublicWebsiteService {
     private readonly websiteFaqEntriesRepository: WebsiteFaqEntriesRepository,
     private readonly websiteTestimonialEntriesRepository: WebsiteTestimonialEntriesRepository,
     private readonly libraryRevisionService: WebsiteLibraryRevisionService,
+    // B0-WEB-05 — Contact-form notices to the website's managers.
+    private readonly communicationService: CommunicationService,
+    private readonly staffRecipients: AcademyStaffRecipientsService,
   ) {}
 
   /** P63g — the effective base domain (environment first, then the configured row), never only the env var. */
@@ -328,6 +341,45 @@ export class PublicWebsiteService {
       await this.subscriptionAccessService.isServingEligible(organizationId);
     await this.cacheService.setServingEligibility(organizationId, eligible);
     return eligible;
+  }
+
+  /**
+   * B0-WEB-01 — what the Academy behind `host` publishes to search engines:
+   * whether it may be indexed, whether it has a sitemap, its canonical
+   * origin and the URLs to list. An unknown host, an unpublished (Coming
+   * Soon) site or one that is not serving answers "not indexable" with no
+   * sitemap — never an error and never another site's content.
+   */
+  async getSeoFiles(host: string): Promise<{
+    readonly indexable: boolean;
+    readonly sitemapEnabled: boolean;
+    readonly origin?: string;
+    readonly urls: readonly SitemapUrl[];
+  }> {
+    const closed = { indexable: false, sitemapEnabled: false, urls: [] };
+    const resolved = await this.resolveHostname(host);
+    if (!resolved) return closed;
+    const configuration = await this.getPublishedWebsite(resolved.academyId);
+    if (!configuration) return closed;
+
+    const seo = (configuration.seo ?? {}) as Record<string, unknown>;
+    const indexable = seo.robotsIndexable !== false;
+    const sitemapEnabled = indexable && seo.sitemapEnabled !== false;
+    const origin = `https://${resolved.canonicalHost ?? normalizeHostname(host)}`;
+    if (!sitemapEnabled) return { indexable, sitemapEnabled, origin, urls: [] };
+
+    const pages = (await this.getPublishedPages(resolved.academyId)) ?? [];
+    const courses: CourseResponse[] = [];
+    for (let page = 1; page <= SITEMAP_MAX_COURSE_PAGES; page += 1) {
+      const result = await this.getPublicCourses(resolved.academyId, {
+        page,
+        pageSize: MAX_PAGE_SIZE,
+      } as CourseListQueryDto);
+      if (!result) break;
+      courses.push(...result.items);
+      if (result.items.length < MAX_PAGE_SIZE) break;
+    }
+    return { indexable, sitemapEnabled, origin, urls: buildSitemapUrls(pages, courses) };
   }
 
   async getPublishedWebsite(
@@ -898,17 +950,56 @@ export class PublicWebsiteService {
       return this.toDiscardedSubmissionResponse(academyId, payload);
     }
 
-    const created = await this.tenancyContextService.runInTenantContext(
+    const { created, outboxIds } = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) =>
-        this.contactSubmissionsRepository.create(tx, {
+      async (tx) => {
+        const created = await this.contactSubmissionsRepository.create(tx, {
           academyId,
           name: payload.name,
           email: payload.email,
           message: payload.message,
-        }),
+        });
+        // B0-WEB-05 — tell the people who manage the website, in the same
+        // transaction as the insert (a rolled-back insert leaves no
+        // notice). The visitor's details stay out of the notice; it only
+        // links to the inbox.
+        const outboxIds: (string | null)[] = [];
+        for (const recipientUserId of await this.contactRecipients(tx, academyId)) {
+          const emitted = await this.communicationService.emit(tx, {
+            key: 'academy.contact_submission.received',
+            recipientUserId,
+            organizationId,
+            academyId,
+            entity: { type: 'contact_submission', id: created.id },
+            values: { academyId },
+          });
+          outboxIds.push(emitted.outboxId);
+        }
+        return { created, outboxIds };
+      },
     );
+    for (const outboxId of outboxIds) {
+      await this.communicationService.enqueueAfterCommit(outboxId);
+    }
     return toContactSubmissionResponse(created);
+  }
+
+  /**
+   * Who reads the website's Contact messages: the academy's owner /
+   * administrator / manager members and the organization owner — the
+   * same tier the inbox serves. Looked up through the narrow
+   * user-ids-only definer functions because this public request has no
+   * user context.
+   */
+  private async contactRecipients(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+  ): Promise<string[]> {
+    const [moderators, owners] = await Promise.all([
+      this.staffRecipients.moderators(tx, academyId),
+      this.staffRecipients.organizationOwners(tx, academyId),
+    ]);
+    return [...new Set([...moderators, ...owners])];
   }
 
   /**

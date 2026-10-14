@@ -5,16 +5,14 @@
  * EVERY NUMBER HERE IS A REAL AGGREGATE over real rows. There are no
  * placeholder statistics and no sample data anywhere in this file.
  *
- * REVENUE IS DELIBERATELY ABSENT. Atlas records `Payment` rows for course
- * commerce, but it does not track subscription revenue: plan prices are
- * catalog metadata, `tenant_subscriptions` carries no amount, and no
- * ledger ties a subscription to money received. Reporting a
- * "subscription MRR" here would therefore require inventing it from plan
- * list prices and pretending every active subscription is paid in full,
- * on time, at list price — which would be a fabricated number presented
- * as fact. The contract instead exposes `revenue: { tracked: false }`,
- * the same honest shape the tenant dashboard already uses, so the UI can
- * say so plainly rather than render a lie.
+ * REVENUE COMES FROM APPROVED PAYMENTS, NEVER FROM LIST PRICES (B0-ANL-01).
+ * Subscription payments are recorded (`payments` joined to a
+ * `plan_subscription` checkout, approved = `succeeded`), so MRR is each
+ * active period's latest approved plan payment, yearly ÷ 12, per
+ * currency. An active period with no approved payment behind it (granted
+ * or extended by the platform, migrated) is counted, not valued — pricing
+ * it at list price would be the fabricated figure this view refuses to
+ * show.
  *
  * TENANCY. This is a PLATFORM-OWNER surface and is intentionally
  * cross-tenant: that is its entire purpose. Reachable only behind
@@ -27,10 +25,12 @@
  * is a second, database-level backstop behind the guard.
  */
 import { Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import type {
+  AdminBillingCycleKey,
   AdminCancellationRow,
+  AdminRecurringRevenueRow,
   AdminSubscriptionOverview,
 } from '../dto/admin-subscription.contract';
 
@@ -161,12 +161,40 @@ export class AdminSubscriptionsService {
     const activePaid =
       (byStatus.active ?? 0) + (byStatus.past_due ?? 0) + (byStatus.grace_period ?? 0);
 
+    const [cycleGroups, activeSubscriptions, mrr] = await Promise.all([
+      tx.tenantSubscription.groupBy({
+        by: ['status', 'billingCycle'],
+        _count: { _all: true },
+      }),
+      tx.tenantSubscription.count({
+        where: {
+          status: 'active',
+          currentPeriodEnd: { gt: now },
+          organization: {
+            OR: [{ platformFlags: null }, { platformFlags: { isInternal: false } }],
+          },
+        },
+      }),
+      this.monthlyRecurringRevenue(tx, now),
+    ]);
+    const byStatusAndCycle: Record<string, Record<AdminBillingCycleKey, number>> = {};
+    for (const row of cycleGroups) {
+      const bucket = (byStatusAndCycle[row.status] ??= {
+        monthly: 0,
+        yearly: 0,
+        none: 0,
+      });
+      bucket[row.billingCycle ?? 'none'] += row._count._all;
+    }
+    const valued = mrr.reduce((sum, row) => sum + row.subscriptions, 0);
+
     return {
       organizations: organizationCount,
 
       subscriptions: {
         byStatus,
         activePaid,
+        byStatusAndCycle,
       },
 
       trials: {
@@ -220,14 +248,70 @@ export class AdminSubscriptionsService {
       /** Total plans carrying at least one subscription, before the cut above. */
       totalPlansWithSubscriptions: planGroups.length,
 
-      /**
-       * Atlas does not track subscription revenue — see this class's own
-       * doc comment. Reported as untracked rather than fabricated.
-       */
-      revenue: { tracked: false },
+      /** B0-ANL-01 — see this class's own doc comment and `monthlyRecurringRevenue`. */
+      revenue: {
+        tracked: true,
+        mrr,
+        activeSubscriptions,
+        activeWithoutPayment: Math.max(0, activeSubscriptions - valued),
+        excludesInternalOrganizations: true,
+      },
 
       generatedAt: now.toISOString(),
     };
+  }
+
+  /**
+   * B0-ANL-01 — per currency, the sum over every `active` subscription whose
+   * period has not ended of its LATEST approved plan payment (a payment on
+   * a `plan_subscription` checkout with status `succeeded`), yearly
+   * payments divided by 12 (rounded per subscription), leaving out
+   * organizations marked internal (B0-ANL-04). One aggregate query
+   * (`DISTINCT ON` per organization), never an id list passed back in —
+   * the same scaling rule `countConvertedTrials` follows. Runs under the
+   * platform owner's context: `payments_platform_review_select`,
+   * `checkouts_platform_select`, `organization_platform_flags_platform_select`
+   * and the subscription platform policy grant the reads.
+   */
+  private async monthlyRecurringRevenue(
+    tx: Prisma.TransactionClient,
+    now: Date,
+  ): Promise<AdminRecurringRevenueRow[]> {
+    const rows = await tx.$queryRaw<
+      { currency: string; monthly: string; subscriptions: number }[]
+    >(Prisma.sql`
+      WITH latest AS (
+        SELECT DISTINCT ON (s."organization_id")
+               p."amount_minor_units" AS amount,
+               p."currency" AS currency,
+               COALESCE(c."billing_cycle", s."billing_cycle") AS cycle
+        FROM "tenant_subscriptions" s
+        JOIN "payments" p
+          ON p."organization_id" = s."organization_id"
+         AND p."status" = 'succeeded'
+        JOIN "checkouts" c
+          ON c."id" = p."checkout_id"
+         AND c."target_type" = 'plan_subscription'
+        LEFT JOIN "organization_platform_flags" f
+          ON f."organization_id" = s."organization_id"
+        WHERE s."status" = 'active'
+          AND s."current_period_end" > ${now}
+          AND COALESCE(f."is_internal", false) = false
+        ORDER BY s."organization_id", p."created_at" DESC
+      )
+      SELECT currency,
+             SUM(CASE WHEN cycle = 'yearly' THEN ROUND(amount / 12.0) ELSE amount END)::text
+               AS monthly,
+             COUNT(*)::int AS subscriptions
+      FROM latest
+      GROUP BY currency
+      ORDER BY currency
+    `);
+    return rows.map((row) => ({
+      currency: row.currency,
+      monthlyAmountMinorUnits: Number(row.monthly),
+      subscriptions: row.subscriptions,
+    }));
   }
 
   /**

@@ -9,9 +9,10 @@
  * academy gets an EMPTY read here even if a guard were wrong. The service
  * checks the same roles first; the two gates agree independently.
  *
- * Reads are capped (`take`) and aggregated in memory by the service — the
- * `StudentAnalyticsRepository` precedent — so no two numbers in a report
- * can come from different snapshots.
+ * B0-ANL-03 — the headline figures come from uncapped grouped counts
+ * (`count*` methods), so they cover the whole window however busy the
+ * academy is. Only the top-N lists are built from the capped, newest-first
+ * row reads (`find*` methods).
  */
 import { Injectable } from '@nestjs/common';
 import type { Prisma, QuizAttemptEventType, ContentAccessResult } from '@prisma/client';
@@ -33,8 +34,90 @@ export interface AccessLogRow {
   readonly courseId: string;
 }
 
+export interface IntegrityHeadlineCounts {
+  readonly byTypeAndCounted: readonly {
+    readonly type: QuizAttemptEventType;
+    readonly counted: boolean;
+    readonly events: number;
+  }[];
+  readonly attemptsWithEvents: number;
+}
+
+export interface SharingHeadlineCounts {
+  readonly byResultAndReason: readonly {
+    readonly result: ContentAccessResult;
+    readonly reason: string | null;
+    readonly decisions: number;
+  }[];
+  readonly distinctUsersRefused: number;
+  readonly distinctDevicesRefused: number;
+}
+
 @Injectable()
 export class AcademyReportsRepository {
+  /** Exact integrity headline counts for THIS academy since `since` (no cap). */
+  async countIntegrityEvents(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    since: Date,
+  ): Promise<IntegrityHeadlineCounts> {
+    const groups = await tx.quizAttemptEvent.groupBy({
+      by: ['type', 'counted'],
+      where: {
+        serverAt: { gte: since },
+        attempt: { quiz: { course: { academyId } } },
+      },
+      _count: { _all: true },
+    });
+    const attemptsWithEvents = await tx.quizAttempt.count({
+      where: {
+        quiz: { course: { academyId } },
+        events: { some: { serverAt: { gte: since } } },
+      },
+    });
+    return {
+      byTypeAndCounted: groups.map((group) => ({
+        type: group.type,
+        counted: group.counted,
+        events: group._count._all,
+      })),
+      attemptsWithEvents,
+    };
+  }
+
+  /** Exact sharing headline counts for THIS academy since `since` (no cap). */
+  async countAccessDecisions(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    since: Date,
+  ): Promise<SharingHeadlineCounts> {
+    const window = { academyId, createdAt: { gte: since } };
+    const groups = await tx.contentAccessLog.groupBy({
+      by: ['result', 'reason'],
+      where: window,
+      _count: { _all: true },
+    });
+    // One row per distinct refused user / device: bounded by the academy's
+    // learners and their devices, not by the number of decisions.
+    const users = await tx.contentAccessLog.groupBy({
+      by: ['userId'],
+      where: { ...window, result: 'refused', userId: { not: null } },
+    });
+    const devices = await tx.contentAccessLog.groupBy({
+      by: ['deviceId'],
+      where: { ...window, result: 'refused', deviceId: { not: null } },
+    });
+    return {
+      byResultAndReason: groups.map((group) => ({
+        result: group.result,
+        reason: group.reason,
+        decisions: group._count._all,
+      })),
+      distinctUsersRefused: users.length,
+      distinctDevicesRefused: devices.length,
+    };
+  }
+
   /** Attempt events of THIS academy's quizzes since `since`, newest first, capped. */
   async findIntegrityEvents(
     tx: Prisma.TransactionClient,

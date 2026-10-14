@@ -116,10 +116,10 @@ All four live under **Platform → Observability** in the sidebar.
 
 | Group | Rules |
 |---|---|
-| `atlas-platform` | AtlasBackendDown, AtlasApiHighErrorRate, AtlasApiHighLatency, AtlasDependencyDown, AtlasQueueBacklog, AtlasAlertDeliveryFailing, AtlasSyntheticAlert |
+| `atlas-platform` | AtlasBackendDown, AtlasApiHighErrorRate, AtlasApiHighLatency, AtlasDependencyDown, AtlasDiskUsageHigh, AtlasDiskUsageCritical, AtlasBackupStale, AtlasBackupStatusMissing, AtlasQueueBacklog, AtlasAlertDeliveryFailing, AtlasSyntheticAlert |
 | `atlas-communications` | AtlasEmailQuotaHigh, AtlasEmailQuotaCritical, AtlasEmailBounceRate, AtlasEmailDispatcherStalled, AtlasEmailDeadLetters, AtlasAuthOtpFailureSurge, AtlasEmailWebhookSignatureFailures |
 | `atlas-learning` | AtlasGrantRefusalSurge, AtlasVideoWebhookSignatureFailures, AtlasQuizIntegrityEventSurge, AtlasCertificateRenderFailures |
-| `atlas-commerce` | AtlasCheckoutApprovalBacklog, AtlasCheckoutApprovalSlow, AtlasCheckoutRefundSpike |
+| `atlas-commerce` | AtlasCheckoutApprovalBacklog, AtlasCheckoutApprovalSlow, AtlasSubscriptionProofWaiting, AtlasCheckoutRefundSpike |
 | `atlas-catalog` | AtlasPublicCatalogSlow |
 | `atlas-retention` | AtlasRetentionSweepFailing, AtlasRetentionSweepSilent |
 
@@ -352,6 +352,9 @@ Click **Resolve** (or let the TTL expire). Then check:
 | Malformed or slow source response | Treated as `unavailable` after a 3 s timeout. Never shown as data. |
 | Backend down | `AtlasBackendDown` (critical) fires in Prometheus; Alertmanager still notifies Slack. |
 | Redis down | Health: Redis `down`; `AtlasDependencyDown`; queue metrics absent. |
+| Host disk filling up | `AtlasDiskUsageHigh` (warning, > 80 % for 15 min) and `AtlasDiskUsageCritical` (critical, > 90 % for 5 min), from `atlas_host_filesystem_size_bytes` / `atlas_host_filesystem_avail_bytes`. The backend measures the host filesystem behind its read-only `backups/status` mount, i.e. the filesystem holding `/opt/atlas` (and Docker's images on a single-disk VPS; a separate Docker volume is not covered). No sample means the mount is missing. `deploy.sh` prunes application images that nothing runs and `.last-good` does not record after every healthy deploy, refuses to pull below `DEPLOY_MIN_FREE_MB` (default 2048) after one prune attempt, and every container's log is capped at 3 × 20 MB. Check `docker system df` and old files in `/opt/atlas/backups`. |
+| Backup failing or not running | `AtlasBackupStale` (critical) after 26 h without a successful backup; `AtlasBackupStatusMissing` (warning) if the backend cannot read `backups/status/last-success` for 26 h. Check `journalctl -u atlas-backup` and the R2 backup bucket. |
+| A subscription payment proof is not reviewed | `AtlasSubscriptionProofWaiting` (warning) when the oldest pending subscription proof has waited more than 24 h (`atlas_subscription_proof_oldest_pending_seconds`, read at scrape time from the Platform Owner review queue; `atlas_subscription_proofs_pending` has the count). Review it in Dashboard → Platform → Payments (Review status = Pending). The age runs from the latest proof, so a resubmission restarts it. No sample at all means the backend could not read the queue (no Platform Owner account, or a database error in the backend log). |
 
 ## 22. Production operational procedures
 

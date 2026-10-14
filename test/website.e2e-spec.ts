@@ -1077,6 +1077,95 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       .expect(403);
   });
 
+  it('deleting a page prunes the menu, footer and header links to it and moves the cache version (B0-WEB-11)', async () => {
+    const { owner, academy } = await seedManagedAcademy('delete-prune');
+    const as = (req: request.Test) =>
+      req.set('Authorization', `Bearer ${owner.accessToken}`);
+    const created = await as(
+      request(app.getHttpServer()).post(`/academies/${academy.id}/website/pages`),
+    )
+      .send({ title: 'Promo', slug: 'promo' })
+      .expect(201);
+    const pageId = created.body.id as string;
+    const label = { en: 'Promo', ar: 'عرض' };
+
+    const before = await as(
+      request(app.getHttpServer()).get(`/academies/${academy.id}/website/configuration`),
+    ).expect(200);
+    const keptNavigation = (before.body.navigation ?? []) as unknown[];
+    await as(
+      request(app.getHttpServer()).patch(
+        `/academies/${academy.id}/website/configuration`,
+      ),
+    )
+      .send({
+        navigation: [
+          ...keptNavigation,
+          { id: 'nav-promo', label, pageId, order: keptNavigation.length },
+        ],
+        header: { cta: { label, pageId } },
+        footer: {
+          groups: [
+            {
+              id: 'g-promo',
+              title: label,
+              links: [
+                { id: 'l-promo', label, pageId },
+                { id: 'l-ext', label, url: 'https://example.com' },
+              ],
+            },
+          ],
+          socialLinks: [],
+        },
+      })
+      .expect(200);
+    // The live copy carries the same links (as after a publish).
+    const stored = await admin.websiteConfiguration.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    await admin.websiteConfiguration.update({
+      where: { academyId: academy.id },
+      data: {
+        publishedSnapshot: {
+          ...((stored.publishedSnapshot as object | null) ?? {}),
+          navigation: stored.navigation as object,
+          header: stored.header as object,
+          footer: stored.footer as object,
+        },
+      },
+    });
+
+    await as(
+      request(app.getHttpServer()).delete(
+        `/academies/${academy.id}/website/pages/${pageId}`,
+      ),
+    ).expect(204);
+
+    const after = await admin.websiteConfiguration.findUniqueOrThrow({
+      where: { academyId: academy.id },
+    });
+    expect(after.configVersion).toBe(stored.configVersion + 1);
+    const snapshot = after.publishedSnapshot as Record<string, unknown>;
+    for (const chrome of [after, snapshot]) {
+      expect(JSON.stringify(chrome.navigation)).not.toContain(pageId);
+      expect(JSON.stringify(chrome.header)).not.toContain(pageId);
+      expect(JSON.stringify(chrome.footer)).not.toContain(pageId);
+      expect(chrome.navigation).toEqual(keptNavigation);
+      expect(chrome.footer).toMatchObject({
+        groups: [{ id: 'g-promo', links: [{ id: 'l-ext' }] }],
+      });
+    }
+
+    // The Owner's next save is no longer refused for a dead reference.
+    await as(
+      request(app.getHttpServer()).patch(
+        `/academies/${academy.id}/website/configuration`,
+      ),
+    )
+      .send({ navigation: after.navigation, footer: after.footer })
+      .expect(200);
+  });
+
   it('visibility can be toggled on a toggleable core page, but the courseDetails core page rejects a visibility change', async () => {
     const { owner, academy } = await seedManagedAcademy('visibility');
     const pages = await request(app.getHttpServer())

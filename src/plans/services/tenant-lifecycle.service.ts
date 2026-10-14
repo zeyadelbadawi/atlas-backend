@@ -94,11 +94,13 @@ export interface LifecycleSweepResult {
 
 /** One catalogue key per clock-driven step. The event-driven four (T1, S1, S2, S8) are emitted by the actions that cause them. */
 const STEP_EVENT_KEY: Record<LifecycleStepId, CommunicationEventKey> = {
+  trial_ending_3d: 'lifecycle.trial.ending_in_3_days',
   trial_ending_soon: 'lifecycle.trial.ending_soon',
   trial_expired: 'lifecycle.trial.expired',
   trial_followup_3d: 'lifecycle.trial.followup_3d',
   trial_followup_14d: 'lifecycle.trial.followup_14d',
   trial_reactivation_45d: 'lifecycle.trial.reactivation_45d',
+  subscription_renewal_30d: 'lifecycle.subscription.renewal_30d',
   subscription_renewal_due: 'lifecycle.subscription.renewal_due',
   subscription_renewal_tomorrow: 'lifecycle.subscription.renewal_tomorrow',
   subscription_grace_started: 'lifecycle.subscription.grace_started',
@@ -315,6 +317,7 @@ export class TenantLifecycleService {
     const base = { anchorAt, planName };
 
     switch (step.step) {
+      case 'trial_ending_3d':
       case 'trial_ending_soon':
         return {
           ...base,
@@ -325,6 +328,7 @@ export class TenantLifecycleService {
       case 'trial_followup_14d':
       case 'trial_reactivation_45d':
         return { ...base, endedAtDate: formatLifecycleInstant(step.anchorAt) };
+      case 'subscription_renewal_30d':
       case 'subscription_renewal_due':
       case 'subscription_renewal_tomorrow':
         return { ...base, periodEndDate: formatLifecycleInstant(step.anchorAt) };
@@ -372,5 +376,17 @@ function toEvaluationInput(candidate: LifecycleCandidate): LifecycleEvaluationIn
       cancellations.find((row) => row.kind === 'trial')?.effectiveAt ?? null,
     paidCancelledAt:
       cancellations.find((row) => row.kind === 'paid')?.effectiveAt ?? null,
+    // B0-MSG-05 — the latest redemption is the current trial's start.
+    trialStartedAt: latest(
+      candidate.organization.trialRedemptions.map((row) => row.redeemedAt),
+    ),
+    billingCycle: candidate.billingCycle,
   };
+}
+
+function latest(dates: readonly Date[]): Date | null {
+  return dates.reduce<Date | null>(
+    (max, at) => (max === null || at.getTime() > max.getTime() ? at : max),
+    null,
+  );
 }
