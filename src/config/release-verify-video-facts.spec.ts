@@ -14,6 +14,7 @@ const SCRIPT = resolve(__dirname, '../../deploy/release-verify/remote.sh');
 
 const SECRETS = ['protected-key-SECRET-1', 'signing-SECRET-2'];
 const BUCKET = 'bucket-name-PRIVATE';
+const AUTHZ_SECRET = 'gate-authz-SECRET-3';
 const ACADEMY_IDS = ['acad-id-0001-aaaa', 'acad-id-0002-bbbb'];
 
 const BASE_ENV = [
@@ -134,10 +135,10 @@ describe('Release verify Normal-tier video readiness (B0-MED-11)', () => {
     const { out, err, status } = run(BASE_ENV, PROBE_OK);
     expect(out).toContain('== Normal-tier activation config (names only)');
     expect(out).toContain(
-      'INFO  required names set: 1 of 2; missing: BASIC_VIDEO_DELIVERY_HOST (tier off, not gating)',
+      'INFO  required names set: 1 of 3; missing: BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_GATE_AUTHZ_SECRET (tier off, not gating)',
     );
     expect(out).toContain(
-      'INFO  optional names set: R2_PROTECTED_BUCKET R2_PROTECTED_ACCESS_KEY_ID; not set: R2_PROTECTED_SECRET_ACCESS_KEY BASIC_VIDEO_REVOCATION_ENDPOINT BASIC_VIDEO_REVOCATION_TOKEN',
+      'INFO  optional names set: R2_PROTECTED_BUCKET R2_PROTECTED_ACCESS_KEY_ID; not set: R2_PROTECTED_SECRET_ACCESS_KEY',
     );
     for (const value of [...SECRETS, BUCKET]) {
       expect(out).not.toContain(value);
@@ -152,7 +153,7 @@ describe('Release verify Normal-tier video readiness (B0-MED-11)', () => {
     );
     const { out, status } = run(env, PROBE_OK);
     expect(out).toContain(
-      'FAIL  FLAG_VIDEO_NORMAL_MODE=allowlist but required names missing: BASIC_VIDEO_DELIVERY_HOST',
+      'FAIL  FLAG_VIDEO_NORMAL_MODE=allowlist but required names missing: BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_GATE_AUTHZ_SECRET',
     );
     expect(status).not.toBe(0);
   });
@@ -165,12 +166,17 @@ describe('Release verify Normal-tier video readiness (B0-MED-11)', () => {
     writeFileSync(join(bin, 'curl'), "#!/usr/bin/env bash\nprintf '401'\n");
     chmodSync(join(bin, 'curl'), 0o755);
     const { out, status } = run(
-      [...BASE_ENV, 'BASIC_VIDEO_DELIVERY_HOST=video.atlass.example'],
+      [
+        ...BASE_ENV,
+        'BASIC_VIDEO_DELIVERY_HOST=video.atlass.example',
+        `BASIC_VIDEO_GATE_AUTHZ_SECRET=${AUTHZ_SECRET}`,
+      ],
       PROBE_OK,
     );
     expect(out).toContain(
-      'PASS  required names set: 2 of 2 (BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_SIGNING_SECRET)',
+      'PASS  required names set: 3 of 3 (BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_SIGNING_SECRET BASIC_VIDEO_GATE_AUTHZ_SECRET)',
     );
+    expect(out).not.toContain(AUTHZ_SECRET);
     expect(out).toContain('PASS  delivery host answers a token-less request with 401');
     expect(status).toBe(0);
   });

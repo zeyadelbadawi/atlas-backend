@@ -76,36 +76,33 @@ const BASIC_DELIVERY_HOST = 'video.atlas.test';
  * `BasicVideoProvider` reads this object once and then consults it on
  * every `capabilities()` call, so flipping a field here is exactly what
  * happens when an operator wires (or fails to wire) the gate's revocation
- * denylist and origin allowlist. AD-16 says the grant must report what is
+ * path (the Worker→API authorization secret, Workstream D) and origin
+ * allowlist. AD-16 says the grant must report what is
  * ENFORCED, so both configurations have to be reachable from a test.
  */
 const basicConfig: {
   deliveryHost?: string;
   signingSecret?: string;
   playbackTtlSeconds: number;
-  revocationEndpoint?: string;
-  revocationToken?: string;
+  gateAuthzSecret?: string;
   allowedOriginsConfigured: boolean;
 } = {
   deliveryHost: BASIC_DELIVERY_HOST,
   signingSecret: 'p64-phase2-basic-video-signing-secret',
   playbackTtlSeconds: BASIC_PLAYBACK_TTL_SECONDS,
-  revocationEndpoint: 'https://video.atlas.test/__revocations',
-  revocationToken: 'p64-phase2-revocation-token',
+  gateAuthzSecret: 'p64-phase2-gate-authz-secret-0123456789abcdef',
   allowedOriginsConfigured: true,
 };
 
-/** The fully wired gate — revocation published, origins pushed. */
+/** The fully wired gate — re-authorization possible, origins pushed. */
 function wireBasicGate(): void {
-  basicConfig.revocationEndpoint = 'https://video.atlas.test/__revocations';
-  basicConfig.revocationToken = 'p64-phase2-revocation-token';
+  basicConfig.gateAuthzSecret = 'p64-phase2-gate-authz-secret-0123456789abcdef';
   basicConfig.allowedOriginsConfigured = true;
 }
 
 /** The half-configured gate: the Worker COULD enforce these; Atlas is not feeding it. */
 function unwireBasicGate(): void {
-  basicConfig.revocationEndpoint = undefined;
-  basicConfig.revocationToken = undefined;
+  basicConfig.gateAuthzSecret = undefined;
   basicConfig.allowedOriginsConfigured = false;
 }
 

@@ -12,6 +12,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { AuthCoreModule } from './auth-core.module';
 import { AuthController } from './controllers/auth.controller';
 import { UsersController } from './controllers/users.controller';
+import { RefreshReissueService } from './services/refresh-reissue.service';
 import { AuthService } from './services/auth.service';
 import { AccountSetupService } from './services/account-setup.service';
 import { UsersService } from './services/users.service';
@@ -63,7 +64,6 @@ import { UserPhoneService } from './phone/user-phone.service';
 import { PhoneVerificationService } from './phone/phone-verification.service';
 import { LearningLeaseService } from '../learning/services/learning-lease.service';
 import { AcademyArchiveModule } from '../academy/academy-archive.module';
-import { VideoGateRevocationService } from '../media/video/video-gate-revocation.service';
 
 @Module({
   imports: [
@@ -103,6 +103,8 @@ import { VideoGateRevocationService } from '../media/video/video-gate-revocation
   providers: [
     AccountSetupService,
     AuthService,
+    // U-14d / OD-21 — lost-response refresh recovery (Redis, `@Global()`).
+    RefreshReissueService,
     UsersService,
     // Phone number (docs/USER_PHONE.md) — no verification provider is bound
     // (`PHONE_VERIFICATION_PROVIDER`); none is contracted yet.
@@ -123,16 +125,15 @@ import { VideoGateRevocationService } from '../media/video/video-gate-revocation
     EmailVerificationTokensRepository,
     EmailRiskService,
     AccountDeletionService,
-    // D5-1 — account deletion drops the learner's learning leases and
-    // publishes the revoked sessions to the video delivery gate, as device
-    // removal and blocking already do. Registered DIRECTLY rather than by
-    // importing `LearningModule`/`MediaModule`: both depend on this module
-    // (through `AcademyModule`), so importing either back would be a real
-    // cycle. Each is a stateless wrapper over the `@Global()` Redis client
-    // or configuration — the same reasoning `AcademyModule` records for
-    // its directly registered domain providers.
+    // D5-1 — account deletion drops the learner's learning leases, as
+    // device removal and blocking already do. Registered DIRECTLY rather
+    // than by importing `LearningModule`: it depends on this module
+    // (through `AcademyModule`), so importing it back would be a real
+    // cycle. A stateless wrapper over the `@Global()` Redis client — the
+    // same reasoning `AcademyModule` records for its directly registered
+    // domain providers. (The video delivery gate needs no provider here:
+    // it re-authorizes against the rows deletion revokes — Workstream D.)
     LearningLeaseService,
-    VideoGateRevocationService,
     AccountSuspensionService,
     AccountDeletionChallengeService,
     DeletionPlanService,

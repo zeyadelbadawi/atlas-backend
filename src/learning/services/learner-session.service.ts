@@ -24,7 +24,6 @@ import { StudentDeviceService } from '../../tenancy/services/student-device.serv
 import { hashDeviceCookie } from '../../tenancy/services/student-device.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { LearningLeaseService } from './learning-lease.service';
-import { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import { CommunicationService } from '../../communications/services/communication.service';
 import type { EmitResult } from '../../communications/services/communication.service';
@@ -51,7 +50,6 @@ export class LearnerSessionService {
     private readonly accessPolicyService: AccessPolicyService,
     private readonly leaseService: LearningLeaseService,
     private readonly auditLogWriterService: AuditLogWriterService,
-    private readonly gateRevocation: VideoGateRevocationService,
     private readonly metrics: LearningMetricsService,
     private readonly communications: CommunicationService,
     private readonly academiesRepository: AcademiesRepository,
@@ -178,13 +176,12 @@ export class LearnerSessionService {
       },
     );
 
-    // P64 Phase 2 — and stop the DELIVERY GATE honouring credentials
-    // already in flight. Revoking the session alone only stops the next
-    // grant; a Normal-tier URL already in the player would keep serving
-    // for the rest of its ten minutes. Removing a device is what a
-    // learner does when they no longer control it, so it has to actually
-    // end access there.
-    await this.gateRevocation.revokeSessions(revokedSessionIds, 'device_removed');
+    // P64 Phase 2 — the DELIVERY GATE stops honouring credentials already
+    // in flight without a call from here: the Worker re-authorizes every
+    // Normal-tier token against the device and session rows revoked above
+    // (`VideoGateAuthorizationService`), within its ≤ 30 s cache window.
+    // Removing a device is what a learner does when they no longer
+    // control it, so it has to actually end access there.
     // Device Identity + Device-Limit fix — and its ACCESS tokens, at once.
     // Revoking the refresh rows only stopped the next refresh: the removed
     // device's current access token kept every API open for up to its
@@ -275,11 +272,11 @@ export class LearnerSessionService {
           data: { revokedAt: new Date() },
         }),
       );
-      // And at the delivery gate, so the displaced browser stops PLAYING
-      // rather than merely stopping at its next refresh. Without this a
-      // takeover would look instant to the learner who requested it and
-      // take up to ten minutes for the one being displaced.
-      await this.gateRevocation.revokeSession(previousSessionId, 'session_taken_over');
+      // That revocation is also what stops the displaced browser PLAYING:
+      // the delivery gate re-authorizes its Normal-tier token against
+      // these rows (`VideoGateAuthorizationService`), so the takeover
+      // reaches the displaced player within the gate's ≤ 30 s cache
+      // window rather than at token expiry.
     }
 
     this.metrics.recordTakeover();

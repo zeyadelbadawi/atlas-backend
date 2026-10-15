@@ -107,6 +107,10 @@ jobs:
             --exit-code
       - name: Unit tests
         run: npm run test -- --ci
+      # The video gate Worker's own suite: dependency-free, Node's built-in
+      # runner, no network (deploy/video-gate-worker/test).
+      - name: Video gate Worker unit tests
+        run: node --test deploy/video-gate-worker/test/*.test.js
       - name: Build
         run: npm run build
       - name: Dependency audit (production dependencies; informational — known, accepted, transitive findings)

@@ -68,6 +68,22 @@ const sessionsRevoked = counter(
   ['trigger'],
 );
 
+/**
+ * U-14d / OD-21 — refreshes whose response was lost and that were answered
+ * with the successor already minted (docs/REFRESH_TOKEN_LOST_RESPONSE_RECOVERY.md).
+ * A steady trickle is normal network loss; a sudden rise points at a proxy
+ * or client timing out refreshes.
+ */
+const refreshReissued = counter(
+  'atlas_auth_refresh_reissued_total',
+  'Cookie refreshes whose response was lost, answered with the successor token already minted for the same browser (U-14d).',
+  [],
+);
+
+export function recordRefreshReissued(): void {
+  refreshReissued.inc();
+}
+
 export function recordSurfaceDenied(reason: SurfaceDenialReason): void {
   surfaceDenied.inc({ reason });
 }

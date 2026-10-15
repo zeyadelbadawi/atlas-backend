@@ -14,10 +14,11 @@
  *   SC-06  a pre-cookie body token is converted once: body refresh → cookie,
  *          never a token in the body
  *   SC-07  stale-tab recovery — a refresh that lost a race to a concurrent
- *          one (two tabs, within the reuse grace) is refused WITHOUT
- *          clearing the cookie, so the winner's newer cookie survives; the
- *          same token replayed after the grace still clears it and ends
- *          the session family
+ *          one never clears the winner's newer cookie: inside the
+ *          lost-response window (U-14d / OD-21) it is answered with that
+ *          SAME newer cookie; past the window but within the reuse grace it
+ *          is refused WITHOUT clearing the cookie; the same token replayed
+ *          after the grace still clears it and ends the session family
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -158,22 +159,35 @@ describe('Session cookie (e2e)', () => {
     const newer = sessionTokenFrom(winner) as string;
     expect(newer).toBeTruthy();
 
-    // Tab B's request carried the old cookie a moment earlier: refused with
-    // the same generic 401 — but no Set-Cookie that would clear `newer`.
-    const loser = await cookieRefresh(original).expect(401);
-    expect(loser.body.error.messageKey).toBe('errors.auth.invalidRefreshToken');
+    // Tab B's request carried the old cookie a moment earlier. U-14d /
+    // OD-21 changed the answer from a 401 to the lost-response recovery: the
+    // same browser gets the SAME `newer` cookie back (nothing new minted), so
+    // `newer` survives exactly as before — and nothing clears it.
+    const loser = await cookieRefresh(original).expect(200);
+    expect(sessionTokenFrom(loser)).toBe(newer);
     expect(setCookies(loser).some((c) => /^atlas_session=;/.test(c))).toBe(false);
-    // The session is intact: the newer cookie still rotates.
-    const next = sessionTokenFrom(await cookieRefresh(newer).expect(200)) as string;
 
-    // Past the grace, the same old token is a replay: cookie cleared and
-    // the whole family ended (the newest token stops working too).
+    // Past the recovery window but within the reuse grace: the pre-existing
+    // stale-tab answer — the same generic 401, but no Set-Cookie that would
+    // clear `newer`.
     const admin = createAdminPrisma();
-    try {
-      await admin.refreshToken.update({
+    const backdate = (msAgo: number) =>
+      admin.refreshToken.update({
         where: { tokenHash: hashOpaqueToken(original) },
-        data: { revokedAt: new Date(Date.now() - 5 * 60 * 1000) },
+        data: { revokedAt: new Date(Date.now() - msAgo) },
       });
+    let next: string;
+    try {
+      await backdate(45 * 1000);
+      const late = await cookieRefresh(original).expect(401);
+      expect(late.body.error.messageKey).toBe('errors.auth.invalidRefreshToken');
+      expect(setCookies(late).some((c) => /^atlas_session=;/.test(c))).toBe(false);
+      // The session is intact: the newer cookie still rotates.
+      next = sessionTokenFrom(await cookieRefresh(newer).expect(200)) as string;
+
+      // Past the grace, the same old token is a replay: cookie cleared and
+      // the whole family ended (the newest token stops working too).
+      await backdate(5 * 60 * 1000);
     } finally {
       await admin.$disconnect();
     }

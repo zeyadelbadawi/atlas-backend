@@ -95,11 +95,18 @@ import { CommunicationService } from '../../communications/services/communicatio
 import type { EmitResult } from '../../communications/services/communication.service';
 import { AcademyStaffRecipientsService } from '../../communications/services/academy-staff-recipients.service';
 import { SupersededRefreshTokenException } from '../errors/superseded-refresh-token.exception';
+import {
+  RefreshReissueService,
+  type ReissueClientBinding,
+} from './refresh-reissue.service';
 import { UnprovenAccountService } from './unproven-account.service';
 import { TrustedDeviceService } from './trusted-device.service';
 import type { EmailOtpChallengeContract } from '../dto/contracts';
 import type { SignInSurface } from '../dto/sign-in.dto';
-import { recordSessionsRevoked } from '../../observability/metrics/auth-security-metrics';
+import {
+  recordRefreshReissued,
+  recordSessionsRevoked,
+} from '../../observability/metrics/auth-security-metrics';
 
 /**
  * Real request metadata for the session being created or refreshed —
@@ -211,6 +218,13 @@ export interface SessionRequestContext {
    * controller, and a server-only secret must not enter the wire contract.
    */
   readonly onTrustCookie?: (value: string, maxAgeSeconds: number) => void;
+  /**
+   * U-14d / OD-21 — how `POST /auth/refresh` received the token: the
+   * HttpOnly session cookie (same-origin checked) or a legacy pre-cookie
+   * body token. Only cookie refreshes are eligible for lost-response
+   * recovery. Set by the controller, never by the client.
+   */
+  readonly refreshChannel?: 'cookie' | 'body';
 }
 
 /** P64 Phase 1 (AD-5) — what a session is minted for. */
@@ -261,6 +275,8 @@ export class AuthService {
     // second, unmetered password-guessing endpoint; and (ATO F7) where
     // every failed password is counted toward the address's ceiling.
     private readonly signInThrottle: SignInThrottleService,
+    // U-14d / OD-21 — lost-response refresh recovery.
+    private readonly refreshReissue: RefreshReissueService,
     // New Customer Onboarding — provided by the global `OnboardingModule`;
     // absent in a module graph without it, which leaves the organization
     // signup unavailable (the safe direction). See the port's doc comment.
@@ -1915,6 +1931,18 @@ export class AuthService {
     );
 
     const days = (n: number) => n * 24 * 60 * 60 * 1000;
+    // U-14d / OD-21 — the presenting client as the server observed it, and
+    // how long a lost response may be recovered (0 = never).
+    const binding: ReissueClientBinding = {
+      channel: context?.refreshChannel ?? 'body',
+      userAgent: context?.userAgent,
+      deviceCookie: context?.deviceCookie,
+      hostname: context?.hostname,
+    };
+    const reissueWindowSeconds = Math.min(
+      30,
+      Math.max(0, identity.refreshReissueWindowSeconds ?? 0),
+    );
     const result = await this.refreshTokensRepository.rotate(
       presentedHash,
       {
@@ -1933,16 +1961,40 @@ export class AuthService {
         management: days(identity.sessionAbsoluteMaxDays.management),
         academy: days(identity.sessionAbsoluteMaxDays.academy),
       },
+      // Recorded before commit, so a duplicate waiting on the row lock finds
+      // it. Cookie refreshes only; never throws.
+      () =>
+        this.refreshReissue.remember(
+          rawRefreshToken,
+          presentedHash,
+          newRawToken,
+          binding,
+          reissueWindowSeconds,
+        ),
     );
 
     if (!result) {
+      // U-14d / OD-21 — lost-response recovery: THIS browser rotated the
+      // token moments ago and never received the answer. It gets the very
+      // successor that answer carried — nothing new is minted — or, when the
+      // token comes back from a different client inside the window, the
+      // family ends at once.
+      const recovery = await this.recoverLostRefresh(
+        rawRefreshToken,
+        presentedHash,
+        binding,
+        reissueWindowSeconds,
+      );
+      if (recovery.kind === 'reissued') return recovery.response;
+
       // A token that was already rotated away and is presented again later
       // means two parties hold the same session: the whole family ends
       // (refresh rows and live access tokens), whoever holds it. A benign
-      // concurrent-refresh race (within the grace) just fails.
+      // concurrent-refresh race (within the grace) just fails — unless the
+      // recovery check above already saw a different client present it.
       const reused = await this.refreshTokensRepository.findReusedRotation(
         presentedHash,
-        REFRESH_REUSE_GRACE_MS,
+        recovery.kind === 'foreign' ? 0 : REFRESH_REUSE_GRACE_MS,
       );
       if (reused) {
         const revoked = await this.refreshTokensRepository.revokeSessionForUser(
@@ -1952,7 +2004,14 @@ export class AuthService {
         await this.sessionRevocationService.markRevoked(reused.sessionId);
         recordSessionsRevoked('refresh_token_reuse', revoked > 0 ? 1 : 0);
         this.logger.warn(
-          { event: 'auth.refresh.reuse_detected', userId: reused.userId, revoked },
+          {
+            event: 'auth.refresh.reuse_detected',
+            userId: reused.userId,
+            revoked,
+            // U-14d — `foreign_client`: inside the recovery window, but from
+            // another client than the one that rotated it.
+            reason: recovery.kind === 'foreign' ? 'foreign_client' : 'after_grace',
+          },
           'A rotated refresh token was presented again; its session was ended.',
         );
         await this.tenancyContextService.runInUserContext(reused.userId, (tx) =>
@@ -2028,6 +2087,75 @@ export class AuthService {
       accessToken: accessToken.token,
       refreshToken: newRawToken,
       expiresIn: accessToken.expiresInSeconds,
+    };
+  }
+
+  /**
+   * U-14d / OD-21 — lost-response recovery for a refresh token that just
+   * failed to rotate. See `RefreshReissueService` and
+   * docs/REFRESH_TOKEN_LOST_RESPONSE_RECOVERY.md.
+   *
+   *  - `reissued`: the same browser (cookie transport, same User-Agent,
+   *    device cookie and host) presented, within the window, a token it
+   *    rotated itself, and the database confirms the successor is the
+   *    token's direct, never-used, live next row. The answer carries that
+   *    SAME successor and a fresh access token for the same session.
+   *  - `foreign`: a genuine recovery record exists — the token was rotated
+   *    seconds ago — but by a different client. The caller ends the family.
+   *  - `none`: no recovery applies; the ordinary rules decide.
+   */
+  private async recoverLostRefresh(
+    rawRefreshToken: string,
+    presentedHash: string,
+    binding: ReissueClientBinding,
+    windowSeconds: number,
+  ): Promise<
+    | { readonly kind: 'reissued'; readonly response: TokenRefreshResponseContract }
+    | { readonly kind: 'foreign' }
+    | { readonly kind: 'none' }
+  > {
+    if (windowSeconds <= 0) return { kind: 'none' };
+    const lookup = await this.refreshReissue.lookup(
+      rawRefreshToken,
+      presentedHash,
+      binding,
+    );
+    if (lookup.kind !== 'successor') return lookup;
+    const successor = await this.refreshTokensRepository.findReissuableSuccessor(
+      presentedHash,
+      hashOpaqueToken(lookup.successorToken),
+      windowSeconds * 1000,
+    );
+    if (!successor) return { kind: 'none' };
+
+    // The same account rule as a rotation: an account that is no longer
+    // active ends the session instead of renewing it.
+    const owner = await this.usersRepository.findById(successor.userId);
+    if (!owner || owner.status !== 'active') {
+      await this.refreshTokensRepository.revokeSessionForUser(
+        successor.sessionId,
+        successor.userId,
+      );
+      await this.sessionRevocationService.markRevoked(successor.sessionId);
+      throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
+    }
+
+    recordRefreshReissued();
+    this.logger.log(
+      { event: 'auth.refresh.reissued', userId: successor.userId },
+      'A refresh whose response was lost was answered with the successor it had already minted.',
+    );
+    const accessToken = this.accessTokenService.issue({
+      sub: successor.userId,
+      sid: successor.sessionId,
+    });
+    return {
+      kind: 'reissued',
+      response: {
+        accessToken: accessToken.token,
+        refreshToken: lookup.successorToken,
+        expiresIn: accessToken.expiresInSeconds,
+      },
     };
   }
 

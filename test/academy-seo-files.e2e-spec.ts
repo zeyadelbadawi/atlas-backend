@@ -185,6 +185,33 @@ describe('Academy robots.txt and sitemap.xml (e2e) — B0-WEB-01', () => {
     await sitemap(host).expect(404);
   });
 
+  it('keeps a stable page order when a publish rewrites the rows (no heap-order dependence)', async () => {
+    const { academyId, host, token } = await academyWithHost('seo-order', true);
+    const locs = (xml: string) =>
+      [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+    const before = locs((await sitemap(host).expect(200)).text);
+    expect(before[0]).toBe(`https://${host}/`);
+    expect(before).toContain(`https://${host}/about-us`);
+
+    // Rewrite the home page's row with a non-HOT update (an indexed column
+    // changes, then is restored): its new tuple and index entries land after
+    // every other page's, so an unordered read would now list it last.
+    const home = await admin.websitePage.findFirstOrThrow({
+      where: { academyId, coreType: 'home' },
+    });
+    await admin.websitePage.update({
+      where: { id: home.id },
+      data: { slug: `${home.slug}-moved` },
+    });
+    await admin.websitePage.update({ where: { id: home.id }, data: { slug: home.slug } });
+    await request(app.getHttpServer())
+      .post(`/academies/${academyId}/website/publish`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(201);
+
+    expect(locs((await sitemap(host).expect(200)).text)).toEqual(before);
+  });
+
   describe('B0-WEB-02 — Arabic as the default language', () => {
     const patchConfig = (academyId: string, token: string, body: object) =>
       request(app.getHttpServer())
