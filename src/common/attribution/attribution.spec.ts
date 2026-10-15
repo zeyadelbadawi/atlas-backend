@@ -71,7 +71,9 @@ describe('sanitizeAttribution (B0-ANL-04)', () => {
     });
     expect(stored?.utmSource).toBe('x'.repeat(ATTRIBUTION_VALUE_MAX - 1));
     expect(stored?.utmCampaign).toBe('launch');
-    expect(JSON.stringify(stored)).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    expect(JSON.stringify(stored)).not.toMatch(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+    );
   });
 
   it('recognises personal data without flagging dates or short codes', () => {
