@@ -15,7 +15,9 @@
  * real Academy or the whole registration is rejected; see
  * `AuthService.resolveRegistrationAcademyId`.
  */
+import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEmail,
   IsNotEmpty,
   IsOptional,
@@ -24,7 +26,9 @@ import {
   MaxLength,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { AttributionDto } from '../../common/attribution/attribution';
 import { IsNotCommonPassword } from '../password/common-password.validator';
 import {
   IsMobilePhoneNumber,
@@ -116,4 +120,26 @@ export class RegisterDto {
   @IsString()
   @IsPhoneCountry()
   readonly phoneCountry?: string;
+
+  /**
+   * B0-IAM-08 — the organization owner's "Contact me on WhatsApp about my
+   * account and setup" box (unticked unless ticked). Stored — with the time
+   * and the server's wording version — only when
+   * `FLAG_SIGNUP_WHATSAPP_CONSENT_MODE=on`, the request creates an
+   * organization, and a phone number is given. On any other signup
+   * (learners included) it is ignored and nothing is stored.
+   */
+  @IsOptional()
+  @IsBoolean()
+  readonly whatsappConsent?: boolean;
+
+  /**
+   * B0-ANL-04 — UTM values / referrer domain / landing template carried in
+   * memory by the signup page. Stored (sanitised) on the organization only
+   * when `FLAG_ATTRIBUTION_CAPTURE_MODE=on` and the request creates one.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AttributionDto)
+  readonly attribution?: AttributionDto;
 }

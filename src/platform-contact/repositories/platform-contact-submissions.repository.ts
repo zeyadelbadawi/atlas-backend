@@ -32,6 +32,18 @@ export interface InsertPlatformContactSubmission {
   readonly sourcePath: string | null;
   readonly ipHash: string;
   readonly userAgent: string | null;
+  /** B0-SUP-04 / B0-ANL-04 — present only while their flags are on. */
+  readonly phoneE164?: string | null;
+  readonly phoneCountry?: string | null;
+  readonly contactConsentAt?: Date | null;
+  readonly contactConsentVersion?: string | null;
+  readonly marketingConsentAt?: Date | null;
+  readonly marketingConsentVersion?: string | null;
+  readonly requesterRole?: string | null;
+  readonly subject?: string | null;
+  readonly studentBand?: string | null;
+  readonly preferredChannel?: string | null;
+  readonly attribution?: Prisma.InputJsonValue;
 }
 
 export interface FindPlatformContactSubmissionsOptions {
@@ -56,6 +68,38 @@ export class PlatformContactSubmissionsRepository {
     const id = randomUUID();
     await tx.platformContactSubmission.createMany({ data: [{ id, ...data }] });
     return id;
+  }
+
+  /**
+   * B0-SUP-04 retention — the ids of enquiries created before `cutoff`,
+   * oldest first, at most `take`. Platform Owner context.
+   */
+  async findIdsCreatedBefore(
+    tx: Prisma.TransactionClient,
+    cutoff: Date,
+    take: number,
+  ): Promise<string[]> {
+    const rows = await tx.platformContactSubmission.findMany({
+      where: { createdAt: { lt: cutoff } },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take,
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
+  }
+
+  countCreatedBefore(tx: Prisma.TransactionClient, cutoff: Date): Promise<number> {
+    return tx.platformContactSubmission.count({ where: { createdAt: { lt: cutoff } } });
+  }
+
+  async deleteMany(
+    tx: Prisma.TransactionClient,
+    ids: readonly string[],
+  ): Promise<number> {
+    const result = await tx.platformContactSubmission.deleteMany({
+      where: { id: { in: [...ids] } },
+    });
+    return result.count;
   }
 
   /** One page, filtered and sorted in the database. Ties broken by `id` so paging is stable. */

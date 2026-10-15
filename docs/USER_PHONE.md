@@ -114,3 +114,14 @@ matches sender number + code. It needs no outbound template, but still needs
 a WhatsApp Business Platform account (Meta business portfolio, a dedicated
 number, acceptance of Meta's terms, payment method on file), so it is a
 product/ops decision, not a free switch.
+
+## Organization owner WhatsApp opt-in (B0-IAM-08)
+
+Behind `FLAG_SIGNUP_WHATSAPP_CONSENT_MODE` (default `off`; the consent wording is a DRAFT pending
+counsel). On the organization owner sign-up only, an unticked "Contact me on WhatsApp about my
+account and setup" box stores `user_phones.whatsapp_consent_at` + `whatsapp_consent_version`
+(`signup-whatsapp-consent-2026-10-draft1`) — migration `20261117000100_lead_consent_attribution`.
+A learner sign-up never stores it. A trigger clears both when the number changes. The Platform
+Owner reads an owner's number only through `platform_organization_owner_phones(org_ids)`, which
+returns a row only while that owner's opt-in stands; it is shown on the organization detail
+(`GET /organizations/:id` → `ownerPhone`). Learner phone visibility is unchanged.

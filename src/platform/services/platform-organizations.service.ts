@@ -30,6 +30,7 @@ import type {
   PlatformOrganizationSummaryResponse,
 } from '../dto/platform-organization.contract';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
+import { readOptedInOrganizationOwnerPhones } from '../../identity/phone/user-phone.service';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
@@ -107,7 +108,7 @@ export class PlatformOrganizationsService {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
 
-    const [subscription, usage, academies, members] = await Promise.all([
+    const [subscription, usage, academies, members, ownerPhones] = await Promise.all([
       this.tryGetSubscription(organizationId),
       this.tryGetUsage(organizationId),
       this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
@@ -119,6 +120,10 @@ export class PlatformOrganizationsService {
           organizationId,
         ),
       ),
+      // B0-IAM-08 — only an owner who opted in to WhatsApp contact.
+      this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
+        readOptedInOrganizationOwnerPhones(tx, [organizationId]),
+      ),
     ]);
 
     return toPlatformOrganizationDetailResponse(
@@ -127,6 +132,7 @@ export class PlatformOrganizationsService {
       usage,
       academies,
       members,
+      ownerPhones.get(organizationId),
     );
   }
 

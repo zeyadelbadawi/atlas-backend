@@ -21,3 +21,16 @@ export class PlatformMetricsWindowQueryDto {
   @Max(REPORT_WINDOW_MAX_DAYS)
   readonly days?: number;
 }
+
+/** B0-ANL-04 — `GET /platform-metrics/growth` — how many weekly cohorts (1–26, default 12). */
+export const GROWTH_WEEKS_DEFAULT = 12;
+export const GROWTH_WEEKS_MAX = 26;
+
+export class PlatformGrowthQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(GROWTH_WEEKS_MAX)
+  readonly weeks?: number;
+}

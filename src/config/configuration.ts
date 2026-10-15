@@ -448,6 +448,30 @@ export interface CommunicationsConfig {
 /** B0-SUP-01 — Platform Owner work alerts on/off. */
 export type PlatformOwnerAlertsMode = 'off' | 'on';
 
+/**
+ * B0-SUP-04 / B0-IAM-08 / B0-ANL-04 — new lead data collection. Every
+ * collection switch defaults to `off`: the consent wording is a DRAFT
+ * pending counsel, so deploying the code must change nothing for anyone
+ * until the owner turns a switch on. Read on every request, never cached.
+ */
+export type LeadCaptureMode = 'off' | 'on';
+
+/** B0-SUP-04 — marketing-enquiry retention: `dry_run` logs what it would delete. */
+export type ContactRetentionMode = 'off' | 'dry_run' | 'on';
+
+export interface LeadCaptureConfig {
+  /** `FLAG_CONTACT_CONSENT_MODE` — contact form phone, two consents, sales qualification. */
+  contactConsentMode: LeadCaptureMode;
+  /** `FLAG_SIGNUP_WHATSAPP_CONSENT_MODE` — organization owner signup WhatsApp opt-in. */
+  signupWhatsappConsentMode: LeadCaptureMode;
+  /** `FLAG_ATTRIBUTION_CAPTURE_MODE` — UTM / referrer domain / landing template on signup + contact. */
+  attributionCaptureMode: LeadCaptureMode;
+  /** `FLAG_CONTACT_RETENTION_MODE` — `dry_run` unless set. */
+  contactRetentionMode: ContactRetentionMode;
+  /** `CONTACT_ENQUIRY_RETENTION_MONTHS` — 24 unless set (a proposal; counsel sets the period). */
+  contactRetentionMonths: number;
+}
+
 /** P64 C5 — the staged rollout of the lifecycle sequences (§43). */
 export type LifecycleSequencesMode = 'off' | 'dry_run' | 'on';
 
@@ -952,9 +976,21 @@ export default () => {
       (nodeEnv === 'test' ? 'off' : 'on')) as PlatformOwnerAlertsMode,
   };
 
+  const leadCapture: LeadCaptureConfig = {
+    contactConsentMode: (env.FLAG_CONTACT_CONSENT_MODE ?? 'off') as LeadCaptureMode,
+    signupWhatsappConsentMode: (env.FLAG_SIGNUP_WHATSAPP_CONSENT_MODE ??
+      'off') as LeadCaptureMode,
+    attributionCaptureMode: (env.FLAG_ATTRIBUTION_CAPTURE_MODE ??
+      'off') as LeadCaptureMode,
+    contactRetentionMode: (env.FLAG_CONTACT_RETENTION_MODE ??
+      'dry_run') as ContactRetentionMode,
+    contactRetentionMonths: Number(env.CONTACT_ENQUIRY_RETENTION_MONTHS || 24),
+  };
+
   return {
     app,
     communications,
+    leadCapture,
     database,
     redis,
     observability,

@@ -1265,6 +1265,16 @@ export const AUDIT_EVENT_DEFINITIONS = [
     false,
     ['status'],
   ),
+  // B0-SUP-04 — the daily enquiry retention run (FLAG_CONTACT_RETENTION_MODE=on).
+  // One row per run that deleted anything: the count and the period only.
+  ev(
+    'platform.contact_submission.retention_purged',
+    'platform',
+    'platform_contact_submission',
+    'platform',
+    false,
+    ['deletedCount', 'retentionMonths'],
+  ),
   // W3-compose — person-authored messages. Counts and the audience TYPE
   // only: never the subject, the body or any recipient.
   ev('platform.campaign.sent', 'platform', 'communication_campaign', 'platform', false, [

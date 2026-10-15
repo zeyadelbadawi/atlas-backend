@@ -32,6 +32,7 @@ import { PlatformMetricsService } from './services/platform-metrics.service';
 import { AnalyticsService } from './services/analytics.service';
 import { PlatformScaleRepository } from './repositories/platform-scale.repository';
 import { AnalyticsRevenueRepository } from './repositories/analytics-revenue.repository';
+import { PlatformGrowthRepository } from './repositories/platform-growth.repository';
 
 @Module({
   imports: [AuthCoreModule, IdentityModule, TenancyModule],
@@ -41,6 +42,8 @@ import { AnalyticsRevenueRepository } from './repositories/analytics-revenue.rep
     AnalyticsService,
     PlatformScaleRepository,
     AnalyticsRevenueRepository,
+    // B0-ANL-04 (part 3) — the Platform Owner's Growth funnel.
+    PlatformGrowthRepository,
   ],
 })
 export class AnalyticsModule {}

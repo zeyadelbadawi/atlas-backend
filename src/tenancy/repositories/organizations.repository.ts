@@ -54,6 +54,8 @@ export class OrganizationsRepository {
        * the signup path passes `null` explicitly to start it as pending.
        */
       readonly onboardingCompletedAt?: null;
+      /** B0-ANL-04 — sanitised signup attribution; omitted = none stored. */
+      readonly signupAttribution?: Prisma.InputJsonValue;
     },
   ): Promise<Organization> {
     return tx.organization.create({
@@ -63,6 +65,9 @@ export class OrganizationsRepository {
         slug: data.slug,
         ownerUserId: data.ownerUserId,
         ...(data.onboardingCompletedAt === null ? { onboardingCompletedAt: null } : {}),
+        ...(data.signupAttribution !== undefined
+          ? { signupAttribution: data.signupAttribution }
+          : {}),
       },
     });
   }
