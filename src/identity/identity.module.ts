@@ -62,6 +62,7 @@ import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-li
 import { UserPhoneService } from './phone/user-phone.service';
 import { PhoneVerificationService } from './phone/phone-verification.service';
 import { LearningLeaseService } from '../learning/services/learning-lease.service';
+import { AcademyArchiveModule } from '../academy/academy-archive.module';
 import { VideoGateRevocationService } from '../media/video/video-gate-revocation.service';
 
 @Module({
@@ -77,6 +78,11 @@ import { VideoGateRevocationService } from '../media/video/video-gate-revocation
     TenancyModule,
     // P64 Communications — adapters, registry, quota, suppression, webhook.
     CommunicationsProvidersModule,
+    // D5-2 — account deletion archives an owner's academies through the
+    // same `AcademyArchiveService` as `DELETE /academies/:id`. That module
+    // imports only `TenancyModule` (never `IdentityModule`/`AcademyModule`),
+    // so this stays a clean DAG.
+    AcademyArchiveModule,
   ],
   // `TwoFactorController` is listed before `AuthController` so its
   // `/auth/2fa/*` routes are registered ahead of any broader `/auth/*`

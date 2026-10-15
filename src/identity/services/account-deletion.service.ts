@@ -41,9 +41,12 @@
  * be undone from inside Atlas. The refusal is enforced here, on the
  * server, rather than by hiding a button.
  *
- * OWNED RESOURCES. An organization owner's academies are archived, which
- * takes their public websites offline and releases the plan's academy
- * allowance. The organization row itself is retained: it anchors billing
+ * OWNED RESOURCES. An organization owner's academies are archived — through
+ * the same `AcademyArchiveService` an owner's own "Delete academy" uses
+ * (D5-2): `archivedAt` recorded (which starts the 30-day media grace),
+ * custom domain released, cached hostnames dropped so the public site goes
+ * offline at once, and usage recomputed so the plan's academy allowance is
+ * freed. The organization row itself is retained: it anchors billing
  * and audit history, and destroying it would take other people's data
  * with it. That limitation is stated in the report rather than hidden.
  */
@@ -67,6 +70,10 @@ import { SessionRevocationService } from './session-revocation.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { LearningLeaseService } from '../../learning/services/learning-lease.service';
 import { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
+import {
+  AcademyArchiveService,
+  type ArchivedAcademyPresence,
+} from '../../academy/services/academy-archive.service';
 
 /** Closed vocabulary, mirroring subscription cancellation so both "why did you leave" signals aggregate the same way. */
 export const ACCOUNT_DELETION_REASONS = [
@@ -118,6 +125,7 @@ export class AccountDeletionService {
     private readonly studentDeviceService: StudentDeviceService,
     private readonly learningLeaseService: LearningLeaseService,
     private readonly videoGateRevocationService: VideoGateRevocationService,
+    private readonly academyArchiveService: AcademyArchiveService,
   ) {}
 
   /**
@@ -230,7 +238,7 @@ export class AccountDeletionService {
       });
     }
 
-    const academiesArchived = await this.archiveOwnedAcademies(userId);
+    const academiesArchived = await this.archiveOwnedAcademies(userId, actor);
 
     // Before anonymising: strip the person's access, inside the tenant
     // contexts RLS requires. Doing this first means that even if
@@ -286,8 +294,20 @@ export class AccountDeletionService {
    * plan's academy allowance. Archiving rather than deleting matches the
    * existing `AcademiesService.archive` behaviour — there is no DELETE
    * RLS policy on `academies` at all, by design.
+   *
+   * D5-2 — through the SAME archive implementation as `AcademiesService.
+   * archive` (`AcademyArchiveService`). This used to be a bare
+   * `status = 'archived'` update: no `archivedAt`, so
+   * `ArchivedMediaPurgeService` never purged these academies' media after
+   * the 30-day grace; no custom-domain release; no hostname-cache drop; no
+   * usage recompute. The state, the domain release and an `academy.archived`
+   * audit row (actor: whoever authorised the deletion) commit together per
+   * organization; the post-commit steps follow it.
    */
-  private async archiveOwnedAcademies(userId: string): Promise<number> {
+  private async archiveOwnedAcademies(
+    userId: string,
+    actor: DeletionActor,
+  ): Promise<number> {
     // Read inside a USER context. Without it the `organizations` SELECT
     // policy matches nothing and this returns an empty list — the lookup
     // fails silently and the whole method becomes a no-op that still
@@ -303,16 +323,66 @@ export class AccountDeletionService {
 
     let archived = 0;
     for (const organization of ownedOrganizations) {
-      const result = await this.tenancyContextService.runInTenantAndUserContext(
+      // Tenant AND user context, as the deleted owner: the custom-domain
+      // connection is invisible to a tenant-only read, and this is the
+      // context `AcademiesService.archive` releases domains in.
+      const presences = await this.tenancyContextService.runInTenantAndUserContext(
         organization.id,
         userId,
-        (tx) =>
-          tx.academy.updateMany({
+        async (tx) => {
+          const academies = await tx.academy.findMany({
             where: { organizationId: organization.id, status: { not: 'archived' } },
-            data: { status: 'archived' },
-          }),
+            select: { id: true, slug: true, name: true },
+          });
+          const archivedAt = new Date();
+          const released: ArchivedAcademyPresence[] = [];
+          for (const academy of academies) {
+            // No reason or feedback: the owner deleted their ACCOUNT, not
+            // this academy, and the closed academy-reason vocabulary has no
+            // honest value for that. The audit row and `account.deleted*`
+            // say why.
+            await this.academyArchiveService.markArchived(tx, academy.id, {}, archivedAt);
+            released.push(
+              await this.academyArchiveService.releaseCustomDomain(tx, academy),
+            );
+            await this.auditLogWriterService.writeBestEffort(tx, {
+              actorUserId: actor.actorUserId,
+              organizationId: organization.id,
+              academyId: academy.id,
+              role: actor.initiatedBy === 'platform_owner' ? 'platform_owner' : 'owner',
+              action: 'academy.archived',
+              targetType: 'academy',
+              targetId: academy.id,
+              targetLabel: academy.name,
+              context: { reason: null, hasFeedback: false },
+            });
+          }
+          return released;
+        },
       );
-      archived += result.count;
+      archived += presences.length;
+      if (presences.length === 0) continue;
+
+      // After commit. A Redis/queue failure here must not stop the person
+      // being erased: the archive and the domain-release ledger row are
+      // already committed, the release sweep retries the provider call,
+      // a cached hostname ages out within 60 s and the resolver already
+      // refuses archived academies.
+      try {
+        await this.academyArchiveService.afterArchiveCommitted(
+          organization.id,
+          presences,
+        );
+      } catch (error) {
+        this.logger.error(
+          {
+            userId,
+            organizationId: organization.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'Post-archive steps failed during account deletion; usage will be recomputed by the stale-usage sweep.',
+        );
+      }
     }
 
     return archived;

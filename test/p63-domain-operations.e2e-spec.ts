@@ -1336,6 +1336,49 @@ describe('P63 — domain operations (e2e, real PostgreSQL, fake provider)', () =
       expect(cloudflare.has(hostname)).toBe(false);
     });
 
+    it("P63-OPS-006b (D5-2) — account deletion archives the owner's academy exactly like DELETE: custom domain released, every public read offline at once, archivedAt recorded", async () => {
+      const { owner, academy } = await seedManagedAcademyWithSubdomain('p63-acctdel');
+      const hostname = `acctdel-${run}.example.com`;
+      await addDomain(academy.id, owner.accessToken, hostname).expect(201);
+      cloudflare.setState(hostname, 'active', 'active');
+      await verify(academy.id, owner.accessToken).expect(201);
+      // Cached for 60 s by this read.
+      await request(app.getHttpServer())
+        .get('/public/websites/resolve')
+        .query({ hostname })
+        .expect(200);
+
+      const platformOwner = await seedPlatformOwner('p63-acctdel-po');
+      await request(app.getHttpServer())
+        .post(`/platform-user-management/${owner.userId}/delete`)
+        .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+        .send({ confirm: true })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .get('/public/websites/resolve')
+        .query({ hostname })
+        .expect(404);
+      await request(app.getHttpServer())
+        .get(`/public/websites/${academy.id}`)
+        .expect(404);
+      const row = await admin.domainConnection.findUniqueOrThrow({
+        where: { academyId: academy.id },
+      });
+      expect(row.hostname).toBeNull();
+      expect(cloudflare.has(hostname)).toBe(false);
+      expect(
+        await admin.domainProviderRelease.count({
+          where: { academyId: academy.id, hostname, reason: 'archived' },
+        }),
+      ).toBe(1);
+      const archived = await admin.academy.findUniqueOrThrow({
+        where: { id: academy.id },
+      });
+      expect(archived.status).toBe('archived');
+      expect(archived.archivedAt).toBeInstanceOf(Date);
+    });
+
     it('P63-OPS-004 — readiness reports live provider facts; PATCH of the base domain stays allowed here only because no environment value is set', async () => {
       const platformOwner = await seedPlatformOwner('p63-ops-ready-owner');
       const readiness = await request(app.getHttpServer())
