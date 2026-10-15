@@ -25,6 +25,10 @@ import { AccountDeletionService } from './account-deletion.service';
 import type { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import type { SessionRevocationService } from './session-revocation.service';
 import type { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
+import { StudentDeviceService } from '../../tenancy/services/student-device.service';
+import type { LearningLeaseService } from '../../learning/services/learning-lease.service';
+import type { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
+import type { AcademyArchiveService } from '../../academy/services/academy-archive.service';
 
 interface AuditRow {
   actorUserId: string;
@@ -34,14 +38,33 @@ interface AuditRow {
 }
 
 /** Users the fake database knows about, keyed by id. */
-function build(users: Record<string, { isPlatformOwner?: boolean; status?: string }>) {
+function build(
+  users: Record<string, { isPlatformOwner?: boolean; status?: string }>,
+  options: {
+    /** Organizations the subject owns, each with its not-yet-archived academies. */
+    readonly owned?: Record<string, { id: string; slug: string; name: string }[]>;
+    readonly afterArchiveFails?: boolean;
+  } = {},
+) {
+  const owned = options.owned ?? {};
+  const archiveCalls: { academyId: string; input: unknown; archivedAt: Date }[] = [];
+  const releaseCalls: string[] = [];
+  const afterCommitCalls: { organizationId: string; slugs: string[] }[] = [];
+  let currentOrganization: string | null = null;
   const audits: AuditRow[] = [];
   const revoked: string[] = [];
   const enqueued: unknown[] = [];
+  const gateRevoked: { sessionIds: readonly string[]; reason: string }[] = [];
+  const leasesDropped: string[] = [];
+  const deviceUpdates: unknown[] = [];
 
   const tx = {
-    organization: { findMany: async () => [] },
-    academy: { updateMany: async () => ({ count: 0 }) },
+    organization: {
+      findMany: async () => Object.keys(owned).map((id) => ({ id })),
+    },
+    academy: {
+      findMany: async () => (currentOrganization ? owned[currentOrganization] : []),
+    },
     organizationMembership: { findMany: async () => [], deleteMany: async () => ({}) },
     academyMember: { deleteMany: async () => ({}) },
     academyStudent: { deleteMany: async () => ({}), count: async () => 0 },
@@ -58,6 +81,14 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
     passwordResetToken: { deleteMany: async () => ({}) },
     emailVerificationToken: { deleteMany: async () => ({}) },
     trustedDevice: { updateMany: async () => ({}) },
+    // Two devices at two academies, both still active.
+    studentDevice: {
+      findMany: async () => [{ academyId: 'academy-a' }, { academyId: 'academy-b' }],
+      updateMany: async (args: unknown) => {
+        deviceUpdates.push(args);
+        return { count: 2 };
+      },
+    },
     authEmailChallenge: { updateMany: async () => ({}) },
     authOAuthFlow: { updateMany: async () => ({}) },
     accountDeletionChallenge: { deleteMany: async () => ({}) },
@@ -80,10 +111,17 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
     runInUserContext: async (_i: string, w: (t: unknown) => unknown) => w(tx),
     runInTenantContext: async (_i: string, w: (t: unknown) => unknown) => w(tx),
     runInTenantAndUserContext: async (
-      _o: string,
+      organizationId: string,
       _u: string,
       w: (t: unknown) => unknown,
-    ) => w(tx),
+    ) => {
+      currentOrganization = organizationId;
+      try {
+        return await w(tx);
+      } finally {
+        currentOrganization = null;
+      }
+    },
   } as unknown as TenancyContextService;
 
   const service = new AccountDeletionService(
@@ -95,9 +133,57 @@ function build(users: Record<string, { isPlatformOwner?: boolean; status?: strin
     {
       writeBestEffort: async (_t: unknown, row: AuditRow) => audits.push(row),
     } as unknown as AuditLogWriterService,
+    // The real service over the fake transaction: the statement it issues
+    // is part of what is under test.
+    new StudentDeviceService(),
+    {
+      revokeAll: async (userId: string, academyId: string) =>
+        leasesDropped.push(`${userId}:${academyId}`),
+    } as unknown as LearningLeaseService,
+    {
+      revokeSessions: async (sessionIds: readonly string[], reason: string) =>
+        gateRevoked.push({ sessionIds, reason }),
+    } as unknown as VideoGateRevocationService,
+    {
+      markArchived: async (
+        _tx: unknown,
+        academyId: string,
+        input: unknown,
+        archivedAt: Date,
+      ) => archiveCalls.push({ academyId, input, archivedAt }),
+      releaseCustomDomain: async (
+        _tx: unknown,
+        academy: { id: string; slug: string },
+      ) => {
+        releaseCalls.push(academy.id);
+        return {
+          slug: academy.slug,
+          allocation: null,
+          previousHostname: null,
+          releaseId: null,
+        };
+      },
+      afterArchiveCommitted: async (
+        organizationId: string,
+        presences: readonly { slug: string }[],
+      ) => {
+        if (options.afterArchiveFails) throw new Error('queue down');
+        afterCommitCalls.push({ organizationId, slugs: presences.map((p) => p.slug) });
+      },
+    } as unknown as AcademyArchiveService,
   );
 
-  return { service, audits, revoked };
+  return {
+    service,
+    audits,
+    revoked,
+    gateRevoked,
+    leasesDropped,
+    deviceUpdates,
+    archiveCalls,
+    releaseCalls,
+    afterCommitCalls,
+  };
 }
 
 describe('AccountDeletionService — who may delete whom', () => {
@@ -160,6 +246,53 @@ describe('AccountDeletionService — who may delete whom', () => {
     });
   });
 
+  describe('owned academies (D5-2)', () => {
+    const owned = {
+      'org-1': [
+        { id: 'ac-1', slug: 'ac-one', name: 'Academy One' },
+        { id: 'ac-2', slug: 'ac-two', name: 'Academy Two' },
+      ],
+    };
+
+    it('archives through the shared archive service: archivedAt, domain release, post-commit steps, audit', async () => {
+      const { service, audits, archiveCalls, releaseCalls, afterCommitCalls } = build(
+        { owner: { isPlatformOwner: true }, client: {} },
+        { owned },
+      );
+
+      const result = await service.deleteUserAsPlatformOwner('owner', 'client', {});
+
+      expect(result.academiesArchived).toBe(2);
+      expect(archiveCalls.map((c) => c.academyId)).toEqual(['ac-1', 'ac-2']);
+      // A real instant, shared by the organization's academies — what the
+      // media purge's 30-day grace is measured from.
+      for (const call of archiveCalls) expect(call.archivedAt).toBeInstanceOf(Date);
+      expect(archiveCalls[0].archivedAt).toBe(archiveCalls[1].archivedAt);
+      // No academy reason is invented for an account deletion.
+      expect(archiveCalls[0].input).toEqual({});
+      expect(releaseCalls).toEqual(['ac-1', 'ac-2']);
+      expect(afterCommitCalls).toEqual([
+        { organizationId: 'org-1', slugs: ['ac-one', 'ac-two'] },
+      ]);
+      const archivedAudits = audits.filter((a) => a.action === 'academy.archived');
+      expect(archivedAudits.map((a) => a.targetId)).toEqual(['ac-1', 'ac-2']);
+      // The operator authorised it, so the operator is the actor.
+      expect(archivedAudits.every((a) => a.actorUserId === 'owner')).toBe(true);
+    });
+
+    it('still erases the person when the post-commit archive steps fail', async () => {
+      const { service, audits } = build(
+        { client: {} },
+        { owned, afterArchiveFails: true },
+      );
+      await expect(service.deleteOwnAccount('client', {})).resolves.toEqual({
+        deleted: true,
+        academiesArchived: 2,
+      });
+      expect(audits.at(-1)?.action).toBe('account.deleted');
+    });
+  });
+
   describe('the self-service door', () => {
     it('still refuses a platform owner deleting themselves', async () => {
       const { service } = build({ owner: { isPlatformOwner: true } });
@@ -178,14 +311,39 @@ describe('AccountDeletionService — who may delete whom', () => {
       expect(row?.context?.initiatedBy).toBe('self');
     });
 
+    it('D5-1 — revokes every learner device, drops every lease and tells the delivery gate', async () => {
+      const { service, audits, revoked, gateRevoked, leasesDropped, deviceUpdates } =
+        build({ learner: {} });
+      await service.deleteOwnAccount('learner', {});
+
+      // Every ACTIVE device of the person, at every academy — not scoped
+      // to one academy the way an owner's registry reset is.
+      expect(deviceUpdates).toEqual([
+        {
+          where: { userId: 'learner', revokedAt: null },
+          data: { revokedAt: expect.any(Date) },
+        },
+      ]);
+      expect(leasesDropped).toEqual(['learner:academy-a', 'learner:academy-b']);
+      // The same sessions the denylist receives, so a playback credential
+      // already in a player stops with the account.
+      expect(revoked).toEqual(['s1']);
+      expect(gateRevoked).toEqual([{ sessionIds: ['s1'], reason: 'account_deleted' }]);
+      expect(audits.at(-1)?.context?.devicesRevoked).toBe(2);
+    });
+
     it('is idempotent — deleting an already-deleted account is not an error', async () => {
-      const { service, audits } = build({ gone: { status: 'deleted' } });
+      const { service, audits, gateRevoked, deviceUpdates } = build({
+        gone: { status: 'deleted' },
+      });
       await expect(service.deleteOwnAccount('gone', {})).resolves.toEqual({
         deleted: true,
         academiesArchived: 0,
       });
       // A no-op must not write a second deletion into the audit trail.
       expect(audits).toHaveLength(0);
+      expect(deviceUpdates).toHaveLength(0);
+      expect(gateRevoked).toHaveLength(0);
     });
   });
 });

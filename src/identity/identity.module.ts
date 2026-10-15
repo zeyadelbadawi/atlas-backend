@@ -61,6 +61,9 @@ import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard'
 import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-limit.guard';
 import { UserPhoneService } from './phone/user-phone.service';
 import { PhoneVerificationService } from './phone/phone-verification.service';
+import { LearningLeaseService } from '../learning/services/learning-lease.service';
+import { AcademyArchiveModule } from '../academy/academy-archive.module';
+import { VideoGateRevocationService } from '../media/video/video-gate-revocation.service';
 
 @Module({
   imports: [
@@ -75,6 +78,11 @@ import { PhoneVerificationService } from './phone/phone-verification.service';
     TenancyModule,
     // P64 Communications — adapters, registry, quota, suppression, webhook.
     CommunicationsProvidersModule,
+    // D5-2 — account deletion archives an owner's academies through the
+    // same `AcademyArchiveService` as `DELETE /academies/:id`. That module
+    // imports only `TenancyModule` (never `IdentityModule`/`AcademyModule`),
+    // so this stays a clean DAG.
+    AcademyArchiveModule,
   ],
   // `TwoFactorController` is listed before `AuthController` so its
   // `/auth/2fa/*` routes are registered ahead of any broader `/auth/*`
@@ -115,6 +123,16 @@ import { PhoneVerificationService } from './phone/phone-verification.service';
     EmailVerificationTokensRepository,
     EmailRiskService,
     AccountDeletionService,
+    // D5-1 — account deletion drops the learner's learning leases and
+    // publishes the revoked sessions to the video delivery gate, as device
+    // removal and blocking already do. Registered DIRECTLY rather than by
+    // importing `LearningModule`/`MediaModule`: both depend on this module
+    // (through `AcademyModule`), so importing either back would be a real
+    // cycle. Each is a stateless wrapper over the `@Global()` Redis client
+    // or configuration — the same reasoning `AcademyModule` records for
+    // its directly registered domain providers.
+    LearningLeaseService,
+    VideoGateRevocationService,
     AccountSuspensionService,
     AccountDeletionChallengeService,
     DeletionPlanService,

@@ -127,6 +127,8 @@ const ACCOUNT_DELETED_CONTEXT = [
   'reason',
   'hasFeedback',
   'sessionsRevoked',
+  // D5-1 — learner devices revoked with the account (a count, never ids).
+  'devicesRevoked',
 ] as const;
 
 export const COURSE_DIFF_FIELDS = [

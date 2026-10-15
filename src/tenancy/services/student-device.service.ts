@@ -363,6 +363,39 @@ export class StudentDeviceService {
     return tx.studentDevice.findUnique({ where: { id: deviceId } });
   }
 
+  /**
+   * Account deletion (D5-1) — every device this person ever registered, at
+   * EVERY academy, revoked in one statement.
+   *
+   * Must run in the person's OWN user context: `student_devices_self_all`
+   * keys on `app.current_user_id`, and the account has no single academy
+   * a manager-scoped reset could be run from. Revoked, never deleted —
+   * `atlas_app` holds no DELETE on this table, and the device history is
+   * referenced by the access log.
+   *
+   * Returns every academy the person held a device at (revoked or not),
+   * so the caller can drop the learning lease at each one once the
+   * transaction has committed.
+   */
+  async revokeAllForUser(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<{ readonly revoked: number; readonly academyIds: readonly string[] }> {
+    const academies = await tx.studentDevice.findMany({
+      where: { userId },
+      select: { academyId: true },
+      distinct: ['academyId'],
+    });
+    const result = await tx.studentDevice.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return {
+      revoked: result.count,
+      academyIds: academies.map((row) => row.academyId),
+    };
+  }
+
   /** Owner-initiated reset of one learner's whole registry for this academy (Phase 2 §D.7). */
   async revokeAllForStudent(
     tx: Prisma.TransactionClient,

@@ -48,9 +48,6 @@ import { AcademyMembersRepository } from '../repositories/academy-members.reposi
 import { ContactSubmissionsRepository } from '../repositories/contact-submissions.repository';
 import { SubdomainAllocationsRepository } from '../../domain/repositories/subdomain-allocations.repository';
 import { DomainConnectionsRepository } from '../../domain/repositories/domain-connections.repository';
-import { DomainProviderReleasesRepository } from '../../domain/repositories/domain-provider-releases.repository';
-import { DomainProviderReleaseService } from '../../domain/services/domain-provider-release.service';
-import { PlatformDomainService } from '../../domain/services/platform-domain.service';
 import {
   buildFullHost,
   resolveEffectiveBaseDomain,
@@ -59,7 +56,8 @@ import { RESERVED_SUBDOMAINS } from '../../provisioning/dto/provisioning.constan
 import { ConfigService } from '@nestjs/config';
 import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
 import { PlatformDomainConfigurationRepository } from '../../domain/repositories/platform-domain-configuration.repository';
-import { PublicWebsiteCacheService } from '../../public-website/services/public-website-cache.service';
+import { AcademyArchiveService } from './academy-archive.service';
+import type { ArchiveAcademyInput } from './academy-archive.service';
 import { toAcademyResponse } from '../dto/academy.contract';
 import type { AcademyResponse, AcademyAddressResponse } from '../dto/academy.contract';
 import { toAcademySummaryResponse } from '../dto/academy-me.contract';
@@ -87,7 +85,6 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../dto/list-query.dto';
 import type { CollectionQueryDto, ListAcademiesQueryDto } from '../dto/list-query.dto';
 import type { CreateAcademyDto } from '../dto/create-academy.dto';
 import type { UpdateAcademyDto } from '../dto/update-academy.dto';
-import type { AcademyArchiveReason } from '../dto/delete-academy.dto';
 import type { UpdateAcademyBrandingDto } from '../dto/update-academy-branding.dto';
 import type { AddAcademyManagerDto } from '../dto/add-academy-manager.dto';
 import type { AddAcademyInstructorDto } from '../dto/add-academy-instructor.dto';
@@ -246,14 +243,9 @@ const MEMBER_LOOKUP_LIMITS = [
  */
 const CREATES_ACADEMY_ROLES = new Set(['owner']);
 
-/**
- * What the caller may record when deleting an Academy. Both fields are
- * optional: deletion must never depend on answering an exit survey.
- */
-export interface ArchiveAcademyInput {
-  readonly reason?: AcademyArchiveReason;
-  readonly feedback?: string;
-}
+// `ArchiveAcademyInput` lives with the shared archive implementation
+// (`AcademyArchiveService`, D5-2); re-exported for existing importers.
+export type { ArchiveAcademyInput } from './academy-archive.service';
 
 /**
  * What one new academy member COSTS, by role (P62).
@@ -306,10 +298,9 @@ export class AcademiesService {
     private readonly subdomainAllocationsRepository: SubdomainAllocationsRepository,
     private readonly platformDomainConfigurationRepository: PlatformDomainConfigurationRepository,
     private readonly domainConnectionsRepository: DomainConnectionsRepository,
-    private readonly domainProviderReleasesRepository: DomainProviderReleasesRepository,
-    private readonly domainProviderReleaseService: DomainProviderReleaseService,
-    private readonly platformDomainService: PlatformDomainService,
-    private readonly publicWebsiteCacheService: PublicWebsiteCacheService,
+    // D5-2 — the shared archive implementation (also owns the public
+    // hostname-cache drop, which branding writes reuse).
+    private readonly academyArchiveService: AcademyArchiveService,
     private readonly authRateLimiter: AuthRateLimiterService,
     private readonly unprovenAccountService: UnprovenAccountService,
     configService: ConfigService,
@@ -323,22 +314,6 @@ export class AcademiesService {
   }
 
   private readonly environmentBaseDomain?: string;
-
-  /** P63g — best-effort provider release after the archive committed; the sweep retries anything that fails. Never throws into the request. */
-  private async domainReleaseAfterCommit(releaseId: string): Promise<void> {
-    try {
-      const platformOwner = await this.usersRepository.findFirstPlatformOwnerId();
-      if (!platformOwner) return;
-      const providerAvailable = await this.platformDomainService.isProviderAvailable();
-      await this.tenancyContextService.runInUserContext(platformOwner.id, async (tx) => {
-        const row = await this.domainProviderReleasesRepository.findById(tx, releaseId);
-        if (row)
-          await this.domainProviderReleaseService.attempt(tx, row, providerAvailable);
-      });
-    } catch {
-      // Recorded in the ledger; the sweep retries.
-    }
-  }
 
   /**
    * Smart member invitation — resolves the account an add is about, INSIDE
@@ -1055,34 +1030,17 @@ export class AcademiesService {
     );
   }
 
-  /**
-   * Drops every cached hostname resolution that could answer for this
-   * Academy (P63g): the allocation's label, its stored full host, the
-   * effective full host, the slug forms and the connected custom hostname.
-   */
-  private async invalidatePublicHostnames(
+  /** Drops every cached hostname resolution for this Academy — one implementation, in `AcademyArchiveService`. */
+  private invalidatePublicHostnames(
     slug: string,
     allocation: { readonly subdomain: string; readonly fullHost: string | null } | null,
     customHostname: string | null,
   ): Promise<void> {
-    const platformDomain =
-      await this.platformDomainConfigurationRepository.findSingleton();
-    const { baseDomain } = resolveEffectiveBaseDomain(
-      this.environmentBaseDomain,
-      platformDomain,
+    return this.academyArchiveService.invalidatePublicHostnames(
+      slug,
+      allocation,
+      customHostname,
     );
-    const hosts = new Set<string>([slug]);
-    if (allocation) {
-      hosts.add(allocation.subdomain);
-      if (allocation.fullHost) hosts.add(allocation.fullHost);
-      const full = buildFullHost(allocation.subdomain, baseDomain);
-      if (full) hosts.add(full);
-    }
-    const slugFull = buildFullHost(slug, baseDomain);
-    if (slugFull) hosts.add(slugFull);
-    if (platformDomain.baseDomain) hosts.add(`${slug}.${platformDomain.baseDomain}`);
-    if (customHostname) hosts.add(customHostname);
-    await this.publicWebsiteCacheService.invalidateHostnameResolution([...hosts]);
   }
 
   /** `DELETE /academies/:id` — soft-archive via status transition, never a SQL DELETE (no DELETE RLS policy exists on `academies` at all). */
@@ -1112,12 +1070,13 @@ export class AcademiesService {
         // Manager or Administrator gets 403 and nothing changes.
         const role = await this.assertIsOrganizationOwner(tx, academyId, userId);
         const previous = await this.academiesRepository.findById(tx, academyId);
-        const result = await this.academiesRepository.update(tx, academyId, {
-          status: 'archived',
-          archivedAt: new Date(),
-          archiveReason: input.reason ?? null,
-          archiveFeedback: input.feedback?.trim() || null,
-        });
+        // D5-2 — the one archive write every path shares (status,
+        // `archivedAt`, reason, feedback).
+        const result = await this.academyArchiveService.markArchived(
+          tx,
+          academyId,
+          input,
+        );
         // The feedback text itself stays on the academy row; the audit row
         // records only that some was given.
         await this.auditLogWriterService.record(tx, {
@@ -1156,63 +1115,17 @@ export class AcademiesService {
     // hostname. The custom domain itself is released: an archived Academy
     // must not keep a hostname burned (no path could free it before) nor
     // keep a provider resource answering at the edge.
-    const { allocation, releaseId, previousHostname } =
-      await this.tenancyContextService.runInTenantAndUserContext(
-        organizationId,
-        userId,
-        async (tx) => {
-          const allocation = await this.subdomainAllocationsRepository.findByAcademyId(
-            tx,
-            academyId,
-          );
-          const connection = await this.domainConnectionsRepository.lockByAcademyId(
-            tx,
-            academyId,
-          );
-          let releaseId: string | null = null;
-          if (connection?.hostname) {
-            const release = await this.domainProviderReleasesRepository.enqueue(tx, {
-              academyId,
-              hostname: connection.hostname,
-              providerHostnameId: connection.providerHostnameId,
-              reason: 'archived',
-            });
-            releaseId = release.id;
-            await this.domainConnectionsRepository.updateByAcademyId(tx, academyId, {
-              hostname: null,
-              status: 'not_configured',
-              verificationRecords: Prisma.JsonNull,
-              sslStatus: 'not_configured',
-              cdnStatus: 'not_configured',
-              cdnProvider: null,
-              providerHostnameId: null,
-              connectedAt: null,
-              lastCheckedAt: null,
-              lastCheckError: null,
-              lastProviderErrorCode: null,
-              httpsReachable: null,
-              httpsCheckedAt: null,
-              httpsStatusCode: null,
-              httpsFailureReason: null,
-              consecutiveFailures: 0,
-            });
-          }
-          return {
-            allocation,
-            releaseId,
-            previousHostname: connection?.hostname ?? null,
-          };
-        },
-      );
-    await this.invalidatePublicHostnames(archived.slug, allocation, previousHostname);
-    if (releaseId) {
-      await this.domainReleaseAfterCommit(releaseId);
-    }
+    const presence = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      (tx) => this.academyArchiveService.releaseCustomDomain(tx, archived),
+    );
 
     // Phase 2 — an archived academy frees its entire quota footprint
     // (academies/instructors/staff/courses/students/storage all drop) —
-    // real reactive usage-recompute trigger.
-    await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
+    // real reactive usage-recompute trigger, enqueued by the shared
+    // post-commit step together with the cache drop and provider release.
+    await this.academyArchiveService.afterArchiveCommitted(organizationId, [presence]);
   }
 
   /**

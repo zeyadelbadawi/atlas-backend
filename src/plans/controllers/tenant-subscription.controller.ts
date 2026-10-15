@@ -40,8 +40,11 @@ import {
   resolveClientIp,
   resolveUserAgent,
 } from '../../identity/utils/request-metadata.util';
+import { toMemberSubscriptionView } from '../dto/tenant-subscription.contract';
 import type { TenantSubscriptionResponse } from '../dto/tenant-subscription.contract';
+import { toMemberTenantAddOnView } from '../dto/tenant-add-on.contract';
 import type { TenantAddOnResponse } from '../dto/tenant-add-on.contract';
+import { withoutPlanPricing } from '../dto/plan.contract';
 import type { TenantUsageResponse } from '../dto/tenant-usage.contract';
 import type { SubscriptionLifecycleResponse } from '../dto/subscription-lifecycle.contract';
 import { AllowInactiveSubscription } from '../decorators/allow-inactive-subscription.decorator';
@@ -94,9 +97,22 @@ export class TenantSubscriptionController {
     private readonly trialRedemptionService: TrialRedemptionService,
   ) {}
 
+  /**
+   * Readable by every member — plan gating, the dashboard and the storage
+   * meter of managers, instructors and staff depend on it (SEC-03(b), owner
+   * decision 12 Oct 2026: the reads stay open). What the organization PAYS
+   * is the billing owner's alone, so a non-owner gets the member view with
+   * every price removed (`toMemberSubscriptionView`).
+   */
   @Get(':id/subscription')
-  async getSubscription(@Param('id') id: string): Promise<TenantSubscriptionResponse> {
-    return this.tenantSubscriptionService.getSubscription(id);
+  async getSubscription(
+    @Param('id') id: string,
+    @Req() request: Request,
+  ): Promise<TenantSubscriptionResponse> {
+    const subscription = await this.tenantSubscriptionService.getSubscription(id);
+    return this.canManageBilling(request)
+      ? subscription
+      : toMemberSubscriptionView(subscription);
   }
 
   /**
@@ -115,7 +131,15 @@ export class TenantSubscriptionController {
     @Param('id') id: string,
     @Req() request: Request,
   ): Promise<SubscriptionLifecycleResponse> {
-    return this.tenantSubscriptionService.getLifecycle(id, request.authContext!.userId);
+    const state = await this.tenantSubscriptionService.getLifecycle(
+      id,
+      request.authContext!.userId,
+    );
+    // SEC-03(b) — "no amount" was the promise above, but `plan` carried the
+    // plan's `pricing`. The owner keeps it; everyone else gets the plan
+    // without its price.
+    if (!state.plan || this.canManageBilling(request)) return state;
+    return { ...state, plan: withoutPlanPricing(state.plan) };
   }
 
   @Get(':id/usage')
@@ -123,9 +147,14 @@ export class TenantSubscriptionController {
     return this.tenantSubscriptionService.getUsage(id);
   }
 
+  /** Readable by every member (entitlement gating); add-on prices only for the billing owner (SEC-03(b)). */
   @Get(':id/add-ons')
-  async getActiveAddOns(@Param('id') id: string): Promise<TenantAddOnResponse[]> {
-    return this.tenantSubscriptionService.getActiveAddOns(id);
+  async getActiveAddOns(
+    @Param('id') id: string,
+    @Req() request: Request,
+  ): Promise<TenantAddOnResponse[]> {
+    const addOns = await this.tenantSubscriptionService.getActiveAddOns(id);
+    return this.canManageBilling(request) ? addOns : addOns.map(toMemberTenantAddOnView);
   }
 
   /**
@@ -244,9 +273,19 @@ export class TenantSubscriptionController {
    * here even though the membership guard already passed.
    */
   private assertCanManageBilling(request: Request): void {
-    const permissions = request.tenantContext?.permissions ?? [];
-    if (!permissions.includes(BILLING_MANAGE_PERMISSION)) {
+    if (!this.canManageBilling(request)) {
       throw new ForbiddenException({ messageKey: 'errors.tenancy.notAMember' });
     }
+  }
+
+  /**
+   * Whether the caller is the organization's billing owner. The same
+   * owner-exclusive marker that authorizes every billing mutation decides
+   * who is shown prices (SEC-03(b)), so "may pay" and "may see what is
+   * paid" can never disagree.
+   */
+  private canManageBilling(request: Request): boolean {
+    const permissions = request.tenantContext?.permissions ?? [];
+    return permissions.includes(BILLING_MANAGE_PERMISSION);
   }
 }

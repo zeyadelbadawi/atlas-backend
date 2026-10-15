@@ -36,7 +36,8 @@ export type GateRevocationReason =
   | 'academy_membership_blocked'
   | 'device_removed'
   | 'session_taken_over'
-  | 'signed_out';
+  | 'signed_out'
+  | 'account_deleted';
 
 @Injectable()
 export class VideoGateRevocationService {
