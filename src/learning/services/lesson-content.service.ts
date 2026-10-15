@@ -814,6 +814,8 @@ export class LessonContentService {
         sessionId: args.sessionId ?? 'anonymous',
         deviceId: args.deviceId ?? 'anonymous',
         academyId: course.academyId,
+        courseId: course.id,
+        lessonId: lesson.id,
         allowedOrigins: origins,
       });
       video = signed.video;

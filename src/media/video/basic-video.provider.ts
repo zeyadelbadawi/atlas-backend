@@ -67,7 +67,7 @@ export function basicVideoObjectKey(args: {
 }
 
 /** What the Worker is handed, and what it verifies. Kept small on purpose — every field costs URL length on every segment request. */
-interface GateClaims {
+export interface GateClaims {
   /** Object key. */
   readonly k: string;
   /** Expiry, unix seconds. */
@@ -78,6 +78,18 @@ interface GateClaims {
   readonly s: string;
   /** Device id. */
   readonly d: string;
+  /**
+   * Workstream D — the academy, course and lesson the grant was made for.
+   * Signed, so the Worker's re-authorization call
+   * (`VideoGateAuthorizationService`) can re-check EXACTLY the decision
+   * `LessonContentService` made — this learner, this lesson, this course,
+   * this academy — rather than "some lesson somewhere that uses these
+   * bytes". The Worker itself ignores them; extra claims never widen what
+   * `gate.js` accepts.
+   */
+  readonly a?: string;
+  readonly c?: string;
+  readonly l?: string;
 }
 
 @Injectable()
@@ -116,11 +128,14 @@ export class BasicVideoProvider implements VideoProvider {
       // presents as the stronger of the two. AD-16 exists for this.
       boundToSession: false,
       boundToDevice: false,
-      // Revocation is real ONLY when the denylist is wired: the Worker
-      // consults it per request, but a capability is a statement about
-      // what is enforced, not about what the Worker could enforce if
-      // Atlas were publishing to it. Reported from configuration so it
-      // can never be an aspiration (AD-16).
+      // Workstream D — revocation is real ONLY when the Worker can
+      // re-authorize a token against Atlas (`POST /video-gate/authorize`),
+      // which needs the shared authorization secret. With it, a revoked
+      // session, removed device, deleted account, ended enrollment or
+      // blocked membership stops playing within the Worker's bounded
+      // cache window (≤ 30 s), not at token expiry. A capability is a
+      // statement about what is enforced, so it is reported from
+      // configuration and never assumed (AD-16).
       revocableBeforeExpiry: this.canRevoke(),
       // Enforced by the Worker's own Origin check against the academy
       // origins Atlas pushes to it. Honest caveat, the same one that
@@ -147,14 +162,17 @@ export class BasicVideoProvider implements VideoProvider {
   /**
    * Whether Atlas can actually withdraw a credential before it expires.
    *
-   * True only when a revocation endpoint is configured AND reachable in
-   * principle — i.e. when Atlas has somewhere to publish a revoked
-   * session to. Without it the Worker's denylist is an empty list that
-   * nobody writes to, and `revocableBeforeExpiry` would be a promise the
-   * system cannot keep.
+   * True only when the Worker→API authorization secret is configured —
+   * i.e. when the authorization endpoint exists and the Worker can call
+   * it. Without it there is nothing for the Worker to re-check a token
+   * against, and `revocableBeforeExpiry` would be a promise the system
+   * cannot keep. (The previous push design — Atlas POSTing revoked
+   * sessions to an endpoint for a KV denylist — had no receiver: the
+   * Worker answers `405` to every POST. See
+   * `docs/HOSTED_VIDEO_ACTIVATION_RUNBOOK.md` §Revocation.)
    */
   private canRevoke(): boolean {
-    return Boolean(this.config.revocationEndpoint && this.config.revocationToken);
+    return Boolean(this.isConfigured() && this.config.gateAuthzSecret);
   }
 
   /**
@@ -216,6 +234,13 @@ export class BasicVideoProvider implements VideoProvider {
       u: request.binding.userId,
       s: request.binding.sessionId,
       d: request.binding.deviceId,
+      ...(request.scope
+        ? {
+            a: request.scope.academyId,
+            c: request.scope.courseId,
+            l: request.scope.lessonId,
+          }
+        : {}),
     };
     const payload = Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url');
     const token = `${payload}.${this.sign(payload)}`;

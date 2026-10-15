@@ -63,6 +63,10 @@ export class WebsitePagesRepository {
         publishedVisible: true,
         publishedSections: { not: Prisma.DbNull },
       },
+      // Same order as the editor's page list, with `id` as the final tie-break.
+      // Without it Postgres returns heap order, which a publish (an UPDATE of
+      // every row) can change, so the sitemap and page list reordered on publish.
+      orderBy: [{ pageType: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     });
     return rows.map(asPublishedPage);
   }
