@@ -424,7 +424,7 @@ Closes S1, S2 (table), S3, S7 (evidence), S8 (devices); tokens never `downloadab
 |---|---|---|
 | Credential lifetime | ≤ 10 min, refreshed | ≤ 2 h |
 | Bound to session/device **at the edge** | **No** (corrected 19 Sep 2026 — see below) | **No** — `accessRules: any/allow`; Atlas enforces at grant-issue only (finding D-5) |
-| Revocation before expiry | **Yes, per request** — only once the revocation list is wired, and reported from configuration rather than assumed. **Prompt, not instant**: bounded by denylist propagation (~1 min measured) plus the gate's cache, so no sub-second SLA may be promised | **No** — only by revoking a signing key, which invalidates every token minted with it |
+| Revocation before expiry | **Yes, per request** — only once the gate's re-authorization is wired (`BASIC_VIDEO_GATE_AUTHZ_SECRET`), and reported from configuration rather than assumed. **Bounded, not instant**: since Workstream D (Oct 2026) the Worker re-asks Atlas (`POST /video-gate/authorize`) with an answer cache of ≤ 30 s, replacing the never-wired KV denylist; a revocation stops every new request within 30 s (a body already streaming is not cut off). No sub-second SLA may be promised. See `HOSTED_VIDEO_ACTIVATION_RUNBOOK.md` §8 | **No** — only by revoking a signing key, which invalidates every token minted with it |
 | Adaptive bitrate | No (single 720p rendition) | Yes, managed |
 | Encoding | Atlas | Provider, free |
 
@@ -1101,7 +1101,7 @@ Three defects in the journeys' own setup were found and fixed rather than worked
 **Corrections made to this plan's own claims.** Three security properties were asserted and then withdrawn once evidence contradicted them; the originals are preserved in §I and in the investigation rather than overwritten:
 
 1. **Neither tier binds to session or device at the delivery edge.** Cloudflare mints `accessRules: any/allow` and ignores custom claims (D-5); the Normal gate is cross-site from the academy and receives no Atlas session. A lifted token plays elsewhere on both tiers until it expires or is revoked.
-2. **Revocation is prompt, not instant** — bounded by denylist propagation (~1 min measured) plus the gate's cache. No sub-second SLA may be promised.
+2. **Revocation is prompt, not instant** — bounded by denylist propagation (~1 min measured) plus the gate's cache. No sub-second SLA may be promised. *(Workstream D, Oct 2026: the denylist is replaced by re-authorization with Atlas; the bound is now ≤ 30 s, still not instant.)*
 3. The investigation's "cache-key fix is Enterprise-only" was out of date; "ignore query string" is available on all plans.
 
 **Evidence produced.** `ATLAS_VIDEO_PROVIDER_TIERS_INVESTIGATION.md` (approved), `ATLAS_PHASE2_RECONCILIATION.md`, `ATLAS_PHASE2_SECURITY_AUDIT.md`, `ATLAS_PHASE2_API_VERIFICATION.md`, `ATLAS_NORMAL_VIDEO_WORKER_SPIKE.md` (DL-22 discharged — revocation proved by control experiment: a gate token with ~600 s left returned `403 revoked` after one denylist write while a presign for the same object kept returning `206`).
@@ -1458,6 +1458,7 @@ was required.
 
 - **`kind: text` authoring** — refused with `errors.lessonContent.textNotYetSupported`. The column promises "server-sanitised on write" and this repository has no sanitiser; accepting rich text would mean storing unsanitised HTML behind a field that says otherwise, or inventing a sanitiser under deadline. `bodyHtml` is not on the DTO, so `forbidNonWhitelisted` rejects it before any handler runs. Backfilled text lessons are unaffected. **Needs a reviewed sanitiser (e.g. `sanitize-html`) as its own change.**
 - **Revocation before expiry** — `BASIC_VIDEO_REVOCATION_ENDPOINT`/`_TOKEN` are deliberately unset: the shipped Worker accepts only `GET`/`HEAD`/`OPTIONS` and returns **405** to Atlas's revocation `POST`, so there is no HTTP receiver. The capability is therefore reported **false** rather than claimed. Revocation today is the 10-minute token lifetime plus secret rotation. A receiver is a separate change.
+  *Update (Workstream D, Oct 2026, engineering only — not yet activated):* the push design is retired. The Worker now re-authorizes each token with Atlas (`POST /api/v1/video-gate/authorize`, HMAC-signed with `BASIC_VIDEO_GATE_AUTHZ_SECRET` / `GATE_AUTHZ_SECRET`), caching an answer ≤ 30 s and failing closed; Atlas answers from durable state (refresh-token rows, `student_devices`, `users.status`, enrollments, memberships, publication) in the token user's RLS context. `BASIC_VIDEO_REVOCATION_*` are removed. Production enabling `FLAG_VIDEO_NORMAL_MODE` now requires the new secret; with it set the grant reports `revocableBeforeExpiry: true`. Activation steps: `HOSTED_VIDEO_ACTIVATION_RUNBOOK.md` §4.3 and §8.
 - **Premium (Cloudflare Stream)** — architecture and adapter are complete and unit-tested; no `CLOUDFLARE_STREAM_*` credentials are configured, so the tier is unconfigured in production and refuses rather than silently downgrading.
 
 ## 4. Implemented but NOT production-verified
