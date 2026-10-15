@@ -15,8 +15,12 @@
  *
  *   initiative  (3 Oct 2026) the new protected APIs answer 401 to an
  *            anonymous caller, the public contact and verify-email
- *            endpoints reject an invalid body (400), and the homepage
- *            contact form renders in EN and AR (never submitted)
+ *            endpoints reject an invalid body (400), and the contact
+ *            page form renders in EN and AR (never submitted)
+ *   holding  (D6, 14 Oct 2026) the legacy marketing site is retired: `/` and
+ *            `/ar` are the noindex holding page with only the four allowed
+ *            links, `/pricing` and `/features` forward to it, and the
+ *            platform sitemap lists only contact and the legal pages
  *
  * No account is created, no sign-in is attempted, nothing is written except
  * the RUM samples a real visit sends. Prints PASS/FAIL/INFO lines.
@@ -192,7 +196,7 @@ for (const path of ['plans', 'add-ons']) {
 
 // ---- browser + RUM -------------------------------------------------------
 const browser = await chromium.launch();
-console.log('== Atlas homepage contact section (Chromium, not submitted)');
+console.log('== Atlas contact page (Chromium, not submitted)');
 for (const locale of ['en', 'ar']) {
   const context = await browser.newContext({ locale });
   await context.addInitScript((l) => {
@@ -205,55 +209,32 @@ for (const locale of ['en', 'ar']) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const res = await page.goto(`${BASE}/#contact`, { waitUntil: 'load' });
+  const res = await page.goto(`${BASE}/contact`, { waitUntil: 'load' });
   const form = page.locator('#contact form');
   const visible = await form
     .waitFor({ state: 'visible', timeout: 30_000 })
     .then(() => true)
     .catch(() => false);
-  check(res?.status() === 200, `${locale.toUpperCase()} homepage loads (${res?.status()})`);
-  check(visible, `${locale.toUpperCase()} homepage contact form is shown`);
+  check(res?.status() === 200, `${locale.toUpperCase()} contact page loads (${res?.status()})`);
+  check(visible, `${locale.toUpperCase()} contact page form is shown`);
   if (visible) {
     const fields = await form.locator('input, textarea').count();
     check(fields >= 3, `${locale.toUpperCase()} contact form has its fields (${fields})`);
   }
   const dir = await page.locator('html').getAttribute('dir');
-  check(dir === (locale === 'ar' ? 'rtl' : 'ltr'), `${locale.toUpperCase()} homepage html dir="${dir}"`);
-  check(errors.length === 0, `${locale.toUpperCase()} homepage has no uncaught page errors (${errors.length})`);
-  await page.screenshot({ path: `${OUT}/home-contact-${locale}.png`, fullPage: false });
+  check(dir === (locale === 'ar' ? 'rtl' : 'ltr'), `${locale.toUpperCase()} contact page html dir="${dir}"`);
+  check(errors.length === 0, `${locale.toUpperCase()} contact page has no uncaught page errors (${errors.length})`);
+  await page.screenshot({ path: `${OUT}/contact-${locale}.png`, fullPage: false });
   await context.close();
 }
-console.log('== Legal pages and pricing (Chromium, EN + AR, desktop + 390 px)');
+console.log('== Legal pages, contact and the holding page (Chromium, EN + AR, desktop + 390 px)');
 {
-  // Which billing cycles may advertise gifted days, from the live catalog:
-  // a cycle is shown only when its gift is 5-15 days and its price is a
-  // finite number above zero (the frontend's `planCycleGifts` rule).
+  // The public plan catalog is still served (the marketing pricing page that
+  // read it was retired by D6; the B1 site will read it again).
   const catalogRes = await fetch(`${API}/public/plans`).catch(() => null);
   const catalogJson = catalogRes?.ok ? await catalogRes.json().catch(() => null) : null;
   const plans = Array.isArray(catalogJson) ? catalogJson : (catalogJson?.data ?? []);
   check(plans.length > 0, `public plan catalog answers (${plans.length} plans)`);
-  const validDays = (d) => Number.isInteger(d) && d >= 5 && d <= 15;
-  const priced = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
-  const expectGift = (plan) => {
-    const p = plan.pricing ?? {};
-    const cycles =
-      p.billingCycle === 'yearly'
-        ? ['yearly']
-        : p.billingCycle === 'monthly' && typeof p.yearlyAmount === 'number'
-          ? ['monthly', 'yearly']
-          : ['monthly'];
-    const price = (c) =>
-      c === 'yearly' && p.billingCycle === 'monthly' ? p.yearlyAmount : p.amount;
-    const days = (c) => (c === 'yearly' ? plan.giftedDaysYearly : plan.giftedDaysMonthly);
-    return {
-      monthly:
-        cycles.includes('monthly') &&
-        validDays(days('monthly')) &&
-        priced(price('monthly')),
-      yearly:
-        cycles.includes('yearly') && validDays(days('yearly')) && priced(price('yearly')),
-    };
-  };
   const TEXT = {
     en: {
       updated: '4 October 2026',
@@ -261,10 +242,7 @@ console.log('== Legal pages and pricing (Chromium, EN + AR, desktop + 390 px)');
       privacyDevices: 'Lesson access records',
       terms: 'the trial of that plan starts when your account is created',
       termsOld: 'does not begin automatically',
-      faq: 'Some plans include a free trial',
-      faqOld: 'Every plan starts with a free trial',
-      monthly: 'Monthly billing',
-      yearly: 'Yearly billing',
+      holding: 'Atlas is a platform for running an online academy.',
     },
     ar: {
       updated: '٤ أكتوبر ٢٠٢٦',
@@ -272,10 +250,7 @@ console.log('== Legal pages and pricing (Chromium, EN + AR, desktop + 390 px)');
       privacyDevices: 'سجلات الوصول إلى الدروس',
       terms: 'تبدأ الفترة التجريبية لتلك الخطة عند إنشاء حسابك',
       termsOld: 'ولا تبدأ تلقائيًا',
-      faq: 'تتضمن بعض الخطط فترة تجريبية مجانية',
-      faqOld: 'تبدأ كل خطة بتجربة مجانية',
-      monthly: 'الفوترة الشهرية',
-      yearly: 'الفوترة السنوية',
+      holding: 'أطلس منصة لإدارة أكاديمية عبر الإنترنت.',
     },
   };
   for (const locale of ['en', 'ar']) {
@@ -363,71 +338,68 @@ console.log('== Legal pages and pricing (Chromium, EN + AR, desktop + 390 px)');
       );
       await overflowCheck(`${label} terms have no sideways scroll`);
 
-      res = await page.goto(`${BASE}/pricing`, { waitUntil: 'load' });
-      const faq = page.getByText(t.faq, { exact: false }).first();
-      const faqShown = await faq
+      // The shared public header (the 8 Oct overflow regression) is checked
+      // on the contact page now that the pricing page is retired.
+      res = await page.goto(`${BASE}/contact`, { waitUntil: 'load' });
+      await page
+        .locator('#contact form')
+        .first()
+        .waitFor({ timeout: 30_000 })
+        .catch(() => undefined);
+      await overflowCheck(`${label} contact page has no sideways scroll`);
+
+      // D6 — the holding page: one sentence, four destinations, noindex.
+      const home = locale === 'ar' ? '/ar' : '/';
+      res = await page.goto(`${BASE}${home}`, { waitUntil: 'load' });
+      const holding = page.getByTestId('holding-page');
+      const holdingShown = await holding
         .waitFor({ state: 'visible', timeout: 30_000 })
         .then(() => true)
         .catch(() => false);
-      const body = await textOf('body');
-      check(res?.status() === 200, `${label} pricing loads (${res?.status()})`);
-      check(
-        faqShown && !body.includes(t.faqOld),
-        `${label} pricing FAQ does not promise a trial on every plan`,
-      );
-      let giftOk = true;
-      let giftPlans = 0;
-      // The plan cards render after the catalog request settles; wait for
-      // the explainer and for every note the catalog says should exist
-      // before reading any of them, or a slow load reads as "no gift".
-      await page
-        .getByTestId('pricing-gifted-days')
-        .waitFor({ state: 'attached', timeout: 30_000 })
-        .catch(() => undefined);
-      for (const plan of plans) {
-        const want = expectGift(plan);
-        if (want.monthly || want.yearly) {
-          await page
-            .getByTestId(`marketing-plan-gift-${plan.key}`)
-            .first()
-            .waitFor({ state: 'attached', timeout: 15_000 })
-            .catch(() => undefined);
-        }
+      check(res?.status() === 200 && holdingShown, `${label} ${home} is the holding page (${res?.status()})`);
+      if (holdingShown) {
+        const holdingText = (await holding.innerText().catch(() => '')) ?? '';
+        check(holdingText.includes(t.holding), `${label} holding page carries its one sentence`);
+        check(
+          !/free/i.test(holdingText) && !holdingText.includes('مجان'),
+          `${label} holding page never says "free"`,
+        );
+        const hrefs = await holding
+          .locator('a[href]')
+          .evaluateAll((as) => as.map((a) => new URL(a.href).pathname + new URL(a.href).search));
+        const allowed = ['/auth/sign-in', '/contact?topic=sales', '/privacy-policy', '/terms', locale === 'ar' ? '/' : '/ar'];
+        check(
+          allowed.every((h) => hrefs.includes(h)) && hrefs.every((h) => allowed.includes(h)),
+          `${label} holding page links only to sign-in, contact, legal pages and the other language (${hrefs.join(' ')})`,
+        );
+        const robots = await page.locator('meta[name="robots"]').getAttribute('content').catch(() => null);
+        check(robots === 'noindex, follow', `${label} holding page is noindex, follow (${robots})`);
+        check((await page.title()) === 'Atlas', `${label} holding page title is "Atlas"`);
+        const holdingDir = await holding.getAttribute('dir');
+        check(holdingDir === (locale === 'ar' ? 'rtl' : 'ltr'), `${label} holding page dir="${holdingDir}"`);
       }
-      for (const plan of plans) {
-        const want = expectGift(plan);
-        const note = page.getByTestId(`marketing-plan-gift-${plan.key}`);
-        const present = (await note.count()) > 0;
-        const text =
-          (present
-            ? await note
-                .first()
-                .textContent()
-                .catch(() => '')
-            : '') ?? '';
-        const got = {
-          monthly: text.includes(t.monthly),
-          yearly: text.includes(t.yearly),
-        };
-        if (want.monthly || want.yearly) giftPlans += 1;
-        if (got.monthly !== want.monthly || got.yearly !== want.yearly) {
-          giftOk = false;
-          fail(
-            `${label} plan ${plan.key}: gift shown ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`,
-          );
-        }
+      await overflowCheck(`${label} holding page has no sideways scroll`);
+
+      // Retired marketing addresses forward (client-side) to the holding page.
+      for (const [from, to] of locale === 'ar'
+        ? [['/ar/pricing', '/ar']]
+        : [
+            ['/pricing', '/'],
+            ['/features', '/'],
+          ]) {
+        await page.goto(`${BASE}${from}`, { waitUntil: 'load' });
+        const landed = await page
+          .waitForURL((u) => u.pathname === to, { timeout: 15_000 })
+          .then(() => true)
+          .catch(() => false);
+        check(landed, `${label} ${from} forwards to ${to} (${new URL(page.url()).pathname})`);
       }
-      check(
-        giftOk,
-        `${label} gifted days shown only on priced cycles that include them (${giftPlans} plans with a gift)`,
-      );
-      await overflowCheck(`${label} pricing has no sideways scroll`);
       check(
         errors.length === 0,
-        `${label} legal and pricing pages raise no page errors (${errors.length})`,
+        `${label} legal, contact and holding pages raise no page errors (${errors.length})`,
       );
       await page.screenshot({
-        path: `${OUT}/pricing-${locale}-${viewport.name}.png`,
+        path: `${OUT}/holding-${locale}-${viewport.name}.png`,
         fullPage: false,
       });
       await context.close();
