@@ -14,7 +14,7 @@ describe('sumByCurrency', () => {
 
 describe('pickDominantCurrencyAmount', () => {
   it('returns the fallback zero amount when there is no data', () => {
-    expect(pickDominantCurrencyAmount([])).toEqual({ amount: 0, currency: 'USD' });
+    expect(pickDominantCurrencyAmount([])).toEqual({ amount: 0, currency: 'EGP' });
   });
 
   it('reports a single currency directly, as a decimal', () => {
