@@ -128,4 +128,50 @@ describe('Release verify Normal-tier video readiness (B0-MED-11)', () => {
     expect(probe).not.toMatch(/send\(new PutObjectCommand/);
     expect(probe).not.toMatch(/PutBucketCors|DeleteBucketCors|DeleteObject/);
   });
+
+  // Activation is configuration only: the names the tier needs, by name.
+  it('reports the activation names as present or missing, never a value', () => {
+    const { out, err, status } = run(BASE_ENV, PROBE_OK);
+    expect(out).toContain('== Normal-tier activation config (names only)');
+    expect(out).toContain(
+      'INFO  required names set: 1 of 2; missing: BASIC_VIDEO_DELIVERY_HOST (tier off, not gating)',
+    );
+    expect(out).toContain(
+      'INFO  optional names set: R2_PROTECTED_BUCKET R2_PROTECTED_ACCESS_KEY_ID; not set: R2_PROTECTED_SECRET_ACCESS_KEY BASIC_VIDEO_REVOCATION_ENDPOINT BASIC_VIDEO_REVOCATION_TOKEN',
+    );
+    for (const value of [...SECRETS, BUCKET]) {
+      expect(out).not.toContain(value);
+      expect(err).not.toContain(value);
+    }
+    expect(status).toBe(0);
+  });
+
+  it('fails when the tier is switched on without a required name', () => {
+    const env = BASE_ENV.map((line) =>
+      line === 'FLAG_VIDEO_NORMAL_MODE=off' ? 'FLAG_VIDEO_NORMAL_MODE=allowlist' : line,
+    );
+    const { out, status } = run(env, PROBE_OK);
+    expect(out).toContain(
+      'FAIL  FLAG_VIDEO_NORMAL_MODE=allowlist but required names missing: BASIC_VIDEO_DELIVERY_HOST',
+    );
+    expect(status).not.toBe(0);
+  });
+
+  it('passes the required names once the delivery gate is configured', () => {
+    // The configured host gets the token-less probe; answer it locally
+    // (a refusing gate) instead of reaching the network.
+    const bin = join(dir, 'bin');
+    spawnSync('mkdir', ['-p', bin]);
+    writeFileSync(join(bin, 'curl'), "#!/usr/bin/env bash\nprintf '401'\n");
+    chmodSync(join(bin, 'curl'), 0o755);
+    const { out, status } = run(
+      [...BASE_ENV, 'BASIC_VIDEO_DELIVERY_HOST=video.atlass.example'],
+      PROBE_OK,
+    );
+    expect(out).toContain(
+      'PASS  required names set: 2 of 2 (BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_SIGNING_SECRET)',
+    );
+    expect(out).toContain('PASS  delivery host answers a token-less request with 401');
+    expect(status).toBe(0);
+  });
 });
