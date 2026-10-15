@@ -515,7 +515,7 @@ case "${1:-}" in
     docker compose logs --no-color --no-log-prefix --since 24h backend 2>/dev/null \
       | grep -E '"level":(50|60)|CreateBucket|payment-proofs' | tail -10 \
       | docker compose exec -T backend node -e '
-          const red = (v) => String(v ?? "").replace(/[A-Za-z0-9+\/=_-]{24,}/g, "<redacted>").slice(0, 300);
+          const red = (v) => String(v ?? "").replace(/[A-Za-z0-9+\/=_-]{24,}/g, "<redacted>").replace(/[^\s@"\x27]+@[^\s@"\x27]+/g, "<email>").slice(0, 300);
           let buf = ""; process.stdin.on("data", (c) => (buf += c)).on("end", () => {
             for (const line of buf.split("\n")) {
               const i = line.indexOf("{"); if (i < 0) continue;

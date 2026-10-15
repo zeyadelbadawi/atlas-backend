@@ -28,8 +28,10 @@
 # and this is not run as a user; the approval record of the workflow run
 # (approver, time, commit) and this script's before/after output are the
 # record. The console's plan history will not show this change.
-set -uo pipefail
-cd "${CATALOG_CONTAINMENT_DIR:-/opt/atlas}"
+# -e: a failed cd, an unreadable .env or a failed report query stops the run
+# instead of reporting an empty state (or writing after a partial report).
+set -euo pipefail
+cd "${CATALOG_CONTAINMENT_DIR:-/opt/atlas}" || { echo "FAIL  cannot enter the app directory" >&2; exit 1; }
 
 MODE="${1:-dry-run}"
 env_value() { grep -E "^$1=" .env | tail -1 | cut -d= -f2-; }
@@ -50,7 +52,9 @@ report() {
     | while IFS='|' read -r k st n; do echo "subscriptions on $k: $st=$n"; done
   sql "select c.target_key, c.status, count(*) from checkouts c where c.target_type = 'plan_subscription' and c.target_key in ($KEYS) group by c.target_key, c.status order by 1, 2" \
     | while IFS='|' read -r k st n; do echo "checkouts for $k: $st=$n"; done
-  echo "customer-facing plans: $(sql "select string_agg(key, ',' order by display_order) from plans where status = 'active' and display_order > 0")"
+  local customer_facing
+  customer_facing=$(sql "select string_agg(key, ',' order by display_order) from plans where status = 'active' and display_order > 0")
+  echo "customer-facing plans: $customer_facing"
 }
 
 case "$MODE" in
@@ -65,6 +69,9 @@ BEGIN;
 DO $$
 DECLARE hidden int; expected int;
 BEGIN
+  -- Lock the three rows first, so the state checked below is the state
+  -- updated (READ COMMITTED alone would let a concurrent edit slip between).
+  PERFORM 1 FROM plans WHERE key IN ('premium-starter', 'premium-growth', 'premium-enterprise') FOR UPDATE;
   SELECT count(*) FILTER (WHERE display_order = 0),
          count(*) FILTER (WHERE (key, display_order) IN (('premium-starter', 4), ('premium-growth', 5), ('premium-enterprise', 6)))
     INTO hidden, expected
@@ -89,6 +96,9 @@ BEGIN;
 DO $$
 DECLARE hidden int;
 BEGIN
+  -- Lock the three rows first, so the state checked below is the state
+  -- updated (READ COMMITTED alone would let a concurrent edit slip between).
+  PERFORM 1 FROM plans WHERE key IN ('premium-starter', 'premium-growth', 'premium-enterprise') FOR UPDATE;
   SELECT count(*) FILTER (WHERE display_order = 0) INTO hidden
     FROM plans WHERE key IN ('premium-starter', 'premium-growth', 'premium-enterprise') AND family = 'premium';
   IF hidden <> 3 THEN
