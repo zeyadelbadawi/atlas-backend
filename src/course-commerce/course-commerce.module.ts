@@ -71,6 +71,8 @@ import { AcademyCoursePaymentsService } from './services/academy-course-payments
 import { AcademyCoursePaymentsRepository } from './repositories/academy-course-payments.repository';
 import { LearnerCoursePaymentsController } from './controllers/learner-course-payments.controller';
 import { LearnerCoursePaymentsService } from './services/learner-course-payments.service';
+// D5-5 — manual sales on the academy revenue summary.
+import { DashboardModule } from '../dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -88,6 +90,9 @@ import { LearnerCoursePaymentsService } from './services/learner-course-payments
     // here; see that service's own doc comment for why a successful
     // payment's enrollment is never blocked by a plan limit.
     PlansModule,
+    // D5-5 — `DashboardMetricsRepository`, so the revenue summary reports
+    // manual sales with the dashboard's own query.
+    DashboardModule,
   ],
   controllers: [
     CourseOrdersController,

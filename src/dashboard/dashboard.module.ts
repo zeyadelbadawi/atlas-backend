@@ -55,5 +55,9 @@ import { AcademyReportsRepository } from './repositories/academy-reports.reposit
     AcademyReportsService,
     AcademyReportsRepository,
   ],
+  // D5-5 — the academy Revenue page (`CourseCommerceModule`) reads manual
+  // sales through the same query as the dashboard card. A clean DAG edge:
+  // nothing this module imports imports `CourseCommerceModule`.
+  exports: [DashboardMetricsRepository],
 })
 export class DashboardModule {}

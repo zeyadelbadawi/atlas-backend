@@ -10,6 +10,7 @@ import type { AcademyContext } from '../../academy/guards/academy-scope.guard';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyPayoutsRepository } from '../repositories/academy-payouts.repository';
 import { RevenueLedgerEntriesRepository } from '../repositories/revenue-ledger-entries.repository';
+import { DashboardMetricsRepository } from '../../dashboard/repositories/dashboard-metrics.repository';
 import {
   toAcademyPayoutResponse,
   type AcademyPayoutResponse,
@@ -26,6 +27,7 @@ export class AcademyPayoutsService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly academyPayoutsRepository: AcademyPayoutsRepository,
     private readonly revenueLedgerEntriesRepository: RevenueLedgerEntriesRepository,
+    private readonly dashboardMetricsRepository: DashboardMetricsRepository,
   ) {}
 
   async listForAcademy(
@@ -52,20 +54,35 @@ export class AcademyPayoutsService {
     };
   }
 
-  /** The unsettled ledger balance an Academy is currently owed, grouped by currency — never persisted, always computed fresh (matches this file's own contract doc comment). */
+  /**
+   * The unsettled ledger balance an Academy is currently owed, grouped by
+   * currency — never persisted, always computed fresh (matches this file's
+   * own contract doc comment).
+   *
+   * D5-5 — plus the academy's manual sales. The ledger only ever holds
+   * Atlas Payments sales, which are not launched, so on its own this read
+   * showed an academy selling by bank transfer an empty "revenue". The
+   * manual figure is the dashboard card's, from the same repository method;
+   * the owner-only rule above already matches the card's (B0-SEC-03).
+   */
   async getRevenueSummary(
     context: AcademyContext,
     academyId: string,
   ): Promise<AcademyRevenueSummaryResponse> {
     const organizationId = assertCanViewAcademyFinance(context);
-    const entries = await this.tenancyContextService.runInTenantContext(
+    const { entries, manualSales } = await this.tenancyContextService.runInTenantContext(
       organizationId,
-      (tx) =>
-        this.revenueLedgerEntriesRepository.findUnsettledForAcademy(
+      async (tx) => ({
+        entries: await this.revenueLedgerEntriesRepository.findUnsettledForAcademy(
           tx,
           academyId,
           new Date(),
         ),
+        manualSales: await this.dashboardMetricsRepository.sumManualSalesWindows(tx, {
+          organizationId,
+          academyId,
+        }),
+      }),
     );
 
     const totalsByCurrency = new Map<string, bigint>();
@@ -82,6 +99,16 @@ export class AcademyPayoutsService {
           amountMinorUnits: Number(amountMinorUnits),
         }),
       ),
+      manualSales: {
+        periods: manualSales.map((period) => ({
+          days: period.days,
+          totals: period.totals.map((total) => ({
+            currency: total.currency,
+            amountMinorUnits: Number(total.amountMinorUnits),
+            count: total.count,
+          })),
+        })),
+      },
     };
   }
 }
