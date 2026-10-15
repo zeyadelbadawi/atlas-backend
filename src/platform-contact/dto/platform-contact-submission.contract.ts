@@ -27,6 +27,24 @@ export interface PlatformContactSubmissionResponse {
   readonly userAgent: string | null;
   readonly readAt: string | null;
   readonly createdAt: string;
+  /** B0-SUP-04 — optional WhatsApp number (E.164) and its country. */
+  readonly phoneE164: string | null;
+  readonly phoneCountry: string | null;
+  /** B0-SUP-04 — each consent: given or not, when, and which wording version. */
+  readonly contactConsent: PlatformContactConsentResponse;
+  readonly marketingConsent: PlatformContactConsentResponse;
+  readonly requesterRole: string | null;
+  readonly subject: string | null;
+  readonly studentBand: string | null;
+  readonly preferredChannel: string | null;
+  /** B0-ANL-04 — sanitised UTM values / referrer domain / landing template, or null. */
+  readonly attribution: Record<string, string> | null;
+}
+
+export interface PlatformContactConsentResponse {
+  readonly given: boolean;
+  readonly at: string | null;
+  readonly version: string | null;
 }
 
 /** `GET platform/contact-submissions/summary` — counts per status. */
@@ -63,5 +81,26 @@ export function toPlatformContactSubmissionResponse(
     userAgent: row.userAgent,
     readAt: row.readAt ? row.readAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
+    phoneE164: row.phoneE164,
+    phoneCountry: row.phoneCountry,
+    contactConsent: toConsent(row.contactConsentAt, row.contactConsentVersion),
+    marketingConsent: toConsent(row.marketingConsentAt, row.marketingConsentVersion),
+    requesterRole: row.requesterRole,
+    subject: row.subject,
+    studentBand: row.studentBand,
+    preferredChannel: row.preferredChannel,
+    attribution:
+      row.attribution &&
+      typeof row.attribution === 'object' &&
+      !Array.isArray(row.attribution)
+        ? (row.attribution as Record<string, string>)
+        : null,
   };
+}
+
+function toConsent(
+  at: Date | null,
+  version: string | null,
+): PlatformContactConsentResponse {
+  return { given: at !== null, at: at ? at.toISOString() : null, version };
 }

@@ -17,11 +17,18 @@ import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type { AuthMethod, User } from '@prisma/client';
-import type { EmailOtpPolicy, IdentityConfig } from '../../config/configuration';
+import type {
+  EmailOtpPolicy,
+  IdentityConfig,
+  LeadCaptureConfig,
+} from '../../config/configuration';
+import { sanitizeAttribution } from '../../common/attribution/attribution';
+import type { AttributionDto } from '../../common/attribution/attribution';
 import { UsersRepository } from '../repositories/users.repository';
 import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
 import {
   createPhoneForNewAccount,
+  SIGNUP_WHATSAPP_CONSENT_WORDING_VERSION,
   isPhoneTaken,
   isPhoneUniqueViolation,
   phoneTakenError,
@@ -422,6 +429,10 @@ export class AuthService {
      */
     phoneNumber?: string;
     phoneCountry?: string;
+    /** B0-IAM-08 — organization owner WhatsApp opt-in (see `RegisterDto`). */
+    whatsappConsent?: boolean;
+    /** B0-ANL-04 — client-sent attribution; sanitised before storage. */
+    attribution?: AttributionDto;
     /** Forensic only (recorded on a trial redemption), never a decision input. */
     context?: { readonly ipAddress?: string; readonly userAgent?: string };
   }): Promise<RegistrationResult> {
@@ -664,6 +675,20 @@ export class AuthService {
       !external?.emailVerified && this.emailOtpService.policyFor(signInSurface) === 'off';
     const rawVerificationToken = sendVerificationLink ? generateOpaqueToken() : null;
     const userId = randomUUID();
+    // B0-IAM-08 / B0-ANL-04 — flag-gated, organization signup only (never a
+    // learner signup, never a Google signup's absent phone). Read live.
+    const leadCapture = this.configService.getOrThrow<LeadCaptureConfig>('leadCapture');
+    const whatsappConsent =
+      preparedOrganization &&
+      phone &&
+      input.whatsappConsent === true &&
+      leadCapture.signupWhatsappConsentMode === 'on'
+        ? { at: new Date(), version: SIGNUP_WHATSAPP_CONSENT_WORDING_VERSION }
+        : undefined;
+    const signupAttribution =
+      preparedOrganization && leadCapture.attributionCaptureMode === 'on'
+        ? (sanitizeAttribution(input.attribution) ?? undefined)
+        : undefined;
 
     const pendingApprovalOutboxIds: (string | null)[] = [];
     let organizationResult: SignupOrganizationResult | undefined;
@@ -693,7 +718,7 @@ export class AuthService {
           if (phone) {
             // Same transaction, same self context: the account and its number
             // exist together or not at all.
-            await createPhoneForNewAccount(tx, userId, phone);
+            await createPhoneForNewAccount(tx, userId, phone, whatsappConsent);
           }
           if (external) {
             await tx.userAuthIdentity.create({
@@ -750,6 +775,9 @@ export class AuthService {
                 owner: { id: userId, email },
                 prepared: preparedOrganization,
                 context: input.context,
+                ...(signupAttribution
+                  ? { signupAttribution: { ...signupAttribution } }
+                  : {}),
               },
             );
           }

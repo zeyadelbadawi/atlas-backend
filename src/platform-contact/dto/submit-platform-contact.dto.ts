@@ -18,8 +18,9 @@
  * Both are answered with the ordinary success response, so neither check
  * can be probed from outside.
  */
-import { Transform, type TransformFnParams } from 'class-transformer';
+import { Transform, Type, type TransformFnParams } from 'class-transformer';
 import {
+  IsBoolean,
   IsEmail,
   IsIn,
   IsInt,
@@ -30,13 +31,28 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import type { PlatformContactTopic } from '@prisma/client';
 import {
   PLATFORM_CONTACT_LIMITS as LIMITS,
   PLATFORM_CONTACT_LOCALES,
+  PLATFORM_CONTACT_PREFERRED_CHANNELS,
+  PLATFORM_CONTACT_REQUESTER_ROLES,
+  PLATFORM_CONTACT_STUDENT_BANDS,
+  PLATFORM_CONTACT_SUBJECT_MAX,
   PLATFORM_CONTACT_TOPICS,
 } from '../platform-contact.constants';
+import {
+  IsMobilePhoneNumber,
+  IsPhoneCountry,
+  IsPhoneNumberFor,
+  IsPhoneNumberInCountry,
+  hasPhoneInput,
+} from '../../identity/phone/phone-number.validators';
+import { PHONE_INPUT_MAX_LENGTH } from '../../identity/phone/phone-number.policy';
+import { AttributionDto } from '../../common/attribution/attribution';
 
 /** Trims strings; leaves anything else alone so `IsString` can reject it. */
 function trim({ value }: TransformFnParams): unknown {
@@ -107,4 +123,62 @@ export class SubmitPlatformContactDto {
   @IsInt()
   @Min(0)
   readonly startedAt!: number;
+
+  // ---------------------------------------------------------------------
+  // B0-SUP-04 / B0-ANL-04 — all OPTIONAL and additive: a form that does
+  // not know them keeps working. Stored only while their flag is on
+  // (FLAG_CONTACT_CONSENT_MODE / FLAG_ATTRIBUTION_CAPTURE_MODE); with the
+  // flag off they are validated and then ignored.
+  // ---------------------------------------------------------------------
+
+  /** WhatsApp number as typed + its ISO country; both or neither, server-normalised to E.164. */
+  @ValidateIf(hasPhoneInput)
+  @IsNotEmpty()
+  @IsString()
+  @MaxLength(PHONE_INPUT_MAX_LENGTH)
+  @IsPhoneNumberFor('phoneCountry')
+  @IsPhoneNumberInCountry('phoneCountry')
+  @IsMobilePhoneNumber('phoneCountry')
+  readonly phoneNumber?: string;
+
+  @ValidateIf(hasPhoneInput)
+  @IsNotEmpty()
+  @IsString()
+  @IsPhoneCountry()
+  readonly phoneCountry?: string;
+
+  /** "You may contact me about this enquiry" — unticked unless the visitor ticks it. */
+  @IsOptional()
+  @IsBoolean()
+  readonly contactConsent?: boolean;
+
+  /** Marketing consent — separate from the one above, unticked by default. */
+  @IsOptional()
+  @IsBoolean()
+  readonly marketingConsent?: boolean;
+
+  /** Sales qualification — kept only for `topic = sales`. */
+  @IsOptional()
+  @IsIn(PLATFORM_CONTACT_REQUESTER_ROLES)
+  readonly requesterRole?: (typeof PLATFORM_CONTACT_REQUESTER_ROLES)[number];
+
+  @IsOptional()
+  @Transform(trimOptional)
+  @IsString()
+  @MaxLength(PLATFORM_CONTACT_SUBJECT_MAX)
+  readonly subject?: string;
+
+  @IsOptional()
+  @IsIn(PLATFORM_CONTACT_STUDENT_BANDS)
+  readonly studentBand?: (typeof PLATFORM_CONTACT_STUDENT_BANDS)[number];
+
+  @IsOptional()
+  @IsIn(PLATFORM_CONTACT_PREFERRED_CHANNELS)
+  readonly preferredChannel?: (typeof PLATFORM_CONTACT_PREFERRED_CHANNELS)[number];
+
+  /** Where the visitor came from — sanitised before storage (`sanitizeAttribution`). */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AttributionDto)
+  readonly attribution?: AttributionDto;
 }

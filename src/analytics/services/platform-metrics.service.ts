@@ -33,7 +33,15 @@ import type { PlatformMetricsOverviewResponse } from '../dto/platform-metrics.co
 import type { PlatformVideoMetricsResponse } from '../dto/platform-video-metrics.contract';
 import type { PlatformCommerceMetricsResponse } from '../dto/platform-commerce-metrics.contract';
 import type { PlatformDeliveryMetricsResponse } from '../dto/platform-delivery-metrics.contract';
-import { REPORT_WINDOW_DEFAULT_DAYS } from '../dto/platform-metrics-query.dto';
+import {
+  GROWTH_WEEKS_DEFAULT,
+  REPORT_WINDOW_DEFAULT_DAYS,
+} from '../dto/platform-metrics-query.dto';
+import {
+  GROWTH_TIME_ZONE,
+  PlatformGrowthRepository,
+} from '../repositories/platform-growth.repository';
+import type { PlatformGrowthMetricsResponse } from '../dto/platform-growth-metrics.contract';
 import {
   CONTENT_ACCESS_LOG_RETENTION_DAYS,
   QUIZ_ATTEMPT_EVENTS_RETENTION_DAYS,
@@ -71,7 +79,51 @@ export class PlatformMetricsService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly platformScaleRepository: PlatformScaleRepository,
     private readonly analyticsRevenueRepository: AnalyticsRevenueRepository,
+    private readonly platformGrowthRepository: PlatformGrowthRepository,
   ) {}
+
+  /**
+   * B0-ANL-04 (part 3) — the weekly activation funnel by signup cohort,
+   * internal organizations excluded. See `PlatformGrowthRepository`.
+   */
+  async getGrowthOverview(
+    platformOwnerId: string,
+    weeks: number = GROWTH_WEEKS_DEFAULT,
+    now: Date = new Date(),
+  ): Promise<PlatformGrowthMetricsResponse> {
+    const { cohorts, sources } = await this.tenancyContextService.runInUserContext(
+      platformOwnerId,
+      async (tx) => ({
+        cohorts: await this.platformGrowthRepository.cohorts(tx, now, weeks),
+        sources: await this.platformGrowthRepository.sources(tx, now, weeks),
+      }),
+    );
+    const totals = cohorts.reduce(
+      (sum, row) => ({
+        signups: sum.signups + row.signups,
+        academyCreated: sum.academyCreated + row.academyCreated,
+        coursePublished: sum.coursePublished + row.coursePublished,
+        firstEnrolment: sum.firstEnrolment + row.firstEnrolment,
+        firstPayment: sum.firstPayment + row.firstPayment,
+      }),
+      {
+        signups: 0,
+        academyCreated: 0,
+        coursePublished: 0,
+        firstEnrolment: 0,
+        firstPayment: 0,
+      },
+    );
+    return {
+      timeZone: GROWTH_TIME_ZONE,
+      weeks,
+      cohorts,
+      totals,
+      sources,
+      excludesInternalOrganizations: true,
+      generatedAt: now.toISOString(),
+    };
+  }
 
   async getOverview(platformOwnerId: string): Promise<PlatformMetricsOverviewResponse> {
     const currentMonth = currentCalendarMonth();

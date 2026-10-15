@@ -141,6 +141,8 @@ export class OrganizationsService {
       readonly onboardingCompletedAt?: null;
       /** W4 — the request field a name conflict is reported on (`organizationName` at signup). */
       readonly nameField?: string;
+      /** B0-ANL-04 — sanitised signup attribution (organization signup only). */
+      readonly signupAttribution?: Prisma.InputJsonValue;
     },
     onCreated?: (
       tx: Prisma.TransactionClient,
@@ -174,6 +176,7 @@ export class OrganizationsService {
           slug,
           ownerUserId: userId,
           onboardingCompletedAt: input.onboardingCompletedAt,
+          signupAttribution: input.signupAttribution,
         });
         await tx.$executeRawUnsafe('RELEASE SAVEPOINT organization_slug_attempt');
       } catch (error) {

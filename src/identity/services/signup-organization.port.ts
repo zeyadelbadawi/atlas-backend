@@ -47,6 +47,8 @@ export interface SignupOrganizationPort {
       readonly owner: { readonly id: string; readonly email: string };
       readonly prepared: PreparedSignupOrganization;
       readonly context?: { readonly ipAddress?: string; readonly userAgent?: string };
+      /** B0-ANL-04 — already sanitised and flag-checked by the caller; omitted = none. */
+      readonly signupAttribution?: Prisma.InputJsonValue;
     },
   ): Promise<SignupOrganizationResult>;
 
