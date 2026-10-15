@@ -159,14 +159,19 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
     expect(checkout.body.snapshot.price.amountMinorUnits).toBe(79000);
   });
 
-  it('4. yearly billing is honestly rejected (pricingUnavailable) for a real plan configured for monthly only — never silently mischarged', async () => {
+  it('4. yearly billing is honestly rejected (pricingUnavailable) for a plan configured for monthly only — never silently mischarged', async () => {
     const { user, org } = await newAccountWithOrg('checkout-yearly-mismatch');
+    // Monthly price, no `yearlyAmount`: the real plans all carry one now
+    // (the B0-CAT-03 ladder), so the monthly-only case is a fixture.
+    const monthlyOnly = await seedPlan(admin, 'monthly-only-plan', {
+      pricing: { amount: 79, currency: 'USD', billingCycle: 'monthly' },
+    });
 
     const response = await request(app.getHttpServer())
       .post(`/organizations/${org.id}/checkouts`)
       .set('Authorization', `Bearer ${user.accessToken}`)
       .send({
-        target: { type: 'plan_subscription', planKey: 'growth' },
+        target: { type: 'plan_subscription', planKey: monthlyOnly.key },
         billingCycle: 'yearly',
         idempotencyKey: 'yearly-mismatch-idem',
       })
@@ -174,6 +179,26 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
 
     expect(response.body.error.messageKey).toBe('errors.checkout.pricingUnavailable');
     expect(response.body.error.kind).toBe('validation');
+  });
+
+  it('4b. a real plan is priced yearly from its own yearlyAmount (the ladder: 10 x monthly)', async () => {
+    const { user, org } = await newAccountWithOrg('checkout-yearly-ladder');
+
+    const checkout = await request(app.getHttpServer())
+      .post(`/organizations/${org.id}/checkouts`)
+      .set('Authorization', `Bearer ${user.accessToken}`)
+      .send({
+        target: { type: 'plan_subscription', planKey: 'growth' },
+        billingCycle: 'yearly',
+        idempotencyKey: 'yearly-ladder-idem',
+      })
+      .expect(201);
+
+    expect(checkout.body.snapshot.billingCycle).toBe('yearly');
+    expect(checkout.body.snapshot.price).toMatchObject({
+      amountMinorUnits: 2_790_000,
+      currency: 'EGP',
+    });
   });
 
   it('5/6. an unpriced plan is rejected cleanly with pricingUnavailable, with the specific messageKey the frontend depends on', async () => {

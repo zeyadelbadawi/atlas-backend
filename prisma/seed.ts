@@ -317,15 +317,18 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
     where: { key: 'starter' },
     create: {
       key: 'starter',
-      name: 'Starter',
-      description: 'For a single academy just getting started.',
+      // B0-CAT-03 — the owner-approved ladder (15 Oct 2026): `starter` is
+      // the Teacher plan. Same values as the catalog-ladder migration, so a
+      // seeded database and a migrated one agree.
+      name: 'Teacher',
+      description: 'For a teacher starting to sell courses online.',
       // P54 — bilingual catalog text, in the same `{ en, ar }` shape the
       // website CMS already uses. Seeded here so a fresh dev database
       // matches what the P54 migration backfills in an existing one.
-      nameLocalized: { en: 'Starter', ar: 'الأساسية' },
+      nameLocalized: { en: 'Teacher', ar: 'المعلّم' },
       descriptionLocalized: {
-        en: 'For a single academy just getting started.',
-        ar: 'لأكاديمية واحدة في بداية الطريق.',
+        en: 'For a teacher starting to sell courses online.',
+        ar: 'للمعلّم الذي يبدأ بيع كورساته أونلاين.',
       },
       status: 'active',
       displayOrder: 1,
@@ -340,24 +343,24 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
       tier: 'basic',
       limits: {
         academies: 1,
-        students: 20,
-        instructors: 2,
-        staff: 2,
-        courses: 5,
-        generalStorage: 2,
-        videoStorage: 2,
-        // P64 Phase 2 (D5, mapped per DL-3): Starter 500 minutes of
-        // provider-hosted video. An Atlas entitlement, not a provider price.
-        // Read from the shared catalog so the seed, the premium-plan
-        // migration and the tests cannot disagree about the baseline.
-        videoStorageMinutes: PLAN_CATALOG.normal.basic.videoStorageMinutes,
+        students: 100,
+        instructors: 3,
+        staff: 3,
+        courses: 20,
+        generalStorage: 10,
+        videoStorage: 30,
+        // Minutes of provider-hosted video, an Atlas entitlement, not a
+        // provider price. The ladder's own figure; the shared tier baseline
+        // (`PLAN_CATALOG`) still governs the Premium rows.
+        videoStorageMinutes: 1200,
         // Live Sessions add-on: how many sessions may be RECORDED.
         // Unrecorded sessions are unlimited and gated by the feature flag.
         recordedSessions: 3,
       },
       features: { liveSessions: false },
-      pricing: { amount: 0, currency: 'USD', billingCycle: 'monthly' },
+      pricing: { amount: 1190, currency: 'EGP', billingCycle: 'monthly', yearlyAmount: 11900 },
       trialEligible: true,
+      giftedDaysYearly: 14,
     },
     update: { trialEligible: true, family: 'normal', tier: 'basic' },
   });
@@ -366,32 +369,32 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
     where: { key: 'growth' },
     create: {
       key: 'growth',
-      name: 'Growth',
-      description: 'For growing organizations running multiple academies.',
-      nameLocalized: { en: 'Growth', ar: 'النمو' },
+      name: 'Academy',
+      description: 'For an established teacher with assistants, or a small team under one brand.',
+      nameLocalized: { en: 'Academy', ar: 'الأكاديمية' },
       descriptionLocalized: {
-        en: 'For growing organizations running multiple academies.',
-        ar: 'للمؤسسات المتنامية التي تدير عدة أكاديميات.',
+        en: 'For an established teacher with assistants, or a small team under one brand.',
+        ar: 'للمعلّم الذي يعمل مع فريق مساعد، أو لفريق صغير تحت علامة واحدة.',
       },
       status: 'active',
       displayOrder: 2,
       family: 'normal',
       tier: 'growth',
       limits: {
-        academies: 5,
-        students: 200,
-        instructors: 10,
-        staff: 10,
-        courses: 50,
-        generalStorage: 20,
-        videoStorage: 20,
-        // P64 Phase 2 (D5/DL-3) — the tier D5 calls "Professional".
-        videoStorageMinutes: PLAN_CATALOG.normal.growth.videoStorageMinutes,
+        academies: 1,
+        students: 400,
+        instructors: 8,
+        staff: 8,
+        courses: 'unlimited',
+        generalStorage: 30,
+        videoStorage: 75,
+        videoStorageMinutes: 3000,
         recordedSessions: 10,
       },
       features: { liveSessions: false },
-      pricing: { amount: 79, currency: 'USD', billingCycle: 'monthly' },
+      pricing: { amount: 2790, currency: 'EGP', billingCycle: 'monthly', yearlyAmount: 27900 },
       trialEligible: true,
+      giftedDaysYearly: 14,
     },
     update: { trialEligible: true, family: 'normal', tier: 'growth' },
   });
@@ -400,37 +403,35 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
     where: { key: 'enterprise' },
     create: {
       key: 'enterprise',
-      name: 'Enterprise',
-      description: 'Unlimited scale for large organizations.',
-      nameLocalized: { en: 'Enterprise', ar: 'المؤسسات' },
+      // The ladder's Organization plan; the USD Enterprise price is retired.
+      name: 'Organization',
+      description: 'For organizations running several academies.',
+      nameLocalized: { en: 'Organization', ar: 'المؤسسة' },
       descriptionLocalized: {
-        en: 'Unlimited scale for large organizations.',
-        ar: 'نطاق غير محدود للمؤسسات الكبيرة.',
+        en: 'For organizations running several academies.',
+        ar: 'للمؤسسات التي تدير عدة أكاديميات.',
       },
       status: 'active',
       displayOrder: 3,
       family: 'normal',
       tier: 'enterprise',
       limits: {
-        academies: 'unlimited',
-        students: 'unlimited',
-        instructors: 'unlimited',
-        staff: 'unlimited',
+        academies: 5,
+        students: 1500,
+        instructors: 25,
+        staff: 25,
         courses: 'unlimited',
-        generalStorage: 'unlimited',
-        videoStorage: 'unlimited',
-        // P64 Phase 2 (D5/DL-3) — the tier D5 calls "Business". A real
-        // number, not `unlimited`: D5 sets a ceiling for every tier, and
-        // provider-hosted minutes are the one resource the plan deliberately
-        // does not give away without bound.
-        videoStorageMinutes: PLAN_CATALOG.normal.enterprise.videoStorageMinutes,
-        recordedSessions: 'unlimited',
+        generalStorage: 100,
+        videoStorage: 200,
+        videoStorageMinutes: 8000,
+        recordedSessions: 30,
       },
       features: { liveSessions: false },
-      pricing: { amount: 299, currency: 'USD', billingCycle: 'monthly' },
-      trialEligible: false,
+      pricing: { amount: 7490, currency: 'EGP', billingCycle: 'monthly', yearlyAmount: 74900 },
+      trialEligible: true,
+      giftedDaysYearly: 14,
     },
-    update: { trialEligible: false, family: 'normal', tier: 'enterprise' },
+    update: { trialEligible: true, family: 'normal', tier: 'enterprise' },
   });
 
   // ---------------------------------------------------------------------
@@ -592,7 +593,8 @@ async function seedPlansAndSubscriptions(prisma: PrismaClient, orgs: SeededOrgs)
   const RECORDED_SESSION_ALLOWANCE: Record<string, number | 'unlimited'> = {
     [PLAN_CATALOG.normal.basic.key]: 3,
     [PLAN_CATALOG.normal.growth.key]: 10,
-    [PLAN_CATALOG.normal.enterprise.key]: 'unlimited',
+    // The ladder's Organization plan: 30, not unlimited.
+    [PLAN_CATALOG.normal.enterprise.key]: 30,
     [PLAN_CATALOG.premium.basic.key]: 3,
     [PLAN_CATALOG.premium.growth.key]: 10,
     [PLAN_CATALOG.premium.enterprise.key]: 'unlimited',
@@ -811,7 +813,7 @@ async function seedBillingDemo(prisma: PrismaClient, orgs: SeededOrgs): Promise<
         target: { type: 'plan_subscription', planKey: growth.key },
         billingCycle: 'monthly',
         displayName: growth.name,
-        price: { amountMinorUnits: 7900, currency: 'USD' },
+        price: { amountMinorUnits: 279000, currency: 'EGP' },
         capturedAt: new Date().toISOString(),
       },
       status: 'draft',

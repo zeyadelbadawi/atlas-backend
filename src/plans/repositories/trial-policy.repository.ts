@@ -15,8 +15,8 @@ import { PrismaService } from '../../database/prisma.service';
 const SINGLETON_ID = '00000000-0000-0000-0000-000000000001';
 
 const DEFAULT_ENABLED = true;
-/** Phase 2, Decision 6 (locked): exactly 3 days, no credit card — supersedes the previous 7-day default. */
-const DEFAULT_DURATION_DAYS = 3;
+/** B0-CAT-03 (owner decision, 15 Oct 2026): 14 days, no credit card — supersedes Phase 2's 3 days (and the original 7). */
+const DEFAULT_DURATION_DAYS = 14;
 
 @Injectable()
 export class TrialPolicyRepository {
