@@ -14,6 +14,7 @@ import {
   seedAcademyMember,
   seedActiveSubscriptionForOrg,
   seedCourse,
+  seedMembership,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 
@@ -182,5 +183,173 @@ describe('Academy robots.txt and sitemap.xml (e2e) — B0-WEB-01', () => {
     const closed = await robots(host).expect(200);
     expect(closed.text).toBe('User-agent: *\nDisallow: /\n');
     await sitemap(host).expect(404);
+  });
+
+  describe('B0-WEB-02 — Arabic as the default language', () => {
+    const patchConfig = (academyId: string, token: string, body: object) =>
+      request(app.getHttpServer())
+        .patch(`/academies/${academyId}/website/configuration`)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body);
+    const publish = (academyId: string, token: string) =>
+      request(app.getHttpServer())
+        .post(`/academies/${academyId}/website/publish`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+    it('an Arabic-default site lists Arabic at the root and English under /en, live only once published; switching back restores the English sitemap exactly', async () => {
+      const { academyId, host, token } = await academyWithHost('seo-ar', true);
+      const english = (await sitemap(host).expect(200)).text;
+      expect(english).toContain(`<loc>https://${host}/about-us</loc>`);
+
+      const saved = await patchConfig(academyId, token, { defaultLocale: 'ar' }).expect(
+        200,
+      );
+      expect(saved.body.defaultLocale).toBe('ar');
+      expect(saved.body.unpublishedChanges.configuration).toBe(true);
+      // Saved, not published: visitors still get the English-default site.
+      expect((await sitemap(host).expect(200)).text).toBe(english);
+      const draftPublic = await request(app.getHttpServer())
+        .get(`/public/websites/${academyId}`)
+        .expect(200);
+      expect(draftPublic.body).not.toHaveProperty('defaultLocale');
+
+      await publish(academyId, token);
+      const arabic = (await sitemap(host).expect(200)).text;
+      expect(arabic).toContain(`<loc>https://${host}/about-us</loc>`);
+      expect(arabic).toContain(`hreflang="ar" href="https://${host}/about-us"`);
+      expect(arabic).toContain(`hreflang="en" href="https://${host}/en/about-us"`);
+      expect(arabic).toContain(`hreflang="x-default" href="https://${host}/about-us"`);
+      expect(arabic).not.toContain(`https://${host}/ar`);
+      const live = await request(app.getHttpServer())
+        .get(`/public/websites/${academyId}`)
+        .expect(200);
+      expect(live.body.defaultLocale).toBe('ar');
+      // robots.txt is unchanged by the language.
+      expect((await robots(host).expect(200)).text).toContain(
+        `Sitemap: https://${host}/sitemap.xml`,
+      );
+
+      await patchConfig(academyId, token, { defaultLocale: 'en' }).expect(200);
+      await publish(academyId, token);
+      expect((await sitemap(host).expect(200)).text).toBe(english);
+      const back = await request(app.getHttpServer())
+        .get(`/public/websites/${academyId}`)
+        .expect(200);
+      expect(back.body).not.toHaveProperty('defaultLocale');
+    });
+
+    it('the required language follows the default: Arabic required on an Arabic-default site, English otherwise', async () => {
+      const { academyId, token } = await academyWithHost('seo-req', false);
+      const page = await request(app.getHttpServer())
+        .post(`/academies/${academyId}/website/pages`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ title: 'Arabic only', slug: 'arabic-only' })
+        .expect(201);
+      const save = async (title: object, expected: number) => {
+        const current = await request(app.getHttpServer())
+          .get(`/academies/${academyId}/website/pages/${page.body.id}`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        return request(app.getHttpServer())
+          .patch(`/academies/${academyId}/website/pages/${page.body.id}`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            sections: [
+              {
+                id: 'sec-hero',
+                type: 'hero',
+                enabled: true,
+                visibility: { desktop: true, tablet: true, mobile: true },
+                config: { title },
+              },
+            ],
+            expectedVersion: current.body.version,
+          })
+          .expect(expected);
+      };
+      const arabicOnly = { en: '', ar: 'أهلاً بكم' };
+      const englishOnly = { en: 'Welcome', ar: '' };
+
+      const refused = await save(arabicOnly, 400);
+      expect(refused.body.error.violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: '0.config.title.en',
+            messageKey: 'validation:required',
+          }),
+        ]),
+      );
+      await save(englishOnly, 200);
+
+      await patchConfig(academyId, token, { defaultLocale: 'ar' }).expect(200);
+      await save(arabicOnly, 200);
+      const refusedEnglish = await save(englishOnly, 400);
+      expect(refusedEnglish.body.error.violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: '0.config.title.ar',
+            messageKey: 'validation:required',
+          }),
+        ]),
+      );
+      // Published, the Arabic-only title also reads on the /en pages (a
+      // blank English side shows its Arabic), never as an empty heading.
+      await save(arabicOnly, 200);
+      await request(app.getHttpServer())
+        .post(`/academies/${academyId}/website/publish`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      const publicPage = await request(app.getHttpServer())
+        .get(`/public/websites/${academyId}/pages/arabic-only`)
+        .expect(200);
+      expect(publicPage.body.sections[0].config.title).toEqual({
+        en: 'أهلاً بكم',
+        ar: 'أهلاً بكم',
+      });
+      const draftPage = await request(app.getHttpServer())
+        .get(`/academies/${academyId}/website/pages/${page.body.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(draftPage.body.sections[0].config.title).toEqual(arabicOnly);
+      // Navigation labels follow the same rule, in the same save as the switch too.
+      await patchConfig(academyId, token, {
+        defaultLocale: 'en',
+        navigation: [{ id: 'n1', label: arabicOnly, pageId: page.body.id, order: 0 }],
+      }).expect(400);
+      await patchConfig(academyId, token, {
+        navigation: [{ id: 'n1', label: arabicOnly, pageId: page.body.id, order: 0 }],
+      }).expect(200);
+    });
+
+    it('rejects any other value, and only the website-managing roles may change it', async () => {
+      const { academyId, token } = await academyWithHost('seo-rbac', false);
+      await request(app.getHttpServer())
+        .get(`/academies/${academyId}/website/configuration`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      await patchConfig(academyId, token, { defaultLocale: 'fr' }).expect(400);
+
+      const email = uniqueTestEmail('seo-instructor');
+      const password = 'correct-horse-battery';
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({ name: 'Instructor', email, password })
+        .expect(201);
+      const signIn = await request(app.getHttpServer())
+        .post('/auth/sign-in')
+        .send({ email, password })
+        .expect(200);
+      const academy = await admin.academy.findUniqueOrThrow({ where: { id: academyId } });
+      await seedMembership(admin, academy.organizationId, signIn.body.user.id, 'member');
+      await seedAcademyMember(admin, academyId, signIn.body.user.id, 'instructor');
+      await patchConfig(academyId, signIn.body.accessToken as string, {
+        defaultLocale: 'ar',
+      }).expect(403);
+      const row = await admin.websiteConfiguration.findUniqueOrThrow({
+        where: { academyId },
+      });
+      expect(row.defaultLocale).toBe('en');
+    });
   });
 });

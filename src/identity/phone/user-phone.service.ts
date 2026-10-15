@@ -174,10 +174,73 @@ export async function createPhoneForNewAccount(
   tx: Prisma.TransactionClient,
   userId: string,
   phone: NormalizedPhoneNumber,
+  /** B0-IAM-08 — the owner's WhatsApp opt-in, already flag-checked by the caller. */
+  whatsappConsent?: { readonly at: Date; readonly version: string },
 ): Promise<void> {
   await tx.userPhone.create({
-    data: { userId, phoneE164: phone.e164, countryCode: phone.country },
+    data: {
+      userId,
+      phoneE164: phone.e164,
+      countryCode: phone.country,
+      ...(whatsappConsent
+        ? {
+            whatsappConsentAt: whatsappConsent.at,
+            whatsappConsentVersion: whatsappConsent.version,
+          }
+        : {}),
+    },
   });
+}
+
+/**
+ * B0-IAM-08 — the wording version stamped on an owner's WhatsApp opt-in.
+ * Server-stamped (the client sends only true/false); mirrored by the
+ * frontend's `SIGNUP_WHATSAPP_CONSENT_WORDING_VERSION`. `draft1`: DRAFT
+ * pending counsel — the approved wording ships as a new version.
+ */
+export const SIGNUP_WHATSAPP_CONSENT_WORDING_VERSION =
+  'signup-whatsapp-consent-2026-10-draft1';
+
+/** One opted-in organization owner's number, for the Platform Owner. */
+export interface OrganizationOwnerPhoneEntry {
+  readonly e164: string;
+  readonly country: string;
+  readonly whatsappConsentAt: Date;
+  readonly whatsappConsentVersion: string;
+}
+
+/**
+ * B0-IAM-08 — opted-in organization owners' numbers, keyed by organization
+ * id. The SQL function decides from `app.current_user_id`: only a Platform
+ * Owner gets rows, and only for owners whose WhatsApp opt-in stands. Anyone
+ * else, and any owner who did not opt in, simply gets no entry.
+ */
+export async function readOptedInOrganizationOwnerPhones(
+  client: RawQueryClient,
+  organizationIds: readonly string[],
+): Promise<Map<string, OrganizationOwnerPhoneEntry>> {
+  if (organizationIds.length === 0) return new Map();
+  const ids = [...organizationIds];
+  const rows = await client.$queryRaw<
+    Array<{
+      organization_id: string;
+      phone_e164: string;
+      country_code: string;
+      whatsapp_consent_at: Date;
+      whatsapp_consent_version: string;
+    }>
+  >(Prisma.sql`SELECT * FROM platform_organization_owner_phones(${ids}::text[])`);
+  return new Map(
+    rows.map((row) => [
+      row.organization_id,
+      {
+        e164: row.phone_e164,
+        country: row.country_code,
+        whatsappConsentAt: row.whatsapp_consent_at,
+        whatsappConsentVersion: row.whatsapp_consent_version,
+      },
+    ]),
+  );
 }
 
 @Injectable()

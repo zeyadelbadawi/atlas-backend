@@ -46,7 +46,9 @@
  * doc comment).
  */
 import {
+  DEFAULT_PUBLIC_WEBSITE_LOCALE,
   PUBLIC_WEBSITE_LOCALES,
+  localePathPrefix,
   type PublicWebsiteLocale,
 } from '../constants/locale.constants';
 import { resolveLocalizedText } from '../utils/localized-text.util';
@@ -59,15 +61,22 @@ import type {
   WebsitePageInput,
 } from './seo.types';
 
-/** `/ar/about` for `ar`, `/about` for `en` — the ONE place the locale URL prefix is applied when building hreflang alternates, matching the frontend router's own prefix rule (`locale.constants.ts`, `PUBLIC_WEBSITE_LOCALE_PATH_PREFIX`). */
-function withLocalePrefix(path: string, locale: PublicWebsiteLocale): string {
-  return locale === 'en' ? path : `/${locale}${path}`;
+/** `/ar/about` for `ar`, `/about` for `en` — the ONE place the locale URL prefix is applied when building hreflang alternates, matching the frontend router's own prefix rule (`locale.constants.ts`, `PUBLIC_WEBSITE_LOCALE_PATH_PREFIX`). B0-WEB-02: on an Arabic-default site the roles swap (`/about` for `ar`, `/en/about` for `en`). */
+function withLocalePrefix(
+  path: string,
+  locale: PublicWebsiteLocale,
+  defaultLocale: PublicWebsiteLocale,
+): string {
+  return `${localePathPrefix(locale, defaultLocale)}${path}`;
 }
 
-function buildHreflangAlternates(canonicalPath: string): readonly HreflangAlternate[] {
+function buildHreflangAlternates(
+  canonicalPath: string,
+  defaultLocale: PublicWebsiteLocale,
+): readonly HreflangAlternate[] {
   return PUBLIC_WEBSITE_LOCALES.map((locale) => ({
     locale,
-    path: withLocalePrefix(canonicalPath, locale),
+    path: withLocalePrefix(canonicalPath, locale, defaultLocale),
   }));
 }
 
@@ -76,6 +85,7 @@ export function resolvePageSeo(
   configuration: WebsiteConfigurationSeoInput,
   fallback: SeoFallback,
   locale: PublicWebsiteLocale,
+  defaultLocale: PublicWebsiteLocale = DEFAULT_PUBLIC_WEBSITE_LOCALE,
 ): ResolvedSeoMetadata {
   const pageMetaTitle = resolveLocalizedText(page.seo.metaTitle, locale);
   const globalMetaTitle = resolveLocalizedText(configuration.seo.metaTitle, locale);
@@ -114,7 +124,7 @@ export function resolvePageSeo(
     titleSource,
     descriptionSource,
     locale,
-    hreflangAlternates: buildHreflangAlternates(canonicalPath),
+    hreflangAlternates: buildHreflangAlternates(canonicalPath, defaultLocale),
   };
 }
 
@@ -124,6 +134,7 @@ export function resolveCourseSeo(
   configuration: WebsiteConfigurationSeoInput,
   fallback: SeoFallback,
   locale: PublicWebsiteLocale,
+  defaultLocale: PublicWebsiteLocale = DEFAULT_PUBLIC_WEBSITE_LOCALE,
 ): ResolvedSeoMetadata {
   const title = course.title || fallback.title;
   const description =
@@ -148,6 +159,6 @@ export function resolveCourseSeo(
     descriptionSource:
       course.shortDescription || course.description ? 'override' : 'fallback',
     locale,
-    hreflangAlternates: buildHreflangAlternates(canonicalPath),
+    hreflangAlternates: buildHreflangAlternates(canonicalPath, defaultLocale),
   };
 }

@@ -67,6 +67,8 @@ const TRIAL_ENDS_AT = '2026-10-01T09:00:00.000Z';
 const PERIOD_END_AT = '2026-11-01T09:00:00.000Z';
 const GRACE_ENDS_AT = '2026-11-08T09:00:00.000Z';
 const PROOF_ID = 'p3333333-3333-4333-8333-333333333333';
+/** B0-MSG-05 — the activation anchor: the organisation's signup instant. */
+const SIGNED_UP_AT = '2026-09-20T09:00:00.000Z';
 /** The calendar day a repeating, self-damping event was first seen — see `device.limit_reached`. */
 const OCCURRED_ON = '2026-09-25';
 /** W-EXC — a learner exception's grant instant and the instant its window opens. */
@@ -357,6 +359,23 @@ const EXPECTED_DEDUPE: Record<
   'lifecycle.subscription.followup_30d': {
     values: { anchorAt: GRACE_ENDS_AT },
     expected: `lifecycle_subscription_followup_30d:${ENTITY_ID}:${GRACE_ENDS_AT}`,
+  },
+  // B0-MSG-05 part 3 — once per tenant: the version is the signup instant.
+  'lifecycle.activation.no_academy': {
+    values: { anchorAt: SIGNED_UP_AT },
+    expected: `lifecycle_activation_no_academy:${ENTITY_ID}:${SIGNED_UP_AT}`,
+  },
+  'lifecycle.activation.site_unpublished': {
+    values: { anchorAt: SIGNED_UP_AT },
+    expected: `lifecycle_activation_site_unpublished:${ENTITY_ID}:${SIGNED_UP_AT}`,
+  },
+  'lifecycle.activation.payments_and_course': {
+    values: { anchorAt: SIGNED_UP_AT },
+    expected: `lifecycle_activation_payments_and_course:${ENTITY_ID}:${SIGNED_UP_AT}`,
+  },
+  'lifecycle.activation.first_proof': {
+    values: { anchorAt: SIGNED_UP_AT, academyId: 'a1' },
+    expected: `lifecycle_activation_first_proof:${ENTITY_ID}:${SIGNED_UP_AT}`,
   },
 
   // --- P64 C6 — hosted-video retention (§31). The whole sequence shares
@@ -968,6 +987,53 @@ describe('COMMUNICATION_CATALOG', () => {
         if (entry.channels.inApp !== 'never') continue;
         expect(entry.channels.email).not.toBe('never');
       }
+    });
+  });
+
+  describe('B0-MSG-05 activation steps A1–A4', () => {
+    const ACTIVATION_KEYS = COMMUNICATION_EVENT_KEYS.filter((key) =>
+      key.startsWith('lifecycle.activation.'),
+    );
+
+    it('declares exactly the four steps', () => {
+      expect([...ACTIVATION_KEYS].sort()).toEqual([
+        'lifecycle.activation.first_proof',
+        'lifecycle.activation.no_academy',
+        'lifecycle.activation.payments_and_course',
+        'lifecycle.activation.site_unpublished',
+      ]);
+    });
+
+    it('are lifecycle nudges: email only, subject to the reminders preference, platform-branded', () => {
+      for (const key of ACTIVATION_KEYS) {
+        const entry = COMMUNICATION_CATALOG[key];
+        expect({ key, category: entry.category }).toEqual({ key, category: 'lifecycle' });
+        expect(entry.channels).toEqual({ inApp: 'never', email: 'preference' });
+        expect(entry.audience).toBe('staff');
+        expect(entry.branding).toBe('platform');
+      }
+    });
+
+    it('key on the signup anchor alone — once per tenant, whatever else the values carry', () => {
+      for (const key of ACTIVATION_KEYS) {
+        const entry = COMMUNICATION_CATALOG[key];
+        const first = entry.dedupe(context({ anchorAt: SIGNED_UP_AT, academyId: 'a1' }));
+        const later = entry.dedupe(
+          context({ anchorAt: SIGNED_UP_AT, academyId: 'a2', planName: 'Other' }),
+        );
+        expect(first).toBe(later);
+      }
+    });
+
+    it('links A1–A3 to the dashboard and A4 to the academy payment queue', () => {
+      const url = (key: CommunicationEventKey) =>
+        COMMUNICATION_CATALOG[key].actionUrl!(context({ academyId: 'a1' }));
+      expect(url('lifecycle.activation.no_academy')).toBe('/dashboard');
+      expect(url('lifecycle.activation.site_unpublished')).toBe('/dashboard');
+      expect(url('lifecycle.activation.payments_and_course')).toBe('/dashboard');
+      expect(url('lifecycle.activation.first_proof')).toBe(
+        '/dashboard/academy/a1/payments',
+      );
     });
   });
 });

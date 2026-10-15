@@ -88,6 +88,11 @@ EMAIL_DELIVERABILITY_CHECK_ENABLED=false
 PAYMENT_CREDENTIALS_ENCRYPTION_KEY=$key
 FLAG_QUIZ_ENGINE_V2_MODE=on
 FLAG_QUIZ_INTEGRITY_MODE=on
+# B0-MED-11 — the Normal video tier, for journey J49 (upload → play with the
+# watermark). With no BASIC_VIDEO_* gate configured, NODE_ENV=development
+# serves it through the backend's local stand-in against the s3rver bucket;
+# that stand-in refuses to run in production.
+FLAG_VIDEO_NORMAL_MODE=on
 # The journeys sign in as organization owners through the UI; production's
 # emailed-code floor for privileged sign-ins (ATO F11) is covered by
 # test/privileged-mfa.e2e-spec.ts instead.

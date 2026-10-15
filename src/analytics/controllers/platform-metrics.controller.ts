@@ -15,9 +15,12 @@ import type { PlatformVideoMetricsResponse } from '../dto/platform-video-metrics
 import type { PlatformCommerceMetricsResponse } from '../dto/platform-commerce-metrics.contract';
 import type { PlatformDeliveryMetricsResponse } from '../dto/platform-delivery-metrics.contract';
 import {
+  GROWTH_WEEKS_DEFAULT,
+  PlatformGrowthQueryDto,
   PlatformMetricsWindowQueryDto,
   REPORT_WINDOW_DEFAULT_DAYS,
 } from '../dto/platform-metrics-query.dto';
+import type { PlatformGrowthMetricsResponse } from '../dto/platform-growth-metrics.contract';
 
 @Controller('platform-metrics')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, PlatformOwnerGuard)
@@ -48,6 +51,18 @@ export class PlatformMetricsController {
     return this.platformMetricsService.getCommerceOverview(
       auth.userId,
       query.days ?? REPORT_WINDOW_DEFAULT_DAYS,
+    );
+  }
+
+  /** B0-ANL-04 (part 3) — weekly activation funnel by signup cohort (1–26 weeks, default 12), internal organizations excluded. Same three guards. */
+  @Get('growth')
+  async getGrowth(
+    @CurrentAuthContext() auth: AuthContext,
+    @Query() query: PlatformGrowthQueryDto,
+  ): Promise<PlatformGrowthMetricsResponse> {
+    return this.platformMetricsService.getGrowthOverview(
+      auth.userId,
+      query.weeks ?? GROWTH_WEEKS_DEFAULT,
     );
   }
 

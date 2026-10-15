@@ -37,6 +37,15 @@ export interface DashboardManualSalesTotal {
   readonly count: number;
 }
 
+/** B0-COM-02 — the manual-sales windows, in days, each ending now. */
+export const MANUAL_SALES_WINDOWS_DAYS = [7, 30, 90] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface DashboardManualSalesPeriod {
+  readonly days: number;
+  readonly totals: readonly DashboardManualSalesTotal[];
+}
+
 export interface DashboardRevenueTotal {
   readonly currency: string;
   readonly amountMinorUnits: bigint;
@@ -167,6 +176,28 @@ export class DashboardMetricsRepository {
       amountMinorUnits: group._sum.amountMinorUnits ?? 0n,
       count: group._count._all,
     }));
+  }
+
+  /**
+   * `sumManualSalesSince` for every window in `MANUAL_SALES_WINDOWS_DAYS`.
+   * The ONE definition of manual sales: the dashboard card and the academy
+   * Revenue page (D5-5) both read it, so the two can never disagree.
+   */
+  sumManualSalesWindows(
+    tx: Prisma.TransactionClient,
+    scope: DashboardScopeFilter,
+    now: Date = new Date(),
+  ): Promise<DashboardManualSalesPeriod[]> {
+    return Promise.all(
+      MANUAL_SALES_WINDOWS_DAYS.map(async (days) => ({
+        days,
+        totals: await this.sumManualSalesSince(
+          tx,
+          scope,
+          new Date(now.getTime() - days * DAY_MS),
+        ),
+      })),
+    );
   }
 
   async sumRevenueByCurrency(

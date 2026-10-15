@@ -122,6 +122,7 @@ export class MediaService {
           status: query.status,
           type: query.type,
           access: query.access,
+          courseId: query.courseId,
           skip: (page - 1) * pageSize,
           take: pageSize,
         }),

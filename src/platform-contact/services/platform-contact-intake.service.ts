@@ -33,7 +33,10 @@
 import { Injectable, Logger, type BeforeApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, createHmac } from 'node:crypto';
-import type { IdentityConfig } from '../../config/configuration';
+import type { IdentityConfig, LeadCaptureConfig } from '../../config/configuration';
+import { requireNormalizedPhone } from '../../identity/phone/user-phone.service';
+import { sanitizeAttribution } from '../../common/attribution/attribution';
+import type { InsertPlatformContactSubmission } from '../repositories/platform-contact-submissions.repository';
 import { RedisService } from '../../redis/redis.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { UsersRepository } from '../../identity/repositories/users.repository';
@@ -42,6 +45,7 @@ import { PlatformContactSubmissionsRepository } from '../repositories/platform-c
 import type { SubmitPlatformContactDto } from '../dto/submit-platform-contact.dto';
 import type { PlatformContactReceiptResponse } from '../dto/platform-contact-submission.contract';
 import {
+  CONTACT_CONSENT_WORDING_VERSION,
   PLATFORM_CONTACT_DEDUPE_TTL_SECONDS,
   PLATFORM_CONTACT_LIMITS,
   PLATFORM_CONTACT_MIN_FILL_MS,
@@ -78,7 +82,7 @@ export class PlatformContactIntakeService implements BeforeApplicationShutdown {
     private readonly redisService: RedisService,
     private readonly usersRepository: UsersRepository,
     private readonly communicationService: CommunicationService,
-    configService: ConfigService,
+    private readonly configService: ConfigService,
   ) {
     // A key DERIVED from the server's signing secret with a fixed label,
     // so the IP hash is salted with a server-only value without adding
@@ -95,6 +99,9 @@ export class PlatformContactIntakeService implements BeforeApplicationShutdown {
   ): Promise<PlatformContactReceiptResponse> {
     const discard = this.screen(payload, now);
     if (discard) return this.discarded(discard);
+    // Normalised BEFORE the dedupe claim, so a malformed number is a 400
+    // that does not swallow the person's corrected retry as a duplicate.
+    const leadFields = this.leadFields(payload, now);
 
     const dedupeKey = this.dedupeKey(payload.email, payload.message);
     if (!(await this.claimDedupe(dedupeKey))) return this.discarded('duplicate');
@@ -114,6 +121,7 @@ export class PlatformContactIntakeService implements BeforeApplicationShutdown {
           userAgent: meta.userAgent
             ? meta.userAgent.slice(0, PLATFORM_CONTACT_LIMITS.userAgentMax)
             : null,
+          ...leadFields,
         }),
       );
     } catch (error) {
@@ -165,6 +173,57 @@ export class PlatformContactIntakeService implements BeforeApplicationShutdown {
     if (elapsed >= 0 && elapsed < PLATFORM_CONTACT_MIN_FILL_MS) return 'too_fast';
     if (elapsed < -MAX_PLAUSIBLE_SKEW_MS) return 'too_fast';
     return null;
+  }
+
+  /**
+   * B0-SUP-04 / B0-ANL-04 — the new, flag-gated columns. Flags are read on
+   * every call (never cached), so the owner's switch takes effect at once.
+   *
+   *   - FLAG_CONTACT_CONSENT_MODE off: nothing new is stored, whatever the
+   *     client sent. On: the WhatsApp number (server-normalised), each
+   *     consent the visitor TICKED stamped with now + the server's wording
+   *     version (unticked or absent = NULL = not given; marketing consent is
+   *     therefore false unless explicitly given), and the sales
+   *     qualification answers for `topic = sales` only.
+   *   - FLAG_ATTRIBUTION_CAPTURE_MODE on: the sanitised attribution object
+   *     (no personal data, capped); an untagged visit stores nothing.
+   */
+  leadFields(
+    payload: SubmitPlatformContactDto,
+    now: Date,
+  ): Partial<InsertPlatformContactSubmission> {
+    const config = this.configService.getOrThrow<LeadCaptureConfig>('leadCapture');
+    const fields: {
+      -readonly [
+        K in keyof InsertPlatformContactSubmission
+      ]?: InsertPlatformContactSubmission[K];
+    } = {};
+    if (config.contactConsentMode === 'on') {
+      if (payload.phoneNumber !== undefined || payload.phoneCountry !== undefined) {
+        const phone = requireNormalizedPhone(payload.phoneNumber, payload.phoneCountry);
+        fields.phoneE164 = phone.e164;
+        fields.phoneCountry = phone.country;
+      }
+      if (payload.contactConsent === true) {
+        fields.contactConsentAt = now;
+        fields.contactConsentVersion = CONTACT_CONSENT_WORDING_VERSION;
+      }
+      if (payload.marketingConsent === true) {
+        fields.marketingConsentAt = now;
+        fields.marketingConsentVersion = CONTACT_CONSENT_WORDING_VERSION;
+      }
+      if (payload.topic === 'sales') {
+        fields.requesterRole = payload.requesterRole ?? null;
+        fields.subject = payload.subject ?? null;
+        fields.studentBand = payload.studentBand ?? null;
+        fields.preferredChannel = payload.preferredChannel ?? null;
+      }
+    }
+    if (config.attributionCaptureMode === 'on') {
+      const attribution = sanitizeAttribution(payload.attribution);
+      if (attribution) fields.attribution = { ...attribution };
+    }
+    return fields;
   }
 
   private discarded(

@@ -334,6 +334,10 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     const slug = `p106ten${Date.now()}`;
     const provisioned = await provisionAcademy(owner.token, owner.organizationId, slug);
     expect(provisioned.academyId).toBeTruthy();
+    // Live first — which also caches the hostname resolution for 60 s.
+    await request(app.getHttpServer())
+      .get(`/public/websites/resolve?hostname=${slug}`)
+      .expect(200);
 
     const response = await request(app.getHttpServer())
       .post('/users/me/delete')
@@ -346,6 +350,18 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
       where: { id: provisioned.academyId },
     });
     expect(academy.status).toBe('archived');
+    // D5-2 — the same archive as DELETE /academies/:id (P106-DEL-021):
+    // `archivedAt` recorded (the media purge's 30-day grace starts here),
+    // and the cached hostname dropped, so the site is offline NOW rather
+    // than when the cache entry ages out.
+    expect(academy.archivedAt).toBeInstanceOf(Date);
+    await request(app.getHttpServer())
+      .get(`/public/websites/resolve?hostname=${slug}`)
+      .expect(404);
+    const audit = await admin.auditLogEntry.findFirst({
+      where: { action: 'academy.archived', targetId: provisioned.academyId },
+    });
+    expect(audit?.actorUserId).toBe(owner.userId);
   });
 
   // ---------------- Academy Provisioning as the ONLY creation path ----------------

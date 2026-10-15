@@ -11,6 +11,8 @@
  *   - a replayed job never notifies anyone twice (per-recipient dedupe);
  *   - a job for a publish that is not visible (in flight / rolled back) is
  *     refused for retry and emits nothing.
+ *   - a SCHEDULED announcement, published later by the sweep tick, gets
+ *     the same fan-out as an immediate publish (it used to get none).
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -28,6 +30,7 @@ import {
   AnnouncementNotYetVisibleError,
 } from '../src/community/services/announcement-fanout.service';
 import { ANNOUNCEMENT_FANOUT_BATCH_SIZE } from '../src/community/queue/announcement-fanout.types';
+import { SubscriptionSweepService } from '../src/plans/services/subscription-sweep.service';
 import type { PrismaClient } from '@prisma/client';
 
 const AUDIENCE = ANNOUNCEMENT_FANOUT_BATCH_SIZE * 2 + 37;
@@ -138,6 +141,39 @@ describe('Announcement fan-out (e2e, real queue)', () => {
     });
     expect(await rowsFor(created.body.id)).toBe(AUDIENCE);
   });
+
+  it('a SCHEDULED announcement published by the sweep tick reaches the same audience exactly once', async () => {
+    const server = app.getHttpServer();
+    const created = await request(server)
+      .post(`/academies/${academyId}/announcements`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        title: 'Exams start Monday',
+        body: 'Bring your ID.',
+        scheduledAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      })
+      .expect(201);
+    expect(created.body.status).toBe('scheduled');
+
+    // Make it due, then run the exact tick body the repeatable job runs.
+    await admin.announcement.update({
+      where: { id: created.body.id },
+      data: { scheduledAt: new Date(Date.now() - 1000) },
+    });
+    const sweep = app.get(SubscriptionSweepService, { strict: false });
+    await sweep.run();
+
+    const published = await admin.announcement.findUniqueOrThrow({
+      where: { id: created.body.id },
+    });
+    expect(published.status).toBe('published');
+    expect(await eventuallyRows(created.body.id, AUDIENCE)).toBe(AUDIENCE);
+
+    // A second tick finds nothing due and notifies no one again.
+    await sweep.run();
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    expect(await rowsFor(created.body.id)).toBe(AUDIENCE);
+  }, 150_000);
 
   it('refuses (for retry) a job whose publish is not visible, and emits nothing', async () => {
     const created = await request(app.getHttpServer())

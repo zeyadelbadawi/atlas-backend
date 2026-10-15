@@ -14,6 +14,7 @@ import type {
   OrganizationWithOwnerAndCounts,
 } from '../../tenancy/repositories/organizations.repository';
 import type { OrganizationMembershipWithUser } from '../../tenancy/repositories/organization-memberships.repository';
+import type { OrganizationOwnerPhoneEntry } from '../../identity/phone/user-phone.service';
 
 export interface PlatformOrganizationAcademyRefResponse {
   readonly id: string;
@@ -40,9 +41,24 @@ export interface PlatformOrganizationSummaryResponse {
   readonly createdAt: string;
 }
 
+/**
+ * B0-IAM-08 — the owner's number, present ONLY when the owner opted in to
+ * WhatsApp contact at signup (`platform_organization_owner_phones`). Absent
+ * otherwise; never a learner's number.
+ */
+export interface PlatformOrganizationOwnerPhoneResponse {
+  readonly e164: string;
+  readonly country: string;
+  readonly whatsappConsentAt: string;
+  readonly whatsappConsentVersion: string;
+}
+
 export interface PlatformOrganizationDetailResponse extends PlatformOrganizationSummaryResponse {
   readonly ownerName?: string;
   readonly ownerEmail?: string;
+  readonly ownerPhone?: PlatformOrganizationOwnerPhoneResponse;
+  /** B0-ANL-04 — sanitised signup attribution (UTM / referrer domain / template), or null. */
+  readonly signupAttribution: Record<string, string> | null;
   readonly subscription?: TenantSubscriptionResponse;
   readonly usage?: TenantUsageResponse;
   readonly academies: readonly PlatformOrganizationAcademyRefResponse[];
@@ -72,11 +88,27 @@ export function toPlatformOrganizationDetailResponse(
   usage: TenantUsageResponse | undefined,
   academies: readonly Pick<Academy, 'id' | 'name' | 'status'>[],
   members: readonly OrganizationMembershipWithUser[],
+  ownerPhone?: OrganizationOwnerPhoneEntry,
 ): PlatformOrganizationDetailResponse {
+  const attribution = organization.signupAttribution;
   return {
     ...toPlatformOrganizationSummaryResponse(organization, subscription),
     ownerName: organization.owner.name,
     ownerEmail: organization.owner.email,
+    ...(ownerPhone
+      ? {
+          ownerPhone: {
+            e164: ownerPhone.e164,
+            country: ownerPhone.country,
+            whatsappConsentAt: ownerPhone.whatsappConsentAt.toISOString(),
+            whatsappConsentVersion: ownerPhone.whatsappConsentVersion,
+          },
+        }
+      : {}),
+    signupAttribution:
+      attribution && typeof attribution === 'object' && !Array.isArray(attribution)
+        ? (attribution as Record<string, string>)
+        : null,
     subscription,
     usage,
     academies: academies.map((academy) => ({

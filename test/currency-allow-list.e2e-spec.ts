@@ -5,6 +5,9 @@
  * a legacy academy can still save its settings; it just cannot switch to a
  * new unsupported currency. Changing the academy currency never rewrites
  * an existing course price, which keeps its own currency.
+ *
+ * D5-3 — the academy currency is the default for a new course price sent
+ * without one, and the academy country is an ISO 3166-1 alpha-2 code.
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -22,6 +25,9 @@ import type { PrismaClient } from '@prisma/client';
 const UNSUPPORTED = [{ field: 'currency', messageKey: 'validation:unsupportedCurrency' }];
 const UNSUPPORTED_PRICE = [
   { field: 'pricing.currency', messageKey: 'validation:unsupportedCurrency' },
+];
+const INVALID_COUNTRY = [
+  { field: 'address.country', messageKey: 'validation:invalidCountry' },
 ];
 
 describe('B0-LRN-05 / B0-COM-05 currency allow-list (e2e)', () => {
@@ -143,5 +149,119 @@ describe('B0-LRN-05 / B0-COM-05 currency allow-list (e2e)', () => {
       .expect(400);
     expect(refused.body.error.violations).toEqual(UNSUPPORTED_PRICE);
     expect(await admin.course.count({ where: { academyId: academy.id } })).toBe(0);
+  });
+  it('D5-3 — a paid price sent without a currency takes the academy currency', async () => {
+    const { token, academy } = await ownerWithAcademy('cur-default');
+    const created = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/courses`)
+      .set(auth(token))
+      .send({
+        title: 'Priced without a currency',
+        slug: `cur-default-${Date.now()}`,
+        visibility: 'public',
+        pricing: { type: 'paid', amount: 250 },
+      })
+      .expect(201);
+    expect(created.body.pricing).toEqual({ type: 'paid', amount: 250, currency: 'EGP' });
+
+    // A free course turned paid without a currency also takes it.
+    const free = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/courses`)
+      .set(auth(token))
+      .send({
+        title: 'Free first',
+        slug: `cur-default-free-${Date.now()}`,
+        visibility: 'public',
+        pricing: { type: 'free' },
+      })
+      .expect(201);
+    const paid = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/courses/${free.body.id}`)
+      .set(auth(token))
+      .send({ pricing: { type: 'paid', amount: 100 } })
+      .expect(200);
+    expect(paid.body.pricing.currency).toBe('EGP');
+  });
+
+  it('D5-3 — a legacy academy currency is never the default; an existing price keeps its own', async () => {
+    const { token, academy } = await ownerWithAcademy('cur-default-legacy');
+    await admin.academy.update({ where: { id: academy.id }, data: { currency: 'USD' } });
+    const created = await request(app.getHttpServer())
+      .post(`/academies/${academy.id}/courses`)
+      .set(auth(token))
+      .send({
+        title: 'Legacy academy course',
+        slug: `cur-default-legacy-${Date.now()}`,
+        visibility: 'public',
+        pricing: { type: 'paid', amount: 40 },
+      })
+      .expect(201);
+    expect(created.body.pricing.currency).toBe('EGP');
+
+    // A course priced in a legacy currency keeps it when re-priced without one.
+    await admin.course.update({
+      where: { id: created.body.id },
+      data: { pricingCurrency: 'USD' },
+    });
+    await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}/courses/${created.body.id}`)
+      .set(auth(token))
+      .send({ pricing: { type: 'paid', amount: 45 } })
+      .expect(200);
+    const row = await admin.course.findUniqueOrThrow({ where: { id: created.body.id } });
+    expect(row.pricingCurrency).toBe('USD');
+    expect(row.pricingAmountMinorUnits).toBe(4500n);
+  });
+
+  it('D5-3 — the academy country must be an ISO 3166-1 alpha-2 code', async () => {
+    const { token, academy } = await ownerWithAcademy('country-code');
+    for (const country of ['Egypt', 'eg', 'ZZ', 'EGY']) {
+      const refused = await request(app.getHttpServer())
+        .patch(`/academies/${academy.id}`)
+        .set(auth(token))
+        .send({ address: { country } })
+        .expect(400);
+      expect(refused.body.error.violations).toEqual(INVALID_COUNTRY);
+    }
+
+    const saved = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}`)
+      .set(auth(token))
+      .send({ address: { country: 'SA', city: 'Riyadh' }, currency: 'EGP' })
+      .expect(200);
+    expect(saved.body.address.country).toBe('SA');
+    // Saving a country never changes the stored currency by itself.
+    expect(saved.body.currency).toBe('EGP');
+
+    // An empty string clears it.
+    await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}`)
+      .set(auth(token))
+      .send({ address: { country: '' } })
+      .expect(200);
+  });
+
+  it('D5-3 — a legacy free-text country can be re-saved unchanged, not switched to another', async () => {
+    const { token, academy } = await ownerWithAcademy('country-legacy');
+    await admin.academy.update({
+      where: { id: academy.id },
+      data: { address: { country: 'Egypt' } },
+    });
+    await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}`)
+      .set(auth(token))
+      .send({ address: { country: 'Egypt', city: 'Cairo' } })
+      .expect(200);
+    const refused = await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}`)
+      .set(auth(token))
+      .send({ address: { country: 'Saudi Arabia' } })
+      .expect(400);
+    expect(refused.body.error.violations).toEqual(INVALID_COUNTRY);
+    await request(app.getHttpServer())
+      .patch(`/academies/${academy.id}`)
+      .set(auth(token))
+      .send({ address: { country: 'EG' } })
+      .expect(200);
   });
 });

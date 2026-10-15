@@ -10,13 +10,29 @@
  * path is verified against the caller's real membership rather than
  * trusted.
  */
-import { Body, Controller, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
+import {
+  ACADEMY_MANAGING_ROLES,
+  AcademyRoles,
+} from '../../academy/decorators/academy-roles.decorator';
 import { ProtectedMediaService } from '../services/protected-media.service';
-import type { VideoUploadTicket } from '../services/protected-media.service';
+import type {
+  ProtectedFileGrant,
+  VideoUploadTicket,
+} from '../services/protected-media.service';
 import { CreateVideoUploadDto, UploadProtectedFileDto } from '../dto/protected-media.dto';
 import { toProtectedMediaAssetResponse } from '../dto/protected-media-asset.contract';
 import type { ProtectedMediaAssetResponse } from '../dto/protected-media-asset.contract';
@@ -42,6 +58,28 @@ export class ProtectedMediaController {
   }
 
   /**
+   * D5-4 — a short-lived signed link for staff to preview or download one
+   * protected file from the Media Library (which lists it with no `url`).
+   * Managing tier only, at the route and again in the service. POST, not
+   * GET: it mints a credential, and nothing may cache or prefetch it.
+   */
+  @Post(':id/media/:assetId/grant')
+  @HttpCode(HttpStatus.OK)
+  @AcademyRoles(...ACADEMY_MANAGING_ROLES)
+  async createStaffFileGrant(
+    @Req() request: Request,
+    @Param('assetId') assetId: string,
+  ): Promise<ProtectedFileGrant> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.protectedMediaService.createStaffFileGrant(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      assetId,
+    );
+  }
+
+  /**
    * Reserves quota and hands back a one-shot provider upload URL.
    *
    * The browser uploads STRAIGHT TO THE PROVIDER with that URL — no video
@@ -64,6 +102,27 @@ export class ProtectedMediaController {
   ): Promise<ProtectedMediaAssetResponse> {
     const { academyId, organizationId } = request.academyContext!;
     const asset = await this.protectedMediaService.completeVideoUpload(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      assetId,
+    );
+    return toProtectedMediaAssetResponse(asset);
+  }
+
+  /**
+   * B0-MED-11 — abandons an unfinished upload (Cancel, or a failed PUT):
+   * deletes any bytes that landed and releases the quota reservation.
+   * Idempotent; a finished video is refused (it is removed through the
+   * media library instead).
+   */
+  @Post(':id/media/video-uploads/:assetId/cancel')
+  async cancelVideoUpload(
+    @Req() request: Request,
+    @Param('assetId') assetId: string,
+  ): Promise<ProtectedMediaAssetResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    const asset = await this.protectedMediaService.cancelVideoUpload(
       academyId,
       organizationId,
       request.authContext!.userId,

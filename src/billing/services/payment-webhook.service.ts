@@ -18,6 +18,7 @@
  * comment.
  */
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { PaymentsRepository } from '../repositories/payments.repository';
 import { PaymentWebhookEventsRepository } from '../repositories/payment-webhook-events.repository';
@@ -102,6 +103,11 @@ export class PaymentWebhookService {
       );
       if (!payment) return null;
 
+      // MONOTONIC. Webhooks arrive late and out of order. Every
+      // transition below applies only while the payment is still
+      // non-terminal (`NON_TERMINAL_PAYMENT_STATUSES`), as one conditional
+      // UPDATE, so a `payment.failed` after `payment.succeeded` (or the
+      // reverse) is recorded above and changes nothing.
       switch (payload.eventType) {
         case 'payment.succeeded': {
           // Idempotent per payment (W8 D2): a payment a reviewer already
@@ -112,28 +118,34 @@ export class PaymentWebhookService {
           const applied = await this.paymentApplicationService.applySuccessfulPayment(
             tx,
             payment,
-            { source: 'gateway' },
+            { source: 'gateway', fromNonTerminalOnly: true },
           );
           return applied.receipt.outboxId;
         }
         case 'payment.failed':
-          await this.paymentApplicationService.applyFailedPayment(
-            tx,
-            payment,
-            'errors.payment.webhookFailed',
-          );
+          await this.paymentsRepository.transitionIfNonTerminal(tx, payment.id, {
+            status: 'failed',
+            failureReason: 'errors.payment.webhookFailed',
+            nextAction: Prisma.JsonNull,
+          });
           break;
         case 'payment.cancelled':
-          await this.paymentsRepository.update(tx, payment.id, { status: 'cancelled' });
+          await this.paymentsRepository.transitionIfNonTerminal(tx, payment.id, {
+            status: 'cancelled',
+          });
           break;
         case 'payment.expired':
-          await this.paymentsRepository.update(tx, payment.id, { status: 'expired' });
+          await this.paymentsRepository.transitionIfNonTerminal(tx, payment.id, {
+            status: 'expired',
+          });
           break;
         case 'payment.processing':
-          await this.paymentsRepository.update(tx, payment.id, { status: 'processing' });
+          await this.paymentsRepository.transitionIfNonTerminal(tx, payment.id, {
+            status: 'processing',
+          });
           break;
         case 'payment.requires_action':
-          await this.paymentsRepository.update(tx, payment.id, {
+          await this.paymentsRepository.transitionIfNonTerminal(tx, payment.id, {
             status: 'requires_action',
           });
           break;

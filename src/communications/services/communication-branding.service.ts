@@ -11,6 +11,7 @@ import type { CommunicationsConfig } from '../../config/configuration';
 import type { BrandingContext } from '../templates/layout';
 import { LinkBuilderService } from './link-builder.service';
 import { EmailLogoService } from './email-logo.service';
+import type { PublicWebsiteLocale } from '../../website/constants/locale.constants';
 
 export interface ResolvedBranding {
   readonly branding: BrandingContext;
@@ -22,6 +23,13 @@ export interface ResolvedBranding {
    * Absent for platform branding (links then use the platform URL).
    */
   readonly credentialHost?: string | null;
+  /**
+   * B0-WEB-02 — the language the academy's published website serves at `/`,
+   * which decides the locale prefix of every link built on its host
+   * (`LinkBuilderService.onHost`). Absent for platform branding and for
+   * platform-host links, which carry no locale prefix: `en` applies.
+   */
+  readonly siteDefaultLocale?: PublicWebsiteLocale;
   readonly academyLanguage: string | null;
   readonly academyTimezone: string | null;
 }
@@ -85,6 +93,10 @@ export class CommunicationBrandingService {
     const host = mode === 'academy' ? await this.links.academyHost(tx, academyId) : null;
     const credentialHost =
       mode === 'academy' ? await this.links.academyAtlasHost(tx, academyId) : null;
+    const siteDefaultLocale =
+      mode === 'academy'
+        ? await this.links.academySiteDefaultLocale(tx, academyId)
+        : undefined;
     if (identity === 'platform') {
       return {
         ...this.platform(),
@@ -107,6 +119,7 @@ export class CommunicationBrandingService {
       },
       host,
       credentialHost,
+      siteDefaultLocale,
       academyLanguage: academy.language,
       academyTimezone: academy.timezone,
     };

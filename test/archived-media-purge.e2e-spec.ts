@@ -12,7 +12,13 @@
  *   - repeated cleanup is safe;
  *   - a payload naming the wrong tenant touches nothing;
  *   - a legal hold wins over the grace period;
- *   - `dry_run` (the default) destroys nothing.
+ *   - `dry_run` (the default) destroys nothing;
+ *   - (D5-2) an academy archived by ACCOUNT DELETION records `archivedAt`
+ *     like any other archive, so its media follows the same grace: kept
+ *     inside it, purged after it, never while a legal hold stands, and an
+ *     active academy's media is never touched;
+ *   - an academy archived with no `archivedAt` (the pre-D5-2 deletion
+ *     path) is never purged — the safe direction for legacy rows.
  */
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -32,6 +38,7 @@ import {
 } from '../src/media/storage/media-storage.interface';
 import { ProtectedMediaStorage } from '../src/media/storage/protected-media-storage.provider';
 import { FakeVideoProvider } from '../src/media/video/fake-video.provider';
+import { AccountDeletionService } from '../src/identity/services/account-deletion.service';
 import type { PrismaClient } from '@prisma/client';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -329,5 +336,111 @@ describe('Archived-media purge — 30-day grace (e2e)', () => {
     }
     expect(status).toBe('deleted');
     expect(await publicStorage.objectExists(asset.storageKey)).toBe(false);
+  });
+  describe('academies archived by account deletion (D5-2)', () => {
+    /** A client owner whose organization runs one academy holding one hosted video. */
+    async function ownerWithVideo(label: string) {
+      const t = await tenant(label, null);
+      const video = await hostedVideo(t.academyId);
+      const org = await admin.organization.findUniqueOrThrow({
+        where: { id: t.organizationId },
+      });
+      return { ...t, ownerUserId: org.ownerUserId, video };
+    }
+
+    async function deleteAccount(userId: string) {
+      const po = await admin.user.findFirstOrThrow({
+        where: { isPlatformOwner: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      return app.get(AccountDeletionService).deleteUserAsPlatformOwner(po.id, userId, {});
+    }
+
+    const backdateArchive = (academyId: string, days: number) =>
+      admin.$executeRaw`UPDATE academies SET archived_at = archived_at - make_interval(days => ${days}::int) WHERE id = ${academyId}`;
+
+    it('records archivedAt, keeps the media inside the grace, purges it after, and leaves an active academy alone', async () => {
+      const deleted = await ownerWithVideo('purge-d52-deleted');
+      const bystander = await tenant('purge-d52-active', null);
+      const bystanderAsset = await hostedVideo(bystander.academyId);
+      await ageAsset(bystanderAsset.id, 90);
+
+      const before = Date.now();
+      const result = await deleteAccount(deleted.ownerUserId);
+      expect(result.academiesArchived).toBe(1);
+
+      const academy = await admin.academy.findUniqueOrThrow({
+        where: { id: deleted.academyId },
+      });
+      expect(academy.status).toBe('archived');
+      // The defect: this stayed NULL, so the purge could never start.
+      expect(academy.archivedAt).toBeInstanceOf(Date);
+      expect(academy.archivedAt!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+
+      // Inside the 30-day grace: kept.
+      expect(await candidates()).not.toContain(deleted.video.id);
+      expect(
+        await purge.purgeAsset({
+          assetId: deleted.video.id,
+          organizationId: deleted.organizationId,
+        }),
+      ).toBe('not_eligible');
+      expect(await fakeVideo.fetchAsset(deleted.video.providerId!)).not.toBeNull();
+
+      // Once the grace has elapsed: eligible, destroyed with proof.
+      await backdateArchive(deleted.academyId, 31);
+      expect(await candidates()).toContain(deleted.video.id);
+      expect(
+        await purge.purgeAsset({
+          assetId: deleted.video.id,
+          organizationId: deleted.organizationId,
+        }),
+      ).toBe('purged');
+      expect(await fakeVideo.fetchAsset(deleted.video.providerId!)).toBeNull();
+
+      // The active academy next door: never a candidate, never touched.
+      expect(await candidates()).not.toContain(bystanderAsset.id);
+      expect(
+        (await admin.mediaAsset.findUniqueOrThrow({ where: { id: bystanderAsset.id } }))
+          .status,
+      ).toBe('active');
+      expect(await fakeVideo.fetchAsset(bystanderAsset.providerId!)).not.toBeNull();
+    });
+
+    it('a legal hold still wins over the grace for a deletion-archived academy', async () => {
+      const deleted = await ownerWithVideo('purge-d52-held');
+      await admin.tenantLifecycleState.create({
+        data: {
+          organizationId: deleted.organizationId,
+          legalHold: true,
+          holdReason: 'litigation',
+        },
+      });
+      await deleteAccount(deleted.ownerUserId);
+      await backdateArchive(deleted.academyId, 60);
+
+      expect(
+        await purge.purgeAsset({
+          assetId: deleted.video.id,
+          organizationId: deleted.organizationId,
+        }),
+      ).toBe('held');
+      expect(await fakeVideo.fetchAsset(deleted.video.providerId!)).not.toBeNull();
+    });
+
+    it('never purges an academy archived WITHOUT archivedAt (legacy pre-D5-2 rows)', async () => {
+      const t = await tenant('purge-d52-legacy', null);
+      await admin.academy.update({
+        where: { id: t.academyId },
+        data: { status: 'archived', archivedAt: null },
+      });
+      const video = await hostedVideo(t.academyId);
+      await ageAsset(video.id, 400);
+      expect(await candidates()).not.toContain(video.id);
+      expect(
+        await purge.purgeAsset({ assetId: video.id, organizationId: t.organizationId }),
+      ).toBe('not_eligible');
+      expect(await fakeVideo.fetchAsset(video.providerId!)).not.toBeNull();
+    });
   });
 });

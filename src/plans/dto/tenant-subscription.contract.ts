@@ -7,7 +7,7 @@ import type {
   Plan as PrismaPlan,
   TenantSubscription as PrismaTenantSubscription,
 } from '@prisma/client';
-import { toPlanResponse } from './plan.contract';
+import { toPlanResponse, withoutPlanPricing } from './plan.contract';
 import type { PlanResponse } from './plan.contract';
 import { readPriceChangeNotice } from '../utils/price-change-notice.util';
 import type { NoticeLimitChange, NoticePrice } from '../utils/price-change-notice.util';
@@ -88,6 +88,28 @@ function describePriceChangeNotice(
         ? { effectiveAt: subscription.currentPeriodEnd.toISOString() }
         : {}),
     },
+  };
+}
+
+/**
+ * SEC-03(b) — the subscription as a member who is NOT the billing owner
+ * sees it.
+ *
+ * Kept readable by every member on purpose: the dashboard, plan gating and
+ * the storage meter of managers, instructors and staff depend on the plan,
+ * its limits and features, the status and the dates. What is removed is
+ * only what the organization PAYS: the plan's `pricing`, and the
+ * `priceChangeNotice` (old and new price), which is addressed to the owner
+ * and dismissible only by them. `billingCycle`, gift and scheduled-change
+ * facts carry no amount and stay.
+ */
+export function toMemberSubscriptionView(
+  subscription: TenantSubscriptionResponse,
+): TenantSubscriptionResponse {
+  return {
+    ...subscription,
+    plan: withoutPlanPricing(subscription.plan),
+    priceChangeNotice: undefined,
   };
 }
 

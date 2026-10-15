@@ -34,6 +34,8 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
   seedAcademy,
+  seedCourse,
+  seedCourseOrder,
   seedOrganizationWithOwner,
   seedPlan,
 } from './utils/db-admin';
@@ -55,6 +57,9 @@ import { GRACE_PERIOD_MS } from '../src/plans/queue/subscription-sweep.types';
 import { LIFECYCLE_STEP_MAX_LATENESS_MS } from '../src/plans/utils/lifecycle-steps.util';
 
 const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+/** The default signup instant — older than every activation window at every pinned tick. */
+const LONG_AGO = new Date('2025-01-01T00:00:00.000Z');
 const DISPATCH_ATTEMPT = { made: 0, max: 6 } as const;
 
 /** Queue workers off: this suite drives the sweep and the dispatcher by hand. */
@@ -148,6 +153,12 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
   afterAll(async () => {
     sendSpy.mockRestore();
     clock.reset();
+    // B0-MSG-05 A4 fixtures — a course payment's order link does not
+    // cascade (the payment would violate its org-xor-order CHECK), so the
+    // payments go first.
+    await admin.payment.deleteMany({
+      where: { courseOrder: { organizationId: { in: seededOrganizationIds } } },
+    });
     await admin.organization.deleteMany({
       where: { id: { in: seededOrganizationIds } },
     });
@@ -183,6 +194,14 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
       billingCycle?: 'monthly' | 'yearly' | null;
       /** B0-MSG-05 — seeds the trial's redemption (its start instant). */
       trialStartedAt?: Date;
+      /**
+       * B0-MSG-05 part 3 — the organisation's signup instant, which drives
+       * the activation steps A1–A4. Defaults to long before every pinned
+       * date in this file: a fixture's real `created_at` (today) means
+       * nothing on the fake clock, and left alone it would put every
+       * tenant here inside an activation window at some pinned tick.
+       */
+      organizationCreatedAt?: Date;
     },
     owner: { preferences?: Record<string, unknown>; email?: string } = {},
   ): Promise<Tenant> {
@@ -195,6 +214,10 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
       },
     });
     const org = await seedOrganizationWithOwner(admin, user.id, `${label}-org`);
+    await admin.organization.update({
+      where: { id: org.id },
+      data: { createdAt: subscription.organizationCreatedAt ?? LONG_AGO },
+    });
     const plan = await seedPlan(admin, `${label}-plan`);
     await admin.tenantSubscription.create({
       data: {
@@ -642,6 +665,295 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
       await tick(periodEnd);
       await tick(new Date(periodEnd.getTime() + 60 * 60 * 1000));
       expect(await keysFor(tenant)).toEqual(['lifecycle.subscription.cancelled']);
+    });
+  });
+
+  // --- B0-MSG-05 part 3: activation A1–A4 --------------------------------
+
+  describe('B0-MSG-05 activation steps A1–A4', () => {
+    /** A trialing tenant that signed up at `signedUpAt` (14-day trial, no T2a: no redemption). */
+    function seedSignup(
+      label: string,
+      signedUpAt: Date,
+      owner: { preferences?: Record<string, unknown> } = {},
+    ) {
+      return seedTenant(
+        label,
+        {
+          status: 'trialing',
+          trialEndsAt: new Date(signedUpAt.getTime() + 14 * DAY),
+          organizationCreatedAt: signedUpAt,
+        },
+        owner,
+      );
+    }
+
+    function publishSite(academyId: string) {
+      return admin.websiteConfiguration.create({
+        data: {
+          academyId,
+          themeKey: 'classic',
+          themeVersion: 1,
+          brand: {},
+          seo: {},
+          navigation: {},
+          header: {},
+          footer: {},
+          status: 'published',
+          publishedAt: new Date(),
+        },
+      });
+    }
+
+    function enablePaymentMethod(tenant: Tenant, academyId: string) {
+      return admin.academyPaymentMethod.create({
+        data: {
+          academyId,
+          organizationId: tenant.organizationId,
+          type: 'manual_instapay',
+          enabled: true,
+          instructions: { address: 'fixture@instapay' },
+        },
+      });
+    }
+
+    /** A learner's proof on an academy-manual course payment — the A4 trigger. */
+    async function learnerProof(tenant: Tenant, academyId: string, label: string) {
+      const course = await seedCourse(admin, academyId, `${label} course`, {
+        pricingType: 'paid',
+        pricingAmountMinorUnits: BigInt(10000),
+        pricingCurrency: 'EGP',
+      });
+      const student = await admin.user.create({
+        data: { email: uniqueTestEmail(`${label}-student`), name: `${label} student` },
+      });
+      const order = await seedCourseOrder(
+        admin,
+        student.id,
+        course.id,
+        academyId,
+        tenant.organizationId,
+      );
+      const payment = await admin.payment.create({
+        data: {
+          payerUserId: student.id,
+          payeeAcademyId: academyId,
+          courseOrderId: order.id,
+          methodKey: 'manual_instapay',
+          methodType: 'manual_instapay',
+          provider: 'academy_manual',
+          amountMinorUnits: BigInt(10000),
+          currency: 'EGP',
+          status: 'pending',
+          reviewStatus: 'pending',
+          paymentCollectionModeSnapshot: 'academy_manual',
+        },
+      });
+      await admin.paymentProof.create({
+        data: {
+          paymentId: payment.id,
+          fileName: 'proof.png',
+          storageKey: `fixtures/${payment.id}.png`,
+          mimeType: 'image/png',
+        },
+      });
+      return payment;
+    }
+
+    function activationKeys(tenant: Tenant) {
+      return keysFor(tenant).then((keys) =>
+        keys.filter((key) => key.startsWith('lifecycle.activation.')),
+      );
+    }
+
+    it('A1 fires once at signup + 24 h across repeated ticks, never 1 ms early, keyed once per tenant', async () => {
+      const signedUpAt = new Date('2027-02-01T08:00:00.000Z');
+      const tenant = await seedSignup('a1-once', signedUpAt);
+      const dueAt = new Date(signedUpAt.getTime() + DAY);
+
+      await tick(new Date(dueAt.getTime() - 1));
+      expect(await activationKeys(tenant)).toEqual([]);
+
+      for (const offset of [0, 15 * 60 * 1000, 6 * HOUR, 23 * HOUR]) {
+        await tick(new Date(dueAt.getTime() + offset));
+      }
+      const rows = (await outbox(tenant)).filter((row) =>
+        row.key.startsWith('lifecycle.activation.'),
+      );
+      expect(rows.map((row) => row.key)).toEqual(['lifecycle.activation.no_academy']);
+      expect(rows[0].dedupeKey).toBe(
+        `lifecycle_activation_no_academy:${tenant.organizationId}:${signedUpAt.toISOString()}`,
+      );
+    });
+
+    it('walks A1 → A2 → A3 once each, and each step stops once the owner does it', async () => {
+      const signedUpAt = new Date('2027-02-03T08:00:00.000Z');
+      const at = (ms: number) => new Date(signedUpAt.getTime() + ms);
+      const walker = await seedSignup('a-walk', signedUpAt);
+      // The control: an owner who did every step before any nudge was due.
+      const done = await seedSignup('a-done', signedUpAt);
+      const doneAcademy = await seedAcademy(admin, done.organizationId, 'a-done-academy');
+      await publishSite(doneAcademy.id);
+      await seedCourse(admin, doneAcademy.id, 'a-done course');
+      await enablePaymentMethod(done, doneAcademy.id);
+
+      // A1 — no academy at +24 h.
+      await tick(at(DAY));
+      expect(await activationKeys(walker)).toEqual(['lifecycle.activation.no_academy']);
+
+      // The owner creates the academy; A1 is done and never comes back,
+      // and A2 is due at +48 h because the site is still unpublished.
+      const academy = await seedAcademy(admin, walker.organizationId, 'a-walk-academy');
+      await tick(at(30 * HOUR));
+      await tick(at(2 * DAY));
+      await tick(at(2 * DAY + 15 * 60 * 1000));
+      expect(await activationKeys(walker)).toEqual([
+        'lifecycle.activation.no_academy',
+        'lifecycle.activation.site_unpublished',
+      ]);
+
+      // The site is published: A2 is done. At day 4 there is still no
+      // course and no payment method, so A3 fires — once.
+      await publishSite(academy.id);
+      await tick(at(3 * DAY));
+      await tick(at(4 * DAY));
+      await tick(at(4 * DAY + HOUR));
+      expect(await activationKeys(walker)).toEqual([
+        'lifecycle.activation.no_academy',
+        'lifecycle.activation.site_unpublished',
+        'lifecycle.activation.payments_and_course',
+      ]);
+
+      expect(await activationKeys(done)).toEqual([]);
+    });
+
+    it('suppresses a step whose condition is met before it falls due', async () => {
+      const signedUpAt = new Date('2027-02-05T08:00:00.000Z');
+      const at = (ms: number) => new Date(signedUpAt.getTime() + ms);
+      const quick = await seedSignup('a-quick', signedUpAt);
+      const halfway = await seedSignup('a-halfway', signedUpAt);
+
+      // `quick` builds its academy and publishes before A1/A2 are due.
+      const academy = await seedAcademy(admin, quick.organizationId, 'a-quick-academy');
+      await publishSite(academy.id);
+      // `halfway` has an academy with a course but no way to take payment.
+      const halfwayAcademy = await seedAcademy(
+        admin,
+        halfway.organizationId,
+        'a-half-academy',
+      );
+      await publishSite(halfwayAcademy.id);
+      await seedCourse(admin, halfwayAcademy.id, 'a-half course');
+
+      await tick(at(DAY));
+      await tick(at(2 * DAY));
+      expect(await activationKeys(quick)).toEqual([]);
+      expect(await activationKeys(halfway)).toEqual([]);
+
+      // `quick` finishes payments and a course just before day 4; `halfway` does not.
+      await seedCourse(admin, academy.id, 'a-quick course');
+      await enablePaymentMethod(quick, academy.id);
+      await tick(at(4 * DAY));
+      expect(await activationKeys(quick)).toEqual([]);
+      expect(await activationKeys(halfway)).toEqual([
+        'lifecycle.activation.payments_and_course',
+      ]);
+    });
+
+    it('A4 fires once on the first learner proof, links to the payment queue, and stops once a proof is reviewed', async () => {
+      const signedUpAt = new Date('2027-02-07T08:00:00.000Z');
+      const at = (ms: number) => new Date(signedUpAt.getTime() + ms);
+      const tenant = await seedSignup('a4', signedUpAt);
+      const academy = await seedAcademy(admin, tenant.organizationId, 'a4-academy');
+      const reviewedFirst = await seedSignup('a4-reviewed', signedUpAt);
+      const reviewedAcademy = await seedAcademy(
+        admin,
+        reviewedFirst.organizationId,
+        'a4-reviewed-academy',
+      );
+
+      // No proof yet: nothing.
+      await tick(at(HOUR));
+      expect(await activationKeys(tenant)).toEqual([]);
+
+      // The first proof arrives on day 6; the next tick sends A4, and the
+      // ticks after it do not repeat it.
+      await learnerProof(tenant, academy.id, 'a4');
+      await tick(at(6 * DAY));
+      await tick(at(6 * DAY + 15 * 60 * 1000));
+      await tick(at(7 * DAY));
+      const rows = await admin.communicationOutbox.findMany({
+        where: {
+          recipientUserId: tenant.ownerId,
+          key: 'lifecycle.activation.first_proof',
+        },
+        select: { dedupeKey: true, values: true },
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dedupeKey).toBe(
+        `lifecycle_activation_first_proof:${tenant.organizationId}:${signedUpAt.toISOString()}`,
+      );
+      expect((rows[0].values as Record<string, unknown>).academyId).toBe(academy.id);
+
+      // An owner who reviewed the proof before the sweep saw it gets nothing.
+      const payment = await learnerProof(
+        reviewedFirst,
+        reviewedAcademy.id,
+        'a4-reviewed',
+      );
+      await admin.payment.update({
+        where: { id: payment.id },
+        data: { reviewStatus: 'approved', status: 'succeeded' },
+      });
+      await tick(at(8 * DAY));
+      expect(await activationKeys(reviewedFirst)).not.toContain(
+        'lifecycle.activation.first_proof',
+      );
+    });
+
+    it('respects the reminders opt-out, like every other nudge', async () => {
+      const signedUpAt = new Date('2027-02-09T08:00:00.000Z');
+      const tenant = await seedSignup('a1-silenced', signedUpAt, {
+        preferences: {
+          notifications: { categories: { lifecycle: { reminders: false } } },
+        },
+      });
+
+      await tick(new Date(signedUpAt.getTime() + DAY));
+      const [row] = (await outbox(tenant)).filter(
+        (r) => r.key === 'lifecycle.activation.no_academy',
+      );
+      expect(row).toBeDefined();
+
+      await rearm(row.id);
+      expect(await dispatcher.dispatch(row.id, DISPATCH_ATTEMPT)).toBe('in_app_only');
+      expect(sent.map((message) => message.to)).not.toContain(tenant.ownerEmail);
+    });
+
+    it('sends nothing to an expired trial, and writes nothing in dry_run', async () => {
+      const signedUpAt = new Date('2027-02-11T08:00:00.000Z');
+      const expired = await seedTenant('a-expired', {
+        status: 'trial_expired',
+        trialEndsAt: new Date(signedUpAt.getTime() + 12 * HOUR),
+        organizationCreatedAt: signedUpAt,
+      });
+      const dry = await seedSignup('a-dry', signedUpAt);
+
+      const modeSpy = jest
+        .spyOn(lifecycle, 'mode', 'get')
+        .mockReturnValue('dry_run' as never);
+      try {
+        const result = await tick(new Date(signedUpAt.getTime() + DAY));
+        expect(result.stepsDue).toBeGreaterThanOrEqual(1);
+        expect(result.stepsEmitted).toBe(0);
+      } finally {
+        modeSpy.mockRestore();
+      }
+      expect(await activationKeys(dry)).toEqual([]);
+
+      await tick(new Date(signedUpAt.getTime() + DAY + HOUR));
+      expect(await activationKeys(expired)).toEqual([]);
+      expect(await activationKeys(dry)).toEqual(['lifecycle.activation.no_academy']);
     });
   });
 

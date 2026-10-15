@@ -17,7 +17,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { ManualReviewStatus, Payment } from '@prisma/client';
+import type { ManualReviewStatus, Payment, PaymentLifecycleStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { ACADEMY_MANUAL_PROVIDER_KEY } from '../dto/billing.constants';
 
@@ -135,6 +135,20 @@ function platformListOrderBy(
         : 'createdAt';
   return [{ [column]: direction }, { id: direction }];
 }
+
+/**
+ * The statuses a payment can still leave (the same set `PaymentService`
+ * treats as editable). `succeeded`, `failed`, `cancelled` and `expired` are
+ * terminal: an asynchronous provider event must never move a payment out
+ * of one of them.
+ */
+export const NON_TERMINAL_PAYMENT_STATUSES: readonly PaymentLifecycleStatus[] = [
+  'created',
+  'pending',
+  'processing',
+  'requires_action',
+  'requires_confirmation',
+];
 
 @Injectable()
 export class PaymentsRepository {
@@ -345,10 +359,35 @@ export class PaymentsRepository {
   async markSucceededIfNotAlready(
     tx: Prisma.TransactionClient,
     id: string,
+    options: { readonly fromNonTerminalOnly?: boolean } = {},
   ): Promise<boolean> {
     const result = await tx.payment.updateMany({
-      where: { id, status: { not: 'succeeded' } },
+      where: {
+        id,
+        status: options.fromNonTerminalOnly
+          ? { in: [...NON_TERMINAL_PAYMENT_STATUSES] }
+          : { not: 'succeeded' },
+      },
       data: { status: 'succeeded', failureReason: null, nextAction: Prisma.JsonNull },
+    });
+    return result.count === 1;
+  }
+
+  /**
+   * A provider-driven status change, applied only while the payment is
+   * still non-terminal. Same row-lock-then-re-evaluate guarantee as
+   * `markSucceededIfNotAlready`: a late or out-of-order webhook (a
+   * `payment.failed` after `payment.succeeded`, say) matches zero rows and
+   * reports `false` instead of overwriting the settled outcome.
+   */
+  async transitionIfNonTerminal(
+    tx: Prisma.TransactionClient,
+    id: string,
+    data: Prisma.PaymentUpdateManyMutationInput,
+  ): Promise<boolean> {
+    const result = await tx.payment.updateMany({
+      where: { id, status: { in: [...NON_TERMINAL_PAYMENT_STATUSES] } },
+      data,
     });
     return result.count === 1;
   }

@@ -62,6 +62,7 @@ export class SignupOrganizationService implements SignupOrganizationPort {
       readonly owner: { readonly id: string; readonly email: string };
       readonly prepared: PreparedSignupOrganization;
       readonly context?: { readonly ipAddress?: string; readonly userAgent?: string };
+      readonly signupAttribution?: Prisma.InputJsonValue;
     },
   ): Promise<SignupOrganizationResult> {
     await this.organizationsService.createInTransaction(
@@ -73,6 +74,7 @@ export class SignupOrganizationService implements SignupOrganizationPort {
         onboardingCompletedAt: null,
         // W4 — a name conflict is reported on the signup form's field.
         nameField: 'organizationName',
+        signupAttribution: input.signupAttribution,
       },
       (innerTx, created) =>
         this.subscriptionBootstrapService.bootstrapSubscription(innerTx, created.id),

@@ -346,19 +346,25 @@ model UserCredential {
 /// command — nobody else (staff, organization owner, Platform Owner) can
 /// read it. See migration `20261110000200_user_phone`.
 model UserPhone {
-  userId      String    @id @map("user_id")
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                 String    @id @map("user_id")
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// E.164, normalised server-side by libphonenumber (`+201001234567`).
   /// Unique: one account per number (20261110000400_user_phone_unique_staff_read).
-  phoneE164   String    @unique(map: "user_phones_phone_e164_key") @map("phone_e164") @db.VarChar(16)
+  phoneE164              String    @unique(map: "user_phones_phone_e164_key") @map("phone_e164") @db.VarChar(16)
   /// ISO 3166-1 alpha-2 country the person chose (`EG`). Kept alongside the
   /// number because one calling code can serve several countries (+1, +7).
-  countryCode String    @map("country_code") @db.VarChar(2)
+  countryCode            String    @map("country_code") @db.VarChar(2)
   /// When this exact number was proven reachable. Null = unverified. A DB
   /// trigger clears it whenever `phone_e164` changes.
-  verifiedAt  DateTime? @map("verified_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  verifiedAt             DateTime? @map("verified_at")
+  /// B0-IAM-08 — organization owner opted in to WhatsApp contact about the
+  /// account and setup (owner signup only). Null = not given. A DB trigger
+  /// clears both whenever `phone_e164` changes.
+  whatsappConsentAt      DateTime? @map("whatsapp_consent_at")
+  /// The consent wording version shown (e.g. `signup-whatsapp-consent-2026-10-draft1`).
+  whatsappConsentVersion String?   @map("whatsapp_consent_version") @db.VarChar(64)
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
   @@map("user_phones")
 }
@@ -498,6 +504,11 @@ model Organization {
   /// across every status (`organizations_name_key_key`). Checked through the
   /// boolean definer check `organization_name_taken`.
   nameKey               String?                  @default(dbgenerated("atlas_name_key(name)")) @map("name_key")
+  /// B0-ANL-04 (part 2) — UTM values, referrer domain and landing template
+  /// captured at organization signup (FLAG_ATTRIBUTION_CAPTURE_MODE). Never
+  /// personal data: the server drops email- or phone-like values. Null =
+  /// untagged signup, flag off, or a legacy creation path.
+  signupAttribution     Json?                    @map("signup_attribution")
 
   memberships            OrganizationMembership[]
   academies              Academy[]
@@ -2985,22 +2996,39 @@ enum PlatformContactSubmissionStatus {
 /// form's honeypot field name. `ipHash` is a keyed SHA-256 of the client
 /// address — the raw IP is never stored.
 model PlatformContactSubmission {
-  id               String                          @id @default(uuid())
-  name             String                          @db.VarChar(200)
+  id                      String                          @id @default(uuid())
+  name                    String                          @db.VarChar(200)
   /// Normalized (trimmed, lower-cased) before it is written.
-  email            String                          @db.VarChar(320)
-  organizationName String?                         @map("organization_name") @db.VarChar(200)
-  topic            PlatformContactTopic
-  message          String                          @db.VarChar(5000)
+  email                   String                          @db.VarChar(320)
+  organizationName        String?                         @map("organization_name") @db.VarChar(200)
+  topic                   PlatformContactTopic
+  message                 String                          @db.VarChar(5000)
   /// `en` | `ar` — the language the visitor wrote from.
-  locale           String                          @db.VarChar(8)
+  locale                  String                          @db.VarChar(8)
   /// The marketing path the form was sent from (path only, no query).
-  sourcePath       String?                         @map("source_path") @db.VarChar(512)
-  status           PlatformContactSubmissionStatus @default(new)
-  ipHash           String                          @map("ip_hash") @db.VarChar(64)
-  userAgent        String?                         @map("user_agent") @db.VarChar(512)
-  readAt           DateTime?                       @map("read_at")
-  createdAt        DateTime                        @default(now()) @map("created_at")
+  sourcePath              String?                         @map("source_path") @db.VarChar(512)
+  status                  PlatformContactSubmissionStatus @default(new)
+  ipHash                  String                          @map("ip_hash") @db.VarChar(64)
+  userAgent               String?                         @map("user_agent") @db.VarChar(512)
+  readAt                  DateTime?                       @map("read_at")
+  createdAt               DateTime                        @default(now()) @map("created_at")
+  /// B0-SUP-04 — optional WhatsApp number (E.164, normalised server-side) and its country.
+  phoneE164               String?                         @map("phone_e164") @db.VarChar(16)
+  phoneCountry            String?                         @map("phone_country") @db.VarChar(2)
+  /// B0-SUP-04 — consent to be contacted about THIS enquiry. Null = not given.
+  contactConsentAt        DateTime?                       @map("contact_consent_at")
+  contactConsentVersion   String?                         @map("contact_consent_version") @db.VarChar(64)
+  /// B0-SUP-04 — marketing consent. Null = not given (the default); only a
+  /// row with a value is eligible for marketing.
+  marketingConsentAt      DateTime?                       @map("marketing_consent_at")
+  marketingConsentVersion String?                         @map("marketing_consent_version") @db.VarChar(64)
+  /// B0-SUP-04 — optional qualification for `topic = sales` (CHECK-listed values).
+  requesterRole           String?                         @map("requester_role") @db.VarChar(32)
+  subject                 String?                         @db.VarChar(120)
+  studentBand             String?                         @map("student_band") @db.VarChar(16)
+  preferredChannel        String?                         @map("preferred_channel") @db.VarChar(16)
+  /// B0-ANL-04 (part 2) — UTM values, referrer domain, landing template.
+  attribution             Json?
 
   @@index([status, createdAt(sort: Desc)])
   @@index([createdAt(sort: Desc)])
@@ -3495,6 +3523,10 @@ model WebsiteConfiguration {
   /// column, or never generated). Stamped once by `WebsiteGenerationService`.
   templateKey       String?              @map("template_key")
   templateVersion   Int?                 @map("template_version")
+  /// B0-WEB-02 — the site's main language: `en` (English at `/`, Arabic
+  /// under `/ar`) or `ar` (Arabic at `/`, English under `/en`). The working
+  /// copy; visitors see the value in `publishedSnapshot` (absent = `en`).
+  defaultLocale     String               @default("en") @map("default_locale")
   brand             Json
   seo               Json
   navigation        Json

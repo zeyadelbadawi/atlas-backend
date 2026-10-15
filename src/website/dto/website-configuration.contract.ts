@@ -1,5 +1,10 @@
 /** `WebsiteConfiguration` response contract — matches `website.types.ts` field-for-field. */
 import type { WebsiteConfiguration as PrismaWebsiteConfiguration } from '@prisma/client';
+import {
+  DEFAULT_PUBLIC_WEBSITE_LOCALE,
+  resolveDefaultLocale,
+  type PublicWebsiteLocale,
+} from '../constants/locale.constants';
 
 export interface WebsiteConfigurationResponse {
   readonly id: string;
@@ -16,6 +21,14 @@ export interface WebsiteConfigurationResponse {
   readonly publishedAt?: string;
   readonly lastPublishError?: Record<string, unknown>;
   readonly updatedAt: string;
+  /**
+   * B0-WEB-02 — the site's main language, present only when it is not the
+   * platform default `en` (absent = `en`), so every response for an
+   * English-default site — and the server-rendered pages that embed the
+   * public one — stays byte-for-byte what it was. Management responses carry
+   * the working copy's value; public ones the published value.
+   */
+  readonly defaultLocale?: PublicWebsiteLocale;
   /**
    * Management responses only: what is saved but not yet visible to
    * visitors — the site-wide settings, and how many pages.
@@ -36,6 +49,7 @@ export interface WebsiteConfigurationResponse {
 export function toWebsiteConfigurationResponse(
   configuration: PrismaWebsiteConfiguration,
 ): WebsiteConfigurationResponse {
+  const defaultLocale = resolveDefaultLocale(configuration.defaultLocale);
   return {
     id: configuration.academyId,
     academyId: configuration.academyId,
@@ -52,5 +66,6 @@ export function toWebsiteConfigurationResponse(
     lastPublishError:
       (configuration.lastPublishError as Record<string, unknown> | null) ?? undefined,
     updatedAt: configuration.updatedAt.toISOString(),
+    ...(defaultLocale !== DEFAULT_PUBLIC_WEBSITE_LOCALE ? { defaultLocale } : {}),
   };
 }

@@ -34,6 +34,7 @@ import {
 import type { Request, Response } from 'express';
 import { buildRobotsTxt, buildSitemapXml } from '../utils/seo-files.util';
 import { Throttle } from '@nestjs/throttler';
+import { clientIpPrefixTracker } from '../../common/security/client-ip-throttler.guard';
 import { EmailLogoService } from '../../communications/services/email-logo.service';
 import { PublicWebsiteService } from '../services/public-website.service';
 import { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
@@ -123,7 +124,9 @@ export class PublicWebsiteController implements OnModuleInit {
     }
     response.setHeader('Content-Type', 'application/xml; charset=utf-8');
     response.setHeader('Cache-Control', 'public, max-age=300');
-    response.status(200).send(buildSitemapXml(files.urls, files.origin));
+    response
+      .status(200)
+      .send(buildSitemapXml(files.urls, files.origin, files.defaultLocale));
   }
 
   @Get('resolve')
@@ -363,13 +366,13 @@ export class PublicWebsiteController implements OnModuleInit {
   /**
    * Phase 6 — the real backend destination for the public Contact
    * section's form. See `PublicWebsiteService.submitContactMessage`'s own
-   * doc comment. 5 submissions per 10 minutes per client IP — overrides
-   * the global `default` throttler (120/min, keyed by
-   * `ClientIpThrottlerGuard`) for this route only; excess requests get the
-   * guard's normal 429.
+   * doc comment. 5 submissions per 10 minutes per client (an IPv4
+   * address or an IPv6 /64, `clientIpPrefixTracker`) — overrides the
+   * global `default` throttler (120/min, keyed by `ClientIpThrottlerGuard`)
+   * for this route only; excess requests get the guard's normal 429.
    */
   @Post(':academyId/contact')
-  @Throttle({ default: { limit: 5, ttl: 600_000 } })
+  @Throttle({ default: { limit: 5, ttl: 600_000, getTracker: clientIpPrefixTracker } })
   @HttpCode(201)
   async submitContactMessage(
     @Param('academyId') academyId: string,

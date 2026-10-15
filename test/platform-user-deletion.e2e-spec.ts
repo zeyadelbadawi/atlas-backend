@@ -10,7 +10,10 @@
  *   - deletion anonymises the target and really removes their memberships
  *     (the silent-RLS regression), and archives the academies they own;
  *   - a non-platform-owner is refused; a platform owner cannot delete
- *     themselves or another platform owner.
+ *     themselves or another platform owner;
+ *   - (D5-1) the target's learner devices are revoked at every academy,
+ *     and a refresh token bound to one of them is dead — the operator's
+ *     context could never have reached those rows, the target's must.
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -19,9 +22,11 @@ import {
   createAdminPrisma,
   seedAcademy,
   seedAcademyMember,
+  seedAcademyStudent,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { hashDeviceCookie } from '../src/tenancy/services/student-device.service';
 
 async function signUpAndSignIn(app: INestApplication, label: string) {
   const email = uniqueTestEmail(label);
@@ -37,6 +42,7 @@ async function signUpAndSignIn(app: INestApplication, label: string) {
   return {
     userId: signIn.body.user.id as string,
     accessToken: signIn.body.accessToken as string,
+    refreshToken: signIn.body.refreshToken as string,
     email,
   };
 }
@@ -107,6 +113,59 @@ describe('Platform Owner administrative deletion (e2e, real Postgres)', () => {
       where: { id: target.academyId },
     });
     expect(academy.status).toBe('archived');
+  });
+
+  it('D5-1 — revokes every learner device of the target and kills device-bound sessions', async () => {
+    const learner = await signUpAndSignIn(app, 'pud-learner');
+    const host = await seedClientOwner('pud-learner-host');
+    const second = await seedAcademy(admin, host.organizationId, 'pud-learner-second');
+    const devices = [];
+    for (const academyId of [host.academyId, second.id]) {
+      await seedAcademyStudent(admin, academyId, learner.userId);
+      devices.push(
+        await admin.studentDevice.create({
+          data: {
+            userId: learner.userId,
+            academyId,
+            cookieHash: hashDeviceCookie(`pud-${academyId}`),
+            label: 'Safari on iOS',
+          },
+        }),
+      );
+    }
+    await admin.refreshToken.updateMany({
+      where: { userId: learner.userId, revokedAt: null },
+      data: { deviceId: devices[1].id },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/platform-user-management/${learner.userId}/delete`)
+      .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+      .send({ confirm: true })
+      .expect(200);
+
+    expect(
+      await admin.studentDevice.count({
+        where: { userId: learner.userId, revokedAt: null },
+      }),
+    ).toBe(0);
+    expect(
+      await admin.refreshToken.count({
+        where: { userId: learner.userId, revokedAt: null },
+      }),
+    ).toBe(0);
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: learner.refreshToken })
+      .expect(401);
+    await request(app.getHttpServer())
+      .get('/users/me')
+      .set('Authorization', `Bearer ${learner.accessToken}`)
+      .expect(401);
+    const audit = await admin.auditLogEntry.findFirstOrThrow({
+      where: { action: 'account.deleted_by_platform_owner', targetId: learner.userId },
+    });
+    expect((audit.context as Record<string, unknown>).devicesRevoked).toBe(2);
   });
 
   it('refuses a caller who is not a platform owner', async () => {

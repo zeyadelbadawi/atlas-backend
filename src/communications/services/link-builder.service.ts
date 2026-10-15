@@ -10,6 +10,8 @@
  *     `<subdomain>.<PLATFORM_BASE_DOMAIN>`), with the `/ar` prefix for
  *     Arabic exactly as the frontend router does (English unprefixed).
  *     Falls back to the platform URL when the academy has no host yet.
+ *     B0-WEB-02: on a site whose published default language is Arabic the
+ *     roles swap — Arabic unprefixed, English under `/en` (`siteDefaultLocale`).
  *
  * Host lookups take the caller's transaction because
  * `subdomain_allocations`/`domain_connections` are RLS-scoped; the
@@ -27,6 +29,12 @@ import type {
   CommunicationLocale,
 } from '../catalog/communication-catalog';
 import { resolveCanonicalHost } from '../../domain/utils/canonical-host.util';
+import {
+  DEFAULT_PUBLIC_WEBSITE_LOCALE,
+  localePathPrefix,
+  resolveDefaultLocale,
+  type PublicWebsiteLocale,
+} from '../../website/constants/locale.constants';
 import { PrismaService } from '../../database/prisma.service';
 import type { UnsubscribeCategory } from '../campaigns/campaign.types';
 import {
@@ -96,9 +104,10 @@ export class LinkBuilderService {
     locale: CommunicationLocale,
     academyHost: string | null,
     audience: CommunicationAudience = 'platform',
+    siteDefaultLocale: PublicWebsiteLocale = DEFAULT_PUBLIC_WEBSITE_LOCALE,
   ): string {
     if (audience === 'learner' && academyHost) {
-      return `https://${academyHost}${localePrefix(locale)}${LEARNER_PROFILE_PATH}`;
+      return `https://${academyHost}${localePrefix(locale, siteDefaultLocale)}${LEARNER_PROFILE_PATH}`;
     }
     // Staff and platform recipients read the management surface, which
     // only exists on the platform host and carries no locale prefix.
@@ -159,14 +168,43 @@ export class LinkBuilderService {
     path: string,
     locale: CommunicationLocale,
   ): Promise<string> {
-    const host = await this.academyHost(tx, academyId);
-    return this.onHost(host, path, locale);
+    const [host, siteDefaultLocale] = await Promise.all([
+      this.academyHost(tx, academyId),
+      this.academySiteDefaultLocale(tx, academyId),
+    ]);
+    return this.onHost(host, path, locale, siteDefaultLocale);
   }
 
   /** Builds a branded URL from an already-resolved host (or the platform when `host` is null). */
-  onHost(host: string | null, path: string, locale: CommunicationLocale): string {
-    const localized = `${localePrefix(locale)}${normalizePath(path)}`;
+  onHost(
+    host: string | null,
+    path: string,
+    locale: CommunicationLocale,
+    siteDefaultLocale: PublicWebsiteLocale = DEFAULT_PUBLIC_WEBSITE_LOCALE,
+  ): string {
+    const localized = `${localePrefix(locale, siteDefaultLocale)}${normalizePath(path)}`;
     return host ? `https://${host}${localized}` : this.platform(localized);
+  }
+
+  /**
+   * B0-WEB-02 — the language the academy's PUBLISHED website serves at `/`
+   * (`en` unless the owner made it Arabic and published). An unpublished
+   * site serves English at `/` (Coming Soon and the learner area alike), so
+   * it counts as `en`, exactly as the public runtime reads it.
+   */
+  async academySiteDefaultLocale(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+  ): Promise<PublicWebsiteLocale> {
+    const configuration = await tx.websiteConfiguration.findUnique({
+      where: { academyId },
+      select: { status: true, publishedSnapshot: true },
+    });
+    if (configuration?.status !== 'published') return DEFAULT_PUBLIC_WEBSITE_LOCALE;
+    const snapshot = configuration.publishedSnapshot as {
+      defaultLocale?: unknown;
+    } | null;
+    return resolveDefaultLocale(snapshot?.defaultLocale);
   }
 
   private async effectiveBaseDomain(): Promise<string | undefined> {
@@ -188,6 +226,9 @@ const LEARNER_PROFILE_PATH = '/my/profile';
 /** `DASHBOARD_ROUTES.profile` — the same section on the management surface. */
 const MANAGEMENT_PROFILE_PATH = '/dashboard/profile';
 
-function localePrefix(locale: CommunicationLocale): string {
-  return locale === 'ar' ? '/ar' : '';
+function localePrefix(
+  locale: CommunicationLocale,
+  siteDefaultLocale: PublicWebsiteLocale,
+): string {
+  return localePathPrefix(locale, siteDefaultLocale);
 }

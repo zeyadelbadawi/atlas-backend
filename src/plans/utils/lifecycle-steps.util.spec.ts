@@ -16,10 +16,13 @@
  */
 import type { TenantSubscription } from '@prisma/client';
 import {
+  ACTIVATION_FIRST_PROOF_WINDOW_MS,
   LIFECYCLE_SHORT_NOTICE_LATENESS_MS,
   LIFECYCLE_STEP_MAX_LATENESS_MS,
   evaluateLifecycleSteps,
+  isActivationStepWanted,
   resolveLifecyclePhase,
+  type ActivationFacts,
   type LifecycleEvaluationInput,
   type LifecycleStepId,
 } from './lifecycle-steps.util';
@@ -591,6 +594,203 @@ describe('lifecycle sequence evaluator (§26 trial, §27 subscription)', () => {
       )[0];
       expect(first.step).toBe(later.step);
       expect(first.anchorAt.toISOString()).toBe(later.anchorAt.toISOString());
+    });
+  });
+
+  describe('A1–A4 — activation steps (B0-MSG-05 part 3)', () => {
+    const SIGNED_UP_AT = new Date('2026-10-01T08:00:00.000Z');
+    const trialing = input(
+      { status: 'trialing', trialEndsAt: new Date(SIGNED_UP_AT.getTime() + 14 * DAY) },
+      { organizationCreatedAt: SIGNED_UP_AT },
+    );
+    const at = (ms: number) => new Date(SIGNED_UP_AT.getTime() + ms);
+    /** The setup steps only — A4 is due across its whole window and asserted separately. */
+    const setupStepsAt = (evaluation: LifecycleEvaluationInput, now: Date) =>
+      stepsAt(evaluation, now).filter(
+        (step) => step.startsWith('activation_') && step !== 'activation_first_proof',
+      );
+
+    it('A1 at signup + 24 h, A2 at + 48 h, A3 at + 4 d — each 1 ms late, never 1 ms early', () => {
+      expect(setupStepsAt(trialing, at(24 * HOUR - 1))).toEqual([]);
+      expect(setupStepsAt(trialing, at(24 * HOUR))).toEqual(['activation_no_academy']);
+      expect(setupStepsAt(trialing, at(48 * HOUR - 1))).toEqual([
+        'activation_no_academy',
+      ]);
+      expect(setupStepsAt(trialing, at(48 * HOUR))).toEqual([
+        'activation_no_academy',
+        'activation_site_unpublished',
+      ]);
+      expect(setupStepsAt(trialing, at(4 * DAY - 1))).toEqual([
+        'activation_site_unpublished',
+      ]);
+      expect(setupStepsAt(trialing, at(4 * DAY + 1))).toEqual([
+        'activation_payments_and_course',
+      ]);
+    });
+
+    it('anchors all four on the signup instant and flags the facts check, not content', () => {
+      const due = evaluateLifecycleSteps(trialing, at(24 * HOUR)).filter((step) =>
+        step.step.startsWith('activation_'),
+      );
+      expect(due.map((step) => step.step)).toEqual([
+        'activation_first_proof',
+        'activation_no_academy',
+      ]);
+      for (const step of due) {
+        expect(step.sequence).toBe('activation');
+        expect(step.anchorAt.toISOString()).toBe(SIGNED_UP_AT.toISOString());
+        expect(step.requiresActivationCheck).toBe(true);
+        expect(step.requiresContent).toBe(false);
+      }
+      // No other step asks for the facts.
+      const lapsed = input({ status: 'trial_expired', trialEndsAt: TRIAL_ENDS_AT });
+      for (const step of evaluateLifecycleSteps(lapsed, TRIAL_ENDS_AT)) {
+        expect(step.requiresActivationCheck).toBe(false);
+      }
+    });
+
+    it('A4 is eligible from signup to the end of its window, and not after', () => {
+      expect(stepsAt(trialing, at(0))).toContain('activation_first_proof');
+      const paid = input(
+        { status: 'active', currentPeriodEnd: at(365 * DAY) },
+        { organizationCreatedAt: SIGNED_UP_AT },
+      );
+      expect(stepsAt(paid, at(ACTIVATION_FIRST_PROOF_WINDOW_MS))).toEqual([
+        'activation_first_proof',
+      ]);
+      expect(stepsAt(paid, at(ACTIVATION_FIRST_PROOF_WINDOW_MS + 1))).toEqual([]);
+    });
+
+    it('also reaches an owner who paid from day one', () => {
+      const paid = input(
+        { status: 'active', currentPeriodEnd: at(30 * DAY) },
+        { organizationCreatedAt: SIGNED_UP_AT },
+      );
+      expect(setupStepsAt(paid, at(24 * HOUR))).toEqual(['activation_no_academy']);
+    });
+
+    it('is never sent once the owner cannot build: expired trial, cancellation, or a period set to end', () => {
+      const expired = input(
+        { status: 'trial_expired', trialEndsAt: at(DAY) },
+        { organizationCreatedAt: SIGNED_UP_AT },
+      );
+      expect(setupStepsAt(expired, at(48 * HOUR))).toEqual([]);
+      expect(stepsAt(expired, at(48 * HOUR))).not.toContain('activation_first_proof');
+
+      const cancelled = input(
+        { status: 'trialing', trialEndsAt: at(14 * DAY) },
+        { organizationCreatedAt: SIGNED_UP_AT, trialCancelledAt: at(HOUR) },
+      );
+      expect(stepsAt(cancelled, at(24 * HOUR))).toEqual([]);
+
+      const leaving = input(
+        { status: 'active', currentPeriodEnd: at(30 * DAY), cancelAtPeriodEnd: true },
+        { organizationCreatedAt: SIGNED_UP_AT },
+      );
+      expect(stepsAt(leaving, at(24 * HOUR))).toEqual([]);
+    });
+
+    it('needs a known signup instant — an organisation without one gets no activation step', () => {
+      const unknown = input({
+        status: 'trialing',
+        trialEndsAt: at(14 * DAY),
+      });
+      expect(
+        stepsAt(unknown, at(24 * HOUR)).filter((s) => s.startsWith('activation_')),
+      ).toEqual([]);
+    });
+
+    it('is never due for an established tenant (signup older than every window)', () => {
+      const old = input(
+        { status: 'active', currentPeriodEnd: at(400 * DAY) },
+        { organizationCreatedAt: SIGNED_UP_AT },
+      );
+      expect(stepsAt(old, at(200 * DAY))).toEqual([]);
+    });
+
+    describe('suppression — each step stops once its condition is met', () => {
+      const NOTHING: ActivationFacts = {
+        hasAcademy: false,
+        sitePublished: false,
+        hasCourse: false,
+        paymentsConfigured: false,
+        hasLearnerProof: false,
+        learnerProofReviewed: false,
+        proofAcademyId: null,
+      };
+      const facts = (over: Partial<ActivationFacts>): ActivationFacts => ({
+        ...NOTHING,
+        ...over,
+      });
+
+      it('A1 — wanted with no academy, suppressed once one exists', () => {
+        expect(isActivationStepWanted('activation_no_academy', NOTHING)).toBe(true);
+        expect(
+          isActivationStepWanted('activation_no_academy', facts({ hasAcademy: true })),
+        ).toBe(false);
+      });
+
+      it('A2 — wanted for an academy with an unpublished site, suppressed once published; not sent without an academy', () => {
+        expect(isActivationStepWanted('activation_site_unpublished', NOTHING)).toBe(
+          false,
+        );
+        expect(
+          isActivationStepWanted(
+            'activation_site_unpublished',
+            facts({ hasAcademy: true }),
+          ),
+        ).toBe(true);
+        expect(
+          isActivationStepWanted(
+            'activation_site_unpublished',
+            facts({ hasAcademy: true, sitePublished: true }),
+          ),
+        ).toBe(false);
+      });
+
+      it('A3 — wanted while payments OR a course is missing, suppressed once both exist', () => {
+        const academy = { hasAcademy: true };
+        expect(isActivationStepWanted('activation_payments_and_course', NOTHING)).toBe(
+          false,
+        );
+        expect(
+          isActivationStepWanted('activation_payments_and_course', facts(academy)),
+        ).toBe(true);
+        expect(
+          isActivationStepWanted(
+            'activation_payments_and_course',
+            facts({ ...academy, paymentsConfigured: true }),
+          ),
+        ).toBe(true);
+        expect(
+          isActivationStepWanted(
+            'activation_payments_and_course',
+            facts({ ...academy, hasCourse: true }),
+          ),
+        ).toBe(true);
+        expect(
+          isActivationStepWanted(
+            'activation_payments_and_course',
+            facts({ ...academy, hasCourse: true, paymentsConfigured: true }),
+          ),
+        ).toBe(false);
+      });
+
+      it('A4 — wanted once a learner proof arrives, suppressed once any is reviewed', () => {
+        expect(isActivationStepWanted('activation_first_proof', NOTHING)).toBe(false);
+        const arrived = facts({
+          hasAcademy: true,
+          hasLearnerProof: true,
+          proofAcademyId: 'a1',
+        });
+        expect(isActivationStepWanted('activation_first_proof', arrived)).toBe(true);
+        expect(
+          isActivationStepWanted('activation_first_proof', {
+            ...arrived,
+            learnerProofReviewed: true,
+          }),
+        ).toBe(false);
+      });
     });
   });
 

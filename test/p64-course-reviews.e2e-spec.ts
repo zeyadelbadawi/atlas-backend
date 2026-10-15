@@ -131,6 +131,44 @@ describe('Course Reviews (e2e)', () => {
       expect(told).not.toContain(learner.userId);
     });
 
+    it('tells the organization owner even when they hold no academy staff row', async () => {
+      // The organization owner is the academy's owner by
+      // `AcademyScopeGuard`'s rule, staff row or not, so they moderate.
+      const owner = await signUpAndSignIn(app, 'rev-orgowner-owner');
+      const org = await seedOrganizationWithOwner(
+        admin,
+        owner.userId,
+        'rev-orgowner-org',
+      );
+      await seedActiveSubscriptionForOrg(admin, org.id, 'rev-orgowner');
+      const academy = await seedAcademy(admin, org.id, 'rev-orgowner-academy');
+      const course = await seedCourse(admin, academy.id, 'rev-orgowner-course', {
+        status: 'published',
+        visibility: 'public',
+      });
+      const manager = await signUpAndSignIn(app, 'rev-orgowner-manager');
+      await seedAcademyMember(admin, academy.id, manager.userId, 'manager');
+      const learner = await seedEnrolledLearner(
+        'rev-orgowner-learner',
+        academy.id,
+        course.id,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/courses/${course.id}/reviews`)
+        .set(auth(learner.accessToken))
+        .send({ rating: 5, body: 'Clear and well paced.' })
+        .expect(201);
+
+      const rows = await admin.communicationOutbox.findMany({
+        where: { key: 'review.submitted', academyId: academy.id },
+        select: { recipientUserId: true },
+      });
+      expect(rows.map((r) => r.recipientUserId).sort()).toEqual(
+        [owner.userId, manager.userId].sort(),
+      );
+    });
+
     it('is atomic with the review: a rejected submission notifies nobody', async () => {
       const { academy, course } = await seedAcademyWithCourse('rev-staff-atomic');
       const outsider = await signUpAndSignIn(app, 'rev-staff-outsider');

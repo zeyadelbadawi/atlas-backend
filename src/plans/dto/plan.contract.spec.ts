@@ -9,7 +9,7 @@
  * translation" and fall back to the plain English `name` — never crash a
  * catalog read for every customer on the Plans page.
  */
-import { toPlanResponse } from './plan.contract';
+import { toPlanResponse, withoutPlanPricing } from './plan.contract';
 import { PLAN_CATALOG_VARIANTS } from '../utils/plan-catalog.util';
 import type { Plan } from '@prisma/client';
 
@@ -155,5 +155,23 @@ describe('toPlanResponse — plan family and tier (P64 Phase 2, D10)', () => {
     );
 
     expect(response.family).toBe('normal');
+  });
+});
+
+describe('withoutPlanPricing — the non-owner member view (SEC-03(b))', () => {
+  it('drops only the price; every gating field is unchanged', () => {
+    const full = toPlanResponse(
+      buildPlan({
+        limits: { academies: 3 } as never,
+        features: { liveSessions: true } as never,
+        pricing: { amount: 1190, currency: 'EGP', billingCycle: 'monthly' } as never,
+      }),
+    );
+    const member = withoutPlanPricing(full);
+
+    expect(JSON.parse(JSON.stringify(member))).not.toHaveProperty('pricing');
+    const { pricing: _price, ...gating } = full;
+    expect(_price).toMatchObject({ amount: 1190 });
+    expect(member).toMatchObject(gating);
   });
 });

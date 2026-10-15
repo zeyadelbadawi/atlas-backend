@@ -46,7 +46,7 @@ describe('Phase2MaintenanceService — retention sweep', () => {
   let usersRepository: { findFirstPlatformOwnerId: jest.Mock };
   let accessLog: { pruneOlderThan: jest.Mock };
   let quizAttempts: { pruneEventsOlderThan: jest.Mock };
-  let reconciliation: { pollStalled: jest.Mock };
+  let reconciliation: { pollStalled: jest.Mock; expireAbandonedUploads: jest.Mock };
   let quizEngine: { finalizeOverdue: jest.Mock };
   let metrics: { recordRetentionPruned: jest.Mock; recordRetentionSweepRun: jest.Mock };
   let forensicWatermarks: { pruneOlderThan: jest.Mock };
@@ -79,7 +79,10 @@ describe('Phase2MaintenanceService — retention sweep', () => {
     };
     accessLog = { pruneOlderThan: jest.fn().mockResolvedValue(3) };
     quizAttempts = { pruneEventsOlderThan: jest.fn().mockResolvedValue(5) };
-    reconciliation = { pollStalled: jest.fn().mockResolvedValue(0) };
+    reconciliation = {
+      pollStalled: jest.fn().mockResolvedValue(0),
+      expireAbandonedUploads: jest.fn().mockResolvedValue(0),
+    };
     quizEngine = { finalizeOverdue: jest.fn().mockResolvedValue(0) };
     metrics = { recordRetentionPruned: jest.fn(), recordRetentionSweepRun: jest.fn() };
     forensicWatermarks = { pruneOlderThan: jest.fn().mockResolvedValue(7) };
@@ -250,5 +253,27 @@ describe('Phase2MaintenanceService — retention sweep', () => {
       'forensic_watermarks',
       false,
     );
+  });
+
+  // B0-MED-11 — the Normal tier has no webhook and nothing to poll, so the
+  // sweep also releases uploads abandoned before completion.
+  it('releases abandoned Normal-tier uploads and reports them with the polled ones', async () => {
+    reconciliation.pollStalled.mockResolvedValue(2);
+    reconciliation.expireAbandonedUploads.mockResolvedValue(3);
+    const result = await service.run();
+    expect(reconciliation.expireAbandonedUploads).toHaveBeenCalledTimes(1);
+    expect(result.reconciledVideos).toBe(5);
+  });
+
+  it('a failing status poll does not skip the abandoned-upload release, and vice versa', async () => {
+    reconciliation.pollStalled.mockRejectedValue(new Error('provider down'));
+    reconciliation.expireAbandonedUploads.mockResolvedValue(1);
+    expect((await service.run()).reconciledVideos).toBe(1);
+
+    reconciliation.pollStalled.mockResolvedValue(4);
+    reconciliation.expireAbandonedUploads.mockRejectedValue(new Error('deadlock'));
+    const result = await service.run();
+    expect(result.reconciledVideos).toBe(4);
+    expect(result.finalizedOverdueQuizAttempts).toBe(0);
   });
 });

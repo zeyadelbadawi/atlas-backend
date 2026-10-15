@@ -50,7 +50,10 @@ import {
   readCourseReadinessFacts,
   type CoursePublishReadinessResponse,
 } from './course-readiness';
-import { assertCurrencyAllowed } from '../../common/currency/supported-currency';
+import {
+  assertCurrencyAllowed,
+  defaultPriceCurrency,
+} from '../../common/currency/supported-currency';
 
 /** See `AcademiesService.MANAGING_ROLES` — identical rule, applied here to Course writes. */
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
@@ -171,13 +174,13 @@ export class CoursesService {
             'courses',
           );
 
-          if (payload.pricing.type === 'paid') {
-            assertCurrencyAllowed(
-              payload.pricing.currency,
-              undefined,
-              'pricing.currency',
-            );
-          }
+          // D5-3 — a paid price sent without a currency takes the academy's.
+          const pricingCurrency =
+            payload.pricing.type === 'paid'
+              ? (payload.pricing.currency ??
+                (await this.academyPriceCurrency(tx, academyId)))
+              : undefined;
+          assertCurrencyAllowed(pricingCurrency, undefined, 'pricing.currency');
           const created = await this.coursesRepository.create(tx, {
             academy: { connect: { id: academyId } },
             // P60 — record the creator at the moment of creation. Previously
@@ -196,8 +199,7 @@ export class CoursesService {
             visibility: payload.visibility,
             pricingType: payload.pricing.type,
             pricingAmountMinorUnits: toMinorUnits(payload.pricing.amount),
-            pricingCurrency:
-              payload.pricing.type === 'paid' ? payload.pricing.currency : undefined,
+            pricingCurrency,
             // P64 Phase 4 catalog metadata. Scalar-list defaults ([]) mean an
             // omitted `outcomes`/`requirements` simply stays empty.
             level: payload.level,
@@ -265,13 +267,20 @@ export class CoursesService {
 
           const current = await this.coursesRepository.findById(tx, courseId);
           this.assertBelongsToAcademy(current, academyId);
-          if (payload.pricing?.type === 'paid') {
-            assertCurrencyAllowed(
-              payload.pricing.currency,
-              current?.pricingCurrency,
-              'pricing.currency',
-            );
-          }
+          // D5-3 — a paid price sent without a currency keeps the one it
+          // has; a course with none yet takes the academy's. Never a
+          // conversion: the amount is whatever was sent.
+          const pricingCurrency =
+            payload.pricing?.type === 'paid'
+              ? (payload.pricing.currency ??
+                current?.pricingCurrency ??
+                (await this.academyPriceCurrency(tx, academyId)))
+              : null;
+          assertCurrencyAllowed(
+            pricingCurrency,
+            current?.pricingCurrency,
+            'pricing.currency',
+          );
 
           const data: Prisma.CourseUpdateInput = {
             title: payload.title,
@@ -299,8 +308,7 @@ export class CoursesService {
                   // to Prisma's update semantics, which would silently keep
                   // the old price alive underneath a "free" label.
                   pricingAmountMinorUnits: toMinorUnits(payload.pricing.amount) ?? null,
-                  pricingCurrency:
-                    payload.pricing.type === 'paid' ? payload.pricing.currency : null,
+                  pricingCurrency,
                 }
               : {}),
             // P64 Phase 4 catalog metadata. Scalar fields follow the same
@@ -725,6 +733,18 @@ export class CoursesService {
     }
 
     return toCourseCategoryResponse(category);
+  }
+
+  /** D5-3 — the currency a new course price defaults to (`defaultPriceCurrency`). */
+  private async academyPriceCurrency(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+  ): Promise<string> {
+    const academy = await tx.academy.findUnique({
+      where: { id: academyId },
+      select: { currency: true },
+    });
+    return defaultPriceCurrency(academy?.currency);
   }
 
   /** Enforces the write-authorization rule documented on this class. Returns the caller's real Academy-membership role (Phase 8) — every call site uses this, rather than re-querying, as the `role` attributed on that mutation's audit-log entry. */

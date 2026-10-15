@@ -86,22 +86,43 @@ Row 5 is the part that must not be faked.
 - Destroys 2FA secret, recovery codes, password-reset and email-verification tokens.
 - Revokes every session in-transaction, then writes the Redis denylist **after commit**
   — a Redis failure must not roll back a completed deletion.
+- Revokes every device identity in the same transaction, in the person's own context:
+  remembered browsers (`trusted_devices`) and, since D5-1 (Oct 2026), every learner
+  device (`student_devices`) at **every** academy — revoked, not deleted, like every
+  other device removal. Before D5-1 the device rows stayed active after deletion even
+  though the refresh tokens bound to them were revoked. After commit the revoked
+  sessions are also published to the Normal-tier video delivery gate (reason
+  `account_deleted`; a no-op while no revocation endpoint is configured) and the
+  learning lease is dropped at each academy the person held a device at. The
+  `account.deleted*` audit row records `devicesRevoked`.
 - Removes memberships **inside per-organization tenant context**, because a
   context-free `deleteMany` matches zero rows and reports success.
-- Archives owned academies with a direct status update (`status='archived'`). This is
-  NOT `AcademiesService.archive`: it does not set `archivedAt`. The archived-media
-  sweep can still pick up individually archived assets of these academies as
-  candidates, but `isPurgeEligible` refuses every asset of an archived academy whose
-  `archivedAt` is null, so none is ever purged. It does not release custom domains or
-  clear the hostname cache — the public resolver refuses archived academies, so the
-  site drops once that cache expires (about a minute). No restore path exists for any
-  archived academy.
+- Archives owned academies through the **same** `AcademyArchiveService` that
+  `AcademiesService.archive` uses (D5-2, Oct 2026): `status='archived'` **and**
+  `archivedAt` (so the 30-day media grace of §14 starts), the custom domain released
+  through the `domain_provider_releases` ledger, every cached hostname dropped so the
+  site goes offline within the request, and usage recomputed so the plan's allowance
+  is freed. An `academy.archived` audit row names whoever authorised the deletion; no
+  academy reason is recorded (the owner deleted their account, not the academy).
+  If the post-commit steps (cache drop, provider release attempt, recompute enqueue)
+  fail, the deletion still completes: the ledger sweep retries the release, the cache
+  ages out in 60 s and the stale-usage sweep recomputes.
+  Before D5-2 this was a bare status update with none of the above; academies archived
+  that way have `archived_at IS NULL`, and `isPurgeEligible` refuses every asset of such
+  an academy, so their media is never purged (safe, but kept indefinitely). No restore
+  path exists for any archived academy. OD-18: migration
+  `20261118000100_legacy_academy_archived_at_backfill` stamps `archived_at` on the rows
+  provably archived by that old path (owner deleted, archive write within the deletion
+  request), set to the migration instant so the 30-day grace starts then rather than
+  back-dated; ambiguous rows stay NULL. Rule, Release-verify counts, rollback and purge
+  timing: `docs/ops/LEGACY-ARCHIVED-AT-BACKFILL.md`.
 - Enqueues certificate anonymisation on the certificates queue.
 
 ### `IMPLEMENTED` — Academy archive
 
 `POST|DELETE /api/v1/academies/:id/delete` → `AcademiesService.archive`. Owner-level
-only. Sets `status='archived'`, releases the plan's academy allowance, enqueues a
+only. Sets `status='archived'` and `archivedAt` (via the shared
+`AcademyArchiveService`, also used by account deletion), releases the plan's academy allowance, enqueues a
 Cloudflare custom-hostname release through the `domain_provider_releases` ledger, and
 invalidates **every** hostname form in the Redis resolution cache so the site goes
 offline within the request rather than after the 60s TTL.
@@ -537,10 +558,13 @@ future work.
 
 **Tests.** Both suites run against real Postgres, S3 and the fake video provider:
 
-- `test/archived-media-purge.e2e-spec.ts` (7): immediate deletion refused, grace
+- `test/archived-media-purge.e2e-spec.ts` (10): immediate deletion refused, grace
   respected, eligible public/protected/hosted assets destroyed with proof and audit,
   referenced assets kept, cross-tenant payload refused, legal hold wins, `dry_run` inert,
-  queue path works.
+  queue path works; and (D5-2) an academy archived by account deletion records
+  `archivedAt`, is kept inside the grace and purged after it, a legal hold still wins,
+  an active academy's media is untouched, and a legacy archive with no `archivedAt` is
+  never purged.
 - `test/media-delete.e2e-spec.ts` (5): the matrix above, the usage guard, mixed bulk
   outcomes, and a just-deleted asset is not purgeable.
 

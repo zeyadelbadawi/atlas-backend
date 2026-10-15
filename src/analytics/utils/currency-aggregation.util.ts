@@ -10,6 +10,7 @@
  * the dev database), so this never actually discards data in practice; it
  * exists purely as a safety net if a second currency is ever introduced.
  */
+import { DEFAULT_CURRENCY } from '../../common/currency/supported-currency';
 import { minorUnitsToDecimal } from './metric-math.util';
 
 export interface CurrencyAmountLike {
@@ -17,10 +18,10 @@ export interface CurrencyAmountLike {
   readonly amountMinorUnits: bigint;
 }
 
-/** Combines any number of `{currency, amountMinorUnits}` rows into per-currency totals, then reports the single largest one as a decimal — `{amount: 0, currency: 'USD'}` when there's no data at all (never `NaN`/`undefined`, matching the contract's non-optional `amount`/`currency` fields). */
+/** Combines any number of `{currency, amountMinorUnits}` rows into per-currency totals, then reports the single largest one as a decimal — `{amount: 0, currency: DEFAULT_CURRENCY}` (EGP, the platform currency; it was a hard-coded `'USD'`, which no approved plan or price uses) when there's no data at all (never `NaN`/`undefined`, matching the contract's non-optional `amount`/`currency` fields). */
 export function pickDominantCurrencyAmount(
   rows: readonly CurrencyAmountLike[],
-  fallbackCurrency = 'USD',
+  fallbackCurrency = DEFAULT_CURRENCY,
 ): { amount: number; currency: string } {
   const totals = sumByCurrency(rows);
   if (totals.size === 0) return { amount: 0, currency: fallbackCurrency };

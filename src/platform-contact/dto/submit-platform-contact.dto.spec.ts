@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { SubmitPlatformContactDto } from './submit-platform-contact.dto';
@@ -141,5 +142,41 @@ describe('SubmitPlatformContactDto', () => {
     await expect(
       errorsFor({ ...valid, status: 'read', ipHash: 'x', website: 'y' }),
     ).resolves.toEqual(['ipHash', 'status', 'website']);
+  });
+
+  // B0-SUP-04 / B0-ANL-04 — additive optional fields.
+  it('accepts the WhatsApp number, both consents, qualification and attribution', async () => {
+    await expect(
+      errorsFor({
+        ...valid,
+        phoneNumber: '01001234567',
+        phoneCountry: 'EG',
+        contactConsent: true,
+        marketingConsent: false,
+        requesterRole: 'academy_owner',
+        subject: 'Mathematics',
+        studentBand: '50_200',
+        preferredChannel: 'whatsapp',
+        attribution: { utmSource: 'facebook', referrerDomain: 'example.org' },
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it('rejects a consent that is not a boolean and a half-given phone', async () => {
+    await expect(errorsFor({ ...valid, marketingConsent: 'yes' })).resolves.toEqual([
+      'marketingConsent',
+    ]);
+    await expect(errorsFor({ ...valid, phoneNumber: '01001234567' })).resolves.toEqual([
+      'phoneCountry',
+    ]);
+  });
+
+  it('rejects unknown qualification values and unknown attribution keys', async () => {
+    await expect(
+      errorsFor({ ...valid, studentBand: 'lots', preferredChannel: 'fax' }),
+    ).resolves.toEqual(['preferredChannel', 'studentBand']);
+    await expect(
+      errorsFor({ ...valid, attribution: { utmSource: 'x', gclid: 'y' } }),
+    ).resolves.toEqual(['attribution']);
   });
 });

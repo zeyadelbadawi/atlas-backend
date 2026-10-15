@@ -27,6 +27,11 @@
 #                        (OPTIONS only — nothing is uploaded), the delivery
 #                        Worker's answer to a token-less request, and
 #                        hosted-video usage as counts
+#   remote.sh archive -> legacy academy `archived_at` backfill (OD-18):
+#                        eligible / ambiguous / already-recorded counts,
+#                        before and after migration
+#                        20261118000100 (INFO only, never gating; also
+#                        part of `facts`)
 #
 # Read-only: every statement is a SELECT, every probe a GET. Prints
 # non-secret facts only — no secret value, no personal data, no bank detail,
@@ -166,6 +171,111 @@ b0_release_facts() {
   if [ "$purpose" = 1 ]; then pass "account_deletion_challenges purpose check present"; else fail "account_deletion_challenges purpose check missing"; fi
 }
 
+# --- OD-18: legacy academy archived_at backfill ----------------------------
+#
+# Before D5-2 (4cd7460) account deletion archived the owner's academies with
+# a bare `status = 'archived'` update: no `archived_at`. Those rows read as
+# live to the learner/registration SQL helpers and their media is never
+# purge-eligible. Migration 20261118000100_legacy_academy_archived_at_backfill
+# stamps the ELIGIBLE ones; this reports the classification before and after
+# (docs/ops/LEGACY-ARCHIVED-AT-BACKFILL.md). Counts and one date only — no
+# id, name or email — and INFO only: it never fails a run.
+#
+# The classification below is the migration's eligibility rule, verbatim in
+# substance; keep them equal (test/legacy-archived-at-backfill.e2e-spec.ts
+# runs this exact text against the migration's fixtures).
+LEGACY_ARCHIVE_SQL=$(cat <<'SQL'
+WITH c AS (
+  SELECT a.id, a.status::text AS status, a.archived_at, a.archive_reason,
+         a.archive_feedback, a.updated_at, u.status::text AS owner_status,
+         u.deleted_at, (u.status = 'deleted' OR u.deleted_at IS NOT NULL) AS owner_deleted,
+         coalesce(ev.audited_at, u.deleted_at) AS deletion_at,
+         ev.audited_at IS NOT NULL AS audited,
+         EXISTS (SELECT 1 FROM audit_log_entries l
+                  WHERE l.action = 'academy.archived' AND l.target_id = a.id) AS normal_path_audit
+    FROM academies a
+    JOIN organizations o ON o.id = a.organization_id
+    JOIN users u ON u.id = o.owner_user_id
+    LEFT JOIN LATERAL (
+      SELECT min(l.occurred_at) AS audited_at FROM audit_log_entries l
+       WHERE l.target_type = 'user' AND l.target_id = u.id
+         AND l.action IN ('account.deleted', 'account.deleted_by_platform_owner')
+    ) ev ON true
+), k AS (
+  SELECT c.*, CASE
+      WHEN c.status <> 'archived' THEN CASE WHEN c.owner_deleted THEN 'live_deleted_owner' ELSE 'live' END
+      WHEN c.archived_at IS NOT NULL THEN CASE WHEN c.owner_deleted THEN 'recorded_deleted_owner' ELSE 'recorded' END
+      WHEN NOT c.owner_deleted THEN 'legacy_live_owner'
+      WHEN NOT (c.owner_status = 'deleted' AND c.deleted_at IS NOT NULL) THEN 'ambiguous_owner_marker'
+      WHEN c.archive_reason IS NOT NULL OR c.archive_feedback IS NOT NULL OR c.normal_path_audit THEN 'ambiguous_normal_archive'
+      WHEN c.updated_at < c.deletion_at - interval '1 hour'
+        OR c.updated_at > c.deletion_at + interval '5 minutes' THEN 'ambiguous_window'
+      ELSE 'eligible' END AS class
+    FROM c
+)
+SELECT 'legacyarchive',
+       count(*) FILTER (WHERE class = 'eligible'),
+       count(*) FILTER (WHERE class = 'eligible' AND audited),
+       count(*) FILTER (WHERE class = 'eligible' AND NOT audited),
+       count(*) FILTER (WHERE class = 'ambiguous_owner_marker'),
+       count(*) FILTER (WHERE class = 'ambiguous_normal_archive'),
+       count(*) FILTER (WHERE class = 'ambiguous_window'),
+       count(*) FILTER (WHERE class IN ('recorded', 'recorded_deleted_owner')),
+       count(*) FILTER (WHERE class = 'recorded_deleted_owner'),
+       count(*) FILTER (WHERE class = 'legacy_live_owner'),
+       count(*) FILTER (WHERE class = 'live_deleted_owner'),
+       (SELECT count(*) FROM media_assets m
+         WHERE m.status IN ('active', 'archived')
+           AND m.academy_id IN (SELECT id FROM k WHERE class = 'eligible')),
+       (SELECT count(*) FROM domain_connections dc
+         WHERE dc.hostname IS NOT NULL
+           AND dc.academy_id IN (SELECT id FROM k WHERE class = 'eligible'))
+  FROM k
+SQL
+)
+LEGACY_BACKFILL_MIGRATION=20261118000100_legacy_academy_archived_at_backfill
+LEGACY_BACKFILL_TABLE=atlas_migration_backups.legacy_academy_archived_at_backfill
+legacy_archive_facts() {
+  echo "== Legacy academy archived_at backfill (OD-18; counts only, never gating)"
+  local tag elig elig_a elig_d amb_o amb_n amb_w rec rec_del legacy_live live_del media hosts mode
+  IFS='|' read -r tag elig elig_a elig_d amb_o amb_n amb_w rec rec_del legacy_live live_del media hosts \
+    <<< "$(sql "$LEGACY_ARCHIVE_SQL" | tr -d '[:space:]')"
+  if [ "$tag" != legacyarchive ] || ! [[ "$elig$amb_o$amb_n$amb_w$media$hosts" =~ ^[0-9]+$ ]]; then
+    info "legacy archive counts could not be read"
+    return 0
+  fi
+  info "legacy archive: eligible for the backfill=$elig (dated by the account.deleted audit row=$elig_a, by users.deleted_at=$elig_d)"
+  info "legacy archive: ambiguous, never changed=$((amb_o + amb_n + amb_w)) (owner deletion marker partial=$amb_o, normal-archive evidence=$amb_n, archive write outside the deletion window=$amb_w)"
+  info "legacy archive: archived_at already recorded=$rec (owner deleted=$rec_del); archived without archived_at under a live owner (out of scope)=$legacy_live; live academies of deleted owners=$live_del"
+  info "legacy archive: eligible academies hold media assets (active/archived)=$media, a connected custom hostname=$hosts"
+  mode=$(env_value FLAG_MEDIA_ARCHIVE_PURGE_MODE)
+  info "legacy archive: FLAG_MEDIA_ARCHIVE_PURGE_MODE=${mode:-dry_run (default)}"
+
+  local state present
+  state=$(sql "select coalesce((select case when finished_at is not null and rolled_back_at is null then 'applied' else 'unfinished' end from _prisma_migrations where migration_name='$LEGACY_BACKFILL_MIGRATION'), 'absent')")
+  present=$(sql "select to_regclass('$LEGACY_BACKFILL_TABLE') is not null")
+  if [ "$state" != applied ] || [ "$present" != t ]; then
+    info "legacy archive backfill: migration $LEGACY_BACKFILL_MIGRATION ${state:-unreadable} (nothing stamped yet)"
+    return 0
+  fi
+  local btag stamped runs carrying grace_end kept purged
+  IFS='|' read -r btag stamped runs carrying grace_end kept purged <<< "$(sql "
+    select 'legacybackfill', count(*), count(distinct b.run_at),
+           count(*) filter (where a.archived_at = b.applied_archived_at),
+           coalesce(to_char(min(b.applied_archived_at) + interval '30 days', 'YYYY-MM-DD'), '-'),
+           (select count(*) from media_assets m where m.status in ('active','archived')
+             and m.academy_id in (select academy_id from $LEGACY_BACKFILL_TABLE)),
+           (select count(*) from media_assets m where m.status = 'deleted'
+             and m.academy_id in (select academy_id from $LEGACY_BACKFILL_TABLE))
+      from $LEGACY_BACKFILL_TABLE b left join academies a on a.id = b.academy_id" | tr -d '[:space:]')"
+  if [ "$btag" != legacybackfill ]; then
+    info "legacy archive backfill: backup table could not be read"
+    return 0
+  fi
+  info "legacy archive backfill: migration applied; academies stamped=$stamped (runs=$runs, still carrying the stamp=$carrying); media grace ends no earlier than $grace_end"
+  info "legacy archive backfill: media assets of stamped academies present=$kept, tombstoned=$purged"
+}
+
 # --- B0-MED-11 / B0-OC-34: Normal-tier hosted video readiness ---------------
 #
 # What the course builder's direct upload needs before the tier is turned
@@ -187,6 +297,30 @@ video_facts() {
   if [ -n "$(env_value R2_PROTECTED_BUCKET)" ]; then info "R2_PROTECTED_BUCKET: set (name not printed)"; else info "R2_PROTECTED_BUCKET: default (<R2_BUCKET>-protected)"; fi
   secret_presence R2_PROTECTED_ACCESS_KEY_ID
   secret_presence BASIC_VIDEO_SIGNING_SECRET
+
+  # Activation is configuration only (docs/HOSTED_VIDEO_ACTIVATION_RUNBOOK.md):
+  # the NAMES the tier needs, present or not — never a value. Required ones
+  # missing while the flag is on fail (the API also refuses to start then);
+  # while it is off they are reported, so readiness shows before the switch.
+  echo "== Normal-tier activation config (names only)"
+  local mode req_set=0 req_missing="" opt_set="" opt_missing="" n
+  mode=$(env_value FLAG_VIDEO_NORMAL_MODE); mode=${mode:-off}
+  for n in BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_SIGNING_SECRET; do
+    if [ -n "$(env_value "$n")" ]; then req_set=$((req_set + 1)); else req_missing="$req_missing $n"; fi
+  done
+  for n in R2_PROTECTED_BUCKET R2_PROTECTED_ACCESS_KEY_ID R2_PROTECTED_SECRET_ACCESS_KEY \
+    BASIC_VIDEO_REVOCATION_ENDPOINT BASIC_VIDEO_REVOCATION_TOKEN; do
+    if [ -n "$(env_value "$n")" ]; then opt_set="$opt_set $n"; else opt_missing="$opt_missing $n"; fi
+  done
+  if [ -z "$req_missing" ]; then
+    pass "required names set: 2 of 2 (BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_SIGNING_SECRET)"
+  elif [ "$mode" = off ]; then
+    info "required names set: $req_set of 2; missing:$req_missing (tier off, not gating)"
+  else
+    fail "FLAG_VIDEO_NORMAL_MODE=$mode but required names missing:$req_missing"
+  fi
+  info "optional names set:${opt_set:- none}; not set:${opt_missing:- none}"
+  info "Worker-side names (Cloudflare, not readable here): secret GATE_SIGNING_SECRET, bindings VIDEO_BUCKET and GATE_DENYLIST; probed below by a token-less request only"
 
   echo "== Protected bucket CORS (read-only; no upload is made)"
   cors=$(docker compose exec -T backend node -e '
@@ -428,6 +562,9 @@ case "${1:-}" in
     echo "== Normal-tier video readiness follows (B0-MED-11; reported, not gating)"
     ( video_facts ) || true
 
+    # OD-18 — INFO only; a subshell so nothing in it can count as a FAIL.
+    ( legacy_archive_facts ) || true
+
     echo "== Website published copy"
     IFS='|' read -r _ all snap <<< "$(sql "select 'published_sites', count(*), count(published_snapshot) from website_configurations where status='published'")"
     if [ "$all" = "$snap" ]; then pass "every published site has a published snapshot ($snap/$all)"; else fail "published sites with a snapshot: $snap/$all"; fi
@@ -536,5 +673,9 @@ SQL
     b0_release_facts
     [ "$FAILS" = 0 ]
     ;;
-  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video|b0" >&2; exit 2 ;;
+  archive)
+    # Reported, never gating: always exits 0 once it ran.
+    legacy_archive_facts
+    ;;
+  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video|b0|archive" >&2; exit 2 ;;
 esac

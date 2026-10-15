@@ -31,12 +31,15 @@ interface HostRows {
     hostname?: string | null;
     httpsReachable?: boolean | null;
   } | null;
+  /** B0-WEB-02 — the academy's website row (absent: no website yet). */
+  readonly website?: { status: string; publishedSnapshot: unknown } | null;
 }
 
 function txStub(rows: HostRows): Prisma.TransactionClient {
   return {
     subdomainAllocation: { findUnique: async () => rows.allocation ?? null },
     domainConnection: { findUnique: async () => rows.connection ?? null },
+    websiteConfiguration: { findUnique: async () => rows.website ?? null },
   } as unknown as Prisma.TransactionClient;
 }
 
@@ -310,6 +313,51 @@ describe('LinkBuilderService', () => {
         `${PLATFORM_URL}/my/certificates`,
       );
       expect(platformDomainReads()).toBe(0);
+    });
+  });
+
+  describe('B0-WEB-02 — the site default locale', () => {
+    const published = (defaultLocale?: string) => ({
+      status: 'published',
+      publishedSnapshot: defaultLocale ? { defaultLocale } : { themeKey: 'x' },
+    });
+    const allocation = { fullHost: 'falcon.atlas.test', subdomain: 'falcon' };
+
+    it('an Arabic-default site: Arabic unprefixed, English under /en (learner settings too)', async () => {
+      const { service } = build();
+      const tx = txStub({ allocation, website: published('ar') });
+      expect(await service.academySiteDefaultLocale(tx, 'academy-1')).toBe('ar');
+      expect(await service.academy(tx, 'academy-1', '/my/courses', 'ar')).toBe(
+        'https://falcon.atlas.test/my/courses',
+      );
+      expect(await service.academy(tx, 'academy-1', '/my/courses', 'en')).toBe(
+        'https://falcon.atlas.test/en/my/courses',
+      );
+      expect(service.settings('en', 'falcon.atlas.test', 'learner', 'ar')).toBe(
+        'https://falcon.atlas.test/en/my/profile',
+      );
+      expect(service.settings('ar', 'falcon.atlas.test', 'learner', 'ar')).toBe(
+        'https://falcon.atlas.test/my/profile',
+      );
+    });
+
+    it('English unless the PUBLISHED site says Arabic (old snapshot, draft, no website)', async () => {
+      const { service } = build();
+      for (const website of [
+        published(),
+        published('en'),
+        { status: 'draft', publishedSnapshot: { defaultLocale: 'ar' } },
+        null,
+      ]) {
+        const tx = txStub({ allocation, website });
+        expect(await service.academySiteDefaultLocale(tx, 'academy-1')).toBe('en');
+        expect(await service.academy(tx, 'academy-1', '/my/courses', 'ar')).toBe(
+          'https://falcon.atlas.test/ar/my/courses',
+        );
+        expect(await service.academy(tx, 'academy-1', '/my/courses', 'en')).toBe(
+          'https://falcon.atlas.test/my/courses',
+        );
+      }
     });
   });
 

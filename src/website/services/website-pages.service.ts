@@ -56,9 +56,13 @@ import {
   createWebsitePageSchema,
   pageSeoSchema,
 } from '../validation/website-config.schemas';
-import { sectionInstanceArraySchema } from '../validation/section-config.schemas';
+import {
+  sectionInstanceArraySchema,
+  withRequiredLocale,
+} from '../validation/section-config.schemas';
 import { parseOrThrow } from '../../common/validation/zod-violations.util';
 import { RESERVED_PAGE_SLUGS } from '../constants/website.constants';
+import { resolveDefaultLocale } from '../constants/locale.constants';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
@@ -380,7 +384,16 @@ export class WebsitePagesService {
         }
 
         if (payload.sections !== undefined) {
-          const sections = parseOrThrow(sectionInstanceArraySchema, payload.sections);
+          // B0-WEB-02 — an Arabic-default site requires the Arabic side of
+          // every required bilingual field; every other site the English.
+          const configuration = await this.websiteConfigurationRepository.findByAcademyId(
+            tx,
+            academyId,
+          );
+          const sections = withRequiredLocale(
+            resolveDefaultLocale(configuration?.defaultLocale),
+            () => parseOrThrow(sectionInstanceArraySchema, payload.sections),
+          );
           await this.sectionReferenceValidatorService.validateSectionReferences(
             tx,
             academyId,

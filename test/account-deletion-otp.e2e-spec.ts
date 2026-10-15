@@ -12,7 +12,9 @@
  *   DELOTP-07  a new request retires the older code; resend cooldown 429
  *   DELOTP-08  an unverified address gets no code (409)
  *   DELOTP-09  two concurrent confirmations: exactly one deletes
- *   DELOTP-10  after deletion nothing can still vouch for the person
+ *   DELOTP-10  after deletion nothing can still vouch for the person — no
+ *              live session, trusted browser, learner device (at any
+ *              academy, D5-1) or learning lease survives
  *   DELOTP-11  the code is never in the audit trail; RLS hides challenges
  *              from a context-free application connection
  *   DELOTP-12  (W3) the code is not in the subject, is gone from the outbox
@@ -22,8 +24,15 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { PrismaClient } from '@prisma/client';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
-import { createAdminPrisma } from './utils/db-admin';
+import {
+  createAdminPrisma,
+  seedAcademy,
+  seedAcademyStudent,
+  seedOrganizationWithOwner,
+} from './utils/db-admin';
 import { PrismaService } from '../src/database/prisma.service';
+import { hashDeviceCookie } from '../src/tenancy/services/student-device.service';
+import { LearningLeaseService } from '../src/learning/services/learning-lease.service';
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
 import { CommunicationDispatchService } from '../src/communications/services/communication-dispatch.service';
@@ -283,6 +292,44 @@ describe('Account deletion by emailed code (e2e)', () => {
         expiresAt: new Date(Date.now() + 600_000),
       },
     });
+    // D5-1 — a learner with registered devices at TWO academies (of
+    // another organization: a learner holds no organization membership),
+    // a live session bound to one of them and a learning lease in flight.
+    const operator = await admin.user.create({
+      data: { email: uniqueTestEmail('delotp10-org'), name: 'delotp10-org' },
+    });
+    const org = await seedOrganizationWithOwner(admin, operator.id, 'delotp10');
+    const academies = [
+      await seedAcademy(admin, org.id, 'delotp10-a'),
+      await seedAcademy(admin, org.id, 'delotp10-b'),
+    ];
+    const devices = [];
+    for (const academy of academies) {
+      await seedAcademyStudent(admin, academy.id, a.userId);
+      devices.push(
+        await admin.studentDevice.create({
+          data: {
+            userId: a.userId,
+            academyId: academy.id,
+            cookieHash: hashDeviceCookie(`delotp10-${academy.id}`),
+            label: 'Chrome on macOS',
+          },
+        }),
+      );
+    }
+    await admin.refreshToken.updateMany({
+      where: { userId: a.userId, revokedAt: null },
+      data: { deviceId: devices[0].id },
+    });
+    const leases = app.get(LearningLeaseService, { strict: false });
+    const lease = await leases.acquire({
+      userId: a.userId,
+      academyId: academies[0].id,
+      deviceId: devices[0].id,
+      sessionId: 'delotp10-session',
+    });
+    expect(lease.status).toBe('acquired');
+
     const { challengeId, code } = await requestCode(a.token);
     await confirm(a.token, challengeId, code).expect(200);
 
@@ -292,6 +339,16 @@ describe('Account deletion by emailed code (e2e)', () => {
     expect(
       await admin.trustedDevice.count({ where: { userId: a.userId, revokedAt: null } }),
     ).toBe(0);
+    // Every learner device, at every academy, revoked — not deleted.
+    expect(
+      await admin.studentDevice.count({ where: { userId: a.userId, revokedAt: null } }),
+    ).toBe(0);
+    expect(await admin.studentDevice.count({ where: { userId: a.userId } })).toBe(2);
+    expect(await leases.current(a.userId, academies[0].id)).toBeNull();
+    const audit = await admin.auditLogEntry.findFirstOrThrow({
+      where: { action: 'account.deleted', targetId: a.userId },
+    });
+    expect((audit.context as Record<string, unknown>).devicesRevoked).toBe(2);
     expect(await admin.passwordResetToken.count({ where: { userId: a.userId } })).toBe(0);
     expect(
       await admin.accountDeletionChallenge.count({ where: { userId: a.userId } }),

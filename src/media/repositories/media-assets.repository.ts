@@ -21,6 +21,8 @@ export interface MediaAssetListFilter {
   readonly type?: MediaAssetType;
   /** B0-MED-11 — public library media vs. protected (signed-grant) assets. */
   readonly access?: 'public' | 'protected';
+  /** B0-MED-11 — this course's assets plus academy-wide (course-less) ones. */
+  readonly courseId?: string;
   readonly skip: number;
   readonly take: number;
 }
@@ -45,6 +47,9 @@ export class MediaAssetsRepository {
       ...(filter.status ? { status: filter.status } : {}),
       ...(filter.type ? { type: filter.type } : {}),
       ...(filter.access ? { access: filter.access } : {}),
+      ...(filter.courseId
+        ? { OR: [{ courseId: filter.courseId }, { courseId: null }] }
+        : {}),
       ...(filter.search
         ? { fileName: { contains: filter.search, mode: 'insensitive' as const } }
         : {}),

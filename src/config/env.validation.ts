@@ -325,6 +325,27 @@ const EnvSchema = z.object({
   // Platform Owner accounts and every suite would fan out to all of them;
   // the alert suite turns it on itself.
   FLAG_PLATFORM_OWNER_ALERTS_MODE: z.enum(['off', 'on']).optional(),
+  // --- B0-SUP-04 / B0-IAM-08 / B0-ANL-04 — new lead data collection ---
+  // All `off` by default: the consent wording is a DRAFT pending counsel,
+  // so no deploy may start collecting until the owner turns a switch on
+  // after counsel approval. `off` stores nothing new even if a client sends
+  // the fields.
+  //   FLAG_CONTACT_CONSENT_MODE — contact form WhatsApp number, the two
+  //     separate consents, and the sales qualification fields.
+  //   FLAG_SIGNUP_WHATSAPP_CONSENT_MODE — the organization owner's WhatsApp
+  //     opt-in at signup (never offered to learners).
+  //   FLAG_ATTRIBUTION_CAPTURE_MODE — UTM values, referrer domain and
+  //     landing template on organization signup and contact enquiries.
+  FLAG_CONTACT_CONSENT_MODE: z.enum(['off', 'on']).default('off'),
+  FLAG_SIGNUP_WHATSAPP_CONSENT_MODE: z.enum(['off', 'on']).default('off'),
+  FLAG_ATTRIBUTION_CAPTURE_MODE: z.enum(['off', 'on']).default('off'),
+  // B0-SUP-04 — marketing-enquiry retention. `dry_run` (the default, like
+  // FLAG_MEDIA_ARCHIVE_PURGE_MODE) counts and logs what WOULD be deleted and
+  // deletes nothing; `on` deletes enquiries older than
+  // CONTACT_ENQUIRY_RETENTION_MONTHS (24 is a proposal — counsel sets the
+  // period). Bounded so a typo cannot erase fresh enquiries.
+  FLAG_CONTACT_RETENTION_MODE: z.enum(['off', 'dry_run', 'on']).default('dry_run'),
+  CONTACT_ENQUIRY_RETENTION_MONTHS: z.coerce.number().int().min(6).max(120).default(24),
   // §12's approved numbers. Configurable so a load-testing pass can tune
   // them, bounded so a typo cannot turn the control off: the ceiling on
   // attempts and codes is validated as a positive integer, and the code
@@ -979,6 +1000,34 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
       throw new Error(
         `VIDEO_PROVIDER=cloudflare_stream requires ${missing.join(', ')} — refusing to start ` +
           'with the real video provider selected but no credentials to sign playback with.',
+      );
+    }
+  }
+
+  // B0-MED-11 — the Normal tier's rollout flag switched on in production
+  // without its delivery gate. The app would boot, the builder would offer
+  // uploads, and every one would be refused `videoNotEnabled` (the
+  // registry reports the tier unavailable; the local stand-in never runs in
+  // production) — a misconfiguration nobody sees until a customer does.
+  // Refused at startup instead, where the deploy shows it. With the flag
+  // `off` (today's production state) nothing here applies.
+  if (
+    parsed.data.NODE_ENV === 'production' &&
+    parsed.data.FLAG_VIDEO_NORMAL_MODE !== 'off'
+  ) {
+    const missing = (
+      [
+        ['BASIC_VIDEO_DELIVERY_HOST', parsed.data.BASIC_VIDEO_DELIVERY_HOST],
+        ['BASIC_VIDEO_SIGNING_SECRET', parsed.data.BASIC_VIDEO_SIGNING_SECRET],
+      ] as const
+    )
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new Error(
+        `FLAG_VIDEO_NORMAL_MODE=${parsed.data.FLAG_VIDEO_NORMAL_MODE} requires ${missing.join(', ')} — ` +
+          'refusing to start with the Normal video tier enabled but no delivery gate to sign ' +
+          'playback for (see docs/HOSTED_VIDEO_ACTIVATION_RUNBOOK.md).',
       );
     }
   }

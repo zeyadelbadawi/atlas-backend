@@ -1950,6 +1950,87 @@ const CATALOG = {
     actionUrl: () => TENANT_SUBSCRIPTION_PATH,
   },
 
+  // B0-MSG-05 part 3 — activation steps A1–A4 (lead-gen §9.2 rows 2–5),
+  // emitted by the lifecycle sweep, behind FLAG_LIFECYCLE_SEQUENCES_MODE.
+  // Each is ONCE PER TENANT: the version is the organisation's signup
+  // instant, which never moves. Each is SUPPRESSED once its condition is
+  // met (`isActivationStepWanted`), re-checked every tick, so the email
+  // stops the moment the owner does the step. They are nudges, not news:
+  // email only, and only with `lifecycle.reminders` on, like T4–T6.
+  // Copy is DRAFT pending owner approval (OQ-33) and Arabic review (RV-14).
+  // A1 — 24 h after signup, no academy yet.
+  'lifecycle.activation.no_academy': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'never', email: 'preference' },
+    priority: 'low',
+    notificationType: 'system',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('activation_no_academy', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.activation.no_academy',
+    titleKey: 'notifications:events.lifecycleActivationNoAcademy.title',
+    messageKey: 'notifications:events.lifecycleActivationNoAcademy.message',
+    actionUrl: () => '/dashboard',
+  },
+  // A2 — 48 h after signup, an academy whose website is not published.
+  'lifecycle.activation.site_unpublished': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'never', email: 'preference' },
+    priority: 'low',
+    notificationType: 'system',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('activation_site_unpublished', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.activation.site_unpublished',
+    titleKey: 'notifications:events.lifecycleActivationSiteUnpublished.title',
+    messageKey: 'notifications:events.lifecycleActivationSiteUnpublished.message',
+    actionUrl: () => '/dashboard',
+  },
+  // A3 — day 4, no way to take payment or no course yet.
+  'lifecycle.activation.payments_and_course': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'never', email: 'preference' },
+    priority: 'low',
+    notificationType: 'system',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('activation_payments_and_course', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.activation.payments_and_course',
+    titleKey: 'notifications:events.lifecycleActivationPaymentsAndCourse.title',
+    messageKey: 'notifications:events.lifecycleActivationPaymentsAndCourse.message',
+    actionUrl: () => '/dashboard',
+  },
+  // A4 — the first learner payment proof, until one has been reviewed.
+  'lifecycle.activation.first_proof': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'never', email: 'preference' },
+    priority: 'low',
+    notificationType: 'system',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      lifecycleKey('activation_first_proof', entity.id, str(values, 'anchorAt')),
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.activation.first_proof',
+    titleKey: 'notifications:events.lifecycleActivationFirstProof.title',
+    messageKey: 'notifications:events.lifecycleActivationFirstProof.message',
+    actionUrl: ({ values }) => `/dashboard/academy/${str(values, 'academyId')}/payments`,
+  },
+
   // === P64 Communications C3, second pass — the remaining transactional
   // === events (plan §8 B1-B4 / C1 / D1-D2 / E4-E6 / H1).
   //
