@@ -1,7 +1,9 @@
 /**
  * The tenant lifecycle SEQUENCE EVALUATOR — P64 Communications C5, the
  * pure half of `docs/communications/COMMUNICATIONS_AND_LIFECYCLE_PLAN.md`
- * §26 (trial T1–T6) and §27 (subscription S1–S10).
+ * §26 (trial T1–T6) and §27 (subscription S1–S10), plus B0-MSG-05's
+ * activation steps A1–A4 (no academy, unpublished site, no payments or
+ * course, first learner proof).
  *
  * NOTHING IS EVER SCHEDULED. The plan's own rule: "Any activation ends the
  * sequence instantly because the sweep re-evaluates conditions each tick;
@@ -124,6 +126,32 @@ export const SUBSCRIPTION_FOLLOWUP_7D_MS = 7 * DAY_MS;
 export const SUBSCRIPTION_FOLLOWUP_30D_MS = 30 * DAY_MS;
 
 /**
+ * B0-MSG-05 part 3 — the activation steps A1–A3, measured from the
+ * organisation's signup (its `created_at`; the trial starts in the same
+ * transaction). Timings are lead-gen §9.2 rows 2–4: "+24 h if no
+ * academy", "+48–72 h if website unpublished", "day 4–5, no payment
+ * method / no course" — the earliest point of each range.
+ *
+ * The 24 h / 48 h / 96 h spacing is chosen against the two-day lateness
+ * horizon: A1 needs NO academy and A2/A3 need one, so A1 never shares a
+ * tick with either, and A2's window closes at the instant A3's opens.
+ * Even after an outage the owner reads at most one setup nudge at a time.
+ */
+export const ACTIVATION_NO_ACADEMY_MS = 24 * HOUR_MS;
+export const ACTIVATION_SITE_UNPUBLISHED_MS = 48 * HOUR_MS;
+export const ACTIVATION_PAYMENTS_AND_COURSE_MS = 4 * DAY_MS;
+/**
+ * B0-MSG-05 A4 — "on first learner proof" (lead-gen §9.2 row 5). It has
+ * no clock offset of its own: it is eligible from signup until this long
+ * after it, and the sweep sends it on the first tick after the first proof
+ * arrives (≤ 15 minutes). Thirty days bounds the candidate scan; after
+ * that the owner has long since met the payment queue through the
+ * always-on `academy.payment.submitted` notification. [DECISION: owner may
+ * change; the design-partner 60-day trial is longer than this window.]
+ */
+export const ACTIVATION_FIRST_PROOF_WINDOW_MS = 30 * DAY_MS;
+
+/**
  * One identifier per step of §26/§27. T1, S1, S2 and S8 are NOT here:
  * they are consequences of an action someone just took (starting a trial,
  * a payment being approved, a proof being uploaded, a cancellation being
@@ -147,9 +175,77 @@ export type LifecycleStepId =
   | 'subscription_expired' // S7
   | 'subscription_cancelled' // S9
   | 'subscription_followup_7d' // S10a
-  | 'subscription_followup_30d'; // S10b
+  | 'subscription_followup_30d' // S10b
+  // --- B0-MSG-05 part 3, activation (lead-gen §9.2 rows 2–5)
+  | 'activation_no_academy' // A1
+  | 'activation_site_unpublished' // A2
+  | 'activation_payments_and_course' // A3
+  | 'activation_first_proof'; // A4
 
-export type LifecycleSequence = 'trial' | 'subscription';
+export type LifecycleSequence = 'trial' | 'subscription' | 'activation';
+
+/** The activation steps, for the service's facts check. */
+export type ActivationStepId = Extract<LifecycleStepId, `activation_${string}`>;
+
+/**
+ * B0-MSG-05 — what the organisation has actually done, as the service
+ * reads it from the records that define each onboarding step (the same
+ * definitions `OnboardingStatusService.derive` uses). Answered only when
+ * an activation step is otherwise due — the `requiresContent` pattern.
+ */
+export interface ActivationFacts {
+  /** A non-archived academy exists. */
+  readonly hasAcademy: boolean;
+  /** One of those academies has its website configuration `published`. */
+  readonly sitePublished: boolean;
+  /** A non-archived course in a non-archived academy exists. */
+  readonly hasCourse: boolean;
+  /**
+   * An academy has an enabled manual payment method, or the organisation
+   * chose a payment collection mode (Atlas Payments / its own gateway).
+   */
+  readonly paymentsConfigured: boolean;
+  /** A learner uploaded a proof for an academy-manual course payment. */
+  readonly hasLearnerProof: boolean;
+  /** An academy-manual course payment was already approved or rejected. */
+  readonly learnerProofReviewed: boolean;
+  /** The academy that received the first such proof (A4's link), or null. */
+  readonly proofAcademyId: string | null;
+}
+
+/**
+ * B0-MSG-05 — whether an activation step still has a job to do. A step
+ * whose condition is met is SUPPRESSED, which is the whole "stop when the
+ * step is done" rule: nothing was scheduled, so nothing is cancelled; the
+ * tick that sees the academy (or the published site, or the review)
+ * simply stops returning the step.
+ *
+ * A2 and A3 also need an academy: without one, the missing step is the
+ * academy, and A1 already asked for it. One nudge per missing step.
+ */
+export function isActivationStepWanted(
+  step: ActivationStepId,
+  facts: ActivationFacts,
+): boolean {
+  switch (step) {
+    case 'activation_no_academy':
+      return !facts.hasAcademy;
+    case 'activation_site_unpublished':
+      return facts.hasAcademy && !facts.sitePublished;
+    case 'activation_payments_and_course':
+      return facts.hasAcademy && !(facts.paymentsConfigured && facts.hasCourse);
+    case 'activation_first_proof':
+      return (
+        facts.hasLearnerProof &&
+        !facts.learnerProofReviewed &&
+        facts.proofAcademyId !== null
+      );
+  }
+}
+
+export function isActivationStep(step: LifecycleStepId): step is ActivationStepId {
+  return step.startsWith('activation_');
+}
 
 export interface DueLifecycleStep {
   readonly step: LifecycleStepId;
@@ -168,6 +264,13 @@ export interface DueLifecycleStep {
    * the extra query is never paid on the ordinary tick).
    */
   readonly requiresContent: boolean;
+  /**
+   * B0-MSG-05 A1–A4 — the step's condition (an academy, a published site,
+   * payments + a course, a reviewed proof) is a database question, so this
+   * file only FLAGS it, exactly like `requiresContent`; the service reads
+   * the facts once and drops every step `isActivationStepWanted` refuses.
+   */
+  readonly requiresActivationCheck: boolean;
 }
 
 export interface LifecycleEvaluationInput {
@@ -187,13 +290,22 @@ export interface LifecycleEvaluationInput {
   readonly trialStartedAt?: Date | null;
   /** B0-MSG-05 — the paid period's cycle; only `yearly` gets S3a. */
   readonly billingCycle?: 'monthly' | 'yearly' | null;
+  /**
+   * B0-MSG-05 part 3 — the organisation's signup instant. The A1–A3
+   * clock and the anchor of all four activation steps: it never moves, so
+   * each activation key is once per tenant, forever. Absent → no
+   * activation step.
+   */
+  readonly organizationCreatedAt?: Date | null;
 }
 
 function isWithinWindow(step: LifecycleStepId, dueAt: Date, now: Date): boolean {
   const lateness = now.getTime() - dueAt.getTime();
   const horizon = SHORT_NOTICE_STEPS.has(step)
     ? LIFECYCLE_SHORT_NOTICE_LATENESS_MS
-    : LIFECYCLE_STEP_MAX_LATENESS_MS;
+    : step === 'activation_first_proof'
+      ? ACTIVATION_FIRST_PROOF_WINDOW_MS
+      : LIFECYCLE_STEP_MAX_LATENESS_MS;
   return lateness >= 0 && lateness <= horizon;
 }
 
@@ -228,7 +340,14 @@ export function evaluateLifecycleSteps(
     requiresContent = false,
   ): void => {
     if (isWithinWindow(step, dueAt, now)) {
-      due.push({ step, sequence, dueAt, anchorAt, requiresContent });
+      due.push({
+        step,
+        sequence,
+        dueAt,
+        anchorAt,
+        requiresContent,
+        requiresActivationCheck: sequence === 'activation',
+      });
     }
   };
 
@@ -386,6 +505,45 @@ export function evaluateLifecycleSteps(
   // period columns are rewritten by the next purchase.
   if (effective === 'cancelled' && paidCancelledAt !== null) {
     push('subscription_cancelled', 'subscription', paidCancelledAt, paidCancelledAt);
+  }
+
+  // ---- B0-MSG-05 part 3, activation A1–A4 ------------------------------
+  //
+  // Only while the owner can actually build (a running trial or a live
+  // paid period), never after a cancellation, and never to someone whose
+  // paid period is set to end: a setup nudge to a leaving customer is
+  // noise. Each step is anchored on the signup instant, so its dedupe key
+  // is once per tenant. Whether its condition is still unmet is the
+  // service's question (`requiresActivationCheck`), asked only when one of
+  // these is otherwise due.
+  const createdAt = input.organizationCreatedAt;
+  if (
+    createdAt &&
+    (effective === 'trialing' || effective === 'active') &&
+    !anyCancellationRecorded &&
+    !subscription.cancelAtPeriodEnd
+  ) {
+    push(
+      'activation_no_academy',
+      'activation',
+      offset(createdAt, ACTIVATION_NO_ACADEMY_MS),
+      createdAt,
+    );
+    push(
+      'activation_site_unpublished',
+      'activation',
+      offset(createdAt, ACTIVATION_SITE_UNPUBLISHED_MS),
+      createdAt,
+    );
+    push(
+      'activation_payments_and_course',
+      'activation',
+      offset(createdAt, ACTIVATION_PAYMENTS_AND_COURSE_MS),
+      createdAt,
+    );
+    // A4 — due from signup across its whole window; the facts check is
+    // what makes it fire on the first proof and stop once one is reviewed.
+    push('activation_first_proof', 'activation', createdAt, createdAt);
   }
 
   return due.sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime());

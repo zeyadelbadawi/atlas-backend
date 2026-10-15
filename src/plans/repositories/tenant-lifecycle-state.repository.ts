@@ -19,7 +19,10 @@
  */
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { ACADEMY_MANUAL_PROVIDER_KEY } from '../../billing/dto/billing.constants';
 import {
+  ACTIVATION_FIRST_PROOF_WINDOW_MS,
+  ACTIVATION_PAYMENTS_AND_COURSE_MS,
   ANNUAL_RENEWAL_LEAD_MS,
   LIFECYCLE_STEP_MAX_LATENESS_MS,
   RENEWAL_REMINDER_LEAD_MS,
@@ -28,7 +31,17 @@ import {
   TRIAL_ENDING_SOON_LEAD_MS,
   TRIAL_REACTIVATION_45D_MS,
   GRACE_ENDING_LEAD_MS,
+  type ActivationFacts,
 } from '../utils/lifecycle-steps.util';
+
+/**
+ * B0-MSG-05 — how far back a signup can still produce an activation step:
+ * the later of A3 (+ the lateness horizon) and A4's whole window.
+ */
+const ACTIVATION_CANDIDATE_SPAN_MS = Math.max(
+  ACTIVATION_PAYMENTS_AND_COURSE_MS + LIFECYCLE_STEP_MAX_LATENESS_MS,
+  ACTIVATION_FIRST_PROOF_WINDOW_MS,
+);
 
 /** Everything one organisation's evaluation needs, in one round trip. */
 export type LifecycleCandidate = Prisma.TenantSubscriptionGetPayload<{
@@ -47,6 +60,7 @@ export type LifecycleCandidate = Prisma.TenantSubscriptionGetPayload<{
       select: {
         id: true;
         status: true;
+        createdAt: true;
         ownerUserId: true;
         owner: { select: { id: true; email: true; status: true; deletedAt: true } };
         cancellations: { select: { kind: true; effectiveAt: true } };
@@ -143,6 +157,15 @@ export class TenantLifecycleStateRepository {
           },
           // S7/S10 — the paid tail.
           { status: 'expired', graceEndsAt: { gte: paidTail } },
+          // A1–A4 (B0-MSG-05) — a recent signup that can still build.
+          // Bounded by signup age, so an established tenant is never
+          // fetched for this clause.
+          {
+            status: { in: ['trialing', 'active'] },
+            organization: {
+              createdAt: { gte: new Date(at - ACTIVATION_CANDIDATE_SPAN_MS) },
+            },
+          },
         ],
         ...(cursor ? { organizationId: { gt: cursor } } : {}),
       },
@@ -161,6 +184,8 @@ export class TenantLifecycleStateRepository {
           select: {
             id: true,
             status: true,
+            // B0-MSG-05 — the activation clock and anchor (A1–A4).
+            createdAt: true,
             ownerUserId: true,
             owner: { select: { id: true, email: true, status: true, deletedAt: true } },
             cancellations: { select: { kind: true, effectiveAt: true } },
@@ -210,6 +235,76 @@ export class TenantLifecycleStateRepository {
       }),
     ]);
     return course !== null || enrollment !== null;
+  }
+
+  /**
+   * B0-MSG-05 A1–A4 — what the organisation has done so far, from the
+   * records that define each onboarding step (the definitions are
+   * `OnboardingStatusService.derive`'s, so the setup card and these
+   * emails can never disagree about whether a step is done).
+   *
+   * Must run in the organisation's TENANT context as well as the platform
+   * owner's user context: `academy_payment_methods` and
+   * `organization_payment_settings` have tenant-only read policies. Every
+   * read is an existence check bounded to this one organisation.
+   *
+   * "Payments configured" also counts an organisation-level collection
+   * mode (Atlas Payments or its own gateway): an academy with no manual
+   * method is not unconfigured if the organisation collects another way.
+   * A4 counts only `academy_manual` course payments — the ones the owner
+   * reviews; a platform-collected payment is reviewed by Atlas, so "approve
+   * it in your queue" would be untrue.
+   */
+  async activationFacts(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<ActivationFacts> {
+    const liveAcademy = {
+      organizationId,
+      archivedAt: null,
+      status: { not: 'archived' as const },
+    };
+    const manualCoursePayment = {
+      provider: ACADEMY_MANUAL_PROVIDER_KEY,
+      courseOrder: { organizationId },
+    };
+    const [academy, site, course, method, settings, proof, reviewed] = await Promise.all([
+      tx.academy.findFirst({ where: liveAcademy, select: { id: true } }),
+      tx.websiteConfiguration.findFirst({
+        where: { status: 'published', academy: liveAcademy },
+        select: { academyId: true },
+      }),
+      tx.course.findFirst({
+        where: { status: { not: 'archived' }, academy: liveAcademy },
+        select: { id: true },
+      }),
+      tx.academyPaymentMethod.findFirst({
+        where: { organizationId, enabled: true, academy: liveAcademy },
+        select: { id: true },
+      }),
+      tx.organizationPaymentSettings.findFirst({
+        where: { organizationId, paymentCollectionMode: { not: 'unconfigured' } },
+        select: { organizationId: true },
+      }),
+      tx.paymentProof.findFirst({
+        where: { payment: manualCoursePayment },
+        orderBy: { uploadedAt: 'asc' },
+        select: { payment: { select: { courseOrder: { select: { academyId: true } } } } },
+      }),
+      tx.payment.findFirst({
+        where: { ...manualCoursePayment, reviewStatus: { in: ['approved', 'rejected'] } },
+        select: { id: true },
+      }),
+    ]);
+    return {
+      hasAcademy: academy !== null,
+      sitePublished: site !== null,
+      hasCourse: course !== null,
+      paymentsConfigured: method !== null || settings !== null,
+      hasLearnerProof: proof !== null,
+      learnerProofReviewed: reviewed !== null,
+      proofAcademyId: proof?.payment.courseOrder?.academyId ?? null,
+    };
   }
 
   /**

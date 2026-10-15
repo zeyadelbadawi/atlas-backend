@@ -57,7 +57,10 @@ import {
 } from '../repositories/tenant-lifecycle-state.repository';
 import {
   evaluateLifecycleSteps,
+  isActivationStep,
+  isActivationStepWanted,
   resolveLifecyclePhase,
+  type ActivationFacts,
   type DueLifecycleStep,
   type LifecycleEvaluationInput,
   type LifecycleStepId,
@@ -109,6 +112,10 @@ const STEP_EVENT_KEY: Record<LifecycleStepId, CommunicationEventKey> = {
   subscription_cancelled: 'lifecycle.subscription.cancelled',
   subscription_followup_7d: 'lifecycle.subscription.followup_7d',
   subscription_followup_30d: 'lifecycle.subscription.followup_30d',
+  activation_no_academy: 'lifecycle.activation.no_academy',
+  activation_site_unpublished: 'lifecycle.activation.site_unpublished',
+  activation_payments_and_course: 'lifecycle.activation.payments_and_course',
+  activation_first_proof: 'lifecycle.activation.first_proof',
 };
 
 /**
@@ -235,6 +242,25 @@ export class TenantLifecycleService {
       );
       if (!hasContent) steps = allDue.filter((step) => !step.requiresContent);
     }
+
+    // B0-MSG-05 A1–A4 — the same pattern: the activation facts are read
+    // once, and only when an activation step is otherwise due. A step
+    // whose condition is met is dropped here, every tick, which is what
+    // makes it stop the moment the owner does the step.
+    let facts: ActivationFacts | null = null;
+    if (steps.some((step) => step.requiresActivationCheck)) {
+      const read = await this.tenancyContextService.runInTenantAndUserContext(
+        organizationId,
+        actorUserId,
+        (tx) => this.repository.activationFacts(tx, organizationId),
+      );
+      facts = read;
+      steps = steps.filter(
+        (step) =>
+          !step.requiresActivationCheck ||
+          (isActivationStep(step.step) && isActivationStepWanted(step.step, read)),
+      );
+    }
     counts.due = steps.length;
 
     let lastEmitted: DueLifecycleStep | null = null;
@@ -270,7 +296,7 @@ export class TenantLifecycleService {
             recipientUserId: owner.id,
             organizationId,
             entity: { type: 'tenant_subscription', id: organizationId },
-            values: this.buildValues(candidate, step),
+            values: this.buildValues(candidate, step, facts),
           }),
       );
       if (emitted.created) {
@@ -310,6 +336,7 @@ export class TenantLifecycleService {
   private buildValues(
     candidate: LifecycleCandidate,
     step: DueLifecycleStep,
+    facts: ActivationFacts | null,
   ): Record<string, unknown> {
     const anchorAt = step.anchorAt.toISOString();
     const planName = candidate.plan?.name ?? '';
@@ -346,6 +373,16 @@ export class TenantLifecycleService {
       case 'subscription_followup_7d':
       case 'subscription_followup_30d':
         return { ...base, expiredAtDate: formatLifecycleInstant(step.anchorAt) };
+      // B0-MSG-05 — the setup nudges carry no date: they describe what is
+      // still missing, not when something happens. `anchorAt` (the signup
+      // instant) is only the once-per-tenant dedupe version.
+      case 'activation_no_academy':
+      case 'activation_site_unpublished':
+      case 'activation_payments_and_course':
+        return base;
+      // A4 links straight to the academy's payment queue.
+      case 'activation_first_proof':
+        return { ...base, academyId: facts?.proofAcademyId ?? '' };
     }
   }
 }
@@ -381,6 +418,8 @@ function toEvaluationInput(candidate: LifecycleCandidate): LifecycleEvaluationIn
       candidate.organization.trialRedemptions.map((row) => row.redeemedAt),
     ),
     billingCycle: candidate.billingCycle,
+    // B0-MSG-05 part 3 — the activation clock and anchor.
+    organizationCreatedAt: candidate.organization.createdAt,
   };
 }
 
