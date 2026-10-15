@@ -104,6 +104,34 @@ export class AnnouncementsService {
     });
   }
 
+  /**
+   * The sweep tick's "publish due scheduled announcements" step (see
+   * `SubscriptionSweepService.run`), run in the platform-owner context the
+   * repository method documents. A scheduled announcement must reach the
+   * same audience as one published by hand, so every row this call
+   * publishes gets the same fan-out, with its AUTHOR — the staff member
+   * who scheduled it — as the actor. Platform-audience rows have no
+   * academy and get none, exactly like `publishPlatformAnnouncement`.
+   * Returns how many announcements were published.
+   */
+  async publishDueScheduled(tx: Prisma.TransactionClient, asOf: Date): Promise<number> {
+    const published = await this.announcementsRepository.publishDueScheduled(tx, asOf);
+    for (const row of published) {
+      if (!row.academyId) continue;
+      await this.fanOutPublished(
+        tx,
+        {
+          id: row.id,
+          academyId: row.academyId,
+          courseId: row.courseId,
+          publishedAt: row.publishedAt,
+        },
+        row.authorId,
+      );
+    }
+    return published.length;
+  }
+
   private async assertCanManage(
     tx: Prisma.TransactionClient,
     userId: string,

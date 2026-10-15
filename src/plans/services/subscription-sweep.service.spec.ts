@@ -26,7 +26,7 @@ import { SubscriptionExpiryService } from './subscription-expiry.service';
 import { TenantLifecycleService } from './tenant-lifecycle.service';
 import { TenantUsageRecomputeProducer } from '../queue/tenant-usage-recompute.producer';
 import { TenantUsageSweepCursorRepository } from '../repositories/tenant-usage-sweep-cursor.repository';
-import { AnnouncementsRepository } from '../../community/repositories/announcements.repository';
+import { AnnouncementsService } from '../../community/services/announcements.service';
 import { BlogPostsRepository } from '../../community/repositories/blog-posts.repository';
 import { SUBSCRIPTION_SWEEP_QUERY_PAGE_SIZE } from '../queue/subscription-sweep.types';
 
@@ -54,7 +54,7 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
     expireDuePaidPeriods: jest.Mock;
     applyDueScheduledPlanChanges: jest.Mock;
   };
-  let announcementsRepository: { publishDueScheduled: jest.Mock };
+  let announcementsService: { publishDueScheduled: jest.Mock };
   let blogPostsRepository: { publishDueScheduled: jest.Mock };
 
   beforeEach(async () => {
@@ -78,7 +78,7 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
     // and returning a real count keeps the stub faithful to
     // `publishDueScheduled`'s actual `Promise<number>` contract rather
     // than handing the service back an `undefined` it never expects.
-    announcementsRepository = { publishDueScheduled: jest.fn().mockResolvedValue(0) };
+    announcementsService = { publishDueScheduled: jest.fn().mockResolvedValue(0) };
     blogPostsRepository = { publishDueScheduled: jest.fn().mockResolvedValue(0) };
 
     const moduleRef = await Test.createTestingModule({
@@ -99,10 +99,10 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
         { provide: SubscriptionExpiryService, useValue: subscriptionExpiryService },
         { provide: TenantUsageRecomputeProducer, useValue: tenantUsageRecomputeProducer },
         { provide: TenantUsageSweepCursorRepository, useValue: sweepCursorRepository },
-        { provide: AnnouncementsRepository, useValue: announcementsRepository },
+        { provide: AnnouncementsService, useValue: announcementsService },
         { provide: BlogPostsRepository, useValue: blogPostsRepository },
         // P64 C5 — the lifecycle sequences ride the same tick. Stubbed for
-        // the same reason the two content repositories above are: this
+        // the same reason the two content publishers above are: this
         // file covers the CURSOR control flow only. Its own behaviour is
         // covered by `lifecycle-steps.util.spec.ts` and the e2e suite.
         {

@@ -6,7 +6,8 @@
  * no session. It is therefore not an "authenticated route" for the
  * route-surface inventory, and it carries nothing a session could add.
  *
- * 5 submissions per 10 minutes per client IP — overrides the global
+ * 5 submissions per 10 minutes per client (an IPv4 address or an IPv6
+ * /64, see `PLATFORM_CONTACT_THROTTLE`) — overrides the global
  * `default` throttler (120/min, keyed by `ClientIpThrottlerGuard` on the
  * real client address) for this route only; excess requests get the
  * guard's normal 429. Everything else about abuse handling — honeypot,

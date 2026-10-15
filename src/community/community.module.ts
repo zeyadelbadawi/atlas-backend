@@ -64,6 +64,9 @@ import { AnnouncementFanOutService } from './services/announcement-fanout.servic
     // definition, not a second copy" rule.
     AnnouncementsRepository,
     BlogPostsRepository,
+    // The sweep publishes due scheduled announcements through the service
+    // so they get the same fan-out as an immediate publish.
+    AnnouncementsService,
   ],
 })
 export class CommunityModule {}

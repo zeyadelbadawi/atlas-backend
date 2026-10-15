@@ -12,10 +12,23 @@ import { Injectable } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { resolveClientIp } from '../../identity/utils/request-metadata.util';
+import { ipThrottleKey } from './ip-throttle-key.util';
 
 @Injectable()
 export class ClientIpThrottlerGuard extends ThrottlerGuard {
   protected async getTracker(req: Request): Promise<string> {
     return resolveClientIp(req) ?? req.ip ?? 'unknown';
   }
+}
+
+/**
+ * Per-route tracker for the anonymous abuse-prone forms (the platform and
+ * academy contact forms): the same real client address, but an IPv6
+ * client is keyed on its /64 so rotating addresses inside one subscriber
+ * prefix cannot escape the limit (`ipThrottleKey`). IPv4 keys are
+ * unchanged. Used as `@Throttle({ default: { ..., getTracker } })`.
+ */
+export function clientIpPrefixTracker(req: Record<string, unknown>): string {
+  const request = req as unknown as Request;
+  return ipThrottleKey(resolveClientIp(request) ?? request.ip ?? 'unknown');
 }

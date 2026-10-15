@@ -653,5 +653,70 @@ describe('Atlas Subscription Billing (e2e)', () => {
       expect(subscription.planId).toBe(plan.id);
       expect(subscription.status).toBe('active');
     });
+
+    /** Delivers one signed event and waits until the worker has recorded (and so applied) it. */
+    async function deliverAndAwait(paymentId: string, type: string, label: string) {
+      const event = {
+        id: `evt-${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        type,
+        paymentId,
+        occurredAt: new Date().toISOString(),
+      };
+      await request(app.getHttpServer())
+        .post('/payments/webhook')
+        .set('x-atlas-webhook-signature', signWebhookEvent(event))
+        .send(event)
+        .expect(200);
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const recorded = await admin.paymentWebhookEvent.findFirst({
+          where: { eventId: event.id },
+        });
+        if (recorded) return;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error(`webhook event ${event.id} was never processed`);
+    }
+
+    it('a late payment.failed (or cancelled/processing) never overwrites a succeeded payment', async () => {
+      const { owner, org, plan, payment } =
+        await arrangeCheckoutAndPayment('webhook-late-fail');
+      await submitProof(org.id, payment.id, owner.accessToken);
+      await deliverAndAwait(payment.id, 'payment.succeeded', 'late-fail-ok');
+
+      for (const type of ['payment.failed', 'payment.cancelled', 'payment.processing']) {
+        await deliverAndAwait(payment.id, type, 'late-fail-late');
+      }
+
+      const paymentRow = await admin.payment.findUniqueOrThrow({
+        where: { id: payment.id },
+      });
+      expect(paymentRow.status).toBe('succeeded');
+      expect(paymentRow.failureReason).toBeNull();
+      const subscription = await admin.tenantSubscription.findUniqueOrThrow({
+        where: { organizationId: org.id },
+      });
+      expect(subscription.planId).toBe(plan.id);
+      expect(subscription.status).toBe('active');
+    });
+
+    it('a late payment.succeeded never revives a failed payment or activates its plan', async () => {
+      const { org, payment } = await arrangeCheckoutAndPayment('webhook-late-ok');
+      await deliverAndAwait(payment.id, 'payment.failed', 'late-ok-fail');
+      await deliverAndAwait(payment.id, 'payment.succeeded', 'late-ok-late');
+
+      const paymentRow = await admin.payment.findUniqueOrThrow({
+        where: { id: payment.id },
+      });
+      expect(paymentRow.status).toBe('failed');
+      const subscription = await admin.tenantSubscription.findUniqueOrThrow({
+        where: { organizationId: org.id },
+      });
+      expect(subscription.status).toBe('trialing');
+      const receipts = await admin.communicationOutbox.count({
+        where: { key: 'lifecycle.subscription.activated', organizationId: org.id },
+      });
+      expect(receipts).toBe(0);
+    });
   });
 });
