@@ -105,12 +105,20 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
     expect([...keys].sort()).toEqual([...PLAN_CATALOG_KEYS].sort());
 
     const growth = firstPage.body.items.find((p: { key: string }) => p.key === 'growth');
+    // B0-CAT-03 — the owner-approved ladder: `growth` is the Academy plan.
     expect(growth).toMatchObject({
       key: 'growth',
-      name: 'Growth',
+      name: 'Academy',
+      nameLocalized: { en: 'Academy', ar: 'الأكاديمية' },
       status: 'active',
       displayOrder: 2,
-      pricing: { amount: 79, currency: 'USD', billingCycle: 'monthly' },
+      trialEligible: true,
+      pricing: {
+        amount: 2790,
+        currency: 'EGP',
+        billingCycle: 'monthly',
+        yearlyAmount: 27900,
+      },
     });
   });
 

@@ -13,9 +13,8 @@
  *     names the plan, the plan reads by key, and a renewal checkout for the
  *     same key is created (checkout and payment look plans up by key);
  *   - shown again: back in `/public/plans` with its original order;
- *   - KNOWN GAP (B0-MED-03, open): the in-app trial endpoint still accepts a
- *     hidden plan's id. The test asserts today's behaviour so the gap stays
- *     visible; it is to be flipped when the guard lands, never deleted.
+ *   - B0-MED-03: the in-app trial endpoint refuses a hidden plan's id too
+ *     (it was the one path that still accepted it), and starts no trial;
  */
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -220,7 +219,7 @@ describe('Catalog containment: a hidden Premium plan (e2e) — B0-CAT-03 / B0-ME
       });
     });
 
-    it('KNOWN GAP (B0-MED-03, open): the in-app trial endpoint still accepts a hidden plan id', async () => {
+    it('B0-MED-03: the in-app trial endpoint refuses a hidden plan id and starts no trial', async () => {
       const owner = await signUpAndSignIn('contain-trial');
       const org = await request(app.getHttpServer())
         .post('/organizations')
@@ -228,17 +227,18 @@ describe('Catalog containment: a hidden Premium plan (e2e) — B0-CAT-03 / B0-ME
         .send({ name: `Contain Trial ${randomUUID().slice(0, 8)}` })
         .expect(201);
 
-      await request(app.getHttpServer())
+      const res = await request(app.getHttpServer())
         .post(`/organizations/${org.body.id}/subscription/trial`)
         .set('Authorization', `Bearer ${owner.accessToken}`)
-        .send({ confirm: true, planId: premium.id });
+        .send({ confirm: true, planId: premium.id })
+        .expect(403);
+      expect(res.body.error.messageKey).toBe('errors.entitlement.noPlanAvailable');
 
       const subscription = await admin.tenantSubscription.findUnique({
         where: { organizationId: org.body.id },
       });
-      // Today's behaviour: a trial starts on the hidden plan. When the
-      // MED-03 guard lands this must become "no trial on the hidden plan".
-      expect(subscription).toMatchObject({ planId: premium.id, status: 'trialing' });
+      expect(subscription?.planId).not.toBe(premium.id);
+      expect(subscription?.status).not.toBe('trialing');
     });
   });
 

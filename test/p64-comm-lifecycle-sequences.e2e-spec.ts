@@ -1118,25 +1118,36 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
       const tenant = await seedTenant('t1', { status: 'no_plan', trialEndsAt: null });
       await admin.plan.update({
         where: { id: tenant.planId },
-        data: { trialEligible: true, trialDurationDays: 3 },
+        // Customer-facing: the in-app trial, like signup, refuses hidden plans.
+        data: { trialEligible: true, trialDurationDays: 3, displayOrder: 950 },
       });
       await admin.trialPolicy.deleteMany({});
       await admin.trialPolicy.create({ data: { enabled: true, durationDays: 3 } });
 
-      const first = await trials.startTrial(
-        tenant.organizationId,
-        tenant.ownerId,
-        tenant.planId,
-      );
+      let first: Awaited<ReturnType<typeof trials.startTrial>>;
+      let second: Awaited<ReturnType<typeof trials.startTrial>>;
+      try {
+        first = await trials.startTrial(
+          tenant.organizationId,
+          tenant.ownerId,
+          tenant.planId,
+        );
+        // A double-clicked button: refused by the trial guards, and it must
+        // not produce a second email either.
+        second = await trials.startTrial(
+          tenant.organizationId,
+          tenant.ownerId,
+          tenant.planId,
+        );
+      } finally {
+        // Hidden again at once: CI re-runs the suites on the same database,
+        // and a customer-facing fixture would leak into the real catalog.
+        await admin.plan.update({
+          where: { id: tenant.planId },
+          data: { displayOrder: 0 },
+        });
+      }
       expect(first.started).toBe(true);
-
-      // A double-clicked button: refused by the trial guards, and it must
-      // not produce a second email either.
-      const second = await trials.startTrial(
-        tenant.organizationId,
-        tenant.ownerId,
-        tenant.planId,
-      );
       expect(second.started).toBe(false);
 
       const rows = await outbox(tenant);

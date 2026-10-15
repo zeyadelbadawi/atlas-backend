@@ -139,12 +139,15 @@ export class TrialRedemptionService {
     // the default trial tier. Validated against the real catalog, and the
     // `status` check is not incidental: without it a caller could pass
     // the id of an intentionally archived plan and trial something the
-    // platform no longer sells.
+    // platform no longer sells. B0-MED-03: the same customer-facing floor
+    // as signup (`displayOrder > 0`) — a hidden plan (contained Premium, a
+    // private deal) is bought by key, never trialled by id.
     const chosen = planId
       ? await this.plansRepository.findById(planId)
       : await this.plansRepository.findDefaultTrialPlan();
 
-    const plan = chosen && chosen.status === 'active' ? chosen : null;
+    const plan =
+      chosen && chosen.status === 'active' && chosen.displayOrder > 0 ? chosen : null;
 
     if (!plan) {
       throw new ForbiddenException({ messageKey: 'errors.entitlement.noPlanAvailable' });
