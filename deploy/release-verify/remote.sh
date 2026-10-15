@@ -286,6 +286,24 @@ legacy_archive_facts() {
 # against a presigned PUT URL for a key that is never written (signing is
 # local; no PUT is ever sent), one token-less GET to the delivery host, and
 # SELECT counts. Prints no bucket name, account ID, key or URL.
+# B0-CAT-03 / B0-MED-03 / B0-CAT-01 — the plan catalog and who is on it,
+# before and after any catalog change. Read-only and INFO only: plan keys
+# and catalog fields are already public (`/public/plans`); subscription and
+# checkout figures are counts per plan key, never an organization.
+catalog_facts() {
+  echo "== Plan catalog and Premium containment (read-only; counts only)"
+  local v
+  v=$(env_value FLAG_VIDEO_PREMIUM_MODE); info "FLAG_VIDEO_PREMIUM_MODE=${v:-<unset> (default off)}"
+  sql "select 'plan', key, family, status, display_order, pricing->>'currency', trial_eligible, coalesce(trial_duration_days::text,'policy') from plans where display_order > 0 or family = 'premium' order by display_order, key" \
+    | while IFS='|' read -r _ k fam st ord cur tr td; do
+        info "plan $k: family=$fam status=$st displayOrder=$ord currency=$cur trialEligible=$tr trialDays=$td$([ "$ord" -gt 0 ] && [ "$st" = active ] && echo ' (customer-facing)')"
+      done
+  sql "select 'subs', p.key, s.status, count(*) from tenant_subscriptions s join plans p on p.id = s.plan_id where p.family = 'premium' or p.display_order > 0 group by p.key, s.status order by p.key, s.status" \
+    | while IFS='|' read -r _ k st n; do info "subscriptions on $k: $st=$n"; done
+  IFS='|' read -r _ open done_ <<< "$(sql "select 'premium_checkouts', count(*) filter (where c.status in ('draft','pending_payment')), count(*) filter (where c.status = 'completed') from checkouts c join plans p on p.key = c.target_key where c.target_type = 'plan_subscription' and p.family = 'premium'")"
+  info "checkouts for Premium plans: open=${open:-?} completed=${done_:-?}"
+}
+
 video_facts() {
   echo "== Normal-tier video settings (host .env; secrets as set/not set only)"
   for k in VIDEO_PROVIDER FLAG_VIDEO_NORMAL_MODE BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_PLAYBACK_TTL_SECONDS \
@@ -570,6 +588,9 @@ case "${1:-}" in
     # OD-18 — INFO only; a subshell so nothing in it can count as a FAIL.
     ( legacy_archive_facts ) || true
 
+    # B0-CAT-03 / B0-MED-03 — INFO only, same subshell rule.
+    ( catalog_facts ) || true
+
     echo "== Website published copy"
     IFS='|' read -r _ all snap <<< "$(sql "select 'published_sites', count(*), count(published_snapshot) from website_configurations where status='published'")"
     if [ "$all" = "$snap" ]; then pass "every published site has a published snapshot ($snap/$all)"; else fail "published sites with a snapshot: $snap/$all"; fi
@@ -682,5 +703,9 @@ SQL
     # Reported, never gating: always exits 0 once it ran.
     legacy_archive_facts
     ;;
-  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video|b0|archive" >&2; exit 2 ;;
+  catalog)
+    # Reported, never gating.
+    catalog_facts
+    ;;
+  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video|b0|archive|catalog" >&2; exit 2 ;;
 esac
