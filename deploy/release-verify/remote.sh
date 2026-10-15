@@ -195,22 +195,24 @@ video_facts() {
   echo "== Normal-tier activation config (names only)"
   local mode req_set=0 req_missing="" opt_set="" opt_missing="" n
   mode=$(env_value FLAG_VIDEO_NORMAL_MODE); mode=${mode:-off}
-  for n in BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_SIGNING_SECRET; do
+  # BASIC_VIDEO_GATE_AUTHZ_SECRET (Workstream D) is the revocation path:
+  # without it the Worker cannot re-authorize a token, and the API refuses
+  # to start with the flag on.
+  for n in BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_SIGNING_SECRET BASIC_VIDEO_GATE_AUTHZ_SECRET; do
     if [ -n "$(env_value "$n")" ]; then req_set=$((req_set + 1)); else req_missing="$req_missing $n"; fi
   done
-  for n in R2_PROTECTED_BUCKET R2_PROTECTED_ACCESS_KEY_ID R2_PROTECTED_SECRET_ACCESS_KEY \
-    BASIC_VIDEO_REVOCATION_ENDPOINT BASIC_VIDEO_REVOCATION_TOKEN; do
+  for n in R2_PROTECTED_BUCKET R2_PROTECTED_ACCESS_KEY_ID R2_PROTECTED_SECRET_ACCESS_KEY; do
     if [ -n "$(env_value "$n")" ]; then opt_set="$opt_set $n"; else opt_missing="$opt_missing $n"; fi
   done
   if [ -z "$req_missing" ]; then
-    pass "required names set: 2 of 2 (BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_SIGNING_SECRET)"
+    pass "required names set: 3 of 3 (BASIC_VIDEO_DELIVERY_HOST BASIC_VIDEO_SIGNING_SECRET BASIC_VIDEO_GATE_AUTHZ_SECRET)"
   elif [ "$mode" = off ]; then
-    info "required names set: $req_set of 2; missing:$req_missing (tier off, not gating)"
+    info "required names set: $req_set of 3; missing:$req_missing (tier off, not gating)"
   else
     fail "FLAG_VIDEO_NORMAL_MODE=$mode but required names missing:$req_missing"
   fi
   info "optional names set:${opt_set:- none}; not set:${opt_missing:- none}"
-  info "Worker-side names (Cloudflare, not readable here): secret GATE_SIGNING_SECRET, bindings VIDEO_BUCKET and GATE_DENYLIST; probed below by a token-less request only"
+  info "Worker-side names (Cloudflare, not readable here): secrets GATE_SIGNING_SECRET and GATE_AUTHZ_SECRET, var ATLAS_AUTHZ_URL, binding VIDEO_BUCKET; probed below by a token-less request only"
 
   echo "== Protected bucket CORS (read-only; no upload is made)"
   cors=$(docker compose exec -T backend node -e '

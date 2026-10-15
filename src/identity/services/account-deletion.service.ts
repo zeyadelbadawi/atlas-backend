@@ -69,7 +69,6 @@ import { StudentDeviceService } from '../../tenancy/services/student-device.serv
 import { SessionRevocationService } from './session-revocation.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { LearningLeaseService } from '../../learning/services/learning-lease.service';
-import { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
 import {
   AcademyArchiveService,
   type ArchivedAcademyPresence,
@@ -124,7 +123,6 @@ export class AccountDeletionService {
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly studentDeviceService: StudentDeviceService,
     private readonly learningLeaseService: LearningLeaseService,
-    private readonly videoGateRevocationService: VideoGateRevocationService,
     private readonly academyArchiveService: AcademyArchiveService,
   ) {}
 
@@ -264,11 +262,12 @@ export class AccountDeletionService {
     // D5-1 — and everything a revoked session could still be carrying,
     // exactly as removing a device or blocking a learner already does
     // (`LearnerSessionService.removeDevice`, `AcademyStudentsService.block`):
-    // the delivery gate stops honouring playback credentials already in a
-    // player, and the learning lease at every academy the person held a
-    // device at is dropped. Both are best-effort by contract and never
-    // throw — the deletion has already committed.
-    await this.videoGateRevocationService.revokeSessions(sessionIds, 'account_deleted');
+    // the learning lease at every academy the person held a device at is
+    // dropped (best-effort, never throws — the deletion has committed).
+    // Playback credentials already in a player need no separate call: the
+    // delivery gate re-authorizes every token against exactly the rows
+    // revoked above (`VideoGateAuthorizationService` — account inactive,
+    // session revoked, device revoked), within its ≤ 30 s cache window.
     for (const academyId of deviceAcademyIds) {
       await this.learningLeaseService.revokeAll(userId, academyId);
     }

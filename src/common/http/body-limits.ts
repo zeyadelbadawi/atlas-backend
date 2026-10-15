@@ -120,13 +120,16 @@ export const ROUTE_BODY_LIMITS: readonly RouteBodyLimit[] = [
 /**
  * Routes whose handlers verify a signature over the EXACT request bytes,
  * so the parser keeps a copy as `request.rawBody` (Zoom, Cloudflare
- * Stream, Resend/Brevo). Prefixes, unprefixed like the table above.
+ * Stream, Resend/Brevo, and the Normal tier's delivery Worker asking
+ * `video-gate/authorize`). Prefixes, unprefixed like the table above.
+ * That last body is tiny, so it keeps the 100 KB default limit.
  */
 export const RAW_BODY_PATH_PREFIXES: readonly string[] = [
   'live-sessions/webhook',
   'live-sessions/deauthorization',
   'webhooks/video',
   'webhooks/email',
+  'video-gate/authorize',
 ];
 
 /** `/api/v1/academies/x/media?y` → `academies/x/media`. */

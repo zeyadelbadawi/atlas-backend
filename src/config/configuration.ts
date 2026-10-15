@@ -224,15 +224,19 @@ export interface BasicVideoConfig {
    */
   readonly playbackTtlSeconds: number;
   /**
-   * Where Atlas publishes a revoked session so the gate stops honouring
-   * its tokens before they expire.
+   * Workstream D — the shared secret the delivery Worker signs its
+   * re-authorization calls with (`POST /video-gate/authorize`, see
+   * `VideoGateAuthorizationService`). Distinct from `signingSecret` on
+   * purpose: the Worker may SIGN with this one, and must never be able to
+   * sign with the one that mints playback tokens.
    *
    * Optional, and its absence is REPORTED rather than hidden: without it
-   * `BasicVideoProvider` reports `revocableBeforeExpiry: false`, because
-   * a revocation list nobody writes to revokes nothing (AD-16).
+   * the authorization endpoint does not exist (404), the Worker has
+   * nothing to re-check a token against, and `BasicVideoProvider` reports
+   * `revocableBeforeExpiry: false` (AD-16). Production refuses to enable
+   * `FLAG_VIDEO_NORMAL_MODE` without it (`env.validation.ts`).
    */
-  readonly revocationEndpoint?: string;
-  readonly revocationToken?: string;
+  readonly gateAuthzSecret?: string;
   /**
    * Whether an origin allowlist has actually been pushed to the gate.
    *
@@ -866,8 +870,7 @@ export default () => {
     deliveryHost: env.BASIC_VIDEO_DELIVERY_HOST || undefined,
     signingSecret: env.BASIC_VIDEO_SIGNING_SECRET || undefined,
     playbackTtlSeconds: Number(env.BASIC_VIDEO_PLAYBACK_TTL_SECONDS ?? 600),
-    revocationEndpoint: env.BASIC_VIDEO_REVOCATION_ENDPOINT || undefined,
-    revocationToken: env.BASIC_VIDEO_REVOCATION_TOKEN || undefined,
+    gateAuthzSecret: env.BASIC_VIDEO_GATE_AUTHZ_SECRET || undefined,
     allowedOriginsConfigured:
       (env.BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED ?? 'false') === 'true',
   };

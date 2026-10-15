@@ -57,7 +57,8 @@ import { CloudflareStreamProvider } from './video/cloudflare-stream.provider';
 import { FakeVideoProvider } from './video/fake-video.provider';
 import { BasicVideoProvider } from './video/basic-video.provider';
 import { VideoProviderRegistry } from './video/video-provider.registry';
-import { VideoGateRevocationService } from './video/video-gate-revocation.service';
+import { VideoGateAuthorizationService } from './video/video-gate-authorization.service';
+import { VideoGateAuthorizationController } from './controllers/video-gate-authorization.controller';
 import { FlagsModule } from '../common/flags/flags.module';
 import { ConfigService } from '@nestjs/config';
 import type { VideoProviderConfig } from '../config/configuration';
@@ -86,6 +87,8 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
     // P64 Phase 2 — the protected tier and the provider webhook.
     ProtectedMediaController,
     VideoWebhookController,
+    // Workstream D — the delivery Worker's re-authorization call.
+    VideoGateAuthorizationController,
   ],
   providers: [
     MediaService,
@@ -109,7 +112,7 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
     FakeVideoProvider,
     BasicVideoProvider,
     VideoProviderRegistry,
-    VideoGateRevocationService,
+    VideoGateAuthorizationService,
     {
       /*
        * The DEFAULT adapter, for the handful of call sites that predate
@@ -171,10 +174,6 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
     VideoProviderRegistry,
     AcademyOriginsService,
     VideoReconciliationService,
-    // P64 Phase 2 — `LearningModule` publishes revocations to the Normal
-    // tier's gate when an enrollment ends, a learner is blocked, a device
-    // is removed or a session is taken over.
-    VideoGateRevocationService,
   ],
 })
 export class MediaModule {}

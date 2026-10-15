@@ -38,6 +38,9 @@ export interface VideoBinding {
   readonly deviceId: string;
   /** The academy the request was verified against. A token is refused when the asset belongs to a different one (Phase 2 §H). */
   readonly academyId: string;
+  /** Workstream D — signed into a Normal-tier token so the gate can re-authorize this exact lesson. */
+  readonly courseId?: string;
+  readonly lessonId?: string;
   readonly allowedOrigins: readonly string[];
 }
 
@@ -136,6 +139,15 @@ export class ContentGrantSigner {
           sessionId: binding.sessionId,
           deviceId: binding.deviceId,
         },
+        ...(binding.courseId && binding.lessonId
+          ? {
+              scope: {
+                academyId: binding.academyId,
+                courseId: binding.courseId,
+                lessonId: binding.lessonId,
+              },
+            }
+          : {}),
         allowedOrigins: binding.allowedOrigins,
       })
       .then((result) => {
