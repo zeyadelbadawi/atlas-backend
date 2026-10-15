@@ -1,0 +1,93 @@
+name: Catalog containment
+
+# B0-CAT-03 / B0-MED-03 — hide the three Premium plans from every
+# customer-facing catalog (displayOrder -> 0), or put them back. See
+# deploy/catalog-containment/remote.sh for exactly what is and is not
+# changed. dry-run is read-only and needs no approval. apply and revert
+# run in the protected `production-migrations` environment, so GitHub
+# holds the job until a required reviewer (the owner) approves that run:
+# the approval is the authorization for the catalog change.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: dry-run (writes nothing) | apply (hide Premium) | revert (show Premium again)
+        required: true
+        default: dry-run
+        type: choice
+        options: [dry-run, apply, revert]
+      confirm:
+        description: For apply or revert only — type HIDE-PREMIUM-PLANS (apply) or SHOW-PREMIUM-PLANS (revert)
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: atlas-vps-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    if: inputs.mode == 'dry-run'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Report (read-only)
+        working-directory: deploy/catalog-containment
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -uo pipefail
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" dry-run </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh
+
+  change:
+    if: inputs.mode == 'apply' || inputs.mode == 'revert'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production-migrations
+    steps:
+      - name: Check the inputs and record the approval
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          want=HIDE-PREMIUM-PLANS; [ "$MODE" = revert ] && want=SHOW-PREMIUM-PLANS
+          if [ "$CONFIRM" != "$want" ]; then
+            echo "::error::mode=$MODE requires confirm=$want. Refusing; nothing was run." >&2
+            exit 1
+          fi
+          echo "Catalog containment $MODE approved for run ${{ github.run_id }}"
+          echo "Commit: ${{ github.sha }} — dispatched by ${{ github.actor }}"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Run on the VPS
+        working-directory: deploy/catalog-containment
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -uo pipefail
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" ${MODE} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh
