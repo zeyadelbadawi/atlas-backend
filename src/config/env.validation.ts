@@ -10,6 +10,9 @@
  */
 import { z } from 'zod';
 
+/** Workstream D — the Worker→API authorization secret is a 256-bit-class key, never a password. */
+export const MIN_GATE_AUTHZ_SECRET_LENGTH = 32;
+
 const EnvSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'staging', 'production', 'test'])
@@ -547,9 +550,11 @@ const EnvSchema = z.object({
   BASIC_VIDEO_SIGNING_SECRET: z.string().trim().optional(),
   // Revocation and origin restriction are CAPABILITIES the grant reports
   // to the learner, so they are driven by whether they are actually
-  // configured — never assumed (AD-16).
-  BASIC_VIDEO_REVOCATION_ENDPOINT: z.string().trim().optional(),
-  BASIC_VIDEO_REVOCATION_TOKEN: z.string().trim().optional(),
+  // configured — never assumed (AD-16). Revocation is the Worker
+  // re-authorizing each token against Atlas (`POST /video-gate/authorize`)
+  // with a bounded cache; this is the secret it signs those calls with,
+  // and it must equal the Worker's `GATE_AUTHZ_SECRET`.
+  BASIC_VIDEO_GATE_AUTHZ_SECRET: z.string().trim().optional(),
   BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED: z.enum(['true', 'false']).default('false'),
   BASIC_VIDEO_PLAYBACK_TTL_SECONDS: z.coerce
     .number()
@@ -1020,10 +1025,15 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
     parsed.data.NODE_ENV === 'production' &&
     parsed.data.FLAG_VIDEO_NORMAL_MODE !== 'off'
   ) {
+    // Workstream D — and the revocation path. Without the authorization
+    // secret the Worker cannot re-check a token, so a revoked device,
+    // session or deleted account would keep streaming until the token
+    // expired. That is not a tier Atlas may switch on in production.
     const missing = (
       [
         ['BASIC_VIDEO_DELIVERY_HOST', parsed.data.BASIC_VIDEO_DELIVERY_HOST],
         ['BASIC_VIDEO_SIGNING_SECRET', parsed.data.BASIC_VIDEO_SIGNING_SECRET],
+        ['BASIC_VIDEO_GATE_AUTHZ_SECRET', parsed.data.BASIC_VIDEO_GATE_AUTHZ_SECRET],
       ] as const
     )
       .filter(([, value]) => !value)
@@ -1032,7 +1042,21 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
       throw new Error(
         `FLAG_VIDEO_NORMAL_MODE=${parsed.data.FLAG_VIDEO_NORMAL_MODE} requires ${missing.join(', ')} — ` +
           'refusing to start with the Normal video tier enabled but no delivery gate to sign ' +
-          'playback for (see docs/HOSTED_VIDEO_ACTIVATION_RUNBOOK.md).',
+          'playback for, or no way for that gate to honour a revocation ' +
+          '(see docs/HOSTED_VIDEO_ACTIVATION_RUNBOOK.md).',
+      );
+    }
+    const authzSecret = parsed.data.BASIC_VIDEO_GATE_AUTHZ_SECRET as string;
+    if (
+      authzSecret.length < MIN_GATE_AUTHZ_SECRET_LENGTH ||
+      authzSecret === parsed.data.BASIC_VIDEO_SIGNING_SECRET
+    ) {
+      // Never echo either value. Equal secrets would let the Worker, which
+      // signs with this one, mint playback tokens with the other.
+      throw new Error(
+        `BASIC_VIDEO_GATE_AUTHZ_SECRET must be at least ${MIN_GATE_AUTHZ_SECRET_LENGTH} characters ` +
+          'and must differ from BASIC_VIDEO_SIGNING_SECRET — refusing to start ' +
+          '(see docs/HOSTED_VIDEO_ACTIVATION_RUNBOOK.md).',
       );
     }
   }

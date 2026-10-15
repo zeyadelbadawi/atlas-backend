@@ -170,6 +170,16 @@ export interface PlaybackTokenRequest {
     readonly sessionId: string;
     readonly deviceId: string;
   };
+  /**
+   * Workstream D — what the grant was FOR. The Normal tier signs it into
+   * the token so the delivery gate's re-authorization call can re-check
+   * that exact lesson; adapters that cannot use it ignore it.
+   */
+  readonly scope?: {
+    readonly academyId: string;
+    readonly courseId: string;
+    readonly lessonId: string;
+  };
   readonly allowedOrigins: readonly string[];
 }
 

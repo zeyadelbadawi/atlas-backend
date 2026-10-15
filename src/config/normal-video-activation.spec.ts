@@ -5,7 +5,10 @@
  * In production, `FLAG_VIDEO_NORMAL_MODE` other than `off` needs the
  * delivery gate (`BASIC_VIDEO_DELIVERY_HOST` + `BASIC_VIDEO_SIGNING_SECRET`);
  * without them the registry reports the tier unavailable and every upload
- * is refused `videoNotEnabled`. With the flag `off` — today's production
+ * is refused `videoNotEnabled`. Workstream D adds the gate's revocation
+ * path (`BASIC_VIDEO_GATE_AUTHZ_SECRET`, ≥ 32 characters and different from
+ * the signing secret): without it a revoked viewer keeps streaming until
+ * the token expires, which production must not ship. With the flag `off` — today's production
  * state — nothing is required, and outside production the local stand-in
  * serves the tier, so nothing is required either.
  *
@@ -34,6 +37,7 @@ const PRODUCTION = { ...BASE_ENV, NODE_ENV: 'production' };
 const GATE = {
   BASIC_VIDEO_DELIVERY_HOST: 'video.atlas.example.test',
   BASIC_VIDEO_SIGNING_SECRET: 'unit-test-gate-signing-secret',
+  BASIC_VIDEO_GATE_AUTHZ_SECRET: 'unit-test-gate-authz-secret-0123456789abcdef',
 };
 
 describe('Normal video tier activation config (B0-MED-11)', () => {
@@ -56,9 +60,45 @@ describe('Normal video tier activation config (B0-MED-11)', () => {
           FLAG_VIDEO_NORMAL_MODE: mode,
           BASIC_VIDEO_DELIVERY_HOST: GATE.BASIC_VIDEO_DELIVERY_HOST,
         }),
-      ).toThrow(/requires BASIC_VIDEO_SIGNING_SECRET —/);
+      ).toThrow(/requires BASIC_VIDEO_SIGNING_SECRET, BASIC_VIDEO_GATE_AUTHZ_SECRET —/);
     },
   );
+
+  // Workstream D — the delivery gate without its revocation path.
+  it.each(['allowlist', 'on'])(
+    'refuses FLAG_VIDEO_NORMAL_MODE=%s in production without the gate authorization secret',
+    (mode) => {
+      expect(() =>
+        validateEnv({
+          ...PRODUCTION,
+          FLAG_VIDEO_NORMAL_MODE: mode,
+          BASIC_VIDEO_DELIVERY_HOST: GATE.BASIC_VIDEO_DELIVERY_HOST,
+          BASIC_VIDEO_SIGNING_SECRET: GATE.BASIC_VIDEO_SIGNING_SECRET,
+        }),
+      ).toThrow(/requires BASIC_VIDEO_GATE_AUTHZ_SECRET —/);
+    },
+  );
+
+  it('refuses a short gate authorization secret, or one equal to the signing secret, without echoing either', () => {
+    for (const authz of ['too-short', GATE.BASIC_VIDEO_SIGNING_SECRET.padEnd(40, 'x')]) {
+      const signing = authz === 'too-short' ? GATE.BASIC_VIDEO_SIGNING_SECRET : authz;
+      try {
+        validateEnv({
+          ...PRODUCTION,
+          ...GATE,
+          BASIC_VIDEO_SIGNING_SECRET: signing,
+          BASIC_VIDEO_GATE_AUTHZ_SECRET: authz,
+          FLAG_VIDEO_NORMAL_MODE: 'on',
+        });
+        throw new Error('expected a refusal');
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain('BASIC_VIDEO_GATE_AUTHZ_SECRET must be at least 32');
+        expect(message).not.toContain(authz);
+        expect(message).not.toContain(signing);
+      }
+    }
+  });
 
   it('never prints a configured value in the refusal', () => {
     try {

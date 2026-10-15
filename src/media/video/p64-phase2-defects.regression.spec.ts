@@ -118,8 +118,7 @@ const BASIC_CONFIG: BasicVideoConfig = {
   deliveryHost: 'video.atlas.test',
   signingSecret: 'basic-signing-secret',
   playbackTtlSeconds: STORE_MAX_TTL_SECONDS,
-  revocationEndpoint: 'https://worker.atlas.test/revocations',
-  revocationToken: 'revocation-token',
+  gateAuthzSecret: 'basic-gate-authz-secret-0123456789abcdef',
   allowedOriginsConfigured: true,
 };
 
@@ -523,12 +522,11 @@ describe('D-5 regression — no adapter claims edge binding it does not enforce'
   it('the normal adapter reports revocability from CONFIGURATION, never as an aspiration', () => {
     const wired = basicProviderWith(storageSpy());
     const unwired = basicProviderWith(storageSpy(), {
-      revocationEndpoint: undefined,
-      revocationToken: undefined,
+      gateAuthzSecret: undefined,
     });
     expect(wired.capabilities().revocableBeforeExpiry).toBe(true);
-    // An unwired denylist is a list nobody writes to; claiming
-    // revocability then would reproduce D-5 on the tier the plan presents
+    // Without the Worker→API authorization secret the gate has nothing to
+    // re-check a token against; claiming revocability then would reproduce D-5 on the tier the plan presents
     // as the stronger of the two.
     expect(unwired.capabilities().revocableBeforeExpiry).toBe(false);
   });
@@ -543,7 +541,7 @@ describe('D-5 regression — no adapter claims edge binding it does not enforce'
 
   it('carries the session and device identifiers in the token even though the edge ignores them', async () => {
     // The identifiers are still signed — that is what makes revocation BY
-    // session possible on the tier that has a denylist. D-5 is about the
+    // session possible on the tier whose gate re-authorizes each token. D-5 is about the
     // claim, not about removing the claims.
     const descriptor =
       await basicProviderWith(storageSpy()).issuePlaybackToken(TOKEN_REQUEST);

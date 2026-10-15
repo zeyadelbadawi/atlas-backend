@@ -27,7 +27,6 @@ import type { SessionRevocationService } from './session-revocation.service';
 import type { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { StudentDeviceService } from '../../tenancy/services/student-device.service';
 import type { LearningLeaseService } from '../../learning/services/learning-lease.service';
-import type { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
 import type { AcademyArchiveService } from '../../academy/services/academy-archive.service';
 
 interface AuditRow {
@@ -54,7 +53,6 @@ function build(
   const audits: AuditRow[] = [];
   const revoked: string[] = [];
   const enqueued: unknown[] = [];
-  const gateRevoked: { sessionIds: readonly string[]; reason: string }[] = [];
   const leasesDropped: string[] = [];
   const deviceUpdates: unknown[] = [];
 
@@ -141,10 +139,6 @@ function build(
         leasesDropped.push(`${userId}:${academyId}`),
     } as unknown as LearningLeaseService,
     {
-      revokeSessions: async (sessionIds: readonly string[], reason: string) =>
-        gateRevoked.push({ sessionIds, reason }),
-    } as unknown as VideoGateRevocationService,
-    {
       markArchived: async (
         _tx: unknown,
         academyId: string,
@@ -177,7 +171,6 @@ function build(
     service,
     audits,
     revoked,
-    gateRevoked,
     leasesDropped,
     deviceUpdates,
     archiveCalls,
@@ -311,9 +304,13 @@ describe('AccountDeletionService — who may delete whom', () => {
       expect(row?.context?.initiatedBy).toBe('self');
     });
 
-    it('D5-1 — revokes every learner device, drops every lease and tells the delivery gate', async () => {
-      const { service, audits, revoked, gateRevoked, leasesDropped, deviceUpdates } =
-        build({ learner: {} });
+    // Workstream D — the delivery gate is no longer TOLD (the push had no
+    // receiver); it re-authorizes against exactly the device and session
+    // revocations asserted here, so these rows are what stop playback.
+    it('D5-1 — revokes every learner device and session the delivery gate re-checks, and drops every lease', async () => {
+      const { service, audits, revoked, leasesDropped, deviceUpdates } = build({
+        learner: {},
+      });
       await service.deleteOwnAccount('learner', {});
 
       // Every ACTIVE device of the person, at every academy — not scoped
@@ -325,15 +322,15 @@ describe('AccountDeletionService — who may delete whom', () => {
         },
       ]);
       expect(leasesDropped).toEqual(['learner:academy-a', 'learner:academy-b']);
-      // The same sessions the denylist receives, so a playback credential
+      // The sessions the denylist receives; their revoked rows are what the
+      // delivery gate's re-authorization refuses, so a playback credential
       // already in a player stops with the account.
       expect(revoked).toEqual(['s1']);
-      expect(gateRevoked).toEqual([{ sessionIds: ['s1'], reason: 'account_deleted' }]);
       expect(audits.at(-1)?.context?.devicesRevoked).toBe(2);
     });
 
     it('is idempotent — deleting an already-deleted account is not an error', async () => {
-      const { service, audits, gateRevoked, deviceUpdates } = build({
+      const { service, audits, revoked, deviceUpdates } = build({
         gone: { status: 'deleted' },
       });
       await expect(service.deleteOwnAccount('gone', {})).resolves.toEqual({
@@ -343,7 +340,7 @@ describe('AccountDeletionService — who may delete whom', () => {
       // A no-op must not write a second deletion into the audit trail.
       expect(audits).toHaveLength(0);
       expect(deviceUpdates).toHaveLength(0);
-      expect(gateRevoked).toHaveLength(0);
+      expect(revoked).toHaveLength(0);
     });
   });
 });

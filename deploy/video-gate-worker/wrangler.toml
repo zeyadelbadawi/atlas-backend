@@ -1,9 +1,10 @@
 # Atlas Normal-tier video gate — Wrangler configuration.
 #
-# This file is the whole deployment. There is no build step and no
-# `package.json`, because the Worker has zero runtime dependencies: it uses
-# only the Workers runtime's own Web Crypto, `URL`, `Headers` and `Response`
-# plus the R2 and KV bindings declared below. Deploy with a transient CLI:
+# This file is the whole deployment. There is no build step, because the
+# Worker has zero runtime dependencies: it uses only the Workers runtime's
+# own Web Crypto, `fetch`, `URL`, `Headers` and `Response` plus the R2
+# binding declared below. (`package.json` declares ES modules and the
+# dependency-free `node --test` suite; nothing is bundled from it.) Deploy with a transient CLI:
 #
 #     npx wrangler@latest deploy
 #
@@ -92,49 +93,39 @@ bucket_name = "atlas-media-prod-protected"
 # Local development derives `${R2_BUCKET}-protected` from `atlas-media-dev`.
 preview_bucket_name = "atlas-media-dev-protected"
 
-# The revocation denylist: one key per revoked session, `rev:s:<sessionId>`.
-# Value is ignored; presence is the signal. Write it with a TTL equal to the
-# longest token lifetime (600 s) so the list stays small on its own — after
-# that, every token naming that session has expired anyway and the entry has
-# nothing left to revoke.
-#
-# THE ONE VALUE THAT CANNOT BE PREPARED IN ADVANCE. A namespace id is
-# issued by Cloudflare, so it does not exist until an authenticated CLI
-# asks for one. Everything else in this file is ready; these two ids are
-# the only edit left before `deploy`, and `deploy` fails loudly on the
-# placeholder rather than shipping a Worker whose denylist reads nothing.
-#
-# After `wrangler login`, run both and paste the returned ids here:
-#     npx wrangler kv namespace create GATE_DENYLIST
-#     npx wrangler kv namespace create GATE_DENYLIST --preview
-[[kv_namespaces]]
-binding = "GATE_DENYLIST"
-id = "553a234e0a1142d49cc7e567f649234e"
-preview_id = "badb2a58244b40e08d32e44aac396b43"
+# NO KV NAMESPACE (Workstream D). Revocation used to be a KV denylist
+# (`GATE_DENYLIST`) that Atlas was meant to write — but nothing ever wrote
+# it (Atlas had no Cloudflare credential for it, and this Worker answers
+# 405 to every POST), KV is eventually consistent for "60 seconds or more"
+# with no upper bound, and the free plan allows only 100 000 reads and
+# 1 000 writes a day, which a fail-closed gate turns into an outage.
+# Revocation is now a re-authorization call to Atlas (see `[vars]` below
+# and `src/authz.js`), which needs no binding and no paid feature. If the
+# two namespaces created earlier still exist they are unused and can be
+# deleted from the dashboard.
 
 # ---------------------------------------------------------------------------
 # Plain variables (non-secret)
 # ---------------------------------------------------------------------------
 [vars]
-# "kv"   — check the denylist on every request (the tier's headline claim).
-# "none" — signature and expiry only. Setting this forfeits
-#          `revocableBeforeExpiry`, which `basic-video.provider.ts`
-#          advertises in `capabilities()`. Do not ship "none" while that
-#          capability is reported as true.
-REVOCATION_MODE = "kv"
+# Where this Worker asks Atlas whether a token is still honoured
+# (`POST /api/v1/video-gate/authorize`, `VideoGateAuthorizationService`).
+# MUST be https. The API is on the same zone, so this subrequest never
+# leaves Cloudflare's network for the public internet. Missing or wrong →
+# every request is refused `503 gate_misconfigured` / `authz_unavailable`
+# (fail closed), never served unchecked.
+ATLAS_AUTHZ_URL = "https://atlass.dpdns.org/api/v1/video-gate/authorize"
 
-# How long a colo may reuse a denylist read. This IS the revocation latency
-# budget, and 30 is Cloudflare's documented minimum. See README.
-DENYLIST_CACHE_TTL_SECONDS = "30"
+# How long one isolate may reuse Atlas's answer for one token. THIS IS THE
+# REVOCATION BOUND: a revocation in Atlas stops every new request within
+# this many seconds. Clamped to [0, 30] in code — it can be shortened
+# (0 = ask on every request, at the cost of one API call per range
+# request) but never lengthened. Atlas independently caps it at 30.
+AUTHZ_CACHE_TTL_SECONDS = "30"
 
-# "closed" — if the denylist cannot be read, refuse. Matches Atlas's
-#            standing rule that an authorization component which cannot
-#            reach its data says no.
-# "open"   — keep playback up during a KV incident and rely on the
-#            ten-minute token lifetime plus signing-secret rotation as the
-#            backstop. A deliberate availability-over-strictness choice;
-#            record it as one if you make it.
-DENYLIST_FAIL_MODE = "closed"
+# How long one authorization call may take before the request is refused
+# (fail closed, 503, nothing cached).
+AUTHZ_TIMEOUT_MS = "3000"
 
 # Comma-separated browser origins permitted to embed the player. Empty or
 # unset means no origin restriction. Read the honest caveats in README
@@ -154,6 +145,14 @@ ENFORCE_ORIGIN = "true"
 #
 #     npx wrangler secret put GATE_SIGNING_SECRET
 #     npx wrangler secret put GATE_SIGNING_SECRET_PREVIOUS   # rotation only
+#     npx wrangler secret put GATE_AUTHZ_SECRET
+#
+# `GATE_AUTHZ_SECRET` must equal `BASIC_VIDEO_GATE_AUTHZ_SECRET` in the API's
+# environment and must DIFFER from the signing secret (the API refuses to
+# start otherwise). This Worker signs its authorization calls with it; it
+# is imported `['sign']`-only and cannot mint a playback token. A mismatch
+# fails closed: every authorization call is refused 401, and every request
+# answered `503 authz_unavailable`.
 #
 # `GATE_SIGNING_SECRET` must equal `BASIC_VIDEO_SIGNING_SECRET` in the API's
 # environment. It is the only shared secret between Atlas and the edge, and

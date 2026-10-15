@@ -127,6 +127,20 @@ export class LearningMetricsService {
     [],
   );
 
+  /**
+   * Workstream D — the Normal tier's delivery Worker re-authorizing a token.
+   * `decision` is `allow` or the closed set of deny reasons in
+   * `VideoGateAuthorizationService`; `caller_rejected` counts calls whose
+   * HMAC failed (a misconfigured or impersonated Worker — alert on any).
+   * A sudden drop to zero while the tier is on means the Worker is no
+   * longer asking, i.e. revocation is not being enforced.
+   */
+  private readonly gateAuthorizations = counter(
+    'atlas_video_gate_authz_total',
+    'Delivery-gate re-authorization calls, by decision.',
+    ['decision'],
+  );
+
   /** §U — `lease_conflicts_total`, `device_limit_hits_total`, and takeovers. */
   private readonly leaseConflicts = counter(
     'atlas_learning_lease_conflicts_total',
@@ -329,6 +343,10 @@ export class LearningMetricsService {
 
   recordTakeover(): void {
     this.safely(() => this.takeovers.inc());
+  }
+
+  recordGateAuthorization(decision: string): void {
+    this.safely(() => this.gateAuthorizations.inc({ decision }));
   }
 
   /** The scrape payload. */

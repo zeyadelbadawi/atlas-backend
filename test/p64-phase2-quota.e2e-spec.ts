@@ -66,15 +66,13 @@ const basicConfig: {
   deliveryHost?: string;
   signingSecret?: string;
   playbackTtlSeconds: number;
-  revocationEndpoint?: string;
-  revocationToken?: string;
+  gateAuthzSecret?: string;
   allowedOriginsConfigured: boolean;
 } = {
   deliveryHost: 'video.atlas.test',
   signingSecret: 'p64-phase2-quota-signing-secret',
   playbackTtlSeconds: 600,
-  revocationEndpoint: 'https://video.atlas.test/__revocations',
-  revocationToken: 'p64-phase2-quota-revocation-token',
+  gateAuthzSecret: 'p64-phase2-quota-gate-authz-secret-0123456789ab',
   allowedOriginsConfigured: true,
 };
 

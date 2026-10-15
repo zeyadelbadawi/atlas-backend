@@ -70,8 +70,7 @@ const MUTATED_ENV_KEYS = [
   'BASIC_VIDEO_DELIVERY_HOST',
   'BASIC_VIDEO_SIGNING_SECRET',
   'BASIC_VIDEO_PLAYBACK_TTL_SECONDS',
-  'BASIC_VIDEO_REVOCATION_ENDPOINT',
-  'BASIC_VIDEO_REVOCATION_TOKEN',
+  'BASIC_VIDEO_GATE_AUTHZ_SECRET',
   'BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED',
   'CLOUDFLARE_STREAM_ACCOUNT_ID',
   'CLOUDFLARE_STREAM_API_TOKEN',
@@ -103,8 +102,8 @@ process.env.FLAG_VIDEO_PREMIUM_MODE = 'on';
 process.env.BASIC_VIDEO_DELIVERY_HOST = 'video.atlas.test';
 process.env.BASIC_VIDEO_SIGNING_SECRET = 'p64-phase2-downgrade-secret';
 process.env.BASIC_VIDEO_PLAYBACK_TTL_SECONDS = '600';
-process.env.BASIC_VIDEO_REVOCATION_ENDPOINT = 'https://worker.atlas.test/revocations';
-process.env.BASIC_VIDEO_REVOCATION_TOKEN = 'p64-phase2-downgrade-revocation';
+process.env.BASIC_VIDEO_GATE_AUTHZ_SECRET =
+  'p64-phase2-downgrade-gate-authz-secret-0123456789';
 process.env.BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED = 'true';
 process.env.CLOUDFLARE_STREAM_ACCOUNT_ID = 'p64-phase2-downgrade-account';
 process.env.CLOUDFLARE_STREAM_API_TOKEN = 'p64-phase2-downgrade-token';

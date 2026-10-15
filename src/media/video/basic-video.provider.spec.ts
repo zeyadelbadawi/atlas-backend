@@ -42,8 +42,8 @@ function providerWith(
 
 describe('BasicVideoProvider.capabilities — what it honestly does NOT enforce', () => {
   it('does not claim session or device binding at the edge', () => {
-    // The gate verifies signature, key, expiry, Origin and the revocation
-    // list. It never compares the token's session/device claims against
+    // The gate verifies signature, key, expiry, Origin and re-authorizes
+    // with Atlas. It never compares the token's session/device claims against
     // the requester, because the delivery host is cross-site from the
     // academy and carries no Atlas session. A lifted token plays
     // elsewhere until it expires or is revoked.
@@ -52,14 +52,15 @@ describe('BasicVideoProvider.capabilities — what it honestly does NOT enforce'
     expect(capabilities.boundToDevice).toBe(false);
   });
 
-  it('claims revocation only when a revocation list is actually wired', () => {
-    // A denylist nobody publishes to revokes nothing. The capability is
-    // read from configuration so it can never be an aspiration (AD-16).
+  it('claims revocation only when the gate can actually re-authorize tokens', () => {
+    // Workstream D — revocation is the Worker re-checking each token with
+    // Atlas, which needs the Worker→API authorization secret. Without it
+    // nothing is re-checked. The capability is read from configuration so
+    // it can never be an aspiration (AD-16).
     expect(providerWith().capabilities().revocableBeforeExpiry).toBe(false);
     expect(
       providerWith({
-        revocationEndpoint: 'https://gate.test/revoke',
-        revocationToken: 'token',
+        gateAuthzSecret: 'unit-test-gate-authz-secret-0123456789abcdef',
       }).capabilities().revocableBeforeExpiry,
     ).toBe(true);
   });
@@ -214,6 +215,23 @@ describe('BasicVideoProvider.issuePlaybackToken', () => {
     expect(claims?.u).toBe('u1');
     expect(claims?.s).toBe('s1');
     expect(claims?.d).toBe('d1');
+  });
+
+  it('signs the grant scope (academy, course, lesson) so the gate can re-authorize that exact lesson', async () => {
+    // Workstream D — `VideoGateAuthorizationService` re-checks the lesson
+    // the grant was made for; without a signed scope it refuses.
+    const provider = providerWith();
+    const scoped = await provider.issuePlaybackToken({
+      ...request,
+      scope: { academyId: 'a1', courseId: 'c1', lessonId: 'l1' },
+    });
+    expect(provider.verifyGateToken(scoped.token!).claims).toMatchObject({
+      a: 'a1',
+      c: 'c1',
+      l: 'l1',
+    });
+    const unscoped = await provider.issuePlaybackToken(request);
+    expect(provider.verifyGateToken(unscoped.token!).claims?.c).toBeUndefined();
   });
 });
 
