@@ -774,6 +774,29 @@ describe('P64 Phase 1 — identity surfaces (e2e)', () => {
     expect(rows.map((r) => r.recipientUserId)).not.toContain(student.userId);
   });
 
+  it('G1: the organization owner is told even with no academy staff row', async () => {
+    const { academy, owner } = await seedAcademyWithOwner('g1-orgowner');
+    // The organization owner is the academy's owner by `AcademyScopeGuard`'s
+    // rule, staff row or not — and can approve, so must be told.
+    await admin.academyMember.deleteMany({
+      where: { academyId: academy.id, userId: owner.userId },
+    });
+    await admin.academy.update({
+      where: { id: academy.id },
+      data: { registrationPolicy: 'approval' },
+    });
+
+    const learner = await registerLearner('g1-orgowner-learner', academy.id);
+    const student = await admin.academyStudent.findFirstOrThrow({
+      where: { academyId: academy.id, user: { email: learner.email } },
+    });
+    const rows = await admin.communicationOutbox.findMany({
+      where: { key: 'roster.student.awaiting_approval', entityId: student.id },
+      select: { recipientUserId: true },
+    });
+    expect(rows.map((r) => r.recipientUserId)).toEqual([owner.userId]);
+  });
+
   it('G1: an OPEN academy admits immediately and creates no approval work item', async () => {
     const { academy } = await seedAcademyWithOwner('g1-open');
     // `open` is the default; asserted explicitly so a policy change to

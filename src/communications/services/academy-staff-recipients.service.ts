@@ -32,6 +32,12 @@ export class AcademyStaffRecipientsService {
    * moderate, and adding them would turn every review on a large academy
    * into mail for people who cannot act on it. A caller that genuinely
    * wants them passes its own roles.
+   *
+   * When `owner` is asked for, the organization owner(s) are included too,
+   * staff row or not: `AcademyScopeGuard` treats the organization owner as
+   * the academy's owner, so they can act on the item, and reading
+   * `academy_members` alone left an owner with no staff row untold.
+   * De-duplicated, so an owner with both rows is told once.
    */
   async moderators(
     tx: Prisma.TransactionClient,
@@ -42,15 +48,19 @@ export class AcademyStaffRecipientsService {
     const rows = await tx.$queryRaw<{ user_id: string }[]>`
       SELECT "user_id" FROM academy_notification_recipients(${academyId}, ${[...roles]}::text[])
     `;
-    return rows.map((row) => row.user_id);
+    const members = rows.map((row) => row.user_id);
+    if (!roles.includes('owner')) return members;
+    const owners = await this.organizationOwners(tx, academyId);
+    return [...new Set([...members, ...owners])];
   }
 
   /**
    * Academy Manual Payments — the Client Owner(s) of the academy's
    * organization: the only people who may review a learner's payment to
-   * the academy. `moderators` reads `academy_members` only and so misses an
-   * organization owner who has no academy membership row; this reads the
-   * organization's owner membership through
+   * the academy. `academy_members` alone misses an organization owner who
+   * has no academy membership row (`moderators` merges this in whenever it
+   * is asked for owners); this reads the organization's owner membership
+   * through
    * `academy_organization_owner_recipients` (same narrow, user-ids-only
    * SECURITY DEFINER shape).
    */
