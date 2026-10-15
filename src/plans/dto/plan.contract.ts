@@ -121,6 +121,16 @@ export interface PlanResponse {
   readonly version: number;
 }
 
+/**
+ * SEC-03(b) — the plan as an organization member who is NOT the billing
+ * owner sees it: every gating fact (limits, features, family, tier, trial
+ * flags) unchanged, the commercial price removed. Only the owner buys, so
+ * only the owner is shown what the organization pays.
+ */
+export function withoutPlanPricing(plan: PlanResponse): PlanResponse {
+  return { ...plan, pricing: undefined };
+}
+
 export function toPlanResponse(
   plan: PrismaPlan,
   /**

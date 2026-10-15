@@ -21,6 +21,11 @@ export interface AddOnResponse {
   readonly catalogStatus: 'draft' | 'coming_soon' | 'published';
 }
 
+/** SEC-03(b) — an add-on without its price, for members who are not the billing owner (see `withoutPlanPricing`). */
+export function withoutAddOnPricing(addOn: AddOnResponse): AddOnResponse {
+  return { ...addOn, pricing: undefined };
+}
+
 export function toAddOnResponse(addOn: PrismaAddOn): AddOnResponse {
   return {
     id: addOn.id,
