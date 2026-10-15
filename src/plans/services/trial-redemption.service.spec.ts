@@ -32,6 +32,7 @@ const TRIALABLE_PLAN = {
   key: 'growth',
   name: 'Growth',
   status: 'active',
+  displayOrder: 2,
   trialEligible: true,
   trialDurationDays: null,
   // P61 — a trial grants an entitlement, so the plan's limits are what the
@@ -53,6 +54,7 @@ const NON_TRIALABLE_PLAN = {
   key: 'enterprise',
   name: 'Enterprise',
   status: 'active',
+  displayOrder: 3,
   trialEligible: false,
   trialDurationDays: null,
 };
@@ -217,6 +219,20 @@ describe('TrialRedemptionService.startTrial', () => {
     await expect(service.startTrial(ORG, USER, TRIALABLE_PLAN.id)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+  });
+
+  it('refuses a hidden (not customer-facing) plan even when it is marked trial-eligible (B0-MED-03)', async () => {
+    findById.mockResolvedValue({
+      ...TRIALABLE_PLAN,
+      displayOrder: 0,
+      trialEligible: true,
+    });
+
+    await expect(service.startTrial(ORG, USER, TRIALABLE_PLAN.id)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    // Refused before the account's one trial is claimed.
+    expect(claimTrial).not.toHaveBeenCalled();
   });
 
   it('refuses everything while trials are disabled platform-wide', async () => {

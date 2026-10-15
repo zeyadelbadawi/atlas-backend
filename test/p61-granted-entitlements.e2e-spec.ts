@@ -783,7 +783,8 @@ describe('P61 granted entitlements (e2e) — P61-GRANT-001..018', () => {
     // not the caller.
     await admin.plan.update({
       where: { id: plan.id },
-      data: { trialEligible: true, trialDurationDays: 3 },
+      // Customer-facing: the in-app trial, like signup, refuses hidden plans.
+      data: { trialEligible: true, trialDurationDays: 3, displayOrder: 950 },
     });
     // The state a brand-new organization is in: a row, no plan, no trial.
     await admin.tenantSubscription.create({
@@ -791,13 +792,20 @@ describe('P61 granted entitlements (e2e) — P61-GRANT-001..018', () => {
     });
     await admin.trialPolicy.updateMany({ data: { enabled: true } });
 
-    const started = await request(app.getHttpServer())
-      .post(`/organizations/${org.id}/subscription/trial`)
-      .set('Authorization', `Bearer ${owner.token}`)
-      // `confirm` is part of the contract: starting a trial is an explicit,
-      // once-per-account decision, not something a stray POST can spend.
-      .send({ confirm: true, planId: plan.id })
-      .expect(200);
+    let started: request.Response;
+    try {
+      started = await request(app.getHttpServer())
+        .post(`/organizations/${org.id}/subscription/trial`)
+        .set('Authorization', `Bearer ${owner.token}`)
+        // `confirm` is part of the contract: starting a trial is an explicit,
+        // once-per-account decision, not something a stray POST can spend.
+        .send({ confirm: true, planId: plan.id })
+        .expect(200);
+    } finally {
+      // Hidden again at once: CI re-runs the suites on the same database,
+      // and a customer-facing fixture would leak into the real catalog.
+      await admin.plan.update({ where: { id: plan.id }, data: { displayOrder: 0 } });
+    }
     expect(started.body.started).toBe(true);
 
     const afterStart = await admin.tenantSubscription.findUniqueOrThrow({
