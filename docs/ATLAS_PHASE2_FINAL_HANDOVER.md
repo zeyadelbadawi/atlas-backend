@@ -303,6 +303,9 @@ is exactly why `R2_PROTECTED_BUCKET` must be set explicitly.
 
 ## L. The video Worker
 
+Activating hosted video (Normal tier) later is configuration only — see
+[`HOSTED_VIDEO_ACTIVATION_RUNBOOK.md`](HOSTED_VIDEO_ACTIVATION_RUNBOOK.md).
+
 `atlas-backend/deploy/video-gate-worker/` — `wrangler.toml`, `src/index.js` (463 lines),
 `src/gate.js` (413), `README.md`. Zero runtime dependencies.
 

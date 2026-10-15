@@ -1,5 +1,5 @@
 /** `GET academies/:id/media` query contract — the shared `CollectionQuery` base (`search` is the only filter the real frontend `MediaLibraryDialog` currently sends) plus `status`/`type`, exposed defensively the same way `CourseListQueryDto` exposes every real enum value as an optional filter. */
-import { IsIn, IsOptional } from 'class-validator';
+import { IsIn, IsOptional, IsUUID } from 'class-validator';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import { MEDIA_ASSET_STATUS_VALUES, MEDIA_ASSET_TYPE_VALUES } from './media.constants';
 
@@ -19,4 +19,14 @@ export class MediaListQueryDto extends CollectionQueryDto {
   @IsOptional()
   @IsIn(['public', 'protected'])
   readonly access?: 'public' | 'protected';
+
+  /**
+   * B0-MED-11 — narrows the list to what a lesson of THIS course may
+   * attach: assets uploaded for the course plus academy-wide ones (no
+   * course). The same rule the attach paths enforce, so the builder's
+   * library never offers a video the server would refuse.
+   */
+  @IsOptional()
+  @IsUUID()
+  readonly courseId?: string;
 }

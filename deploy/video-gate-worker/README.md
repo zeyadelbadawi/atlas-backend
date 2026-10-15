@@ -5,6 +5,9 @@ Atlas-owned delivery hostname in front of the protected R2 bucket, verifies the 
 `BasicVideoProvider.issuePlaybackToken` minted, and — only then — streams the object out of
 an **R2 binding**.
 
+Turning the tier on (settings by name, canary, verification, rollback):
+[`docs/HOSTED_VIDEO_ACTIVATION_RUNBOOK.md`](../../docs/HOSTED_VIDEO_ACTIVATION_RUNBOOK.md).
+
 Validated locally under DL-22. The evidence, the measured numbers, and an explicit list of
 what could not be validated without a real Cloudflare deployment are in
 [`docs/ATLAS_NORMAL_VIDEO_WORKER_SPIKE.md`](../../docs/ATLAS_NORMAL_VIDEO_WORKER_SPIKE.md).

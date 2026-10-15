@@ -27,8 +27,19 @@ import { TenancyContextService } from '../../tenancy/services/tenancy-context.se
 import { UsersRepository } from '../../identity/repositories/users.repository';
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { HOSTED_VIDEO_PROVIDERS } from '../video/hosted-video-providers';
+import { findMediaUsages } from './media-usage.util';
 import { VideoProviderRegistry } from '../video/video-provider.registry';
 import type { VideoWebhookEvent } from '../video/video-provider.interface';
+
+/**
+ * B0-MED-11 — how long an upload to a provider with NO webhook (the Normal
+ * tier) may stay unfinished before it counts as abandoned. A day: far
+ * longer than the presigned PUT's ten-minute signature plus any realistic
+ * transfer of a 5 GiB file, so a slow upload is never cut off, and short
+ * enough that a tab closed mid-upload stops holding the tenant's quota by
+ * the next day.
+ */
+export const ABANDONED_VIDEO_UPLOAD_HOURS = 24;
 
 @Injectable()
 export class VideoReconciliationService {
@@ -195,6 +206,104 @@ export class VideoReconciliationService {
       }
     }
     return reconciled;
+  }
+
+  /**
+   * B0-MED-11 — releases Normal-tier uploads that were never finished.
+   *
+   * The status poll above cannot help here: the Normal tier has no remote
+   * to ask (`fetchAsset` is null by design) and no webhook, so an upload
+   * whose browser went away — a closed tab, a lost connection, a crash
+   * before Cancel or completion — would sit at `pending`/`processing`
+   * forever, its reservation counting against the tenant's minutes and
+   * declared bytes. After `ABANDONED_VIDEO_UPLOAD_HOURS` such an upload is
+   * released exactly as a refused completion is: `failed` + `archived`
+   * (it stops counting at once), and any bytes that landed are deleted
+   * (best effort; the archived-media purge retries).
+   *
+   * Never touched: an upload a lesson already points at (staff decide —
+   * nothing is silently broken), and a row whose status changed since it
+   * was read (the conditional update loses the race to a completion or a
+   * cancel, which is the right winner).
+   */
+  async expireAbandonedUploads(
+    olderThanHours = ABANDONED_VIDEO_UPLOAD_HOURS,
+    limit = 50,
+  ): Promise<number> {
+    const actorUserId = await this.resolveReadActor();
+    if (!actorUserId) return 0;
+
+    const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);
+    const abandoned = await this.tenancyContextService.runInUserContext(
+      actorUserId,
+      (tx) =>
+        tx.mediaAsset.findMany({
+          where: {
+            // The only hosted provider without a webhook. Stream uploads
+            // are the status poll's job and are never expired here.
+            provider: 'r2_worker',
+            processingStatus: { in: ['pending', 'processing'] },
+            updatedAt: { lt: cutoff },
+          },
+          select: {
+            id: true,
+            provider: true,
+            providerId: true,
+            academyId: true,
+            url: true,
+            academy: { select: { organizationId: true } },
+          },
+          orderBy: { updatedAt: 'asc' },
+          take: limit,
+        }),
+    );
+
+    let expired = 0;
+    for (const row of abandoned) {
+      const organizationId = row.academy.organizationId;
+      try {
+        const released = await this.tenancyContextService.runInTenantContext(
+          organizationId,
+          async (tx) => {
+            if ((await findMediaUsages(tx, row)).length > 0) return false;
+            const updated = await tx.mediaAsset.updateMany({
+              where: { id: row.id, processingStatus: { in: ['pending', 'processing'] } },
+              data: { processingStatus: 'failed', status: 'archived' },
+            });
+            return updated.count === 1;
+          },
+        );
+        if (!released) continue;
+        expired += 1;
+        if (row.providerId) {
+          await this.videoProviders
+            .forProvider(row.provider)
+            .deleteAsset(row.providerId)
+            .catch((error: unknown) => {
+              this.logger.warn(
+                {
+                  assetId: row.id,
+                  error: error instanceof Error ? error.message : String(error),
+                },
+                'Could not delete an abandoned video upload; the archived-media purge will retry it.',
+              );
+            });
+        }
+        await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
+      } catch (error) {
+        this.logger.warn(
+          {
+            assetId: row.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'Expiring an abandoned video upload failed; the next sweep will retry.',
+        );
+      }
+    }
+    if (expired > 0) {
+      this.logger.log({ expired }, 'Released abandoned Normal-tier video uploads.');
+    }
+    return expired;
   }
 
   /**

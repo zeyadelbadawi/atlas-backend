@@ -266,22 +266,38 @@ export class Phase2MaintenanceService {
     return null;
   }
 
+  /**
+   * Stalled uploads, both kinds: the provider status poll (webhook-capable
+   * tiers) and, B0-MED-11, the release of Normal-tier uploads that were
+   * abandoned before completion — which no poll can recover, because that
+   * tier has neither a webhook nor a remote to ask. Each half has its own
+   * guard so one failing never skips the other; both counts are reported
+   * together as `reconciledVideos`.
+   */
   private async pollStalledVideos(): Promise<number> {
+    let reconciled = 0;
     try {
-      const reconciled = await this.reconciliation.pollStalled();
+      reconciled = await this.reconciliation.pollStalled();
       if (reconciled > 0) {
         this.logger.log(
           { reconciled },
           'Reconciled stalled video uploads by status poll.',
         );
       }
-      return reconciled;
     } catch (error) {
       this.logger.error(
         { error: error instanceof Error ? error.message : String(error) },
         'Stalled-video status poll failed; the next run will retry.',
       );
-      return 0;
     }
+    try {
+      reconciled += await this.reconciliation.expireAbandonedUploads();
+    } catch (error) {
+      this.logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Abandoned video-upload sweep failed; the next run will retry.',
+      );
+    }
+    return reconciled;
   }
 }

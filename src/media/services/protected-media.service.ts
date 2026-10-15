@@ -27,6 +27,7 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -52,6 +53,8 @@ import {
   sanitizeFileName,
 } from '../utils/file-validation.util';
 import { parseMp4Duration } from './video-duration.util';
+import { findMediaUsages } from './media-usage.util';
+import { HOSTED_VIDEO_PROVIDERS } from '../video/hosted-video-providers';
 import { LearningMetricsService } from '../../observability/metrics/learning-metrics.service';
 import type { ProtectedMediaConfig } from '../../config/configuration';
 
@@ -532,13 +535,22 @@ export class ProtectedMediaService {
     const measuredMinutes = Math.ceil(measured.durationSeconds / 60);
     const overrunMinutes = Math.max(0, measuredMinutes - reservedMinutes);
     if (overrunMinutes > 0) {
-      await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
-        this.entitlementEnforcementService.assertVideoMinutesWithinQuota(
-          tx,
-          organizationId,
-          overrunMinutes,
-        ),
-      );
+      try {
+        await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+          this.entitlementEnforcementService.assertVideoMinutesWithinQuota(
+            tx,
+            organizationId,
+            overrunMinutes,
+          ),
+        );
+      } catch (error) {
+        // B0-MED-11 — the same rule as the size refusal: an over-quota video
+        // must not stay behind, still `processing`, holding its reservation
+        // and its bytes with nothing left that would ever finish or release
+        // it. The uploader sees the quota error and can upload a shorter file.
+        await this.discardUpload(organizationId, asset, provider);
+        throw error;
+      }
     }
 
     const updated = await this.tenancyContextService.runInTenantContext(
@@ -575,6 +587,71 @@ export class ProtectedMediaService {
     // silently. It is a metric because it is a trend, not an event.
     this.metrics.recordDurationProvenance(measured.source);
     return updated;
+  }
+
+  /**
+   * B0-MED-11 — the uploader abandons an unfinished upload: Cancel in the
+   * course builder, or a browser PUT / completion that failed.
+   *
+   * WHY AN ENDPOINT. The reservation is written before the upload URL is
+   * issued, and for a provider with no webhook nothing else ever learns
+   * that the browser gave up — so without this call the row would sit at
+   * `processing`, consuming the tenant's minutes (and its declared bytes)
+   * until the abandoned-upload sweep reached it a day later.
+   *
+   * What it does: deletes whatever bytes landed (best effort — the purge
+   * retries) and marks the reservation `failed` + `archived`, exactly as a
+   * refused completion does. Idempotent for an already-released upload. A
+   * READY video is refused: it is a library asset now, removed through the
+   * media library (archive → purge), where its usages are checked. An
+   * unfinished upload that a lesson already points at is refused too, so
+   * a cancel can never silently break a lesson.
+   */
+  async cancelVideoUpload(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    assetId: string,
+  ): Promise<MediaAsset> {
+    const asset = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        const row = await tx.mediaAsset.findFirst({
+          where: {
+            id: assetId,
+            academyId,
+            type: 'video',
+            provider: { in: [...HOSTED_VIDEO_PROVIDERS] },
+          },
+        });
+        if (!row) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        if (row.processingStatus === 'pending' || row.processingStatus === 'processing') {
+          const usages = await findMediaUsages(tx, row);
+          if (usages.length > 0) {
+            throw new ConflictException({
+              messageKey: 'errors.media.inUse',
+              details: { usages },
+            });
+          }
+        }
+        return row;
+      },
+    );
+
+    if (asset.processingStatus === 'failed') return asset;
+    if (asset.processingStatus === 'ready') {
+      throw new ConflictException({ messageKey: 'errors.media.uploadAlreadyComplete' });
+    }
+
+    await this.discardUpload(
+      organizationId,
+      asset,
+      this.videoProviders.forProvider(asset.provider),
+    );
+    return this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+      tx.mediaAsset.findFirstOrThrow({ where: { id: asset.id, academyId } }),
+    );
   }
 
   /**
@@ -629,18 +706,8 @@ export class ProtectedMediaService {
     const reservedBytes = Number(asset.sizeBytes);
     const allowedBytes =
       reservedBytes > 0 ? reservedBytes : this.config.maxVideoUploadBytes;
-    const discard = async (): Promise<void> => {
-      await provider.deleteAsset(asset.providerId!).catch((error: unknown) => {
-        this.logger.error(
-          {
-            assetId: asset.id,
-            error: error instanceof Error ? error.message : String(error),
-          },
-          'Could not delete an over-limit video upload; it must be removed manually.',
-        );
-      });
-      await this.releaseReservation(organizationId, asset.id);
-    };
+    const discard = (): Promise<void> =>
+      this.discardUpload(organizationId, asset, provider);
 
     if (storedBytes > allowedBytes) {
       await discard();
@@ -662,6 +729,33 @@ export class ProtectedMediaService {
         throw error;
       }
     }
+  }
+
+  /**
+   * Deletes an upload's bytes (best effort) and releases its reservation.
+   *
+   * The delete is best effort because the row is what consumes quota: once
+   * it is `failed` + `archived`, the archived-media purge deletes whatever
+   * is left after its grace period, so a storage hiccup here leaves a
+   * logged, recoverable orphan rather than a stuck reservation.
+   */
+  private async discardUpload(
+    organizationId: string,
+    asset: Pick<MediaAsset, 'id' | 'providerId'>,
+    provider: { deleteAsset(providerId: string): Promise<void> },
+  ): Promise<void> {
+    if (asset.providerId) {
+      await provider.deleteAsset(asset.providerId).catch((error: unknown) => {
+        this.logger.error(
+          {
+            assetId: asset.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'Could not delete a discarded video upload; the archived-media purge will retry it.',
+        );
+      });
+    }
+    await this.releaseReservation(organizationId, asset.id);
   }
 
   /** Marks a failed reservation as `failed` so it stops counting against the quota. */

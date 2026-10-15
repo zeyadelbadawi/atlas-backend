@@ -983,6 +983,34 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
     }
   }
 
+  // B0-MED-11 — the Normal tier's rollout flag switched on in production
+  // without its delivery gate. The app would boot, the builder would offer
+  // uploads, and every one would be refused `videoNotEnabled` (the
+  // registry reports the tier unavailable; the local stand-in never runs in
+  // production) — a misconfiguration nobody sees until a customer does.
+  // Refused at startup instead, where the deploy shows it. With the flag
+  // `off` (today's production state) nothing here applies.
+  if (
+    parsed.data.NODE_ENV === 'production' &&
+    parsed.data.FLAG_VIDEO_NORMAL_MODE !== 'off'
+  ) {
+    const missing = (
+      [
+        ['BASIC_VIDEO_DELIVERY_HOST', parsed.data.BASIC_VIDEO_DELIVERY_HOST],
+        ['BASIC_VIDEO_SIGNING_SECRET', parsed.data.BASIC_VIDEO_SIGNING_SECRET],
+      ] as const
+    )
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new Error(
+        `FLAG_VIDEO_NORMAL_MODE=${parsed.data.FLAG_VIDEO_NORMAL_MODE} requires ${missing.join(', ')} — ` +
+          'refusing to start with the Normal video tier enabled but no delivery gate to sign ' +
+          'playback for (see docs/HOSTED_VIDEO_ACTIVATION_RUNBOOK.md).',
+      );
+    }
+  }
+
   // PLATFORM_WEB_URL is where an email's links point. It must never fall
   // back to a localhost default in production — but requiring it outright
   // would refuse to start every existing deployment, none of which sets
