@@ -120,7 +120,7 @@ product/ops decision, not a free switch.
 Behind `FLAG_SIGNUP_WHATSAPP_CONSENT_MODE` (default `off`; the consent wording is a DRAFT pending
 counsel). On the organization owner sign-up only, an unticked "Contact me on WhatsApp about my
 account and setup" box stores `user_phones.whatsapp_consent_at` + `whatsapp_consent_version`
-(`signup-whatsapp-consent-2026-10-draft1`) — migration `20261117000100_lead_consent_attribution`.
+(`signup-whatsapp-consent-2026-10-draft1`) — migration `20261117000200_lead_consent_attribution`.
 A learner sign-up never stores it. A trigger clears both when the number changes. The Platform
 Owner reads an owner's number only through `platform_organization_owner_phones(org_ids)`, which
 returns a row only while that owner's opt-in stands; it is shown on the organization detail
