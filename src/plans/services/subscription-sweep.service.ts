@@ -88,7 +88,7 @@ import { SubscriptionExpiryService } from './subscription-expiry.service';
 import { TenantLifecycleService } from './tenant-lifecycle.service';
 import { TenantUsageRecomputeProducer } from '../queue/tenant-usage-recompute.producer';
 import { TenantUsageSweepCursorRepository } from '../repositories/tenant-usage-sweep-cursor.repository';
-import { AnnouncementsRepository } from '../../community/repositories/announcements.repository';
+import { AnnouncementsService } from '../../community/services/announcements.service';
 import { BlogPostsRepository } from '../../community/repositories/blog-posts.repository';
 import {
   SUBSCRIPTION_SWEEP_MAX_RECOMPUTE_PER_TICK,
@@ -165,7 +165,7 @@ export class SubscriptionSweepService {
     private readonly tenantUsageRecomputeProducer: TenantUsageRecomputeProducer,
     private readonly sweepCursorRepository: TenantUsageSweepCursorRepository,
     // Phase 6 — see this class's own doc comment, responsibility 3.
-    private readonly announcementsRepository: AnnouncementsRepository,
+    private readonly announcementsService: AnnouncementsService,
     private readonly blogPostsRepository: BlogPostsRepository,
   ) {}
 
@@ -218,7 +218,10 @@ export class SubscriptionSweepService {
     const [publishedAnnouncementCount, publishedBlogPostCount] =
       await this.tenancyContextService.runInUserContext(platformOwner.id, (tx) =>
         Promise.all([
-          this.announcementsRepository.publishDueScheduled(tx, now),
+          // Through the service, not the repository: a scheduled
+          // announcement gets the same recipient fan-out as one
+          // published by hand (enqueued in this transaction).
+          this.announcementsService.publishDueScheduled(tx, now),
           this.blogPostsRepository.publishDueScheduled(tx, now),
         ]),
       );

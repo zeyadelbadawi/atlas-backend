@@ -14,6 +14,15 @@ export type AnnouncementWithAuthor = Announcement & { author: { name: string } }
 
 const WITH_AUTHOR = { author: { select: { name: true } } } as const;
 
+/** One row `publishDueScheduled` flipped to `published` on this call. */
+export interface ScheduledAnnouncementPublished {
+  readonly id: string;
+  readonly academyId: string | null;
+  readonly courseId: string | null;
+  readonly authorId: string;
+  readonly publishedAt: Date;
+}
+
 @Injectable()
 export class AnnouncementsRepository {
   async findFeed(
@@ -107,13 +116,29 @@ export class AnnouncementsRepository {
    * migration) are what let this single `updateMany` reach every due row
    * platform-wide, regardless of which academy/course it belongs to — this
    * query itself carries no cross-tenant special-casing of its own.
+   *
+   * Returns the rows THIS call published, so the caller can fan them out
+   * exactly like an immediate publish (a scheduled announcement used to
+   * publish to no one). Each row is flipped by its own conditional
+   * update, so two overlapping ticks never both report the same row.
    */
-  async publishDueScheduled(tx: Prisma.TransactionClient, asOf: Date): Promise<number> {
-    const { count } = await tx.announcement.updateMany({
+  async publishDueScheduled(
+    tx: Prisma.TransactionClient,
+    asOf: Date,
+  ): Promise<ScheduledAnnouncementPublished[]> {
+    const due = await tx.announcement.findMany({
       where: { status: 'scheduled', scheduledAt: { lte: asOf } },
-      data: { status: 'published', publishedAt: asOf },
+      select: { id: true, academyId: true, courseId: true, authorId: true },
     });
-    return count;
+    const published: ScheduledAnnouncementPublished[] = [];
+    for (const row of due) {
+      const { count } = await tx.announcement.updateMany({
+        where: { id: row.id, status: 'scheduled' },
+        data: { status: 'published', publishedAt: asOf },
+      });
+      if (count === 1) published.push({ ...row, publishedAt: asOf });
+    }
+    return published;
   }
 
   create(
