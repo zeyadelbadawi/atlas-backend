@@ -64,6 +64,16 @@ describe('sanitizeAttribution (B0-ANL-04)', () => {
     expect(stored?.landingTemplate).toBeUndefined();
   });
 
+  it('never stores half of an emoji the length cap cut through', () => {
+    const stored = sanitizeAttribution({
+      utmSource: `${'x'.repeat(ATTRIBUTION_VALUE_MAX - 1)}😀`,
+      utmCampaign: 'launch\uD83D',
+    });
+    expect(stored?.utmSource).toBe('x'.repeat(ATTRIBUTION_VALUE_MAX - 1));
+    expect(stored?.utmCampaign).toBe('launch');
+    expect(JSON.stringify(stored)).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  });
+
   it('recognises personal data without flagging dates or short codes', () => {
     expect(looksLikePersonalData('someone@mail.test')).toBe(true);
     expect(looksLikePersonalData('(010) 0000-0000')).toBe(true);

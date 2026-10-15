@@ -43,8 +43,10 @@ inputs:
     description: >-
       P64 Phase 3 rollout — newline-separated FLAG_*=value lines, sourced from
       GitHub repository VARIABLES by the workflow (never secrets). Only keys
-      starting with FLAG_ are accepted and empty values are dropped, so an
-      unset variable can never blank a working flag. Reuses the one
+      starting with FLAG_ (plus the numeric CONTACT_ENQUIRY_RETENTION_MONTHS) are
+      accepted and empty values are dropped, so an unset variable can never
+      blank a working flag — to turn a flag off, set it to `off`, do not
+      delete the variable. Reuses the one
       authorised env-sync path (`deploy.sh --sync-env`), so a rollout is a
       variable change plus a deploy — audited in both places — and nothing is
       hand-edited on the VPS.
@@ -226,6 +228,11 @@ runs:
             k, v = raw.split('=', 1)
             k, v = k.strip(), v.strip()
             if re.fullmatch(r'FLAG_[A-Z0-9_]+', k) and v and re.fullmatch(r'[A-Za-z0-9_,-]+', v):
+                lines.append(f"{k}={v}")
+            # B0-SUP-04: the one non-flag setting passed this way — the
+            # enquiry retention period, a number of months (the backend
+            # accepts 6–120 at boot).
+            elif k == 'CONTACT_ENQUIRY_RETENTION_MONTHS' and re.fullmatch(r'[0-9]{1,3}', v):
                 lines.append(f"{k}={v}")
         print(base64.b64encode("\n".join(lines).encode()).decode() if lines else "")
         PYEOF

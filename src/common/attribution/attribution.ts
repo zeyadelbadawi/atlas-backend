@@ -106,11 +106,19 @@ export function looksLikePersonalData(value: string): boolean {
   return [value, decoded].some((v) => EMAIL_LIKE.test(v) || PHONE_LIKE.test(v));
 }
 
+/** A UTF-16 surrogate without its partner (half of an emoji, say). */
+const LONE_SURROGATE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 function cleanText(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const text = raw.replace(CONTROL_CHARS, '').replace(/\s+/g, ' ').trim();
   if (text.length === 0 || looksLikePersonalData(text)) return undefined;
-  return text.slice(0, ATTRIBUTION_VALUE_MAX).trim() || undefined;
+  // Cut, then drop any half of a surrogate pair the cut (or the input)
+  // left behind: Postgres rejects JSON with a lone surrogate.
+  return (
+    text.slice(0, ATTRIBUTION_VALUE_MAX).replace(LONE_SURROGATE, '').trim() || undefined
+  );
 }
 
 function cleanHost(raw: unknown): string | undefined {

@@ -173,7 +173,9 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+-- `pg_temp` last: the temporary schema is otherwise searched FIRST, so a
+-- temp table named like one below could shadow it inside this function.
+SET search_path = public, pg_temp
 AS $$
   SELECT o."id", p."user_id", p."phone_e164"::text, p."country_code"::text,
          p."whatsapp_consent_at", p."whatsapp_consent_version"::text
