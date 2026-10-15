@@ -110,7 +110,12 @@ Row 5 is the part that must not be faked.
   Before D5-2 this was a bare status update with none of the above; academies archived
   that way have `archived_at IS NULL`, and `isPurgeEligible` refuses every asset of such
   an academy, so their media is never purged (safe, but kept indefinitely). No restore
-  path exists for any archived academy.
+  path exists for any archived academy. OD-18: migration
+  `20261118000100_legacy_academy_archived_at_backfill` stamps `archived_at` on the rows
+  provably archived by that old path (owner deleted, archive write within the deletion
+  request), set to the migration instant so the 30-day grace starts then rather than
+  back-dated; ambiguous rows stay NULL. Rule, Release-verify counts, rollback and purge
+  timing: `docs/ops/LEGACY-ARCHIVED-AT-BACKFILL.md`.
 - Enqueues certificate anonymisation on the certificates queue.
 
 ### `IMPLEMENTED` — Academy archive
