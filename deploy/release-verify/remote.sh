@@ -302,6 +302,13 @@ catalog_facts() {
     | while IFS='|' read -r _ k st n; do info "subscriptions on $k: $st=$n"; done
   IFS='|' read -r _ open done_ <<< "$(sql "select 'premium_checkouts', count(*) filter (where c.status in ('draft','pending_payment')), count(*) filter (where c.status = 'completed') from checkouts c join plans p on p.key = c.target_key where c.target_type = 'plan_subscription' and p.family = 'premium'")"
   info "checkouts for Premium plans: open=${open:-?} completed=${done_:-?}"
+  # When a hidden Premium plan would first matter to its subscribers: the
+  # renewal dates of the live subscriptions and the expiry of open checkouts
+  # (dates only, per key; no organization).
+  sql "select 'premium_periods', p.key, s.status, s.billing_cycle, to_char(min(s.current_period_end), 'YYYY-MM-DD'), to_char(max(s.current_period_end), 'YYYY-MM-DD'), count(*) filter (where s.cancel_at_period_end) from tenant_subscriptions s join plans p on p.id = s.plan_id where p.family = 'premium' and s.status in ('active','past_due','grace_period','trialing') group by p.key, s.status, s.billing_cycle order by 2, 3" \
+    | while IFS='|' read -r _ k st cyc lo hi canc; do info "Premium $k $st ($cyc): current period ends ${lo:-?}..${hi:-?}, cancelling at period end=$canc"; done
+  sql "select 'premium_open_checkouts', c.target_key, c.status, to_char(min(c.expires_at), 'YYYY-MM-DD'), to_char(max(c.expires_at), 'YYYY-MM-DD'), count(*) from checkouts c join plans p on p.key = c.target_key where c.target_type = 'plan_subscription' and p.family = 'premium' and c.status in ('draft','pending_payment') group by 2, 3 order by 2, 3" \
+    | while IFS='|' read -r _ k st lo hi n; do info "open Premium checkout $k $st: $n, expires ${lo:-?}..${hi:-?}"; done
 }
 
 video_facts() {
