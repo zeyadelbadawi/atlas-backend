@@ -351,7 +351,7 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'academy',
     true,
     ['changedAreas'],
-    ['themeKey'],
+    ['themeKey', 'defaultLocale'],
   ),
   ev(
     'website.visual_identity.updated',

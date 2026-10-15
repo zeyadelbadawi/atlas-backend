@@ -95,6 +95,11 @@ import { LearningMetricsService } from '../../observability/metrics/learning-met
 import { CourseCategoriesRepository } from '../../course/repositories/course-categories.repository';
 import type { PublicCourseCategoryResponse } from '../dto/public-categories.contract';
 import { stripSampleContent } from '../../website/utils/sample-content.util';
+import { fillBlankEnglish } from '../../website/utils/localized-text.util';
+import {
+  resolveDefaultLocale,
+  type PublicWebsiteLocale,
+} from '../../website/constants/locale.constants';
 import { toPublicBrand } from '../../website/brand/brand-palette-update';
 import { WebsiteFaqEntriesRepository } from '../../website/repositories/website-faq-entries.repository';
 import { WebsiteTestimonialEntriesRepository } from '../../website/repositories/website-testimonial-entries.repository';
@@ -107,6 +112,17 @@ import {
   collectLibraryEntryIds,
   expandLibraryEntries,
 } from '../utils/library-entries.util';
+
+/**
+ * B0-WEB-02 — a public response as an Arabic-default site serves it (blank
+ * English sides show their Arabic, `fillBlankEnglish`); any other site's
+ * response is returned untouched.
+ */
+function forDefaultLocale<T>(response: T, defaultLocale: string | undefined): T {
+  return resolveDefaultLocale(defaultLocale) === 'ar'
+    ? fillBlankEnglish(response)
+    : response;
+}
 
 /** B0-WEB-01 — at most 50 × 100 courses in one sitemap (well under the 50,000-URL limit). */
 const SITEMAP_MAX_COURSE_PAGES = 50;
@@ -355,6 +371,8 @@ export class PublicWebsiteService {
     readonly sitemapEnabled: boolean;
     readonly origin?: string;
     readonly urls: readonly SitemapUrl[];
+    /** B0-WEB-02 — the published site's main language (served unprefixed). */
+    readonly defaultLocale?: PublicWebsiteLocale;
   }> {
     const closed = { indexable: false, sitemapEnabled: false, urls: [] };
     const resolved = await this.resolveHostname(host);
@@ -366,7 +384,10 @@ export class PublicWebsiteService {
     const indexable = seo.robotsIndexable !== false;
     const sitemapEnabled = indexable && seo.sitemapEnabled !== false;
     const origin = `https://${resolved.canonicalHost ?? normalizeHostname(host)}`;
-    if (!sitemapEnabled) return { indexable, sitemapEnabled, origin, urls: [] };
+    const defaultLocale = resolveDefaultLocale(configuration.defaultLocale);
+    if (!sitemapEnabled) {
+      return { indexable, sitemapEnabled, origin, urls: [], defaultLocale };
+    }
 
     const pages = (await this.getPublishedPages(resolved.academyId)) ?? [];
     const courses: CourseResponse[] = [];
@@ -379,7 +400,13 @@ export class PublicWebsiteService {
       courses.push(...result.items);
       if (result.items.length < MAX_PAGE_SIZE) break;
     }
-    return { indexable, sitemapEnabled, origin, urls: buildSitemapUrls(pages, courses) };
+    return {
+      indexable,
+      sitemapEnabled,
+      origin,
+      urls: buildSitemapUrls(pages, courses),
+      defaultLocale,
+    };
   }
 
   async getPublishedWebsite(
@@ -397,10 +424,12 @@ export class PublicWebsiteService {
     const configurationResponse = toWebsiteConfigurationResponse(configuration);
     // Theme 1 plan §D.2 — the palette's colours are public; who confirmed it,
     // when, and the logo analysis are not.
-    const response: WebsiteConfigurationResponse = {
+    const publicResponse: WebsiteConfigurationResponse = {
       ...configurationResponse,
       brand: toPublicBrand(configurationResponse.brand),
     };
+    // B0-WEB-02 — English is optional on an Arabic-default site.
+    const response = forDefaultLocale(publicResponse, configuration.defaultLocale);
     const cached = await this.cacheService.getConfiguration<WebsiteConfigurationResponse>(
       academyId,
       configuration.configVersion,
@@ -468,14 +497,17 @@ export class PublicWebsiteService {
     // Theme 1 plan §D.4 — sample testimonials are preview-only: removed
     // here, before caching, so they never reach a visitor's browser.
     const response = pages.map((mapped) => {
-      return {
-        ...mapped,
-        sections: expandLibraryEntries(
-          stripSampleContent(mapped.sections),
-          faqById,
-          testimonialById,
-        ),
-      };
+      return forDefaultLocale(
+        {
+          ...mapped,
+          sections: expandLibraryEntries(
+            stripSampleContent(mapped.sections),
+            faqById,
+            testimonialById,
+          ),
+        },
+        configuration.defaultLocale,
+      );
     });
     await this.cacheService.setPages(
       academyId,

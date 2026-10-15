@@ -67,6 +67,8 @@ import {
   websiteNavigationSchema,
   globalSeoSchema,
 } from '../validation/website-config.schemas';
+import { withRequiredLocale } from '../validation/section-config.schemas';
+import { resolveDefaultLocale } from '../constants/locale.constants';
 import { parseOrThrow } from '../../common/validation/zod-violations.util';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import {
@@ -231,6 +233,16 @@ export class WebsiteConfigurationService {
           data.themeKey = payload.themeKey;
         }
 
+        // B0-WEB-02 — the site's main language decides which side of every
+        // required bilingual label must be filled (Arabic on an
+        // Arabic-default site, English otherwise), including in this save.
+        if (payload.defaultLocale !== undefined) {
+          data.defaultLocale = payload.defaultLocale;
+        }
+        const requiredLocale = resolveDefaultLocale(
+          payload.defaultLocale ?? current.defaultLocale,
+        );
+
         if (payload.brand !== undefined) {
           const patch = parseOrThrow(websiteBrandPatchSchema, payload.brand);
           // Theme 1 plan §F.4.3 — palettes are re-derived and validated
@@ -249,15 +261,21 @@ export class WebsiteConfigurationService {
         }
 
         if (payload.navigation !== undefined) {
-          data.navigation = parseOrThrow(websiteNavigationSchema, payload.navigation);
+          data.navigation = withRequiredLocale(requiredLocale, () =>
+            parseOrThrow(websiteNavigationSchema, payload.navigation),
+          );
         }
 
         if (payload.header !== undefined) {
-          data.header = parseOrThrow(websiteHeaderSchema, payload.header);
+          data.header = withRequiredLocale(requiredLocale, () =>
+            parseOrThrow(websiteHeaderSchema, payload.header),
+          );
         }
 
         if (payload.footer !== undefined) {
-          data.footer = parseOrThrow(websiteFooterSchema, payload.footer);
+          data.footer = withRequiredLocale(requiredLocale, () =>
+            parseOrThrow(websiteFooterSchema, payload.footer),
+          );
         }
 
         await this.sectionReferenceValidatorService.validateConfigurationReferences(
@@ -300,8 +318,18 @@ export class WebsiteConfigurationService {
           targetId: academyId,
           context:
             changedAreas.length > 0 ? { changedAreas: changedAreas.join(',') } : {},
-          before: { themeKey: current.themeKey },
-          after: data.themeKey !== undefined ? { themeKey: updated.themeKey } : {},
+          before: {
+            themeKey: current.themeKey,
+            ...(data.defaultLocale !== undefined
+              ? { defaultLocale: current.defaultLocale }
+              : {}),
+          },
+          after: {
+            ...(data.themeKey !== undefined ? { themeKey: updated.themeKey } : {}),
+            ...(data.defaultLocale !== undefined
+              ? { defaultLocale: updated.defaultLocale }
+              : {}),
+          },
         });
         return this.toManagedResponse(tx, academyId, updated);
       },

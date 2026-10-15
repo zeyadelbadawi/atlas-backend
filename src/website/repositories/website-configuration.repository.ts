@@ -8,6 +8,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import type { Prisma, WebsiteConfiguration } from '@prisma/client';
+import { resolveDefaultLocale } from '../constants/locale.constants';
 
 @Injectable()
 export class WebsiteConfigurationRepository {
@@ -66,7 +67,14 @@ export class WebsiteConfigurationRepository {
 
 type PublishedSnapshot = Pick<
   WebsiteConfiguration,
-  'themeKey' | 'themeVersion' | 'brand' | 'seo' | 'navigation' | 'header' | 'footer'
+  | 'themeKey'
+  | 'themeVersion'
+  | 'brand'
+  | 'seo'
+  | 'navigation'
+  | 'header'
+  | 'footer'
+  | 'defaultLocale'
 >;
 
 /**
@@ -87,6 +95,9 @@ export function withPublishedSnapshot(row: WebsiteConfiguration): WebsiteConfigu
     navigation: snapshot.navigation ?? row.navigation,
     header: snapshot.header ?? row.header,
     footer: snapshot.footer ?? row.footer,
+    // B0-WEB-02 — never the working copy's: a snapshot taken before the
+    // setting existed was published with English at the root.
+    defaultLocale: resolveDefaultLocale(snapshot.defaultLocale),
   };
 }
 
@@ -103,6 +114,7 @@ export function hasUnpublishedConfigurationChanges(row: WebsiteConfiguration): b
       row.navigation,
       row.header,
       row.footer,
+      row.defaultLocale,
     ]) !==
     JSON.stringify([
       published.themeKey,
@@ -112,6 +124,7 @@ export function hasUnpublishedConfigurationChanges(row: WebsiteConfiguration): b
       published.navigation,
       published.header,
       published.footer,
+      published.defaultLocale,
     ])
   );
 }
@@ -131,5 +144,6 @@ export function buildPublishedSnapshot(
     navigation: configuration.navigation,
     header: configuration.header,
     footer: configuration.footer,
+    defaultLocale: configuration.defaultLocale,
   } as Prisma.InputJsonValue;
 }

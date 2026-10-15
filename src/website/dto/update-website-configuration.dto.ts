@@ -8,6 +8,10 @@
  */
 import { IsArray, IsIn, IsISO8601, IsObject, IsOptional } from 'class-validator';
 import { SELECTABLE_WEBSITE_THEME_KEYS } from '../constants/website.constants';
+import {
+  PUBLIC_WEBSITE_LOCALES,
+  type PublicWebsiteLocale,
+} from '../constants/locale.constants';
 
 export class UpdateWebsiteConfigurationDto {
   /** Only a selectable theme (`SELECTABLE_WEBSITE_THEME_KEYS`); the original Themes 2–5 are retired (`RETIRED_WEBSITE_THEME_KEYS`) and rejected. */
@@ -34,6 +38,15 @@ export class UpdateWebsiteConfigurationDto {
   @IsOptional()
   @IsObject()
   readonly footer?: Record<string, unknown>;
+
+  /**
+   * B0-WEB-02 — the site's main language (`en` | `ar`), served at `/`; the
+   * other language moves under its own prefix. Saved to the working copy
+   * and live at the next publish, like every other site-wide setting.
+   */
+  @IsOptional()
+  @IsIn(PUBLIC_WEBSITE_LOCALES)
+  readonly defaultLocale?: PublicWebsiteLocale;
 
   /**
    * The `updatedAt` of the configuration this edit was based on. When it no
