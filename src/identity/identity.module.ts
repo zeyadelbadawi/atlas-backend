@@ -12,6 +12,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { AuthCoreModule } from './auth-core.module';
 import { AuthController } from './controllers/auth.controller';
 import { UsersController } from './controllers/users.controller';
+import { RefreshReissueService } from './services/refresh-reissue.service';
 import { AuthService } from './services/auth.service';
 import { AccountSetupService } from './services/account-setup.service';
 import { UsersService } from './services/users.service';
@@ -103,6 +104,8 @@ import { VideoGateRevocationService } from '../media/video/video-gate-revocation
   providers: [
     AccountSetupService,
     AuthService,
+    // U-14d / OD-21 — lost-response refresh recovery (Redis, `@Global()`).
+    RefreshReissueService,
     UsersService,
     // Phone number (docs/USER_PHONE.md) — no verification provider is bound
     // (`PHONE_VERIFICATION_PROVIDER`); none is contracted yet.

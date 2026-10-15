@@ -305,6 +305,7 @@ Severity follows impact as deployed, not worst-case theory.
 - **Fix:** `findReusedRotation`: a retired token that was rotated into a newer row more than 60 seconds ago ends the whole family (refresh rows plus the access-token denylist). It is recorded as an `auth.sessions.revoked` audit entry (`trigger: refresh_token_reuse`) with a warning log.
 - **Files:** `refresh-tokens.repository.ts`, `auth.service.ts`.
 - **Tests:** AUD-07 (within the grace it only fails; after the grace the family ends and the audit is written); the existing `auth-refresh-concurrency` still passes.
+- **Follow-up (U-14d / OD-21):** a cookie refresh whose response was lost is now recovered for the same browser within `REFRESH_REISSUE_WINDOW_SECONDS` (≤ 30 s) by re-issuing the successor it already minted; the same token from another client inside that window ends the family at once. See `docs/REFRESH_TOKEN_LOST_RESPONSE_RECOVERY.md`.
 - **Verification:** passes; fails before.
 
 ### AUTH-08 — Platform sign-in `?redirect=` not constrained to same-site paths
