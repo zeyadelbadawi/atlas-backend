@@ -287,7 +287,12 @@ export class CourseCurriculumService {
         // could attach another academy's video by guessing and the grant
         // path would sign it because the lesson claims it.
         if (payload.videoAssetId) {
-          await assertAttachableLessonVideo(tx, academyId, payload.videoAssetId);
+          await assertAttachableLessonVideo(
+            tx,
+            academyId,
+            courseId,
+            payload.videoAssetId,
+          );
         }
 
         // Append after the LAST item of the unit across all types — the
@@ -375,7 +380,12 @@ export class CourseCurriculumService {
         // attach another academy's video by guessing, and the grant path
         // would then happily sign it because the lesson says it is theirs.
         if (payload.videoAssetId) {
-          await assertAttachableLessonVideo(tx, academyId, payload.videoAssetId);
+          await assertAttachableLessonVideo(
+            tx,
+            academyId,
+            courseId,
+            payload.videoAssetId,
+          );
         }
 
         const updated = await this.lessonsRepository.update(tx, lessonId, {
@@ -819,18 +829,27 @@ export class CourseCurriculumService {
  *   - whose upload has finished: `pending` means the bytes never arrived
  *     (the completion call was not made), `failed` means they never will.
  *     `processing` is accepted — the learner path already answers
- *     "processing" until the asset is ready.
+ *     "processing" until the asset is ready;
+ *   - still in the library: an archived (deleted, awaiting purge) or purged
+ *     asset is gone as far as the product is concerned;
+ *   - uploaded for THIS course or for none — the B0-MED-05 rule the lesson
+ *     content path (`upsertLessonContent`) already applies to the same
+ *     asset, so the two ways of pointing a lesson at a video agree.
+ * The last two are indistinguishable from a miss, like the academy check.
  */
 export async function assertAttachableLessonVideo(
   tx: Prisma.TransactionClient,
   academyId: string,
+  courseId: string,
   videoAssetId: string,
 ): Promise<void> {
   const asset = await tx.mediaAsset.findFirst({
-    where: { id: videoAssetId, academyId, type: 'video' },
-    select: { id: true, access: true, processingStatus: true },
+    where: { id: videoAssetId, academyId, type: 'video', status: 'active' },
+    select: { id: true, access: true, processingStatus: true, courseId: true },
   });
-  if (!asset) throw new NotFoundException({ messageKey: 'errors.notFound' });
+  if (!asset || (asset.courseId !== null && asset.courseId !== courseId)) {
+    throw new NotFoundException({ messageKey: 'errors.notFound' });
+  }
   if (asset.access !== 'protected') {
     throw new BadRequestException({ messageKey: 'errors.media.videoNotAttachable' });
   }

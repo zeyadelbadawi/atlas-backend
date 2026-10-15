@@ -72,6 +72,27 @@ export class ProtectedMediaController {
     return toProtectedMediaAssetResponse(asset);
   }
 
+  /**
+   * B0-MED-11 — abandons an unfinished upload (Cancel, or a failed PUT):
+   * deletes any bytes that landed and releases the quota reservation.
+   * Idempotent; a finished video is refused (it is removed through the
+   * media library instead).
+   */
+  @Post(':id/media/video-uploads/:assetId/cancel')
+  async cancelVideoUpload(
+    @Req() request: Request,
+    @Param('assetId') assetId: string,
+  ): Promise<ProtectedMediaAssetResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    const asset = await this.protectedMediaService.cancelVideoUpload(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      assetId,
+    );
+    return toProtectedMediaAssetResponse(asset);
+  }
+
   @Post(':id/media/video-uploads')
   async createVideoUpload(
     @Req() request: Request,
