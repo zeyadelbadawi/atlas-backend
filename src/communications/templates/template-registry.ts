@@ -102,6 +102,11 @@ import { template as lifecycleSubscriptionCancelled } from './keys/lifecycle.sub
 import { template as lifecycleSubscriptionPriceChangeNotice } from './keys/lifecycle.subscription.price_change_notice';
 import { template as lifecycleSubscriptionFollowup7d } from './keys/lifecycle.subscription.followup_7d';
 import { template as lifecycleSubscriptionFollowup30d } from './keys/lifecycle.subscription.followup_30d';
+// B0-MSG-05 part 3 — activation steps A1–A4.
+import { template as lifecycleActivationNoAcademy } from './keys/lifecycle.activation.no_academy';
+import { template as lifecycleActivationSiteUnpublished } from './keys/lifecycle.activation.site_unpublished';
+import { template as lifecycleActivationPaymentsAndCourse } from './keys/lifecycle.activation.payments_and_course';
+import { template as lifecycleActivationFirstProof } from './keys/lifecycle.activation.first_proof';
 // P64 C6 — hosted-video retention (plan §31/§32).
 import { template as retentionVideoWarning30d } from './keys/retention.video.warning_30d';
 import { template as retentionVideoWarning14d } from './keys/retention.video.warning_14d';
@@ -194,6 +199,10 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'lifecycle.subscription.price_change_notice': lifecycleSubscriptionPriceChangeNotice,
   'lifecycle.subscription.followup_7d': lifecycleSubscriptionFollowup7d,
   'lifecycle.subscription.followup_30d': lifecycleSubscriptionFollowup30d,
+  'lifecycle.activation.no_academy': lifecycleActivationNoAcademy,
+  'lifecycle.activation.site_unpublished': lifecycleActivationSiteUnpublished,
+  'lifecycle.activation.payments_and_course': lifecycleActivationPaymentsAndCourse,
+  'lifecycle.activation.first_proof': lifecycleActivationFirstProof,
   'retention.video.warning_30d': retentionVideoWarning30d,
   'retention.video.warning_14d': retentionVideoWarning14d,
   'retention.video.warning_7d': retentionVideoWarning7d,
