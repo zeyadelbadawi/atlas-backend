@@ -10,6 +10,8 @@ import type {
   PlatformContactTopic,
 } from '@prisma/client';
 
+import { clientIpPrefixTracker } from '../common/security/client-ip-throttler.guard';
+
 export const PLATFORM_CONTACT_TOPICS = [
   'sales',
   'support',
@@ -47,8 +49,15 @@ export const PLATFORM_CONTACT_MIN_FILL_MS = 3_000;
 /** Identical address + message within this window is stored once. */
 export const PLATFORM_CONTACT_DEDUPE_TTL_SECONDS = 600;
 
-/** Per-IP route throttle: 5 submissions per 10 minutes. */
-export const PLATFORM_CONTACT_THROTTLE = { limit: 5, ttl: 600_000 } as const;
+/**
+ * Per-client route throttle: 5 submissions per 10 minutes, keyed per IPv4
+ * address or per IPv6 /64 (`clientIpPrefixTracker`).
+ */
+export const PLATFORM_CONTACT_THROTTLE = {
+  limit: 5,
+  ttl: 600_000,
+  getTracker: clientIpPrefixTracker,
+} as const;
 
 /** Audit actions this module writes — see `AuditLogWriterService`. */
 export const PLATFORM_CONTACT_AUDIT_ACTIONS = {

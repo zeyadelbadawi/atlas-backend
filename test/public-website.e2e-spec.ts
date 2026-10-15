@@ -567,4 +567,34 @@ describe('Public Website Runtime (e2e)', () => {
       .send({ name: 'Attacker', email: 'attacker@example.com', message: 'x' });
     expect(response.status).toBe(404);
   });
+
+  it('the contact throttle counts one IPv6 /64 as one visitor (rotating the interface id is a 429); IPv4 addresses stay separate', async () => {
+    const { owner, academy } = await seedManagedAcademy('pub-contact-ipv6');
+    await createPublishedPage(owner, academy.id, 'contact-ipv6');
+    const group = () => Math.floor(Math.random() * 0xffff).toString(16);
+    const prefix = `2001:db8:${group()}:${group()}`;
+    const send = (ip: string, i: number) =>
+      request(app.getHttpServer())
+        .post(`/public/websites/${academy.id}/contact`)
+        .set('X-Real-IP', ip)
+        .send({
+          name: 'Visitor',
+          email: `visitor-${i}@example.com`,
+          message: `Hello ${i}`,
+        });
+
+    for (let i = 0; i < 5; i += 1) {
+      await send(`${prefix}:${i + 1}::${i + 9}`, i).expect(201);
+    }
+    expect((await send(`${prefix}:ffff:ffff:ffff:1`, 5)).status).toBe(429);
+    await send(`2001:db8:${group()}:${group()}::1`, 6).expect(201);
+
+    // IPv4: a sixth address is still its own bucket.
+    const v4 = `198.18.${Math.floor(Math.random() * 250)}`;
+    for (let i = 0; i < 5; i += 1) {
+      await send(`${v4}.10`, 10 + i).expect(201);
+    }
+    expect((await send(`${v4}.10`, 20)).status).toBe(429);
+    await send(`${v4}.11`, 21).expect(201);
+  });
 });

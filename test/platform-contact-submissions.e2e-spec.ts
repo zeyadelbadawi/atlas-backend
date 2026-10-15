@@ -72,6 +72,12 @@ function freshIp(): string {
   return `198.18.${(salt + Math.floor(ipCounter / 250)) % 255}.${(ipCounter % 250) + 1}`;
 }
 
+/** A fresh documentation-range IPv6 /64 prefix (`2001:db8:x:y`), four groups, no trailing colon. */
+function freshIpv6Prefix(): string {
+  const group = () => Math.floor(Math.random() * 0xffff).toString(16);
+  return `2001:db8:${group()}:${group()}`;
+}
+
 describe('Platform contact submissions (e2e)', () => {
   let app: INestApplication;
   let admin: PrismaClient;
@@ -281,6 +287,19 @@ describe('Platform contact submissions (e2e)', () => {
       expect(limited.status).toBe(429);
       // A different address is not affected.
       await submit(enquiry()).expect(201);
+    });
+
+    it('counts one IPv6 /64 as one client: rotating the interface id is still a 429', async () => {
+      const prefix = freshIpv6Prefix();
+      for (let i = 0; i < 5; i += 1) {
+        await submit(enquiry(), `${prefix}:${(i + 1).toString(16)}:0:0:${i + 7}`).expect(
+          201,
+        );
+      }
+      const rotated = await submit(enquiry(), `${prefix}:ffff:ffff:ffff:1234`);
+      expect(rotated.status).toBe(429);
+      // Another /64 is another client.
+      await submit(enquiry(), `${freshIpv6Prefix()}::1`).expect(201);
     });
 
     it.each([
