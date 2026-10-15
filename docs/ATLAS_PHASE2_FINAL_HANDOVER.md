@@ -235,7 +235,8 @@ redis **healthy**. Only Caddy publishes ports to the host.
 | Other | `NODE_ENV`, `PORT`, `PLATFORM_BASE_DOMAIN`, `CORS_ALLOWED_ORIGINS`, `MEDIA_MAX_UPLOAD_BYTES`, `ZOOM_WEBHOOK_SECRET_TOKEN` | Zoom token **yes** |
 
 **Absent by design:** `BASIC_VIDEO_REVOCATION_ENDPOINT`, `BASIC_VIDEO_REVOCATION_TOKEN`
-(no HTTP receiver exists — §L), `BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED`,
+(no HTTP receiver exists — §L; removed entirely by Workstream D, replaced by
+`BASIC_VIDEO_GATE_AUTHZ_SECRET`, required before the Normal flag may be enabled), `BASIC_VIDEO_ALLOWED_ORIGINS_CONFIGURED`,
 `FLAG_VIDEO_NORMAL_ACADEMY_IDS`, all `FLAG_CONTENT_PROTECTED_*`, all `FLAG_VIDEO_PREMIUM_*`,
 all `CLOUDFLARE_STREAM_*`. Unset flags default to **`off`** — an unset variable must
 never be why a rollout reaches an un-canaried academy.
@@ -523,6 +524,12 @@ TTLs (capped, not just defaulted), **no durable URL ever** for protected assets.
 
 **Worker gate** — verifies Atlas's HMAC token, enforces expiry, checks the KV denylist,
 fails **closed**. It enforces a decision Atlas already made; it never makes one.
+*Workstream D (Oct 2026, in the repository, not yet deployed):* the KV denylist — which
+nothing ever wrote — is replaced by a re-authorization call to Atlas
+(`POST /api/v1/video-gate/authorize`, HMAC with `GATE_AUTHZ_SECRET`), answer cached ≤ 30 s,
+fail closed. The deployed version recorded below predates it; the KV namespace and the
+`REVOCATION_MODE`/`DENYLIST_*` vars are gone from `wrangler.toml`. See
+`HOSTED_VIDEO_ACTIVATION_RUNBOOK.md` §8.
 
 **Capability honesty (AD-16)** — the grant reports what is actually enforced. Both tiers
 report `boundToSession: false` and `boundToDevice: false` (D-5: Cloudflare mints

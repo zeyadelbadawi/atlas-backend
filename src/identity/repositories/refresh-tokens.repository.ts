@@ -231,6 +231,52 @@ export class RefreshTokensRepository {
   }
 
   /**
+   * U-14d / OD-21 — the lost-response recovery check. Returns the successor
+   * row only when ALL of these hold, read in the token owner's context:
+   *   - the presented token exists and was retired at most `windowMs` ago;
+   *   - exactly ONE row of its family is newer than it — its direct
+   *     successor, so the successor has never itself been rotated;
+   *   - that row is the one `successorHash` names, and it is unrevoked and
+   *     unexpired (sign-out, a password change, a revoked device session,
+   *     the absolute cap or reuse revocation all leave it revoked).
+   * Read-only: re-issuing an existing successor writes nothing, so it can
+   * never fork the chain. Anything else is `null` and the caller falls back
+   * to the ordinary reuse rules.
+   */
+  async findReissuableSuccessor(
+    presentedTokenHash: string,
+    successorHash: string,
+    windowMs: number,
+  ): Promise<RefreshToken | null> {
+    const ownerId = await this.identityResolver.refreshTokenOwner(presentedTokenHash);
+    if (!ownerId) return null;
+    return this.asUser(ownerId, async (tx) => {
+      const now = new Date();
+      const presented = await tx.refreshToken.findUnique({
+        where: { tokenHash: presentedTokenHash },
+        select: { sessionId: true, revokedAt: true, createdAt: true },
+      });
+      if (!presented?.revokedAt) return null;
+      const age = now.getTime() - presented.revokedAt.getTime();
+      if (age < 0 || age > windowMs) return null;
+      const newer = await tx.refreshToken.findMany({
+        where: { sessionId: presented.sessionId, createdAt: { gt: presented.createdAt } },
+        take: 2,
+      });
+      if (newer.length !== 1) return null;
+      const [successor] = newer;
+      if (successor.tokenHash !== successorHash) return null;
+      if (
+        successor.revokedAt !== null ||
+        successor.expiresAt.getTime() <= now.getTime()
+      ) {
+        return null;
+      }
+      return successor;
+    });
+  }
+
+  /**
    * The session (family) a presented refresh token belongs to — revoked or
    * not — for cookie-identified sign-out. The owner comes from the token's
    * hash, never from the caller.
@@ -380,6 +426,14 @@ export class RefreshTokensRepository {
      * session.
      */
     absoluteMaxMs: { readonly management: number; readonly academy: number },
+    /**
+     * U-14d / OD-21 — runs inside the transaction once the successor row is
+     * written, BEFORE commit, so whatever it records (the lost-response
+     * recovery record) is already visible to a concurrent duplicate that
+     * was blocked on this row's lock. It must not throw; if it does, the
+     * whole rotation rolls back and the presented token stays live.
+     */
+    onRotated?: (created: RefreshToken) => Promise<void>,
   ): Promise<{ claimed: RefreshToken; created: RefreshToken | null } | null> {
     // The owner is looked up by the presented hash; an unknown token has no
     // owner and simply fails. Everything below runs in that owner's context,
@@ -456,6 +510,7 @@ export class RefreshTokensRepository {
         },
       });
 
+      if (onRotated) await onRotated(created);
       return { claimed, created };
     });
   }

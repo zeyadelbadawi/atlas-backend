@@ -72,8 +72,6 @@ import { EmailRiskService } from '../../identity/services/email-risk.service';
 import { RefreshTokensRepository } from '../../identity/repositories/refresh-tokens.repository';
 import { SessionRevocationService } from '../../identity/services/session-revocation.service';
 import { LearningLeaseService } from './learning-lease.service';
-import { VideoGateRevocationService } from '../../media/video/video-gate-revocation.service';
-import type { GateRevocationReason } from '../../media/video/video-gate-revocation.service';
 import { CommunicationService } from '../../communications/services/communication.service';
 import type { CommunicationEventKey } from '../../communications/catalog/communication-catalog';
 import type { EmitResult } from '../../communications/services/communication.service';
@@ -101,7 +99,6 @@ export class AcademyStudentsService {
     private readonly refreshTokensRepository: RefreshTokensRepository,
     private readonly sessionRevocationService: SessionRevocationService,
     private readonly learningLeaseService: LearningLeaseService,
-    private readonly gateRevocation: VideoGateRevocationService,
     private readonly emailRiskService: EmailRiskService,
     private readonly communicationService: CommunicationService,
   ) {}
@@ -350,12 +347,11 @@ export class AcademyStudentsService {
     // up to a minute later.
     await this.learningLeaseService.revokeAll(studentUserId, academyId);
 
-    // And at the DELIVERY GATE. The two above stop the next grant and the
-    // next heartbeat; a Normal-tier playback URL already in the player
-    // would otherwise keep serving bytes for the rest of its life. A
-    // blocked learner should stop watching, not stop watching in ten
-    // minutes.
-    await this.gateRevocation.revokeSessions(sessionIds, 'academy_membership_blocked');
+    // And at the DELIVERY GATE, without a call from here: a Normal-tier
+    // playback URL already in the player is re-authorized by the Worker
+    // against the membership and session rows just written
+    // (`VideoGateAuthorizationService`), so a blocked learner stops
+    // watching within the gate's ≤ 30 s cache window, not in ten minutes.
 
     await this.communicationService.enqueueAfterCommit(result.outboxId);
     return result.response;
@@ -744,47 +740,15 @@ export class AcademyStudentsService {
 
     // P64 Phase 2 — and the delivery gate, for the same reason the lease
     // is dropped: a refund or a manual revocation should stop the video
-    // that is playing right now, not merely refuse the next request.
-    // Scoped to this academy's sessions — a learner who studies at two
-    // academies keeps the other one.
-    await this.revokeGateSessionsForAcademy(
-      revoked.studentId,
-      academyId,
-      'enrollment_revoked',
-    );
+    // that is playing right now, not merely refuse the next request. The
+    // Worker re-authorizes each token against this enrollment
+    // (`VideoGateAuthorizationService`), so the playing video stops within
+    // the gate's ≤ 30 s cache window — scoped to exactly this course,
+    // where the old per-session push would have stopped every course the
+    // learner had open at this academy.
 
     await this.communicationService.enqueueAfterCommit(emitted.outboxId);
     return revoked.response;
-  }
-
-  /**
-   * Stops the video gate honouring this learner's credentials for ONE
-   * academy.
-   *
-   * Reads the sessions rather than taking them from the caller so it
-   * cannot be handed the wrong set, and scopes by `academyId` so a
-   * learner enrolled at two academies loses access only where their
-   * entitlement actually ended.
-   */
-  private async revokeGateSessionsForAcademy(
-    studentUserId: string,
-    academyId: string,
-    reason: GateRevocationReason,
-  ): Promise<void> {
-    if (!this.gateRevocation.isEnabled) return;
-    const sessions = await this.tenancyContextService.runInUserContext(
-      studentUserId,
-      (tx) =>
-        tx.refreshToken.findMany({
-          where: { userId: studentUserId, academyId, surface: 'academy' },
-          select: { sessionId: true },
-          distinct: ['sessionId'],
-        }),
-    );
-    await this.gateRevocation.revokeSessions(
-      sessions.map((session) => session.sessionId),
-      reason,
-    );
   }
 
   async updateExpiry(

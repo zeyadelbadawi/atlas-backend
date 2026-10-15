@@ -197,6 +197,8 @@ The owning worker has since corrected all four flags (`src/media/video/basic-vid
 
 **Residual note on the flag itself:** `isEnabled` (`:51-53`) is *configuration presence*, so `revocableBeforeExpiry: true` becomes true the moment the two environment variables are set — before any evidence that the gate is reachable or that the denylist is bound. A startup reachability probe, or reporting the capability from the last successful publish, would make the flag describe enforcement rather than intent.
 
+**Follow-up (Workstream D, Oct 2026).** `VideoGateRevocationService` never had a receiver and is removed. Revocation is now a pull: the Worker re-authorizes each token with `POST /video-gate/authorize` (`VideoGateAuthorizationService`), which re-checks durable state in the token user's RLS context; the Worker caches ≤ 30 s and fails closed. The flag is still *configuration presence* (`BASIC_VIDEO_GATE_AUTHZ_SECRET` + the gate), so the residual note stands in a narrower form: it can be true while an OLD Worker (pre-Workstream-D) is deployed. Mitigations: production refuses to enable the tier without the secret; the runbook makes the Worker redeploy a step (§4.3) and verifies a real revocation on the canary (§4.6); `atlas_video_gate_authz_total` falling to zero while learners play is an alert condition (§5).
+
 ### SEC-5 — the webhook verifier is resolved from a process-wide default, not the registry
 
 **Where.** `src/media/controllers/video-webhook.controller.ts:52-55` injects `VIDEO_PROVIDER`; `src/media/media.module.ts:117-130` binds that token from `config.provider` with a three-way branch.

@@ -196,6 +196,9 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'POST webhooks/email/:provider':
     'Svix signature (Resend) / URL secret (Brevo), replay-claimed',
   'POST webhooks/video/stream': 'Cloudflare Stream HMAC signature',
+  // Workstream D — the Normal tier's delivery Worker; 404 unless configured.
+  'POST video-gate/authorize':
+    'Worker HMAC over timestamp + raw body (±60 s), then the playback token is verified with Atlas’s signing secret',
   'POST live-sessions/webhook': 'Zoom x-zm-signature',
   'POST live-sessions/deauthorization': 'Zoom x-zm-signature',
   'POST payments/webhook': 'payment provider HMAC signature',

@@ -99,6 +99,23 @@ describe('validateEnv', () => {
     ).toThrow(/JWT_ACCESS_SECRET/);
   });
 
+  it('U-14d / OD-21: REFRESH_REISSUE_WINDOW_SECONDS is optional, 0..30, never longer', () => {
+    expect(validateEnv(VALID_BASE).REFRESH_REISSUE_WINDOW_SECONDS).toBeUndefined();
+    expect(
+      validateEnv({ ...VALID_BASE, REFRESH_REISSUE_WINDOW_SECONDS: '0' })
+        .REFRESH_REISSUE_WINDOW_SECONDS,
+    ).toBe(0);
+    expect(
+      validateEnv({ ...VALID_BASE, REFRESH_REISSUE_WINDOW_SECONDS: '30' })
+        .REFRESH_REISSUE_WINDOW_SECONDS,
+    ).toBe(30);
+    for (const bad of ['31', '3600', '-1', '1.5', 'forever']) {
+      expect(() =>
+        validateEnv({ ...VALID_BASE, REFRESH_REISSUE_WINDOW_SECONDS: bad }),
+      ).toThrow(/REFRESH_REISSUE_WINDOW_SECONDS/);
+    }
+  });
+
   it('rejects a JWT_ACCESS_SECRET shorter than 32 characters', () => {
     expect(() => validateEnv({ ...VALID_BASE, JWT_ACCESS_SECRET: 'too-short' })).toThrow(
       /JWT_ACCESS_SECRET/,

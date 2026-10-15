@@ -16,8 +16,10 @@
  * before it expires. A binding keeps the bytes on an Atlas hostname behind
  * an arbitrary verifier Atlas controls. That is the entire argument for
  * the Normal tier's security posture, and it is why `capabilities()` in
- * `basic-video.provider.ts` is allowed to claim `boundToSession: true` and
- * `revocableBeforeExpiry: true`.
+ * `basic-video.provider.ts` may claim `revocableBeforeExpiry: true` once
+ * this Worker re-authorizes with Atlas (`authz.js`, Workstream D). It
+ * still does NOT claim session or device binding: nothing here can tell
+ * which browser is presenting a token.
  *
  * WHAT THIS WORKER IS NOT. It is NOT the authorization authority. By the
  * time a token reaches this code, `LessonContentService` has already
@@ -29,8 +31,8 @@
  * there is deliberately no code path in this file that widens one.
  *
  * ZERO RUNTIME DEPENDENCIES. Nothing here imports anything the Workers
- * runtime does not itself provide — Web Crypto, `URL`, `Headers`,
- * `Response`, and the R2 and KV bindings. That is a hard requirement, not
+ * runtime does not itself provide — Web Crypto, `fetch`, `URL`, `Headers`,
+ * `Response`, and the R2 binding. That is a hard requirement, not
  * a preference: a security boundary with a supply chain is a security
  * boundary with somebody else's supply chain.
  */
@@ -41,6 +43,14 @@ import {
   parseRangeHeader,
   verifyGateToken,
 } from './gate.js';
+import { AUTHZ_DENY, DecisionCache, authorizeWithAtlas } from './authz.js';
+
+/**
+ * Per-isolate re-authorization cache (Workstream D). Bounded in size and in
+ * time — every entry dies at most 30 s after Atlas was asked — so it can
+ * never outlive a revocation by more than that. See `authz.js`.
+ */
+const decisionCache = new DecisionCache();
 
 /**
  * HTTP status for each refusal reason.
@@ -61,26 +71,16 @@ const DENY_STATUS = Object.freeze({
   [DENY.EXPIRED]: 403,
   [DENY.KEY_MISMATCH]: 403,
   [DENY.REVOKED]: 403,
+  [AUTHZ_DENY.UNAVAILABLE]: 503,
+  [AUTHZ_DENY.MISCONFIGURED]: 503,
 });
-
-/**
- * Cloudflare KV's own documented floor for `cacheTtl` is 30 seconds (the
- * API default is 60). Asking for less is an error, so a configured value
- * is clamped rather than passed through — an operator's typo must not take
- * playback down. The floor is used as the DEFAULT too, because on this
- * path `cacheTtl` is revocation latency: every second of caching is a
- * second longer that a revoked session keeps streaming from a colo that
- * has not re-read the denylist.
- */
-const KV_MIN_CACHE_TTL_SECONDS = 30;
 
 export default {
   /**
    * @param {Request} request
    * @param {Record<string, any>} env
-   * @param {{ waitUntil: (p: Promise<any>) => void }} ctx
    */
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     const url = new URL(request.url);
 
     // CORS preflight is answered before anything else and without touching
@@ -140,14 +140,29 @@ export default {
     }
 
     // REVOCATION BEFORE EXPIRY — the property a presigned URL cannot have.
-    // The token is cryptographically valid and unexpired, and we ask
-    // anyway. Because the verifier is a program Atlas controls, Atlas can
-    // change the answer for a credential that is already in the wild;
-    // a presign's answer was fixed at the moment it was signed.
-    const revoked = await isRevoked(env, verdict.claims, ctx);
-    if (revoked) {
-      logDeny({ reason: DENY.REVOKED, objectKey, claims: verdict.claims, request });
-      return errorResponse(request, env, DENY_STATUS[DENY.REVOKED], DENY.REVOKED);
+    // The token is cryptographically valid and unexpired, and we ask Atlas
+    // anyway (at most once per token per 30 s in this isolate). Because the
+    // verifier is a program Atlas controls, Atlas can change the answer for
+    // a credential that is already in the wild; a presign's answer was
+    // fixed at the moment it was signed. Fail closed: if Atlas cannot be
+    // asked, nothing is served (`authz.js`).
+    const authz = await authorizeWithAtlas({
+      token,
+      objectKey,
+      claims: verdict.claims,
+      env,
+      cache: decisionCache,
+      nowMs: Date.now(),
+    });
+    if (!authz.ok) {
+      logDeny({
+        reason: authz.reason,
+        detail: authz.detail,
+        objectKey,
+        claims: verdict.claims,
+        request,
+      });
+      return errorResponse(request, env, authz.status, authz.reason);
     }
 
     return serveObject({ request, env, objectKey, claims: verdict.claims });
@@ -282,59 +297,6 @@ function baseHeaders({ request, env, head, size }) {
 }
 
 /**
- * Checks the revocation overlay.
- *
- * WHAT IS BEING REVOKED. The SESSION is the unit, because the session is
- * what Atlas's concurrent-session lease already tracks and already ends: a
- * banned user, a cancelled enrollment or a released lease all express
- * themselves as "these session ids are no longer welcome". A user-level or
- * device-level entry would be a second source of truth, and two sources of
- * truth about who is revoked is how a revocation gets missed.
- *
- * HONEST LATENCY. A KV write is visible to other locations only after
- * propagation, and a `cacheTtl` on the read trades revocation latency for
- * cost and speed. So the property this delivers is "revoked within KV
- * propagation plus `cacheTtl`", NOT "revoked in the same millisecond". The
- * instant, zero-latency kill switch is rotating `GATE_SIGNING_SECRET`,
- * which invalidates every token minted with it at once — the whole-zone
- * blast radius the investigation ascribes to the WAF-token path, kept here
- * only as an emergency lever rather than as the routine mechanism.
- *
- * FAIL MODE. If the KV read throws, `DENYLIST_FAIL_MODE` decides. The
- * default is `closed`, matching Atlas's standing rule that an authorization
- * component which cannot reach its data refuses. An operator who would
- * rather keep playback up during a KV incident can set `open` and rely on
- * the ten-minute token lifetime plus secret rotation as the backstop — but
- * that is a decision to be taken deliberately, not a default to inherit.
- */
-async function isRevoked(env, claims, ctx) {
-  const mode = env.REVOCATION_MODE || 'kv';
-  if (mode === 'none') return false;
-  if (!env.GATE_DENYLIST) {
-    // Configured for KV revocation but no namespace bound. This is a
-    // deployment error, and treating it as "nothing is revoked" would
-    // silently downgrade the tier's headline capability.
-    console.error('gate: REVOCATION_MODE=kv but GATE_DENYLIST is not bound');
-    return (env.DENYLIST_FAIL_MODE || 'closed') !== 'open';
-  }
-  const cacheTtl = Math.max(
-    KV_MIN_CACHE_TTL_SECONDS,
-    Number(env.DENYLIST_CACHE_TTL_SECONDS ?? KV_MIN_CACHE_TTL_SECONDS),
-  );
-  try {
-    const entry = await env.GATE_DENYLIST.get(`rev:s:${claims.s}`, { cacheTtl });
-    return entry !== null;
-  } catch (error) {
-    console.error('gate: denylist read failed', error && error.message);
-    if (ctx && typeof ctx.waitUntil === 'function') {
-      // Nothing to await, but keep the shape: any future telemetry write
-      // belongs here rather than on the request's critical path.
-    }
-    return (env.DENYLIST_FAIL_MODE || 'closed') !== 'open';
-  }
-}
-
-/**
  * The accepted signing secrets, current first.
  *
  * Two slots rather than one so a secret can be rotated without a window in
@@ -448,11 +410,14 @@ function errorResponse(request, env, status, reason, extraHeaders) {
  * Atlas truncate them — enough to correlate an incident, not enough to
  * rebuild a user's viewing history from the log alone.
  */
-function logDeny({ reason, objectKey, claims, request }) {
+function logDeny({ reason, detail = null, objectKey, claims, request }) {
   console.log(
     JSON.stringify({
       at: 'video-gate',
       deny: reason,
+      // Atlas's own reason for a revocation (`session_revoked`,
+      // `device_revoked`, ...). Never sent to the client.
+      detail,
       key: objectKey,
       user: claims ? String(claims.u).slice(0, 8) : null,
       session: claims ? String(claims.s).slice(0, 8) : null,

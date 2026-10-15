@@ -35,7 +35,8 @@ The consequences are deliberate and load-bearing:
   RLS.
 - **It does not know who a user is.** It knows that Atlas said *some* user, session and
   device were entitled to *this* object until *this* second. It never queries the database,
-  never sees a JWT, and never makes a judgement about a person.
+  never sees a JWT, and never makes a judgement about a person — when it needs to know
+  whether that is still true, it **asks Atlas** (`src/authz.js`) and Atlas decides.
 - **It is not a substitute for the backend's checks.** If this Worker were removed entirely,
   no entitlement rule would change — playback would simply become unavailable. That is the
   right failure mode for an enforcement point.
@@ -57,10 +58,10 @@ Two more things it does not do, stated plainly so nobody assumes otherwise:
 | | |
 |---|---|
 | Verifies | HMAC-SHA256 over the base64url claims, in constant time via `crypto.subtle.verify` |
-| Rejects | missing token, malformed token, bad signature, malformed claims, expired `e`, `k` ≠ the key in the path, revoked session, foreign `Origin` |
+| Rejects | missing token, malformed token, bad signature, malformed claims, expired `e`, `k` ≠ the key in the path, a token Atlas no longer honours (`revoked`), Atlas unreachable (`authz_unavailable`, 503), missing authz settings (`gate_misconfigured`, 503), foreign `Origin` |
 | Serves | the object from an R2 **binding**, honouring `Range` → `206` + `Content-Range`, `416` on a seek past the end |
 | Always sets | `Accept-Ranges: bytes`, `Content-Type`, `Cache-Control: private, no-store`, `Content-Disposition: inline`, `X-Content-Type-Options: nosniff`, `ETag` |
-| Revokes | per request, against a KV denylist keyed by session id — the property a presigned URL cannot have |
+| Revokes | by re-authorizing each token with Atlas (`POST /api/v1/video-gate/authorize`), answer cached ≤ 30 s per isolate — the property a presigned URL cannot have |
 | Never logs | the token, in whole or in part |
 
 Request shape, fixed by `src/media/video/basic-video.provider.ts`:
@@ -68,7 +69,8 @@ Request shape, fixed by `src/media/video/basic-video.provider.ts`:
 ```
 GET https://<deliveryHost>/v/<encodeURIComponent(objectKey)>?t=<payload>.<hex hmac>
 
-payload = base64url(JSON.stringify({ k: objectKey, e: expUnixSeconds, u: userId, s: sessionId, d: deviceId }))
+payload = base64url(JSON.stringify({ k: objectKey, e: expUnixSeconds, u: userId, s: sessionId, d: deviceId,
+                                     a: academyId, c: courseId, l: lessonId }))
 ```
 
 ---
@@ -79,7 +81,9 @@ payload = base64url(JSON.stringify({ k: objectKey, e: expUnixSeconds, u: userId,
 wrangler.toml     bindings, vars, route — the whole deployment config
 package.json      { "type": "module" } and nothing else; there are no runtime dependencies
 src/gate.js       the pure verifier: token verification, path→key, Range parsing
-src/index.js      the Worker: R2 binding, streaming, headers, CORS, revocation, logging
+src/authz.js      revocation: the signed re-authorization call to Atlas and its bounded cache
+src/index.js      the Worker: R2 binding, streaming, headers, CORS, logging
+test/             `node --test` suite for all three files (no dependencies, no network)
 ```
 
 `src/gate.js` is separate from `src/index.js` for one specific reason: it depends on nothing
@@ -88,8 +92,8 @@ runtime and Node 18+. That is what let the DL-22 harness test *this* verifier ra
 second copy of it that might have drifted. Keep it that way — if `gate.js` ever needs a
 Workers-only API, the local validation stops being evidence.
 
-`package.json` exists only to declare `"type": "module"`, so that Node (and therefore the
-harness) treats these `.js` files as ES modules. It has no dependencies and must not acquire
+`package.json` declares `"type": "module"`, so that Node (and therefore the harness and
+`npm test`) treats these `.js` files as ES modules. It has no dependencies and must not acquire
 any: **a security boundary with a supply chain is a security boundary with somebody else's
 supply chain.**
 
@@ -100,16 +104,18 @@ supply chain.**
 ```bash
 cd deploy/video-gate-worker
 
-# 1. Create the revocation namespace and paste the ids into wrangler.toml.
-npx wrangler@latest kv namespace create GATE_DENYLIST
-npx wrangler@latest kv namespace create GATE_DENYLIST --preview
+# 1. Run the suite (Node 18+, no install needed).
+npm test
 
 # 2. Point wrangler.toml at the real bucket and route (both are commented placeholders).
 #    bucket_name  must equal the API's R2_PROTECTED_BUCKET (or "${R2_BUCKET}-protected").
 #    routes       must equal the API's BASIC_VIDEO_DELIVERY_HOST.
 
-# 3. Set the shared secret. It must equal the API's BASIC_VIDEO_SIGNING_SECRET.
+# 3. Set the shared secrets. The first must equal the API's BASIC_VIDEO_SIGNING_SECRET,
+#    the second the API's BASIC_VIDEO_GATE_AUTHZ_SECRET (a DIFFERENT value).
+#    Check ATLAS_AUTHZ_URL in wrangler.toml points at the API.
 npx wrangler@latest secret put GATE_SIGNING_SECRET
+npx wrangler@latest secret put GATE_AUTHZ_SECRET
 
 # 4. Ship it.
 npx wrangler@latest deploy
@@ -137,24 +143,30 @@ npx wrangler@latest secret delete GATE_SIGNING_SECRET_PREVIOUS
 
 **Emergency rotation** — a suspected secret leak — skips the courtesy: set the new secret and
 do **not** populate the previous slot. Every playback URL in flight dies at once. This is the
-zero-latency kill switch, and its blast radius is every viewer on the tier; the KV denylist
-is the per-session instrument for everything short of that.
+zero-latency kill switch, and its blast radius is every viewer on the tier; revoking in
+Atlas (below) is the per-learner instrument for everything short of that.
 
-### Revoking a session
+`GATE_AUTHZ_SECRET` rotates the same way on both sides, but has no previous slot: set the
+new value on the API and the Worker back to back, and expect `503 authz_unavailable` for
+the seconds in between (fail closed, by design).
 
-```bash
-npx wrangler@latest kv key put --binding GATE_DENYLIST "rev:s:<sessionId>" 1 --ttl 600
-```
+### Revoking a viewer
 
-The value is ignored; presence is the signal. The `--ttl` matches the longest token lifetime,
-so the list stays small on its own — after that every token naming the session has expired
-anyway and the entry has nothing left to revoke.
+There is nothing to do at the edge. Revoke in Atlas — sign the session out, remove the
+device, revoke the enrollment, block the learner, delete the account — and the next
+re-authorization refuses the token. `src/authz.js` caches Atlas's answer per token for at
+most `AUTHZ_CACHE_TTL_SECONDS` (≤ 30), so **every new request is refused within 30 s of the
+revocation**, at every edge location: there is no replication delay on top, because Atlas
+answers from its own database. What the bound does not cover: a response body already
+streaming at the moment of revocation is not cut off (browser players issue many short
+range requests, so they stop; a single whole-object `GET` can finish).
 
-**Honest latency.** Cloudflare documents KV writes as taking *"up to 60 seconds or more to be
-visible in other global network locations"*, and `DENYLIST_CACHE_TTL_SECONDS` (minimum 30)
-adds a colo-local cache on top. So the property is **"revoked within KV propagation plus the
-cache TTL"** — not "revoked in the same millisecond". Anyone quoting a revocation SLA to a
-customer needs that sentence, not the one in the capability matrix.
+**Why not the KV denylist this Worker used to read.** Nothing ever wrote it — Atlas held no
+Cloudflare credential, and this Worker answers 405 to every POST — so it revoked nothing.
+Making it work would have needed a Cloudflare API token on the API host, and would still
+have been eventually consistent for *"60 seconds or more"* (no upper bound) and limited on
+the free plan to 100,000 reads and 1,000 writes a day, a quota a fail-closed gate turns
+into an outage. The re-authorization call needs no binding and no paid feature.
 
 ---
 
@@ -166,23 +178,23 @@ Set in `wrangler.toml` under `[vars]`; secrets via `wrangler secret put`.
 |---|---|---|
 | `GATE_SIGNING_SECRET` | *(secret, required)* | Must equal the API's `BASIC_VIDEO_SIGNING_SECRET`. |
 | `GATE_SIGNING_SECRET_PREVIOUS` | *(secret, optional)* | Also accepted, for zero-downtime rotation. |
-| `REVOCATION_MODE` | `kv` | `kv` checks the denylist per request. `none` forfeits `revocableBeforeExpiry`, which `capabilities()` advertises as true — do not ship it. |
-| `DENYLIST_CACHE_TTL_SECONDS` | `30` | Colo-local cache on the denylist read. This *is* the revocation latency budget. 30 is Cloudflare's documented minimum. |
-| `DENYLIST_FAIL_MODE` | `closed` | What to do when the denylist cannot be read. See below. |
+| `GATE_AUTHZ_SECRET` | *(secret, required)* | Must equal the API's `BASIC_VIDEO_GATE_AUTHZ_SECRET`, and differ from `GATE_SIGNING_SECRET`. Signs the re-authorization calls. |
+| `ATLAS_AUTHZ_URL` | *(required, https)* | The API's `/api/v1/video-gate/authorize`. Missing or not https → every request `503 gate_misconfigured`. |
+| `AUTHZ_CACHE_TTL_SECONDS` | `30` | How long one isolate reuses Atlas's answer for one token. **This is the revocation bound.** Clamped to [0, 30]: it can be shortened (0 = ask on every request), never lengthened. |
+| `AUTHZ_TIMEOUT_MS` | `3000` | How long one call to Atlas may take before the request is refused (503). |
 | `ALLOWED_ORIGINS` | `""` | Comma-separated browser origins. Empty means no origin restriction. |
 | `ENFORCE_ORIGIN` | `true` | Whether a present-but-foreign `Origin` is refused, or merely not given CORS headers. |
 
-### `DENYLIST_FAIL_MODE`, and why it is a real decision
+### Failure policy: fail closed, no exceptions
 
-- **`closed`** (default) — a KV read failure refuses the request. Consistent with Atlas's
-  standing rule that an authorization component which cannot reach its data says no. The cost
-  is that a KV incident becomes a total playback outage for the tier.
-- **`open`** — playback survives the incident; a revoked learner keeps watching for at most
-  the remaining token lifetime (≤ 10 minutes), and signing-secret rotation remains available
-  as the backstop.
-
-The default is `closed` because a default should be the conservative one. If you switch it,
-record it as a deliberate availability-over-strictness decision, not as a config tweak.
+If Atlas cannot be asked — network error, timeout, any non-200 (including `401` from a
+secret mismatch and `429` from the API's rate limit), an unparseable answer — the request is
+refused `503 authz_unavailable`, **nothing is cached**, and the next request asks again. The
+only requests served without a fresh answer are those still inside a positive answer's
+≤ 30 s window, which is the revocation bound itself. There is no stale-while-revalidate, no
+grace period and deliberately no fail-open setting: the old `DENYLIST_FAIL_MODE=open` option
+is gone with the denylist. An Atlas outage is therefore a playback outage for the tier
+within 30 s — the same rule every other Atlas authorization component follows.
 
 ### The `Origin` check, honestly
 
@@ -226,7 +238,22 @@ If someone later proposes caching these bytes, the things they need to know firs
 
 ## Local validation
 
-There is no test suite in this directory, by design: the Worker's behaviour was validated by
-running **this exact source** under Node, backed by the local MinIO container over the real S3
-protocol. The harness, the transcripts and the numbers live with the spike document. Re-run it
-after any change to `gate.js`, and after bumping `compatibility_date`.
+`npm test` (or `node --test test/*.test.js`, Node 18+, also a Backend CI step) runs **this
+exact source** under Node's built-in test runner, with an in-memory R2-shaped binding and a
+stub Atlas that verifies the Worker's HMAC exactly as the API does. It covers: a valid token
+plays (200 and 206); expired tokens; revoked session, device and account refused within the
+30 s bound and at every request after (time simulated); cross-course and cross-academy reuse
+and claim tampering; Atlas unreachable, erroring or hanging → `503`, nothing cached;
+no stale authorization after an answer's window closes; a mismatched authorization secret;
+missing settings; the cache's size and time bounds; concurrent range requests sharing one
+call; and that the token is never logged.
+
+The API side of the same contract is `test/video-gate-authorization.e2e-spec.ts` (real
+Postgres with RLS). The original DL-22 harness (MinIO-backed range/streaming measurements)
+lives with the spike document; re-run it after any change to `gate.js`, and after bumping
+`compatibility_date`.
+
+**Not verifiable locally:** the real `workerd` isolate lifecycle (how long a module-scope
+cache lives), real R2 binding semantics, real egress latency from an edge location to the
+API, and Cloudflare's handling of a same-zone subrequest. These are first-deployment checks
+in `docs/HOSTED_VIDEO_ACTIVATION_RUNBOOK.md` §4.6.
