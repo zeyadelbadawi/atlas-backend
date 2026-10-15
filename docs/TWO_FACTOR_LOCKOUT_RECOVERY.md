@@ -2,6 +2,7 @@
 
 **Applies to:** every account with two-factor authentication (TOTP), and above all Platform Owners, who must have it to open any platform page once `PLATFORM_OWNER_TOTP_REQUIRED_FROM` has passed (default `2026-10-24T00:00:00Z`).
 **Record:** B0-OC-03. **Code:** `TwoFactorService.resetByOperator`, `src/scripts/reset-two-factor.ts`, e2e `test/two-factor-operator-reset.e2e-spec.ts`.
+**Platform Owner runbook:** `docs/platform-owner/DOC-PO-002-LOCKOUT-RECOVERY.md` (enrolment before the deadline, plus this procedure as a checklist; pending owner approval).
 
 Never store TOTP secrets or recovery codes in a repository, a ticket, a chat or a planning file. Keep recovery codes offline (printed, or in a password manager the owner alone controls).
 

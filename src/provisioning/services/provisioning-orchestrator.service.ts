@@ -58,6 +58,7 @@ import { buildFullHost } from '../../domain/utils/effective-base-domain.util';
 import { ProvisioningRequestsRepository } from '../repositories/provisioning-requests.repository';
 import { ProvisioningStepsRepository } from '../repositories/provisioning-steps.repository';
 import { CommunicationService } from '../../communications/services/communication.service';
+import { PlatformOwnerAlertService } from '../../communications/services/platform-owner-alert.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { WebsiteConfigurationService } from '../../website/services/website-configuration.service';
 import { WebsiteGenerationService } from '../../website/services/website-generation.service';
@@ -210,6 +211,8 @@ export class ProvisioningOrchestratorService {
     private readonly supportCasesRepository: SupportCasesRepository,
     private readonly supportCaseMessagesRepository: SupportCaseMessagesRepository,
     private readonly academyPaymentMethodsRepository: AcademyPaymentMethodsRepository,
+    // The auto-opened case tells the customer "Our team has been notified".
+    private readonly platformOwnerAlertService: PlatformOwnerAlertService,
   ) {}
 
   /** `TenancyContextService.runInTenantContext`, wrapped with `withTransientRetry` — the ONE call path every method in this class uses to touch the database, so the transient-connection-pool protection documented on `withTransientRetry` applies uniformly, not just at the one call site that first surfaced it. */
@@ -514,12 +517,12 @@ export class ProvisioningOrchestratorService {
     const requester = await this.usersRepository.findById(request.requestedByUserId);
     if (!requester) return;
 
-    await this.runTenantAsRequester(
+    const createdCaseId = await this.runTenantAsRequester(
       request.organizationId,
       request.requestedByUserId,
-      async (tx) => {
+      async (tx): Promise<string | null> => {
         const fresh = await this.provisioningRequestsRepository.findById(tx, request.id);
-        if (!fresh || fresh.autoSupportCaseId) return;
+        if (!fresh || fresh.autoSupportCaseId) return null;
 
         const created = await this.supportCasesRepository.create(tx, {
           organizationId: request.organizationId,
@@ -557,8 +560,21 @@ export class ProvisioningOrchestratorService {
             errorCode: error.code,
           },
         });
+        return created.id;
       },
     );
+
+    // The message above promises "Our team has been notified", so raise
+    // the same Platform Owner alert a customer-opened case raises
+    // (`SupportCasesService`): after the commit, best-effort, behind
+    // `FLAG_PLATFORM_OWNER_ALERTS_MODE`. `notify` never throws.
+    if (createdCaseId) {
+      this.platformOwnerAlertService.notify({
+        key: 'platform.support_case.created',
+        entity: { type: 'support_case', id: createdCaseId },
+        organizationId: request.organizationId,
+      });
+    }
   }
 
   /** Advances `current_step_key`/`status` without touching the step row — used when a step is discovered already `completed`/`skipped` on resume, so the request-level milestone stays consistent even though no new work happened. */

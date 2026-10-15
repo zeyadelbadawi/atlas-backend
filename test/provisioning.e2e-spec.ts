@@ -19,6 +19,7 @@ import { createAdminPrisma, seedOrganizationWithOwner, seedPlan } from './utils/
 import { ProvisioningProducer } from '../src/provisioning/queue/provisioning.producer';
 import { WebsiteGenerationService } from '../src/website/services/website-generation.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
+import { PlatformOwnerAlertService } from '../src/communications/services/platform-owner-alert.service';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
 
@@ -1221,6 +1222,18 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
       },
     });
 
+    // The ticket tells the customer "Our team has been notified": the
+    // Platform Owners must actually be alerted, through the same path a
+    // customer-opened case uses.
+    const alerts = app.get(PlatformOwnerAlertService, { strict: false });
+    const notify = jest.spyOn(alerts, 'notify');
+    const caseAlerts = () =>
+      notify.mock.calls.filter(
+        ([alert]) =>
+          alert.key === 'platform.support_case.created' &&
+          alert.organizationId === org.id,
+      );
+
     const created = await createRequest(owner, org.id, {
       academyName: uniqueName('Auto Case Academy'),
       requestedSubdomain: subdomain,
@@ -1281,9 +1294,20 @@ describe('Provisioning Orchestration — P14 (e2e)', () => {
     expect(messages).toHaveLength(1);
     expect(messages[0].body).not.toMatch(/slug|unique|constraint|P20\d\d|stack/i);
 
-    // Attempt 3 fails too: still exactly one case for this episode.
+    // The Platform Owners were alerted about this case, once.
+    expect(caseAlerts()).toHaveLength(1);
+    expect(caseAlerts()[0][0]).toMatchObject({
+      key: 'platform.support_case.created',
+      entity: { type: 'support_case', id: cases[0].id },
+      organizationId: org.id,
+    });
+
+    // Attempt 3 fails too: still exactly one case for this episode, and
+    // no second alert.
     await failAgain(second.failedAt);
     expect(await casesFor()).toHaveLength(1);
+    expect(caseAlerts()).toHaveLength(1);
+    notify.mockRestore();
   }, 120_000);
 
   it('18: retrying an already-ready request is refused with 409', async () => {
