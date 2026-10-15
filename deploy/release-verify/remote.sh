@@ -505,7 +505,10 @@ case "${1:-}" in
               console.log(["INFO ", new Date(j.time || Date.now()).toISOString(), "level=" + j.level,
                 j.context ? "ctx=" + red(j.context) : "", "msg=" + red(j.msg),
                 e.type || e.name ? "err=" + red(e.type || e.name) : "", e.code || e.Code ? "code=" + red(e.code || e.Code) : "",
-                e.message ? "errmsg=" + red(e.message) : "", e.$metadata && e.$metadata.httpStatusCode ? "s3status=" + e.$metadata.httpStatusCode : "",
+                e.message ? "errmsg=" + red(e.message) : "",
+                // PrismaService logs the Prisma error event as { message, target }.
+                !e.message && typeof j.message === "string" ? "errmsg=" + red(j.message) : "",
+                typeof j.target === "string" ? "target=" + red(j.target) : "", e.$metadata && e.$metadata.httpStatusCode ? "s3status=" + e.$metadata.httpStatusCode : "",
                 j.status ? "status=" + j.status : "", head, frames ? "at " + frames : "",
                 req.method ? req.method + " " + path.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/gi, ":id").replace(/[^\/]{24,}/g, "<redacted>") : ""].filter(Boolean).join(" "));
             }
