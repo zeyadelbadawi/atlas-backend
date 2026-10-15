@@ -594,7 +594,7 @@ export class CommunicationDispatchService {
         : branding.host;
     const actionUrl = path
       ? entry.branding === 'academy' && row.academyId
-        ? this.links.onHost(linkHost, path, locale)
+        ? this.links.onHost(linkHost, path, locale, branding.siteDefaultLocale)
         : this.links.platform(path)
       : null;
     return TemplateRegistry.render(
@@ -610,6 +610,7 @@ export class CommunicationDispatchService {
           locale,
           entry.branding === 'academy' ? branding.host : null,
           entry.audience,
+          branding.siteDefaultLocale,
         ),
       },
       values,
@@ -1081,7 +1082,12 @@ export class CommunicationDispatchService {
             subject: rendered.subject,
             url: path
               ? entry.branding === 'academy'
-                ? this.links.onHost(itemBranding.host, path, locale)
+                ? this.links.onHost(
+                    itemBranding.host,
+                    path,
+                    locale,
+                    itemBranding.siteDefaultLocale,
+                  )
                 : this.links.platform(path)
               : null,
           });
@@ -1098,6 +1104,7 @@ export class CommunicationDispatchService {
               locale,
               firstEntry.branding === 'academy' ? branding.host : null,
               firstEntry.audience,
+              branding.siteDefaultLocale,
             ),
           },
           { items: digestItems },

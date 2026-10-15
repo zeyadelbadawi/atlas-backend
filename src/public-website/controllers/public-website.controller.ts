@@ -123,7 +123,9 @@ export class PublicWebsiteController implements OnModuleInit {
     }
     response.setHeader('Content-Type', 'application/xml; charset=utf-8');
     response.setHeader('Cache-Control', 'public, max-age=300');
-    response.status(200).send(buildSitemapXml(files.urls, files.origin));
+    response
+      .status(200)
+      .send(buildSitemapXml(files.urls, files.origin, files.defaultLocale));
   }
 
   @Get('resolve')

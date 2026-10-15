@@ -30,6 +30,10 @@ export const RESERVED_PAGE_SLUGS: readonly string[] = [
   // never claim either slug.
   'sign-in',
   'sign-up',
+  // B0-WEB-02 — the language prefixes (`/ar/...`, and `/en/...` on an
+  // Arabic-default site): a page at either slug would be shadowed.
+  'ar',
+  'en',
 ];
 
 export const MAX_SEO_TITLE_LENGTH = 70;

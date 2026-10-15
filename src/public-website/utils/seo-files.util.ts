@@ -11,10 +11,18 @@
  * `resolvePathToPage` in the frontend): home is `/`, a core page is
  * `/<coreType>`, a custom page is `/<slug>`, a course is
  * `/courses/<slug>`; the course-details template page itself is never a
- * URL. Every URL is listed in English (unprefixed) with its Arabic
- * alternate under `/ar`, and `x-default` points at English, matching the
- * site's fixed locale routing.
+ * URL. Every URL is listed in the site's default language (unprefixed) with
+ * its other-language alternate under that language's prefix, and
+ * `x-default` points at the default language. B0-WEB-02: the default is
+ * English (alternate under `/ar`) unless the owner made it Arabic
+ * (alternate under `/en`).
  */
+import {
+  DEFAULT_PUBLIC_WEBSITE_LOCALE,
+  PUBLIC_WEBSITE_LOCALES,
+  localePathPrefix,
+  type PublicWebsiteLocale,
+} from '../../website/constants/locale.constants';
 
 export interface SeoFilePage {
   readonly pageType: string;
@@ -100,21 +108,39 @@ function escapeXml(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
-function arabicPath(path: string): string {
-  return path === '/' ? '/ar' : `/ar${path}`;
+/** `path` (unprefixed, e.g. `/about` or `/`) as served in `locale`: `/ar/about`, `/ar` for the root. */
+export function localizedSitePath(
+  path: string,
+  locale: PublicWebsiteLocale,
+  defaultLocale: PublicWebsiteLocale = DEFAULT_PUBLIC_WEBSITE_LOCALE,
+): string {
+  const prefix = localePathPrefix(locale, defaultLocale);
+  if (!prefix) return path;
+  return path === '/' ? prefix : `${prefix}${path}`;
 }
 
-/** `origin` is the Academy's canonical origin, e.g. `https://elzozo.atlass.dpdns.org`. */
-export function buildSitemapXml(urls: readonly SitemapUrl[], origin: string): string {
+/**
+ * `origin` is the Academy's canonical origin, e.g. `https://elzozo.atlass.dpdns.org`.
+ * Each `<url>` is the default-language URL with one alternate per language
+ * (always `en` then `ar`, so every page's set is reciprocal) and `x-default`.
+ */
+export function buildSitemapXml(
+  urls: readonly SitemapUrl[],
+  origin: string,
+  defaultLocale: PublicWebsiteLocale = DEFAULT_PUBLIC_WEBSITE_LOCALE,
+): string {
   const nodes = urls.map((url) => {
-    const en = escapeXml(origin + url.path);
-    const ar = escapeXml(origin + arabicPath(url.path));
+    const href = (locale: PublicWebsiteLocale) =>
+      escapeXml(origin + localizedSitePath(url.path, locale, defaultLocale));
+    const main = href(defaultLocale);
     return [
       '  <url>',
-      `    <loc>${en}</loc>`,
-      `    <xhtml:link rel="alternate" hreflang="en" href="${en}"/>`,
-      `    <xhtml:link rel="alternate" hreflang="ar" href="${ar}"/>`,
-      `    <xhtml:link rel="alternate" hreflang="x-default" href="${en}"/>`,
+      `    <loc>${main}</loc>`,
+      ...PUBLIC_WEBSITE_LOCALES.map(
+        (locale) =>
+          `    <xhtml:link rel="alternate" hreflang="${locale}" href="${href(locale)}"/>`,
+      ),
+      `    <xhtml:link rel="alternate" hreflang="x-default" href="${main}"/>`,
       `    <lastmod>${escapeXml(url.lastModified)}</lastmod>`,
       `    <changefreq>${url.changeFrequency}</changefreq>`,
       `    <priority>${url.priority.toFixed(1)}</priority>`,

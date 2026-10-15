@@ -3495,6 +3495,10 @@ model WebsiteConfiguration {
   /// column, or never generated). Stamped once by `WebsiteGenerationService`.
   templateKey       String?              @map("template_key")
   templateVersion   Int?                 @map("template_version")
+  /// B0-WEB-02 — the site's main language: `en` (English at `/`, Arabic
+  /// under `/ar`) or `ar` (Arabic at `/`, English under `/en`). The working
+  /// copy; visitors see the value in `publishedSnapshot` (absent = `en`).
+  defaultLocale     String               @default("en") @map("default_locale")
   brand             Json
   seo               Json
   navigation        Json

@@ -85,6 +85,10 @@ import {
   MIN_COURSE_CATEGORIES,
   SECTION_TYPES,
 } from '../constants/website.constants';
+import {
+  DEFAULT_PUBLIC_WEBSITE_LOCALE,
+  type PublicWebsiteLocale,
+} from '../constants/locale.constants';
 import { isAllowedImageValue } from './image-value.util';
 import { isSafeExternalUrl } from './url-safety.util';
 
@@ -124,15 +128,55 @@ export function coerceLegacyLocalized(value: unknown): unknown {
 const optionalArabic = (maxLength: number) =>
   z.string().max(maxLength, 'validation:maxLength').default('');
 
-/** `en` is required non-empty (the one always-complete language); `ar` may be empty or absent — an incomplete translation degrades to `en` at render time, it never blocks a save. */
-export const localizedRequired = (maxLength: number) =>
-  z.preprocess(
+/*
+ * B0-WEB-02 — WHICH LANGUAGE IS REQUIRED FOLLOWS THE SITE'S DEFAULT.
+ *
+ * On an English-default site (every site until now, and still the default)
+ * English is the required language and Arabic optional. On an
+ * Arabic-default site the two swap: Arabic is required and English may be
+ * empty or absent. The schemas below are module-level constants shared by
+ * every caller, so the direction is supplied around the parse rather than
+ * baked into a second copy of every section schema: `withRequiredLocale`
+ * sets it for one synchronous parse (zod's `safeParse` is synchronous, so
+ * nothing else can run in between) and `localizedRequired` reads it when it
+ * parses. Outside `withRequiredLocale` it is `en`, which is exactly the
+ * schema this was before.
+ */
+let requiredLocale: PublicWebsiteLocale = DEFAULT_PUBLIC_WEBSITE_LOCALE;
+
+/** Runs `parse` (a synchronous zod parse) with `locale` as the language every `localizedRequired` field must fill. */
+export function withRequiredLocale<T>(locale: PublicWebsiteLocale, parse: () => T): T {
+  const previous = requiredLocale;
+  requiredLocale = locale;
+  try {
+    return parse();
+  } finally {
+    requiredLocale = previous;
+  }
+}
+
+/** `en` is required non-empty (the one always-complete language); `ar` may be empty or absent — an incomplete translation degrades to `en` at render time, it never blocks a save. On an Arabic-default site the roles swap (see `withRequiredLocale`). */
+export const localizedRequired = (maxLength: number) => {
+  const englishRequired = z.preprocess(
     coerceLegacyLocalized,
     z.object({
       en: z.string().min(1, 'validation:required').max(maxLength, 'validation:maxLength'),
       ar: optionalArabic(maxLength),
     }),
   );
+  const arabicRequired = z.preprocess(
+    coerceLegacyLocalized,
+    z.object({
+      en: z.string().max(maxLength, 'validation:maxLength').default(''),
+      ar: z.string().min(1, 'validation:required').max(maxLength, 'validation:maxLength'),
+    }),
+  );
+  return z.lazy(() =>
+    requiredLocale === 'ar'
+      ? (arabicRequired as unknown as typeof englishRequired)
+      : englishRequired,
+  );
+};
 
 /** Neither key is required to be non-empty — matches the field's own plain-string equivalent already being optional-content (e.g. a `description` that may be blank). */
 export const localizedOptional = (maxLength: number) =>
