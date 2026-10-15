@@ -498,6 +498,13 @@ export interface IdentityConfig {
   readonly jwtAccessSecret: string;
   readonly jwtAccessTtlSeconds: number;
   readonly refreshTokenTtlDays: number;
+  /**
+   * U-14d / OD-21 — how long after a cookie refresh rotated a token the SAME
+   * browser may present that token again and be handed the successor it
+   * already minted (the response was lost). `0` turns recovery off. Capped
+   * at 30 by `env.validation.ts`; see docs/REFRESH_TOKEN_LOST_RESPONSE_RECOVERY.md.
+   */
+  readonly refreshReissueWindowSeconds: number;
   readonly passwordResetTokenTtlMinutes: number;
   /** Phase 10.1 — verification-link lifetime. Longer than a password reset: a signup email is often opened hours later, and the token is single-use and low-value on its own. */
   readonly emailVerificationTokenTtlMinutes: number;
@@ -682,6 +689,7 @@ export default () => {
     jwtAccessSecret: env.JWT_ACCESS_SECRET,
     jwtAccessTtlSeconds: Number(env.JWT_ACCESS_TTL_SECONDS ?? 900),
     refreshTokenTtlDays: Number(env.REFRESH_TOKEN_TTL_DAYS ?? 30),
+    refreshReissueWindowSeconds: Number(env.REFRESH_REISSUE_WINDOW_SECONDS ?? 30),
     passwordResetTokenTtlMinutes: Number(env.PASSWORD_RESET_TOKEN_TTL_MINUTES ?? 45),
     emailVerificationTokenTtlMinutes: Number(
       env.EMAIL_VERIFICATION_TOKEN_TTL_MINUTES ?? 1440,

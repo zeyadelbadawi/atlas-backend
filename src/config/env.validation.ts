@@ -135,6 +135,11 @@ const EnvSchema = z.object({
 
   // Refresh token TTL — master plan §8: "long-lived (e.g. 30 days)".
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  // U-14d / OD-21 — lost-response refresh recovery window, in seconds. A
+  // hard ceiling of 30: a longer window would let a just-retired token keep
+  // working for longer than a lost response plausibly takes to retry, which
+  // is exactly the weakening rotation exists to prevent. `0` disables it.
+  REFRESH_REISSUE_WINDOW_SECONDS: z.coerce.number().int().min(0).max(30).optional(),
 
   // Password reset token TTL — master plan §5.1/§8: "short-lived (e.g. 30-60 min)".
   PASSWORD_RESET_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(45),

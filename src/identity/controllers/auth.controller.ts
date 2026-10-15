@@ -213,7 +213,12 @@ export class AuthController {
     try {
       // Re-read on every refresh so `lastUsedAt` tracks genuine session
       // activity rather than only the original sign-in.
-      return await this.authService.refresh(presented, sessionContext(request));
+      // U-14d / OD-21 — the transport is the server's own observation, never
+      // the client's claim: only a cookie refresh can recover a lost response.
+      return await this.authService.refresh(presented, {
+        ...sessionContext(request),
+        refreshChannel: fromCookie ? 'cookie' : 'body',
+      });
     } catch (error) {
       // A refused refresh clears the cookie — except one that merely lost a
       // race to a concurrent refresh: the browser already holds the newer

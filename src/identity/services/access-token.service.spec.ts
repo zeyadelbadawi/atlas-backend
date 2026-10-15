@@ -8,6 +8,7 @@ function buildIdentityConfig(overrides: Partial<IdentityConfig> = {}): IdentityC
     jwtAccessSecret: 'unit-test-secret-at-least-32-characters-long',
     jwtAccessTtlSeconds: 900,
     refreshTokenTtlDays: 30,
+    refreshReissueWindowSeconds: 30,
     passwordResetTokenTtlMinutes: 45,
     emailVerificationTokenTtlMinutes: 1440,
     signupOrganizationMode: 'off',
