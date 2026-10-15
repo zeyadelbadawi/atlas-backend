@@ -12,6 +12,15 @@
  * precise reason the schema keeps the key and the URL as separate fields:
  * "kept separate from `url` so the CDN/domain can change without a data
  * migration".
+ *
+ * D5-4 (B0-MED-05 residual) — EXCEPT FOR A PROTECTED ASSET, whose `url` is
+ * `null`. Deriving one from its key produced a path under the PUBLIC media
+ * route for an object that lives in the separate protected bucket: the
+ * route refuses it (404) and the bytes are not in the public bucket anyway,
+ * so it never exposed the file, but the staff library rendered it as an
+ * ordinary link and image. A protected file has no durable address; staff
+ * open it with `POST …/media/:assetId/grant`, learners through the lesson
+ * grant. `protected` states the same thing as a flag the UI can branch on.
  */
 import type { MediaAsset as PrismaMediaAsset } from '@prisma/client';
 
@@ -42,7 +51,10 @@ export interface MediaAssetResponse {
   readonly type: PrismaMediaAsset['type'];
   readonly status: PrismaMediaAsset['status'];
   readonly fileName: string;
-  readonly url: string;
+  /** `null` for a protected asset (see the header) — never a fetchable address. */
+  readonly url: string | null;
+  /** D5-4 — true exactly when `access` is `protected`; such an asset has no `url`. */
+  readonly protected: boolean;
   readonly altText?: string;
   readonly mimeType: string;
   readonly sizeBytes: number;
@@ -60,13 +72,15 @@ export interface MediaAssetResponse {
 }
 
 export function toMediaAssetResponse(asset: PrismaMediaAsset): MediaAssetResponse {
+  const isProtected = asset.access === 'protected';
   return {
     id: asset.id,
     academyId: asset.academyId,
     type: asset.type,
     status: asset.status,
     fileName: asset.fileName,
-    url: toMediaAssetUrl(asset.storageKey),
+    url: isProtected ? null : toMediaAssetUrl(asset.storageKey),
+    protected: isProtected,
     altText: asset.altText ?? undefined,
     mimeType: asset.mimeType,
     // `bigint` at rest (master plan §5.9) — a `Number` conversion is safe

@@ -82,6 +82,12 @@ export interface VideoUploadTicket {
   readonly requiresCompletionCall: boolean;
 }
 
+/** D5-4 — a staff member's short-lived link to one protected file. */
+export interface ProtectedFileGrant {
+  readonly url: string;
+  readonly expiresAt: string;
+}
+
 export interface UploadProtectedFileInput {
   readonly fileName: string;
   /** `data:` URI or bare base64 — the same bridge `MediaService.upload` accepts. */
@@ -261,6 +267,52 @@ export class ProtectedMediaService {
 
     await this.tenantUsageRecomputeProducer.enqueueOne(organizationId);
     return asset;
+  }
+
+  /**
+   * D5-4 (B0-MED-05 residual) — staff preview/download of a protected FILE
+   * from the Media Library.
+   *
+   * The library list reports no `url` for a protected asset, so this is the
+   * only way staff reach its bytes, and it is the same delivery a learner's
+   * lesson grant uses for a protected file (`ContentGrantSigner.signFile` →
+   * `ProtectedMediaStorage.presignGet`): a presigned GET on the protected
+   * bucket, at the store's clamped TTL, never cached.
+   *
+   * Authorization is the managing tier of THIS academy — the same rule that
+   * may upload, attach and archive these files — re-checked here under the
+   * tenant's RLS context, and the asset is looked up by id AND academy, so
+   * another academy's asset is a 404 even with a guessed id. A purged row is
+   * a 404 too. Provider-hosted video is refused: its playback credential is
+   * bound to a session and device and is issued only by the lesson grant.
+   */
+  async createStaffFileGrant(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    assetId: string,
+  ): Promise<ProtectedFileGrant> {
+    const asset = await this.tenancyContextService.runInTenantContext(
+      organizationId,
+      async (tx) => {
+        await this.assertCanManage(tx, academyId, userId);
+        return tx.mediaAsset.findFirst({
+          where: { id: assetId, academyId, access: 'protected' },
+        });
+      },
+    );
+    if (!asset || asset.deletedAt || asset.status === 'deleted') {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    if (asset.provider !== 'r2' || !asset.storageKey) {
+      throw new BadRequestException({ messageKey: 'errors.media.previewUnavailable' });
+    }
+    const ttlSeconds = this.storage.maxTtlSeconds;
+    const url = await this.storage.presignGet(asset.storageKey, ttlSeconds);
+    return {
+      url,
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+    };
   }
 
   async createVideoUpload(

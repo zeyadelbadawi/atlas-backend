@@ -51,10 +51,6 @@ import type {
 
 const RECENT_ACTIVITY_LIMIT = 10;
 
-/** B0-COM-02 — the manual-sales windows the revenue card offers. */
-const MANUAL_SALES_WINDOWS_DAYS = [7, 30, 90] as const;
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 @Injectable()
 export class DashboardService {
   constructor(
@@ -166,16 +162,7 @@ export class DashboardService {
             : Promise.resolve(null),
           // B0-COM-02 / B0-SEC-03 — finance data, read only for the owner.
           includeRevenue
-            ? Promise.all(
-                MANUAL_SALES_WINDOWS_DAYS.map(async (days) => ({
-                  days,
-                  totals: await this.dashboardMetricsRepository.sumManualSalesSince(
-                    tx,
-                    scope,
-                    new Date(Date.now() - days * DAY_MS),
-                  ),
-                })),
-              )
+            ? this.dashboardMetricsRepository.sumManualSalesWindows(tx, scope)
             : Promise.resolve(null),
         ]);
 
