@@ -54,6 +54,13 @@ import { SubscriptionReceiptService } from './subscription-receipt.service';
 export interface ApplySuccessOptions {
   /** Who confirmed the money: a human reviewer (default) or a gateway webhook. Recorded on a gift. */
   readonly source?: GiftSource;
+  /**
+   * Only a NON-TERMINAL payment may succeed (provider webhooks): a late
+   * `payment.succeeded` must not revive a payment already failed,
+   * cancelled or expired. A reviewer's approval, already gated by
+   * `claimPendingReview`, leaves this off.
+   */
+  readonly fromNonTerminalOnly?: boolean;
 }
 
 export interface AppliedPayment {
@@ -115,6 +122,7 @@ export class PaymentApplicationService {
     const transitioned = await this.paymentsRepository.markSucceededIfNotAlready(
       tx,
       payment.id,
+      { fromNonTerminalOnly: options.fromNonTerminalOnly },
     );
     const updated = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
     if (!transitioned) return { payment: updated, receipt: NO_RECEIPT };
