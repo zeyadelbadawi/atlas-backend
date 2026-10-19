@@ -100,6 +100,18 @@ export class CheckoutService {
             messageKey: 'errors.checkout.annualPlanChangeViaSupport',
           });
         }
+
+        // B0-MED-03 — a hidden Premium plan (`displayOrder <= 0`, Catalog
+        // containment) is not for sale: only an organization already on it
+        // may renew it (B0-CAT-03). Anyone else gets the unknown-plan answer.
+        const target = await this.plansRepository.findByKey(input.target.planKey);
+        if (
+          target?.family === 'premium' &&
+          target.displayOrder <= 0 &&
+          current?.plan.key !== target.key
+        ) {
+          throw new NotFoundException({ messageKey: 'errors.checkout.planNotFound' });
+        }
       }
 
       // CF-23 — an add-on restricted to some plans (`compatiblePlanKeys`)
