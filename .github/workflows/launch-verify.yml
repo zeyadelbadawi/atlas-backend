@@ -38,6 +38,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      # Public repository, public logs: mask the mailbox before any step
+      # prints its env (read from the event payload, never a step header).
+      - name: Mask the inputs
+        run: |
+          v=$(jq -r '.inputs.mailbox // empty' "$GITHUB_EVENT_PATH")
+          [ -n "$v" ] && echo "::add-mask::$v"
+          true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -67,6 +74,13 @@ jobs:
     env:
       OUT: ${{ github.workspace }}/launch-verify-out
     steps:
+      # Public repository, public logs: mask the mailbox before any step
+      # prints its env (read from the event payload, never a step header).
+      - name: Mask the inputs
+        run: |
+          v=$(jq -r '.inputs.mailbox // empty' "$GITHUB_EVENT_PATH")
+          [ -n "$v" ] && echo "::add-mask::$v"
+          true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -107,6 +121,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      # Public repository, public logs: mask the mailbox before any step
+      # prints its env (read from the event payload, never a step header).
+      - name: Mask the inputs
+        run: |
+          v=$(jq -r '.inputs.mailbox // empty' "$GITHUB_EVENT_PATH")
+          [ -n "$v" ] && echo "::add-mask::$v"
+          true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -136,6 +157,13 @@ jobs:
     env:
       OUT: ${{ github.workspace }}/launch-verify-out
     steps:
+      # Public repository, public logs: mask the mailbox before any step
+      # prints its env (read from the event payload, never a step header).
+      - name: Mask the inputs
+        run: |
+          v=$(jq -r '.inputs.mailbox // empty' "$GITHUB_EVENT_PATH")
+          [ -n "$v" ] && echo "::add-mask::$v"
+          true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -175,6 +203,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      # Public repository, public logs: mask the mailbox before any step
+      # prints its env (read from the event payload, never a step header).
+      - name: Mask the inputs
+        run: |
+          v=$(jq -r '.inputs.mailbox // empty' "$GITHUB_EVENT_PATH")
+          [ -n "$v" ] && echo "::add-mask::$v"
+          true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

@@ -20,6 +20,17 @@ on:
           are its plus-addresses (<local>+atlas-onb-<run>-a@gmail.com).
         required: true
         type: string
+      phone_a:
+        description: >-
+          Journey A's mobile number (national format, e.g. 01xxxxxxxxx), one
+          the owner controls and not already on an Atlas account. Masked in
+          the log.
+        required: false
+        type: string
+      phone_b:
+        description: Journey B's mobile number (a different one). Masked in the log.
+        required: false
+        type: string
       journeys:
         description: Which journeys to run
         required: true
@@ -42,6 +53,16 @@ jobs:
       BASE_URL: https://atlass.dpdns.org
       OUT: ${{ github.workspace }}/journey-out
     steps:
+      # The repository is public, and so are its logs: mask the mailbox and
+      # phone numbers before any step prints its env. Read from the event
+      # payload so the raw values never appear in a step header.
+      - name: Mask the inputs
+        run: |
+          for k in mailbox phone_a phone_b; do
+            v=$(jq -r --arg k "$k" '.inputs[$k] // empty' "$GITHUB_EVENT_PATH")
+            [ -n "$v" ] && echo "::add-mask::$v"
+          done
+          true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -66,6 +87,8 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           SSH_KEY_FILE: /home/runner/.ssh/deploy_key
           MAILBOX: ${{ inputs.mailbox }}
+          PHONE_A: ${{ inputs.phone_a }}
+          PHONE_B: ${{ inputs.phone_b }}
           JOURNEYS: ${{ inputs.journeys }}
           RUN_TAG: ${{ github.run_id }}
         run: |
@@ -83,7 +106,8 @@ jobs:
             email="${MAILBOX}+atlas-onb-${RUN_TAG}-${tag}@gmail.com"
             echo "== Journey $j"
             echo "INFO  [$j] trial subject before signup: $(remote eligible "$email")"
-            JOURNEY="$j" JOURNEY_EMAIL="$email" node journey.mjs || rc=1
+            phone=PHONE_${j}
+            JOURNEY="$j" JOURNEY_EMAIL="$email" JOURNEY_PHONE="${!phone:-}" node journey.mjs || rc=1
           done
           exit $rc
       - name: Upload screenshots
@@ -92,4 +116,5 @@ jobs:
         with:
           name: onboarding-journey-screenshots
           path: journey-out
-          retention-days: 14
+          # Screenshots show test addresses; keep them only briefly (public repo).
+          retention-days: 3

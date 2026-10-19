@@ -29,6 +29,7 @@ const BASE = (process.env.BASE_URL || '').replace(/\/$/, '');
 const API = process.env.API_URL || `${BASE}/api/v1`;
 const JOURNEY = process.env.JOURNEY || 'A';
 const EMAIL = process.env.JOURNEY_EMAIL;
+const PHONE = process.env.JOURNEY_PHONE;
 const OUT = process.env.OUT || path.join(here, 'out');
 const LANG = JOURNEY === 'B' ? 'ar' : 'en';
 const VIEWPORT = JOURNEY === 'B' ? { width: 390, height: 844 } : { width: 1440, height: 900 };
@@ -118,11 +119,9 @@ try {
   check('signup-options: organization signup on', options.organizationSignup === true);
   info(`server trial plans: ${options.trialPlans.map((pl) => pl.key).join(',')}`);
 
-  await p.goto(`${BASE}/`); await p.waitForLoadState('networkidle'); await acceptCookies();
-  const cta = p.locator('a[href^="/auth/register"]:visible').first();
-  check('landing page has a visible Start-for-Free link to signup', (await cta.count()) === 1,
-    (await cta.count()) ? `"${(await cta.innerText()).trim()}"` : 'none');
-  if (await cta.count()) await cta.click(); else await p.goto(`${BASE}/auth/register`);
+  // B0-WEB-13 (DL-36): the platform root is a noindex holding page with no
+  // signup link, so the journey starts where signup lives.
+  await p.goto(`${BASE}/auth/register`);
   await p.waitForURL('**/auth/register**'); await p.waitForLoadState('networkidle'); await acceptCookies();
   await p.locator('#organizationName').waitFor({ timeout: 20000 });
 
@@ -141,9 +140,14 @@ try {
   await p.fill('#email', EMAIL);
   await p.fill('#password', PASSWORD); await p.fill('#confirmPassword', PASSWORD);
   await p.fill('#organizationName', `Atlas Onboarding Verify ${JOURNEY} ${RUN}`);
+  // The form requires a mobile number (unique per account): one the owner
+  // controls, per journey, never printed.
+  if (!PHONE) throw new Error('JOURNEY_PHONE is required: signup asks for a mobile number');
+  await p.fill('#phoneNumber', PHONE);
   const firstPlan = options.trialPlans[0];
   if (firstPlan) await p.getByTestId(`trial-plan-${firstPlan.key}`).getByRole('radio').click();
-  await p.getByRole('checkbox').first().click();
+  // By id: the WhatsApp-consent checkbox now comes first.
+  await p.locator('#acceptTerms').click();
   await step('signup-filled');
   const before = visited.length;
   await submit.click();
