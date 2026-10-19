@@ -183,13 +183,18 @@ describe('helpers', () => {
     const MAX_COST_VS_BENIGN = 15;
     /** Hard ceiling at full size: catches a catastrophic regression on any runner. */
     const CEILING_MS = 1_000;
-    /** Below this a measurement is timer noise, so growth is measured from here. */
-    const NOISE_FLOOR_MS = 1;
+    /**
+     * Below this a measurement is timer noise, so growth is measured from
+     * here. 2 ms, not 1: the 5 KB sample runs in about 1 ms, so with a 1 ms
+     * floor one slow sample alone moved the ratio past 25 on a shared CI
+     * runner (27.6x on 19 Oct 2026). Quadratic still reads about 50x.
+     */
+    const NOISE_FLOOR_MS = 2;
 
-    /** Best of three, so a GC pause on a shared runner is not a failure. */
+    /** Best of five, so a GC pause on a shared runner is not a failure. */
     function fastestMs(input: string): number {
       let best = Infinity;
-      for (let i = 0; i < 3; i += 1) {
+      for (let i = 0; i < 5; i += 1) {
         const started = performance.now();
         sanitizeRichText(input);
         best = Math.min(best, performance.now() - started);
