@@ -102,14 +102,11 @@ export class CheckoutService {
         }
 
         // B0-MED-03 — a hidden Premium plan (`displayOrder <= 0`, Catalog
-        // containment) is not for sale: only an organization already on it
-        // may renew it (B0-CAT-03). Anyone else gets the unknown-plan answer.
+        // containment) is not for sale, renewals included: the owner decided
+        // on 19 Oct that the existing Premium subscriptions end at their
+        // period end. Everyone gets the unknown-plan answer.
         const target = await this.plansRepository.findByKey(input.target.planKey);
-        if (
-          target?.family === 'premium' &&
-          target.displayOrder <= 0 &&
-          current?.plan.key !== target.key
-        ) {
+        if (target?.family === 'premium' && target.displayOrder <= 0) {
           throw new NotFoundException({ messageKey: 'errors.checkout.planNotFound' });
         }
       }

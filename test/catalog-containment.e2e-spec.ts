@@ -9,9 +9,10 @@
  *
  *   - hidden: gone from `/public/plans`, `/public/signup-options` and the
  *     signed-in `/plans` list; signup refuses it and creates nothing;
- *   - an organization ALREADY on the plan keeps it: its subscription still
- *     names the plan, the plan reads by key, and a renewal checkout for the
- *     same key is created (checkout and payment look plans up by key);
+ *   - an organization ALREADY on the plan keeps it until its period end:
+ *     its subscription still names the plan and the plan reads by key, but a
+ *     renewal checkout is refused (B0-MED-03, owner decision 19 Oct: the
+ *     existing Premium subscriptions are not renewed);
  *   - shown again: back in `/public/plans` with its original order;
  *   - B0-MED-03: the in-app trial endpoint refuses a hidden plan's id too
  *     (it was the one path that still accepted it), and starts no trial;
@@ -200,7 +201,7 @@ describe('Catalog containment: a hidden Premium plan (e2e) — B0-CAT-03 / B0-ME
       });
     });
 
-    it('leaves an existing subscription untouched and lets it renew by key', async () => {
+    it('leaves an existing subscription untouched but refuses its renewal checkout', async () => {
       const subscription = await admin.tenantSubscription.findUniqueOrThrow({
         where: { organizationId: subscriberOrgId },
       });
@@ -214,11 +215,13 @@ describe('Catalog containment: a hidden Premium plan (e2e) — B0-CAT-03 / B0-ME
           billingCycle: 'monthly',
           idempotencyKey: `contain-renew-${randomUUID()}`,
         })
-        .expect(201);
-      expect(checkout.body.snapshot).toMatchObject({
-        target: { type: 'plan_subscription', planKey: premium.key },
-        price: { amountMinorUnits: 4900, currency: 'USD' },
-      });
+        .expect(404);
+      expect(checkout.body.error.messageKey).toBe('errors.checkout.planNotFound');
+      expect(
+        await admin.checkout.count({
+          where: { organizationId: subscriberOrgId, targetKey: premium.key },
+        }),
+      ).toBe(0);
     });
 
     it('B0-MED-03: checkout refuses a hidden plan to an organization not on it, and freezes nothing', async () => {
