@@ -37,6 +37,7 @@ const ENV = [
   'R2_BACKUP_BUCKET=atlas-backups',
   'R2_BACKUP_ENDPOINT=https://acct.r2.example',
   'R2_BACKUP_ACCESS_KEY_ID=db-backup-key',
+  'R2_BACKUP_SECRET_ACCESS_KEY=db-backup-secret',
   'R2_MEDIA_BACKUP_ACCESS_KEY_ID=media-backup-key',
   'R2_MEDIA_BACKUP_SECRET_ACCESS_KEY=media-backup-secret',
 ];
@@ -51,23 +52,32 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'media-backup-'));
   r2 = join(dir, 'r2');
   mkdirSync(join(dir, 'bin'));
-  // docker run --rm -e AWS_ACCESS_KEY_ID=.. -e .. -e .. IMAGE --endpoint-url URL s3 <ls|sync> ...
+  // docker run --rm [-i] -e AWS_ACCESS_KEY_ID=.. -e .. -e .. IMAGE --endpoint-url URL <s3|s3api> ...
+  // Each call logs "<op> key=<access key id>" so a test can check which
+  // credential did what. Buckets are folders under $R2.
   writeFileSync(
     join(dir, 'bin/docker'),
     `#!/usr/bin/env bash
 set -euo pipefail
-args=("$@"); key=""
-for a in "\${args[@]}"; do case "$a" in AWS_ACCESS_KEY_ID=*) key="\${a#AWS_ACCESS_KEY_ID=}";; esac; done
-echo "key=$key" >> "$CALLS"
-while [ "$1" != "s3" ]; do shift; done; shift
+key=""
+for a in "$@"; do case "$a" in AWS_ACCESS_KEY_ID=*) key="\${a#AWS_ACCESS_KEY_ID=}";; esac; done
+while [ "$1" != "s3" ] && [ "$1" != "s3api" ]; do shift; done
+tool="$1"; shift
 path() { local u="\${1#s3://}"; echo "$R2/$u"; }
+if [ "$tool" = s3api ]; then
+  # list-objects-v2 --bucket B [--prefix P] --query .. --output text
+  shift; bucket=""; prefix=""
+  while [ $# -gt 0 ]; do case "$1" in --bucket) bucket="$2"; shift 2;; --prefix) prefix="$2"; shift 2;; *) shift;; esac; done
+  echo "list key=$key bucket=$bucket" >> "$CALLS"
+  [ -d "$R2/$bucket" ] || exit 254
+  out=$(cd "$R2/$bucket" && find . -type f | sed 's#^\\./##' | grep "^$prefix" || true)
+  if [ -z "$out" ]; then echo None; else echo "$out"; fi
+  exit 0
+fi
 case "$1" in
-  ls) src=$(path "$3"); [ -d "$src" ] || exit 1
-      (cd "$src" && find . -type f | sed 's#^\\./##' | sort | while read -r k; do
-         p="\${3#s3://}"; p="\${p#*/}"; echo "2026-10-19 10:00:00 1 $p$k"; done) ;;
-  sync) src=$(path "$2"); dst=$(path "$3"); echo "sync $2 -> $3 $*" >> "$CALLS"
-      [ -d "$src" ] || exit 1; mkdir -p "$dst"; cp -R "$src/." "$dst/" ;;
-  cp) cat "$(path "$2")" ;;
+  cp)
+    if [ "$2" = - ]; then echo "write key=$key" >> "$CALLS"; f=$(path "$3"); mkdir -p "$(dirname "$f")"; cat > "$f"
+    else echo "read key=$key" >> "$CALLS"; cat "$(path "$2")"; fi ;;
   *) exit 9 ;;
 esac
 `,
@@ -76,6 +86,7 @@ esac
   put('atlas-media-payment-proofs', 'org1/proof-a.png');
   put('atlas-media-protected', 'academy1/lesson.pdf');
   put('atlas-media', 'public/logo.png');
+  mkdirSync(join(r2, 'atlas-backups'));
 });
 
 afterEach(() => {
@@ -104,16 +115,50 @@ const copied = (bucket: string, key: string): boolean =>
   existsSync(join(r2, 'atlas-backups/objects', bucket, key));
 
 describe('Media backup — media-backup.sh (B0-OPS-08)', () => {
-  it('daily copies payment proofs and protected media with the dedicated token only', () => {
+  it('daily copies proofs and protected media: reads with the read-only media token, writes with the backup token', () => {
     const { out, status } = run('daily');
     expect(status).toBe(0);
     expect(copied('atlas-media-payment-proofs', 'org1/proof-a.png')).toBe(true);
     expect(copied('atlas-media-protected', 'academy1/lesson.pdf')).toBe(true);
     expect(copied('atlas-media', 'public/logo.png')).toBe(false);
-    expect(calls()).not.toMatch(/key=(app-media-key|db-backup-key)/);
-    expect(calls()).toMatch(/key=media-backup-key/);
-    expect(calls()).not.toContain('--delete');
+    const log = calls();
+    expect(log).not.toContain('app-media-key');
+    expect(log).toMatch(/^read key=media-backup-key$/m);
+    expect(log).toMatch(/^write key=db-backup-key$/m);
+    expect(log).not.toMatch(/^write key=media-backup-key$/m);
+    expect(log).toMatch(/^list key=media-backup-key bucket=atlas-media-payment-proofs$/m);
+    expect(log).toMatch(/^list key=db-backup-key bucket=atlas-backups$/m);
+    expect(out).toContain(
+      'bucket=atlas-media-payment-proofs new_objects=1 copied=1 failed=0 already_in_copy=0',
+    );
+    expect(out).not.toMatch(/proof-a|lesson\.pdf/);
     expect(out).toContain('== Result: ok');
+  });
+
+  it('copies only what the copy does not have yet', () => {
+    run('daily');
+    put('atlas-media-payment-proofs', 'org1/proof-b.png');
+    const { out } = run('daily');
+    expect(out).toContain(
+      'bucket=atlas-media-payment-proofs new_objects=1 copied=1 failed=0 already_in_copy=1',
+    );
+    expect(out).toContain(
+      'bucket=atlas-media-protected new_objects=0 copied=0 failed=0 already_in_copy=1',
+    );
+  });
+
+  it('an empty source bucket is not an error', () => {
+    rmSync(join(r2, 'atlas-media-payment-proofs/org1/proof-a.png'));
+    const { out, status } = run('daily');
+    expect(status).toBe(0);
+    expect(out).toContain('bucket=atlas-media-payment-proofs new_objects=0 copied=0');
+  });
+
+  it('an unreadable source bucket fails the run', () => {
+    rmSync(join(r2, 'atlas-media-protected'), { recursive: true, force: true });
+    const { out, status } = run('daily');
+    expect(status).toBe(1);
+    expect(out).toContain('FAIL  cannot list the source bucket (atlas-media-protected)');
   });
 
   it('weekly copies public media only', () => {
@@ -167,7 +212,7 @@ describe('Media backup — media-backup.sh (B0-OPS-08)', () => {
     expect(res.out).not.toMatch(/proof-a|lesson\.pdf/);
   });
 
-  it('refuses without the dedicated token, and copies nothing', () => {
+  it('refuses without the read-only media token, and copies nothing', () => {
     const { out, status } = run(
       'daily',
       ENV.filter((l) => !l.startsWith('R2_MEDIA_BACKUP_')),
@@ -177,15 +222,13 @@ describe('Media backup — media-backup.sh (B0-OPS-08)', () => {
     expect(calls()).toBe('');
   });
 
-  it('refuses when media and backup are on different endpoints', () => {
-    const env = ENV.map((l) =>
-      l.startsWith('R2_BACKUP_ENDPOINT=')
-        ? 'R2_BACKUP_ENDPOINT=https://other.r2.example'
-        : l,
+  it('refuses without the backup token, and copies nothing', () => {
+    const { out, status } = run(
+      'daily',
+      ENV.filter((l) => !l.startsWith('R2_BACKUP_ACCESS_KEY_ID')),
     );
-    const { out, status } = run('daily', env);
     expect(status).toBe(1);
-    expect(out).toContain('different endpoints');
+    expect(out).toContain('R2_BACKUP_ACCESS_KEY_ID');
     expect(calls()).toBe('');
   });
 
