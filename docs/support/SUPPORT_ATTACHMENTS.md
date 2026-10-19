@@ -39,7 +39,7 @@ One storage pipeline, a second ownership model over it:
 
 | Reused | From |
 |---|---|
-| R2 client, bucket and credentials | `MEDIA_STORAGE_PROVIDER` (now exported by `MediaModule`) |
+| R2 client, bucket and credentials | `ProtectedMediaStorage`, the bucket with no public URL (B0-SEC-10; was `MEDIA_STORAGE_PROVIDER`, the public bucket — see §3a) |
 | Magic-byte file-kind detection | `detectFileKind` (`media/utils/file-validation.util.ts`) |
 | Size ceiling (`MEDIA_MAX_UPLOAD_BYTES`) | `assertWithinSizeLimit` |
 | Data-URL parsing, filename sanitising | `parseDataUrl`, `sanitizeFileName` |
@@ -62,6 +62,23 @@ Storage key: `support-cases/{caseId}/{uuid}.{ext}` —
 Every part is server-generated from an already-resolved case id plus
 `randomUUID()`. No client string (filename, mime type) is ever concatenated
 into a key, so `../../` cannot be expressed.
+
+## 3a. Which bucket (B0-SEC-10, 19 Oct 2026)
+
+Images are written to the **protected** bucket (`R2_PROTECTED_BUCKET`, no
+public URL; only `GET /support-cases/attachments/:id` reads them). Until
+then they were written to the public media bucket, which is reachable by
+URL by design (`R2_PUBLIC_URL_BASE`), so a screenshot there was protected
+only by nobody knowing its key.
+
+Images stored before the change stay readable: the serve path reads the
+protected bucket first and falls back to the public one (read only, never
+written). The **Support attachments move** workflow
+(`.github/workflows/support-attachments-move.yml`) moves them, key for key,
+so no database change is needed: `plan` counts (read-only), `apply` copies
+each image, confirms the copy and only then deletes the public one
+(owner-approved, `production-migrations`), and `rollback` copies them back
+(only before a code rollback to a release that reads the public bucket).
 
 ## 4. Authorization — guard decides, RLS independently agrees
 

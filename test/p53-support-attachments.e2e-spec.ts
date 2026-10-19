@@ -9,16 +9,22 @@
  * assertion below therefore asserts the OUTCOME against live Postgres with
  * FORCE RLS on, exactly as the Phase 11.8 support suite already does.
  *
- * The bytes are real too: `MEDIA_STORAGE_PROVIDER` is the actual
- * `R2StorageProvider` pointed at local MinIO in tests, so "the image comes
- * back" means an object was genuinely written and genuinely read — not
- * that a stub remembered a buffer.
+ * The bytes are real too: `ProtectedMediaStorage` (B0-SEC-10: where ticket
+ * images live) and `MEDIA_STORAGE_PROVIDER` (the public bucket, read only as
+ * a fallback for images stored before the move) point at local MinIO in
+ * tests, so "the image comes back" means an object was genuinely written
+ * and genuinely read — not that a stub remembered a buffer.
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma, seedOrganizationWithOwner } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import {
+  MEDIA_STORAGE_PROVIDER,
+  type MediaStorageProvider,
+} from '../src/media/storage/media-storage.interface';
+import { ProtectedMediaStorage } from '../src/media/storage/protected-media-storage.provider';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -398,5 +404,72 @@ describe('P53 support ticket attachments (e2e) — P53-ATT-001..015', () => {
       .get('/support-cases/attachments/..%2F..%2Fetc%2Fpasswd')
       .set('Authorization', `Bearer ${requester.token}`)
       .expect(400);
+  });
+  // ---------------- B0-SEC-10: where the bytes live ----------------
+
+  it('SEC-10-001 — an image is stored in the PROTECTED bucket, never the public one', async () => {
+    const requester = await seedRequester('sec10-001');
+    const created = await createTicket(requester.token, requester.organizationId, {
+      attachment: attachment(),
+    }).expect(201);
+    const row = await admin.supportCaseMessageAttachment.findUniqueOrThrow({
+      where: { id: created.body.messages[0].attachments[0].id },
+    });
+
+    expect(row.storageKey).toMatch(/^support-cases\//);
+    expect(
+      await app.get(ProtectedMediaStorage).headObject(row.storageKey),
+    ).not.toBeNull();
+    // The public bucket is reachable by URL by design: nothing there.
+    expect(
+      await app
+        .get<MediaStorageProvider>(MEDIA_STORAGE_PROVIDER)
+        .objectExists(row.storageKey),
+    ).toBe(false);
+  });
+
+  it('SEC-10-002 — an image stored before the move (public bucket only) is still served, to its owner only', async () => {
+    const requester = await seedRequester('sec10-002');
+    const other = await seedRequester('sec10-002-other');
+    const created = await createTicket(requester.token, requester.organizationId, {
+      attachment: attachment(),
+    }).expect(201);
+    const { id } = created.body.messages[0].attachments[0];
+    const row = await admin.supportCaseMessageAttachment.findUniqueOrThrow({
+      where: { id },
+    });
+    // Recreate the pre-fix state: the bytes in the public bucket only.
+    const bytes = Buffer.from(PNG_DATA_URL.split(',')[1], 'base64');
+    await app.get(ProtectedMediaStorage).deleteObject(row.storageKey);
+    await app
+      .get<MediaStorageProvider>(MEDIA_STORAGE_PROVIDER)
+      .putObject(row.storageKey, bytes, 'image/png');
+
+    const served = await request(app.getHttpServer())
+      .get(`/support-cases/attachments/${id}`)
+      .set('Authorization', `Bearer ${requester.token}`)
+      .expect(200);
+    expect(Buffer.from(served.body).equals(bytes)).toBe(true);
+    await request(app.getHttpServer())
+      .get(`/support-cases/attachments/${id}`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .expect(404);
+  });
+
+  it('SEC-10-003 — an image in neither bucket is a 404', async () => {
+    const requester = await seedRequester('sec10-003');
+    const created = await createTicket(requester.token, requester.organizationId, {
+      attachment: attachment(),
+    }).expect(201);
+    const { id } = created.body.messages[0].attachments[0];
+    const row = await admin.supportCaseMessageAttachment.findUniqueOrThrow({
+      where: { id },
+    });
+    await app.get(ProtectedMediaStorage).deleteObject(row.storageKey);
+
+    await request(app.getHttpServer())
+      .get(`/support-cases/attachments/${id}`)
+      .set('Authorization', `Bearer ${requester.token}`)
+      .expect(404);
   });
 });

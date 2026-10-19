@@ -1,0 +1,105 @@
+name: Support attachments move
+
+# B0-SEC-10 — move support-ticket images stored before the fix from the
+# public media bucket (reachable by URL) to the protected bucket (no public
+# URL). New images already go to the protected bucket. See
+# deploy/support-attachments-move/remote.sh and
+# src/platform/utils/support-attachment-move.util.ts.
+#
+#   plan      read-only, no approval: counts per bucket, what would move
+#   apply     copy each image to the protected bucket, confirm the copy,
+#             then delete the public one
+#   rollback  copy them back to the public bucket (before a code rollback
+#             to a release that reads the public bucket only); deletes nothing
+#
+# apply and rollback run in the protected `production-migrations`
+# environment, so GitHub holds the job until a required reviewer (the owner)
+# approves that run: the approval is the authorization for the change.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: plan (writes nothing) | apply (move to the protected bucket) | rollback (copy back)
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply, rollback]
+      confirm:
+        description: For apply or rollback only — type MOVE-SUPPORT-ATTACHMENTS (apply) or RESTORE-SUPPORT-ATTACHMENTS (rollback)
+        required: false
+        default: ''
+        type: string
+
+# The deploy group: this can never run while a deploy is rolling the backend
+# (and a deploy queues behind it).
+concurrency:
+  group: atlas-vps-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    if: inputs.mode == 'plan'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Plan (read-only)
+        working-directory: deploy/support-attachments-move
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -uo pipefail
+          # The script travels over stdin into a temp file (not `bash -s`:
+          # `docker compose exec -T` inside it would read the rest of it).
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" plan </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh
+
+  change:
+    if: inputs.mode == 'apply' || inputs.mode == 'rollback'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production-migrations
+    steps:
+      - name: Check the inputs and record the approval
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          want=MOVE-SUPPORT-ATTACHMENTS; [ "$MODE" = rollback ] && want=RESTORE-SUPPORT-ATTACHMENTS
+          if [ "$CONFIRM" != "$want" ]; then
+            echo "::error::mode=$MODE requires confirm=$want. Refusing; nothing was run." >&2
+            exit 1
+          fi
+          echo "Support attachments $MODE approved for run ${{ github.run_id }}"
+          echo "Commit: ${{ github.sha }} — dispatched by ${{ github.actor }}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Run on the VPS
+        working-directory: deploy/support-attachments-move
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -uo pipefail
+          # MODE is a choice value.
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" ${MODE} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh

@@ -40,6 +40,7 @@ import {
   MEDIA_STORAGE_PROVIDER,
   type MediaStorageProvider,
 } from '../../media/storage/media-storage.interface';
+import { ProtectedMediaStorage } from '../../media/storage/protected-media-storage.provider';
 import {
   buildSupportAttachmentStorageKey,
   detectFileKind,
@@ -83,8 +84,12 @@ export class SupportCasesService {
     private readonly supportCaseMessageAttachmentsRepository: SupportCaseMessageAttachmentsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly communicationService: CommunicationService,
+    // B0-SEC-10 — read-only fallback for images stored before the move to
+    // the protected bucket; never written to (see `getAttachmentBytes`).
     @Inject(MEDIA_STORAGE_PROVIDER)
-    private readonly storageProvider: MediaStorageProvider,
+    private readonly legacyPublicStorage: MediaStorageProvider,
+    // B0-SEC-10 — where ticket images live: the bucket with no public URL.
+    private readonly protectedStorage: ProtectedMediaStorage,
     configService: ConfigService,
     // B0-SUP-01 — a new case or a customer reply is work for Atlas support.
     private readonly platformOwnerAlertService: PlatformOwnerAlertService,
@@ -565,7 +570,12 @@ export class SupportCasesService {
 
     const id = randomUUID();
     const storageKey = buildSupportAttachmentStorageKey(caseId, kind.extension, id);
-    await this.storageProvider.putObject(storageKey, buffer, kind.mimeType);
+    // B0-SEC-10 — the PROTECTED bucket, never the public media one. The
+    // public bucket is reachable by URL by design (`R2_PUBLIC_URL_BASE`), so
+    // a ticket screenshot there was protected by nothing but its key not
+    // being known; the protected bucket has no public URL at all, and the
+    // only way to these bytes is `getAttachmentBytes` below.
+    await this.protectedStorage.putObject(storageKey, buffer, kind.mimeType);
 
     return {
       id,
@@ -619,14 +629,22 @@ export class SupportCasesService {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
 
+    // B0-SEC-10 — the protected bucket first; an image uploaded before the
+    // move may still be in the public bucket under the same key until
+    // `move-support-attachments` has run, so that is read as a fallback.
+    // Reading is all it is used for: nothing new is ever written there.
     let buffer: Buffer;
     try {
-      buffer = await this.storageProvider.getObject(attachment.storageKey);
+      buffer = await this.protectedStorage.getObject(attachment.storageKey);
     } catch {
-      // A missing object is an ordinary stale reference, and surfacing the
-      // storage error would say more about the backend than a caller
-      // should learn — the same reasoning `PublicMediaController` applies.
-      throw new NotFoundException({ messageKey: 'errors.notFound' });
+      try {
+        buffer = await this.legacyPublicStorage.getObject(attachment.storageKey);
+      } catch {
+        // A missing object is an ordinary stale reference, and surfacing the
+        // storage error would say more about the backend than a caller
+        // should learn — the same reasoning `PublicMediaController` applies.
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
     }
 
     return {

@@ -75,8 +75,10 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     WebsiteModule,
     ProvisioningModule,
     LiveSessionsModule,
-    // P53 — for `MEDIA_STORAGE_PROVIDER` only (support-ticket attachments
-    // reuse the one R2 client), never for `MediaService`.
+    // P53 / B0-SEC-10 — for the storage seams only: support-ticket images
+    // are written to `ProtectedMediaStorage` (no public URL) and read back
+    // from it, with `MEDIA_STORAGE_PROVIDER` as a read-only fallback for
+    // images stored before the move. Never for `MediaService`.
     MediaModule,
   ],
   controllers: [
