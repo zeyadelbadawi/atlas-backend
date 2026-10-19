@@ -4,6 +4,7 @@
  * Every catalogue key has a template here (asserted by the unit test);
  * `digest.daily` is the one template without a catalogue key.
  */
+import { resolveLocalizedPlanName } from '../utils/plan-name-values.util';
 import type { CommunicationLocale } from '../catalog/communication-catalog';
 import type { BrandingContext, CommunicationTemplate, TemplateValues } from './layout';
 import { template as provisioningCompleted } from './keys/provisioning.completed';
@@ -279,6 +280,8 @@ export class TemplateRegistry {
     const template = TEMPLATES[templateId];
     if (!template) throw new Error(`Unknown communication template: ${templateId}`);
     const copy = template[locale];
+    // The plan name in the recipient's language when the sender gave both.
+    values = resolveLocalizedPlanName(values, locale);
     const context = {
       locale,
       branding: input.branding,

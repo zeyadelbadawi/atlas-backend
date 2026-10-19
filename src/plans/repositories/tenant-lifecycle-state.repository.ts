@@ -55,7 +55,7 @@ export type LifecycleCandidate = Prisma.TenantSubscriptionGetPayload<{
     cancelAtPeriodEnd: true;
     billingCycle: true;
     grantedLimits: true;
-    plan: { select: { name: true } };
+    plan: { select: { name: true; nameLocalized: true } };
     organization: {
       select: {
         id: true;
@@ -179,7 +179,7 @@ export class TenantLifecycleStateRepository {
         cancelAtPeriodEnd: true,
         billingCycle: true,
         grantedLimits: true,
-        plan: { select: { name: true } },
+        plan: { select: { name: true, nameLocalized: true } },
         organization: {
           select: {
             id: true,

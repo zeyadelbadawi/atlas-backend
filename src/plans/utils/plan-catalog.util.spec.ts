@@ -16,6 +16,7 @@
  * hold.
  */
 import {
+  CUSTOMER_FACING_PLAN_KEYS,
   PLAN_CATALOG,
   PLAN_CATALOG_KEYS,
   PLAN_CATALOG_VARIANTS,
@@ -67,19 +68,17 @@ describe('plan catalog — the six commercial variants (D10)', () => {
     }
   });
 
-  it('orders Normal 1–3 then Premium 4–6, with no duplicate display order', () => {
+  it('orders Normal 1–3 and keeps the contained Premium family at 0 (B0-CAT-03)', () => {
     expect(PLAN_CATALOG_VARIANTS.map((variant) => variant.displayOrder)).toEqual([
-      1, 2, 3, 4, 5, 6,
+      1, 2, 3, 0, 0, 0,
     ]);
   });
 
-  it('keeps `displayOrder` above zero so every variant is customer-facing', () => {
-    // `PlansRepository.CUSTOMER_FACING_WHERE` filters on
-    // `displayOrder > 0`. A variant seeded at 0 would exist, be
-    // subscribable by key, and be invisible on the Plans page.
-    for (const variant of PLAN_CATALOG_VARIANTS) {
-      expect(variant.displayOrder).toBeGreaterThan(0);
-    }
+  it('lists only the Normal plans as customer-facing, and every plan as real', () => {
+    // `PlansRepository.CUSTOMER_FACING_WHERE` filters on `displayOrder > 0`:
+    // a Premium row exists, is bought and renewed by key, and is hidden.
+    expect(CUSTOMER_FACING_PLAN_KEYS).toEqual(['starter', 'growth', 'enterprise']);
+    expect(PLAN_CATALOG_KEYS).toHaveLength(6);
   });
 });
 

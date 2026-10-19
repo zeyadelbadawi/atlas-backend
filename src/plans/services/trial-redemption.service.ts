@@ -40,6 +40,7 @@ import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer
 import { CommunicationService } from '../../communications/services/communication.service';
 import type { EmitResult } from '../../communications/services/communication.service';
 import { formatLifecycleInstant } from './tenant-lifecycle.service';
+import { planNameValues } from '../../communications/utils/plan-name-values.util';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -295,7 +296,7 @@ export class TrialRedemptionService {
       values: {
         anchorAt: input.trialEndsAt.toISOString(),
         trialEndsAtDate: formatLifecycleInstant(input.trialEndsAt),
-        planName: input.plan.name,
+        ...planNameValues(input.plan),
       },
     });
   }

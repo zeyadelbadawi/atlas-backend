@@ -68,6 +68,7 @@ import {
 import { resolveGraceEndsAt } from '../utils/subscription-effective-status.util';
 import { PLANS_CLOCK, type Clock } from '../utils/clock';
 import { SUBSCRIPTION_SWEEP_QUERY_PAGE_SIZE } from '../queue/subscription-sweep.types';
+import { planNameValues } from '../../communications/utils/plan-name-values.util';
 
 /**
  * The hard ceiling on organisations one tick will evaluate.
@@ -339,9 +340,8 @@ export class TenantLifecycleService {
     facts: ActivationFacts | null,
   ): Record<string, unknown> {
     const anchorAt = step.anchorAt.toISOString();
-    const planName = candidate.plan?.name ?? '';
     const graceEndsAt = resolveGraceEndsAt(candidate);
-    const base = { anchorAt, planName };
+    const base = { anchorAt, ...planNameValues(candidate.plan) };
 
     switch (step.step) {
       case 'trial_ending_3d':

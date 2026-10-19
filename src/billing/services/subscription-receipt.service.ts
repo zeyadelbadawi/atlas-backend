@@ -45,6 +45,7 @@ import { CommunicationService } from '../../communications/services/communicatio
 import type { EmitResult } from '../../communications/services/communication.service';
 import { formatLifecycleInstant } from '../../plans/services/tenant-lifecycle.service';
 import { resolveSubscriptionLimits } from '../../plans/utils/granted-limits.util';
+import { planNameValues } from '../../communications/utils/plan-name-values.util';
 
 const NONE: EmitResult = { created: false, outboxId: null };
 
@@ -87,7 +88,7 @@ export class SubscriptionReceiptService {
         giftedStartsAt: true,
         giftedEndsAt: true,
         giftedPaymentId: true,
-        plan: { select: { name: true, limits: true } },
+        plan: { select: { name: true, nameLocalized: true, limits: true } },
       },
     });
     if (!subscription?.currentPeriodEnd || !subscription.currentPeriodStart) return NONE;
@@ -114,7 +115,7 @@ export class SubscriptionReceiptService {
       entity: { type: 'tenant_subscription', id: organizationId },
       values: {
         anchorAt: subscription.currentPeriodEnd.toISOString(),
-        planName: subscription.plan.name,
+        ...planNameValues(subscription.plan),
         periodStartDate: formatLifecycleInstant(subscription.currentPeriodStart),
         periodEndDate: formatLifecycleInstant(subscription.currentPeriodEnd),
         academiesLimit: String(limits.academies ?? ''),

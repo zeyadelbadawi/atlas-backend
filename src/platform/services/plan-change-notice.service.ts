@@ -52,6 +52,7 @@ import {
   readPriceChangeNotice,
   renewalCycleFor,
 } from '../../plans/utils/price-change-notice.util';
+import { planNameValues } from '../../communications/utils/plan-name-values.util';
 
 /** Subscribers read per page — bounded so one huge plan never loads at once. */
 const PAGE_SIZE = 200;
@@ -240,7 +241,7 @@ export class PlanChangeNoticeService {
           organizationId: row.organizationId,
           entity: { type: 'tenant_subscription', id: row.organizationId },
           values: {
-            planName: after.name,
+            ...planNameValues(after),
             planVersion: String(after.version),
             fromPrice: formatNoticePrice(notice.fromPrice),
             toPrice: formatNoticePrice(notice.toPrice),

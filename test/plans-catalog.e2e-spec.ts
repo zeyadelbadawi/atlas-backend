@@ -4,7 +4,7 @@
  * reads the same list, no organization scoping.
  */
 import { INestApplication } from '@nestjs/common';
-import { PLAN_CATALOG_KEYS } from '../src/plans/utils/plan-catalog.util';
+import { CUSTOMER_FACING_PLAN_KEYS } from '../src/plans/utils/plan-catalog.util';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma, seedAddOn, seedPlan } from './utils/db-admin';
@@ -98,11 +98,11 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
     expect(firstPage.body.pagination).toMatchObject({ page: 1, pageSize: 100 });
 
     const keys = firstPage.body.items.map((p: { key: string }) => p.key);
-    // P64 Phase 2 (D10) — Atlas now sells TWO plan families, so the
-    // customer-facing catalog is six variants, not three. Derived from
-    // `PLAN_CATALOG_KEYS` rather than re-listed here so this assertion
-    // cannot drift from the catalog the seed and the migration write.
-    expect([...keys].sort()).toEqual([...PLAN_CATALOG_KEYS].sort());
+    // The customer-facing catalog: the three Normal plans, the Premium
+    // family being contained (B0-CAT-03). Derived from the catalog util,
+    // not re-listed, so it cannot drift from what the seed and migrations
+    // write.
+    expect([...keys].sort()).toEqual([...CUSTOMER_FACING_PLAN_KEYS].sort());
 
     const growth = firstPage.body.items.find((p: { key: string }) => p.key === 'growth');
     // B0-CAT-03 — the owner-approved ladder: `growth` is the Academy plan.
@@ -146,11 +146,11 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
     const keys = catalog.body.items.map((p: { key: string }) => p.key);
     expect(keys).not.toContain(archived.key);
     expect(keys).not.toContain(fixture.key);
-    // P64 Phase 2 (D10) — Atlas now sells TWO plan families, so the
-    // customer-facing catalog is six variants, not three. Derived from
-    // `PLAN_CATALOG_KEYS` rather than re-listed here so this assertion
-    // cannot drift from the catalog the seed and the migration write.
-    expect([...keys].sort()).toEqual([...PLAN_CATALOG_KEYS].sort());
+    // The customer-facing catalog: the three Normal plans, the Premium
+    // family being contained (B0-CAT-03). Derived from the catalog util,
+    // not re-listed, so it cannot drift from what the seed and migrations
+    // write.
+    expect([...keys].sort()).toEqual([...CUSTOMER_FACING_PLAN_KEYS].sort());
 
     const byKey = await request(app.getHttpServer())
       .get(`/plans/${archived.key}`)
