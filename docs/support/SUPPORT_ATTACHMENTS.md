@@ -77,7 +77,7 @@ written). The **Support attachments move** workflow
 (`.github/workflows/support-attachments-move.yml`) moves them, key for key,
 so no database change is needed: `plan` counts (read-only), `apply` copies
 each image, confirms the copy and only then deletes the public one
-(owner-approved, `production-migrations`), and `rollback` copies them back
+(owner-approved, `production-migrations`; the copy is read back and compared byte for byte), and `rollback` copies them back
 (only before a code rollback to a release that reads the public bucket).
 
 ## 4. Authorization — guard decides, RLS independently agrees

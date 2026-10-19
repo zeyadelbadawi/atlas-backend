@@ -9,15 +9,16 @@
  *
  *   plan      read-only: what is in each bucket under the prefix
  *   apply     copy each public object missing from (or different in) the
- *             protected bucket, confirm the copy's size, and only then
- *             delete the public one. An object whose copy cannot be
- *             confirmed is left where it is.
+ *             protected bucket, read the copy back and compare it byte for
+ *             byte, and only then delete the public one. An object whose
+ *             copy cannot be confirmed is left where it is.
  *   rollback  copy each protected object back to the public bucket (for a
  *             code rollback to the pre-fix release, which reads the public
  *             bucket only). Deletes nothing.
  *
- * Re-running any step is safe: a confirmed copy is not made again, and a
- * public object already gone is not an error.
+ * Re-running any step is safe: an identical copy is not made again, and a
+ * public object already gone is not an error. Every object is read in full
+ * (ticket images are capped at MEDIA_MAX_UPLOAD_BYTES).
  */
 export const SUPPORT_ATTACHMENT_PREFIX = 'support-cases/';
 
@@ -26,8 +27,6 @@ export interface MoveStore {
   list(prefix: string): Promise<readonly { key: string; size: number }[]>;
   get(key: string): Promise<{ body: Buffer; contentType?: string }>;
   put(key: string, body: Buffer, contentType?: string): Promise<void>;
-  /** Size of the object, or null when there is none. */
-  size(key: string): Promise<number | null>;
   delete(key: string): Promise<void>;
 }
 
@@ -39,7 +38,7 @@ export interface MoveSummary {
   readonly protectedObjects: number;
   /** plan: would be copied. apply/rollback: copied in this run. */
   readonly copied: number;
-  /** Already present with the same size: not copied again. */
+  /** Already present with identical bytes: not copied again. */
   readonly alreadyCopied: number;
   /** apply: public objects deleted after a confirmed copy. */
   readonly removedFromPublic: number;
@@ -57,8 +56,8 @@ export async function moveSupportAttachments(
   const [from, to] =
     mode === 'rollback' ? [protectedStore, publicStore] : [publicStore, protectedStore];
   const source = mode === 'rollback' ? protectedKeys : publicKeys;
-  const target = new Map(
-    (mode === 'rollback' ? publicKeys : protectedKeys).map((o) => [o.key, o.size]),
+  const target = new Set(
+    (mode === 'rollback' ? publicKeys : protectedKeys).map((o) => o.key),
   );
 
   let copied = 0;
@@ -67,28 +66,28 @@ export async function moveSupportAttachments(
   let failed = 0;
 
   for (const object of source) {
-    const present = target.get(object.key) === object.size;
-    if (mode === 'plan') {
-      if (present) alreadyCopied += 1;
-      else copied += 1;
+    // Byte-for-byte, never by size alone: `apply` deletes the source on the
+    // strength of this comparison.
+    try {
+      const original = await from.get(object.key);
+      const existing = target.has(object.key) ? await to.get(object.key) : null;
+      if (existing?.body.equals(original.body)) {
+        alreadyCopied += 1;
+      } else if (mode === 'plan') {
+        copied += 1;
+      } else {
+        await to.put(object.key, original.body, original.contentType);
+        const readBack = await to.get(object.key);
+        if (!readBack.body.equals(original.body)) throw new Error('copy differs');
+        copied += 1;
+      }
+    } catch {
+      failed += 1;
       continue;
     }
-    if (present) {
-      alreadyCopied += 1;
-    } else {
-      try {
-        const { body, contentType } = await from.get(object.key);
-        await to.put(object.key, body, contentType);
-        if ((await to.size(object.key)) !== object.size) throw new Error('size mismatch');
-        copied += 1;
-      } catch {
-        failed += 1;
-        continue;
-      }
-    }
     if (mode === 'apply') {
-      // Only after the protected copy is confirmed (present, or just copied
-      // and its size re-read above).
+      // Only after the protected copy is confirmed identical (already there,
+      // or just written and read back above).
       await publicStore.delete(object.key);
       removedFromPublic += 1;
     }

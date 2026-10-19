@@ -20,7 +20,6 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
-  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -81,19 +80,6 @@ function s3Store(
           ContentType: contentType,
         }),
       );
-    },
-    async size(key) {
-      try {
-        const head = await client.send(
-          new HeadObjectCommand({ Bucket: bucket, Key: key }),
-        );
-        return head.ContentLength ?? 0;
-      } catch (error) {
-        const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata
-          ?.httpStatusCode;
-        if (status === 404) return null;
-        throw error;
-      }
     },
     async delete(key) {
       await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));

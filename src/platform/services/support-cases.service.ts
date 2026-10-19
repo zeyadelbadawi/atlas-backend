@@ -633,16 +633,21 @@ export class SupportCasesService {
     // move may still be in the public bucket under the same key until
     // `move-support-attachments` has run, so that is read as a fallback.
     // Reading is all it is used for: nothing new is ever written there.
+    //
+    // Only a confirmed "no such object" moves on to the next bucket or ends
+    // in 404 (an ordinary stale reference). Any other storage failure
+    // propagates as a 500 — which Nest answers generically, so it says no
+    // more about the backend — rather than being reported as a deleted
+    // attachment while storage is down.
     let buffer: Buffer;
     try {
       buffer = await this.protectedStorage.getObject(attachment.storageKey);
-    } catch {
+    } catch (error) {
+      if (!isObjectMissing(error)) throw error;
       try {
         buffer = await this.legacyPublicStorage.getObject(attachment.storageKey);
-      } catch {
-        // A missing object is an ordinary stale reference, and surfacing the
-        // storage error would say more about the backend than a caller
-        // should learn — the same reasoning `PublicMediaController` applies.
+      } catch (legacyError) {
+        if (!isObjectMissing(legacyError)) throw legacyError;
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
     }
@@ -664,4 +669,13 @@ export class SupportCasesService {
     }
     return supportCase;
   }
+}
+
+/** B0-SEC-10 — an S3/R2 "this key does not exist" answer, as opposed to any other failure. */
+function isObjectMissing(error: unknown): boolean {
+  const { name, $metadata } = (error ?? {}) as {
+    name?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  return name === 'NoSuchKey' || name === 'NotFound' || $metadata?.httpStatusCode === 404;
 }

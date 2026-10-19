@@ -456,6 +456,28 @@ describe('P53 support ticket attachments (e2e) — P53-ATT-001..015', () => {
       .expect(404);
   });
 
+  it('SEC-10-004 — a storage failure is a 500, never reported as a missing attachment', async () => {
+    const requester = await seedRequester('sec10-004');
+    const created = await createTicket(requester.token, requester.organizationId, {
+      attachment: attachment(),
+    }).expect(201);
+    const { id } = created.body.messages[0].attachments[0];
+    const spy = jest
+      .spyOn(app.get(ProtectedMediaStorage), 'getObject')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('storage down'), { name: 'InternalError' }),
+      );
+    try {
+      const response = await request(app.getHttpServer())
+        .get(`/support-cases/attachments/${id}`)
+        .set('Authorization', `Bearer ${requester.token}`);
+      expect(response.status).toBe(500);
+      expect(JSON.stringify(response.body)).not.toContain('storage down');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('SEC-10-003 — an image in neither bucket is a 404', async () => {
     const requester = await seedRequester('sec10-003');
     const created = await createTicket(requester.token, requester.organizationId, {

@@ -23,9 +23,6 @@ function memoryStore(initial: Record<string, string> = {}) {
       if (failPut.has(key)) throw new Error('denied');
       objects.set(key, body);
     },
-    async size(key) {
-      return objects.get(key)?.length ?? null;
-    },
     async delete(key) {
       objects.delete(key);
     },
@@ -81,6 +78,26 @@ describe('moveSupportAttachments (B0-SEC-10)', () => {
     const summary = await moveSupportAttachments('apply', pub.store, prot.store);
     expect(summary).toMatchObject({ copied: 1, alreadyCopied: 0 });
     expect(prot.objects.get(A)?.toString()).toBe('aaa');
+  });
+
+  it('a copy with the same size but different bytes is made again before the source is deleted', async () => {
+    const pub = memoryStore({ [A]: 'aaa' });
+    const prot = memoryStore({ [A]: 'bbb' });
+    expect(await moveSupportAttachments('plan', pub.store, prot.store)).toMatchObject({
+      copied: 1,
+      alreadyCopied: 0,
+    });
+    const summary = await moveSupportAttachments('apply', pub.store, prot.store);
+    expect(summary).toMatchObject({ copied: 1, alreadyCopied: 0, removedFromPublic: 1 });
+    expect(prot.objects.get(A)?.toString()).toBe('aaa');
+  });
+
+  it('rollback overwrites a same-size public object with different bytes', async () => {
+    const pub = memoryStore({ [A]: 'bbb' });
+    const prot = memoryStore({ [A]: 'aaa' });
+    const summary = await moveSupportAttachments('rollback', pub.store, prot.store);
+    expect(summary).toMatchObject({ copied: 1, alreadyCopied: 0 });
+    expect(pub.objects.get(A)?.toString()).toBe('aaa');
   });
 
   it('re-running apply is a no-op', async () => {
