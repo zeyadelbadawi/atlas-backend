@@ -34,21 +34,21 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { NestFactory } from '@nestjs/core';
 import type { Prisma } from '@prisma/client';
-import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/database/prisma.service';
-import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
-import { UsersRepository } from '../src/identity/repositories/users.repository';
+import { AppModule } from '../app.module';
+import { PrismaService } from '../database/prisma.service';
+import { TenancyContextService } from '../tenancy/services/tenancy-context.service';
+import { UsersRepository } from '../identity/repositories/users.repository';
 import {
   RETIRED_WEBSITE_THEME_KEYS,
   RETIRED_WEBSITE_THEME_REPLACEMENT,
-} from '../src/website/constants/website.constants';
+} from '../website/constants/website.constants';
 import {
   planThemeRetirement,
   summariseThemeRetirement,
   websiteContentFingerprint,
   type ThemeRetirementPlanEntry,
   type ThemeRetirementWebsite,
-} from '../src/website/utils/theme-retirement.util';
+} from '../website/utils/theme-retirement.util';
 
 type Mode = 'dry-run' | 'apply' | 'rollback-dry-run' | 'rollback';
 
@@ -223,170 +223,198 @@ async function main(): Promise<void> {
     const entries: ThemeRetirementPlanEntry[] = [];
     const outcomes: Outcome[] = [];
 
-    for (const academy of academies) {
-      const target = rollbackFile || planFile ? approved.get(academy.id) : undefined;
-      if ((rollbackFile || planFile) && !target) continue;
+    // Each Academy commits in its own transaction, so a failure part-way
+    // leaves the earlier ones moved: their outcomes are written before the
+    // error is rethrown, and `--rollback` of that report undoes them.
+    try {
+      for (const academy of academies) {
+        const target = rollbackFile || planFile ? approved.get(academy.id) : undefined;
+        if ((rollbackFile || planFile) && !target) continue;
 
-      const owner = await asPlatformOwner(prisma, platformOwner.id, (tx) =>
-        tx.academyMember.findFirst({
-          where: { academyId: academy.id, role: 'owner', status: 'active' },
-          orderBy: { joinedAt: 'asc' },
-          select: { userId: true },
-        }),
-      );
-      if (!owner) {
-        outcomes.push({
-          academyId: academy.id,
-          academySlug: academy.slug,
-          result: 'skippedNoActiveOwner',
-        });
-        continue;
-      }
+        const owner = await asPlatformOwner(prisma, platformOwner.id, (tx) =>
+          tx.academyMember.findFirst({
+            where: { academyId: academy.id, role: 'owner', status: 'active' },
+            orderBy: { joinedAt: 'asc' },
+            select: { userId: true },
+          }),
+        );
+        if (!owner) {
+          outcomes.push({
+            academyId: academy.id,
+            academySlug: academy.slug,
+            result: 'skippedNoActiveOwner',
+          });
+          continue;
+        }
 
-      await tenancy.runInTenantAndUserContext(
-        academy.organizationId,
-        owner.userId,
-        async (tx) => {
-          const website = await readWebsite(tx, academy);
-          if (!website) {
-            if (target) {
-              outcomes.push({
-                academyId: academy.id,
-                academySlug: academy.slug,
-                result: 'skippedNoWebsite',
-              });
+        await tenancy.runInTenantAndUserContext(
+          academy.organizationId,
+          owner.userId,
+          async (tx) => {
+            const website = await readWebsite(tx, academy);
+            if (!website) {
+              if (target) {
+                outcomes.push({
+                  academyId: academy.id,
+                  academySlug: academy.slug,
+                  result: 'skippedNoWebsite',
+                });
+              }
+              return;
             }
-            return;
-          }
-          const fingerprint = websiteContentFingerprint(website);
+            const fingerprint = websiteContentFingerprint(website);
 
-          if (rollbackFile && target) {
-            if (website.themeKey === target.fromThemeKey) {
+            if (rollbackFile && target) {
+              if (website.themeKey === target.fromThemeKey) {
+                outcomes.push({
+                  academyId: academy.id,
+                  academySlug: academy.slug,
+                  result: 'alreadyDone',
+                });
+                return;
+              }
+              if (
+                website.themeKey !== RETIRED_WEBSITE_THEME_REPLACEMENT ||
+                fingerprint !== target.fingerprint
+              ) {
+                outcomes.push({
+                  academyId: academy.id,
+                  academySlug: academy.slug,
+                  result: 'skippedChangedSincePlan',
+                  detail: `now on ${website.themeKey}; content ${fingerprint === target.fingerprint ? 'unchanged' : 'edited since the move'}`,
+                });
+                return;
+              }
+              if (mode === 'rollback') {
+                const updated = await tx.websiteConfiguration.update({
+                  where: { academyId: academy.id },
+                  data: {
+                    themeKey: target.fromThemeKey,
+                    configVersion: { increment: 1 },
+                  },
+                });
+                const after = await readWebsite(tx, academy);
+                if (!after || websiteContentFingerprint(after) !== fingerprint) {
+                  throw new Error(
+                    `Content changed while restoring ${academy.slug}; rolled back.`,
+                  );
+                }
+                outcomes.push({
+                  academyId: academy.id,
+                  academySlug: academy.slug,
+                  result: 'restored',
+                  fromThemeKey: RETIRED_WEBSITE_THEME_REPLACEMENT,
+                  toThemeKey: target.fromThemeKey,
+                  fingerprint,
+                  configVersionBefore: website.configVersion,
+                  configVersionAfter: updated.configVersion,
+                });
+              } else {
+                outcomes.push({
+                  academyId: academy.id,
+                  academySlug: academy.slug,
+                  result: 'wouldRestore',
+                  toThemeKey: target.fromThemeKey,
+                  fingerprint,
+                });
+              }
+              return;
+            }
+
+            const entry = planThemeRetirement(website);
+            if (!entry) {
+              if (target) {
+                outcomes.push({
+                  academyId: academy.id,
+                  academySlug: academy.slug,
+                  result: 'alreadyDone',
+                });
+              }
+              return;
+            }
+            if (mode === 'dry-run') {
+              entries.push(entry);
               outcomes.push({
                 academyId: academy.id,
                 academySlug: academy.slug,
-                result: 'alreadyDone',
+                result: 'wouldMove',
+                fromThemeKey: entry.fromThemeKey,
+                toThemeKey: entry.toThemeKey,
+                fingerprint,
               });
               return;
             }
+
+            // Apply: exactly what was reviewed, and only if nothing changed since.
             if (
-              website.themeKey !== RETIRED_WEBSITE_THEME_REPLACEMENT ||
-              fingerprint !== target.fingerprint
+              !target ||
+              target.fromThemeKey !== entry.fromThemeKey ||
+              target.fingerprint !== fingerprint
             ) {
               outcomes.push({
                 academyId: academy.id,
                 academySlug: academy.slug,
                 result: 'skippedChangedSincePlan',
-                detail: `now on ${website.themeKey}; content ${fingerprint === target.fingerprint ? 'unchanged' : 'edited since the move'}`,
+                fromThemeKey: entry.fromThemeKey,
+                detail:
+                  'theme or content changed since the dry run; re-run the dry run and review it',
               });
               return;
             }
-            if (mode === 'rollback') {
-              const updated = await tx.websiteConfiguration.update({
-                where: { academyId: academy.id },
-                data: { themeKey: target.fromThemeKey, configVersion: { increment: 1 } },
-              });
-              const after = await readWebsite(tx, academy);
-              if (!after || websiteContentFingerprint(after) !== fingerprint) {
-                throw new Error(
-                  `Content changed while restoring ${academy.slug}; rolled back.`,
-                );
-              }
+            if (entry.unmappableSections.length > 0) {
               outcomes.push({
                 academyId: academy.id,
                 academySlug: academy.slug,
-                result: 'restored',
-                fromThemeKey: RETIRED_WEBSITE_THEME_REPLACEMENT,
-                toThemeKey: target.fromThemeKey,
-                fingerprint,
-                configVersionBefore: website.configVersion,
-                configVersionAfter: updated.configVersion,
+                result: 'skippedUnmappableSections',
+                fromThemeKey: entry.fromThemeKey,
+                detail: JSON.stringify(entry.unmappableSections),
               });
-            } else {
-              outcomes.push({
-                academyId: academy.id,
-                academySlug: academy.slug,
-                result: 'wouldRestore',
-                toThemeKey: target.fromThemeKey,
-                fingerprint,
-              });
+              return;
             }
-            return;
-          }
-
-          const entry = planThemeRetirement(website);
-          if (!entry) {
-            if (target) {
-              outcomes.push({
-                academyId: academy.id,
-                academySlug: academy.slug,
-                result: 'alreadyDone',
-              });
+            const updated = await tx.websiteConfiguration.update({
+              where: { academyId: academy.id },
+              data: {
+                themeKey: RETIRED_WEBSITE_THEME_REPLACEMENT,
+                configVersion: { increment: 1 },
+              },
+            });
+            const after = await readWebsite(tx, academy);
+            if (!after || websiteContentFingerprint(after) !== fingerprint) {
+              throw new Error(
+                `Content changed while moving ${academy.slug}; rolled back.`,
+              );
             }
-            return;
-          }
-          if (mode === 'dry-run') {
-            entries.push(entry);
             outcomes.push({
               academyId: academy.id,
               academySlug: academy.slug,
-              result: 'wouldMove',
+              result: 'moved',
               fromThemeKey: entry.fromThemeKey,
-              toThemeKey: entry.toThemeKey,
+              toThemeKey: RETIRED_WEBSITE_THEME_REPLACEMENT,
               fingerprint,
+              configVersionBefore: website.configVersion,
+              configVersionAfter: updated.configVersion,
             });
-            return;
-          }
-
-          // Apply: exactly what was reviewed, and only if nothing changed since.
-          if (
-            !target ||
-            target.fromThemeKey !== entry.fromThemeKey ||
-            target.fingerprint !== fingerprint
-          ) {
-            outcomes.push({
-              academyId: academy.id,
-              academySlug: academy.slug,
-              result: 'skippedChangedSincePlan',
-              fromThemeKey: entry.fromThemeKey,
-              detail:
-                'theme or content changed since the dry run; re-run the dry run and review it',
-            });
-            return;
-          }
-          if (entry.unmappableSections.length > 0) {
-            outcomes.push({
-              academyId: academy.id,
-              academySlug: academy.slug,
-              result: 'skippedUnmappableSections',
-              fromThemeKey: entry.fromThemeKey,
-              detail: JSON.stringify(entry.unmappableSections),
-            });
-            return;
-          }
-          const updated = await tx.websiteConfiguration.update({
-            where: { academyId: academy.id },
-            data: {
-              themeKey: RETIRED_WEBSITE_THEME_REPLACEMENT,
-              configVersion: { increment: 1 },
-            },
-          });
-          const after = await readWebsite(tx, academy);
-          if (!after || websiteContentFingerprint(after) !== fingerprint) {
-            throw new Error(`Content changed while moving ${academy.slug}; rolled back.`);
-          }
-          outcomes.push({
-            academyId: academy.id,
-            academySlug: academy.slug,
-            result: 'moved',
-            fromThemeKey: entry.fromThemeKey,
-            toThemeKey: RETIRED_WEBSITE_THEME_REPLACEMENT,
-            fingerprint,
-            configVersionBefore: website.configVersion,
-            configVersionAfter: updated.configVersion,
-          });
-        },
+          },
+        );
+      }
+    } catch (error) {
+      writeFileSync(
+        outFile,
+        `${JSON.stringify(
+          {
+            mode,
+            generatedAt: new Date().toISOString(),
+            plan: planFile ?? null,
+            rollbackOf: rollbackFile ?? null,
+            failed: error instanceof Error ? error.message : String(error),
+            entries,
+            outcomes,
+          },
+          null,
+          2,
+        )}\n`,
       );
+      throw error;
     }
 
     // In-flight provisioning requests that picked a retired theme: the

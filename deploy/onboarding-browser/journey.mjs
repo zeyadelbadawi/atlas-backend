@@ -5,7 +5,7 @@
  * non-personal facts. Screenshots go to $OUT for the workflow artifact.
  *
  *   JOURNEY=A  EN desktop — trial path end to end: Start for Free → one-page
- *              signup → sign in → OTP → /onboarding → Academy → Branding →
+ *              signup → sign in → OTP → /onboarding → Academy (with logo) →
  *              Website → First course → Summary → Finish → Dashboard, with a
  *              refresh-persistence check and "Finish disabled while required
  *              steps are open".
@@ -96,11 +96,13 @@ async function step(label) {
   await p.waitForTimeout(1200);
   shot += 1;
   await p.screenshot({ path: path.join(OUT, `${JOURNEY}-${String(shot).padStart(2, '0')}-${label}.png`), fullPage: true });
-  const s = await p.evaluate(() => ({
+  // Host names on the page (the academy's address) look like dotted keys;
+  // they are removed before the raw-key search.
+  const s = await p.evaluate((host) => ({
     dir: document.documentElement.dir || 'ltr',
     overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
-    rawKeys: (document.body.innerText.match(/\b[a-z]+(?:[A-Z][a-zA-Z]*)?\.[a-z][a-zA-Z]+\.[a-z][a-zA-Z_.]+\b/g) || []).slice(0, 3),
-  }));
+    rawKeys: (document.body.innerText.split(host).join(' ').match(/\b[a-z]+(?:[A-Z][a-zA-Z]*)?\.[a-z][a-zA-Z]+\.[a-z][a-zA-Z_.]+\b/g) || []).slice(0, 3),
+  }), new URL(BASE).hostname);
   const path_ = new URL(p.url()).pathname;
   check(`${label}: layout (${path_})`, !s.overflow && s.rawKeys.length === 0 && s.dir === (LANG === 'ar' ? 'rtl' : 'ltr'),
     `dir=${s.dir} overflow=${s.overflow} rawKeys=${s.rawKeys.join(',') || '-'}`);
@@ -175,7 +177,7 @@ try {
   await step('otp');
   await p.fill('#email-otp-code', await code()); await p.press('#email-otp-code', 'Enter');
   await p.waitForURL((u) => !u.pathname.startsWith('/auth'), { timeout: 30000 });
-  await p.waitForURL('**/onboarding**', { timeout: 30000 }).catch(() => {});
+  await p.waitForURL((u) => u.pathname.startsWith('/onboarding'), { timeout: 30000 }).catch(() => {});
   check('first authenticated page is /onboarding (not an empty dashboard)', new URL(p.url()).pathname.startsWith('/onboarding'), new URL(p.url()).pathname);
 
   // Rail semantics
@@ -187,13 +189,18 @@ try {
     await step('onboarding-academy');
     check('rail: Academy = Required', (await rail('academy')).includes(T.required));
     check('rail: Website = Required', (await rail('website')).includes(T.required));
-    check('rail: Branding = Recommended', (await rail('branding')).includes(T.recommended));
+    // Branding is chosen in the Academy step's form now, not a rail step.
+    check('rail: no separate Branding step (logo is chosen in the Academy step)', (await p.getByTestId('rail-step-branding').count()) === 0);
     check('rail: First course = Recommended', (await rail('course')).includes(T.recommended));
 
     // Academy
     const sub = `onbverify${Date.now().toString().slice(-7)}`;
     await p.locator('main input').first().fill(`Atlas Onboarding Verify Academy ${RUN}`);
     await p.fill('input[name=requestedSubdomain]', sub); await p.waitForTimeout(1500);
+    // The logo, in the form's "Logo & colours" block (the favicon input is the other file input).
+    await p.locator('main input[type=file]:not([data-testid="setup-favicon-input"])').first().setInputFiles(path.join(here, 'logo.png'));
+    await p.waitForTimeout(2500);
+    await step('academy-logo');
     await p.getByRole('button', { name: /create academy/i }).click();
     await step('academy-provisioning');
     await p.getByRole('button', { name: T.cont }).waitFor({ timeout: 300000 });
@@ -210,15 +217,6 @@ try {
     // Refresh: server-derived state survives
     await p.reload(); await p.waitForLoadState('networkidle'); await p.waitForTimeout(1500);
     check('refresh keeps the derived state (Academy still complete)', /done|complete/i.test(await rail('academy')), (await rail('academy')).replace(/\n/g, ' '));
-
-    // Branding
-    await p.getByTestId('rail-step-branding').getByRole('link').click();
-    await p.waitForURL('**/onboarding/branding');
-    const [chooser] = await Promise.all([p.waitForEvent('filechooser'), p.getByRole('button', { name: /upload logo/i }).first().click()]);
-    await chooser.setFiles(path.join(here, 'logo.png')); await p.waitForTimeout(1500);
-    await step('branding');
-    await p.getByRole('button', { name: /save branding/i }).first().click();
-    await p.waitForURL('**/onboarding/website', { timeout: 30000 });
 
     // Website
     await step('website');
@@ -273,7 +271,7 @@ try {
       await step('payment');
       const back = p.getByTestId('payment-back-to-setup');
       check('payment page offers "Back to setup"', (await back.count()) === 1);
-      await back.click(); await p.waitForURL('**/onboarding**'); await p.waitForTimeout(2500);
+      await back.click(); await p.waitForURL((u) => u.pathname.startsWith('/onboarding'), { timeout: 30000 }); await p.waitForTimeout(2500);
       await step('plan-awaiting');
       check('Plan step shows the payment as awaiting confirmation', (await p.getByTestId('plan-awaiting-confirmation').count()) === 1);
     } else {

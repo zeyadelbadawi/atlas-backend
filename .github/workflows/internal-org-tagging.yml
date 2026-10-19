@@ -1,0 +1,116 @@
+name: Internal organization tagging
+
+# B0-CAT-01 / B0-ANL-04 — tag the test organizations as internal
+# (`organization_platform_flags.is_internal`), approved by the product owner
+# on 19 Oct 2026. See deploy/internal-org-tagging/remote.sh for exactly what
+# is and is not changed.
+#
+#   dry-run  read-only, no approval: stores every organization id existing
+#            now on the VPS as plan-<this run id>.txt and prints counts
+#   apply    tags exactly the plan of the dry-run run given as ref_run_id
+#   revert   untags exactly what the apply run given as ref_run_id tagged
+#
+# apply and revert run in the protected `production-migrations`
+# environment, so GitHub holds the job until a required reviewer (the owner)
+# approves that run: the approval is the authorization for the change.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: dry-run (writes nothing) | apply (tag as internal) | revert (untag what an apply tagged)
+        required: true
+        default: dry-run
+        type: choice
+        options: [dry-run, apply, revert]
+      ref_run_id:
+        description: For apply — the dry-run's run id; for revert — the apply's run id
+        required: false
+        default: ''
+        type: string
+      confirm:
+        description: For apply or revert only — type TAG-INTERNAL-ORGS (apply) or UNTAG-INTERNAL-ORGS (revert)
+        required: false
+        default: ''
+        type: string
+
+# The deploy group: this can never run while a deploy is rolling the backend
+# (and a deploy queues behind it).
+concurrency:
+  group: atlas-vps-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    if: inputs.mode == 'dry-run'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Plan (read-only)
+        working-directory: deploy/internal-org-tagging
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          # The script travels over stdin into a temp file (not `bash -s`:
+          # `docker compose exec -T` inside it would read the rest of it).
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" dry-run ${RUN_ID} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh
+
+  change:
+    if: inputs.mode == 'apply' || inputs.mode == 'revert'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production-migrations
+    steps:
+      - name: Check the inputs and record the approval
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          REF: ${{ inputs.ref_run_id }}
+        run: |
+          set -euo pipefail
+          want=TAG-INTERNAL-ORGS; [ "$MODE" = revert ] && want=UNTAG-INTERNAL-ORGS
+          if [ "$CONFIRM" != "$want" ]; then
+            echo "::error::mode=$MODE requires confirm=$want. Refusing; nothing was run." >&2
+            exit 1
+          fi
+          if ! [[ "$REF" =~ ^[0-9]{1,20}$ ]]; then
+            echo "::error::mode=$MODE requires ref_run_id (a run id, digits only). Refusing; nothing was run." >&2
+            exit 1
+          fi
+          echo "Internal organization tagging $MODE of run $REF approved for run ${{ github.run_id }}"
+          echo "Commit: ${{ github.sha }} — dispatched by ${{ github.actor }}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Run on the VPS
+        working-directory: deploy/internal-org-tagging
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          MODE: ${{ inputs.mode }}
+          REF: ${{ inputs.ref_run_id }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          # MODE is a choice value and REF digits only, both checked above.
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" ${MODE} ${RUN_ID} ${REF} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh
