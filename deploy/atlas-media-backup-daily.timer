@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Atlas backup of payment proofs and protected media (B0-OPS-08)
+
+[Timer]
+# After the 03:00 database backup.
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

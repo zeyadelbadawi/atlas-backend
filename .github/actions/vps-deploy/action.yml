@@ -251,6 +251,9 @@ runs:
           deploy/docker-compose.prod.yml "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/docker-compose.yml"
         scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
           deploy/backup.sh "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/backup.sh"
+        # B0-OPS-08 — the media object backup (atlas-media-backup-*.timer).
+        scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+          deploy/media-backup.sh "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/media-backup.sh"
         # Alert routing — monitoring configs (no secrets in them; the secret
         # files are written on the host by deploy.sh from /opt/atlas/.env).
         ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \

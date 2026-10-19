@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly Atlas backup of public media (B0-OPS-08)
+
+[Timer]
+OnCalendar=Sun *-*-* 05:00:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

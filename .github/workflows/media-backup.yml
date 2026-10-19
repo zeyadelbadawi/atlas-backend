@@ -1,0 +1,56 @@
+name: Media backup
+
+# B0-OPS-08 — run deploy/media-backup.sh on the VPS on demand (the systemd
+# timers atlas-media-backup-daily/-weekly run it on schedule).
+#
+#   verify        read-only: objects per bucket in the source vs the copy
+#   restore-test  read-only: reads one copied object per bucket back and
+#                 compares it with the source
+#   daily         copy payment proofs + protected media now
+#   weekly        copy public media now
+#
+# A copy only adds objects to the backup bucket; it never deletes. The log
+# prints counts and yes/no only, never object keys.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: verify | restore-test (read-only) | daily | weekly (copy now)
+        required: true
+        default: verify
+        type: choice
+        options: [verify, restore-test, daily, weekly]
+
+concurrency:
+  group: atlas-media-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Run on the VPS
+        working-directory: deploy
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -uo pipefail
+          # The script travels over stdin into a temp file (not `bash -s`:
+          # `docker run` inside it would read the rest of it). MODE is one of
+          # the choice values above.
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" ${MODE} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < media-backup.sh
