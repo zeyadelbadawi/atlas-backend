@@ -1,6 +1,6 @@
 /**
  * Themes 2–5 retirement (frontend repo, Reports/THEMES_2_5_RETIREMENT.md) — the pure part
- * of `scripts/retire-website-themes.ts`: which websites move, what each
+ * of `src/scripts/retire-website-themes.ts`: which websites move, what each
  * one holds, and a fingerprint of everything the move must leave alone.
  *
  * The move changes `website_configurations.theme_key` only (plus

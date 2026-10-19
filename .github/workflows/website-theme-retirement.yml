@@ -1,0 +1,117 @@
+name: Website theme retirement
+
+# B0-WEB-09 — move every Academy website on a retired theme (Themes 2–5) to
+# Theme 1, approved by the product owner on 19 Oct 2026. See
+# deploy/theme-retirement/remote.sh and src/scripts/retire-website-themes.ts
+# for exactly what is and is not changed.
+#
+#   dry-run   read-only, no approval: stores the plan on the VPS as
+#             plan-<this run id>.json and prints counts
+#   apply     applies exactly the plan of the dry-run run given as
+#             ref_run_id; websites changed since are skipped
+#   rollback  undoes the apply run given as ref_run_id
+#
+# apply and rollback run in the protected `production-migrations`
+# environment, so GitHub holds the job until a required reviewer (the owner)
+# approves that run: the approval is the authorization for the change.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: dry-run (writes nothing) | apply (move to Theme 1) | rollback (restore the previous themes)
+        required: true
+        default: dry-run
+        type: choice
+        options: [dry-run, apply, rollback]
+      ref_run_id:
+        description: For apply — the dry-run's run id; for rollback — the apply's run id
+        required: false
+        default: ''
+        type: string
+      confirm:
+        description: For apply or rollback only — type MOVE-RETIRED-THEMES (apply) or RESTORE-RETIRED-THEMES (rollback)
+        required: false
+        default: ''
+        type: string
+
+# The deploy group: this can never run while a deploy is rolling the backend
+# (and a deploy queues behind it).
+concurrency:
+  group: atlas-vps-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    if: inputs.mode == 'dry-run'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Plan (read-only)
+        working-directory: deploy/theme-retirement
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          # The script travels over stdin into a temp file (not `bash -s`:
+          # `docker compose exec -T` inside it would read the rest of it).
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" dry-run ${RUN_ID} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh
+
+  change:
+    if: inputs.mode == 'apply' || inputs.mode == 'rollback'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production-migrations
+    steps:
+      - name: Check the inputs and record the approval
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          REF: ${{ inputs.ref_run_id }}
+        run: |
+          set -euo pipefail
+          want=MOVE-RETIRED-THEMES; [ "$MODE" = rollback ] && want=RESTORE-RETIRED-THEMES
+          if [ "$CONFIRM" != "$want" ]; then
+            echo "::error::mode=$MODE requires confirm=$want. Refusing; nothing was run." >&2
+            exit 1
+          fi
+          if ! [[ "$REF" =~ ^[0-9]{1,20}$ ]]; then
+            echo "::error::mode=$MODE requires ref_run_id (a run id, digits only). Refusing; nothing was run." >&2
+            exit 1
+          fi
+          echo "Website theme retirement $MODE of run $REF approved for run ${{ github.run_id }}"
+          echo "Commit: ${{ github.sha }} — dispatched by ${{ github.actor }}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the deploy identity
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Run on the VPS
+        working-directory: deploy/theme-retirement
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          MODE: ${{ inputs.mode }}
+          REF: ${{ inputs.ref_run_id }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          # MODE is a choice value and REF digits only, both checked above.
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" ${MODE} ${RUN_ID} ${REF} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" < remote.sh
