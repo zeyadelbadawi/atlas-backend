@@ -37,6 +37,13 @@ on:
         default: 'A,B'
         type: choice
         options: ['A,B', 'A', 'B']
+      screenshots:
+        description: >-
+          Upload the screenshots as a run artifact. They show the test email
+          and phone number and this repository is public, so off by default.
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: onboarding-browser-verify
@@ -111,7 +118,7 @@ jobs:
           done
           exit $rc
       - name: Upload screenshots
-        if: always()
+        if: always() && inputs.screenshots
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: onboarding-journey-screenshots
