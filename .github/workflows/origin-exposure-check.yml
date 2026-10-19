@@ -1,0 +1,58 @@
+name: Origin exposure check
+
+# B0-OPS-04 — is the origin server reachable without going through
+# Cloudflare? Read-only. From a GitHub runner (outside Cloudflare) it
+# requests the site through Cloudflare, then directly at the origin
+# (DEPLOY_HOST, the same address the deploy SSHes to) on 80 and 443 with the
+# platform Host header. After the lockdown (Oracle security list allows
+# 80/443 from Cloudflare's ranges only) the direct requests must time out or
+# be refused while the Cloudflare request still works.
+#
+# The origin address is a secret and is never printed (GitHub masks it, and
+# the log shows outcomes only).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      SITE: atlass.dpdns.org
+    steps:
+      - name: Probe
+        env:
+          ORIGIN: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -uo pipefail
+          probe() { # $1 label, then curl args; prints the outcome only
+            local label="$1"; shift
+            local code rc
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 15 "$@" 2>/tmp/err); rc=$?
+            if [ "$rc" = 0 ]; then echo "$label: REACHABLE (HTTP $code)"; return 0; fi
+            case "$rc" in
+              7) echo "$label: refused (connection refused)";;
+              28) echo "$label: timed out (no answer)";;
+              35|60) echo "$label: TLS handshake answered but failed (port open)";;
+              *) echo "$label: not reachable (curl exit $rc)";;
+            esac
+            [ "$rc" = 35 ] || [ "$rc" = 60 ] && return 0 || return 1
+          }
+          # DEPLOY_HOST may be a name or an address; --resolve needs an address.
+          IP=$(getent ahostsv4 "$ORIGIN" | awk 'NR == 1 { print $1 }')
+          [ -n "$IP" ] || { echo "::error::cannot resolve the origin address"; exit 1; }
+          echo "::add-mask::$IP"
+          echo "== Through Cloudflare"
+          probe "https://$SITE/" "https://$SITE/" || echo "::error::the site does not answer through Cloudflare"
+          echo "== Directly at the origin (bypassing Cloudflare)"
+          exposed=0
+          probe "origin :443 (Host: $SITE)" -k --resolve "$SITE:443:$IP" "https://$SITE/" && exposed=1
+          probe "origin :80 (Host: $SITE)" --resolve "$SITE:80:$IP" "http://$SITE/" && exposed=1
+          if [ "$exposed" = 1 ]; then
+            echo "RESULT: the origin answers directly; Cloudflare can be bypassed (OPS-04 NOT met)"
+          else
+            echo "RESULT: the origin does not answer directly on 80/443 (OPS-04 met for this runner)"
+          fi
