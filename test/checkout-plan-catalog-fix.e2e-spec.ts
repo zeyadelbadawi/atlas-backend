@@ -99,7 +99,7 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
 
     const keys = response.body.items.map((p: { key: string }) => p.key);
     // The customer-facing three: Premium is contained (B0-CAT-03) and is
-    // bought by key only (the checkout cases below still cover all six).
+    // not for sale to a new organization (B0-MED-03, covered below).
     expect(keys).toEqual([...CUSTOMER_FACING_PLAN_KEYS]);
     expect(response.body.pagination.totalItems).toBe(CUSTOMER_FACING_PLAN_KEYS.length);
 
@@ -112,7 +112,7 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
     }
   });
 
-  it.each(REAL_PLAN_KEYS)(
+  it.each(CUSTOMER_FACING_PLAN_KEYS)(
     '3/4/6. a brand-new account can create a MONTHLY checkout for "%s" and reach the payment-method stage',
     async (planKey) => {
       const { user, org } = await newAccountWithOrg(`checkout-${planKey}`);
@@ -139,6 +139,24 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
         .set('Authorization', `Bearer ${user.accessToken}`)
         .expect(200);
       expect(Array.isArray(methods.body.items)).toBe(true);
+    },
+  );
+
+  it.each(PLAN_CATALOG_KEYS.filter((key) => !CUSTOMER_FACING_PLAN_KEYS.includes(key)))(
+    'B0-MED-03. a brand-new account cannot buy the hidden Premium plan "%s" by key',
+    async (planKey) => {
+      const { user, org } = await newAccountWithOrg(`checkout-hidden-${planKey}`);
+
+      const res = await request(app.getHttpServer())
+        .post(`/organizations/${org.id}/checkouts`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          target: { type: 'plan_subscription', planKey },
+          billingCycle: 'monthly',
+          idempotencyKey: `${planKey}-hidden-idem`,
+        })
+        .expect(404);
+      expect(res.body.error.messageKey).toBe('errors.checkout.planNotFound');
     },
   );
 

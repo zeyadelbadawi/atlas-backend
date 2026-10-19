@@ -15,6 +15,8 @@
  *   - shown again: back in `/public/plans` with its original order;
  *   - B0-MED-03: the in-app trial endpoint refuses a hidden plan's id too
  *     (it was the one path that still accepted it), and starts no trial;
+ *   - B0-MED-03: checkout refuses it to an organization not already on it
+ *     (the unknown-plan 404) and freezes no checkout;
  */
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -217,6 +219,31 @@ describe('Catalog containment: a hidden Premium plan (e2e) — B0-CAT-03 / B0-ME
         target: { type: 'plan_subscription', planKey: premium.key },
         price: { amountMinorUnits: 4900, currency: 'USD' },
       });
+    });
+
+    it('B0-MED-03: checkout refuses a hidden plan to an organization not on it, and freezes nothing', async () => {
+      const owner = await signUpAndSignIn('contain-buy');
+      const org = await request(app.getHttpServer())
+        .post('/organizations')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ name: `Contain Buy ${randomUUID().slice(0, 8)}` })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .post(`/organizations/${org.body.id}/checkouts`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          target: { type: 'plan_subscription', planKey: premium.key },
+          billingCycle: 'monthly',
+          idempotencyKey: `contain-buy-${randomUUID()}`,
+        })
+        .expect(404);
+      expect(res.body.error.messageKey).toBe('errors.checkout.planNotFound');
+      expect(
+        await admin.checkout.count({
+          where: { organizationId: org.body.id, targetKey: premium.key },
+        }),
+      ).toBe(0);
     });
 
     it('B0-MED-03: the in-app trial endpoint refuses a hidden plan id and starts no trial', async () => {

@@ -27,6 +27,9 @@
 #                        (OPTIONS only — nothing is uploaded), the delivery
 #                        Worker's answer to a token-less request, and
 #                        hosted-video usage as counts
+#   remote.sh counts  -> the B0 read-only counts (OC-16, CAT-01, COM-03,
+#                        ORG-03, ORG-05, WEB-09): counts, keys and table
+#                        names only (INFO only; also part of `facts`)
 #   remote.sh archive -> legacy academy `archived_at` backfill (OD-18):
 #                        eligible / ambiguous / already-recorded counts,
 #                        before and after migration
@@ -309,6 +312,63 @@ catalog_facts() {
     | while IFS='|' read -r _ k st cyc lo hi canc; do info "Premium $k $st ($cyc): current period ends ${lo:-?}..${hi:-?}, cancelling at period end=$canc"; done
   sql "select 'premium_open_checkouts', c.target_key, c.status, to_char(min(c.expires_at), 'YYYY-MM-DD'), to_char(max(c.expires_at), 'YYYY-MM-DD'), count(*) from checkouts c join plans p on p.key = c.target_key where c.target_type = 'plan_subscription' and p.family = 'premium' and c.status in ('draft','pending_payment') group by 2, 3 order by 2, 3" \
     | while IFS='|' read -r _ k st lo hi n; do info "open Premium checkout $k $st: $n, expires ${lo:-?}..${hi:-?}"; done
+}
+
+# B0-OC-16 / B0-CAT-01 / B0-COM-03 / B0-ORG-03 / B0-ORG-05 / B0-WEB-09 — the
+# saved read-only production counts: OC-16 (1)–(8) and the records whose
+# acceptance is a production count. Prints counts, enum values, plan and
+# theme keys and table names only — never an organization, academy, user or
+# storage key. INFO only, never gating.
+# Keep in step with src/website/constants/website.constants.ts and
+# src/provisioning/dto/provisioning.constants.ts (the unit test compares).
+RETIRED_THEME_KEYS="premium-academy corporate-learning minimal-editorial bold-creative"
+KNOWN_THEME_KEYS="modern-education atelier manara riwaq $RETIRED_THEME_KEYS"
+RESERVED_SLUGS="www app api admin dashboard platform atlas mail status support"
+# OC-16 (5): names Atlas may want later; an academy holding one is a conflict.
+CANDIDATE_SLUGS="preview staging docs blog help learn"
+sql_list() { printf "'%s'," $1 | sed 's/,$//'; }
+b0_counts_facts() {
+  echo "== B0 read-only counts (OC-16; counts only)"
+  local k st n a b c t
+  # (1) / CAT-01: every subscription by plan key and status.
+  sql "select 'subs_all', p.key, s.status, count(*) from tenant_subscriptions s join plans p on p.id = s.plan_id group by p.key, s.status order by 2, 3" \
+    | while IFS='|' read -r _ k st n; do info "subscriptions: plan=$k status=$st count=$n"; done
+  # CAT-01: organizations on a live subscription that exceed their plan's
+  # current academies / courses / active-students limit (what a renewal on
+  # the live catalog would cut).
+  sql "with live as (select s.organization_id org, p.key, p.limits l from tenant_subscriptions s join plans p on p.id = s.plan_id where s.status in ('active', 'trialing', 'grace_period', 'past_due')), usage as (select o.id org, (select count(*) from academies a where a.organization_id = o.id and a.archived_at is null and a.status <> 'archived') ac, (select count(*) from courses c join academies a on a.id = c.academy_id where a.organization_id = o.id and c.status <> 'archived') co, (select count(*) from academy_students st join academies a on a.id = st.academy_id where a.organization_id = o.id and st.status = 'active') stu from organizations o) select 'overlimit', live.key, count(*), count(*) filter (where l->>'academies' ~ '^[0-9]+$' and u.ac > (l->>'academies')::int), count(*) filter (where l->>'courses' ~ '^[0-9]+$' and u.co > (l->>'courses')::int), count(*) filter (where l->>'students' ~ '^[0-9]+$' and u.stu > (l->>'students')::int) from live join usage u on u.org = live.org group by live.key order by 2" \
+    | while IFS='|' read -r _ k n a b c; do info "CAT-01: live subscriptions on $k=$n; over the current limit: academies=$a courses=$b active students=$c"; done
+  # (2) organizations by status, and how many are tagged internal/test (ANL-04).
+  sql "select 'orgs', o.status, count(*), count(*) filter (where f.is_internal) from organizations o left join organization_platform_flags f on f.organization_id = o.id group by o.status order by 2" \
+    | while IFS='|' read -r _ st n a; do info "organizations: status=$st count=$n tagged internal=$a"; done
+  # (3) text lessons with no content, created before / after the P64 phase 2 migration.
+  IFS='|' read -r _ a b <<< "$(sql "select 'emptytext', count(*) filter (where l.created_at >= m.t), count(*) filter (where l.created_at < m.t) from course_lessons l cross join (select finished_at t from _prisma_migrations where migration_name = '20261009000000_p64_phase2_protected_content_video_devices' and finished_at is not null) m where l.content_type = 'text' and coalesce(l.content_url, '') = '' and not exists (select 1 from lesson_contents c where c.lesson_id = l.id)")"
+  info "empty text lessons: created after 20261009000000=${a:-?} before=${b:-?}"
+  # (4) / WEB-09: website configurations by theme key and status.
+  sql "select 'themes', theme_key, status, count(*) from website_configurations group by 2, 3 order by 2, 3" \
+    | while IFS='|' read -r _ k st n; do
+        case " $RETIRED_THEME_KEYS " in *" $k "*) t=' (retired)' ;; *) case " $KNOWN_THEME_KEYS " in *" $k "*) t='' ;; *) t=' (unknown key)' ;; esac ;; esac
+        info "websites: theme=$k$t status=$st count=$n"
+      done
+  IFS='|' read -r _ a b <<< "$(sql "select 'retired_published', count(*) filter (where theme_key in ($(sql_list "$RETIRED_THEME_KEYS"))), count(*) filter (where theme_key not in ($(sql_list "$KNOWN_THEME_KEYS"))) from website_configurations where status = 'published'")"
+  info "WEB-09: published websites on a retired theme=${a:-?}, on an unknown theme key=${b:-?}"
+  # (5) reserved and candidate slugs held by an academy.
+  IFS='|' read -r _ a b <<< "$(sql "select 'slugs', count(*) filter (where slug in ($(sql_list "$RESERVED_SLUGS"))), count(*) filter (where slug in ($(sql_list "$CANDIDATE_SLUGS"))) from academies")"
+  info "academy slugs: reserved=${a:-?} candidate (preview, staging, docs, blog, help, learn)=${b:-?}"
+  # (6) Premium and catalog subscriptions: see "Plan catalog and Premium containment".
+  # (7) / ORG-03: live academies with no active owner row, and those whose
+  # organization owner has no academy-owner row.
+  IFS='|' read -r _ a b c <<< "$(sql "select 'owners', count(*), count(*) filter (where not exists (select 1 from academy_members m where m.academy_id = ac.id and m.role = 'owner' and m.status = 'active')), count(*) filter (where not exists (select 1 from academy_members m where m.academy_id = ac.id and m.user_id = o.owner_user_id and m.role = 'owner' and m.status = 'active')) from academies ac join organizations o on o.id = ac.organization_id where ac.archived_at is null and ac.status <> 'archived'")"
+  info "ORG-03: live academies=${a:-?}, with no active owner row=${b:-?}, whose organization owner has no academy-owner row=${c:-?}"
+  # (8) / ORG-05: row-level security on the application's tables.
+  IFS='|' read -r _ a b c <<< "$(sql "select 'rls', count(*), count(*) filter (where c.relrowsecurity), count(*) filter (where c.relforcerowsecurity) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind in ('r', 'p') and c.relname <> '_prisma_migrations'")"
+  info "ORG-05: public tables=${a:-?}, RLS enabled=${b:-?}, RLS forced=${c:-?}"
+  info "ORG-05: tables without RLS: $(sql "select coalesce(string_agg(c.relname, ', ' order by c.relname), 'none') from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind in ('r', 'p') and c.relname <> '_prisma_migrations' and not c.relrowsecurity")"
+  info "ORG-05: RLS enabled but not forced: $(sql "select coalesce(string_agg(c.relname, ', ' order by c.relname), 'none') from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind in ('r', 'p') and c.relrowsecurity and not c.relforcerowsecurity")"
+  # COM-03: organization payment collection modes (expected: none in
+  # atlas_payments or organization_gateway).
+  sql "select 'paymodes', payment_collection_mode, count(*) from organization_payment_settings group by 2 order by 2" \
+    | while IFS='|' read -r _ k n; do info "COM-03: organizations with payment_collection_mode=$k: $n"; done
 }
 
 video_facts() {
@@ -598,6 +658,9 @@ case "${1:-}" in
     # B0-CAT-03 / B0-MED-03 — INFO only, same subshell rule.
     ( catalog_facts ) || true
 
+    # B0-OC-16 and the count-only records — INFO only, same subshell rule.
+    ( b0_counts_facts ) || true
+
     echo "== Website published copy"
     IFS='|' read -r _ all snap <<< "$(sql "select 'published_sites', count(*), count(published_snapshot) from website_configurations where status='published'")"
     if [ "$all" = "$snap" ]; then pass "every published site has a published snapshot ($snap/$all)"; else fail "published sites with a snapshot: $snap/$all"; fi
@@ -714,5 +777,9 @@ SQL
     # Reported, never gating.
     catalog_facts
     ;;
-  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video|b0|archive|catalog" >&2; exit 2 ;;
+  counts)
+    # Reported, never gating.
+    b0_counts_facts
+    ;;
+  *) echo "usage: remote.sh facts|hosts|rum|dups|config|video|b0|archive|catalog|counts" >&2; exit 2 ;;
 esac
