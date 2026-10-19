@@ -29,7 +29,10 @@
  *      see the fix report).
  */
 import { INestApplication } from '@nestjs/common';
-import { PLAN_CATALOG_KEYS } from '../src/plans/utils/plan-catalog.util';
+import {
+  CUSTOMER_FACING_PLAN_KEYS,
+  PLAN_CATALOG_KEYS,
+} from '../src/plans/utils/plan-catalog.util';
 import request from 'supertest';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma, seedOrganizationWithOwner, seedPlan } from './utils/db-admin';
@@ -95,10 +98,10 @@ describe('Checkout/plan-catalog fix (e2e)', () => {
       .expect(200);
 
     const keys = response.body.items.map((p: { key: string }) => p.key);
-    expect(keys).toEqual([...REAL_PLAN_KEYS]);
-    // Derived, not a literal — the catalog is six variants since D10 and
-    // must not need a hand-edit here the next time it changes.
-    expect(response.body.pagination.totalItems).toBe(REAL_PLAN_KEYS.length);
+    // The customer-facing three: Premium is contained (B0-CAT-03) and is
+    // bought by key only (the checkout cases below still cover all six).
+    expect(keys).toEqual([...CUSTOMER_FACING_PLAN_KEYS]);
+    expect(response.body.pagination.totalItems).toBe(CUSTOMER_FACING_PLAN_KEYS.length);
 
     for (const plan of response.body.items) {
       expect(plan.status).toBe('active');

@@ -123,21 +123,27 @@ export const PLAN_CATALOG: Readonly<
       family: 'premium',
       tier: 'basic',
       key: 'premium-starter',
-      displayOrder: 4,
+      // B0-CAT-03: contained — not customer-facing (was 4). Bought and
+      // renewed by key; `deploy/catalog-containment` shows it again.
+      displayOrder: 0,
       videoStorageMinutes: PLAN_TIER_BASELINE_VIDEO_STORAGE_MINUTES.basic,
     },
     growth: {
       family: 'premium',
       tier: 'growth',
       key: 'premium-growth',
-      displayOrder: 5,
+      // B0-CAT-03: contained — not customer-facing (was 5). Bought and
+      // renewed by key; `deploy/catalog-containment` shows it again.
+      displayOrder: 0,
       videoStorageMinutes: PLAN_TIER_BASELINE_VIDEO_STORAGE_MINUTES.growth,
     },
     enterprise: {
       family: 'premium',
       tier: 'enterprise',
       key: 'premium-enterprise',
-      displayOrder: 6,
+      // B0-CAT-03: contained — not customer-facing (was 6). Bought and
+      // renewed by key; `deploy/catalog-containment` shows it again.
+      displayOrder: 0,
       videoStorageMinutes: PLAN_TIER_BASELINE_VIDEO_STORAGE_MINUTES.enterprise,
     },
   },
@@ -164,6 +170,15 @@ export const PLAN_CATALOG_VARIANTS: readonly PlanCatalogVariant[] = PLAN_FAMILIE
 export const PLAN_CATALOG_KEYS: readonly string[] = PLAN_CATALOG_VARIANTS.map(
   (variant) => variant.key,
 );
+
+/**
+ * The real plans a customer can see and pick (`displayOrder > 0`, the
+ * catalog's customer-facing floor): the three Normal plans since the
+ * Premium family was contained (B0-CAT-03). A subset of `PLAN_CATALOG_KEYS`.
+ */
+export const CUSTOMER_FACING_PLAN_KEYS: readonly string[] = PLAN_CATALOG_VARIANTS.filter(
+  (variant) => variant.displayOrder > 0,
+).map((variant) => variant.key);
 
 /** The `plans.key` for a `(family, tier)` pair — D10's vocabulary translated into the database's. */
 export function planKeyFor(family: PlanFamily, tier: PlanTier): string {
