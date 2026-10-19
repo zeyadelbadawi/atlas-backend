@@ -1,0 +1,10 @@
+[Unit]
+Description=Atlas R2 media backup (daily; B0-OPS-08)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/atlas
+ExecStart=/opt/atlas/media-backup.sh daily
