@@ -765,6 +765,9 @@ describe('Academy manual payments (e2e)', () => {
       expect(res.body.reviewNotes).toBeUndefined();
       const [email] = await outbox('course.payment.rejected', p.id);
       expect((email.values as { reason?: string }).reason).toBeUndefined();
+      // The academy reviewed it, not Atlas — the stored reason says so.
+      const row = await admin.payment.findUniqueOrThrow({ where: { id: p.id } });
+      expect(row.failureReason).toBe('errors.payment.rejectedByAcademy');
     });
   });
 

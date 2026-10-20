@@ -312,10 +312,12 @@ export class AcademyCoursePaymentsService {
           reviewer: { connect: { id: reviewerId } },
           notes: reason,
         });
+        // The ACADEMY reviewed this payment, not Atlas — its own key, so
+        // the learner is never told Atlas turned their payment down.
         await this.courseOrderPaymentApplicationService.applyFailedPayment(
           tx,
           payment,
-          'errors.payment.rejectedByReviewer',
+          'errors.payment.rejectedByAcademy',
         );
 
         // The order stays open: the learner may pay again (a new payment on
