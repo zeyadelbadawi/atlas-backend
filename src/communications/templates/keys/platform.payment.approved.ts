@@ -6,9 +6,11 @@ import type { CommunicationTemplate } from '../layout';
  * no writer, and billing offers no Invoices page), so the email points at
  * the payment history instead of promising invoices there. The
  * subscription receipt itself is `lifecycle.subscription.activated`.
+ * v3 — the Arabic copy names the page by its Arabic UI title, «مدفوعات
+ * الاشتراك» (it used to be «الفواتير والمدفوعات»).
  */
 export const template: CommunicationTemplate = {
-  version: '2',
+  version: '3',
   en: defineLocale({
     subject: () => 'Payment approved',
     paragraphs: (v) => [
@@ -21,8 +23,8 @@ export const template: CommunicationTemplate = {
     subject: () => 'تمت الموافقة على الدفع',
     paragraphs: (v) => [
       `تمت الموافقة على دفعتك بقيمة ${str(v, 'amount')} ${str(v, 'currency')}.`,
-      'اشتراكك محدّث. يمكنك الاطّلاع على هذه الدفعة في سجل المدفوعات في صفحة الفوترة.',
+      'اشتراكك محدّث. يمكنك الاطّلاع على هذه الدفعة في سجل المدفوعات في صفحة «مدفوعات الاشتراك».',
     ],
-    ctaLabel: 'فتح الفوترة',
+    ctaLabel: 'فتح مدفوعات الاشتراك',
   }),
 };

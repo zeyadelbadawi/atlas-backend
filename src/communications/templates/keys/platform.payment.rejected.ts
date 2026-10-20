@@ -2,7 +2,7 @@ import { defineLocale, str } from '../layout';
 import type { CommunicationTemplate } from '../layout';
 
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
     subject: () => 'Payment rejected',
     paragraphs: (v) => [
@@ -19,8 +19,8 @@ export const template: CommunicationTemplate = {
       `تم رفض دفعتك بقيمة ${str(v, 'amount')} ${str(v, 'currency')}.${
         str(v, 'reason') ? ` السبب: ${str(v, 'reason')}` : ''
       }`,
-      'يرجى إرسال دفعة جديدة من صفحة الفوترة ليبقى اشتراكك نشطًا.',
+      'يرجى إرسال دفعة جديدة من صفحة «مدفوعات الاشتراك» ليبقى اشتراكك نشطًا.',
     ],
-    ctaLabel: 'فتح الفوترة',
+    ctaLabel: 'فتح مدفوعات الاشتراك',
   }),
 };
