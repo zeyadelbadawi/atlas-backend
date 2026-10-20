@@ -631,6 +631,11 @@ model Academy {
   organization   Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
   slug           String                   @unique
+  /// When the slug (the public address) was last changed — `null` until the
+  /// first change; creation does not count. A new change is refused for 60
+  /// days after this (`SLUG_CHANGE_INTERVAL_DAYS`, migration
+  /// `20261123000100_subdomain_aliases`).
+  slugChangedAt  DateTime?                @map("slug_changed_at")
   description    String?
   logoUrl        String?                  @map("logo_url")
   faviconUrl     String?                  @map("favicon_url")

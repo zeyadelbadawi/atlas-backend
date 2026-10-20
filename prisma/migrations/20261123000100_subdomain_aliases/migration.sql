@@ -61,13 +61,26 @@
 --    as it is, for an operator to look at) when the slug is held by another
 --    academy's allocation or is a reserved label. Re-runnable.
 --
--- Additive: one table, three triggers, one new function, two function
--- bodies. Rollback: drop the triggers, `atlas_refuse_subdomain_label_held_
--- elsewhere`, `subdomain_held_by_other` and the table; restore
+-- 6. `academies.slug_changed_at` — when the slug last changed (NULL until
+--    the first change; creation does not count). Owner decision: a slug may
+--    change at most once every 60 days, reclaiming an old address included;
+--    the API refuses an earlier change and names the date it becomes
+--    possible. A column rather than alias timestamps: a move away from a
+--    reserved label keeps no alias, and an Academy without an allocation
+--    keeps none either, so alias rows cannot date every change. Backfilled
+--    academies (5.) keep NULL: when their change happened is not recorded.
+--
+-- Additive: one table, one column, three triggers, one new function, two
+-- function bodies. Rollback: drop the triggers, `atlas_refuse_subdomain_label_held_
+-- elsewhere`, `subdomain_held_by_other`, the table and
+-- `academies.slug_changed_at`; restore
 -- `subdomain_is_taken` from 20260827112450_p14_provisioning_orchestration and
 -- `resolve_public_hostname` from 20261007040000_p63g_domain_hardening (then
 -- re-apply `search_path = public, pg_temp` as 20261118000300 did).
 -- ============================================================================
+
+-- 6. When the slug last changed (the 60-day rule).
+ALTER TABLE "academies" ADD COLUMN IF NOT EXISTS "slug_changed_at" TIMESTAMP(3);
 
 -- 1. The alias table.
 CREATE TABLE IF NOT EXISTS "subdomain_aliases" (

@@ -59,6 +59,10 @@ import { PlatformDomainConfigurationRepository } from '../../domain/repositories
 import { AcademyArchiveService } from './academy-archive.service';
 import { AcademyAddressService } from './academy-address.service';
 import type { AcademyAddressMoveResult } from './academy-address.service';
+import {
+  nextSlugChangeAt,
+  SLUG_CHANGE_INTERVAL_DAYS,
+} from '../utils/slug-change-window.util';
 import type { ArchiveAcademyInput } from './academy-archive.service';
 import { toAcademyResponse } from '../dto/academy.contract';
 import type { AcademyResponse, AcademyAddressResponse } from '../dto/academy.contract';
@@ -150,6 +154,23 @@ export type AcademyNameConflictPolicy = 'refuse' | 'suffix';
  * content; see `ORGANIZATION_INSTRUCTOR_PERMISSIONS`'s doc comment for
  * the same exclusion at the organization-permission layer.
  */
+/**
+ * A slug change inside the 60-day window (`slug-change-window.util.ts`).
+ * 409 on the slug field, with the date the next change becomes possible in
+ * `details.nextSlugChangeAt` (ISO 8601) so the form can name it.
+ */
+export function slugChangeTooSoon(next: Date): ConflictException {
+  const messageKey = 'errors.academy.slugChangeTooSoon';
+  return new ConflictException({
+    messageKey,
+    violations: [{ field: 'slug', messageKey }],
+    details: {
+      nextSlugChangeAt: next.toISOString(),
+      intervalDays: SLUG_CHANGE_INTERVAL_DAYS,
+    },
+  });
+}
+
 /** P63g — a slug that is a reserved platform label (or a look-alike of one) can never become a public subdomain. */
 export function assertSlugNotReserved(slug: string): void {
   if (isReservedSubdomain(slug)) {
@@ -858,6 +879,14 @@ export class AcademiesService {
           if (changesSlug || changesStatus) {
             await this.assertIsOrganizationOwner(tx, academyId, userId);
           }
+          // Owner decision: one slug change every 60 days (taking an old
+          // address back counts; creation does not). Checked on the LOCKED
+          // row, so two concurrent changes cannot both pass.
+          if (changesSlug) {
+            const locked = await this.academiesRepository.lockSlugState(tx, academyId);
+            const next = nextSlugChangeAt(locked?.slugChangedAt);
+            if (next && locked?.slug !== payload.slug) throw slugChangeTooSoon(next);
+          }
           // Only a NEW address is checked against the reserved list: an
           // academy created before a label was reserved keeps saving its
           // settings (the database trigger applies the same rule).
@@ -900,6 +929,8 @@ export class AcademiesService {
             timezone: payload.timezone,
             currency: payload.currency,
             status: payload.status,
+            // Starts the 60-day window; only a real change writes it.
+            slugChangedAt: changesSlug ? new Date() : undefined,
             // `organization_id` is never in `data` — `UpdateAcademyDto` has
             // no such field, and `academies_tenant_update`'s RLS `WITH
             // CHECK` would reject the row even if it were.

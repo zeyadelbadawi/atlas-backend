@@ -120,6 +120,22 @@ export class AcademiesRepository {
     return tx.academy.update({ where: { id }, data });
   }
 
+  /**
+   * Slug change — locks the academy row for the rest of `tx` and returns its
+   * current slug and last slug change, so two concurrent changes cannot
+   * both pass the 60-day rule (the second waits, then sees the first).
+   */
+  async lockSlugState(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<{ slug: string; slugChangedAt: Date | null } | null> {
+    const rows = await tx.$queryRaw<{ slug: string; slug_changed_at: Date | null }[]>(
+      Prisma.sql`SELECT "slug", "slug_changed_at" FROM "academies" WHERE "id" = ${id} FOR UPDATE`,
+    );
+    const row = rows[0];
+    return row ? { slug: row.slug, slugChangedAt: row.slug_changed_at } : null;
+  }
+
   /** Phase P15 — `PlatformOrganizationDetail.academies` (id/name/status refs only). Meaningful only inside `runInUserContext(platformOwnerId)` (the `academies_platform_select` policy); capped, not paginated — see `PLATFORM_DETAIL_MEMBER_CAP`. */
   findRefsForOrganization(
     tx: Prisma.TransactionClient,
