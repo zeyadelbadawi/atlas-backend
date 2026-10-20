@@ -295,17 +295,19 @@ export class CourseOrderRefundsService {
     studentId: string,
     orderId: string,
   ): Promise<CourseOrderRefundResponse | null> {
-    const refund = await this.tenancyContextService.runInUserContext(
+    const order = await this.tenancyContextService.runInUserContext(studentId, (tx) =>
+      this.courseOrdersRepository.findByIdForStudent(tx, studentId, orderId),
+    );
+    if (!order) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    // A refund the ACADEMY recorded (Academy Manual Payments) is
+    // `requested_by` the owner, so the buyer's own-rows policy cannot see
+    // it. The order is already proven to be this learner's, so its refund
+    // is read in the order's tenant context — the same dual context the
+    // learner's own refund is written in — and only for this order.
+    const refund = await this.tenancyContextService.runInTenantAndUserContext(
+      order.organizationId,
       studentId,
-      async (tx) => {
-        const order = await this.courseOrdersRepository.findByIdForStudent(
-          tx,
-          studentId,
-          orderId,
-        );
-        if (!order) throw new NotFoundException({ messageKey: 'errors.notFound' });
-        return this.courseOrderRefundsRepository.findByCourseOrderId(tx, order.id);
-      },
+      (tx) => this.courseOrderRefundsRepository.findByCourseOrderId(tx, order.id),
     );
     return refund ? toCourseOrderRefundResponse(refund) : null;
   }

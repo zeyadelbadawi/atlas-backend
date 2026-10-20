@@ -14,6 +14,18 @@ export class ApproveAcademyCoursePaymentDto {
   readonly notes?: string;
 }
 
+/**
+ * Recording that the academy refunded a learner's approved payment. The
+ * note is optional and is shown to the learner (in-app and email). v1 is a
+ * FULL refund only: the amount recorded is the payment's own amount.
+ */
+export class RecordAcademyCoursePaymentRefundDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_PAYMENT_REVIEW_NOTES_LENGTH)
+  readonly note?: string;
+}
+
 export class RejectAcademyCoursePaymentDto {
   @IsOptional()
   @IsString()

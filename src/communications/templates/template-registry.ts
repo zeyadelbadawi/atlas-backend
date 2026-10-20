@@ -66,6 +66,7 @@ import { template as courseOrderCreated } from './keys/course.order.created';
 import { template as courseOrderExpired } from './keys/course.order.expired';
 import { template as coursePaymentApproved } from './keys/course.payment.approved';
 import { template as coursePaymentRejected } from './keys/course.payment.rejected';
+import { template as coursePaymentRefunded } from './keys/course.payment.refunded';
 import { template as academyPaymentSubmitted } from './keys/academy.payment.submitted';
 import { template as quizAutoSubmitted } from './keys/assessment.quiz.auto_submitted';
 import { template as attemptInvalidated } from './keys/assessment.attempt.invalidated';
@@ -230,6 +231,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'course.order.expired': courseOrderExpired,
   'course.payment.approved': coursePaymentApproved,
   'course.payment.rejected': coursePaymentRejected,
+  'course.payment.refunded': coursePaymentRefunded,
   'academy.payment.submitted': academyPaymentSubmitted,
   'assessment.quiz.auto_submitted': quizAutoSubmitted,
   'assessment.attempt.invalidated': attemptInvalidated,
@@ -266,6 +268,24 @@ export interface RenderInput {
   readonly settingsUrl: string;
 }
 
+/** The product's default name (`EMAIL_FROM_NAME` unset) and how Arabic copy writes it. */
+const DEFAULT_PLATFORM_NAME = 'Atlas';
+const DEFAULT_PLATFORM_NAME_AR = 'أطلس';
+
+/**
+ * Arabic copy names the product «أطلس», never Latin "Atlas" inside an
+ * Arabic sentence ("تحديث من …", the footer's "أُرسلت بواسطة …"). Only the
+ * default product name is translated: a deployment that configured its own
+ * sender name keeps it verbatim, and the From header is never touched.
+ */
+function localizePlatformName(
+  branding: BrandingContext,
+  locale: CommunicationLocale,
+): BrandingContext {
+  if (locale !== 'ar' || branding.platformName !== DEFAULT_PLATFORM_NAME) return branding;
+  return { ...branding, platformName: DEFAULT_PLATFORM_NAME_AR };
+}
+
 export class TemplateRegistry {
   static has(templateId: string): boolean {
     return Object.prototype.hasOwnProperty.call(TEMPLATES, templateId);
@@ -284,7 +304,7 @@ export class TemplateRegistry {
     values = resolveLocalizedPlanName(values, locale);
     const context = {
       locale,
-      branding: input.branding,
+      branding: localizePlatformName(input.branding, locale),
       actionUrl: input.actionUrl,
       settingsUrl: input.settingsUrl,
     };

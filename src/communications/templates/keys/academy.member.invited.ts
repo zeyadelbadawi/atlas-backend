@@ -31,7 +31,7 @@ export function roleLabel(values: Record<string, unknown>, locale: 'en' | 'ar'):
 }
 
 export const template: CommunicationTemplate = {
-  version: '2',
+  version: '3',
   en: defineLocale({
     subject: (v) =>
       `You've been invited to ${str(v, 'academyName', 'an academy')} on Atlas`,
@@ -44,11 +44,10 @@ export const template: CommunicationTemplate = {
     ctaLabel: 'Set up your account',
   }),
   ar: defineLocale({
-    subject: (v) =>
-      `تمت دعوتك إلى ${str(v, 'academyName', 'إحدى الأكاديميات')} على Atlas`,
-    preheader: () => 'أنشئ حسابك على Atlas للبدء.',
+    subject: (v) => `تمت دعوتك إلى ${str(v, 'academyName', 'إحدى الأكاديميات')} على أطلس`,
+    preheader: () => 'أنشئ حسابك على أطلس للبدء.',
     paragraphs: (v) => [
-      `تمت دعوتك للانضمام إلى ${str(v, 'academyName', 'إحدى الأكاديميات')} بصفة ${roleLabel(v, 'ar')}. أنشأنا لك حسابًا على Atlas.`,
+      `تمت دعوتك للانضمام إلى ${str(v, 'academyName', 'إحدى الأكاديميات')} بصفة ${roleLabel(v, 'ar')}. أنشأنا لك حسابًا على أطلس.`,
       `تسجّل الدخول باستخدام ${str(v, 'email')}.`,
       `أنشئ حسابك باختيار كلمة مرور، ثم تابع إلى الأكاديمية. يعمل هذا الرابط مرة واحدة وتنتهي صلاحيته خلال ${str(v, 'expiresInHours', '72')} ساعة — وإذا انتهت، استخدم «نسيت كلمة المرور» في صفحة تسجيل الدخول.`,
     ],

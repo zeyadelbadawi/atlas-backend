@@ -30,7 +30,7 @@ function topic(labels: Record<string, string>, raw: string): string {
 }
 
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
     subject: (v) =>
       `New contact enquiry (${topic(TOPIC_EN, str(v, 'topic'))}) from ${str(v, 'name')}`,
@@ -46,7 +46,7 @@ export const template: CommunicationTemplate = {
     subject: (v) =>
       `استفسار جديد (${topic(TOPIC_AR, str(v, 'topic'))}) من ${str(v, 'name')}`,
     paragraphs: (v) => [
-      `أرسل ${str(v, 'name')} (${str(v, 'email')}) رسالة عبر نموذج التواصل في موقع Atlas.`,
+      `أرسل ${str(v, 'name')} (${str(v, 'email')}) رسالة عبر نموذج التواصل في موقع أطلس.`,
       `الموضوع: ${topic(TOPIC_AR, str(v, 'topic'))}. المؤسسة: ${str(v, 'organizationName', 'غير محددة')}.`,
       str(v, 'message'),
       'افتح صندوق الوارد لقراءة الاستفسار كاملًا وتحديد حالته.',

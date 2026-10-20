@@ -7,7 +7,7 @@ import type { CommunicationTemplate } from '../layout';
  * contact details stay on the organization record.
  */
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
     subject: (v) => `New organization: ${str(v, 'organizationName', 'a new customer')}`,
     preheader: () => 'A new organization signed up.',
@@ -23,7 +23,7 @@ export const template: CommunicationTemplate = {
     subject: (v) => `مؤسسة جديدة: ${str(v, 'organizationName', 'عميل جديد')}`,
     preheader: () => 'سجّلت مؤسسة جديدة.',
     paragraphs: (v) => [
-      `سجّلت ${str(v, 'organizationName', 'مؤسسة جديدة')} في Atlas.`,
+      `سجّلت ${str(v, 'organizationName', 'مؤسسة جديدة')} في أطلس.`,
       v.trialStarted === true
         ? 'بدأت فترتها التجريبية.'
         : 'لم تبدأ فترة تجريبية لهذه المؤسسة.',

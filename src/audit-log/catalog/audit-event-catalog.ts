@@ -801,6 +801,13 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'courseOrderId',
     'notes',
   ]),
+  ev('academy.course_payment.refunded', 'payments', 'payment', 'academy', true, [
+    'courseOrderId',
+    'refundId',
+    'amountMinorUnits',
+    'currency',
+    'note',
+  ]),
   ev('course_order.refund_recorded', 'payments', 'course_order', 'academy', true, [
     'refundId',
     'amountMinorUnits',

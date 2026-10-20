@@ -4,7 +4,7 @@ import { requestTypeLabel } from '../customer-request-labels';
 
 /** Customer Requests — to the requester: the request is in, and what happens next. */
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
     subject: (v) => `We received your request: ${str(v, 'title')}`,
     paragraphs: (v) => [
@@ -16,7 +16,7 @@ export const template: CommunicationTemplate = {
   ar: defineLocale({
     subject: (v) => `استلمنا طلبك: ${str(v, 'title')}`,
     paragraphs: (v) => [
-      `شكرًا لك — وصل طلبك (${requestTypeLabel('ar', str(v, 'type'))}) "${str(v, 'title')}" إلى فريق Atlas.`,
+      `شكرًا لك — وصل طلبك (${requestTypeLabel('ar', str(v, 'type'))}) "${str(v, 'title')}" إلى فريق أطلس.`,
       'سنراجعه ونرد عليك في لوحة التحكم، وستصلك رسالة كلما تغيّرت حالته أو احتجنا منك إلى معلومات إضافية.',
     ],
     ctaLabel: 'عرض الطلب',

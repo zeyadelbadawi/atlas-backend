@@ -118,6 +118,10 @@ const EXPECTED_DEDUPE: Record<
     values: {},
     expected: `course_payment_rejected:${ENTITY_ID}`,
   },
+  'course.payment.refunded': {
+    values: {},
+    expected: `course_payment_refunded:${ENTITY_ID}`,
+  },
   'academy.payment.submitted': {
     values: { academyId: 'a1', paymentId: 'p1' },
     expected: `academy_payment_submitted:${ENTITY_ID}`,

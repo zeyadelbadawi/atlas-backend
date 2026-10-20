@@ -15,7 +15,7 @@ import { roleLabel } from './academy.member.invited';
  * catalogue entry's branding.
  */
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
     subject: (v) =>
       `You've been added to ${str(v, 'academyName', 'an academy')} on Atlas`,
@@ -28,11 +28,11 @@ export const template: CommunicationTemplate = {
   }),
   ar: defineLocale({
     subject: (v) =>
-      `تمت إضافتك إلى ${str(v, 'academyName', 'إحدى الأكاديميات')} على Atlas`,
-    preheader: () => 'سجّل الدخول بحسابك الحالي على Atlas.',
+      `تمت إضافتك إلى ${str(v, 'academyName', 'إحدى الأكاديميات')} على أطلس`,
+    preheader: () => 'سجّل الدخول بحسابك الحالي على أطلس.',
     paragraphs: (v) => [
       `أصبح لديك وصول إلى ${str(v, 'academyName', 'إحدى الأكاديميات')} بصفة ${roleLabel(v, 'ar')}.`,
-      'سجّل الدخول بالبريد الإلكتروني وكلمة المرور اللذين تستخدمهما بالفعل على Atlas. لم يتغيّر شيء في حسابك.',
+      'سجّل الدخول بالبريد الإلكتروني وكلمة المرور اللذين تستخدمهما بالفعل على أطلس. لم يتغيّر شيء في حسابك.',
     ],
     ctaLabel: 'فتح الأكاديمية',
   }),

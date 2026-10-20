@@ -50,6 +50,18 @@ export const ACADEMY_COURSE_PAYMENT_SELECT = {
 
 export const ACADEMY_COURSE_PAYMENT_DETAIL_SELECT = {
   ...ACADEMY_COURSE_PAYMENT_SELECT,
+  refunds: {
+    take: 1,
+    select: {
+      id: true,
+      amountMinorUnits: true,
+      currency: true,
+      reason: true,
+      requestedAt: true,
+      processedAt: true,
+      requester: { select: { name: true } },
+    },
+  },
   reviews: {
     orderBy: { reviewedAt: 'desc' as const },
     select: {
@@ -105,10 +117,20 @@ export interface AcademyCoursePaymentReviewResponse {
   readonly reviewerName?: string;
 }
 
+/** The refund the academy recorded for this payment (full refunds only). */
+export interface AcademyCoursePaymentRefundResponse {
+  readonly id: string;
+  readonly money: { readonly amountMinorUnits: number; readonly currency: string };
+  readonly note?: string;
+  readonly recordedAt: string;
+  readonly recordedByName?: string;
+}
+
 export interface AcademyCoursePaymentDetailResponse extends AcademyCoursePaymentResponse {
   /** The details the learner was shown when they chose the method. */
   readonly instructions?: ManualPaymentInstructionsResponse;
   readonly reviews: readonly AcademyCoursePaymentReviewResponse[];
+  readonly refund?: AcademyCoursePaymentRefundResponse;
 }
 
 /** Per-tab totals for the review list (the same academy, before filters). */
@@ -176,5 +198,19 @@ export function toAcademyCoursePaymentDetailResponse(
       reviewedAt: review.reviewedAt.toISOString(),
       reviewerName: review.reviewer?.name ?? undefined,
     })),
+    refund: row.refunds[0]
+      ? {
+          id: row.refunds[0].id,
+          money: {
+            amountMinorUnits: Number(row.refunds[0].amountMinorUnits),
+            currency: row.refunds[0].currency,
+          },
+          note: row.refunds[0].reason ?? undefined,
+          recordedAt: (
+            row.refunds[0].processedAt ?? row.refunds[0].requestedAt
+          ).toISOString(),
+          recordedByName: row.refunds[0].requester?.name ?? undefined,
+        }
+      : undefined,
   };
 }

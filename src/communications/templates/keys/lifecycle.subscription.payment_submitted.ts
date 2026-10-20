@@ -7,7 +7,7 @@ import type { CommunicationTemplate } from '../layout';
  * reference they would otherwise have to guess at.
  */
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
     subject: () => 'We received your payment proof',
     paragraphs: (v) => [
@@ -24,6 +24,6 @@ export const template: CommunicationTemplate = {
       'يقوم أحد أعضاء الفريق بمراجعته يدويًا. ستصلك رسالة فور الموافقة عليه أو إذا كان ينقصه شيء.',
       'لا داعي لإرساله مرة أخرى.',
     ],
-    ctaLabel: 'عرض الفوترة',
+    ctaLabel: 'عرض مدفوعات الاشتراك',
   }),
 };
