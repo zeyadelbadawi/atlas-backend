@@ -2157,4 +2157,84 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     expect(JSON.stringify(learnerView.body)).not.toContain('acceptedAnswers');
     expect(JSON.stringify(learnerView.body)).not.toContain('isCorrect');
   });
+
+  it('a setting the academy cannot use (flag off) is refused on save with a field error, never stored and silently ignored', async () => {
+    const w = await world('p3-flag-off-authoring');
+    const question = {
+      prompt: '2+2',
+      type: 'single_choice',
+      options: [
+        { label: '4', isCorrect: true },
+        { label: '5', isCorrect: false },
+      ],
+    };
+    const violationsOf = (body: {
+      error: { violations: { field: string; messageKey: string }[] };
+    }) => body.error.violations.map((v) => [v.field, v.messageKey] as [string, string]);
+
+    // Engine v2 off: time limit, shuffle, subset and layout do nothing at
+    // attempt time — and integrity with them.
+    flags.value = { ...allFlags('on'), quizEngineV2: { mode: 'off', academyIds: [] } };
+    const refused = await http()
+      .post(`/courses/${w.course.id}/quizzes`)
+      .set(auth(w.owner.token))
+      .send({
+        title: 'Timed',
+        timeLimitSeconds: 600,
+        shuffleQuestions: true,
+        integrityMode: 'warn',
+        questions: [question],
+      })
+      .expect(400);
+    expect(violationsOf(refused.body)).toEqual([
+      ['timeLimitSeconds', 'errors.quiz.settingUnavailable'],
+      ['shuffleQuestions', 'errors.quiz.settingUnavailable'],
+      ['integrityMode', 'errors.quiz.settingUnavailable'],
+    ]);
+    // The everyday settings still save.
+    const plain = await http()
+      .post(`/courses/${w.course.id}/quizzes`)
+      .set(auth(w.owner.token))
+      .send({
+        title: 'Plain',
+        maxAttempts: 2,
+        gradingPolicy: 'latest',
+        questions: [question],
+      })
+      .expect(201);
+
+    // Integrity off only: the time limit is fine, integrity is not.
+    flags.value = { ...allFlags('on'), quizIntegrity: { mode: 'off', academyIds: [] } };
+    const integrity = await http()
+      .patch(`/courses/${w.course.id}/quizzes/${plain.body.id}`)
+      .set(auth(w.owner.token))
+      .send({ timeLimitSeconds: 600, integrityMode: 'strict', requireFullscreen: true })
+      .expect(400);
+    expect(violationsOf(integrity.body)).toEqual([
+      ['integrityMode', 'errors.quiz.settingUnavailable'],
+      ['requireFullscreen', 'errors.quiz.settingUnavailable'],
+    ]);
+    const stored = await admin.quiz.findUniqueOrThrow({ where: { id: plain.body.id } });
+    expect(stored).toMatchObject({ timeLimitSeconds: null, integrityMode: 'off' });
+
+    // A quiz saved while the flag was on stays editable after it goes off,
+    // and its now-unavailable setting can be cleared.
+    flags.value = allFlags('on');
+    await http()
+      .patch(`/courses/${w.course.id}/quizzes/${plain.body.id}`)
+      .set(auth(w.owner.token))
+      .send({ timeLimitSeconds: 600 })
+      .expect(200);
+    flags.value = { ...allFlags('on'), quizEngineV2: { mode: 'off', academyIds: [] } };
+    await http()
+      .patch(`/courses/${w.course.id}/quizzes/${plain.body.id}`)
+      .set(auth(w.owner.token))
+      .send({ title: 'Renamed', timeLimitSeconds: 600 })
+      .expect(200);
+    await http()
+      .patch(`/courses/${w.course.id}/quizzes/${plain.body.id}`)
+      .set(auth(w.owner.token))
+      .send({ timeLimitSeconds: null })
+      .expect(200);
+  });
 });
