@@ -52,6 +52,8 @@ import { ContactSubmissionsRepository } from './repositories/contact-submissions
 import { AcademyOrganizationScopeGuard } from './guards/academy-organization-scope.guard';
 import { AcademyScopeGuard } from './guards/academy-scope.guard';
 import { SubdomainAllocationsRepository } from '../domain/repositories/subdomain-allocations.repository';
+import { SubdomainAliasesRepository } from '../domain/repositories/subdomain-aliases.repository';
+import { AcademyAddressService } from './services/academy-address.service';
 import { DomainConnectionsRepository } from '../domain/repositories/domain-connections.repository';
 import { PlatformDomainConfigurationRepository } from '../domain/repositories/platform-domain-configuration.repository';
 import { AcademyArchiveModule } from './academy-archive.module';
@@ -86,6 +88,9 @@ import { AcademyCommunicationSettingsController } from './controllers/academy-co
     // `RefreshTokensRepository`. A `forwardRef` pair would work too, but
     // would add real coupling to avoid a problem that does not exist here.
     SubdomainAllocationsRepository,
+    // A slug change moves the address and keeps the old one as a redirect.
+    SubdomainAliasesRepository,
+    AcademyAddressService,
     PlatformDomainConfigurationRepository,
     // Branding and slug reads need the custom-domain connection. The
     // archive-only providers (provider release, hostname cache, Cloudflare)

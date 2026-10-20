@@ -60,6 +60,8 @@ import { ConfigService } from '@nestjs/config';
 import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
 import { PlatformDomainConfigurationRepository } from '../../domain/repositories/platform-domain-configuration.repository';
 import { AcademyArchiveService } from './academy-archive.service';
+import { AcademyAddressService } from './academy-address.service';
+import type { AcademyAddressMoveResult } from './academy-address.service';
 import type { ArchiveAcademyInput } from './academy-archive.service';
 import { toAcademyResponse } from '../dto/academy.contract';
 import type { AcademyResponse, AcademyAddressResponse } from '../dto/academy.contract';
@@ -312,6 +314,8 @@ export class AcademiesService {
     configService: ConfigService,
     // Task 3 — the Academy activity log's read side (global AuditLogModule).
     private readonly auditLogEntriesRepository: AuditLogEntriesRepository,
+    // Slug change — moves the public address and keeps the old one as a redirect.
+    private readonly academyAddressService: AcademyAddressService,
   ) {
     this.environmentBaseDomain = configService
       .get<PlatformDomainRuntimeConfig>('platformDomain')
@@ -637,6 +641,8 @@ export class AcademiesService {
     // provisioning path refuses them.
     assertSlugNotReserved(payload.slug);
     await this.assertSlugAvailable(payload.organizationId, payload.slug);
+    // An old address another academy keeps (it redirects) is taken too.
+    await this.assertSubdomainLabelFree(payload.slug, null);
     const requestedName = cleanDisplayName(payload.name);
     let claimedNameKey: string | null = null;
 
@@ -817,9 +823,15 @@ export class AcademiesService {
     const name = payload.name === undefined ? undefined : cleanDisplayName(payload.name);
     let nameKey: string | null = null;
 
-    const academy = await this.withSlugConflictHandling(
+    // Tenant AND user context: the allocation, alias and domain connection
+    // policies are academy-membership scoped (P21), exactly as in `create`
+    // and `updateBranding`.
+    const inUserContext = <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) =>
+      this.tenancyContextService.runInTenantAndUserContext(organizationId, userId, work);
+
+    const { academy, moved } = await this.withSlugConflictHandling(
       () =>
-        this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+        inUserContext(async (tx) => {
           const role = await this.assertCanManage(tx, academyId, userId);
 
           const current = await this.academiesRepository.findById(tx, academyId);
@@ -857,6 +869,9 @@ export class AcademiesService {
               throw new BadRequestException({ messageKey: 'errors.academy.invalidSlug' });
             }
             assertSlugNotReserved(payload.slug as string);
+            // Another academy's slug, address or kept old address. This
+            // academy's own old addresses are free to take back.
+            await this.assertSubdomainLabelFree(payload.slug as string, academyId, tx);
           }
           // W4 — a rename re-checks the platform-wide name rule (excluding
           // this academy, so re-saving its own name is never a conflict).
@@ -918,7 +933,41 @@ export class AcademiesService {
               ]),
             ),
           });
-          return updated;
+
+          // The public address follows the slug, in this transaction.
+          let addressMove: {
+            readonly result: AcademyAddressMoveResult;
+            readonly customHostname: string | null;
+          } | null = null;
+          if (changesSlug) {
+            const result = await this.academyAddressService.move(tx, {
+              academyId,
+              subdomain: updated.slug,
+              baseDomain: await this.effectiveBaseDomain(),
+            });
+            const connection = await this.domainConnectionsRepository.findByAcademyId(
+              tx,
+              academyId,
+            );
+            await this.auditLogWriterService.write(tx, {
+              actorUserId: userId,
+              organizationId,
+              academyId,
+              role,
+              action: 'domain.subdomain_changed',
+              targetType: 'subdomain_allocation',
+              targetId: result.allocation.id,
+              targetLabel: result.allocation.fullHost ?? result.allocation.subdomain,
+              context: {
+                previousSubdomain: result.previous?.subdomain,
+                newSubdomain: result.allocation.subdomain,
+                redirectKept: result.redirectKept,
+                reclaimedAlias: result.reclaimedAlias,
+              },
+            });
+            addressMove = { result, customHostname: connection?.hostname ?? null };
+          }
+          return { academy: updated, moved: addressMove };
         }),
       () =>
         nameKey === null
@@ -928,7 +977,36 @@ export class AcademiesService {
             ),
     );
 
+    // After commit: drop every cached hostname resolution that could still
+    // answer with the old address — the old and new labels and hosts, the
+    // custom domain, and every old address this academy keeps (each one's
+    // cached redirect named the previous canonical host).
+    if (moved) {
+      const { result, customHostname } = moved;
+      await this.invalidatePublicHostnames(
+        result.previous?.subdomain ?? academy.slug,
+        result.previous,
+        customHostname,
+      );
+      await this.invalidatePublicHostnames(
+        academy.slug,
+        result.allocation,
+        customHostname,
+      );
+      for (const alias of result.aliases) {
+        await this.invalidatePublicHostnames(alias, null, null);
+      }
+    }
+
     return toAcademyResponse(academy);
+  }
+
+  /** The effective platform base domain (P63g rule: environment first, then the configured row). */
+  private async effectiveBaseDomain(): Promise<string | undefined> {
+    const platformDomain =
+      await this.platformDomainConfigurationRepository.findSingleton();
+    return resolveEffectiveBaseDomain(this.environmentBaseDomain, platformDomain)
+      .baseDomain;
   }
 
   async updateBranding(
@@ -2154,6 +2232,31 @@ export class AcademiesService {
     // here (RLS-invisible), and the eventual `create`/`update` call fails
     // on the real DB unique constraint instead — reported identically.
     if (existing && existing.id !== excludeAcademyId) {
+      throw new ConflictException({ messageKey: 'errors.academy.slugTaken' });
+    }
+  }
+
+  /**
+   * The cross-tenant half of the slug check: refuses a label ANOTHER
+   * academy holds as its slug, its address or one of the old addresses it
+   * keeps (they redirect to it, so they are never given away). `academyId`
+   * is the academy taking the label (`null` for a new one) — its own old
+   * addresses are its to take back. The namespace triggers (migration
+   * `20261123000100_subdomain_aliases`) enforce the same rule under
+   * concurrency; this answers the common case with the clean 409 first.
+   */
+  private async assertSubdomainLabelFree(
+    slug: string,
+    academyId: string | null,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    if (
+      await this.subdomainAllocationsRepository.isHeldByAnotherAcademy(
+        slug,
+        academyId,
+        tx,
+      )
+    ) {
       throw new ConflictException({ messageKey: 'errors.academy.slugTaken' });
     }
   }

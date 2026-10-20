@@ -62,7 +62,39 @@ export class SubdomainAllocationsRepository {
     }));
   }
 
-  /** Phase P14 — global, context-free availability check. See this class's own doc comment. */
+  /**
+   * Slug change — moves this Academy's allocation to a new label (and the
+   * full host with it). The old label is kept as an alias by the caller, in
+   * the same transaction.
+   */
+  moveTo(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    data: { readonly subdomain: string; readonly fullHost: string | null },
+  ): Promise<SubdomainAllocation> {
+    return tx.subdomainAllocation.update({ where: { academyId }, data });
+  }
+
+  /**
+   * Slug change / creation — whether an Academy OTHER than `academyId`
+   * (any Academy, when `null`) holds this label as its slug, its allocation
+   * or one of its old addresses. Boolean only, through the
+   * `subdomain_held_by_other` definer function, for the same reason as
+   * `existsBySubdomain`: the answer crosses tenants. Runs on the caller's
+   * transaction when given one (no second connection while it is open).
+   */
+  async isHeldByAnotherAcademy(
+    subdomain: string,
+    academyId: string | null,
+    tx?: Prisma.TransactionClient,
+  ): Promise<boolean> {
+    const rows = await (tx ?? this.prisma).$queryRaw<{ held: boolean }[]>(
+      Prisma.sql`SELECT subdomain_held_by_other(${subdomain}::text, ${academyId}::text) AS held`,
+    );
+    return rows[0]?.held ?? false;
+  }
+
+  /** Phase P14 — global, context-free availability check (an old address an Academy keeps counts as taken). See this class's own doc comment. */
   async existsBySubdomain(subdomain: string): Promise<boolean> {
     const rows = await this.prisma.$queryRaw<{ subdomain_is_taken: boolean }[]>(
       Prisma.sql`SELECT subdomain_is_taken(${subdomain}) AS subdomain_is_taken`,
