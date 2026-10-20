@@ -34,7 +34,7 @@ AS $fn$
       'payments', 'checkout', 'sso', 'oauth', 'id', 'identity',
       'secure', 'security', 'verify', 'email', 'webmail', 'smtp',
       'imap', 'pop', 'mx', 'ns1', 'ns2', 'ftp', 'dev', 'staging',
-      'test', 'preview', 'sandbox', 'beta', 'demo', 'internal',
+      'test', 'preview', 'sandbox', 'demo', 'internal',
       'system', 'root', 'origin', 'metrics', 'health', 'owner',
       'manage', 'management', 'academy', 'org', 'organization'
     ]::text[] AS reserved,

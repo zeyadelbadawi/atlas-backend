@@ -325,7 +325,7 @@ RETIRED_THEME_KEYS="premium-academy corporate-learning minimal-editorial bold-cr
 KNOWN_THEME_KEYS="modern-education atelier manara riwaq $RETIRED_THEME_KEYS"
 # DL-57: the exact reserved labels (src/provisioning/dto/provisioning.constants.ts
 # RESERVED_SUBDOMAINS; the spec compares).
-RESERVED_SLUGS="www app api admin dashboard platform atlas mail status support docs doc help blog learn kb faq wiki video ssh cdn static assets media files auth login signin signup register account accounts billing pay payment payments checkout sso oauth id identity secure security verify email webmail smtp imap pop mx ns1 ns2 ftp dev staging test preview sandbox beta demo internal system root origin metrics health owner manage management academy org organization"
+RESERVED_SLUGS="www app api admin dashboard platform atlas mail status support docs doc help blog learn kb faq wiki video ssh cdn static assets media files auth login signin signup register account accounts billing pay payment payments checkout sso oauth id identity secure security verify email webmail smtp imap pop mx ns1 ns2 ftp dev staging test preview sandbox demo internal system root origin metrics health owner manage management academy org organization"
 sql_list() { printf "'%s'," $1 | sed 's/,$//'; }
 b0_counts_facts() {
   echo "== B0 read-only counts (OC-16; counts only)"
