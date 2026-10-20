@@ -14,7 +14,12 @@
  * independently; this app-layer check exists to return a real 403 instead
  * of a confusing empty/failed write.
  */
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AnnouncementsRepository } from '../repositories/announcements.repository';
 import { toAnnouncementResponse } from '../dto/announcement.contract';
@@ -84,6 +89,42 @@ export class AnnouncementsService {
     private readonly announcementsRepository: AnnouncementsRepository,
     private readonly fanOutProducer: AnnouncementFanOutProducer,
   ) {}
+
+  /**
+   * Writes an edit. When the schedule part changes the status, the write
+   * only lands if the row still has the status it was decided from (the
+   * sweep may have published it meanwhile); otherwise 409 and the editor
+   * reloads.
+   */
+  private async writeUpdate(
+    tx: Prisma.TransactionClient,
+    existing: { readonly status: AnnouncementStatus },
+    announcementId: string,
+    fields: { readonly title?: string; readonly body?: string },
+    scheduledAt: string | null | undefined,
+  ) {
+    const schedule = scheduleUpdate(existing, scheduledAt);
+    if (schedule.status === undefined) {
+      return this.announcementsRepository.update(tx, announcementId, {
+        ...fields,
+        ...schedule,
+      });
+    }
+    const updated = await this.announcementsRepository.updateIfStatus(
+      tx,
+      announcementId,
+      existing.status,
+      {
+        ...fields,
+        scheduledAt: schedule.scheduledAt as Date | null,
+        status: schedule.status as AnnouncementStatus,
+      },
+    );
+    if (!updated) {
+      throw new ConflictException({ messageKey: 'errors.concurrency.staleVersion' });
+    }
+    return updated;
+  }
 
   /**
    * P64 Communications C3 (plan §8 H1) — tells the audience a publish
@@ -256,11 +297,16 @@ export class AnnouncementsService {
       if (!existing || existing.courseId !== courseId) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
-      const updated = await this.announcementsRepository.update(tx, announcementId, {
-        title: payload.title,
-        body: payload.body,
-        ...scheduleUpdate(existing, payload.scheduledAt),
-      });
+      const updated = await this.writeUpdate(
+        tx,
+        existing,
+        announcementId,
+        {
+          title: payload.title,
+          body: payload.body,
+        },
+        payload.scheduledAt,
+      );
       return toAnnouncementResponse(updated, updated.author.name);
     });
   }
@@ -374,11 +420,16 @@ export class AnnouncementsService {
       if (!existing || existing.academyId !== academyId || existing.courseId) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
-      const updated = await this.announcementsRepository.update(tx, announcementId, {
-        title: payload.title,
-        body: payload.body,
-        ...scheduleUpdate(existing, payload.scheduledAt),
-      });
+      const updated = await this.writeUpdate(
+        tx,
+        existing,
+        announcementId,
+        {
+          title: payload.title,
+          body: payload.body,
+        },
+        payload.scheduledAt,
+      );
       return toAnnouncementResponse(updated, updated.author.name);
     });
   }
@@ -484,11 +535,16 @@ export class AnnouncementsService {
       if (!existing || existing.audience !== 'platform') {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
-      const updated = await this.announcementsRepository.update(tx, announcementId, {
-        title: payload.title,
-        body: payload.body,
-        ...scheduleUpdate(existing, payload.scheduledAt),
-      });
+      const updated = await this.writeUpdate(
+        tx,
+        existing,
+        announcementId,
+        {
+          title: payload.title,
+          body: payload.body,
+        },
+        payload.scheduledAt,
+      );
       return toAnnouncementResponse(updated, updated.author.name);
     });
   }

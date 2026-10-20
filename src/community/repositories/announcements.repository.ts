@@ -8,7 +8,7 @@
  * satisfy, never a `WHERE` clause re-deriving authorization here.
  */
 import { Injectable } from '@nestjs/common';
-import type { Announcement, Prisma } from '@prisma/client';
+import type { Announcement, AnnouncementStatus, Prisma } from '@prisma/client';
 
 export type AnnouncementWithAuthor = Announcement & { author: { name: string } };
 
@@ -154,5 +154,25 @@ export class AnnouncementsRepository {
     data: Prisma.AnnouncementUpdateInput,
   ): Promise<AnnouncementWithAuthor> {
     return tx.announcement.update({ where: { id }, data, include: WITH_AUTHOR });
+  }
+
+  /**
+   * `update`, but only while the row still has the status the caller read.
+   * A schedule change decides the new status from the one it read; without
+   * this the sweep could publish the row in between and the write would put
+   * it back to `scheduled` (and publish it twice). `null` when the status
+   * moved on.
+   */
+  async updateIfStatus(
+    tx: Prisma.TransactionClient,
+    id: string,
+    expectedStatus: AnnouncementStatus,
+    data: Prisma.AnnouncementUncheckedUpdateManyInput,
+  ): Promise<AnnouncementWithAuthor | null> {
+    const { count } = await tx.announcement.updateMany({
+      where: { id, status: expectedStatus },
+      data,
+    });
+    return count === 0 ? null : this.findById(tx, id);
   }
 }

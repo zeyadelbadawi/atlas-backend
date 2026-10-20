@@ -444,7 +444,7 @@ describe('P64 Communications — outbox, dispatch, preferences, RLS (e2e)', () =
       const email = deliveries.filter((d) => d.channel === 'email');
       expect(email).toHaveLength(1);
       expect(email[0].status).toBe('sent');
-      expect(email[0].templateVersion).toBe('platform.payment.approved@1');
+      expect(email[0].templateVersion).toBe('platform.payment.approved@3');
       expect(email[0].sentAt).not.toBeNull();
       // The provider RECORDS ITSELF now (`EmailSendResult.provider`),
       // rather than the transport guessing from the class name — so a
