@@ -704,6 +704,7 @@ model Academy {
   websiteFaqEntries      WebsiteFaqEntry[]
   websiteTestimonials    WebsiteTestimonialEntry[]
   subdomainAllocation    SubdomainAllocation?
+  subdomainAliases       SubdomainAlias[]
   domainConnection       DomainConnection?
   domainProviderReleases DomainProviderRelease[]
   /// Phase P13 — Course Commerce (master plan §23/§5.8).
@@ -3782,6 +3783,24 @@ model SubdomainAllocation {
   updatedAt DateTime        @updatedAt @map("updated_at")
 
   @@map("subdomain_allocations")
+}
+
+/// An Academy's PREVIOUS subdomain labels. Changing the slug moves the
+/// allocation to the new label and keeps the old one here, held for this
+/// Academy for good: its host answers with a redirect to the Academy's
+/// canonical host, and no other Academy may take it (database triggers
+/// enforce one label namespace across `academies.slug`, allocations and
+/// aliases — migration `20261123000000_subdomain_aliases`).
+model SubdomainAlias {
+  id        String   @id @default(uuid())
+  academyId String   @map("academy_id")
+  academy   Academy  @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  subdomain String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([academyId])
+  @@map("subdomain_aliases")
 }
 
 /// Mirrors `DomainConnection` (`provisioning.types.ts`) plus the SSL/CDN
