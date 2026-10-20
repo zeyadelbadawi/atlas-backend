@@ -279,7 +279,7 @@ describe('Course Commerce — P13 (e2e)', () => {
   it('5/6: Atlas Payments mode snapshots and records commission on the Payment and the ledger; Organization-Owned Gateway never does', async () => {
     await setGlobalCommission(1000); // 10%
     const { payment, academy, course } = await purchaseCourseToApproval(
-      'commission-atlas',
+      'commission-managed',
       10000,
     );
 
