@@ -18,6 +18,9 @@ interface BuildOptions {
   testimonialEntries?: unknown[];
   cachedPages?: unknown;
   libraryRevision?: number;
+  /** What `resolve_public_hostname` answers (`resolveHostname`). */
+  resolution?: Record<string, unknown> | null;
+  baseDomain?: string;
 }
 
 function build(options: BuildOptions = {}) {
@@ -29,6 +32,8 @@ function build(options: BuildOptions = {}) {
     testimonialEntries = [],
     cachedPages,
     libraryRevision = 0,
+    resolution = null,
+    baseDomain,
   } = options;
   const tx = { marker: 'tx' };
 
@@ -39,6 +44,12 @@ function build(options: BuildOptions = {}) {
   };
   const publicHostnameResolutionRepository = {
     resolveAcademyOrganization: jest.fn(async () => ORGANIZATION_ID),
+    resolve: jest.fn(async () => resolution),
+    resolvePresentation: jest.fn(async () => null),
+  };
+  const academiesRepository = { findById: jest.fn(async () => ({ faviconUrl: null })) };
+  const platformDomainService = {
+    getEffectiveBaseDomain: jest.fn(async () => ({ baseDomain })),
   };
   const websiteConfigurationRepository = {
     findPublishedByAcademyId: jest.fn(async () =>
@@ -46,6 +57,8 @@ function build(options: BuildOptions = {}) {
     ),
   };
   const cacheService = {
+    getHostnameResolution: jest.fn(async () => undefined),
+    setHostnameResolution: jest.fn(async () => undefined),
     getServingEligibility: jest.fn(async () => undefined),
     setServingEligibility: jest.fn(async () => undefined),
     getPages: jest.fn(async () => cachedPages),
@@ -97,9 +110,9 @@ function build(options: BuildOptions = {}) {
     coursesRepository as never,
     {} as never, // courseReviewsRepository
     {} as never, // courseSectionsRepository
-    {} as never, // academiesRepository
+    academiesRepository as never,
     subscriptionAccessService as never,
-    {} as never, // platformDomainService
+    platformDomainService as never,
     {} as never, // metrics
     {} as never, // courseCategoriesRepository
     websiteFaqEntriesRepository as never,
@@ -112,6 +125,7 @@ function build(options: BuildOptions = {}) {
   return {
     service,
     tx,
+    publicHostnameResolutionRepository,
     websiteConfigurationRepository,
     contactSubmissionsRepository,
     academyStudentsRepository,
@@ -434,5 +448,84 @@ describe('PublicWebsiteService.getPublishedPages — content library', () => {
     expect((result.sections[0] as { config: object }).config).not.toHaveProperty(
       'libraryEntries',
     );
+  });
+});
+
+describe('PublicWebsiteService.resolveHostname — an old address after a slug change', () => {
+  const BASE = 'atlas.example';
+  const academyRow = {
+    academyId: ACADEMY_ID,
+    organizationId: ORGANIZATION_ID,
+    academyName: 'Nour Academy',
+    academySlug: 'nour-new',
+    academyLogoUrl: null,
+    customHostname: null,
+    subdomain: 'nour-new',
+    subdomainFullHost: `nour-new.${BASE}`,
+  };
+
+  it('answers an old label with the academy and a redirect to its canonical host', async () => {
+    const { service, publicHostnameResolutionRepository, cacheService } = build({
+      baseDomain: BASE,
+      resolution: { ...academyRow, matchedAlias: true },
+    });
+
+    const response = await service.resolveHostname(`nour-old.${BASE}`);
+
+    expect(publicHostnameResolutionRepository.resolve).toHaveBeenCalledWith(
+      `nour-old.${BASE}`,
+      'nour-old',
+    );
+    expect(response).toMatchObject({
+      academyId: ACADEMY_ID,
+      academySlug: 'nour-new',
+      canonicalHost: `nour-new.${BASE}`,
+      redirectHost: `nour-new.${BASE}`,
+    });
+    // Cached under the old host only, with the redirect in it.
+    expect(cacheService.setHostnameResolution).toHaveBeenCalledWith(
+      `nour-old.${BASE}`,
+      expect.objectContaining({ redirectHost: `nour-new.${BASE}` }),
+    );
+  });
+
+  it('redirects an old label to the connected custom domain when that is canonical', async () => {
+    const { service } = build({
+      baseDomain: BASE,
+      resolution: {
+        ...academyRow,
+        customHostname: 'learn.nour.example',
+        matchedAlias: true,
+      },
+    });
+
+    const response = await service.resolveHostname(`nour-old.${BASE}`);
+
+    expect(response?.redirectHost).toBe('learn.nour.example');
+  });
+
+  it('never redirects the live address', async () => {
+    const { service } = build({
+      baseDomain: BASE,
+      resolution: { ...academyRow, matchedAlias: false },
+    });
+
+    const response = await service.resolveHostname(`nour-new.${BASE}`);
+
+    expect(response).not.toHaveProperty('redirectHost');
+    expect(response?.canonicalHost).toBe(`nour-new.${BASE}`);
+  });
+
+  it('serves an old label without a redirect when no canonical host is known', async () => {
+    // No base domain and no stored full host (local development): there is
+    // nowhere to send the visitor, so the academy is served as before.
+    const { service } = build({
+      resolution: { ...academyRow, subdomainFullHost: null, matchedAlias: true },
+    });
+
+    const response = await service.resolveHostname('nour-old');
+
+    expect(response?.academyId).toBe(ACADEMY_ID);
+    expect(response).not.toHaveProperty('redirectHost');
   });
 });

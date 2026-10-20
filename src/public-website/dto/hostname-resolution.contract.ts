@@ -13,6 +13,15 @@ export interface HostnameResolutionResponse {
    */
   readonly canonicalHost?: string;
   /**
+   * Present only when the requested host is one of the Academy's OLD
+   * addresses (a previous slug, kept in `subdomain_aliases` when the slug
+   * changed): the host to send the visitor to, same path and query — the
+   * Academy's canonical host, computed here from its own rows, never from
+   * the request. The SPA follows it with `location.replace`, the server
+   * renderer with a 301.
+   */
+  readonly redirectHost?: string;
+  /**
    * The Academy's own favicon, when it has one: the public runtime links
    * `public/websites/:academyId/favicon?v=<faviconVersion>`. A hash of the
    * stored favicon, so it changes exactly when the favicon does. Absent:

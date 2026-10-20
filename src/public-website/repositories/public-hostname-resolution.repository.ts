@@ -32,6 +32,8 @@ export interface ResolvedPublicHostname {
   readonly subdomain: string | null;
   /** P63g — the allocation's stored full host, when one was recorded. */
   readonly subdomainFullHost: string | null;
+  /** The host matched one of the Academy's OLD subdomain labels (`subdomain_aliases`): it redirects to the canonical host. */
+  readonly matchedAlias: boolean;
 }
 
 interface ResolvePublicHostnameRow {
@@ -43,6 +45,7 @@ interface ResolvePublicHostnameRow {
   readonly custom_hostname: string | null;
   readonly subdomain: string | null;
   readonly subdomain_full_host: string | null;
+  readonly matched_alias: boolean | null;
 }
 
 @Injectable()
@@ -68,6 +71,7 @@ export class PublicHostnameResolutionRepository {
       customHostname: row.custom_hostname,
       subdomain: row.subdomain,
       subdomainFullHost: row.subdomain_full_host,
+      matchedAlias: row.matched_alias === true,
     };
   }
 

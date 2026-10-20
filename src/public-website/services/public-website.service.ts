@@ -209,6 +209,12 @@ export class PublicWebsiteService {
       academySlug: resolved.academySlug,
       academyLogo: resolved.academyLogoUrl ?? undefined,
       canonicalHost: canonical?.host,
+      // An old address (the slug changed): send the visitor to the
+      // Academy's own canonical host — computed above from its rows, so the
+      // target can never be a host the request chose.
+      ...(resolved.matchedAlias && canonical && canonical.host !== normalized
+        ? { redirectHost: canonical.host }
+        : {}),
       ...(favicon ? { faviconVersion: favicon } : {}),
       ...(presentation ? { presentation } : {}),
     };
