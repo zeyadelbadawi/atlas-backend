@@ -274,6 +274,22 @@ export class ProtectedMediaStorage implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * The whole object. B0-SEC-10 — support-ticket images, which Atlas serves
+   * itself through an authenticated, RLS-scoped endpoint rather than a
+   * presigned URL. Throws when the object is missing.
+   */
+  async getObject(key: string): Promise<Buffer> {
+    const response = await this.client.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
+    const bytes = await response.Body?.transformToByteArray();
+    if (!bytes) {
+      throw new Error(`Object body empty for key "${key}".`);
+    }
+    return Buffer.from(bytes);
+  }
+
   async deleteObject(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }

@@ -40,6 +40,7 @@ import {
   MEDIA_STORAGE_PROVIDER,
   type MediaStorageProvider,
 } from '../../media/storage/media-storage.interface';
+import { ProtectedMediaStorage } from '../../media/storage/protected-media-storage.provider';
 import {
   buildSupportAttachmentStorageKey,
   detectFileKind,
@@ -83,8 +84,12 @@ export class SupportCasesService {
     private readonly supportCaseMessageAttachmentsRepository: SupportCaseMessageAttachmentsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly communicationService: CommunicationService,
+    // B0-SEC-10 — read-only fallback for images stored before the move to
+    // the protected bucket; never written to (see `getAttachmentBytes`).
     @Inject(MEDIA_STORAGE_PROVIDER)
-    private readonly storageProvider: MediaStorageProvider,
+    private readonly legacyPublicStorage: MediaStorageProvider,
+    // B0-SEC-10 — where ticket images live: the bucket with no public URL.
+    private readonly protectedStorage: ProtectedMediaStorage,
     configService: ConfigService,
     // B0-SUP-01 — a new case or a customer reply is work for Atlas support.
     private readonly platformOwnerAlertService: PlatformOwnerAlertService,
@@ -565,7 +570,12 @@ export class SupportCasesService {
 
     const id = randomUUID();
     const storageKey = buildSupportAttachmentStorageKey(caseId, kind.extension, id);
-    await this.storageProvider.putObject(storageKey, buffer, kind.mimeType);
+    // B0-SEC-10 — the PROTECTED bucket, never the public media one. The
+    // public bucket is reachable by URL by design (`R2_PUBLIC_URL_BASE`), so
+    // a ticket screenshot there was protected by nothing but its key not
+    // being known; the protected bucket has no public URL at all, and the
+    // only way to these bytes is `getAttachmentBytes` below.
+    await this.protectedStorage.putObject(storageKey, buffer, kind.mimeType);
 
     return {
       id,
@@ -619,14 +629,27 @@ export class SupportCasesService {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
 
+    // B0-SEC-10 — the protected bucket first; an image uploaded before the
+    // move may still be in the public bucket under the same key until
+    // `move-support-attachments` has run, so that is read as a fallback.
+    // Reading is all it is used for: nothing new is ever written there.
+    //
+    // Only a confirmed "no such object" moves on to the next bucket or ends
+    // in 404 (an ordinary stale reference). Any other storage failure
+    // propagates as a 500 — which Nest answers generically, so it says no
+    // more about the backend — rather than being reported as a deleted
+    // attachment while storage is down.
     let buffer: Buffer;
     try {
-      buffer = await this.storageProvider.getObject(attachment.storageKey);
-    } catch {
-      // A missing object is an ordinary stale reference, and surfacing the
-      // storage error would say more about the backend than a caller
-      // should learn — the same reasoning `PublicMediaController` applies.
-      throw new NotFoundException({ messageKey: 'errors.notFound' });
+      buffer = await this.protectedStorage.getObject(attachment.storageKey);
+    } catch (error) {
+      if (!isObjectMissing(error)) throw error;
+      try {
+        buffer = await this.legacyPublicStorage.getObject(attachment.storageKey);
+      } catch (legacyError) {
+        if (!isObjectMissing(legacyError)) throw legacyError;
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
     }
 
     return {
@@ -646,4 +669,13 @@ export class SupportCasesService {
     }
     return supportCase;
   }
+}
+
+/** B0-SEC-10 — an S3/R2 "this key does not exist" answer, as opposed to any other failure. */
+function isObjectMissing(error: unknown): boolean {
+  const { name, $metadata } = (error ?? {}) as {
+    name?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  return name === 'NoSuchKey' || name === 'NotFound' || $metadata?.httpStatusCode === 404;
 }
