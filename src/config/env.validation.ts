@@ -164,9 +164,9 @@ const EnvSchema = z.object({
   // sets VITE_RUM_SAMPLE_RATE. Reports/REAL_USER_MONITORING.md.
   RUM_ENABLED: z.union([z.literal('true'), z.literal('false')]).optional(),
   // B1 F.5 — the marketing website's cookieless beacon (`POST /mkt/events`).
-  // Same semantics as RUM_ENABLED: off unless exactly "true" (SPEC F.5:
-  // deployed dark until M1a); when off, beacons still get 204 and are
-  // dropped. The 25-month retention prune runs either way.
+  // Same semantics as RUM_ENABLED: off unless exactly "true". The deploy
+  // workflow sets it on with the M1a marketing site (DL-51); when off,
+  // beacons still get 204 and are dropped. The 25-month retention prune runs either way.
   MARKETING_EVENTS_ENABLED: z.union([z.literal('true'), z.literal('false')]).optional(),
 
   EMAIL_DELIVERABILITY_CHECK_ENABLED: z

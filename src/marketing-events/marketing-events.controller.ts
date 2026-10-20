@@ -20,7 +20,8 @@
  * a bot User-Agent, an opted-out request or ingestion switched off are all
  * dropped silently, and a storage failure is swallowed (logged without the
  * payload) — a beacon never gets a 500. `MARKETING_EVENTS_ENABLED` other
- * than exactly "true" turns ingestion off (SPEC: deployed dark until M1a).
+ * than exactly "true" turns ingestion off; the deploy workflow turns it on
+ * with the M1a marketing site (owner decision DL-51, 20 Oct 2026).
  * Bodies are capped at 16 KB (`body-limits.ts`, `beacon` tier).
  */
 import {
