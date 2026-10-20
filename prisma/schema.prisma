@@ -6668,3 +6668,32 @@ model PrivacyRequest {
   @@index([status, createdAt(sort: Desc)])
   @@map("privacy_requests")
 }
+
+/// B1 F.5 — the cookieless marketing beacon's DAILY AGGREGATES
+/// (`POST /mkt/events`). One row per UTC day and combination of closed-
+/// vocabulary dimensions, holding only a count: no visitor, session,
+/// device identifier, IP address, URL, query or fragment is ever stored
+/// (`marketing-events.vocabulary.ts` lists every value a column can hold;
+/// `referrer_domain` is a bare hostname or ''). Platform-level, carries no
+/// tenant data, so — like `tenant_usage_sweep_cursor` — no RLS policy.
+/// Rows older than 25 months are pruned daily
+/// (`MarketingEventsRetentionService`).
+model MarketingEventDaily {
+  day            DateTime @db.Date
+  name           String   @db.VarChar(32)
+  page           String   @db.VarChar(24)
+  locale         String   @db.VarChar(2)
+  device         String   @db.VarChar(8)
+  /// The event's closed-list value ('' for events without one).
+  value          String   @default("") @db.VarChar(32)
+  /// `campaign_landing` only: a registered value, `unregistered`, or ''.
+  utmSource      String   @default("") @map("utm_source") @db.VarChar(32)
+  utmMedium      String   @default("") @map("utm_medium") @db.VarChar(32)
+  utmCampaign    String   @default("") @map("utm_campaign") @db.VarChar(32)
+  referrerDomain String   @default("") @map("referrer_domain") @db.VarChar(100)
+  count          Int      @default(0)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@id([day, name, page, locale, device, value, utmSource, utmMedium, utmCampaign, referrerDomain], name: "dimensions")
+  @@map("marketing_event_daily")
+}
