@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 import {
+  CERTIFICATE_FOOTER,
   CertificateRendererService,
   reorderMixedRtl,
 } from './certificate-renderer.service';
@@ -39,6 +40,12 @@ describe('CertificateRendererService', () => {
     objectExists: jest.fn(),
   };
   const renderer = new CertificateRendererService(new CertificateImageLoader(storage));
+
+  it('names the platform «أطلس» in the Arabic footer, Atlas in the English one', () => {
+    expect(CERTIFICATE_FOOTER.ar).toBe('صادرة ومُوثَّقة عبر أطلس');
+    expect(CERTIFICATE_FOOTER.ar).not.toMatch(/[A-Za-z]/);
+    expect(CERTIFICATE_FOOTER.en).toBe('Issued & verified through Atlas');
+  });
 
   it('embeds the vendored fonts', () => {
     expect(renderer.fontsAvailable).toBe(true);
