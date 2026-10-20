@@ -48,12 +48,20 @@ jobs:
           served=0 open=0
           probe() { # $1 label, then curl args; prints the outcome only
             local label="$1"; shift
-            local code rc
-            code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 15 "$@" 2>/dev/null); rc=$?
+            local out code connect rc
+            out=$(curl -sS -o /dev/null -w '%{http_code} %{time_connect}' --connect-timeout 8 --max-time 15 "$@" 2>/dev/null); rc=$?
+            code=${out%% *}; connect=${out##* }
+            # A status line means the origin answered, whatever went wrong after it.
+            if [ "${code:-000}" != 000 ]; then echo "$label: SERVED (HTTP $code)"; return 0; fi
             case "$rc" in
-              0) echo "$label: SERVED (HTTP $code)"; return 0;;
               7) echo "$label: refused (connection refused: network lock)";;
-              28) echo "$label: timed out (no answer: network lock)";;
+              28)
+                # time_connect stays 0 unless the TCP handshake completed.
+                if [ "${connect:-0}" = 0 ] || [ "${connect:-0}" = 0.000000 ]; then
+                  echo "$label: timed out before connecting (network lock)"
+                else
+                  echo "$label: connected, no response before the timeout (port open)"; open=1
+                fi;;
               52|56|92) echo "$label: dropped without a response (application lock; port open)"; open=1;;
               35|60) echo "$label: TLS handshake answered but failed (port open)"; open=1;;
               *) echo "$label: not reachable (curl exit $rc)";;
@@ -81,5 +89,5 @@ jobs:
           elif [ "$open" = 1 ]; then
             echo "RESULT: application lock holds (no direct request is served); ports 80/443 still accept connections from outside Cloudflare (network lock pending)"
           else
-            echo "RESULT: the origin does not accept direct connections on 80/443 (application and network lock met for this runner)"
+            echo "RESULT: network lock holds (the origin does not accept direct connections on 80/443 from this runner); the application lock is not observable from here because no probe reached Caddy"
           fi
