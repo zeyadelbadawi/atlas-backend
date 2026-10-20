@@ -34,3 +34,6 @@ testsprite_tests/tmp/config.json
 
 # Machine-local handover companion — credential LOCATIONS, never committed.
 ATLAS_HANDOVER_SECRETS.local.md
+
+# Redis writes its snapshot into the working directory when started locally.
+/dump.rdb

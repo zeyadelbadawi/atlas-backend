@@ -323,9 +323,9 @@ catalog_facts() {
 # src/provisioning/dto/provisioning.constants.ts (the unit test compares).
 RETIRED_THEME_KEYS="premium-academy corporate-learning minimal-editorial bold-creative"
 KNOWN_THEME_KEYS="modern-education atelier manara riwaq $RETIRED_THEME_KEYS"
-RESERVED_SLUGS="www app api admin dashboard platform atlas mail status support"
-# OC-16 (5): names Atlas may want later; an academy holding one is a conflict.
-CANDIDATE_SLUGS="preview staging docs blog help learn"
+# DL-57: the exact reserved labels (src/provisioning/dto/provisioning.constants.ts
+# RESERVED_SUBDOMAINS; the spec compares).
+RESERVED_SLUGS="www app api admin dashboard platform atlas mail status support docs doc help blog learn kb faq wiki video ssh cdn static assets media files auth login signin signup register account accounts billing pay payment payments checkout sso oauth id identity secure security verify email webmail smtp imap pop mx ns1 ns2 ftp dev staging test preview sandbox demo internal system root origin metrics health owner manage management academy org organization"
 sql_list() { printf "'%s'," $1 | sed 's/,$//'; }
 b0_counts_facts() {
   echo "== B0 read-only counts (OC-16; counts only)"
@@ -352,9 +352,28 @@ b0_counts_facts() {
       done
   IFS='|' read -r _ a b <<< "$(sql "select 'retired_published', count(*) filter (where theme_key in ($(sql_list "$RETIRED_THEME_KEYS"))), count(*) filter (where theme_key not in ($(sql_list "$KNOWN_THEME_KEYS"))) from website_configurations where status = 'published'")"
   info "WEB-09: published websites on a retired theme=${a:-?}, on an unknown theme key=${b:-?}"
-  # (5) reserved and candidate slugs held by an academy.
-  IFS='|' read -r _ a b <<< "$(sql "select 'slugs', count(*) filter (where slug in ($(sql_list "$RESERVED_SLUGS"))), count(*) filter (where slug in ($(sql_list "$CANDIDATE_SLUGS"))) from academies")"
-  info "academy slugs: reserved=${a:-?} candidate (preview, staging, docs, blog, help, learn)=${b:-?}"
+  # (5) / DL-57: subdomain labels (academy slugs and subdomain allocations,
+  # archived academies included) that are reserved now, impersonate Atlas
+  # (contain "atlas" or start with "admin"), or are shorter than 3
+  # characters. They were taken before the rule existed and keep working;
+  # each one is a conflict the owner decides on. Labels are public hostnames.
+  local labels="with labels as (select slug l from academies union all select subdomain from subdomain_allocations), hits as (select distinct l from labels where l in ($(sql_list "$RESERVED_SLUGS")) or replace(l, '-', '') like '%atlas%' or replace(l, '-', '') like 'admin%' or length(l) < 3)"
+  IFS='|' read -r _ a b c <<< "$(sql "$labels select 'slugs', (select count(*) from hits where l in ($(sql_list "$RESERVED_SLUGS"))), (select count(*) from hits where replace(l, '-', '') like '%atlas%' or replace(l, '-', '') like 'admin%'), (select count(*) from hits where length(l) < 3)")"
+  info "DL-57 subdomain labels held: reserved=${a:-?} impersonating (atlas*, admin*)=${b:-?} shorter than 3=${c:-?}"
+  info "DL-57 held labels: $(sql "$labels select 'held_labels', coalesce(string_agg(l, ' ' order by l), 'none') from hits" | cut -d'|' -f2)"
+  # Once migration 20261122000000 is applied, the database's own rule
+  # (look-alikes included) is the authority.
+  # Its list includes look-alikes the approximation above misses (d0cs, docs2).
+  local installed
+  installed="$(sql "select 'guard_installed', to_regproc('public.atlas_is_reserved_subdomain') is not null" | cut -d'|' -f2)"
+  case "$installed" in
+    t)
+      IFS='|' read -r _ a b <<< "$(sql "select 'slug_guard', count(distinct l), coalesce(string_agg(distinct l, ' ' order by l), 'none') from (select slug l from academies union all select subdomain from subdomain_allocations) x where atlas_is_reserved_subdomain(l)")"
+      info "DL-57 labels the database guard calls reserved: ${a:-?} (${b:-?})"
+      ;;
+    f) info "DL-57 database guard: not installed yet (migration 20261122000000 pending)" ;;
+    *) info "DL-57 database guard: unknown (the check could not be read)" ;;
+  esac
   # (6) Premium and catalog subscriptions: see "Plan catalog and Premium containment".
   # (7) / ORG-03: live academies with no active owner row, and those whose
   # organization owner has no academy-owner row.
