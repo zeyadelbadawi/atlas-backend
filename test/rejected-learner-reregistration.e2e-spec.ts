@@ -431,4 +431,193 @@ describe('Rejected learners and manual enrollment (e2e)', () => {
       expect(granted.body).toMatchObject({ courseId: course.id, isActive: true });
     });
   });
+
+  // ==================================================================
+  // RJ-SIGNIN / RJ-BUY — sign-in never re-admits; a rejected learner
+  // cannot buy or join courses; a pending one still can buy
+  // ==================================================================
+
+  const PROOF_DATA_URL =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+  /** Academy-website session (password, then the emailed code if asked). */
+  async function academyToken(a: Academy, email: string): Promise<string> {
+    const open = await http()
+      .post('/auth/sign-in')
+      .set('Host', a.host)
+      .send({ email, password: PASSWORD, surface: 'academy', academyId: a.id })
+      .expect(200);
+    if (open.body.accessToken) return open.body.accessToken as string;
+    expect(open.body.emailOtpRequired).toBe(true);
+    const user = await admin.user.findUniqueOrThrow({ where: { email } });
+    const rows = await admin.$queryRaw<{ values: { code?: string } | null }[]>`
+      SELECT "values" FROM "communication_outbox"
+      WHERE "recipient_user_id" = ${user.id} AND "key" = 'auth.email.otp'
+      ORDER BY "created_at" DESC LIMIT 1`;
+    const verified = await http()
+      .post('/auth/otp/verify')
+      .set('Host', a.host)
+      .send({
+        challengeId: open.body.challengeId,
+        code: rows[0]?.values?.code,
+        rememberDevice: false,
+        surface: 'academy',
+      })
+      .expect(200);
+    return verified.body.accessToken as string;
+  }
+
+  /** An academy that sells: its own bank-transfer method, one paid and one free course. */
+  async function sellingAcademy(label: string) {
+    const a = await freshAcademy(label, 'approval');
+    await http()
+      .put(`/academies/${a.id}/payment-methods/bank-transfer`)
+      .set(bearer(a.ownerToken))
+      .send({
+        enabled: true,
+        instructions: {
+          bankName: 'Fixture Bank',
+          accountName: 'Fixture Academy',
+          accountNumber: '0000 0000 0000',
+          instructions: 'Transfer the exact amount, then upload the receipt.',
+          referenceInstructions: 'Use your name as the reference.',
+        },
+      })
+      .expect(200);
+    const paid = await seedCourse(admin, a.id, `${label}-paid`, {
+      status: 'published',
+      visibility: 'public',
+      pricingType: 'paid',
+      pricingAmountMinorUnits: 150000n,
+      pricingCurrency: 'EGP',
+    });
+    const free = await seedCourse(admin, a.id, `${label}-free`, {
+      status: 'published',
+      visibility: 'public',
+    });
+    return { a, paid, free };
+  }
+
+  const startOrder = (token: string, courseId: string) =>
+    http()
+      .post(`/courses/${courseId}/course-orders`)
+      .set(bearer(token))
+      .send({ idempotencyKey: `rj-${Date.now()}-${Math.random()}` });
+
+  describe('RJ-SIGNIN — signing in never re-admits a rejected learner', () => {
+    it('RJ-SIGNIN-01 — on an Open academy, a rejected learner signs in but stays rejected', async () => {
+      const a = await freshAcademy('rj-signin', 'approval');
+      const learner = await rejectedLearner(a, 'rj-signin-learner');
+      await setPolicy(a, 'open');
+
+      await academyToken(a, learner.email);
+      const after = await membership(a, learner.userId);
+      expect(after.status).toBe('inactive');
+      expect(after.source).toBe('self_signup');
+    });
+  });
+
+  describe('RJ-BUY — checkout and free enrollment', () => {
+    it('RJ-BUY-01 — a rejected learner cannot start a checkout, pay an order opened earlier, or join a free course', async () => {
+      const { a, paid, free } = await sellingAcademy('rj-buy');
+      const email = uniqueTestEmail('rj-buy-learner');
+      await registerAt(a, email).expect(201);
+      const userId = (await admin.user.findUniqueOrThrow({ where: { email } })).id;
+      const token = await academyToken(a, email);
+
+      // Pending: an order can be opened (unchanged behaviour).
+      const opened = await startOrder(token, paid.id).expect(201);
+
+      await decide(a, userId, 'reject').expect(200);
+
+      const refused = await startOrder(token, paid.id).expect(403);
+      expect(refused.body.error.messageKey).toBe('errors.academy.registrationRejected');
+
+      const pay = await http()
+        .post(`/course-orders/${opened.body.id}/payments`)
+        .set(bearer(token))
+        .send({ methodKey: 'academy_manual_bank_transfer' })
+        .expect(403);
+      expect(pay.body.error.messageKey).toBe('errors.academy.registrationRejected');
+
+      const join = await http()
+        .post('/enrollments')
+        .set(bearer(token))
+        .send({ courseId: free.id })
+        .expect(403);
+      expect(join.body.error.messageKey).toBe('errors.academy.registrationRejected');
+
+      expect(await admin.enrollment.count({ where: { studentId: userId } })).toBe(0);
+      expect(
+        await admin.payment.count({ where: { courseOrderId: opened.body.id } }),
+      ).toBe(0);
+    });
+
+    it('RJ-BUY-02 — a proof cannot be sent after the rejection either', async () => {
+      const { a, paid } = await sellingAcademy('rj-proof');
+      const email = uniqueTestEmail('rj-proof-learner');
+      await registerAt(a, email).expect(201);
+      const userId = (await admin.user.findUniqueOrThrow({ where: { email } })).id;
+      const token = await academyToken(a, email);
+      const opened = await startOrder(token, paid.id).expect(201);
+      const payment = await http()
+        .post(`/course-orders/${opened.body.id}/payments`)
+        .set(bearer(token))
+        .send({ methodKey: 'academy_manual_bank_transfer' })
+        .expect(201);
+
+      await decide(a, userId, 'reject').expect(200);
+
+      const refused = await http()
+        .patch(`/course-orders/${opened.body.id}/payments/${payment.body.id}/proof`)
+        .set(bearer(token))
+        .send({
+          fileData: PROOF_DATA_URL,
+          fileName: 'receipt.png',
+          payerReference: 'TRX-1',
+        })
+        .expect(403);
+      expect(refused.body.error.messageKey).toBe('errors.academy.registrationRejected');
+    });
+
+    it('RJ-BUY-03 — a PENDING learner still buys, and gets access once approved', async () => {
+      const { a, paid } = await sellingAcademy('rj-pending-buy');
+      const email = uniqueTestEmail('rj-pending-buyer');
+      await registerAt(a, email).expect(201);
+      const userId = (await admin.user.findUniqueOrThrow({ where: { email } })).id;
+      const token = await academyToken(a, email);
+
+      const opened = await startOrder(token, paid.id).expect(201);
+      const payment = await http()
+        .post(`/course-orders/${opened.body.id}/payments`)
+        .set(bearer(token))
+        .send({ methodKey: 'academy_manual_bank_transfer' })
+        .expect(201);
+      await http()
+        .patch(`/course-orders/${opened.body.id}/payments/${payment.body.id}/proof`)
+        .set(bearer(token))
+        .send({
+          fileData: PROOF_DATA_URL,
+          fileName: 'receipt.png',
+          payerReference: 'TRX-2',
+        })
+        .expect(200);
+      await http()
+        .post(`/academies/${a.id}/course-payments/${payment.body.id}/approve`)
+        .set(bearer(a.ownerToken))
+        .send({})
+        .expect(200);
+
+      // Paid and enrolled, but the membership is still pending: no access yet.
+      const enrollment = await admin.enrollment.findFirstOrThrow({
+        where: { studentId: userId, courseId: paid.id },
+      });
+      expect(enrollment.status).toBe('enrolled');
+      expect((await membership(a, userId)).status).toBe('pending');
+      await http().get(`/courses/${paid.id}/progress`).set(bearer(token)).expect(404);
+
+      await decide(a, userId, 'approve').expect(200);
+      await http().get(`/courses/${paid.id}/progress`).set(bearer(token)).expect(200);
+    });
+  });
 });

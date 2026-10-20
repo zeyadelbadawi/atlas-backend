@@ -44,6 +44,10 @@ import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import { CommunicationService } from '../../communications/services/communication.service';
+import {
+  AcademyStudentsRepository,
+  isRejectedRegistration,
+} from '../../tenancy/repositories/academy-students.repository';
 import type { EmitResult } from '../../communications/services/communication.service';
 
 function isUniqueConstraintViolation(error: unknown): boolean {
@@ -63,7 +67,35 @@ export class CourseOrdersService {
     private readonly communications: CommunicationService,
     private readonly academyPaymentMethodsRepository: AcademyPaymentMethodsRepository,
     private readonly entitlementEnforcementService: EntitlementEnforcementService,
+    private readonly academyStudentsRepository: AcademyStudentsRepository,
   ) {}
+
+  /**
+   * Fix round (20 Oct 2026, team) — a learner whose registration THIS
+   * academy rejected cannot buy its courses: a purchase would otherwise
+   * produce an enrollment that opens nothing (learning access needs an
+   * active membership, and a purchase never re-admits an existing row).
+   * Re-admission is a staff decision, or a new registration under the
+   * academy's policy. Only a REJECTED row (`isRejectedRegistration`) is
+   * refused here: a pending learner still buys and gets access once
+   * approved; an active one is unaffected; someone with no membership at
+   * all is admitted by the purchase as before. Runs under the buyer's own
+   * context (`academy_students_self_select`).
+   */
+  async assertNotRejectedLearner(
+    tx: Prisma.TransactionClient,
+    studentId: string,
+    academyId: string,
+  ): Promise<void> {
+    const membership = await this.academyStudentsRepository.findForUserInAcademy(
+      tx,
+      academyId,
+      studentId,
+    );
+    if (membership && isRejectedRegistration(membership)) {
+      throw new ForbiddenException({ messageKey: 'errors.academy.registrationRejected' });
+    }
+  }
 
   async createOrder(
     studentId: string,
@@ -91,6 +123,7 @@ export class CourseOrdersService {
 
         const course = await this.coursesRepository.findPublishedById(tx, courseId);
         if (!course) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        await this.assertNotRejectedLearner(tx, studentId, course.academyId);
         if (course.pricingType !== 'paid') {
           throw new ConflictException({ messageKey: 'errors.courseOrder.courseNotPaid' });
         }
