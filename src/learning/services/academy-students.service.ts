@@ -68,6 +68,7 @@ import {
   hashOpaqueToken,
 } from '../../identity/utils/opaque-token.util';
 import { normalizeEmail } from '../../identity/utils/email.util';
+import { isRejectedRegistration } from '../../tenancy/repositories/academy-students.repository';
 import { EmailRiskService } from '../../identity/services/email-risk.service';
 import { RefreshTokensRepository } from '../../identity/repositories/refresh-tokens.repository';
 import { SessionRevocationService } from '../../identity/services/session-revocation.service';
@@ -392,8 +393,13 @@ export class AcademyStudentsService {
       { status: 'active' },
       'academy.student.approved',
       { event: 'roster.student.approved', decidedAt },
+      // A pending registration, or one staff REJECTED earlier: a rejection
+      // is not final, so the same Approve admits the learner later. A
+      // rejected row that is also blocked is not reopened (the block
+      // decides), and approval never clears a block; an active row has
+      // nothing to approve.
       (row) => {
-        if (row.status !== 'pending') {
+        if (row.status !== 'pending' && !isRejectedRegistration(row)) {
           throw new ConflictException({ messageKey: 'errors.academy.studentNotPending' });
         }
       },
@@ -443,7 +449,7 @@ export class AcademyStudentsService {
     data: Prisma.AcademyStudentUpdateInput,
     action: string,
     notification: { readonly event: CommunicationEventKey; readonly decidedAt: Date },
-    precondition?: (row: { status: string }) => void,
+    precondition?: (row: { status: string; blockedAt: Date | null }) => void,
   ): Promise<{
     readonly response: AcademyRosterStudentResponse;
     readonly outboxId: string | null;

@@ -1409,7 +1409,15 @@ const CATALOG = {
     priority: 'medium',
     notificationType: 'account',
     retentionClass: 'standard',
-    dedupe: ({ entity }) => `roster.student.awaiting_approval:${entity.id}`,
+    // One work item per APPLICATION. A first registration keeps its
+    // pre-existing key; a learner who registers again after a rejection
+    // re-enters the queue on the same membership row, so that instant joins
+    // the key — otherwise the second application would dedupe against the
+    // first and the moderators would never hear of it.
+    dedupe: ({ entity, values }) =>
+      str(values, 'reappliedAtMs')
+        ? `roster.student.awaiting_approval:${entity.id}:${str(values, 'reappliedAtMs')}`
+        : `roster.student.awaiting_approval:${entity.id}`,
     cooldownSeconds: 0,
     locale: 'academy',
     // PLATFORM-branded, not academy: this is a work item, and staff act on
