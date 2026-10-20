@@ -337,6 +337,7 @@ export class InstructorService {
 
       return {
         courseId: course.id,
+        academyId: course.academyId,
         title: course.title,
         description: course.description ?? undefined,
         status: course.status,
