@@ -14,7 +14,12 @@ export class UpdateAnnouncementDto {
   @MaxLength(10000)
   readonly body?: string;
 
+  /**
+   * A date schedules a draft (see `AnnouncementsService`'s `scheduleUpdate`);
+   * `null` clears the schedule and returns a scheduled announcement to
+   * draft. Absent leaves it unchanged. (`@IsOptional` lets `null` through.)
+   */
   @IsOptional()
   @IsISO8601()
-  readonly scheduledAt?: string;
+  readonly scheduledAt?: string | null;
 }
