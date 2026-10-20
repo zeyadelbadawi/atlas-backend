@@ -658,6 +658,13 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'replacedHostname',
   ]),
   ev('domain.custom_domain_removed', 'domains', 'domain_connection', 'academy', true),
+  // A new Academy Slug moved the Atlas address; the old one now redirects.
+  ev('domain.subdomain_changed', 'domains', 'subdomain_allocation', 'academy', true, [
+    'previousSubdomain',
+    'newSubdomain',
+    'redirectKept',
+    'reclaimedAlias',
+  ]),
   ev('domain.verification_checked', 'domains', 'domain_connection', 'academy', true, [
     'outcome',
     'error',
