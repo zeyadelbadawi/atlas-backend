@@ -515,14 +515,18 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'account',
     'studentName',
   ]),
+  // `afterRejection` — the learner's earlier registration had been rejected
+  // and this re-admits the same membership row (staff add / re-registration).
   ev('academy.student.added', 'students', 'user', 'academy', true, [
     'account',
     'studentName',
+    'afterRejection',
   ]),
   ev('academy.student.joined', 'students', 'user', 'academy', true, [
     'existingAccount',
     'source',
     'status',
+    'afterRejection',
   ]),
   // W4 — an automatic admission (sign-in auto-join, purchase) whose account
   // name was already held by another learner of the academy: admitted anyway
@@ -658,6 +662,13 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'replacedHostname',
   ]),
   ev('domain.custom_domain_removed', 'domains', 'domain_connection', 'academy', true),
+  // A new Academy Slug moved the Atlas address; the old one now redirects.
+  ev('domain.subdomain_changed', 'domains', 'subdomain_allocation', 'academy', true, [
+    'previousSubdomain',
+    'newSubdomain',
+    'redirectKept',
+    'reclaimedAlias',
+  ]),
   ev('domain.verification_checked', 'domains', 'domain_connection', 'academy', true, [
     'outcome',
     'error',
@@ -789,6 +800,13 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('academy.course_payment.rejected', 'payments', 'payment', 'academy', true, [
     'courseOrderId',
     'notes',
+  ]),
+  ev('academy.course_payment.refunded', 'payments', 'payment', 'academy', true, [
+    'courseOrderId',
+    'refundId',
+    'amountMinorUnits',
+    'currency',
+    'note',
   ]),
   ev('course_order.refund_recorded', 'payments', 'course_order', 'academy', true, [
     'refundId',

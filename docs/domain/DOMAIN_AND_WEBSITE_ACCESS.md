@@ -25,6 +25,31 @@ suspended Academies. P63 extended its return list (not its matching rules)
 with the Academy's connected custom hostname and subdomain label so the
 public runtime can name a canonical host.
 
+**Changing the Academy Slug moves the address** (migration
+`20261123000100_subdomain_aliases`, owner decision 20 Oct 2026). In the
+slug-update transaction `AcademyAddressService.move` moves the allocation
+(label and `full_host`) to the new slug and keeps the old label in
+`subdomain_aliases` for that Academy, permanently (no delete policy). The
+resolver matches an alias last (after a connected custom domain and the
+live allocation) and reports `matched_alias`; `GET public/websites/resolve`
+then adds `redirectHost` — the Academy's canonical host, computed
+server-side by `resolveCanonicalHost`, never taken from the request. The
+SPA moves there with `location.replace` and the server renderer answers a
+public page with a 301 (path and query kept, `Cache-Control: private,
+no-cache`, so changing back takes effect at once). One label namespace
+covers `academies.slug`, allocations and aliases (BEFORE triggers raising
+`unique_violation` `atlas_subdomain_label_taken`, plus
+`subdomain_is_taken`/`subdomain_held_by_other`), so nobody else can take an
+old address; the Academy itself can take one back (the alias row is
+re-pointed at the label it gives up). A reserved label held from before
+DL-57 is not kept as an alias. Audited as `domain.subdomain_changed`.
+A slug may change at most once every 60 days (owner decision 20 Oct 2026;
+`academies.slug_changed_at`, NULL until the first change, so creation does
+not start the clock; reclaiming an old address counts). Inside the window
+`PATCH /academies/:id` answers 409 `errors.academy.slugChangeTooSoon` on
+the `slug` field with `details.nextSlugChangeAt`, and the academy response
+carries `nextSlugChangeAt` while the window is open.
+
 ## 2. The base domain has one source of truth
 
 `PlatformDomainService.getEffectiveBaseDomain()` returns the deployment's

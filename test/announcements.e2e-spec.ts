@@ -18,6 +18,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { SubscriptionSweepService } from '../src/plans/services/subscription-sweep.service';
 
 async function makePlatformOwner(admin: PrismaClient, userId: string): Promise<void> {
   await admin.user.update({ where: { id: userId }, data: { isPlatformOwner: true } });
@@ -351,4 +352,132 @@ describe('Announcements (e2e)', () => {
       .set('Authorization', `Bearer ${academyOwner.accessToken}`)
       .expect(403);
   });
+
+  // -------------------------------------------------------------------
+  // Scheduling an existing draft. Creating with a date already makes an
+  // announcement `scheduled`; editing a draft to add one must do the same,
+  // or the sweep (which only publishes `scheduled` rows) never sends it.
+  // -------------------------------------------------------------------
+
+  it('adding a date to a draft course announcement schedules it, the sweep then publishes it; clearing the date returns it to draft', async () => {
+    const { owner, course } = await seedManagedCourse('ann-schedule-course');
+    const base = `/courses/${course.id}/announcements`;
+    const created = await request(app.getHttpServer())
+      .post(base)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ title: 'Exam next week', body: 'Revise chapter 3.' })
+      .expect(201);
+    expect(created.body.status).toBe('draft');
+
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const scheduled = await request(app.getHttpServer())
+      .patch(`${base}/${created.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ scheduledAt: future })
+      .expect(200);
+    expect(scheduled.body.status).toBe('scheduled');
+    expect(scheduled.body.scheduledAt).toBe(future);
+
+    // Editing the text alone leaves the schedule as it is.
+    const retitled = await request(app.getHttpServer())
+      .patch(`${base}/${created.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ title: 'Exam next Monday' })
+      .expect(200);
+    expect(retitled.body.status).toBe('scheduled');
+    expect(retitled.body.scheduledAt).toBe(future);
+
+    const cleared = await request(app.getHttpServer())
+      .patch(`${base}/${created.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ scheduledAt: null })
+      .expect(200);
+    expect(cleared.body.status).toBe('draft');
+    expect(cleared.body.scheduledAt).toBeUndefined();
+
+    await request(app.getHttpServer())
+      .patch(`${base}/${created.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ scheduledAt: future })
+      .expect(200);
+    // Make it due without waiting, then run the real sweep tick body.
+    await admin.announcement.update({
+      where: { id: created.body.id },
+      data: { scheduledAt: new Date(Date.now() - 1000) },
+    });
+    await app.get(SubscriptionSweepService, { strict: false }).run();
+
+    const list = await request(app.getHttpServer())
+      .get(base)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    const row = list.body.items.find((a: { id: string }) => a.id === created.body.id);
+    expect(row?.status).toBe('published');
+    expect(row?.publishedAt).toBeTruthy();
+  }, 30000);
+
+  it('adding and clearing a date on an academy-wide or platform-wide draft schedules and unschedules it; a published announcement keeps its status', async () => {
+    const { owner, academy } = await seedManagedCourse('ann-schedule-academy');
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    const academyBase = `/academies/${academy.id}/announcements`;
+    const academyDraft = await request(app.getHttpServer())
+      .post(academyBase)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ title: 'Holiday', body: 'Closed on Friday.' })
+      .expect(201);
+    const academyScheduled = await request(app.getHttpServer())
+      .patch(`${academyBase}/${academyDraft.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ scheduledAt: future })
+      .expect(200);
+    expect(academyScheduled.body.status).toBe('scheduled');
+    const academyCleared = await request(app.getHttpServer())
+      .patch(`${academyBase}/${academyDraft.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ scheduledAt: null })
+      .expect(200);
+    expect(academyCleared.body.status).toBe('draft');
+
+    // Published is not moved back to scheduled by an edit.
+    await request(app.getHttpServer())
+      .post(`${academyBase}/${academyDraft.body.id}/publish`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(201);
+    const publishedEdit = await request(app.getHttpServer())
+      .patch(`${academyBase}/${academyDraft.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ scheduledAt: future })
+      .expect(200);
+    expect(publishedEdit.body.status).toBe('published');
+
+    const platformOwner = await signUpAndSignIn(app, 'ann-schedule-platform-owner');
+    await makePlatformOwner(admin, platformOwner.userId);
+    const platformDraft = await request(app.getHttpServer())
+      .post('/platform/announcements')
+      .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+      .send({ title: 'Maintenance', body: 'Short downtime tonight.' })
+      .expect(201);
+    const platformScheduled = await request(app.getHttpServer())
+      .patch(`/platform/announcements/${platformDraft.body.id}`)
+      .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+      .send({ scheduledAt: future })
+      .expect(200);
+    expect(platformScheduled.body.status).toBe('scheduled');
+    const platformCleared = await request(app.getHttpServer())
+      .patch(`/platform/announcements/${platformDraft.body.id}`)
+      .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+      .send({ scheduledAt: null })
+      .expect(200);
+    expect(platformCleared.body.status).toBe('draft');
+
+    // Scheduling is still a managing action: a student cannot do it.
+    const student = await signUpAndSignIn(app, 'ann-schedule-student');
+    await seedAcademyStudent(admin, academy.id, student.userId);
+    await request(app.getHttpServer())
+      .patch(`${academyBase}/${academyDraft.body.id}`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ scheduledAt: future })
+      .expect(403);
+  }, 30000);
 });

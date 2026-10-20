@@ -67,6 +67,15 @@ export interface TeachingCourseResponse {
 
 export interface InstructorCourseOverviewResponse {
   readonly courseId: string;
+  /**
+   * The owning academy. The curriculum builder an assigned instructor may
+   * edit is academy-scoped by route
+   * (`/dashboard/academy/:academyId/courses/:courseId/builder`), so the
+   * Teaching Dashboard's "Edit curriculum" link needs it. Not a grant:
+   * which course the caller may edit stays `assertCanAuthorCourseContent`
+   * and RLS.
+   */
+  readonly academyId: string;
   readonly title: string;
   readonly description?: string;
   readonly status: string;

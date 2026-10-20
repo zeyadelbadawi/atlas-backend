@@ -118,6 +118,10 @@ const EXPECTED_DEDUPE: Record<
     values: {},
     expected: `course_payment_rejected:${ENTITY_ID}`,
   },
+  'course.payment.refunded': {
+    values: {},
+    expected: `course_payment_refunded:${ENTITY_ID}`,
+  },
   'academy.payment.submitted': {
     values: { academyId: 'a1', paymentId: 'p1' },
     expected: `academy_payment_submitted:${ENTITY_ID}`,
@@ -487,8 +491,8 @@ const EXPECTED_DEDUPE: Record<
   // A STAFF work item. The submission instant is in the key because a
   // re-submitted review is a new thing to moderate — without it an edited
   // review would dedupe against the original and never be re-queued.
-  // One work item per person per academy: a given learner enters the
-  // approval queue once, so no instant in the key.
+  // One work item per application: a first registration has no instant in
+  // the key (a re-application after a rejection does — see below).
   'roster.student.awaiting_approval': {
     values: { academyName: 'Falcon' },
     expected: `roster.student.awaiting_approval:${ENTITY_ID}`,
@@ -851,6 +855,20 @@ describe('COMMUNICATION_CATALOG', () => {
           entry.dedupe(context({ decidedAtMs: DECIDED_AT_MS + 1000 })),
         );
       }
+    });
+
+    it('distinguishes a re-application after a rejection from the first registration', () => {
+      // Pending → rejected → registers again is a real sequence on ONE
+      // membership row; the second application is a new work item.
+      const entry = COMMUNICATION_CATALOG['roster.student.awaiting_approval'];
+      const first = entry.dedupe(context({}));
+      const again = entry.dedupe(context({ reappliedAtMs: DECIDED_AT_MS }));
+      const later = entry.dedupe(context({ reappliedAtMs: DECIDED_AT_MS + 1000 }));
+      expect(first).toBe(`roster.student.awaiting_approval:${ENTITY_ID}`);
+      expect(again).toBe(
+        `roster.student.awaiting_approval:${ENTITY_ID}:${DECIDED_AT_MS}`,
+      );
+      expect(new Set([first, again, later]).size).toBe(3);
     });
 
     it('treats a cleared enrollment expiry as its own distinct key', () => {

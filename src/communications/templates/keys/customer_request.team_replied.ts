@@ -3,7 +3,7 @@ import type { CommunicationTemplate } from '../layout';
 
 /** Customer Requests — to the requester: a message from the Atlas team. */
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
     subject: (v) => `New message about your request: ${str(v, 'title')}`,
     paragraphs: (v) => [
@@ -16,7 +16,7 @@ export const template: CommunicationTemplate = {
   ar: defineLocale({
     subject: (v) => `رسالة جديدة بخصوص طلبك: ${str(v, 'title')}`,
     paragraphs: (v) => [
-      `رد فريق Atlas على طلبك "${str(v, 'title')}".`,
+      `رد فريق أطلس على طلبك "${str(v, 'title')}".`,
       str(v, 'excerpt'),
       'افتح الطلب لقراءة الرسالة كاملة والرد.',
     ],

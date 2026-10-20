@@ -34,7 +34,10 @@ import { buildAuditFeedFilter } from '../../audit-log/utils/audit-feed.util';
 import { AccountSetupService } from '../../identity/services/account-setup.service';
 import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
-import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
+import {
+  AcademyStudentsRepository,
+  isRejectedRegistration,
+} from '../../tenancy/repositories/academy-students.repository';
 import {
   ORGANIZATION_INSTRUCTOR_PERMISSIONS,
   ORGANIZATION_MANAGER_PERMISSIONS,
@@ -57,6 +60,12 @@ import { ConfigService } from '@nestjs/config';
 import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
 import { PlatformDomainConfigurationRepository } from '../../domain/repositories/platform-domain-configuration.repository';
 import { AcademyArchiveService } from './academy-archive.service';
+import { AcademyAddressService } from './academy-address.service';
+import type { AcademyAddressMoveResult } from './academy-address.service';
+import {
+  nextSlugChangeAt,
+  SLUG_CHANGE_INTERVAL_DAYS,
+} from '../utils/slug-change-window.util';
 import type { ArchiveAcademyInput } from './academy-archive.service';
 import { toAcademyResponse } from '../dto/academy.contract';
 import type { AcademyResponse, AcademyAddressResponse } from '../dto/academy.contract';
@@ -148,6 +157,23 @@ export type AcademyNameConflictPolicy = 'refuse' | 'suffix';
  * content; see `ORGANIZATION_INSTRUCTOR_PERMISSIONS`'s doc comment for
  * the same exclusion at the organization-permission layer.
  */
+/**
+ * A slug change inside the 60-day window (`slug-change-window.util.ts`).
+ * 409 on the slug field, with the date the next change becomes possible in
+ * `details.nextSlugChangeAt` (ISO 8601) so the form can name it.
+ */
+export function slugChangeTooSoon(next: Date): ConflictException {
+  const messageKey = 'errors.academy.slugChangeTooSoon';
+  return new ConflictException({
+    messageKey,
+    violations: [{ field: 'slug', messageKey }],
+    details: {
+      nextSlugChangeAt: next.toISOString(),
+      intervalDays: SLUG_CHANGE_INTERVAL_DAYS,
+    },
+  });
+}
+
 /** P63g — a slug that is a reserved platform label (or a look-alike of one) can never become a public subdomain. */
 export function assertSlugNotReserved(slug: string): void {
   if (isReservedSubdomain(slug)) {
@@ -309,6 +335,8 @@ export class AcademiesService {
     configService: ConfigService,
     // Task 3 — the Academy activity log's read side (global AuditLogModule).
     private readonly auditLogEntriesRepository: AuditLogEntriesRepository,
+    // Slug change — moves the public address and keeps the old one as a redirect.
+    private readonly academyAddressService: AcademyAddressService,
   ) {
     this.environmentBaseDomain = configService
       .get<PlatformDomainRuntimeConfig>('platformDomain')
@@ -634,6 +662,8 @@ export class AcademiesService {
     // provisioning path refuses them.
     assertSlugNotReserved(payload.slug);
     await this.assertSlugAvailable(payload.organizationId, payload.slug);
+    // An old address another academy keeps (it redirects) is taken too.
+    await this.assertSubdomainLabelFree(payload.slug, null);
     const requestedName = cleanDisplayName(payload.name);
     let claimedNameKey: string | null = null;
 
@@ -814,9 +844,15 @@ export class AcademiesService {
     const name = payload.name === undefined ? undefined : cleanDisplayName(payload.name);
     let nameKey: string | null = null;
 
-    const academy = await this.withSlugConflictHandling(
+    // Tenant AND user context: the allocation, alias and domain connection
+    // policies are academy-membership scoped (P21), exactly as in `create`
+    // and `updateBranding`.
+    const inUserContext = <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) =>
+      this.tenancyContextService.runInTenantAndUserContext(organizationId, userId, work);
+
+    const { academy, moved } = await this.withSlugConflictHandling(
       () =>
-        this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+        inUserContext(async (tx) => {
           const role = await this.assertCanManage(tx, academyId, userId);
 
           const current = await this.academiesRepository.findById(tx, academyId);
@@ -846,6 +882,14 @@ export class AcademiesService {
           if (changesSlug || changesStatus) {
             await this.assertIsOrganizationOwner(tx, academyId, userId);
           }
+          // Owner decision: one slug change every 60 days (taking an old
+          // address back counts; creation does not). Checked on the LOCKED
+          // row, so two concurrent changes cannot both pass.
+          if (changesSlug) {
+            const locked = await this.academiesRepository.lockSlugState(tx, academyId);
+            const next = nextSlugChangeAt(locked?.slugChangedAt);
+            if (next && locked?.slug !== payload.slug) throw slugChangeTooSoon(next);
+          }
           // Only a NEW address is checked against the reserved list: an
           // academy created before a label was reserved keeps saving its
           // settings (the database trigger applies the same rule).
@@ -854,6 +898,9 @@ export class AcademiesService {
               throw new BadRequestException({ messageKey: 'errors.academy.invalidSlug' });
             }
             assertSlugNotReserved(payload.slug as string);
+            // Another academy's slug, address or kept old address. This
+            // academy's own old addresses are free to take back.
+            await this.assertSubdomainLabelFree(payload.slug as string, academyId, tx);
           }
           // W4 — a rename re-checks the platform-wide name rule (excluding
           // this academy, so re-saving its own name is never a conflict).
@@ -885,6 +932,8 @@ export class AcademiesService {
             timezone: payload.timezone,
             currency: payload.currency,
             status: payload.status,
+            // Starts the 60-day window; only a real change writes it.
+            slugChangedAt: changesSlug ? new Date() : undefined,
             // `organization_id` is never in `data` — `UpdateAcademyDto` has
             // no such field, and `academies_tenant_update`'s RLS `WITH
             // CHECK` would reject the row even if it were.
@@ -915,7 +964,41 @@ export class AcademiesService {
               ]),
             ),
           });
-          return updated;
+
+          // The public address follows the slug, in this transaction.
+          let addressMove: {
+            readonly result: AcademyAddressMoveResult;
+            readonly customHostname: string | null;
+          } | null = null;
+          if (changesSlug) {
+            const result = await this.academyAddressService.move(tx, {
+              academyId,
+              subdomain: updated.slug,
+              baseDomain: await this.effectiveBaseDomain(),
+            });
+            const connection = await this.domainConnectionsRepository.findByAcademyId(
+              tx,
+              academyId,
+            );
+            await this.auditLogWriterService.write(tx, {
+              actorUserId: userId,
+              organizationId,
+              academyId,
+              role,
+              action: 'domain.subdomain_changed',
+              targetType: 'subdomain_allocation',
+              targetId: result.allocation.id,
+              targetLabel: result.allocation.fullHost ?? result.allocation.subdomain,
+              context: {
+                previousSubdomain: result.previous?.subdomain,
+                newSubdomain: result.allocation.subdomain,
+                redirectKept: result.redirectKept,
+                reclaimedAlias: result.reclaimedAlias,
+              },
+            });
+            addressMove = { result, customHostname: connection?.hostname ?? null };
+          }
+          return { academy: updated, moved: addressMove };
         }),
       () =>
         nameKey === null
@@ -925,7 +1008,36 @@ export class AcademiesService {
             ),
     );
 
+    // After commit: drop every cached hostname resolution that could still
+    // answer with the old address — the old and new labels and hosts, the
+    // custom domain, and every old address this academy keeps (each one's
+    // cached redirect named the previous canonical host).
+    if (moved) {
+      const { result, customHostname } = moved;
+      await this.invalidatePublicHostnames(
+        result.previous?.subdomain ?? academy.slug,
+        result.previous,
+        customHostname,
+      );
+      await this.invalidatePublicHostnames(
+        academy.slug,
+        result.allocation,
+        customHostname,
+      );
+      for (const alias of result.aliases) {
+        await this.invalidatePublicHostnames(alias, null, null);
+      }
+    }
+
     return toAcademyResponse(academy);
+  }
+
+  /** The effective platform base domain (P63g rule: environment first, then the configured row). */
+  private async effectiveBaseDomain(): Promise<string | undefined> {
+    const platformDomain =
+      await this.platformDomainConfigurationRepository.findSingleton();
+    return resolveEffectiveBaseDomain(this.environmentBaseDomain, platformDomain)
+      .baseDomain;
   }
 
   async updateBranding(
@@ -1587,7 +1699,14 @@ export class AcademiesService {
                 academyId,
                 target.user.id,
               );
-            if (existingLearner) {
+            // A learner whose registration staff REJECTED is not "already a
+            // member": adding them is the staff's decision to admit them after
+            // all, so the same row becomes active again (like a removed staff
+            // member added back). Blocked stays refused; anything else is a
+            // current learner.
+            const readmit =
+              existingLearner !== null && isRejectedRegistration(existingLearner);
+            if (existingLearner && !readmit) {
               throw existingLearner.blockedAt
                 ? new ForbiddenException({ messageKey: 'errors.academy.studentBlocked' })
                 : new ConflictException({
@@ -1603,17 +1722,36 @@ export class AcademiesService {
             // this academy is a 409. For a NEW account it is reported on the
             // name staff typed; for an existing account staff cannot edit
             // that person's name, so the staff variant points at the email.
-            const { student: learner } = await this.academyStudentsRepository.admit(
-              tx,
-              {
-                academyId,
-                userId: target.user.id,
-                source: 'staff_created',
-              },
-              target.account === 'new'
-                ? { mode: 'interactive', field: 'name', variant: 'self' }
-                : { mode: 'interactive', field: 'email', variant: 'existingAccount' },
-            );
+            // A re-admitted row already holds its name key (W4 unaffected).
+            const learner =
+              readmit && existingLearner
+                ? await this.academyStudentsRepository.reopenRejectedByStaff(
+                    tx,
+                    existingLearner.id,
+                  )
+                : (
+                    await this.academyStudentsRepository.admit(
+                      tx,
+                      {
+                        academyId,
+                        userId: target.user.id,
+                        source: 'staff_created',
+                      },
+                      target.account === 'new'
+                        ? { mode: 'interactive', field: 'name', variant: 'self' }
+                        : {
+                            mode: 'interactive',
+                            field: 'email',
+                            variant: 'existingAccount',
+                          },
+                    )
+                  ).student;
+            if (!learner) {
+              // Decided (blocked, approved) by someone else meanwhile.
+              throw new ConflictException({
+                messageKey: 'errors.academy.studentAlreadyMember',
+              });
+            }
 
             // Task 3 — academy-scoped and name-labelled; see the staff add above.
             await this.auditLogWriterService.record(tx, {
@@ -1627,7 +1765,11 @@ export class AcademiesService {
               targetType: 'user',
               targetId: target.user.id,
               targetLabel: target.user.name,
-              context: { account: target.account, studentName: target.user.name },
+              context: {
+                account: target.account,
+                studentName: target.user.name,
+                ...(readmit ? { afterRejection: true } : {}),
+              },
             });
 
             return {
@@ -1722,11 +1864,15 @@ export class AcademiesService {
                   academyId,
                   user.id,
                 );
-          // A removed staff member (`inactive`) can be added again, so the
-          // dialog must not tell the owner they are "already a member".
+          // A removed staff member (`inactive`) can be added again, and so
+          // can a learner whose registration was rejected
+          // (`isRejectedRegistration`), so the dialog must not tell the owner
+          // they are "already a member".
           const isCurrent =
             !!alreadyHere &&
-            !('role' in alreadyHere && alreadyHere.status === 'inactive');
+            !('role' in alreadyHere
+              ? alreadyHere.status === 'inactive'
+              : isRejectedRegistration(alreadyHere));
           return isCurrent ? { status: 'already_member' } : { status: 'new' };
         },
       );
@@ -1746,7 +1892,7 @@ export class AcademiesService {
       const [totalMembers, activeStaff, activeInstructors, publishedCourses] =
         await Promise.all([
           this.academyMembersRepository.countAll(tx, academyId),
-          this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'staff'),
+          this.academyMembersRepository.countActive(tx, academyId),
           this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
           tx.course.count({ where: { academyId, status: 'published' } }),
         ]);
@@ -2117,6 +2263,31 @@ export class AcademiesService {
     // here (RLS-invisible), and the eventual `create`/`update` call fails
     // on the real DB unique constraint instead — reported identically.
     if (existing && existing.id !== excludeAcademyId) {
+      throw new ConflictException({ messageKey: 'errors.academy.slugTaken' });
+    }
+  }
+
+  /**
+   * The cross-tenant half of the slug check: refuses a label ANOTHER
+   * academy holds as its slug, its address or one of the old addresses it
+   * keeps (they redirect to it, so they are never given away). `academyId`
+   * is the academy taking the label (`null` for a new one) — its own old
+   * addresses are its to take back. The namespace triggers (migration
+   * `20261123000100_subdomain_aliases`) enforce the same rule under
+   * concurrency; this answers the common case with the clean 409 first.
+   */
+  private async assertSubdomainLabelFree(
+    slug: string,
+    academyId: string | null,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    if (
+      await this.subdomainAllocationsRepository.isHeldByAnotherAcademy(
+        slug,
+        academyId,
+        tx,
+      )
+    ) {
       throw new ConflictException({ messageKey: 'errors.academy.slugTaken' });
     }
   }

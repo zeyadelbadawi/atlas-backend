@@ -23,6 +23,19 @@ import type { CertificateSnapshot } from '../dto/certificate.contract';
 import { deriveRenderPalette, type RenderPalette } from '../certificate-palette.util';
 import { CertificateImageLoader } from './certificate-image-loader.service';
 
+/**
+ * The fixed platform line in the footer. Arabic names the platform «أطلس»
+ * (never Latin "Atlas" inside an Arabic line). It is layout, not part of
+ * the snapshot: a PDF already stored keeps the line it was rendered with,
+ * and nothing hashes or verifies the rendered PDF — verification looks the
+ * code up in the database — so changing it only affects new renders
+ * (issuance or an explicit regeneration).
+ */
+export const CERTIFICATE_FOOTER = {
+  en: 'Issued & verified through Atlas',
+  ar: 'صادرة ومُوثَّقة عبر أطلس',
+} as const;
+
 export interface RenderInput {
   readonly snapshot: CertificateSnapshot;
   readonly serial: string;
@@ -438,20 +451,16 @@ export class CertificateRendererService {
       width: contentWidth - 12,
       align: rtl ? 'right' : 'left',
     });
-    this.text(
-      doc,
-      rtl ? 'صادرة ومُوثَّقة عبر Atlas' : 'Issued & verified through Atlas',
-      {
-        y: PAGE_HEIGHT - 44,
-        size: 8,
-        bold: true,
-        color: palette.accentDeep,
-        rtl,
-        x: MARGIN + 6,
-        width: contentWidth - 12,
-        align: rtl ? 'left' : 'right',
-      },
-    );
+    this.text(doc, CERTIFICATE_FOOTER[rtl ? 'ar' : 'en'], {
+      y: PAGE_HEIGHT - 44,
+      size: 8,
+      bold: true,
+      color: palette.accentDeep,
+      rtl,
+      x: MARGIN + 6,
+      width: contentWidth - 12,
+      align: rtl ? 'left' : 'right',
+    });
     if (input.snapshot.anonymizedAt) {
       this.text(
         doc,

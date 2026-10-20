@@ -213,8 +213,16 @@ export class LearnerDashboardService {
             course: { select: { title: true } },
           },
         });
+        // A voided attempt is given back to the learner and never counts
+        // (quiz result, attempt allowance), so it is not "my result" either:
+        // the row shows the latest attempt that counts, or "not started"
+        // when every attempt was voided.
         const attempts = await tx.quizAttempt.findMany({
-          where: { studentId: userId, quizId: { in: quizzes.map((q) => q.id) } },
+          where: {
+            studentId: userId,
+            quizId: { in: quizzes.map((q) => q.id) },
+            status: { not: 'invalidated' },
+          },
           select: {
             quizId: true,
             status: true,

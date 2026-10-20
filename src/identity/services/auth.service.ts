@@ -16,7 +16,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
-import type { AuthMethod, User } from '@prisma/client';
+import type { AcademyStudent, AuthMethod, User } from '@prisma/client';
 import type {
   EmailOtpPolicy,
   IdentityConfig,
@@ -67,7 +67,10 @@ import { UserOrganizationsService } from '../../tenancy/services/user-organizati
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
-import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
+import {
+  AcademyStudentsRepository,
+  isRejectedRegistration,
+} from '../../tenancy/repositories/academy-students.repository';
 import {
   isNameConflict,
   isOrganizationNameTaken,
@@ -915,6 +918,12 @@ export class AuthService {
       };
       readonly hostname?: string;
       /**
+       * The learner already holds a REJECTED membership here and is
+       * registering again: that row goes back into the flow (same id, same
+       * name key) instead of a second row being inserted.
+       */
+      readonly reapply?: boolean;
+      /**
        * W4 — `interactive` (an existing account that has proven its
        * password): a learner name already held in this academy is a 409 the
        * person can act on. `automatic` (a brand-new, unverified registration —
@@ -927,19 +936,37 @@ export class AuthService {
   ): Promise<(string | null)[]> {
     const outboxIds: (string | null)[] = [];
     const { academyId, userId, admission } = input;
-    const { student, nameClashExempted } = await this.academyStudentsRepository.admit(
-      tx,
-      {
+    let student: AcademyStudent;
+    let nameClashExempted = false;
+    if (input.reapply) {
+      const reopened = await this.academyStudentsRepository.reapplyRejected(tx, {
         academyId,
         userId,
         status: admission.status,
         source: admission.source,
         registeredViaHost: input.hostname ?? null,
-      },
-      input.namePolicy === 'interactive'
-        ? { mode: 'interactive', field: 'name' }
-        : { mode: 'automatic' },
-    );
+      });
+      // Staff approved, blocked or otherwise decided in the meantime: the
+      // row is no longer a rejected one, so there is nothing to re-apply.
+      if (!reopened) {
+        throw new ConflictException({ messageKey: 'errors.auth.alreadyLearnerHere' });
+      }
+      student = reopened;
+    } else {
+      ({ student, nameClashExempted } = await this.academyStudentsRepository.admit(
+        tx,
+        {
+          academyId,
+          userId,
+          status: admission.status,
+          source: admission.source,
+          registeredViaHost: input.hostname ?? null,
+        },
+        input.namePolicy === 'interactive'
+          ? { mode: 'interactive', field: 'name' }
+          : { mode: 'automatic' },
+      ));
+    }
     if (nameClashExempted) {
       const organizationId =
         await this.academyStudentsRepository.resolveOrganizationId(academyId);
@@ -973,8 +1000,12 @@ export class AuthService {
           entity: { type: 'academy_student', id: student.id },
           // The roster link is `/dashboard/academy/:academyId/members`,
           // so the academy travels in `values` — the rule context
-          // only sees `{ entity, values }`.
-          values: { academyId },
+          // only sees `{ entity, values }`. A re-application after a
+          // rejection is a NEW work item on the same row: its instant is
+          // part of the dedupe key.
+          values: input.reapply
+            ? { academyId, reappliedAtMs: student.joinedAt.getTime() }
+            : { academyId },
         });
         outboxIds.push(emitted.outboxId);
       }
@@ -1170,7 +1201,9 @@ export class AuthService {
    * `register` (A4) and `joinAcademy`: runs only once the caller has proven
    * the account's password. Resolves and checks the academy against the
    * request host, refuses a blocked or existing learner, and writes ONE
-   * `academy_students` row under the academy's registration policy.
+   * `academy_students` row under the academy's registration policy — or,
+   * for a learner whose registration was rejected, puts that same row back
+   * under the policy (`isRejectedRegistration`).
    */
   private async admitExistingAccount(
     user: User,
@@ -1201,7 +1234,12 @@ export class AuthService {
     if (already?.blockedAt) {
       throw new ForbiddenException({ messageKey: 'errors.auth.academyAccessBlocked' });
     }
-    if (already) {
+    // A REJECTED registration is not a refusal for good (the reject dialog
+    // says "They can register again"): the person applies again under the
+    // academy's CURRENT registration policy, exactly like a new learner.
+    // Any other existing row — active, pending — is already a learner here.
+    const reapply = already !== null && isRejectedRegistration(already);
+    if (already && !reapply) {
       throw new ConflictException({ messageKey: 'errors.auth.alreadyLearnerHere' });
     }
 
@@ -1227,6 +1265,7 @@ export class AuthService {
             userId: user.id,
             admission,
             hostname: input.hostname,
+            reapply,
             namePolicy: 'interactive',
           });
           await this.auditLogWriterService.write(tx, {
@@ -1240,6 +1279,7 @@ export class AuthService {
               existingAccount: true,
               source: admission.source,
               status: admission.status,
+              ...(reapply ? { afterRejection: true } : {}),
             },
           });
           return ids;

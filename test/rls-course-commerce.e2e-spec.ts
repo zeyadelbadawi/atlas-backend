@@ -441,15 +441,29 @@ describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_e
   });
 
   describe('course_order_refunds (buyer-scoped, append-only)', () => {
-    async function createSucceededPayment(payerUserId: string, payeeAcademyId: string) {
+    /**
+     * A succeeded course payment, attached to its order — the insert
+     * policies (20261123000200) require the refund's payment to belong to
+     * the refund's order, as every real writer guarantees.
+     */
+    async function createSucceededPayment(
+      payerUserId: string,
+      payeeAcademyId: string,
+      courseOrderId?: string,
+      provider: 'atlas_manual' | 'academy_manual' = 'atlas_manual',
+    ) {
       return tenancyContext.runInUserContext(payerUserId, (tx) =>
         tx.payment.create({
           data: {
             payerUserId,
             payeeAcademyId,
-            methodKey: 'atlas_manual',
+            courseOrderId,
+            methodKey:
+              provider === 'academy_manual'
+                ? 'academy_manual_bank_transfer'
+                : 'atlas_manual',
             methodType: 'manual_bank_transfer',
-            provider: 'atlas_manual',
+            provider,
             amountMinorUnits: 5000n,
             currency: 'USD',
             status: 'succeeded',
@@ -467,7 +481,7 @@ describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_e
       const academy = await createAcademy(org.id, 'rls-refund-academy');
       const course = await createCourse(org.id, academy.id, 'rls-refund-course');
       const order1 = await createOrder(student1.id, course.id, academy.id, org.id);
-      const payment1 = await createSucceededPayment(student1.id, academy.id);
+      const payment1 = await createSucceededPayment(student1.id, academy.id, order1.id);
 
       const refund1 = await tenancyContext.runInUserContext(student1.id, (tx) =>
         tx.courseOrderRefund.create({
@@ -501,7 +515,7 @@ describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_e
       const academy = await createAcademy(org.id, 'rls-atk-refund-academy');
       const course = await createCourse(org.id, academy.id, 'rls-atk-refund-course');
       const order2 = await createOrder(student2.id, course.id, academy.id, org.id);
-      const payment2 = await createSucceededPayment(student2.id, academy.id);
+      const payment2 = await createSucceededPayment(student2.id, academy.id, order2.id);
 
       await expect(
         tenancyContext.runInUserContext(student1.id, (tx) =>
@@ -514,6 +528,152 @@ describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_e
               requestedBy: student2.id,
               idempotencyKey: `rls-atk-refund-${randomUUID()}`,
             },
+          }),
+        ),
+      ).rejects.toThrow(/row-level security policy/i);
+    });
+
+    // --- 20261123000200 — the INSERT policy names the two real writers ---
+
+    const refundRow = (
+      courseOrderId: string,
+      paymentId: string,
+      requestedBy: string,
+    ) => ({
+      courseOrderId,
+      paymentId,
+      amountMinorUnits: 5000n,
+      currency: 'USD',
+      requestedBy,
+      idempotencyKey: `rls-ins-${randomUUID()}`,
+    });
+
+    async function commerceFixture(label: string) {
+      const student = await createUser(`${label}-student`);
+      const owner = await createUser(`${label}-owner`);
+      const org = await createOrgOwnedBy(owner.id, `${label}-org`);
+      const academy = await createAcademy(org.id, `${label}-academy`);
+      const course = await createCourse(org.id, academy.id, `${label}-course`);
+      const order = await createOrder(student.id, course.id, academy.id, org.id);
+      return { student, owner, org, academy, course, order };
+    }
+
+    it("ATTACK (blocked): a buyer cannot refund ANOTHER student's order even when naming themselves (the old gap)", async () => {
+      const f = await commerceFixture('rls-ins-other');
+      const payment = await createSucceededPayment(
+        f.student.id,
+        f.academy.id,
+        f.order.id,
+      );
+      const intruder = await createUser('rls-ins-other-intruder');
+      await expect(
+        tenancyContext.runInTenantAndUserContext(f.org.id, intruder.id, (tx) =>
+          tx.courseOrderRefund.create({
+            data: refundRow(f.order.id, payment.id, intruder.id),
+          }),
+        ),
+      ).rejects.toThrow(/row-level security policy/i);
+    });
+
+    it('ATTACK (blocked): a buyer cannot self-refund a payment made to the academy (academy_manual)', async () => {
+      const f = await commerceFixture('rls-ins-manual');
+      const payment = await createSucceededPayment(
+        f.student.id,
+        f.academy.id,
+        f.order.id,
+        'academy_manual',
+      );
+      await expect(
+        tenancyContext.runInTenantAndUserContext(f.org.id, f.student.id, (tx) =>
+          tx.courseOrderRefund.create({
+            data: refundRow(f.order.id, payment.id, f.student.id),
+          }),
+        ),
+      ).rejects.toThrow(/row-level security policy/i);
+    });
+
+    it('ATTACK (blocked): a refund cannot pair an order with a payment of a different order', async () => {
+      const f = await commerceFixture('rls-ins-pair');
+      const otherOrder = await createOrder(
+        f.student.id,
+        f.course.id,
+        f.academy.id,
+        f.org.id,
+      );
+      const payment = await createSucceededPayment(
+        f.student.id,
+        f.academy.id,
+        otherOrder.id,
+      );
+      await expect(
+        tenancyContext.runInUserContext(f.student.id, (tx) =>
+          tx.courseOrderRefund.create({
+            data: refundRow(f.order.id, payment.id, f.student.id),
+          }),
+        ),
+      ).rejects.toThrow(/row-level security policy/i);
+    });
+
+    it('TENANT (allowed): the Organization Owner records a refund of an academy_manual payment in its own tenant context', async () => {
+      const f = await commerceFixture('rls-ins-owner');
+      const payment = await createSucceededPayment(
+        f.student.id,
+        f.academy.id,
+        f.order.id,
+        'academy_manual',
+      );
+      const refund = await tenancyContext.runInTenantAndUserContext(
+        f.org.id,
+        f.owner.id,
+        (tx) =>
+          tx.courseOrderRefund.create({
+            data: refundRow(f.order.id, payment.id, f.owner.id),
+          }),
+      );
+      expect(refund.requestedBy).toBe(f.owner.id);
+    });
+
+    it('ATTACK (blocked): in the tenant context, a non-owner, another organization, or an Atlas-collected payment is refused', async () => {
+      const f = await commerceFixture('rls-ins-tenant');
+      const manualPayment = await createSucceededPayment(
+        f.student.id,
+        f.academy.id,
+        f.order.id,
+        'academy_manual',
+      );
+      const notOwner = await createUser('rls-ins-tenant-not-owner');
+      await expect(
+        tenancyContext.runInTenantAndUserContext(f.org.id, notOwner.id, (tx) =>
+          tx.courseOrderRefund.create({
+            data: refundRow(f.order.id, manualPayment.id, notOwner.id),
+          }),
+        ),
+      ).rejects.toThrow(/row-level security policy/i);
+
+      const other = await commerceFixture('rls-ins-tenant-other');
+      await expect(
+        tenancyContext.runInTenantAndUserContext(other.org.id, other.owner.id, (tx) =>
+          tx.courseOrderRefund.create({
+            data: refundRow(f.order.id, manualPayment.id, other.owner.id),
+          }),
+        ),
+      ).rejects.toThrow(/row-level security policy/i);
+
+      const atlasOrder = await createOrder(
+        f.student.id,
+        f.course.id,
+        f.academy.id,
+        f.org.id,
+      );
+      const atlasPayment = await createSucceededPayment(
+        f.student.id,
+        f.academy.id,
+        atlasOrder.id,
+      );
+      await expect(
+        tenancyContext.runInTenantAndUserContext(f.org.id, f.owner.id, (tx) =>
+          tx.courseOrderRefund.create({
+            data: refundRow(atlasOrder.id, atlasPayment.id, f.owner.id),
           }),
         ),
       ).rejects.toThrow(/row-level security policy/i);

@@ -12,11 +12,13 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
   seedAcademy,
+  seedAcademyMember,
   seedAcademyStudent,
   seedActiveSubscriptionForOrg,
   seedAssignment,
   seedCourse,
   seedCourseInstructor,
+  seedMembership,
   seedOrganizationWithOwner,
   seedQuiz,
   seedQuizQuestion,
@@ -144,6 +146,26 @@ describe('Instructor Operations (e2e)', () => {
       enrolledCount: 1,
       pendingGradingCount: 1,
     });
+  });
+
+  it('the course overview names the owning academy, so the instructor can open its curriculum builder', async () => {
+    const { instructor, course, academy, org } =
+      await seedTeachingFixture('instr-academy-id');
+    // A real instructor is a member of the organization and the academy.
+    await seedMembership(admin, org.id, instructor.userId, 'instructor');
+    await seedAcademyMember(admin, academy.id, instructor.userId, 'instructor');
+
+    const overview = await request(app.getHttpServer())
+      .get(`/instructor/courses/${course.id}`)
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(200);
+    expect(overview.body.academyId).toBe(academy.id);
+    // The academy-scoped curriculum the "Edit curriculum" link opens is one
+    // the assigned instructor may read.
+    await request(app.getHttpServer())
+      .get(`/academies/${overview.body.academyId}/courses/${course.id}/sections`)
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(200);
   });
 
   it('the course roster lists the real enrolled student', async () => {

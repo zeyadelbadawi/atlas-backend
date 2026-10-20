@@ -194,6 +194,7 @@ writer stores.
 | `media.video.deleted` | media | academy | yes | assetId, bytes, minutes, reason |
 | `domain.custom_domain_added` | domains | academy | yes | providerRegistered, error, replacedHostname |
 | `domain.custom_domain_removed` | domains | academy | yes | — |
+| `domain.subdomain_changed` | domains | academy | yes | previousSubdomain, newSubdomain, redirectKept, reclaimedAlias |
 | `domain.verification_checked` | domains | academy | yes | outcome, error, httpsReachable, reRegistered |
 | `domain.platform_check` | domains | platform | no | outcome, error, httpsReachable |
 | `domain.platform_release` | domains | academy | yes | — |

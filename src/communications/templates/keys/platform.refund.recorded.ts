@@ -7,7 +7,7 @@ import type { CommunicationTemplate } from '../layout';
  * returned outside the platform, which is why Atlas is told.
  */
 export const template: CommunicationTemplate = {
-  version: '1',
+  version: '2',
   en: defineLocale({
     subject: (v) => `Refund recorded: ${str(v, 'courseTitle', 'a course')}`,
     preheader: () => 'A course refund needs the money returned.',
@@ -22,7 +22,7 @@ export const template: CommunicationTemplate = {
     preheader: () => 'استرداد دورة يحتاج إلى إعادة المبلغ.',
     paragraphs: (v) => [
       `تم تسجيل استرداد بقيمة ${str(v, 'amount')} ${str(v, 'currency')} لدورة "${str(v, 'courseTitle', 'دورة')}" في ${str(v, 'academyName', 'إحدى الأكاديميات')}.`,
-      'حصّلت Atlas هذه الدفعة. أعِد المبلغ إلى المتعلّم خارج المنصة.',
+      'حصّلت أطلس هذه الدفعة. أعِد المبلغ إلى المتعلّم خارج المنصة.',
     ],
     ctaLabel: 'عرض الدفعة',
   }),

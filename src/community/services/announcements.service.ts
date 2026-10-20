@@ -14,7 +14,12 @@
  * independently; this app-layer check exists to return a real 403 instead
  * of a confusing empty/failed write.
  */
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AnnouncementsRepository } from '../repositories/announcements.repository';
 import { toAnnouncementResponse } from '../dto/announcement.contract';
@@ -25,7 +30,7 @@ import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
-import type { Prisma } from '@prisma/client';
+import type { AnnouncementStatus, Prisma } from '@prisma/client';
 import { AnnouncementFanOutProducer } from '../queue/announcement-fanout.producer';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
@@ -54,6 +59,29 @@ async function assertCanManageAcademy(
   }
 }
 
+/**
+ * The schedule part of an announcement update, by the same rule as create
+ * (a date → `scheduled`, none → `draft`). `scheduledAt` absent leaves the
+ * schedule as it is; a date on a draft or scheduled announcement makes it
+ * `scheduled` (the sweep only publishes `scheduled` rows, so a draft with a
+ * date would otherwise never go out); `null` clears the date and a
+ * scheduled announcement goes back to `draft`. A published or archived
+ * announcement never changes status here — only its stored date, as before.
+ */
+function scheduleUpdate(
+  existing: { readonly status: AnnouncementStatus },
+  scheduledAt: string | null | undefined,
+): Pick<Prisma.AnnouncementUpdateInput, 'scheduledAt' | 'status'> {
+  if (scheduledAt === undefined) return {};
+  const unpublished = existing.status === 'draft' || existing.status === 'scheduled';
+  if (scheduledAt === null) {
+    return unpublished ? { scheduledAt: null, status: 'draft' } : {};
+  }
+  return unpublished
+    ? { scheduledAt: new Date(scheduledAt), status: 'scheduled' }
+    : { scheduledAt: new Date(scheduledAt) };
+}
+
 @Injectable()
 export class AnnouncementsService {
   constructor(
@@ -61,6 +89,42 @@ export class AnnouncementsService {
     private readonly announcementsRepository: AnnouncementsRepository,
     private readonly fanOutProducer: AnnouncementFanOutProducer,
   ) {}
+
+  /**
+   * Writes an edit. When the schedule part changes the status, the write
+   * only lands if the row still has the status it was decided from (the
+   * sweep may have published it meanwhile); otherwise 409 and the editor
+   * reloads.
+   */
+  private async writeUpdate(
+    tx: Prisma.TransactionClient,
+    existing: { readonly status: AnnouncementStatus },
+    announcementId: string,
+    fields: { readonly title?: string; readonly body?: string },
+    scheduledAt: string | null | undefined,
+  ) {
+    const schedule = scheduleUpdate(existing, scheduledAt);
+    if (schedule.status === undefined) {
+      return this.announcementsRepository.update(tx, announcementId, {
+        ...fields,
+        ...schedule,
+      });
+    }
+    const updated = await this.announcementsRepository.updateIfStatus(
+      tx,
+      announcementId,
+      existing.status,
+      {
+        ...fields,
+        scheduledAt: schedule.scheduledAt as Date | null,
+        status: schedule.status as AnnouncementStatus,
+      },
+    );
+    if (!updated) {
+      throw new ConflictException({ messageKey: 'errors.concurrency.staleVersion' });
+    }
+    return updated;
+  }
 
   /**
    * P64 Communications C3 (plan §8 H1) — tells the audience a publish
@@ -233,11 +297,16 @@ export class AnnouncementsService {
       if (!existing || existing.courseId !== courseId) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
-      const updated = await this.announcementsRepository.update(tx, announcementId, {
-        title: payload.title,
-        body: payload.body,
-        scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : undefined,
-      });
+      const updated = await this.writeUpdate(
+        tx,
+        existing,
+        announcementId,
+        {
+          title: payload.title,
+          body: payload.body,
+        },
+        payload.scheduledAt,
+      );
       return toAnnouncementResponse(updated, updated.author.name);
     });
   }
@@ -351,11 +420,16 @@ export class AnnouncementsService {
       if (!existing || existing.academyId !== academyId || existing.courseId) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
-      const updated = await this.announcementsRepository.update(tx, announcementId, {
-        title: payload.title,
-        body: payload.body,
-        scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : undefined,
-      });
+      const updated = await this.writeUpdate(
+        tx,
+        existing,
+        announcementId,
+        {
+          title: payload.title,
+          body: payload.body,
+        },
+        payload.scheduledAt,
+      );
       return toAnnouncementResponse(updated, updated.author.name);
     });
   }
@@ -461,11 +535,16 @@ export class AnnouncementsService {
       if (!existing || existing.audience !== 'platform') {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
-      const updated = await this.announcementsRepository.update(tx, announcementId, {
-        title: payload.title,
-        body: payload.body,
-        scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : undefined,
-      });
+      const updated = await this.writeUpdate(
+        tx,
+        existing,
+        announcementId,
+        {
+          title: payload.title,
+          body: payload.body,
+        },
+        payload.scheduledAt,
+      );
       return toAnnouncementResponse(updated, updated.author.name);
     });
   }

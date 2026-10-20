@@ -97,3 +97,62 @@ export function assertValidQuizSettings(
     });
   }
 }
+
+/**
+ * The quiz settings that only take effect behind a rollout flag
+ * (`quiz-attempt-engine.service.ts`'s `start`): with `quiz.engine_v2` off
+ * an attempt has no time limit, nothing shuffled, every question on one
+ * page; with `quiz.integrity` off (or engine v2 off) integrity and full
+ * screen are not applied. Each entry is the field's "does nothing" value.
+ */
+const ENGINE_V2_SETTINGS = {
+  timeLimitSeconds: null,
+  shuffleQuestions: false,
+  shuffleOptions: false,
+  questionsPerAttempt: null,
+  layout: 'all_questions',
+} as const;
+const INTEGRITY_SETTINGS = {
+  integrityMode: 'off',
+  requireFullscreen: false,
+} as const;
+
+/**
+ * Refuses to SAVE a setting the academy's attempts would silently ignore
+ * (flag off for this academy), instead of storing it and running the quiz
+ * without it. The frontend has no per-academy view of these flags, so an
+ * honest refusal on the field is how the author learns it is unavailable.
+ *
+ * Only a value the author is CHANGING to something other than the
+ * "does nothing" value is refused: a quiz saved while the flag was on can
+ * still be edited (title, questions…) after it is switched off, and
+ * clearing the setting is always allowed. `existing` is the stored row
+ * (`null` on create, where every field starts at its default).
+ */
+export function assertQuizSettingsAvailable(
+  settings: QuizSettingsWriteData,
+  existing: Readonly<Record<string, unknown>> | null,
+  available: { readonly engineV2: boolean; readonly integrity: boolean },
+): void {
+  const refused: string[] = [];
+  const check = (defaults: Readonly<Record<string, unknown>>, on: boolean) => {
+    if (on) return;
+    for (const [field, inert] of Object.entries(defaults)) {
+      const next = (settings as Record<string, unknown>)[field];
+      if (next === undefined || next === inert) continue;
+      const current = existing ? existing[field] : inert;
+      if (next === current) continue;
+      refused.push(field);
+    }
+  };
+  check(ENGINE_V2_SETTINGS, available.engineV2);
+  check(INTEGRITY_SETTINGS, available.engineV2 && available.integrity);
+  if (refused.length === 0) return;
+  throw new BadRequestException({
+    messageKey: 'errors.validation.failed',
+    violations: refused.map((field) => ({
+      field,
+      messageKey: 'errors.quiz.settingUnavailable',
+    })),
+  });
+}
