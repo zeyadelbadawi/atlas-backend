@@ -25,7 +25,7 @@ import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
-import type { Prisma } from '@prisma/client';
+import type { AnnouncementStatus, Prisma } from '@prisma/client';
 import { AnnouncementFanOutProducer } from '../queue/announcement-fanout.producer';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
@@ -52,6 +52,29 @@ async function assertCanManageAcademy(
   if (!membership || !MANAGING_ROLES.has(membership.role)) {
     throw new ForbiddenException({ messageKey: 'errors.forbidden' });
   }
+}
+
+/**
+ * The schedule part of an announcement update, by the same rule as create
+ * (a date → `scheduled`, none → `draft`). `scheduledAt` absent leaves the
+ * schedule as it is; a date on a draft or scheduled announcement makes it
+ * `scheduled` (the sweep only publishes `scheduled` rows, so a draft with a
+ * date would otherwise never go out); `null` clears the date and a
+ * scheduled announcement goes back to `draft`. A published or archived
+ * announcement never changes status here — only its stored date, as before.
+ */
+function scheduleUpdate(
+  existing: { readonly status: AnnouncementStatus },
+  scheduledAt: string | null | undefined,
+): Pick<Prisma.AnnouncementUpdateInput, 'scheduledAt' | 'status'> {
+  if (scheduledAt === undefined) return {};
+  const unpublished = existing.status === 'draft' || existing.status === 'scheduled';
+  if (scheduledAt === null) {
+    return unpublished ? { scheduledAt: null, status: 'draft' } : {};
+  }
+  return unpublished
+    ? { scheduledAt: new Date(scheduledAt), status: 'scheduled' }
+    : { scheduledAt: new Date(scheduledAt) };
 }
 
 @Injectable()
@@ -236,7 +259,7 @@ export class AnnouncementsService {
       const updated = await this.announcementsRepository.update(tx, announcementId, {
         title: payload.title,
         body: payload.body,
-        scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : undefined,
+        ...scheduleUpdate(existing, payload.scheduledAt),
       });
       return toAnnouncementResponse(updated, updated.author.name);
     });
@@ -354,7 +377,7 @@ export class AnnouncementsService {
       const updated = await this.announcementsRepository.update(tx, announcementId, {
         title: payload.title,
         body: payload.body,
-        scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : undefined,
+        ...scheduleUpdate(existing, payload.scheduledAt),
       });
       return toAnnouncementResponse(updated, updated.author.name);
     });
@@ -464,7 +487,7 @@ export class AnnouncementsService {
       const updated = await this.announcementsRepository.update(tx, announcementId, {
         title: payload.title,
         body: payload.body,
-        scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : undefined,
+        ...scheduleUpdate(existing, payload.scheduledAt),
       });
       return toAnnouncementResponse(updated, updated.author.name);
     });
