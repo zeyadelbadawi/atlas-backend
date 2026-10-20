@@ -48,6 +48,7 @@ import { TenancyContextService } from '../src/tenancy/services/tenancy-context.s
 import { getQueueToken } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { Phase2MaintenanceService } from '../src/learning/services/phase2-maintenance.service';
+import { LearnerDashboardService } from '../src/learning/services/learner-dashboard.service';
 import {
   QUIZ_DEADLINE_QUEUE,
   quizDeadlineJobId,
@@ -989,6 +990,44 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     expect(after.effectiveAttemptId).toBe(a1.id);
     expect(after.attemptsCount).toBe(1);
     expect(after.passed).toBe(true);
+  });
+
+  it('the learner Assessments row shows the latest attempt that counts, and "not started" once every attempt is voided', async () => {
+    const w = await world('p3-void-dashboard');
+    const dashboard = app.get(LearnerDashboardService);
+    const rowOf = async () =>
+      (await dashboard.getAssessments(w.student.userId, w.academy.id, 'quiz')).find(
+        (item) => item.id === w.quiz.id,
+      );
+    const a1 = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${a1.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: correctAnswers(w) })
+      .expect(201);
+    const a2 = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${a2.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: [{ questionId: w.q1.id, selectedOptionIds: [w.q1Wrong.id] }] })
+      .expect(201);
+    expect(await rowOf()).toMatchObject({ state: 'failed' });
+
+    const voidAttempt = (attemptId: string) =>
+      http()
+        .post(`${reviewPath(w)}/attempts/${attemptId}/invalidate`)
+        .set(auth(w.instructor.token))
+        .send({ reason: 'Technical problem' })
+        .expect(200);
+    await voidAttempt(a2.id);
+    // The latest NON-voided attempt: the first one, passed.
+    expect(await rowOf()).toMatchObject({ state: 'passed', score: 100 });
+    await voidAttempt(a1.id);
+    expect(await rowOf()).toMatchObject({
+      state: 'not_started',
+      score: null,
+      submittedAt: null,
+    });
   });
 
   it('a voided attempt does not use up an extra attempt granted as an exception', async () => {
