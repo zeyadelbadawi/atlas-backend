@@ -110,6 +110,10 @@ services:
       # the health checks). Empty or `on` locks; `off` serves direct
       # connections again (kill switch, no rebuild).
       ATLAS_ORIGIN_LOCK: ${ATLAS_ORIGIN_LOCK:-on}
+      # DL-57 — the help center on docs.<base>. `preview` (default) serves
+      # it with X-Robots-Tag noindex; `on` makes it indexable; `off` answers
+      # 503 on every page (kill switch, no rebuild).
+      ATLAS_DOCS_STATIC: ${ATLAS_DOCS_STATIC:-preview}
     ports:
       - '80:80'
       - '443:443'
