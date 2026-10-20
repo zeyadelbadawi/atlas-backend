@@ -212,8 +212,12 @@ describe('Member view of subscription pricing (e2e) — SEC-03(b)', () => {
       expect(gatingView(subscription.body)).toEqual(gatingView(owner.body));
       expect(subscription.body.plan).not.toHaveProperty('pricing');
       expect(subscription.body).not.toHaveProperty('priceChangeNotice');
-      // Nothing that looks like an amount survives anywhere in the body.
-      expect(JSON.stringify(subscription.body)).not.toMatch(/1190|1490|"amount"/);
+      // Nothing that looks like an amount survives anywhere in the body. The
+      // prices only count as JSON number values: the seeded plan key embeds
+      // Date.now(), whose digits can contain "1190" (seen in CI, 20 Oct 2026).
+      expect(JSON.stringify(subscription.body)).not.toMatch(
+        /"amount"|[:,[](1190|1490)[,}\]]/,
+      );
 
       const ownerLifecycle = await get('/subscription/lifecycle', callers.owner);
       const lifecycle = await get('/subscription/lifecycle', callers[role]);
