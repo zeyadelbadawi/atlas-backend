@@ -71,7 +71,40 @@ export class QuizAttemptsRepository {
     });
   }
 
+  /**
+   * Attempts that count toward the quiz's attempt allowance. A VOIDED
+   * (`invalidated`) attempt is excluded: voiding gives the attempt back
+   * to the learner, as the reviewer is told when they void it. Every
+   * "may start another / attempts left" decision reads this count.
+   *
+   * `upToAttemptNumber` limits it to attempts numbered at or below one
+   * attempt — "how many counted attempts had been used by then", which is
+   * what the answer-disclosure rule asks.
+   */
   countForStudent(
+    tx: Prisma.TransactionClient,
+    studentId: string,
+    quizId: string,
+    options: { readonly upToAttemptNumber?: number } = {},
+  ): Promise<number> {
+    return tx.quizAttempt.count({
+      where: {
+        studentId,
+        quizId,
+        status: { not: 'invalidated' },
+        ...(options.upToAttemptNumber !== undefined
+          ? { attemptNumber: { lte: options.upToAttemptNumber } }
+          : {}),
+      },
+    });
+  }
+
+  /**
+   * Every attempt row, voided ones included. Only for NUMBERING the next
+   * attempt: `(quiz, student, attempt_number)` is unique, so a voided
+   * attempt keeps its number and the next one must not reuse it.
+   */
+  countAllForStudent(
     tx: Prisma.TransactionClient,
     studentId: string,
     quizId: string,

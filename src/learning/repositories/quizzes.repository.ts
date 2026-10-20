@@ -129,6 +129,11 @@ export class QuizzesRepository {
     });
   }
 
+  /**
+   * Every attempt row, voided ones included — for numbering the next
+   * attempt only. The allowance counts with
+   * `QuizAttemptsRepository.countForStudent`, which leaves voided ones out.
+   */
   countAttemptsForStudent(
     tx: Prisma.TransactionClient,
     studentId: string,

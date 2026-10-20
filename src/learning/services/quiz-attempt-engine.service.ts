@@ -213,7 +213,10 @@ export class QuizAttemptEngineService {
         }
 
         const override = await this.attempts.findOverride(tx, quizId, userId);
+        // Counted attempts decide the allowance (a voided attempt is given
+        // back); every row, voided ones included, decides the next number.
         const existingCount = await this.attempts.countForStudent(tx, userId, quizId);
+        const totalRows = await this.attempts.countAllForStudent(tx, userId, quizId);
         if (
           !canStartAttempt(
             existingCount,
@@ -259,7 +262,7 @@ export class QuizAttemptEngineService {
         }
 
         const timeMultiplier = override ? Number(override.timeMultiplier) : 1;
-        const seed = (Math.floor(Math.random() * 0x7fffffff) ^ existingCount) >>> 0;
+        const seed = (Math.floor(Math.random() * 0x7fffffff) ^ totalRows) >>> 0;
         const plan = buildAttemptPlan(
           quizRow.questions,
           engineV2
@@ -317,7 +320,7 @@ export class QuizAttemptEngineService {
           student: { connect: { id: userId } },
           status: 'in_progress',
           answers: [],
-          attemptNumber: existingCount + 1,
+          attemptNumber: totalRows + 1,
           startedAt: now,
           deadlineAt,
           seed,
@@ -543,7 +546,7 @@ export class QuizAttemptEngineService {
         );
         const override = await this.attempts.findOverride(tx, quizId, userId);
         const disclosure = (finalized: QuizAttempt) =>
-          this.disclosureFor(quiz, finalized, override?.extraAttempts ?? 0, now);
+          this.disclosureFor(tx, quiz, finalized, override?.extraAttempts ?? 0, now);
 
         if (attempt.status !== 'in_progress') {
           // Idempotent: a finalised attempt is returned as-is; anything else
@@ -763,7 +766,7 @@ export class QuizAttemptEngineService {
       const current = (await this.attempts.findById(tx, attemptId)) ?? attempt;
       const override = await this.attempts.findOverride(tx, quizId, userId);
       const extra = override?.extraAttempts ?? 0;
-      const disclosure = await this.disclosureFor(quiz, current, extra, now);
+      const disclosure = await this.disclosureFor(tx, quiz, current, extra, now);
       const questions = this.attemptQuestions(quiz, current);
       const answers = this.answersOf(current);
       const answerByQuestion = new Map(
@@ -1144,6 +1147,7 @@ export class QuizAttemptEngineService {
   }
 
   private async disclosureFor(
+    tx: Prisma.TransactionClient,
     quiz: Quiz,
     attempt: QuizAttempt,
     extraAttempts: number,
@@ -1152,6 +1156,15 @@ export class QuizAttemptEngineService {
     const snapshot = this.snapshotOf(attempt, quiz);
     const finalized =
       attempt.status !== 'in_progress' && attempt.status !== 'not_started';
+    // Counted attempts up to this one, not its raw number: after a void the
+    // learner has an attempt back, so "attempts exhausted" must not reveal
+    // the answers while another attempt can still be started.
+    const attemptsUsed = await this.attempts.countForStudent(
+      tx,
+      attempt.studentId,
+      attempt.quizId,
+      { upToAttemptNumber: attempt.attemptNumber },
+    );
     return resolveDisclosure({
       showScore: snapshot.showScore,
       showAnswers: snapshot.showAnswers,
@@ -1159,7 +1172,7 @@ export class QuizAttemptEngineService {
       now,
       dueAt: quiz.dueAt,
       availableUntil: quiz.availableUntil,
-      attemptsUsed: attempt.attemptNumber,
+      attemptsUsed,
       maxAttempts: quiz.maxAttempts === null ? null : quiz.maxAttempts + extraAttempts,
       attemptFinalized: finalized,
     });

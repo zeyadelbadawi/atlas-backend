@@ -227,8 +227,14 @@ export class QuizzesService {
       // Override-aware, same rule as the engine (start/session/results), so
       // this list endpoint no longer disagrees with the rest of the surface.
       const override = await this.quizAttemptsRepository.findOverride(tx, quizId, userId);
+      // Voided attempts are listed but given back: they do not count.
+      const counted = await this.quizAttemptsRepository.countForStudent(
+        tx,
+        userId,
+        quizId,
+      );
       const canRetry = canStartAttempt(
-        totalItems,
+        counted,
         quiz.maxAttempts,
         override?.extraAttempts ?? 0,
       );
@@ -273,7 +279,7 @@ export class QuizzesService {
         quizId,
       );
       if (open) {
-        const count = await this.quizzesRepository.countAttemptsForStudent(
+        const count = await this.quizAttemptsRepository.countForStudent(
           tx,
           userId,
           quizId,
@@ -284,7 +290,9 @@ export class QuizzesService {
         );
       }
 
-      const existingCount = await this.quizzesRepository.countAttemptsForStudent(
+      // Counted attempts (a voided one is given back) decide the limit;
+      // every row decides the next number (it is unique per student).
+      const existingCount = await this.quizAttemptsRepository.countForStudent(
         tx,
         userId,
         quizId,
@@ -292,13 +300,18 @@ export class QuizzesService {
       if (!canStartAnotherAttempt(existingCount, quiz.maxAttempts)) {
         throw new ForbiddenException({ messageKey: 'errors.quiz.maxAttemptsReached' });
       }
+      const totalRows = await this.quizzesRepository.countAttemptsForStudent(
+        tx,
+        userId,
+        quizId,
+      );
 
       const attempt = await this.quizzesRepository.createAttempt(tx, {
         quiz: { connect: { id: quizId } },
         student: { connect: { id: userId } },
         status: 'in_progress',
         answers: [],
-        attemptNumber: existingCount + 1,
+        attemptNumber: totalRows + 1,
       });
 
       const canRetry = canStartAnotherAttempt(existingCount + 1, quiz.maxAttempts);
@@ -335,7 +348,7 @@ export class QuizzesService {
         // double-click or a retried request never errors and never
         // re-grades); anything else still open is a real conflict.
         if (attempt.status === 'passed' || attempt.status === 'failed') {
-          const total = await this.quizzesRepository.countAttemptsForStudent(
+          const total = await this.quizAttemptsRepository.countForStudent(
             tx,
             userId,
             quizId,
@@ -385,7 +398,7 @@ export class QuizzesService {
         submittedAt: new Date(),
       });
 
-      const totalAttempts = await this.quizzesRepository.countAttemptsForStudent(
+      const totalAttempts = await this.quizAttemptsRepository.countForStudent(
         tx,
         userId,
         quizId,
