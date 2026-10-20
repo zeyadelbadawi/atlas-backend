@@ -543,6 +543,16 @@ export class AcademyStudentsService {
         if (membership.blockedAt) {
           throw new ConflictException({ messageKey: 'errors.academy.studentBlocked' });
         }
+        // Learning access needs an ACTIVE membership (`assertActiveEnrollment`),
+        // so an enrollment granted to a pending or rejected learner would be
+        // reported as "enrolled" and then open nothing. Refused instead:
+        // approving is a separate, deliberate decision (and has its own
+        // notice to the learner), never a side effect of an enrollment.
+        if (membership.status !== 'active') {
+          throw new ConflictException({
+            messageKey: 'errors.academy.studentNotApproved',
+          });
+        }
         const course = await this.coursesRepository.findById(tx, payload.courseId);
         if (!course || course.academyId !== academyId) {
           throw new NotFoundException({ messageKey: 'errors.notFound' });
