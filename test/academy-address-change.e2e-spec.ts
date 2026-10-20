@@ -130,6 +130,13 @@ describe('Academy address change (e2e) — move + old address redirects', () => 
       .send({ slug });
   }
 
+  /** Moves the academy's last slug change `days` days into the past (the 60-day rule's clock). */
+  async function backdateSlugChange(academyId: string, days: number) {
+    const at = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    await admin.academy.update({ where: { id: academyId }, data: { slugChangedAt: at } });
+    return at;
+  }
+
   function resolve(hostname: string) {
     return http().get('/public/websites/resolve').query({ hostname });
   }
@@ -312,6 +319,7 @@ describe('Academy address change (e2e) — move + old address redirects', () => 
 
     await changeSlug(academy.id, owner.accessToken, interim).expect(200);
     await resolve(`${interim}.${BASE}`).expect(200); // cache the live answer
+    await backdateSlugChange(academy.id, 61); // past the 60-day rule
     const back = await changeSlug(academy.id, owner.accessToken, original).expect(200);
     expect(back.body.slug).toBe(original);
 
@@ -338,6 +346,88 @@ describe('Academy address change (e2e) — move + old address redirects', () => 
     expect(await admin.subdomainAlias.count({ where: { academyId: academy.id } })).toBe(
       1,
     );
+  });
+
+  it('allows one change every 60 days, reclaiming included, and names the next date', async () => {
+    const { owner, org, academy } = await arrangeAcademy('mv-60d');
+    const original = academy.slug;
+    const first = label('mv-60a');
+    const DAY = 24 * 60 * 60 * 1000;
+
+    // Creation does not start the clock: the first change is allowed.
+    expect(academy.slugChangedAt).toBeNull();
+    const moved = await changeSlug(academy.id, owner.accessToken, first).expect(200);
+    const changedAt = (
+      await admin.academy.findUniqueOrThrow({ where: { id: academy.id } })
+    ).slugChangedAt as Date;
+    expect(Math.abs(changedAt.getTime() - Date.now())).toBeLessThan(60_000);
+    const expectedNext = new Date(changedAt.getTime() + 60 * DAY).toISOString();
+    expect(moved.body.nextSlugChangeAt).toBe(expectedNext);
+    const read = await http()
+      .get(`/academies/${academy.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(read.body.nextSlugChangeAt).toBe(expectedNext);
+
+    // A second change, and taking the old address back, are both refused.
+    for (const slug of [label('mv-60b'), original]) {
+      const refused = await changeSlug(academy.id, owner.accessToken, slug).expect(409);
+      expect(refused.body.error).toMatchObject({
+        messageKey: 'errors.academy.slugChangeTooSoon',
+        details: { nextSlugChangeAt: expectedNext, intervalDays: 60 },
+      });
+      expect(refused.body.error.violations).toEqual([
+        expect.objectContaining({ field: 'slug' }),
+      ]);
+    }
+    expect(
+      (
+        await admin.subdomainAllocation.findUniqueOrThrow({
+          where: { academyId: academy.id },
+        })
+      ).subdomain,
+    ).toBe(first);
+    expect(await admin.subdomainAlias.count({ where: { academyId: academy.id } })).toBe(
+      1,
+    );
+
+    // Saving the other settings with the unchanged slug keeps working.
+    await http()
+      .patch(`/academies/${academy.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ slug: first, description: 'Still saving' })
+      .expect(200);
+
+    // A manager is refused as before (403), not told about the window.
+    const manager = await fixtureUser('mv-60d-mgr');
+    await admin.organizationMembership.create({
+      data: { organizationId: org.id, userId: manager.userId, role: 'manager' },
+    });
+    await seedAcademyMember(admin, academy.id, manager.userId, 'manager');
+    await expect(
+      app
+        .get(AcademiesService, { strict: false })
+        .update(academy.id, org.id, manager.userId, {
+          slug: label('mv-60m'),
+        } as never),
+    ).rejects.toMatchObject({ status: 403 });
+
+    // Day 59: still refused, same date. Day 61: allowed — reclaiming too.
+    const day59 = await backdateSlugChange(academy.id, 59);
+    const stillRefused = await changeSlug(academy.id, owner.accessToken, original).expect(
+      409,
+    );
+    expect(stillRefused.body.error.details.nextSlugChangeAt).toBe(
+      new Date(day59.getTime() + 60 * DAY).toISOString(),
+    );
+    await backdateSlugChange(academy.id, 61);
+    const reclaimed = await changeSlug(academy.id, owner.accessToken, original).expect(
+      200,
+    );
+    expect(reclaimed.body.slug).toBe(original);
+    expect(reclaimed.body.nextSlugChangeAt).toBeDefined();
+    // …which started a new window.
+    await changeSlug(academy.id, owner.accessToken, first).expect(409);
   });
 
   it('only the organization owner can change the address', async () => {

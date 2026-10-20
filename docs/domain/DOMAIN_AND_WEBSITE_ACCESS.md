@@ -43,6 +43,12 @@ covers `academies.slug`, allocations and aliases (BEFORE triggers raising
 old address; the Academy itself can take one back (the alias row is
 re-pointed at the label it gives up). A reserved label held from before
 DL-57 is not kept as an alias. Audited as `domain.subdomain_changed`.
+A slug may change at most once every 60 days (owner decision 20 Oct 2026;
+`academies.slug_changed_at`, NULL until the first change, so creation does
+not start the clock; reclaiming an old address counts). Inside the window
+`PATCH /academies/:id` answers 409 `errors.academy.slugChangeTooSoon` on
+the `slug` field with `details.nextSlugChangeAt`, and the academy response
+carries `nextSlugChangeAt` while the window is open.
 
 ## 2. The base domain has one source of truth
 

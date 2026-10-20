@@ -7,6 +7,7 @@
  * assumed from the DB column naming.
  */
 import type { Academy } from '@prisma/client';
+import { nextSlugChangeAt } from '../utils/slug-change-window.util';
 
 export interface AcademyAddressResponse {
   readonly street?: string;
@@ -34,6 +35,12 @@ export interface AcademyResponse {
   readonly address?: AcademyAddressResponse;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /**
+   * Present only while the slug (the public address) may not change yet:
+   * when the next change becomes possible (once every 60 days,
+   * `slug-change-window.util.ts`).
+   */
+  readonly nextSlugChangeAt?: string;
 }
 
 export function toAcademyResponse(academy: Academy): AcademyResponse {
@@ -55,5 +62,11 @@ export function toAcademyResponse(academy: Academy): AcademyResponse {
     address: (academy.address as AcademyAddressResponse | null) ?? undefined,
     createdAt: academy.createdAt.toISOString(),
     updatedAt: academy.updatedAt.toISOString(),
+    ...nextSlugChangeField(academy.slugChangedAt),
   };
+}
+
+function nextSlugChangeField(slugChangedAt: Date | null): { nextSlugChangeAt?: string } {
+  const next = nextSlugChangeAt(slugChangedAt);
+  return next ? { nextSlugChangeAt: next.toISOString() } : {};
 }
