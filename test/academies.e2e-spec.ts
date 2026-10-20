@@ -15,7 +15,6 @@ import {
   createAdminPrisma,
   seedActiveSubscriptionForOrg,
   seedOrganizationWithOwner,
-  seedMembership,
   seedCourse,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
@@ -412,10 +411,36 @@ describe('Academy Management (e2e) — functional/contract', () => {
     );
     expect(created.status).toBe(201);
 
-    const otherUser = await signUpAndSignIn(app, 'academy-stats-staff');
-    await seedMembership(admin, org.id, otherUser.userId, 'member');
-    await admin.academyMember.create({
-      data: { academyId: created.body.id, userId: otherUser.userId, role: 'staff' },
+    // "Active Staff" is every ACTIVE staff row, whatever the role (owner,
+    // manager, instructor). It used to count the legacy `staff` role only —
+    // a role no flow assigns any more — so the old expectation here (one
+    // seeded `staff` row → 1) described the bug. A pending invitation counts
+    // as a member but not as active staff; a removed row counts as neither.
+    const people = await Promise.all(
+      ['manager', 'instructor', 'pending', 'removed'].map((label) =>
+        admin.user.create({
+          data: { email: uniqueTestEmail(`academy-stats-${label}`), name: label },
+        }),
+      ),
+    );
+    const [manager, instructor, pending, removed] = people;
+    await admin.academyMember.createMany({
+      data: [
+        { academyId: created.body.id, userId: manager.id, role: 'manager' },
+        { academyId: created.body.id, userId: instructor.id, role: 'instructor' },
+        {
+          academyId: created.body.id,
+          userId: pending.id,
+          role: 'manager',
+          status: 'pending',
+        },
+        {
+          academyId: created.body.id,
+          userId: removed.id,
+          role: 'instructor',
+          status: 'inactive',
+        },
+      ],
     });
 
     // The old expectation (`publishedCourses` always 0) predated the
@@ -429,9 +454,9 @@ describe('Academy Management (e2e) — functional/contract', () => {
       .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(200);
     expect(stats.body).toEqual({
-      totalMembers: 2,
-      activeStaff: 1,
-      activeInstructors: 0,
+      totalMembers: 4, // owner, manager, instructor, pending invitation
+      activeStaff: 3, // owner, manager, instructor
+      activeInstructors: 1,
       publishedCourses: 1,
     });
   });

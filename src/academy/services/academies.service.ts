@@ -1783,7 +1783,7 @@ export class AcademiesService {
       const [totalMembers, activeStaff, activeInstructors, publishedCourses] =
         await Promise.all([
           this.academyMembersRepository.countAll(tx, academyId),
-          this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'staff'),
+          this.academyMembersRepository.countActive(tx, academyId),
           this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
           tx.course.count({ where: { academyId, status: 'published' } }),
         ]);
