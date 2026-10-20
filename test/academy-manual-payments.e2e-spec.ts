@@ -28,6 +28,7 @@ import {
   createAdminPrisma,
   seedAcademy,
   seedAcademyMember,
+  seedActiveSubscriptionForOrg,
   seedCourse,
   seedMembership,
   seedOrganizationWithOwner,
@@ -768,6 +769,104 @@ describe('Academy manual payments (e2e)', () => {
       // The academy reviewed it, not Atlas — the stored reason says so.
       const row = await admin.payment.findUniqueOrThrow({ where: { id: p.id } });
       expect(row.failureReason).toBe('errors.payment.rejectedByAcademy');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  /*
+   * The academy's OWN Atlas subscription lapsing must not strand money a
+   * learner already sent: approving or rejecting a payment that is waiting
+   * for review keeps working. Nothing else about selling does — setting up
+   * payment methods stays refused like every other change.
+   */
+  describe('review while the academy subscription has lapsed', () => {
+    it('still approves and rejects pending payments, and still refuses setup changes', async () => {
+      const lapsedOwner = await signUpAndSignIn(app, 'amp-lapsed-owner');
+      const lapsedOrg = await seedOrganizationWithOwner(
+        admin,
+        lapsedOwner.userId,
+        'amp-lapsed-org',
+      );
+      await seedActiveSubscriptionForOrg(admin, lapsedOrg.id, 'amp-lapsed');
+      const lapsedAcademy = (await seedAcademy(admin, lapsedOrg.id, 'amp-lapsed-academy'))
+        .id;
+      const course = await seedCourse(
+        admin,
+        lapsedAcademy,
+        `Lapsed Course ${Date.now()}`,
+        {
+          status: 'published',
+          visibility: 'public',
+          pricingType: 'paid',
+          pricingAmountMinorUnits: 90000n,
+          pricingCurrency: 'EGP',
+        },
+      );
+      await http()
+        .put(`/academies/${lapsedAcademy}/payment-methods/bank-transfer`)
+        .set(auth(lapsedOwner))
+        .send({ enabled: true, instructions: BANK })
+        .expect(200);
+
+      const paid = await signUpAndSignIn(app, 'amp-lapsed-paid');
+      const toApprove = await payAndSubmit(
+        paid,
+        (await order(paid, course.id, 'amp-lapsed-paid')).id,
+        'academy_manual_bank_transfer',
+      );
+      const wrong = await signUpAndSignIn(app, 'amp-lapsed-wrong');
+      const toReject = await payAndSubmit(
+        wrong,
+        (await order(wrong, course.id, 'amp-lapsed-wrong')).id,
+        'academy_manual_bank_transfer',
+      );
+
+      await admin.tenantSubscription.update({
+        where: { organizationId: lapsedOrg.id },
+        data: { status: 'expired', trialEndsAt: null },
+      });
+
+      // Read-only mode is real: a setup change is refused…
+      const refused = await http()
+        .put(`/academies/${lapsedAcademy}/payment-methods/bank-transfer`)
+        .set(auth(lapsedOwner))
+        .send({ enabled: false, instructions: BANK })
+        .expect(403);
+      expect(refused.body.error.code).toBe('SUBSCRIPTION_REQUIRED');
+
+      // …but the learners' pending payments can still be settled.
+      await http()
+        .post(`/academies/${lapsedAcademy}/course-payments/${toApprove.id}/approve`)
+        .set(auth(lapsedOwner))
+        .send({})
+        .expect(200);
+      const enrollment = await admin.enrollment.findFirstOrThrow({
+        where: { studentId: paid.userId, courseId: course.id },
+      });
+      expect(enrollment.status).toBe('enrolled');
+      expect(await outbox('course.payment.approved', toApprove.id)).toHaveLength(1);
+
+      const rejected = await http()
+        .post(`/academies/${lapsedAcademy}/course-payments/${toReject.id}/reject`)
+        .set(auth(lapsedOwner))
+        .send({ reason: 'No transfer arrived.' })
+        .expect(200);
+      expect(rejected.body.reviewStatus).toBe('rejected');
+
+      // Only a payment that is WAITING for review: a decided one is still
+      // a conflict, never a second decision.
+      await http()
+        .post(`/academies/${lapsedAcademy}/course-payments/${toApprove.id}/reject`)
+        .set(auth(lapsedOwner))
+        .send({})
+        .expect(409);
+
+      // The exemption does not widen who may review.
+      await http()
+        .post(`/academies/${lapsedAcademy}/course-payments/${toReject.id}/approve`)
+        .set(auth(otherOwner))
+        .send({})
+        .expect((res) => expect([403, 404]).toContain(res.status));
     });
   });
 

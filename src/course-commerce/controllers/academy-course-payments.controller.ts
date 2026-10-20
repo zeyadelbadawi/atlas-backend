@@ -4,6 +4,16 @@
  * Manual Payments). Same guard chain as `AcademyCourseOrdersController`; the
  * service applies the Organization-Owner-only rule and pins every query to
  * this academy's `academy_manual` payments.
+ *
+ * LAPSED SUBSCRIPTION. Approve and reject carry `@AllowInactiveSubscription`
+ * (the same exemption support and billing have): a pending payment is money
+ * the learner ALREADY sent to the academy, so refusing the review while the
+ * academy's own Atlas subscription is lapsed would strand the learner's
+ * money and access, not the academy's. The exemption is exactly these two
+ * handlers, and they can only settle a payment that is already waiting for
+ * review (`loadReviewable` → 409 otherwise) — no new sale, price or
+ * payment-method change. Payment-method setup and everything else stay
+ * read-only until the subscription is active again.
  */
 import {
   Body,
@@ -21,6 +31,7 @@ import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
 import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
+import { AllowInactiveSubscription } from '../../plans/decorators/allow-inactive-subscription.decorator';
 import { AcademyCoursePaymentsService } from '../services/academy-course-payments.service';
 import { AcademyCoursePaymentQueryDto } from '../dto/academy-course-payment-query.dto';
 import {
@@ -95,6 +106,7 @@ export class AcademyCoursePaymentsController {
 
   @Post(':id/course-payments/:paymentId/approve')
   @HttpCode(200)
+  @AllowInactiveSubscription()
   async approve(
     @Req() request: Request,
     @Param('id') academyId: string,
@@ -112,6 +124,7 @@ export class AcademyCoursePaymentsController {
 
   @Post(':id/course-payments/:paymentId/reject')
   @HttpCode(200)
+  @AllowInactiveSubscription()
   async reject(
     @Req() request: Request,
     @Param('id') academyId: string,
