@@ -25,6 +25,45 @@ const CHROME =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
 
 describe('parseMarketingBeacon', () => {
+  it('keeps help center events (DL-57) with their closed values only', () => {
+    const docs = { page: 'docs:article', locale: 'ar', device: 'desktop' } as const;
+    expect(
+      parseMarketingBeacon({
+        events: [
+          { name: 'page_viewed', ...docs },
+          { name: 'docs_helpful', ...docs, props: { value: 'yes' } },
+          {
+            name: 'docs_search_used',
+            page: 'docs:search',
+            locale: 'en',
+            device: 'mobile',
+            props: { value: 'no_results' },
+          },
+          // Free text (a query, a path) is never accepted.
+          { name: 'docs_search_used', ...docs, props: { value: 'how to pay' } },
+          { name: 'docs_helpful', ...docs, props: { value: 'maybe' } },
+          {
+            name: 'page_viewed',
+            page: 'docs:/selling/refunds',
+            locale: 'en',
+            device: 'mobile',
+          },
+        ],
+      }),
+    ).toEqual([
+      { name: 'page_viewed', ...docs, value: '', ...none },
+      { name: 'docs_helpful', ...docs, value: 'yes', ...none },
+      {
+        name: 'docs_search_used',
+        page: 'docs:search',
+        locale: 'en',
+        device: 'mobile',
+        value: 'no_results',
+        ...none,
+      },
+    ]);
+  });
+
   it('keeps valid events with their closed-list value', () => {
     expect(
       parseMarketingBeacon({

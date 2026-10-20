@@ -7,7 +7,8 @@
  * field can carry a URL, a query string, an id or free text, so a hostile
  * reporter can skew counts but cannot grow the table with personal data.
  *
- * The frontend mirrors these lists in `src/marketing/client/beacon.ts`.
+ * The frontend mirrors these lists in `src/marketing/client/beacon.ts` and
+ * (help center, DL-57) `src/docs/client/beacon.ts`.
  */
 
 export const MKT_EVENT_NAMES = [
@@ -20,6 +21,9 @@ export const MKT_EVENT_NAMES = [
   'contact_form_started',
   'contact_form_submitted',
   'campaign_landing',
+  // Help center (docs.<base>, DL-57). Never the query text or the article.
+  'docs_search_used',
+  'docs_helpful',
 ] as const;
 export type MktEventName = (typeof MKT_EVENT_NAMES)[number];
 
@@ -33,6 +37,12 @@ export const MKT_PAGES = [
   'mkt:about',
   'mkt:legal',
   'mkt:404',
+  // Help center page templates (DL-57).
+  'docs:home',
+  'docs:category',
+  'docs:article',
+  'docs:search',
+  'docs:404',
   'other',
 ] as const;
 export type MktPage = (typeof MKT_PAGES)[number];
@@ -94,6 +104,8 @@ export const MKT_EVENT_VALUES: Record<MktEventName, readonly string[] | null> = 
   contact_form_started: null,
   contact_form_submitted: null,
   campaign_landing: null,
+  docs_search_used: ['results', 'no_results'],
+  docs_helpful: ['yes', 'no'],
 };
 
 /**
@@ -107,6 +119,7 @@ export const MKT_ONCE_PER_BATCH: ReadonlySet<MktEventName> = new Set([
   'contact_form_started',
   'contact_form_submitted',
   'section_viewed',
+  'docs_helpful',
 ]);
 
 /**
