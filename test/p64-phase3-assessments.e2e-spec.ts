@@ -1019,6 +1019,21 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     expect(session.body).toMatchObject({ attemptsUsed: 2, attemptsAllowed: 2 });
   });
 
+  it('the time multiplier of an exception is between 1 and 4', async () => {
+    const w = await world('p3-multiplier');
+    const put = (timeMultiplier: number) =>
+      http()
+        .put(`${reviewPath(w)}/overrides`)
+        .set(auth(w.instructor.token))
+        .send({ studentId: w.student.userId, timeMultiplier });
+    expect((await put(4)).status).toBe(200);
+    for (const outOfRange of [0.5, 4.25, 5]) {
+      const refused = await put(outOfRange);
+      expect(refused.status).toBe(400);
+      expect(refused.body.error.messageKey).toBe('errors.quiz.invalidTimeMultiplier');
+    }
+  });
+
   it('overrides extend one student only: extra attempts and time multiplier apply to the named learner and no one else', async () => {
     const w = await world('p3-override', {
       maxAttempts: 1,
