@@ -48,6 +48,7 @@ import { TenancyContextService } from '../src/tenancy/services/tenancy-context.s
 import { getQueueToken } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { Phase2MaintenanceService } from '../src/learning/services/phase2-maintenance.service';
+import { LearnerDashboardService } from '../src/learning/services/learner-dashboard.service';
 import {
   QUIZ_DEADLINE_QUEUE,
   quizDeadlineJobId,
@@ -894,6 +895,182 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
       .set(auth(w.student.token))
       .send({})
       .expect(400);
+  });
+
+  it('voiding an attempt gives it back: it stops counting toward Max attempts on every learner surface, and answers stay hidden while an attempt remains', async () => {
+    const w = await world('p3-void-refund', {
+      maxAttempts: 2,
+      quiz: { showAnswers: 'after_attempts_exhausted' },
+    });
+    const submit = (attemptId: string) =>
+      http()
+        .post(`${attemptsPath(w)}/${attemptId}/submit`)
+        .set(auth(w.student.token))
+        .send({ answers: correctAnswers(w) })
+        .expect(201);
+    const results = (attemptId: string) =>
+      http()
+        .get(`${attemptsPath(w)}/${attemptId}/results`)
+        .set(auth(w.student.token))
+        .expect(200);
+
+    const a1 = await start(w);
+    await submit(a1.id);
+    await http()
+      .post(`${reviewPath(w)}/attempts/${a1.id}/invalidate`)
+      .set(auth(w.instructor.token))
+      .send({ reason: 'Wrong paper' })
+      .expect(200);
+
+    // The second attempt is numbered after the voided one (the number is
+    // unique per learner), but it is the first that counts.
+    const a2 = await start(w);
+    const a2Row = await admin.quizAttempt.findUniqueOrThrow({ where: { id: a2.id } });
+    expect(a2Row.attemptNumber).toBe(2);
+    const session = await http()
+      .get(`${attemptsPath(w)}/${a2.id}`)
+      .set(auth(w.student.token))
+      .expect(200);
+    expect(session.body).toMatchObject({ attemptsUsed: 1, attemptsAllowed: 2 });
+    const submitted = await submit(a2.id);
+    expect(submitted.body.canRetry).toBe(true);
+
+    // One counted attempt of two: the learner may still try again, so the
+    // "after attempts are used up" answers must NOT be revealed yet — the
+    // raw attempt number (2) would have said "used up".
+    const r2 = await results(a2.id);
+    expect(r2.body).toMatchObject({
+      attemptsUsed: 1,
+      attemptsAllowed: 2,
+      canRetry: true,
+    });
+    expect(r2.body.disclosure.answers).toBe(false);
+    const list = await http().get(attemptsPath(w)).set(auth(w.student.token)).expect(200);
+    expect(list.body.items).toHaveLength(2);
+    expect(list.body.items.every((a: { canRetry: boolean }) => a.canRetry)).toBe(true);
+
+    // The refunded attempt is real, and then the limit holds again.
+    const a3 = await start(w);
+    await submit(a3.id);
+    const r3 = await results(a3.id);
+    expect(r3.body).toMatchObject({
+      attemptsUsed: 2,
+      attemptsAllowed: 2,
+      canRetry: false,
+    });
+    expect(r3.body.disclosure.answers).toBe(true);
+    await http().post(attemptsPath(w)).set(auth(w.student.token)).expect(403);
+  });
+
+  it('a voided attempt is never the kept one: with "latest attempt" the result falls back to the attempt before it', async () => {
+    const w = await world('p3-void-latest', { quiz: { gradingPolicy: 'latest' } });
+    const a1 = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${a1.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: correctAnswers(w) })
+      .expect(201);
+    const a2 = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${a2.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: [{ questionId: w.q1.id, selectedOptionIds: [w.q1Wrong.id] }] })
+      .expect(201);
+    const resultOf = () =>
+      admin.quizResult.findUniqueOrThrow({
+        where: { quizId_studentId: { quizId: w.quiz.id, studentId: w.student.userId } },
+      });
+    expect((await resultOf()).effectiveAttemptId).toBe(a2.id);
+    await http()
+      .post(`${reviewPath(w)}/attempts/${a2.id}/invalidate`)
+      .set(auth(w.owner.token))
+      .send({ reason: 'Technical problem' })
+      .expect(200);
+    const after = await resultOf();
+    expect(after.effectiveAttemptId).toBe(a1.id);
+    expect(after.attemptsCount).toBe(1);
+    expect(after.passed).toBe(true);
+  });
+
+  it('the learner Assessments row shows the latest attempt that counts, and "not started" once every attempt is voided', async () => {
+    const w = await world('p3-void-dashboard');
+    const dashboard = app.get(LearnerDashboardService);
+    const rowOf = async () =>
+      (await dashboard.getAssessments(w.student.userId, w.academy.id, 'quiz')).find(
+        (item) => item.id === w.quiz.id,
+      );
+    const a1 = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${a1.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: correctAnswers(w) })
+      .expect(201);
+    const a2 = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${a2.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: [{ questionId: w.q1.id, selectedOptionIds: [w.q1Wrong.id] }] })
+      .expect(201);
+    expect(await rowOf()).toMatchObject({ state: 'failed' });
+
+    const voidAttempt = (attemptId: string) =>
+      http()
+        .post(`${reviewPath(w)}/attempts/${attemptId}/invalidate`)
+        .set(auth(w.instructor.token))
+        .send({ reason: 'Technical problem' })
+        .expect(200);
+    await voidAttempt(a2.id);
+    // The latest NON-voided attempt: the first one, passed.
+    expect(await rowOf()).toMatchObject({ state: 'passed', score: 100 });
+    await voidAttempt(a1.id);
+    expect(await rowOf()).toMatchObject({
+      state: 'not_started',
+      score: null,
+      submittedAt: null,
+    });
+  });
+
+  it('a voided attempt does not use up an extra attempt granted as an exception', async () => {
+    const w = await world('p3-void-extra', { maxAttempts: 1 });
+    const a1 = await start(w);
+    await http()
+      .post(`${attemptsPath(w)}/${a1.id}/submit`)
+      .set(auth(w.student.token))
+      .send({ answers: correctAnswers(w) })
+      .expect(201);
+    await http()
+      .put(`${reviewPath(w)}/overrides`)
+      .set(auth(w.instructor.token))
+      .send({ studentId: w.student.userId, extraAttempts: 1 })
+      .expect(200);
+    const a2 = await start(w);
+    await http()
+      .post(`${reviewPath(w)}/attempts/${a2.id}/invalidate`)
+      .set(auth(w.instructor.token))
+      .send({ reason: 'Connection dropped' })
+      .expect(200);
+    // 1 counted of 1 + 1 extra: the voided second attempt is given back.
+    const a3 = await start(w);
+    const session = await http()
+      .get(`${attemptsPath(w)}/${a3.id}`)
+      .set(auth(w.student.token))
+      .expect(200);
+    expect(session.body).toMatchObject({ attemptsUsed: 2, attemptsAllowed: 2 });
+  });
+
+  it('the time multiplier of an exception is between 1 and 4', async () => {
+    const w = await world('p3-multiplier');
+    const put = (timeMultiplier: number) =>
+      http()
+        .put(`${reviewPath(w)}/overrides`)
+        .set(auth(w.instructor.token))
+        .send({ studentId: w.student.userId, timeMultiplier });
+    expect((await put(4)).status).toBe(200);
+    for (const outOfRange of [0.5, 4.25, 5]) {
+      const refused = await put(outOfRange);
+      expect(refused.status).toBe(400);
+      expect(refused.body.error.messageKey).toBe('errors.quiz.invalidTimeMultiplier');
+    }
   });
 
   it('overrides extend one student only: extra attempts and time multiplier apply to the named learner and no one else', async () => {
@@ -2018,5 +2195,85 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
     expect(learnerView.body.settings.timeLimitSeconds).toBe(900);
     expect(JSON.stringify(learnerView.body)).not.toContain('acceptedAnswers');
     expect(JSON.stringify(learnerView.body)).not.toContain('isCorrect');
+  });
+
+  it('a setting the academy cannot use (flag off) is refused on save with a field error, never stored and silently ignored', async () => {
+    const w = await world('p3-flag-off-authoring');
+    const question = {
+      prompt: '2+2',
+      type: 'single_choice',
+      options: [
+        { label: '4', isCorrect: true },
+        { label: '5', isCorrect: false },
+      ],
+    };
+    const violationsOf = (body: {
+      error: { violations: { field: string; messageKey: string }[] };
+    }) => body.error.violations.map((v) => [v.field, v.messageKey] as [string, string]);
+
+    // Engine v2 off: time limit, shuffle, subset and layout do nothing at
+    // attempt time — and integrity with them.
+    flags.value = { ...allFlags('on'), quizEngineV2: { mode: 'off', academyIds: [] } };
+    const refused = await http()
+      .post(`/courses/${w.course.id}/quizzes`)
+      .set(auth(w.owner.token))
+      .send({
+        title: 'Timed',
+        timeLimitSeconds: 600,
+        shuffleQuestions: true,
+        integrityMode: 'warn',
+        questions: [question],
+      })
+      .expect(400);
+    expect(violationsOf(refused.body)).toEqual([
+      ['timeLimitSeconds', 'errors.quiz.settingUnavailable'],
+      ['shuffleQuestions', 'errors.quiz.settingUnavailable'],
+      ['integrityMode', 'errors.quiz.settingUnavailable'],
+    ]);
+    // The everyday settings still save.
+    const plain = await http()
+      .post(`/courses/${w.course.id}/quizzes`)
+      .set(auth(w.owner.token))
+      .send({
+        title: 'Plain',
+        maxAttempts: 2,
+        gradingPolicy: 'latest',
+        questions: [question],
+      })
+      .expect(201);
+
+    // Integrity off only: the time limit is fine, integrity is not.
+    flags.value = { ...allFlags('on'), quizIntegrity: { mode: 'off', academyIds: [] } };
+    const integrity = await http()
+      .patch(`/courses/${w.course.id}/quizzes/${plain.body.id}`)
+      .set(auth(w.owner.token))
+      .send({ timeLimitSeconds: 600, integrityMode: 'strict', requireFullscreen: true })
+      .expect(400);
+    expect(violationsOf(integrity.body)).toEqual([
+      ['integrityMode', 'errors.quiz.settingUnavailable'],
+      ['requireFullscreen', 'errors.quiz.settingUnavailable'],
+    ]);
+    const stored = await admin.quiz.findUniqueOrThrow({ where: { id: plain.body.id } });
+    expect(stored).toMatchObject({ timeLimitSeconds: null, integrityMode: 'off' });
+
+    // A quiz saved while the flag was on stays editable after it goes off,
+    // and its now-unavailable setting can be cleared.
+    flags.value = allFlags('on');
+    await http()
+      .patch(`/courses/${w.course.id}/quizzes/${plain.body.id}`)
+      .set(auth(w.owner.token))
+      .send({ timeLimitSeconds: 600 })
+      .expect(200);
+    flags.value = { ...allFlags('on'), quizEngineV2: { mode: 'off', academyIds: [] } };
+    await http()
+      .patch(`/courses/${w.course.id}/quizzes/${plain.body.id}`)
+      .set(auth(w.owner.token))
+      .send({ title: 'Renamed', timeLimitSeconds: 600 })
+      .expect(200);
+    await http()
+      .patch(`/courses/${w.course.id}/quizzes/${plain.body.id}`)
+      .set(auth(w.owner.token))
+      .send({ timeLimitSeconds: null })
+      .expect(200);
   });
 });

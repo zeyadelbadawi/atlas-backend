@@ -47,6 +47,7 @@ import type { CreateQuizDto } from '../dto/create-quiz.dto';
 import type { UpdateQuizDto } from '../dto/update-quiz.dto';
 import type { QuizQuestionInputDto } from '../dto/quiz-question-input.dto';
 import {
+  assertQuizSettingsAvailable,
   assertValidQuizSettings,
   settingsWriteDataFromDto,
 } from '../dto/quiz-settings.mapper';
@@ -66,6 +67,7 @@ import {
 } from './quiz-scoring.util';
 import { canStartAttempt } from './quiz-engine.util';
 import { QuizAttemptsRepository } from '../repositories/quiz-attempts.repository';
+import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
 import { diffListCounts } from '../../audit-log/utils/audit-diff.util';
 
 /**
@@ -124,7 +126,19 @@ export class QuizzesService {
     private readonly quizzesRepository: QuizzesRepository,
     private readonly quizAttemptsRepository: QuizAttemptsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly featureFlags: FeatureFlagsService,
   ) {}
+
+  /** Which flag-gated quiz settings this academy's attempts would honour (see `assertQuizSettingsAvailable`). */
+  private quizSettingsAvailability(academyId: string): {
+    engineV2: boolean;
+    integrity: boolean;
+  } {
+    return {
+      engineV2: this.featureFlags.isEnabledForAcademy('quizEngineV2', academyId),
+      integrity: this.featureFlags.isEnabledForAcademy('quizIntegrity', academyId),
+    };
+  }
 
   /** See `AssignmentsService.resolveAuditAttribution`'s identical doc comment — same shape, same reasoning, this module's own authoring surface. */
   private async resolveAuditAttribution(
@@ -227,8 +241,14 @@ export class QuizzesService {
       // Override-aware, same rule as the engine (start/session/results), so
       // this list endpoint no longer disagrees with the rest of the surface.
       const override = await this.quizAttemptsRepository.findOverride(tx, quizId, userId);
+      // Voided attempts are listed but given back: they do not count.
+      const counted = await this.quizAttemptsRepository.countForStudent(
+        tx,
+        userId,
+        quizId,
+      );
       const canRetry = canStartAttempt(
-        totalItems,
+        counted,
         quiz.maxAttempts,
         override?.extraAttempts ?? 0,
       );
@@ -273,7 +293,7 @@ export class QuizzesService {
         quizId,
       );
       if (open) {
-        const count = await this.quizzesRepository.countAttemptsForStudent(
+        const count = await this.quizAttemptsRepository.countForStudent(
           tx,
           userId,
           quizId,
@@ -284,7 +304,9 @@ export class QuizzesService {
         );
       }
 
-      const existingCount = await this.quizzesRepository.countAttemptsForStudent(
+      // Counted attempts (a voided one is given back) decide the limit;
+      // every row decides the next number (it is unique per student).
+      const existingCount = await this.quizAttemptsRepository.countForStudent(
         tx,
         userId,
         quizId,
@@ -292,13 +314,18 @@ export class QuizzesService {
       if (!canStartAnotherAttempt(existingCount, quiz.maxAttempts)) {
         throw new ForbiddenException({ messageKey: 'errors.quiz.maxAttemptsReached' });
       }
+      const totalRows = await this.quizzesRepository.countAttemptsForStudent(
+        tx,
+        userId,
+        quizId,
+      );
 
       const attempt = await this.quizzesRepository.createAttempt(tx, {
         quiz: { connect: { id: quizId } },
         student: { connect: { id: userId } },
         status: 'in_progress',
         answers: [],
-        attemptNumber: existingCount + 1,
+        attemptNumber: totalRows + 1,
       });
 
       const canRetry = canStartAnotherAttempt(existingCount + 1, quiz.maxAttempts);
@@ -335,7 +362,7 @@ export class QuizzesService {
         // double-click or a retried request never errors and never
         // re-grades); anything else still open is a real conflict.
         if (attempt.status === 'passed' || attempt.status === 'failed') {
-          const total = await this.quizzesRepository.countAttemptsForStudent(
+          const total = await this.quizAttemptsRepository.countForStudent(
             tx,
             userId,
             quizId,
@@ -385,7 +412,7 @@ export class QuizzesService {
         submittedAt: new Date(),
       });
 
-      const totalAttempts = await this.quizzesRepository.countAttemptsForStudent(
+      const totalAttempts = await this.quizAttemptsRepository.countForStudent(
         tx,
         userId,
         quizId,
@@ -477,6 +504,11 @@ export class QuizzesService {
         },
         payload.questions.length,
       );
+      assertQuizSettingsAvailable(
+        settings,
+        null,
+        this.quizSettingsAvailability(academyId),
+      );
       // W7 — a unit placement must be a unit of THIS course, and the quiz
       // joins it at the END (it used to land at order 0, ahead of the
       // unit's existing items).
@@ -559,6 +591,11 @@ export class QuizzesService {
           mode: pick(settings.mode, existing.mode),
         },
         payload.questions ? payload.questions.length : existing.questions.length,
+      );
+      assertQuizSettingsAvailable(
+        settings,
+        existing as unknown as Record<string, unknown>,
+        this.quizSettingsAvailability(academyId),
       );
       // W7 — unit placement: `undefined` keeps it, `null` detaches it, a
       // DIFFERENT unit must belong to this course and appends the quiz at
