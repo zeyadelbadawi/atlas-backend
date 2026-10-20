@@ -43,6 +43,7 @@ import { SecurityReportsModule } from './security-reports/security-reports.modul
 import { SessionCookieInterceptor } from './identity/session-cookie/session-cookie.interceptor';
 import { MetricsModule } from './observability/metrics/metrics.module';
 import { RumModule } from './observability/rum/rum.module';
+import { MarketingEventsModule } from './marketing-events/marketing-events.module';
 import { IdentityModule } from './identity/identity.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { AcademyModule } from './academy/academy.module';
@@ -179,6 +180,8 @@ import { SecurityMonitoringModule } from './security-events/security-monitoring.
     // P64 Phase 2 §U — the first metrics registry in the codebase.
     MetricsModule,
     RumModule,
+    // B1 F.5 — the marketing website's cookieless beacon (`POST /mkt/events`).
+    MarketingEventsModule,
     ObservabilityModule,
     // New Customer Onboarding — docs/NEW_CUSTOMER_ONBOARDING.md.
     OnboardingModule,

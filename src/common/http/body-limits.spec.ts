@@ -2,6 +2,7 @@ import express from 'express';
 import request from 'supertest';
 import { collectDeclaredRoutes } from '../testing/route-inventory.fixture-spec';
 import {
+  BEACON_JSON_BODY_LIMIT_BYTES,
   DEFAULT_JSON_BODY_LIMIT_BYTES,
   ROUTE_BODY_LIMITS,
   bodyLimitTierFor,
@@ -77,6 +78,18 @@ describe('per-route JSON body limits (W3)', () => {
       .post('/api/v1/academies/abc/media')
       .send(bodyOf(UPLOAD_LIMIT + 1024))
       .expect(413);
+  });
+
+  it('caps the anonymous marketing beacon BELOW the default (16 KB)', async () => {
+    expect(bodyLimitTierFor('POST', '/api/v1/mkt/events')).toBe('beacon');
+    await request(appWithParser())
+      .post('/api/v1/mkt/events')
+      .send(bodyOf(BEACON_JSON_BODY_LIMIT_BYTES + 1024))
+      .expect(413);
+    await request(appWithParser())
+      .post('/api/v1/mkt/events')
+      .send(bodyOf(8 * 1024))
+      .expect(200);
   });
 
   it('keeps the raw bytes for signed webhooks only', async () => {

@@ -155,6 +155,9 @@ jobs:
           # Real-user monitoring is on unless the repository variable says
           # otherwise (set RUM_ENABLED=false to switch it off at the next deploy).
           rum_enabled: ${{ vars.RUM_ENABLED || 'true' }}
+          # The cookieless marketing beacon (DL-51) is on unless the repository
+          # variable MARKETING_EVENTS_ENABLED says `false`.
+          marketing_events_enabled: ${{ vars.MARKETING_EVENTS_ENABLED || 'true' }}
           # Server rendering of public Academy pages is on unless the
           # repository variable ATLAS_SSR says `off` (instant rollback: set it
           # and redeploy, or `docker compose stop ssr` on the host).
@@ -254,6 +257,9 @@ jobs:
           # Real-user monitoring is on unless the repository variable says
           # otherwise (set RUM_ENABLED=false to switch it off at the next deploy).
           rum_enabled: ${{ vars.RUM_ENABLED || 'true' }}
+          # The cookieless marketing beacon (DL-51) is on unless the repository
+          # variable MARKETING_EVENTS_ENABLED says `false`.
+          marketing_events_enabled: ${{ vars.MARKETING_EVENTS_ENABLED || 'true' }}
           # Server rendering of public Academy pages is on unless the
           # repository variable ATLAS_SSR says `off` (instant rollback: set it
           # and redeploy, or `docker compose stop ssr` on the host).

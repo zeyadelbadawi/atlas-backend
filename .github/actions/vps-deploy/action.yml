@@ -127,6 +127,13 @@ inputs:
       Real-user monitoring kill switch (`true` / `false`), synced into the
       VPS .env as RUM_ENABLED. Empty leaves the host value untouched; any
       other value than the two is ignored.
+  marketing_events_enabled:
+    required: false
+    default: ''
+    description: >-
+      Cookieless marketing beacon switch (`true` / `false`), synced into the
+      VPS .env as MARKETING_EVENTS_ENABLED (POST /mkt/events, DL-51). Empty
+      leaves the host value untouched; any other value is ignored.
   # Google Identity (docs/GOOGLE_IDENTITY.md). The one Atlas OAuth client;
   # the redirect URI is the central platform callback, byte-for-byte as
   # registered with Google. Empty values are dropped like every other key,
@@ -172,6 +179,7 @@ runs:
         ALERT_SLACK_WEBHOOK_URL: ${{ inputs.alert_slack_webhook_url }}
         PLATFORM_WEB_URL: ${{ inputs.platform_web_url }}
         RUM_ENABLED: ${{ inputs.rum_enabled }}
+        MARKETING_EVENTS_ENABLED: ${{ inputs.marketing_events_enabled }}
         ATLAS_SSR: ${{ inputs.atlas_ssr }}
         FEATURE_FLAGS: ${{ inputs.feature_flags }}
       run: |
@@ -215,6 +223,9 @@ runs:
         # is a real write rather than a dropped empty value.
         if os.environ.get('RUM_ENABLED') in ('true', 'false'):
             lines.append(f"RUM_ENABLED={os.environ['RUM_ENABLED']}")
+        # Marketing beacon: same exact-value rule as RUM.
+        if os.environ.get('MARKETING_EVENTS_ENABLED') in ('true', 'false'):
+            lines.append(f"MARKETING_EVENTS_ENABLED={os.environ['MARKETING_EVENTS_ENABLED']}")
         # Server rendering: exactly `on` or `off`, for the same reason.
         if os.environ.get('ATLAS_SSR') in ('on', 'off'):
             lines.append(f"ATLAS_SSR={os.environ['ATLAS_SSR']}")

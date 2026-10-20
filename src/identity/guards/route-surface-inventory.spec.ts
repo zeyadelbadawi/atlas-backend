@@ -238,6 +238,8 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   // --- telemetry and infrastructure ---------------------------------------
   'POST security/csp-reports': 'browser CSP reports; small bodies, rate-limited',
   'POST rum/vitals': 'browser web-vitals beacons; small bodies, rate-limited',
+  'POST mkt/events':
+    'marketing-site cookieless beacon; closed vocabularies, aggregate counts only, 16 KB, rate-limited',
   'GET health': 'liveness for the orchestrator; no data',
   'GET metrics': 'MetricsAccessGuard (scrape token)',
 };

@@ -22,6 +22,9 @@
  *  - `webhook` (1 MB): provider deliveries (Zoom, Cloudflare Stream, email
  *    providers, payments), verified against their exact bytes.
  *
+ * One tier is SMALLER than the default: `beacon` (16 KB) for the marketing
+ * website's anonymous beacon (`mkt/events`, at most 20 tiny events).
+ *
  * Paths are matched without the global `/api/v1` prefix, so `main.ts` and
  * the e2e app (which has no prefix) use the same table. `body-limits.spec`
  * proves every entry names a real route, and the e2e spec proves a small
@@ -37,8 +40,9 @@ import type { IncomingMessage } from 'node:http';
 export const DEFAULT_JSON_BODY_LIMIT_BYTES = 100 * 1024;
 export const CONTENT_JSON_BODY_LIMIT_BYTES = 5 * 1024 * 1024;
 export const WEBHOOK_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
+export const BEACON_JSON_BODY_LIMIT_BYTES = 16 * 1024;
 
-export type BodyLimitTier = 'upload' | 'content' | 'webhook';
+export type BodyLimitTier = 'upload' | 'content' | 'webhook' | 'beacon';
 
 export interface RouteBodyLimit {
   readonly method: 'POST' | 'PUT' | 'PATCH';
@@ -115,6 +119,8 @@ export const ROUTE_BODY_LIMITS: readonly RouteBodyLimit[] = [
   { method: 'POST', path: 'live-sessions/webhook', tier: 'webhook' },
   { method: 'POST', path: 'live-sessions/deauthorization', tier: 'webhook' },
   { method: 'POST', path: 'payments/webhook', tier: 'webhook' },
+  // --- anonymous beacons, SMALLER than the default --------------------------
+  { method: 'POST', path: 'mkt/events', tier: 'beacon' },
 ];
 
 /**
@@ -196,6 +202,7 @@ export function createJsonBodyParser(options: JsonBodyParserOptions): RequestHan
     upload: json({ limit: options.uploadLimitBytes, type, verify }),
     content: json({ limit: CONTENT_JSON_BODY_LIMIT_BYTES, type, verify }),
     webhook: json({ limit: WEBHOOK_JSON_BODY_LIMIT_BYTES, type, verify }),
+    beacon: json({ limit: BEACON_JSON_BODY_LIMIT_BYTES, type, verify }),
   };
   return function jsonParser(request, response, next) {
     const tier = bodyLimitTierFor(request.method, request.originalUrl ?? request.url);
