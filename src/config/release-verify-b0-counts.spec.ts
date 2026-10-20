@@ -37,6 +37,9 @@ type Answers = Partial<
     | 'themes'
     | 'retired'
     | 'slugs'
+    | 'heldLabels'
+    | 'guard'
+    | 'guardCount'
     | 'owners'
     | 'rls'
     | 'notForced'
@@ -65,6 +68,9 @@ function run(answers: Answers) {
       `  *"'themes'"*) printf '%s\\n' ${quote(a('themes'))} ;;`,
       `  *"'retired_published'"*) echo '${a('retired')}' ;;`,
       `  *"'slugs'"*) echo '${a('slugs')}' ;;`,
+      `  *"'held_labels'"*) echo '${a('heldLabels')}' ;;`,
+      `  *"'guard_installed'"*) echo '${a('guard')}' ;;`,
+      `  *"'slug_guard'"*) echo '${a('guardCount')}' ;;`,
       `  *"'owners'"*) echo '${a('owners')}' ;;`,
       `  *"'rls'"*) echo '${a('rls')}' ;;`,
       `  *"not c.relforcerowsecurity"*) echo '${a('notForced')}' ;;`,
@@ -113,7 +119,10 @@ describe('Release verify — B0 read-only counts (OC-16)', () => {
       themes:
         'themes|atelier|published|1\nthemes|bold-creative|draft|2\nthemes|mystery|draft|1',
       retired: 'retired_published|0|0',
-      slugs: 'slugs|0|1',
+      slugs: 'slugs|1|2|0',
+      heldLabels: 'held_labels|atlas-demo docs my-atlas',
+      guard: 'guard_installed|t',
+      guardCount: 'slug_guard|4',
       owners: 'owners|12|1|2',
       rls: 'rls|140|131|129',
       noRls: 'plans, trial_redemption_history',
@@ -131,7 +140,9 @@ describe('Release verify — B0 read-only counts (OC-16)', () => {
       'INFO  websites: theme=bold-creative (retired) status=draft count=2',
       'INFO  websites: theme=mystery (unknown key) status=draft count=1',
       'INFO  WEB-09: published websites on a retired theme=0, on an unknown theme key=0',
-      'INFO  academy slugs: reserved=0 candidate (preview, staging, docs, blog, help, learn)=1',
+      'INFO  DL-57 subdomain labels held: reserved=1 impersonating (atlas*, admin*)=2 shorter than 3=0',
+      'INFO  DL-57 held labels: atlas-demo docs my-atlas',
+      'INFO  DL-57 labels the database guard calls reserved: 4',
       'INFO  ORG-03: live academies=12, with no active owner row=1, whose organization owner has no academy-owner row=2',
       'INFO  ORG-05: public tables=140, RLS enabled=131, RLS forced=129',
       'INFO  ORG-05: tables without RLS: plans, trial_redemption_history',
@@ -155,6 +166,12 @@ describe('Release verify — B0 read-only counts (OC-16)', () => {
     );
     expect(out).toContain('INFO  ORG-03: live academies=?, with no active owner row=?');
     expect(out).toContain('INFO  ORG-05: public tables=?, RLS enabled=?, RLS forced=?');
+    expect(out).toContain(
+      'INFO  DL-57 subdomain labels held: reserved=? impersonating (atlas*, admin*)=? shorter than 3=?',
+    );
+    expect(out).toContain(
+      'INFO  DL-57 database guard: not installed yet (migration 20261122000000 pending)',
+    );
     expect(out).not.toMatch(/^(FAIL|PASS)/m);
     expect(status).toBe(0);
   });

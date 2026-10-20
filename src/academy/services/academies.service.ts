@@ -52,7 +52,7 @@ import {
   buildFullHost,
   resolveEffectiveBaseDomain,
 } from '../../domain/utils/effective-base-domain.util';
-import { RESERVED_SUBDOMAINS } from '../../provisioning/dto/provisioning.constants';
+import { isReservedSubdomain } from '../../provisioning/dto/provisioning.constants';
 import { ConfigService } from '@nestjs/config';
 import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
 import { PlatformDomainConfigurationRepository } from '../../domain/repositories/platform-domain-configuration.repository';
@@ -83,7 +83,10 @@ import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../dto/list-query.dto';
 import type { CollectionQueryDto, ListAcademiesQueryDto } from '../dto/list-query.dto';
-import type { CreateAcademyDto } from '../dto/create-academy.dto';
+import {
+  MIN_ACADEMY_SLUG_LENGTH,
+  type CreateAcademyDto,
+} from '../dto/create-academy.dto';
 import type { UpdateAcademyDto } from '../dto/update-academy.dto';
 import type { UpdateAcademyBrandingDto } from '../dto/update-academy-branding.dto';
 import type { AddAcademyManagerDto } from '../dto/add-academy-manager.dto';
@@ -145,9 +148,9 @@ export type AcademyNameConflictPolicy = 'refuse' | 'suffix';
  * content; see `ORGANIZATION_INSTRUCTOR_PERMISSIONS`'s doc comment for
  * the same exclusion at the organization-permission layer.
  */
-/** P63g — a slug that is a reserved platform label can never become a public subdomain. */
+/** P63g — a slug that is a reserved platform label (or a look-alike of one) can never become a public subdomain. */
 export function assertSlugNotReserved(slug: string): void {
-  if (RESERVED_SUBDOMAINS.includes(slug.trim().toLowerCase())) {
+  if (isReservedSubdomain(slug)) {
     throw new ConflictException({ messageKey: 'errors.academy.slugReserved' });
   }
 }
@@ -806,7 +809,6 @@ export class AcademiesService {
     payload: UpdateAcademyDto,
   ): Promise<AcademyResponse> {
     if (payload.slug) {
-      assertSlugNotReserved(payload.slug);
       await this.assertSlugAvailable(organizationId, payload.slug, academyId);
     }
     const name = payload.name === undefined ? undefined : cleanDisplayName(payload.name);
@@ -843,6 +845,15 @@ export class AcademiesService {
             payload.status !== undefined && payload.status !== current.status;
           if (changesSlug || changesStatus) {
             await this.assertIsOrganizationOwner(tx, academyId, userId);
+          }
+          // Only a NEW address is checked against the reserved list: an
+          // academy created before a label was reserved keeps saving its
+          // settings (the database trigger applies the same rule).
+          if (changesSlug) {
+            if ((payload.slug as string).length < MIN_ACADEMY_SLUG_LENGTH) {
+              throw new BadRequestException({ messageKey: 'errors.academy.invalidSlug' });
+            }
+            assertSlugNotReserved(payload.slug as string);
           }
           // W4 — a rename re-checks the platform-wide name rule (excluding
           // this academy, so re-saving its own name is never a conflict).

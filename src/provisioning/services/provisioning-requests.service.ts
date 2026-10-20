@@ -53,7 +53,7 @@ import type { ProvisioningConfig } from '../../config/configuration';
 import { ProvisioningOrchestratorService } from './provisioning-orchestrator.service';
 import {
   DEFAULT_PROVISIONING_STALL_SECONDS,
-  RESERVED_SUBDOMAINS,
+  isReservedSubdomain,
   TERMINAL_PROVISIONING_STATUSES,
 } from '../dto/provisioning.constants';
 import {
@@ -143,7 +143,7 @@ export class ProvisioningRequestsService {
     userId: string,
     payload: CreateProvisioningRequestDto,
   ): Promise<ProvisioningRequestResponse> {
-    if (RESERVED_SUBDOMAINS.includes(payload.requestedSubdomain)) {
+    if (isReservedSubdomain(payload.requestedSubdomain)) {
       throw new ConflictException({
         messageKey: 'errors.provisioning.subdomainReserved',
       });

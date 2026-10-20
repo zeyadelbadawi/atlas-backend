@@ -28,6 +28,7 @@ import {
   IsUrl,
   Matches,
   MaxLength,
+  MinLength,
 } from 'class-validator';
 
 // Matches `atlas frontend/src/features/academy/schemas/academy.schemas.ts`'s `SLUG_REGEX`.
@@ -35,6 +36,8 @@ export const ACADEMY_SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const MAX_ACADEMY_NAME_LENGTH = 100;
 export const MAX_ACADEMY_DESCRIPTION_LENGTH = 500;
 export const MAX_ACADEMY_SLUG_LENGTH = 50;
+/** Shortest NEW address (the provisioning path's `MIN_SUBDOMAIN_LENGTH`). An existing shorter slug keeps working; `AcademiesService.update` applies the floor only to a changed slug. */
+export const MIN_ACADEMY_SLUG_LENGTH = 3;
 
 // See `RegisterDto`'s comment (identity module): `@IsNotEmpty()` is what
 // actually rejects a missing required field; class-validator's other
@@ -51,6 +54,7 @@ export class CreateAcademyDto {
 
   @IsNotEmpty()
   @IsString()
+  @MinLength(MIN_ACADEMY_SLUG_LENGTH, { message: 'errors.academy.invalidSlug' })
   @MaxLength(MAX_ACADEMY_SLUG_LENGTH)
   @Matches(ACADEMY_SLUG_REGEX, { message: 'errors.academy.invalidSlug' })
   readonly slug!: string;

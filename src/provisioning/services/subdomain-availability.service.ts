@@ -11,7 +11,7 @@ import { Injectable } from '@nestjs/common';
 import { SubdomainAllocationsRepository } from '../../domain/repositories/subdomain-allocations.repository';
 import { PlatformDomainService } from '../../domain/services/platform-domain.service';
 import { buildFullHost } from '../../domain/utils/effective-base-domain.util';
-import { RESERVED_SUBDOMAINS } from '../dto/provisioning.constants';
+import { isReservedSubdomain } from '../dto/provisioning.constants';
 import type { SubdomainAllocationResponse } from '../../domain/dto/domain.contract';
 
 @Injectable()
@@ -23,7 +23,7 @@ export class SubdomainAvailabilityService {
 
   async checkAvailability(rawSubdomain: string): Promise<SubdomainAllocationResponse> {
     const subdomain = rawSubdomain.trim().toLowerCase();
-    if (RESERVED_SUBDOMAINS.includes(subdomain)) {
+    if (isReservedSubdomain(subdomain)) {
       return { subdomain, status: 'reserved' };
     }
 
