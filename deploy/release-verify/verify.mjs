@@ -17,10 +17,11 @@
  *            anonymous caller, the public contact and verify-email
  *            endpoints reject an invalid body (400), and the contact
  *            page form renders in EN and AR (never submitted)
- *   holding  (D6, 14 Oct 2026) the legacy marketing site is retired: `/` and
- *            `/ar` are the noindex holding page with only the four allowed
- *            links, `/pricing` and `/features` forward to it, and the
- *            platform sitemap lists only contact and the legal pages
+ *   marketing (B1, DL-50, 20 Oct 2026) the static marketing site: `/`,
+ *            `/features`, `/pricing` and their `/ar/*` twins are server-sent
+ *            pages with one h1, the right direction and no "free"; the
+ *            legal pages and the contact form are at `/<page>` and
+ *            `/ar/<page>`
  *
  * No account is created, no sign-in is attempted, nothing is written except
  * the RUM samples a real visit sends. Prints PASS/FAIL/INFO lines.
@@ -209,8 +210,8 @@ for (const locale of ['en', 'ar']) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const res = await page.goto(`${BASE}/contact`, { waitUntil: 'load' });
-  const form = page.locator('#contact form');
+  const res = await page.goto(`${BASE}${locale === 'ar' ? '/ar' : ''}/contact`, { waitUntil: 'load' });
+  const form = page.locator('form[data-contact-form]');
   const visible = await form
     .waitFor({ state: 'visible', timeout: 30_000 })
     .then(() => true)
@@ -227,7 +228,7 @@ for (const locale of ['en', 'ar']) {
   await page.screenshot({ path: `${OUT}/contact-${locale}.png`, fullPage: false });
   await context.close();
 }
-console.log('== Legal pages, contact and the holding page (Chromium, EN + AR, desktop + 390 px)');
+console.log('== Legal pages, contact and the marketing pages (Chromium, EN + AR, desktop + 390 px)');
 {
   // The public plan catalog is still served (the marketing pricing page that
   // read it was retired by D6; the B1 site will read it again).
@@ -242,7 +243,6 @@ console.log('== Legal pages, contact and the holding page (Chromium, EN + AR, de
       privacyDevices: 'Lesson access records',
       terms: 'the trial of that plan starts when your account is created',
       termsOld: 'does not begin automatically',
-      holding: 'Atlas is a platform for running an online academy.',
     },
     ar: {
       updated: '٤ أكتوبر ٢٠٢٦',
@@ -250,7 +250,6 @@ console.log('== Legal pages, contact and the holding page (Chromium, EN + AR, de
       privacyDevices: 'سجلات الوصول إلى الدروس',
       terms: 'تبدأ الفترة التجريبية لتلك الخطة عند إنشاء حسابك',
       termsOld: 'ولا تبدأ تلقائيًا',
-      holding: 'أطلس منصة لإدارة أكاديمية عبر الإنترنت.',
     },
   };
   for (const locale of ['en', 'ar']) {
@@ -300,7 +299,8 @@ console.log('== Legal pages, contact and the holding page (Chromium, EN + AR, de
           .innerText({ timeout: 30_000 })
           .catch(() => '')) ?? '';
 
-      let res = await page.goto(`${BASE}/privacy-policy`, { waitUntil: 'load' });
+      const prefix = locale === 'ar' ? '/ar' : '';
+      let res = await page.goto(`${BASE}${prefix}/privacy-policy`, { waitUntil: 'load' });
       await page
         .locator('article')
         .first()
@@ -324,7 +324,7 @@ console.log('== Legal pages, contact and the holding page (Chromium, EN + AR, de
       );
       await overflowCheck(`${label} privacy policy has no sideways scroll`);
 
-      res = await page.goto(`${BASE}/terms`, { waitUntil: 'load' });
+      res = await page.goto(`${BASE}${prefix}/terms`, { waitUntil: 'load' });
       await page
         .locator('#trials')
         .first()
@@ -340,66 +340,38 @@ console.log('== Legal pages, contact and the holding page (Chromium, EN + AR, de
 
       // The shared public header (the 8 Oct overflow regression) is checked
       // on the contact page now that the pricing page is retired.
-      res = await page.goto(`${BASE}/contact`, { waitUntil: 'load' });
+      res = await page.goto(`${BASE}${prefix}/contact`, { waitUntil: 'load' });
       await page
-        .locator('#contact form')
+        .locator('form[data-contact-form]')
         .first()
         .waitFor({ timeout: 30_000 })
         .catch(() => undefined);
       await overflowCheck(`${label} contact page has no sideways scroll`);
 
-      // D6 — the holding page: one sentence, four destinations, noindex.
-      const home = locale === 'ar' ? '/ar' : '/';
-      res = await page.goto(`${BASE}${home}`, { waitUntil: 'load' });
-      const holding = page.getByTestId('holding-page');
-      const holdingShown = await holding
-        .waitFor({ state: 'visible', timeout: 30_000 })
-        .then(() => true)
-        .catch(() => false);
-      check(res?.status() === 200 && holdingShown, `${label} ${home} is the holding page (${res?.status()})`);
-      if (holdingShown) {
-        const holdingText = (await holding.innerText().catch(() => '')) ?? '';
-        check(holdingText.includes(t.holding), `${label} holding page carries its one sentence`);
+      // B1 — the static marketing pages (DL-50): served as HTML, one h1,
+      // the page's own direction, never "free".
+      for (const path of ['/', '/features', '/pricing']) {
+        const url = locale === 'ar' ? (path === '/' ? '/ar' : `/ar${path}`) : path;
+        res = await page.goto(`${BASE}${url}`, { waitUntil: 'load' });
+        const h1s = await page.locator('h1').count();
+        const pageDir = await page.locator('html').getAttribute('dir');
+        const bodyText = (await page.locator('main').innerText().catch(() => '')) ?? '';
         check(
-          !/free/i.test(holdingText) && !holdingText.includes('مجان'),
-          `${label} holding page never says "free"`,
+          res?.status() === 200 && h1s === 1 && pageDir === (locale === 'ar' ? 'rtl' : 'ltr'),
+          `${label} ${url} is the marketing page (${res?.status()}, h1=${h1s}, dir=${pageDir})`,
         );
-        const hrefs = await holding
-          .locator('a[href]')
-          .evaluateAll((as) => as.map((a) => new URL(a.href).pathname + new URL(a.href).search));
-        const allowed = ['/auth/sign-in', '/contact?topic=sales', '/privacy-policy', '/terms', locale === 'ar' ? '/' : '/ar'];
         check(
-          allowed.every((h) => hrefs.includes(h)) && hrefs.every((h) => allowed.includes(h)),
-          `${label} holding page links only to sign-in, contact, legal pages and the other language (${hrefs.join(' ')})`,
+          !/\bfree\b/i.test(bodyText) && !bodyText.includes('مجان'),
+          `${label} ${url} never says "free"`,
         );
-        const robots = await page.locator('meta[name="robots"]').getAttribute('content').catch(() => null);
-        check(robots === 'noindex, follow', `${label} holding page is noindex, follow (${robots})`);
-        check((await page.title()) === 'Atlas', `${label} holding page title is "Atlas"`);
-        const holdingDir = await holding.getAttribute('dir');
-        check(holdingDir === (locale === 'ar' ? 'rtl' : 'ltr'), `${label} holding page dir="${holdingDir}"`);
-      }
-      await overflowCheck(`${label} holding page has no sideways scroll`);
-
-      // Retired marketing addresses forward (client-side) to the holding page.
-      for (const [from, to] of locale === 'ar'
-        ? [['/ar/pricing', '/ar']]
-        : [
-            ['/pricing', '/'],
-            ['/features', '/'],
-          ]) {
-        await page.goto(`${BASE}${from}`, { waitUntil: 'load' });
-        const landed = await page
-          .waitForURL((u) => u.pathname === to, { timeout: 15_000 })
-          .then(() => true)
-          .catch(() => false);
-        check(landed, `${label} ${from} forwards to ${to} (${new URL(page.url()).pathname})`);
+        await overflowCheck(`${label} ${url} has no sideways scroll`);
       }
       check(
         errors.length === 0,
-        `${label} legal, contact and holding pages raise no page errors (${errors.length})`,
+        `${label} legal, contact and marketing pages raise no page errors (${errors.length})`,
       );
       await page.screenshot({
-        path: `${OUT}/holding-${locale}-${viewport.name}.png`,
+        path: `${OUT}/marketing-${locale}-${viewport.name}.png`,
         fullPage: false,
       });
       await context.close();
