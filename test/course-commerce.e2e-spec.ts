@@ -541,6 +541,8 @@ describe('Course Commerce — P13 (e2e)', () => {
       refundType: 'full', // structurally ready for a future 'partial' value — see schema.prisma
       money: { amountMinorUnits: 8000, currency: 'USD' },
     });
+    // The learner's refund answer names no user (see the contract).
+    expect(refundRes.body).not.toHaveProperty('requestedBy');
 
     const enrollmentRes = await request(app.getHttpServer())
       .get(`/enrollments/by-course/${course.id}`)

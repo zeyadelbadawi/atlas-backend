@@ -1017,6 +1017,10 @@ describe('Academy manual payments (e2e)', () => {
         status: 'succeeded',
         money: { amountMinorUnits: 150000, currency: 'EGP' },
       });
+      // The owner recorded it, and the owner's user id is not the
+      // learner's to see — no staff id anywhere in the learner's answer.
+      expect(refund.body).not.toHaveProperty('requestedBy');
+      expect(JSON.stringify(refund.body)).not.toContain(owner.userId);
 
       // Exactly once.
       const again = await http()
