@@ -1,6 +1,6 @@
 /**
  * SubdomainAliasesRepository — an Academy's previous subdomain labels
- * (migration `20261123000000_subdomain_aliases`). Saving a new slug moves
+ * (migration `20261123000100_subdomain_aliases`). Saving a new slug moves
  * the allocation to the new label and keeps the old one here, so its host
  * keeps answering — with a redirect to the Academy's canonical host — and
  * no other Academy can take it.

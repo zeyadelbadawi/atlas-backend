@@ -26,7 +26,7 @@ with the Academy's connected custom hostname and subdomain label so the
 public runtime can name a canonical host.
 
 **Changing the Academy Slug moves the address** (migration
-`20261123000000_subdomain_aliases`, owner decision 20 Oct 2026). In the
+`20261123000100_subdomain_aliases`, owner decision 20 Oct 2026). In the
 slug-update transaction `AcademyAddressService.move` moves the allocation
 (label and `full_host`) to the new slug and keeps the old label in
 `subdomain_aliases` for that Academy, permanently (no delete policy). The

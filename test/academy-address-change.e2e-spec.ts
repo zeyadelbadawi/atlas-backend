@@ -1,6 +1,6 @@
 /**
  * Academy address change — the website moves, the old address redirects
- * (owner decision, 20 Oct 2026; migration 20261123000000_subdomain_aliases).
+ * (owner decision, 20 Oct 2026; migration 20261123000100_subdomain_aliases).
  *
  * THE DEFECT THIS PINS. Saving a new Academy Slug changed only
  * `academies.slug`; the public website, email links and invite links follow
@@ -36,7 +36,7 @@ import { PublicWebsiteCacheService } from '../src/public-website/services/public
 const BASE = 'slugmove.test';
 const MIGRATION = resolvePath(
   __dirname,
-  '../prisma/migrations/20261123000000_subdomain_aliases/migration.sql',
+  '../prisma/migrations/20261123000100_subdomain_aliases/migration.sql',
 );
 const PASSWORD = 'correct-horse-battery';
 

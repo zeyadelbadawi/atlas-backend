@@ -14,7 +14,7 @@
  *     host keeps answering, with a redirect to the Academy's canonical
  *     host (`PublicWebsiteService.resolveHostname`), and no other Academy
  *     can take it (the namespace triggers of migration
- *     `20261123000000_subdomain_aliases`);
+ *     `20261123000100_subdomain_aliases`);
  *   - when the new label is one of the Academy's own old addresses, that
  *     alias row is re-pointed at the label being given up, so the old name
  *     becomes the address again and nothing is ever freed.

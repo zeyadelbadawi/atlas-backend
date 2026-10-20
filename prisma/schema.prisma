@@ -3790,7 +3790,7 @@ model SubdomainAllocation {
 /// Academy for good: its host answers with a redirect to the Academy's
 /// canonical host, and no other Academy may take it (database triggers
 /// enforce one label namespace across `academies.slug`, allocations and
-/// aliases — migration `20261123000000_subdomain_aliases`).
+/// aliases — migration `20261123000100_subdomain_aliases`).
 model SubdomainAlias {
   id        String   @id @default(uuid())
   academyId String   @map("academy_id")

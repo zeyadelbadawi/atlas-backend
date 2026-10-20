@@ -2205,7 +2205,7 @@ export class AcademiesService {
    * keeps (they redirect to it, so they are never given away). `academyId`
    * is the academy taking the label (`null` for a new one) — its own old
    * addresses are its to take back. The namespace triggers (migration
-   * `20261123000000_subdomain_aliases`) enforce the same rule under
+   * `20261123000100_subdomain_aliases`) enforce the same rule under
    * concurrency; this answers the common case with the clean 409 first.
    */
   private async assertSubdomainLabelFree(
