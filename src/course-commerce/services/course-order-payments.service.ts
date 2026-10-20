@@ -311,6 +311,13 @@ export class CourseOrderPaymentsService {
         studentId,
         orderId,
       );
+      // An order opened before the registration was rejected cannot be
+      // paid afterwards (see `CourseOrdersService.assertNotRejectedLearner`).
+      await this.courseOrdersService.assertNotRejectedLearner(
+        tx,
+        studentId,
+        order.academyId,
+      );
 
       // Academy Manual Payments — decided first, exactly as
       // `listAvailableMethods` decides it: an academy with its own enabled
@@ -665,6 +672,11 @@ export class CourseOrderPaymentsService {
           tx,
           studentId,
           orderId,
+        );
+        await this.courseOrdersService.assertNotRejectedLearner(
+          tx,
+          studentId,
+          order.academyId,
         );
         const payment = await this.paymentsRepository.findByIdAnyOrganization(
           tx,

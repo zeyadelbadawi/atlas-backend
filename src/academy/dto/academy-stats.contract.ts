@@ -2,7 +2,9 @@
  * `AcademyStats` response contract — matches `academy.types.ts` exactly.
  *
  * `totalMembers`/`activeStaff`/`activeInstructors` are real, computed from
- * `academy_members` rows within the active tenant context.
+ * `academy_members` rows within the active tenant context: `totalMembers`
+ * is every row not removed (active and pending), `activeStaff` every
+ * ACTIVE row whatever its role, `activeInstructors` the active instructors.
  *
  * `publishedCourses` counts this academy's courses in `published` status
  * (the same rule as the organization dashboard's published-course count).

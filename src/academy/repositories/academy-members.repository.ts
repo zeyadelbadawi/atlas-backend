@@ -134,6 +134,18 @@ export class AcademyMembersRepository {
     return tx.academyMember.count({ where: { academyId, role, status: 'active' } });
   }
 
+  /**
+   * The academy's ACTIVE staff, whatever their role (owner, manager,
+   * instructor — and the hidden legacy `administrator`/`staff` rows): the
+   * dashboard's "Active Staff" card. It used to count the legacy `staff`
+   * role alone, which no flow assigns any more, so the card read 0 for
+   * every academy. A pending invitation or a removed (`inactive`) row is
+   * not active staff.
+   */
+  countActive(tx: Prisma.TransactionClient, academyId: string): Promise<number> {
+    return tx.academyMember.count({ where: { academyId, status: 'active' } });
+  }
+
   /** Every staff row that still counts as a member — a removed (`inactive`) row does not. */
   countAll(tx: Prisma.TransactionClient, academyId: string): Promise<number> {
     return tx.academyMember.count({ where: { academyId, status: { not: 'inactive' } } });

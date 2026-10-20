@@ -28,7 +28,10 @@ import type { CourseWithRelations } from '../../course/repositories/courses.repo
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { CoursesRepository } from '../../course/repositories/courses.repository';
 import { CourseSectionsRepository } from '../../course/repositories/course-sections.repository';
-import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
+import {
+  AcademyStudentsRepository,
+  isRejectedRegistration,
+} from '../../tenancy/repositories/academy-students.repository';
 import { EntitlementEnforcementService } from '../../plans/services/entitlement-enforcement.service';
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
@@ -183,7 +186,12 @@ export class EnrollmentsService {
         // enforces the identical rule underneath.
         if (!membership || membership.status !== 'active' || membership.blockedAt) {
           throw new ForbiddenException({
-            messageKey: 'errors.enrollment.academyMembershipRequired',
+            // A REJECTED registration gets its own, actionable answer
+            // (apply again); every other case keeps the existing one.
+            messageKey:
+              membership && isRejectedRegistration(membership)
+                ? 'errors.academy.registrationRejected'
+                : 'errors.enrollment.academyMembershipRequired',
           });
         }
 

@@ -50,6 +50,24 @@ export interface LearnerAdmission {
   readonly nameClashExempted: boolean;
 }
 
+/**
+ * A membership whose registration staff REJECTED, and nothing more: the one
+ * kind of existing row a learner may re-register over (and staff may still
+ * approve or add again). On `academy_students`, `inactive` is written by
+ * exactly one path — `AcademyStudentsService.reject` of a pending
+ * registration; every admission inserts `active`/`pending` — so it means
+ * "rejected". A BLOCKED row never counts, whatever its status: the block
+ * stays effective until staff lift it. A new writer of `inactive` must not
+ * reuse that status for anything else without revisiting this rule and the
+ * `academy_student_reapply` definer that mirrors it.
+ */
+export function isRejectedRegistration(row: {
+  readonly status: string;
+  readonly blockedAt: Date | null;
+}): boolean {
+  return row.status === 'inactive' && row.blockedAt === null;
+}
+
 @Injectable()
 export class AcademyStudentsRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -152,6 +170,51 @@ export class AcademyStudentsRepository {
       });
       return { student, nameClashExempted: true };
     }
+  }
+
+  /**
+   * A learner registering AGAIN after a rejection: their own rejected row
+   * goes back into the registration flow with the status the registration
+   * policy gave the new application. Runs under the LEARNER's context, where
+   * `academy_students` has no UPDATE policy — hence the narrow definer
+   * `academy_student_reapply` (20261123000000), which re-checks the caller,
+   * `inactive` and not blocked in the same statement that writes. Returns
+   * the reopened row, or `null` when nothing qualified (a concurrent
+   * decision got there first).
+   */
+  async reapplyRejected(
+    tx: Prisma.TransactionClient,
+    input: {
+      readonly academyId: string;
+      readonly userId: string;
+      readonly status: 'active' | 'pending';
+      readonly source: 'self_signup' | 'invite';
+      readonly registeredViaHost: string | null;
+    },
+  ): Promise<AcademyStudent | null> {
+    const rows = await tx.$queryRaw<{ id: string | null }[]>(
+      Prisma.sql`SELECT academy_student_reapply(${input.academyId}, ${input.status}, ${input.source}, ${input.registeredViaHost}) AS id`,
+    );
+    if (!rows[0]?.id) return null;
+    return this.findForUserInAcademy(tx, input.academyId, input.userId);
+  }
+
+  /**
+   * Staff ADD a learner whose registration they had rejected: the same row,
+   * active again (`academy_students_tenant_update`, tenant context; the role
+   * check is the caller's). Conditional on the row still being a rejected,
+   * unblocked one, so a concurrent block or decision is never overwritten.
+   */
+  async reopenRejectedByStaff(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<AcademyStudent | null> {
+    const { count } = await tx.academyStudent.updateMany({
+      where: { id, status: 'inactive', blockedAt: null },
+      data: { status: 'active', source: 'staff_created', joinedAt: new Date() },
+    });
+    if (count !== 1) return null;
+    return tx.academyStudent.findUnique({ where: { id } });
   }
 
   /**

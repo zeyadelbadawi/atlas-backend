@@ -34,7 +34,10 @@ import { buildAuditFeedFilter } from '../../audit-log/utils/audit-feed.util';
 import { AccountSetupService } from '../../identity/services/account-setup.service';
 import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
-import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
+import {
+  AcademyStudentsRepository,
+  isRejectedRegistration,
+} from '../../tenancy/repositories/academy-students.repository';
 import {
   ORGANIZATION_INSTRUCTOR_PERMISSIONS,
   ORGANIZATION_MANAGER_PERMISSIONS,
@@ -1587,7 +1590,14 @@ export class AcademiesService {
                 academyId,
                 target.user.id,
               );
-            if (existingLearner) {
+            // A learner whose registration staff REJECTED is not "already a
+            // member": adding them is the staff's decision to admit them after
+            // all, so the same row becomes active again (like a removed staff
+            // member added back). Blocked stays refused; anything else is a
+            // current learner.
+            const readmit =
+              existingLearner !== null && isRejectedRegistration(existingLearner);
+            if (existingLearner && !readmit) {
               throw existingLearner.blockedAt
                 ? new ForbiddenException({ messageKey: 'errors.academy.studentBlocked' })
                 : new ConflictException({
@@ -1603,17 +1613,36 @@ export class AcademiesService {
             // this academy is a 409. For a NEW account it is reported on the
             // name staff typed; for an existing account staff cannot edit
             // that person's name, so the staff variant points at the email.
-            const { student: learner } = await this.academyStudentsRepository.admit(
-              tx,
-              {
-                academyId,
-                userId: target.user.id,
-                source: 'staff_created',
-              },
-              target.account === 'new'
-                ? { mode: 'interactive', field: 'name', variant: 'self' }
-                : { mode: 'interactive', field: 'email', variant: 'existingAccount' },
-            );
+            // A re-admitted row already holds its name key (W4 unaffected).
+            const learner =
+              readmit && existingLearner
+                ? await this.academyStudentsRepository.reopenRejectedByStaff(
+                    tx,
+                    existingLearner.id,
+                  )
+                : (
+                    await this.academyStudentsRepository.admit(
+                      tx,
+                      {
+                        academyId,
+                        userId: target.user.id,
+                        source: 'staff_created',
+                      },
+                      target.account === 'new'
+                        ? { mode: 'interactive', field: 'name', variant: 'self' }
+                        : {
+                            mode: 'interactive',
+                            field: 'email',
+                            variant: 'existingAccount',
+                          },
+                    )
+                  ).student;
+            if (!learner) {
+              // Decided (blocked, approved) by someone else meanwhile.
+              throw new ConflictException({
+                messageKey: 'errors.academy.studentAlreadyMember',
+              });
+            }
 
             // Task 3 — academy-scoped and name-labelled; see the staff add above.
             await this.auditLogWriterService.record(tx, {
@@ -1627,7 +1656,11 @@ export class AcademiesService {
               targetType: 'user',
               targetId: target.user.id,
               targetLabel: target.user.name,
-              context: { account: target.account, studentName: target.user.name },
+              context: {
+                account: target.account,
+                studentName: target.user.name,
+                ...(readmit ? { afterRejection: true } : {}),
+              },
             });
 
             return {
@@ -1722,11 +1755,15 @@ export class AcademiesService {
                   academyId,
                   user.id,
                 );
-          // A removed staff member (`inactive`) can be added again, so the
-          // dialog must not tell the owner they are "already a member".
+          // A removed staff member (`inactive`) can be added again, and so
+          // can a learner whose registration was rejected
+          // (`isRejectedRegistration`), so the dialog must not tell the owner
+          // they are "already a member".
           const isCurrent =
             !!alreadyHere &&
-            !('role' in alreadyHere && alreadyHere.status === 'inactive');
+            !('role' in alreadyHere
+              ? alreadyHere.status === 'inactive'
+              : isRejectedRegistration(alreadyHere));
           return isCurrent ? { status: 'already_member' } : { status: 'new' };
         },
       );
@@ -1746,7 +1783,7 @@ export class AcademiesService {
       const [totalMembers, activeStaff, activeInstructors, publishedCourses] =
         await Promise.all([
           this.academyMembersRepository.countAll(tx, academyId),
-          this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'staff'),
+          this.academyMembersRepository.countActive(tx, academyId),
           this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
           tx.course.count({ where: { academyId, status: 'published' } }),
         ]);

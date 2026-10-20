@@ -515,14 +515,18 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'account',
     'studentName',
   ]),
+  // `afterRejection` — the learner's earlier registration had been rejected
+  // and this re-admits the same membership row (staff add / re-registration).
   ev('academy.student.added', 'students', 'user', 'academy', true, [
     'account',
     'studentName',
+    'afterRejection',
   ]),
   ev('academy.student.joined', 'students', 'user', 'academy', true, [
     'existingAccount',
     'source',
     'status',
+    'afterRejection',
   ]),
   // W4 — an automatic admission (sign-in auto-join, purchase) whose account
   // name was already held by another learner of the academy: admitted anyway
