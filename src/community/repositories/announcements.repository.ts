@@ -133,7 +133,9 @@ export class AnnouncementsRepository {
     const published: ScheduledAnnouncementPublished[] = [];
     for (const row of due) {
       const { count } = await tx.announcement.updateMany({
-        where: { id: row.id, status: 'scheduled' },
+        // Due again at write time: an editor may have moved the date into
+        // the future after the read above.
+        where: { id: row.id, status: 'scheduled', scheduledAt: { lte: asOf } },
         data: { status: 'published', publishedAt: asOf },
       });
       if (count === 1) published.push({ ...row, publishedAt: asOf });
