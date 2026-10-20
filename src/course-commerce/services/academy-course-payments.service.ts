@@ -33,7 +33,7 @@
  * handed to the queue after commit; a lost hand-off is found by the sweep.
  */
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import type { AcademyContext } from '../../academy/guards/academy-scope.guard';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { PaymentsRepository } from '../../billing/repositories/payments.repository';
@@ -67,8 +67,11 @@ import {
 import type { AcademyCoursePaymentQueryDto } from '../dto/academy-course-payment-query.dto';
 import type {
   ApproveAcademyCoursePaymentDto,
+  RecordAcademyCoursePaymentRefundDto,
   RejectAcademyCoursePaymentDto,
 } from '../dto/review-academy-course-payment.dto';
+import { CourseOrderRefundsRepository } from '../repositories/course-order-refunds.repository';
+import { EnrollmentsRepository } from '../../learning/repositories/enrollments.repository';
 
 function courseTitleOf(snapshot: unknown): string {
   return (snapshot as { course?: { title?: string } } | null)?.course?.title ?? '';
@@ -98,6 +101,8 @@ export class AcademyCoursePaymentsService {
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly communicationService: CommunicationService,
     private readonly metrics: LearningMetricsService,
+    private readonly courseOrderRefundsRepository: CourseOrderRefundsRepository,
+    private readonly enrollmentsRepository: EnrollmentsRepository,
   ) {}
 
   async list(
@@ -356,6 +361,167 @@ export class AcademyCoursePaymentsService {
             currency: payment.currency,
             methodType: payment.methodType,
             ...(reason ? { reason } : {}),
+          },
+        });
+
+        const row = await this.academyCoursePaymentsRepository.findOneForAcademy(
+          tx,
+          academyId,
+          paymentId,
+        );
+        return toAcademyCoursePaymentDetailResponse(row!);
+      },
+    );
+
+    await this.communicationService.enqueueAfterCommit(emitted.outboxId);
+    return response;
+  }
+
+  /**
+   * Records that the ACADEMY refunded a learner's approved payment — money
+   * Atlas never held, returned by the academy itself outside Atlas. Full
+   * refunds only (v1): the recorded amount is the payment's own amount.
+   *
+   * One transaction, as the owner, in the organization's tenant context:
+   * the `course_order_refunds` row (who and when: `requested_by`,
+   * `processed_at`; the optional note as `reason`), the order → `refunded`
+   * (which takes it out of the manual-sales totals, defined on orders still
+   * `paid`), the learner's enrollment revoked with reason `refund` (the same
+   * revocation the learner's own refund path writes), the audit entry and
+   * the learner's notification.
+   *
+   * Only this academy's `academy_manual` payments (Atlas-collected payments
+   * are the platform's to refund, and are 404 here like everywhere on this
+   * controller), only when approved and the order is still `paid`. A second
+   * refund is a 409: the order is no longer `paid`, and
+   * `course_order_refunds.course_order_id` is unique underneath.
+   */
+  async recordRefund(
+    context: AcademyContext,
+    ownerId: string,
+    academyId: string,
+    paymentId: string,
+    payload: RecordAcademyCoursePaymentRefundDto,
+  ): Promise<AcademyCoursePaymentDetailResponse> {
+    const organizationId = assertCanViewAcademyFinance(context);
+    const note = optionalText(payload.note);
+
+    let emitted: EmitResult = { created: false, outboxId: null };
+    const response = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      ownerId,
+      async (tx) => {
+        const payment = await this.paymentsRepository.findByIdAnyOrganization(
+          tx,
+          paymentId,
+        );
+        if (
+          !payment ||
+          payment.payeeAcademyId !== academyId ||
+          payment.provider !== ACADEMY_MANUAL_PROVIDER_KEY ||
+          !payment.courseOrderId
+        ) {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        const order = await this.courseOrdersRepository.findById(
+          tx,
+          payment.courseOrderId,
+        );
+        if (!order || order.academyId !== academyId) {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        const existing = await this.courseOrderRefundsRepository.findByCourseOrderId(
+          tx,
+          order.id,
+        );
+        if (existing || order.status === 'refunded') {
+          throw new ConflictException({
+            messageKey: 'errors.courseOrder.alreadyRefunded',
+          });
+        }
+        if (
+          order.status !== 'paid' ||
+          payment.status !== 'succeeded' ||
+          payment.reviewStatus !== 'approved'
+        ) {
+          throw new ConflictException({
+            messageKey: 'errors.courseOrder.refundNotEligible',
+          });
+        }
+
+        const now = new Date();
+        let refundId: string;
+        try {
+          const refund = await this.courseOrderRefundsRepository.create(tx, {
+            courseOrder: { connect: { id: order.id } },
+            payment: { connect: { id: payment.id } },
+            refundType: 'full',
+            status: 'succeeded',
+            amountMinorUnits: payment.amountMinorUnits,
+            currency: payment.currency,
+            reason: note,
+            requester: { connect: { id: ownerId } },
+            idempotencyKey: `academy-refund:${order.id}`,
+            requestedAt: now,
+            processedAt: now,
+          });
+          refundId = refund.id;
+        } catch (error) {
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          ) {
+            throw new ConflictException({
+              messageKey: 'errors.courseOrder.alreadyRefunded',
+            });
+          }
+          throw error;
+        }
+
+        await this.courseOrdersRepository.update(tx, order.id, { status: 'refunded' });
+        this.metrics.recordCheckoutOrderState('refunded');
+
+        const enrollment = await this.enrollmentsRepository.findByStudentAndCourse(
+          tx,
+          order.studentId,
+          order.courseId,
+        );
+        if (enrollment && !enrollment.revokedAt) {
+          await this.enrollmentsRepository.update(tx, enrollment.id, {
+            status: 'unavailable',
+            revokedAt: now,
+            revokeReason: 'refund',
+          });
+        }
+
+        await this.auditLogWriterService.write(tx, {
+          actorUserId: ownerId,
+          organizationId,
+          academyId,
+          role: context.academyRole,
+          action: 'academy.course_payment.refunded',
+          targetType: 'payment',
+          targetId: paymentId,
+          context: {
+            courseOrderId: order.id,
+            refundId,
+            amountMinorUnits: Number(payment.amountMinorUnits),
+            currency: payment.currency,
+            ...(note ? { note } : {}),
+          },
+        });
+
+        emitted = await this.communicationService.emit(tx, {
+          key: 'course.payment.refunded',
+          recipientUserId: order.studentId,
+          organizationId,
+          academyId,
+          entity: { type: 'payment', id: paymentId },
+          values: {
+            courseTitle: courseTitleOf(order.snapshot),
+            amount: formatAmount(payment.amountMinorUnits),
+            currency: payment.currency,
+            ...(note ? { note } : {}),
           },
         });
 

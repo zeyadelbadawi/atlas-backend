@@ -66,6 +66,7 @@ import { template as courseOrderCreated } from './keys/course.order.created';
 import { template as courseOrderExpired } from './keys/course.order.expired';
 import { template as coursePaymentApproved } from './keys/course.payment.approved';
 import { template as coursePaymentRejected } from './keys/course.payment.rejected';
+import { template as coursePaymentRefunded } from './keys/course.payment.refunded';
 import { template as academyPaymentSubmitted } from './keys/academy.payment.submitted';
 import { template as quizAutoSubmitted } from './keys/assessment.quiz.auto_submitted';
 import { template as attemptInvalidated } from './keys/assessment.attempt.invalidated';
@@ -230,6 +231,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'course.order.expired': courseOrderExpired,
   'course.payment.approved': coursePaymentApproved,
   'course.payment.rejected': coursePaymentRejected,
+  'course.payment.refunded': coursePaymentRefunded,
   'academy.payment.submitted': academyPaymentSubmitted,
   'assessment.quiz.auto_submitted': quizAutoSubmitted,
   'assessment.attempt.invalidated': attemptInvalidated,

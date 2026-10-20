@@ -10,10 +10,11 @@
  * the learner ALREADY sent to the academy, so refusing the review while the
  * academy's own Atlas subscription is lapsed would strand the learner's
  * money and access, not the academy's. The exemption is exactly these two
- * handlers, and they can only settle a payment that is already waiting for
- * review (`loadReviewable` → 409 otherwise) — no new sale, price or
- * payment-method change. Payment-method setup and everything else stay
- * read-only until the subscription is active again.
+ * handlers and the refund record below, and they can only settle a payment
+ * that already exists (`loadReviewable` → 409 otherwise; a refund only on an
+ * approved, still-paid one) — no new sale, price or payment-method change.
+ * Payment-method setup and everything else stay read-only until the
+ * subscription is active again.
  */
 import {
   Body,
@@ -36,6 +37,7 @@ import { AcademyCoursePaymentsService } from '../services/academy-course-payment
 import { AcademyCoursePaymentQueryDto } from '../dto/academy-course-payment-query.dto';
 import {
   ApproveAcademyCoursePaymentDto,
+  RecordAcademyCoursePaymentRefundDto,
   RejectAcademyCoursePaymentDto,
 } from '../dto/review-academy-course-payment.dto';
 import type {
@@ -132,6 +134,31 @@ export class AcademyCoursePaymentsController {
     @Body() payload: RejectAcademyCoursePaymentDto,
   ): Promise<AcademyCoursePaymentDetailResponse> {
     return this.academyCoursePaymentsService.reject(
+      request.academyContext!,
+      request.authContext!.userId,
+      academyId,
+      paymentId,
+      payload,
+    );
+  }
+
+  /**
+   * Records the academy's own refund of an approved payment (see the
+   * service). Allowed while the subscription is lapsed for the same reason
+   * as approve/reject: it settles a payment that already exists — it
+   * records money already returned and ends that learner's access — and
+   * creates no sale and changes no setup.
+   */
+  @Post(':id/course-payments/:paymentId/refund')
+  @HttpCode(200)
+  @AllowInactiveSubscription()
+  async recordRefund(
+    @Req() request: Request,
+    @Param('id') academyId: string,
+    @Param('paymentId') paymentId: string,
+    @Body() payload: RecordAcademyCoursePaymentRefundDto,
+  ): Promise<AcademyCoursePaymentDetailResponse> {
+    return this.academyCoursePaymentsService.recordRefund(
       request.academyContext!,
       request.authContext!.userId,
       academyId,

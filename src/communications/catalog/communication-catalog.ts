@@ -414,6 +414,28 @@ const CATALOG = {
     actionUrl: () => '/my/payments',
   },
   /**
+   * The Client Owner recorded that the ACADEMY refunded the learner's
+   * approved payment (money returned outside Atlas) and the learner's access
+   * ended. Exactly once per payment: the refund row is unique per order and
+   * the dedupe is the payment id. The owner's note, if any, is in the email.
+   */
+  'course.payment.refunded': {
+    category: 'transactional',
+    audience: 'learner',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity }) => `course_payment_refunded:${entity.id}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'academy',
+    template: 'course.payment.refunded',
+    titleKey: 'notifications:events.coursePaymentRefunded.title',
+    messageKey: 'notifications:events.coursePaymentRefunded.message',
+    actionUrl: () => '/my/purchases',
+  },
+  /**
    * A learner submitted a proof of payment to the academy — a work item for
    * the Client Owner, the only reviewer. One per proof (a resubmission after
    * a rejection is a new payment and a new proof). Platform-branded like

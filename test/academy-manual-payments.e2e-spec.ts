@@ -867,6 +867,220 @@ describe('Academy manual payments (e2e)', () => {
         .set(auth(otherOwner))
         .send({})
         .expect((res) => expect([403, 404]).toContain(res.status));
+
+      // Recording a refund settles an existing payment too, so it works
+      // while lapsed as well.
+      await http()
+        .post(`/academies/${lapsedAcademy}/course-payments/${toApprove.id}/refund`)
+        .set(auth(lapsedOwner))
+        .send({})
+        .expect(200);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  /*
+   * The academy refunded a learner itself (money Atlas never held) and
+   * records it: full refund only, Organization Owner only, once.
+   */
+  describe('record a refund', () => {
+    /**
+     * A payment waiting for review, without uploading a proof: the upload
+     * needs object storage, and nothing about a refund depends on the file.
+     */
+    async function awaitingReview(label: string, courseId = courseA.id) {
+      const learner = await signUpAndSignIn(app, label);
+      const o = await order(learner, courseId, label);
+      const created = await http()
+        .post(`/course-orders/${o.id}/payments`)
+        .set(auth(learner))
+        .send({ methodKey: 'academy_manual_bank_transfer' })
+        .expect(201);
+      await admin.payment.update({
+        where: { id: created.body.id as string },
+        data: { reviewStatus: 'pending' },
+      });
+      return { learner, orderId: o.id, paymentId: created.body.id as string };
+    }
+
+    async function approvedPayment(label: string, courseId = courseA.id) {
+      const { learner, orderId, paymentId } = await awaitingReview(label, courseId);
+      const p = { id: paymentId };
+      const o = { id: orderId };
+      await http()
+        .post(`/academies/${academyA}/course-payments/${p.id}/approve`)
+        .set(auth(owner))
+        .send({})
+        .expect(200);
+      return { learner, orderId: o.id, paymentId: p.id };
+    }
+
+    const manualSales30 = async () => {
+      const res = await http()
+        .get(`/academies/${academyA}/payouts/revenue-summary`)
+        .set(auth(owner))
+        .expect(200);
+      const period = (
+        res.body.manualSales.periods as {
+          days: number;
+          totals: { currency: string; amountMinorUnits: number; count: number }[];
+        }[]
+      ).find((p) => p.days === 30);
+      return (
+        period?.totals.find((t) => t.currency === 'EGP') ?? {
+          amountMinorUnits: 0,
+          count: 0,
+        }
+      );
+    };
+
+    it('records it once: order refunded, access ended, sales reduced, learner told, audited', async () => {
+      const { learner, orderId, paymentId } = await approvedPayment('amp-refund');
+      const before = await manualSales30();
+
+      // Not another organization's owner, and not a manager (finance is
+      // the Organization Owner's, like approve and reject).
+      await http()
+        .post(`/academies/${academyA}/course-payments/${paymentId}/refund`)
+        .set(auth(otherOwner))
+        .send({})
+        .expect((res) => expect([403, 404]).toContain(res.status));
+      await http()
+        .post(`/academies/${academyA}/course-payments/${paymentId}/refund`)
+        .set(auth(manager))
+        .send({})
+        .expect(403);
+
+      const res = await http()
+        .post(`/academies/${academyA}/course-payments/${paymentId}/refund`)
+        .set(auth(owner))
+        .send({ note: 'Returned by bank transfer on request.' })
+        .expect(200);
+      expect(res.body).toMatchObject({
+        id: paymentId,
+        orderStatus: 'refunded',
+        refund: {
+          money: { amountMinorUnits: 150000, currency: 'EGP' },
+          note: 'Returned by bank transfer on request.',
+        },
+      });
+      expect(res.body.refund.recordedByName).toBeTruthy();
+
+      const orderRow = await admin.courseOrder.findUniqueOrThrow({
+        where: { id: orderId },
+      });
+      expect(orderRow.status).toBe('refunded');
+      const refundRow = await admin.courseOrderRefund.findUniqueOrThrow({
+        where: { courseOrderId: orderId },
+      });
+      expect(refundRow).toMatchObject({
+        requestedBy: owner.userId,
+        refundType: 'full',
+        status: 'succeeded',
+        amountMinorUnits: 150000n,
+      });
+
+      const enrollment = await admin.enrollment.findFirstOrThrow({
+        where: { studentId: learner.userId, courseId: courseA.id },
+      });
+      expect(enrollment.status).toBe('unavailable');
+      expect(enrollment.revokeReason).toBe('refund');
+      expect(enrollment.revokedAt).not.toBeNull();
+
+      const after = await manualSales30();
+      expect(after.count).toBe(before.count - 1);
+      expect(after.amountMinorUnits).toBe(before.amountMinorUnits - 150000);
+
+      const emails = await outbox('course.payment.refunded', paymentId);
+      expect(emails).toHaveLength(1);
+      expect(emails[0].recipientUserId).toBe(learner.userId);
+      const sent = await dispatchCapturing(emails[0].id);
+      if (sent) {
+        expect(sent.to).toBe(learner.email);
+        expect(sent.text).toContain('Returned by bank transfer on request.');
+        expect(sent.text).not.toMatch(/invoice/i);
+      }
+
+      const audit = await admin.auditLogEntry.findMany({
+        where: { action: 'academy.course_payment.refunded', targetId: paymentId },
+      });
+      expect(audit).toHaveLength(1);
+      expect(audit[0].actorUserId).toBe(owner.userId);
+
+      // The learner sees it: the order is Refunded, with the refund's details.
+      const refund = await http()
+        .get(`/course-orders/${orderId}/refund`)
+        .set(auth(learner))
+        .expect(200);
+      expect(refund.body).toMatchObject({
+        courseOrderId: orderId,
+        status: 'succeeded',
+        money: { amountMinorUnits: 150000, currency: 'EGP' },
+      });
+
+      // Exactly once.
+      const again = await http()
+        .post(`/academies/${academyA}/course-payments/${paymentId}/refund`)
+        .set(auth(owner))
+        .send({})
+        .expect(409);
+      expect(again.body.error.messageKey ?? again.body.error.code).toBeTruthy();
+      expect(await outbox('course.payment.refunded', paymentId)).toHaveLength(1);
+      expect(
+        await admin.courseOrderRefund.count({ where: { courseOrderId: orderId } }),
+      ).toBe(1);
+    });
+
+    it('refuses a payment that is not approved, and an Atlas-collected payment', async () => {
+      const pending = await awaitingReview('amp-refund-pending');
+      await http()
+        .post(`/academies/${academyA}/course-payments/${pending.paymentId}/refund`)
+        .set(auth(owner))
+        .send({})
+        .expect(409);
+
+      // A payment Atlas collected for this academy is the platform's to
+      // refund: this controller never sees it.
+      const buyer = await signUpAndSignIn(app, 'amp-refund-atlas');
+      const atlasOrder = await admin.courseOrder.create({
+        data: {
+          studentId: buyer.userId,
+          courseId: courseA.id,
+          academyId: academyA,
+          organizationId: orgId,
+          snapshot: {
+            course: { id: courseA.id, title: courseA.title },
+            price: { amountMinorUnits: 150000, currency: 'EGP' },
+          },
+          status: 'paid',
+          paidAt: new Date(),
+          expiresAt: new Date(Date.now() + 3600_000),
+          idempotencyKey: `amp-atlas-${Date.now()}`,
+        },
+      });
+      const atlasPayment = await admin.payment.create({
+        data: {
+          payerUserId: buyer.userId,
+          payeeAcademyId: academyA,
+          courseOrderId: atlasOrder.id,
+          methodKey: 'manual_bank_transfer',
+          methodType: 'manual_bank_transfer',
+          provider: 'atlas_manual',
+          amountMinorUnits: 150000n,
+          currency: 'EGP',
+          status: 'succeeded',
+          reviewStatus: 'approved',
+          paymentCollectionModeSnapshot: 'atlas_payments',
+        },
+      });
+      await http()
+        .post(`/academies/${academyA}/course-payments/${atlasPayment.id}/refund`)
+        .set(auth(owner))
+        .send({})
+        .expect(404);
+      expect(
+        await admin.courseOrderRefund.count({ where: { courseOrderId: atlasOrder.id } }),
+      ).toBe(0);
     });
   });
 
