@@ -5,9 +5,12 @@ import type { CommunicationTemplate } from '../layout';
  * v2 (26 Sep 2026): Atlas takes payment by manual bank transfer and records
  * refunds without moving money, so this says the refund is RECORDED and the
  * amount is returned separately — never that the money has been refunded.
+ *
+ * v3 (20 Oct 2026): the Arabic copy names the platform «أطلس», never Latin
+ * "Atlas" inside an Arabic sentence.
  */
 export const template: CommunicationTemplate = {
-  version: '2',
+  version: '3',
   en: defineLocale({
     subject: () => 'Refund recorded',
     paragraphs: (v) => [
@@ -20,7 +23,7 @@ export const template: CommunicationTemplate = {
     subject: () => 'تم تسجيل الاسترداد',
     paragraphs: (v) => [
       `تم تسجيل استرداد قيمة "${str(v, 'courseTitle')}" وانتهى وصولك إلى الدورة.`,
-      'يُعاد إليك المبلغ نفسه بشكل منفصل عبر تحويل بنكي، بالطريقة نفسها التي دفعت بها. لا تحوّل Atlas الأموال بنفسها.',
+      'يُعاد إليك المبلغ نفسه بشكل منفصل عبر تحويل بنكي، بالطريقة نفسها التي دفعت بها. لا تحوّل أطلس الأموال بنفسها.',
     ],
     ctaLabel: 'عرض المشتريات',
   }),
