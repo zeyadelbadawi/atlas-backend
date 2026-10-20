@@ -122,7 +122,7 @@ describe('Release verify — B0 read-only counts (OC-16)', () => {
       slugs: 'slugs|1|2|0',
       heldLabels: 'held_labels|atlas-demo docs my-atlas',
       guard: 'guard_installed|t',
-      guardCount: 'slug_guard|4',
+      guardCount: 'slug_guard|4|atlas-demo d0cs docs my-atlas',
       owners: 'owners|12|1|2',
       rls: 'rls|140|131|129',
       noRls: 'plans, trial_redemption_history',
@@ -142,7 +142,7 @@ describe('Release verify — B0 read-only counts (OC-16)', () => {
       'INFO  WEB-09: published websites on a retired theme=0, on an unknown theme key=0',
       'INFO  DL-57 subdomain labels held: reserved=1 impersonating (atlas*, admin*)=2 shorter than 3=0',
       'INFO  DL-57 held labels: atlas-demo docs my-atlas',
-      'INFO  DL-57 labels the database guard calls reserved: 4',
+      'INFO  DL-57 labels the database guard calls reserved: 4 (atlas-demo d0cs docs my-atlas)',
       'INFO  ORG-03: live academies=12, with no active owner row=1, whose organization owner has no academy-owner row=2',
       'INFO  ORG-05: public tables=140, RLS enabled=131, RLS forced=129',
       'INFO  ORG-05: tables without RLS: plans, trial_redemption_history',
@@ -170,10 +170,17 @@ describe('Release verify — B0 read-only counts (OC-16)', () => {
       'INFO  DL-57 subdomain labels held: reserved=? impersonating (atlas*, admin*)=? shorter than 3=?',
     );
     expect(out).toContain(
-      'INFO  DL-57 database guard: not installed yet (migration 20261122000000 pending)',
+      'INFO  DL-57 database guard: unknown (the check could not be read)',
     );
     expect(out).not.toMatch(/^(FAIL|PASS)/m);
     expect(status).toBe(0);
+  });
+
+  it('says the guard is pending only when the database answers false', () => {
+    const { out } = run({ guard: 'guard_installed|f' });
+    expect(out).toContain(
+      'INFO  DL-57 database guard: not installed yet (migration 20261122000000 pending)',
+    );
   });
 
   it('embeds the same theme and reserved-slug lists as the code', () => {

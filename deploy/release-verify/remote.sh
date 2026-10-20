@@ -363,11 +363,17 @@ b0_counts_facts() {
   info "DL-57 held labels: $(sql "$labels select 'held_labels', coalesce(string_agg(l, ' ' order by l), 'none') from hits" | cut -d'|' -f2)"
   # Once migration 20261122000000 is applied, the database's own rule
   # (look-alikes included) is the authority.
-  if [ "$(sql "select 'guard_installed', to_regproc('public.atlas_is_reserved_subdomain') is not null" | cut -d'|' -f2)" = t ]; then
-    info "DL-57 labels the database guard calls reserved: $(sql "select 'slug_guard', count(*) from (select slug l from academies union all select subdomain from subdomain_allocations) x where atlas_is_reserved_subdomain(l)" | cut -d'|' -f2)"
-  else
-    info "DL-57 database guard: not installed yet (migration 20261122000000 pending)"
-  fi
+  # Its list includes look-alikes the approximation above misses (d0cs, docs2).
+  local installed
+  installed="$(sql "select 'guard_installed', to_regproc('public.atlas_is_reserved_subdomain') is not null" | cut -d'|' -f2)"
+  case "$installed" in
+    t)
+      IFS='|' read -r _ a b <<< "$(sql "select 'slug_guard', count(distinct l), coalesce(string_agg(distinct l, ' ' order by l), 'none') from (select slug l from academies union all select subdomain from subdomain_allocations) x where atlas_is_reserved_subdomain(l)")"
+      info "DL-57 labels the database guard calls reserved: ${a:-?} (${b:-?})"
+      ;;
+    f) info "DL-57 database guard: not installed yet (migration 20261122000000 pending)" ;;
+    *) info "DL-57 database guard: unknown (the check could not be read)" ;;
+  esac
   # (6) Premium and catalog subscriptions: see "Plan catalog and Premium containment".
   # (7) / ORG-03: live academies with no active owner row, and those whose
   # organization owner has no academy-owner row.

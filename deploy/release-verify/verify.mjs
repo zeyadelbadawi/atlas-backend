@@ -355,14 +355,17 @@ console.log('== Legal pages, contact and the marketing pages (Chromium, EN + AR,
         res = await page.goto(`${BASE}${url}`, { waitUntil: 'load' });
         const h1s = await page.locator('h1').count();
         const pageDir = await page.locator('html').getAttribute('dir');
-        const bodyText = (await page.locator('main').innerText().catch(() => '')) ?? '';
+        // One <main> is the page text; otherwise read the whole body, so a
+        // missing or doubled <main> cannot pass the check with no text.
+        const mains = await page.locator('main').count();
+        const bodyText = await page.locator(mains === 1 ? 'main' : 'body').innerText().catch(() => '');
         check(
           res?.status() === 200 && h1s === 1 && pageDir === (locale === 'ar' ? 'rtl' : 'ltr'),
           `${label} ${url} is the marketing page (${res?.status()}, h1=${h1s}, dir=${pageDir})`,
         );
         check(
-          !/\bfree\b/i.test(bodyText) && !bodyText.includes('مجان'),
-          `${label} ${url} never says "free"`,
+          bodyText.trim().length > 0 && !/\bfree\b/i.test(bodyText) && !bodyText.includes('مجان'),
+          `${label} ${url} never says "free" (main=${mains}, ${bodyText.length} characters read)`,
         );
         await overflowCheck(`${label} ${url} has no sideways scroll`);
       }
