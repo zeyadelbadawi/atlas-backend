@@ -3,15 +3,29 @@ name: Origin exposure check
 # B0-OPS-04 — is the origin server reachable without going through
 # Cloudflare? Read-only. From a GitHub runner (outside Cloudflare) it
 # requests the site through Cloudflare, then directly at the origin
-# (DEPLOY_HOST, the same address the deploy SSHes to) on 80 and 443 with the
-# platform Host header. After the lockdown (Oracle security list allows
-# 80/443 from Cloudflare's ranges only) the direct requests must time out or
-# be refused while the Cloudflare request still works.
+# (DEPLOY_HOST, the same address the deploy SSHes to) on 80 and 443, with
+# the platform Host header and with a host no academy owns (the
+# custom-domain catch-all).
+#
+# Two layers, reported separately:
+#   - application lock (frontend Caddyfile `(origin_lock)`): Caddy drops a
+#     connection whose peer is not a Cloudflare edge address before any
+#     route runs, so a direct request gets no response at all (curl exit
+#     52 / 56 / 92). The port still accepts TCP.
+#   - network lock (owner action: Oracle security list allows 80/443 from
+#     Cloudflare's ranges only): a direct connection is refused or times
+#     out (curl exit 7 / 28).
+# The job fails only when the origin SERVES a direct request (a response
+# with a status line): that is the bypass OPS-04 forbids.
 #
 # The origin address is a secret and is never printed (GitHub masks it, and
 # the log shows outcomes only).
 on:
   workflow_dispatch:
+  schedule:
+    # Weekly, Monday 05:17 UTC: a regression (lock removed, kill switch
+    # left off) shows up within a week.
+    - cron: '17 5 * * 1'
 
 permissions:
   contents: read
@@ -22,37 +36,50 @@ jobs:
     timeout-minutes: 5
     env:
       SITE: atlass.dpdns.org
+      # Reserved TLD (RFC 2606): no academy can own it, so it reaches the
+      # `:443` / `:80` catch-all blocks.
+      STRAY_HOST: origin-check.invalid
     steps:
       - name: Probe
         env:
           ORIGIN: ${{ secrets.DEPLOY_HOST }}
         run: |
           set -uo pipefail
+          served=0 open=0
           probe() { # $1 label, then curl args; prints the outcome only
             local label="$1"; shift
             local code rc
-            code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 15 "$@" 2>/tmp/err); rc=$?
-            if [ "$rc" = 0 ]; then echo "$label: REACHABLE (HTTP $code)"; return 0; fi
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 15 "$@" 2>/dev/null); rc=$?
             case "$rc" in
-              7) echo "$label: refused (connection refused)";;
-              28) echo "$label: timed out (no answer)";;
-              35|60) echo "$label: TLS handshake answered but failed (port open)";;
+              0) echo "$label: SERVED (HTTP $code)"; return 0;;
+              7) echo "$label: refused (connection refused: network lock)";;
+              28) echo "$label: timed out (no answer: network lock)";;
+              52|56|92) echo "$label: dropped without a response (application lock; port open)"; open=1;;
+              35|60) echo "$label: TLS handshake answered but failed (port open)"; open=1;;
               *) echo "$label: not reachable (curl exit $rc)";;
             esac
-            [ "$rc" = 35 ] || [ "$rc" = 60 ] && return 0 || return 1
+            return 1
           }
           # DEPLOY_HOST may be a name or an address; --resolve needs an address.
           IP=$(getent ahostsv4 "$ORIGIN" | awk 'NR == 1 { print $1 }')
           [ -n "$IP" ] || { echo "::error::cannot resolve the origin address"; exit 1; }
           echo "::add-mask::$IP"
           echo "== Through Cloudflare"
-          probe "https://$SITE/" "https://$SITE/" || echo "::error::the site does not answer through Cloudflare"
+          if ! probe "https://$SITE/" "https://$SITE/"; then
+            echo "::error::the site does not answer through Cloudflare"
+            exit 1
+          fi
           echo "== Directly at the origin (bypassing Cloudflare)"
-          exposed=0
-          probe "origin :443 (Host: $SITE)" -k --resolve "$SITE:443:$IP" "https://$SITE/" && exposed=1
-          probe "origin :80 (Host: $SITE)" --resolve "$SITE:80:$IP" "http://$SITE/" && exposed=1
-          if [ "$exposed" = 1 ]; then
-            echo "RESULT: the origin answers directly; Cloudflare can be bypassed (OPS-04 NOT met)"
+          probe "origin :443 (Host: $SITE)" -k --resolve "$SITE:443:$IP" "https://$SITE/" && served=1
+          probe "origin :80 (Host: $SITE)" --resolve "$SITE:80:$IP" "http://$SITE/" && served=1
+          probe "origin :443 (Host: $STRAY_HOST)" -k --resolve "$STRAY_HOST:443:$IP" "https://$STRAY_HOST/" && served=1
+          probe "origin :80 (Host: $STRAY_HOST)" --resolve "$STRAY_HOST:80:$IP" "http://$STRAY_HOST/" && served=1
+          if [ "$served" = 1 ]; then
+            echo "RESULT: the origin serves direct requests; Cloudflare can be bypassed (OPS-04 NOT met)"
+            echo "::error::origin served a request that bypassed Cloudflare"
+            exit 1
+          elif [ "$open" = 1 ]; then
+            echo "RESULT: application lock holds (no direct request is served); ports 80/443 still accept connections from outside Cloudflare (network lock pending)"
           else
-            echo "RESULT: the origin does not answer directly on 80/443 (OPS-04 met for this runner)"
+            echo "RESULT: the origin does not accept direct connections on 80/443 (application and network lock met for this runner)"
           fi

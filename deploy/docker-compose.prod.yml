@@ -105,6 +105,11 @@ services:
       # B1 — the static marketing site on the apex host. Empty or `on`
       # serves it; `off` hands those paths back to the SPA (kill switch).
       ATLAS_MARKETING_STATIC: ${ATLAS_MARKETING_STATIC:-on}
+      # B0-OPS-04 — the origin lock: Caddy drops every connection whose
+      # peer is not a Cloudflare edge address (or loopback / private, for
+      # the health checks). Empty or `on` locks; `off` serves direct
+      # connections again (kill switch, no rebuild).
+      ATLAS_ORIGIN_LOCK: ${ATLAS_ORIGIN_LOCK:-on}
     ports:
       - '80:80'
       - '443:443'
