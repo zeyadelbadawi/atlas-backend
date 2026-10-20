@@ -102,6 +102,9 @@ services:
       # page requests to the `ssr` service below; anything else (the
       # default) keeps every request on the route it took before.
       ATLAS_SSR: ${ATLAS_SSR:-off}
+      # B1 — the static marketing site on the apex host. Empty or `on`
+      # serves it; `off` hands those paths back to the SPA (kill switch).
+      ATLAS_MARKETING_STATIC: ${ATLAS_MARKETING_STATIC:-on}
     ports:
       - '80:80'
       - '443:443'
