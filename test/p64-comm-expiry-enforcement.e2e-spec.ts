@@ -44,6 +44,7 @@ import {
 } from '../src/plans/services/subscription-expiry.service';
 import { PublicWebsiteCacheService } from '../src/public-website/services/public-website-cache.service';
 import { GRACE_PERIOD_MS } from '../src/plans/queue/subscription-sweep.types';
+import { addCalendarMonthsUtc } from '../src/billing/utils/billing-period.util';
 
 const DAY = 24 * 60 * 60 * 1000;
 const PROOF_DATA_URL =
@@ -64,10 +65,14 @@ class FakeClock implements Clock {
 }
 
 /** Mirrors `addPeriod` in `payment-application.service.ts` for a monthly cycle. */
+/**
+ * One billing month, exactly as the server computes it (D3: same day of
+ * month, clamped to the target month's last day, UTC). `Date#setMonth`
+ * overflowed instead — 31 Oct + 1 month = 1 Dec — which failed this suite
+ * whenever "now + 10 days" fell on a 31st.
+ */
 function plusOneMonth(start: Date): Date {
-  const end = new Date(start);
-  end.setMonth(end.getMonth() + 1);
-  return end;
+  return addCalendarMonthsUtc(start, 1);
 }
 
 async function signUpAndSignIn(
