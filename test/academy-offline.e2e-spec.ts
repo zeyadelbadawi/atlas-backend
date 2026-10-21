@@ -515,7 +515,7 @@ describe('Academy offline — replay safety, ordering and caching (e2e)', () => 
       expect(refused.headers['cache-control']).toBe('private, no-store');
     });
 
-    it('published website reads are private and briefly cacheable; errors and writes are not', async () => {
+    it('published website reads are private and always revalidated; errors and writes are not stored', async () => {
       const w = await world('off-cache-public');
       const missing = await http()
         .get(`/public/websites/${w.academy.id}`)
@@ -523,15 +523,11 @@ describe('Academy offline — replay safety, ordering and caching (e2e)', () => 
       if (missing.status === 404) {
         expect(missing.headers['cache-control']).toBe('private, no-store');
       } else {
-        expect(missing.headers['cache-control']).toBe(
-          'private, max-age=60, stale-while-revalidate=300',
-        );
+        expect(missing.headers['cache-control']).toBe('private, no-cache');
       }
       const statistics = await http().get(`/public/websites/${w.academy.id}/statistics`);
       if (statistics.status === 200) {
-        expect(statistics.headers['cache-control']).toBe(
-          'private, max-age=60, stale-while-revalidate=300',
-        );
+        expect(statistics.headers['cache-control']).toBe('private, no-cache');
       } else {
         expect(statistics.headers['cache-control']).toBe('private, no-store');
       }

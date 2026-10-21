@@ -26,10 +26,14 @@
  * WHY `private` FOR PUBLIC WEBSITE DATA. The content is public, but it is
  * resolved per academy and per host, and a shared cache (Cloudflare, a proxy)
  * keyed only by URL is the wrong place to decide which tenant's copy to
- * serve, and cannot be purged when the academy publishes. `private` lets the
- * visitor's own browser keep it briefly (a minute, then serve-stale while it
- * revalidates in the background), which is what a returning visitor or a
- * flaky connection actually needs.
+ * serve, and cannot be purged when the academy publishes.
+ *
+ * WHY `no-cache` (owner decision, 21 Oct 2026). The dashboard tells the owner
+ * a save is "saved and live", so a returning visitor must see it at once,
+ * not after a browser cache expires (it was `max-age=60`). `no-cache` lets
+ * the browser keep its copy but ask every time; Express answers an unchanged
+ * page with `304 Not Modified` from its ETag, so a revisit costs one small
+ * round trip and no body.
  */
 import {
   CallHandler,
@@ -45,7 +49,7 @@ import type { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 
 export const NO_STORE = 'private, no-store';
-export const PUBLIC_WEBSITE_CACHE = 'private, max-age=60, stale-while-revalidate=300';
+export const PUBLIC_WEBSITE_CACHE = 'private, no-cache';
 
 const CACHE_POLICY_KEY = 'atlas:cache-policy';
 
