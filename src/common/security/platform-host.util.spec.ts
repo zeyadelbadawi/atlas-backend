@@ -30,6 +30,13 @@ describe('platform hosts (dashboard subdomain move)', () => {
     }
   });
 
+  it('ignores a label an academy could hold (not a reserved subdomain)', () => {
+    for (const appHost of ['my-academy.atlass.dpdns.org', 'school.atlass.dpdns.org']) {
+      expect(platformAppHost({ ...base, appHost })).toBeUndefined();
+      expect(isPlatformHost(appHost, { ...base, appHost })).toBe(false);
+    }
+  });
+
   it('refuses a dashboard host longer than a DNS name allows', () => {
     const longBase = `${'a'.repeat(60)}.${'b'.repeat(60)}.${'c'.repeat(60)}.${'d'.repeat(59)}.org`;
     expect(longBase.length).toBeLessThanOrEqual(253);

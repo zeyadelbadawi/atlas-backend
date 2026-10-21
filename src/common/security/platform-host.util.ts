@@ -8,14 +8,17 @@
  * app links) and the dashboard subdomain (`PLATFORM_APP_HOST`, default
  * `dashboard.<base>`). The dashboard host is accepted only when it is a
  * single-label subdomain of the base domain, so a mistyped or hostile value
- * can never make a foreign host count as the platform. `dashboard` is a
- * reserved academy label (DL-58), so no academy can hold it.
+ * can never make a foreign host count as the platform, and only when that
+ * label is a reserved academy label (DL-58: `dashboard`, `app`, ...), so a
+ * misconfigured value can never turn an academy's own host into a platform
+ * host.
  */
 import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
+import { isReservedSubdomain } from '../../provisioning/dto/provisioning.constants';
 
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
-/** The validated dashboard host, or `undefined` when no base domain is configured or the value is not a single-label subdomain of it. */
+/** The validated dashboard host, or `undefined` when no base domain is configured or the value is not a reserved single-label subdomain of it. */
 export function platformAppHost(
   config: PlatformDomainRuntimeConfig | undefined,
 ): string | undefined {
@@ -25,7 +28,7 @@ export function platformAppHost(
   // A DNS name is at most 253 characters, the generated default included.
   if (host.length > 253 || !host.endsWith(`.${base}`)) return undefined;
   const label = host.slice(0, -(base.length + 1));
-  return LABEL.test(label) ? host : undefined;
+  return LABEL.test(label) && isReservedSubdomain(label) ? host : undefined;
 }
 
 /** Every host that is the platform itself: the base domain and the dashboard host. */
