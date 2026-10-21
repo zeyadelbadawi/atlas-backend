@@ -116,10 +116,12 @@ services:
       ATLAS_DOCS_STATIC: ${ATLAS_DOCS_STATIC:-preview}
       # DL-63 — the platform app lives on dashboard.<base>. `on` sends old
       # app links on the apex (/auth/*, /dashboard/*, /onboarding/*,
-      # /verify/*, …) to the dashboard with a 301 and retires the apex
-      # service worker; `off` (default until production is verified) keeps
-      # serving the app on the apex as well (kill switch, no rebuild).
-      ATLAS_DASHBOARD_REDIRECT: ${ATLAS_DASHBOARD_REDIRECT:-off}
+      # /verify/*, …) to the dashboard with a 302 (path and query kept;
+      # `/api/*` never redirected) and retires the apex service worker. On
+      # by default since the owner's go-ahead (21 Oct 2026), after the
+      # dashboard host was verified in production. Kill switch, no rebuild:
+      # ATLAS_DASHBOARD_REDIRECT=off in /opt/atlas/.env, then recreate Caddy.
+      ATLAS_DASHBOARD_REDIRECT: ${ATLAS_DASHBOARD_REDIRECT:-on}
     ports:
       - '80:80'
       - '443:443'
