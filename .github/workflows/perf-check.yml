@@ -45,5 +45,5 @@ jobs:
           # script as its own stdin). Nothing secret is on any command line.
           ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" ${ACADEMY} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+            "f=\$(mktemp) || exit 1; if ! cat > \"\$f\" || ! [ -s \"\$f\" ]; then rm -f \"\$f\"; echo 'script transfer failed'; exit 1; fi; bash \"\$f\" ${ACADEMY} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" \
             < deploy/perf-check.sh
