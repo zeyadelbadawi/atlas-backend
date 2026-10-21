@@ -15,6 +15,8 @@ import { mkdirSync } from 'node:fs';
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const PLATFORM = process.env.PLATFORM_HOST || 'atlass.dpdns.org';
+// DL-63 — the platform app (sign-in, registration) is served on the dashboard host.
+const APP_HOST = process.env.APP_HOST || `dashboard.${PLATFORM}`;
 const ACADEMY_HOST = process.env.ACADEMY_HOST || 'ellzoz.atlass.dpdns.org';
 const EXPECT_PLATFORM = process.env.EXPECT_PLATFORM !== 'off';
 const OUT = process.env.OUT || './google-verify-out';
@@ -68,7 +70,7 @@ for (const variant of [
     ['sign-in', '/auth/sign-in'],
     ['sign-up', '/auth/register'],
   ]) {
-    const { context, page: p } = await open(page, `https://${PLATFORM}${path}`, variant);
+    const { context, page: p } = await open(page, `https://${APP_HOST}${path}`, variant);
     const f = await facts(p);
     const label = `platform ${page} (${variant.tag})`;
     check(`${label}: Google button ${EXPECT_PLATFORM ? 'shown' : 'hidden'}`, (f.google === 1) === EXPECT_PLATFORM, `buttons=${f.google}`);
@@ -83,7 +85,7 @@ for (const variant of [
 
 // /auth/sign-up is the sign-up page, and keeps ?plan=.
 {
-  const { context, page } = await open('alias', `https://${PLATFORM}/auth/sign-up?plan=starter`);
+  const { context, page } = await open('alias', `https://${APP_HOST}/auth/sign-up?plan=starter`);
   const url = new URL(page.url());
   check('/auth/sign-up?plan=starter lands on /auth/register?plan=starter', url.pathname === '/auth/register' && url.searchParams.get('plan') === 'starter', url.pathname + url.search);
   await context.close();
@@ -92,7 +94,7 @@ for (const variant of [
 // The sign-up draft travels in sessionStorage only; the browser reaches Google.
 if (EXPECT_PLATFORM) {
   const marker = `Verify Org ${Date.now().toString(36)}`;
-  const { context, page } = await open('carry', `https://${PLATFORM}/auth/register`);
+  const { context, page } = await open('carry', `https://${APP_HOST}/auth/register`);
   const urls = [];
   page.on('request', (request) => urls.push(request.url()));
   await page.fill('#organizationName', marker);
@@ -106,7 +108,7 @@ if (EXPECT_PLATFORM) {
   check('the organization name is in no URL (Atlas or Google)', leaked.length === 0, `${leaked.length} URL(s)`);
   await page.screenshot({ path: `${OUT}/platform-google-chooser.png` });
   // Back on Atlas's origin, the flow context holds the draft for the create step.
-  await page.goto(`https://${PLATFORM}/auth/sign-in`, { waitUntil: 'networkidle' });
+  await page.goto(`https://${APP_HOST}/auth/sign-in`, { waitUntil: 'networkidle' });
   const stored = await page.evaluate(() => {
     try {
       return JSON.parse(sessionStorage.getItem('atlas:google-flow') || 'null');

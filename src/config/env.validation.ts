@@ -9,6 +9,7 @@
  * plan's explicit P0 requirement: "environment validation."
  */
 import { z } from 'zod';
+import { platformAppHost } from '../common/security/platform-host.util';
 
 /** Workstream D — the Worker→API authorization secret is a 256-bit-class key, never a password. */
 export const MIN_GATE_AUTHZ_SECRET_LENGTH = 32;
@@ -1085,18 +1086,38 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
   // PLATFORM_WEB_URL is where an email's links point. It must never fall
   // back to a localhost default in production — but requiring it outright
   // would refuse to start every existing deployment, none of which sets
-  // it, for a value Atlas can already derive: the platform host IS
-  // `PLATFORM_BASE_DOMAIN`, which production has had since P63. So the
+  // it, for a value Atlas can already derive: the platform app is served
+  // on the dashboard host (`PLATFORM_APP_HOST`, default
+  // `dashboard.<PLATFORM_BASE_DOMAIN>`; DL-63), and production has had the
+  // base domain since P63. So the
   // rule is "derive it, or refuse" rather than "demand it": an explicit
   // value still wins (a separate marketing host, a staging origin), and a
   // deployment with neither is the only one that cannot build a link and
   // is refused.
+  // DL-63 — a PLATFORM_APP_HOST that is set but cannot be the dashboard host
+  // (not a reserved single-label subdomain of the base domain) is refused
+  // at boot rather than silently ignored: ignoring it would leave the app
+  // without a dashboard host and point email links at the marketing site.
+  const appHost = parsed.data.PLATFORM_BASE_DOMAIN
+    ? platformAppHost({
+        baseDomain: parsed.data.PLATFORM_BASE_DOMAIN,
+        appHost: parsed.data.PLATFORM_APP_HOST,
+      })
+    : undefined;
+  if (parsed.data.PLATFORM_APP_HOST && parsed.data.PLATFORM_BASE_DOMAIN && !appHost) {
+    throw new Error(
+      'PLATFORM_APP_HOST must be a reserved single-label subdomain of PLATFORM_BASE_DOMAIN ' +
+        '(e.g. dashboard.<PLATFORM_BASE_DOMAIN>).',
+    );
+  }
+
   const emailProviders = parsed.data.EMAIL_PROVIDERS ?? [parsed.data.EMAIL_PROVIDER];
   const canActuallySend = emailProviders.some((provider) => provider !== 'stub');
 
   if (parsed.data.NODE_ENV === 'production' && !parsed.data.PLATFORM_WEB_URL) {
     if (parsed.data.PLATFORM_BASE_DOMAIN) {
-      parsed.data.PLATFORM_WEB_URL = `https://${parsed.data.PLATFORM_BASE_DOMAIN}`;
+      // The base domain only when it is too long to have a dashboard host.
+      parsed.data.PLATFORM_WEB_URL = `https://${appHost ?? parsed.data.PLATFORM_BASE_DOMAIN}`;
     } else if (canActuallySend) {
       // Only a deployment that can actually SEND is refused — i.e. one
       // with a real provider anywhere in `EMAIL_PROVIDERS`, not just in

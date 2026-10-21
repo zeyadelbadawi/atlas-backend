@@ -106,6 +106,45 @@ describe('P64 Communications — email configuration boot contract', () => {
     expect(config.EMAIL_PROVIDERS).not.toContain('stub');
   });
 
+  it('derives PLATFORM_WEB_URL from the dashboard host when it is not set (DL-63)', () => {
+    const config = validateEnv({
+      ...PRODUCTION_BASE,
+      EMAIL_PROVIDERS: 'brevo',
+      BREVO_API_KEY: 'brevo-key',
+      EMAIL_FROM_EMAIL: 'owner@example.com',
+    }) as Record<string, unknown>;
+    expect(config.PLATFORM_WEB_URL).toBe('https://dashboard.atlass.dpdns.org');
+  });
+
+  it('derives PLATFORM_WEB_URL from an explicit, valid PLATFORM_APP_HOST', () => {
+    const config = validateEnv({
+      ...PRODUCTION_BASE,
+      EMAIL_PROVIDERS: 'brevo',
+      BREVO_API_KEY: 'brevo-key',
+      EMAIL_FROM_EMAIL: 'owner@example.com',
+      PLATFORM_APP_HOST: 'app.atlass.dpdns.org',
+    }) as Record<string, unknown>;
+    expect(config.PLATFORM_WEB_URL).toBe('https://app.atlass.dpdns.org');
+  });
+
+  it('refuses a PLATFORM_APP_HOST that cannot be the dashboard host instead of ignoring it', () => {
+    for (const appHost of [
+      'my-academy.atlass.dpdns.org',
+      'evil.example.com',
+      'a.b.atlass.dpdns.org',
+    ]) {
+      expect(() =>
+        validateEnv({
+          ...PRODUCTION_BASE,
+          EMAIL_PROVIDERS: 'brevo',
+          BREVO_API_KEY: 'brevo-key',
+          EMAIL_FROM_EMAIL: 'owner@example.com',
+          PLATFORM_APP_HOST: appHost,
+        }),
+      ).toThrow(/PLATFORM_APP_HOST must be a reserved single-label subdomain/);
+    }
+  });
+
   it('an explicit PLATFORM_WEB_URL wins over the domain-derived default', () => {
     const config = validateEnv({
       ...PRODUCTION_BASE,

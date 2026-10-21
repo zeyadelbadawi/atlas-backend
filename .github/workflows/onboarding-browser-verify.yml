@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      BASE_URL: https://atlass.dpdns.org
+      BASE_URL: https://dashboard.atlass.dpdns.org
       OUT: ${{ github.workspace }}/journey-out
     steps:
       # The repository is public, and so are its logs: mask the mailbox and
