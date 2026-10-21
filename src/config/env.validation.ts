@@ -1094,15 +1094,29 @@ export function validateEnv(config: Record<string, unknown>): EnvVariables {
   // value still wins (a separate marketing host, a staging origin), and a
   // deployment with neither is the only one that cannot build a link and
   // is refused.
+  // DL-63 — a PLATFORM_APP_HOST that is set but cannot be the dashboard host
+  // (not a reserved single-label subdomain of the base domain) is refused
+  // at boot rather than silently ignored: ignoring it would leave the app
+  // without a dashboard host and point email links at the marketing site.
+  const appHost = parsed.data.PLATFORM_BASE_DOMAIN
+    ? platformAppHost({
+        baseDomain: parsed.data.PLATFORM_BASE_DOMAIN,
+        appHost: parsed.data.PLATFORM_APP_HOST,
+      })
+    : undefined;
+  if (parsed.data.PLATFORM_APP_HOST && parsed.data.PLATFORM_BASE_DOMAIN && !appHost) {
+    throw new Error(
+      'PLATFORM_APP_HOST must be a reserved single-label subdomain of PLATFORM_BASE_DOMAIN ' +
+        '(e.g. dashboard.<PLATFORM_BASE_DOMAIN>).',
+    );
+  }
+
   const emailProviders = parsed.data.EMAIL_PROVIDERS ?? [parsed.data.EMAIL_PROVIDER];
   const canActuallySend = emailProviders.some((provider) => provider !== 'stub');
 
   if (parsed.data.NODE_ENV === 'production' && !parsed.data.PLATFORM_WEB_URL) {
     if (parsed.data.PLATFORM_BASE_DOMAIN) {
-      const appHost = platformAppHost({
-        baseDomain: parsed.data.PLATFORM_BASE_DOMAIN,
-        appHost: parsed.data.PLATFORM_APP_HOST,
-      });
+      // The base domain only when it is too long to have a dashboard host.
       parsed.data.PLATFORM_WEB_URL = `https://${appHost ?? parsed.data.PLATFORM_BASE_DOMAIN}`;
     } else if (canActuallySend) {
       // Only a deployment that can actually SEND is refused — i.e. one
