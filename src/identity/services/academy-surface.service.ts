@@ -30,6 +30,7 @@ import {
   normalizeHostname,
 } from '../../public-website/utils/hostname-normalization.util';
 import { hashOpaqueToken } from '../utils/opaque-token.util';
+import { isPlatformHost } from '../../common/security/platform-host.util';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
 
@@ -40,19 +41,27 @@ export class AcademySurfaceService {
     private readonly configService: ConfigService,
   ) {}
 
-  private baseDomain(): string | undefined {
-    return this.configService.get<PlatformDomainRuntimeConfig>('platformDomain')
-      ?.baseDomain;
+  private platformDomain(): PlatformDomainRuntimeConfig | undefined {
+    return this.configService.get<PlatformDomainRuntimeConfig>('platformDomain');
   }
 
-  /** The academy the request host serves, or `null` when the host is the platform itself, local, or unknown. */
+  private baseDomain(): string | undefined {
+    return this.platformDomain()?.baseDomain;
+  }
+
+  /** The base domain or the dashboard subdomain — the platform itself, never an academy. */
+  private isPlatform(bare: string): boolean {
+    return isPlatformHost(bare, this.platformDomain());
+  }
+
+  /** The academy the request host serves, or `null` when the host is the platform itself (apex or dashboard), local, or unknown. */
   async resolveHostAcademyId(rawHostname: string | undefined): Promise<string | null> {
     const normalized = normalizeHostname(rawHostname);
     if (!normalized) return null;
     const bare = normalized.split(':')[0];
     if (LOCAL_HOSTS.has(bare)) return null;
+    if (this.isPlatform(bare)) return null;
     const base = this.baseDomain();
-    if (base && bare === base) return null;
     const label = extractSubdomainLabel(bare, base) ?? (bare.includes('.') ? null : bare);
     const rows = await this.prisma.$queryRaw<{ academy_id: string }[]>(
       Prisma.sql`SELECT academy_id FROM resolve_public_hostname(${bare}, ${label})`,
@@ -60,20 +69,19 @@ export class AcademySurfaceService {
     return rows[0]?.academy_id ?? null;
   }
 
-  /** `true` when the host is local or the platform host — where the frontend supplies the academy through its preview parameter. */
+  /** `true` when the host is local or a platform host (apex or dashboard) — where the frontend supplies the academy through its preview parameter. */
   async isUnresolvableHost(rawHostname: string | undefined): Promise<boolean> {
     const normalized = normalizeHostname(rawHostname);
     if (!normalized) return true;
     const bare = normalized.split(':')[0];
     if (LOCAL_HOSTS.has(bare)) return true;
-    const base = this.baseDomain();
-    return !!base && bare === base;
+    return this.isPlatform(bare);
   }
 
   /**
    * Launch Stabilization A6 — the authentication context a request HOST
    * stands for, for binding an emailed code to where it is completed:
-   * an academy host → that academy; the platform host → management; a
+   * an academy host → that academy; a platform host (apex or dashboard) → management; a
    * local or unrecognised host → `null` (no claim to compare against,
    * exactly like `assertAcademyMatchesHost`).
    */
@@ -86,8 +94,7 @@ export class AcademySurfaceService {
     if (academyId) return { surface: 'academy', academyId };
     const normalized = normalizeHostname(rawHostname);
     const bare = normalized?.split(':')[0];
-    const base = this.baseDomain();
-    if (bare && base && bare === base) return { surface: 'management' };
+    if (bare && this.isPlatform(bare)) return { surface: 'management' };
     return null;
   }
 

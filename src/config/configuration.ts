@@ -60,6 +60,8 @@ export interface MediaStorageConfig {
 /** Phase P11 — Public Website Runtime, Domains & Edge configuration (master plan §5.11, §21 P11). `baseDomain` and every Cloudflare field are deliberately optional — no real platform domain or Cloudflare account exists in any environment today (see `env.validation.ts`'s doc comment on `PLATFORM_BASE_DOMAIN`/`CLOUDFLARE_*`). */
 export interface PlatformDomainRuntimeConfig {
   readonly baseDomain?: string;
+  /** Dashboard subdomain (`PLATFORM_APP_HOST`, default `dashboard.<baseDomain>`). Read it through `platformAppHost()`, which validates it. */
+  readonly appHost?: string;
 }
 
 /**
@@ -781,6 +783,7 @@ export default () => {
 
   const platformDomain: PlatformDomainRuntimeConfig = {
     baseDomain: env.PLATFORM_BASE_DOMAIN || undefined,
+    appHost: env.PLATFORM_APP_HOST || undefined,
   };
 
   const zoom: ZoomConfig = {

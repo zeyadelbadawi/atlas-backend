@@ -17,6 +17,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import { RegisterDto } from '../dto/register.dto';
@@ -58,6 +59,8 @@ import {
   clearSessionCookie,
   readSessionCookie,
 } from '../session-cookie/session-cookie';
+import { clearSignedInHint } from '../session-cookie/signed-in-hint';
+import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
 import { DEVICE_COOKIE_NAME } from '../../tenancy/services/student-device.service';
 import { TRUST_COOKIE_NAME } from '../services/trusted-device.service';
 import { assertSessionServesHostAcademy } from '../../learning/dto/learning-request.util';
@@ -111,7 +114,20 @@ export function sessionContextWithDeviceCookie(
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  /** DL-63 — the session is gone: drop the session cookie and the signed-in hint together. */
+  private endBrowserSession(request: Request, response: Response): void {
+    clearSessionCookie(request, response);
+    clearSignedInHint(
+      request,
+      response,
+      this.configService.get<PlatformDomainRuntimeConfig>('platformDomain'),
+    );
+  }
 
   /** Matches `authenticationService.register` — does not establish a session. */
   @Post('register')
@@ -224,7 +240,7 @@ export class AuthController {
       // race to a concurrent refresh: the browser already holds the newer
       // cookie, and clearing it would sign every tab out of a valid session.
       if (fromCookie && !(error instanceof SupersededRefreshTokenException)) {
-        clearSessionCookie(request, response);
+        this.endBrowserSession(request, response);
       }
       throw error;
     }
@@ -252,7 +268,7 @@ export class AuthController {
       assertSameOriginCookieRequest(request);
       await this.authService.signOutByRefreshToken(fromCookie);
     }
-    clearSessionCookie(request, response);
+    this.endBrowserSession(request, response);
   }
 
   /**

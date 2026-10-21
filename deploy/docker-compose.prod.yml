@@ -114,6 +114,12 @@ services:
       # it with X-Robots-Tag noindex; `on` makes it indexable; `off` answers
       # 503 on every page (kill switch, no rebuild).
       ATLAS_DOCS_STATIC: ${ATLAS_DOCS_STATIC:-preview}
+      # DL-63 — the platform app lives on dashboard.<base>. `on` sends old
+      # app links on the apex (/auth/*, /dashboard/*, /onboarding/*,
+      # /verify/*, …) to the dashboard with a 301 and retires the apex
+      # service worker; `off` (default until production is verified) keeps
+      # serving the app on the apex as well (kill switch, no rebuild).
+      ATLAS_DASHBOARD_REDIRECT: ${ATLAS_DASHBOARD_REDIRECT:-off}
     ports:
       - '80:80'
       - '443:443'

@@ -26,8 +26,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { map, type Observable } from 'rxjs';
-import type { IdentityConfig } from '../../config/configuration';
+import type {
+  IdentityConfig,
+  PlatformDomainRuntimeConfig,
+} from '../../config/configuration';
 import { setSessionCookie } from './session-cookie';
+import { setSignedInHint } from './signed-in-hint';
 import {
   KNOWN_DEVICE_COOKIE_MAX_AGE_DAYS,
   SignInThrottleService,
@@ -61,6 +65,16 @@ export class SessionCookieInterceptor implements NestInterceptor {
           request,
           response,
           refreshToken,
+          identity.refreshTokenTtlDays * 24 * 60 * 60,
+        );
+        // DL-63 — the signed-in HINT for the static marketing and help
+        // pages (a constant `1`, read by no server code; see
+        // `signed-in-hint.ts`). Set only when a platform host minted the
+        // session; academy hosts never set it.
+        setSignedInHint(
+          request,
+          response,
+          this.configService.get<PlatformDomainRuntimeConfig>('platformDomain'),
           identity.refreshTokenTtlDays * 24 * 60 * 60,
         );
         // ATO F7 — a sign-in (a session minted for a named account, not a

@@ -625,6 +625,21 @@ const EnvSchema = z.object({
     )
     .optional(),
 
+  // Dashboard subdomain — the host that serves the platform web app (sign-in,
+  // registration, every dashboard) once the apex carries only the marketing
+  // site. Optional: when unset it is `dashboard.<PLATFORM_BASE_DOMAIN>`. It
+  // must be a single-label subdomain of the base domain (checked where it is
+  // read, `platform-host.util.ts`); anything else is ignored, never trusted.
+  PLATFORM_APP_HOST: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(
+      /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/,
+      'PLATFORM_APP_HOST must be a bare hostname (no scheme, port or trailing dot)',
+    )
+    .optional(),
+
   // --- P64 Phase 1: surface-enforcement rollout control ---
   //
   // Rollout control for the management-surface refusal, NOT a security

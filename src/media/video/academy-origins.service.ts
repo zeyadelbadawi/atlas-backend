@@ -33,6 +33,7 @@ import {
   resolveCanonicalHost,
   resolveSubdomainHost,
 } from '../../domain/utils/canonical-host.util';
+import { platformHosts } from '../../common/security/platform-host.util';
 
 @Injectable()
 export class AcademyOriginsService {
@@ -42,8 +43,9 @@ export class AcademyOriginsService {
     tx: Prisma.TransactionClient,
     academyId: string,
   ): Promise<readonly string[]> {
-    const baseDomain =
-      this.configService.get<PlatformDomainRuntimeConfig>('platformDomain')?.baseDomain;
+    const platformDomain =
+      this.configService.get<PlatformDomainRuntimeConfig>('platformDomain');
+    const baseDomain = platformDomain?.baseDomain;
 
     const [allocation, connection] = await Promise.all([
       tx.subdomainAllocation.findUnique({ where: { academyId } }),
@@ -72,7 +74,9 @@ export class AcademyOriginsService {
     });
     if (canonical) hosts.add(canonical.host);
 
-    if (baseDomain) hosts.add(baseDomain);
+    // Staff preview from the platform itself: the apex and the dashboard
+    // host (DL-63), never any other subdomain.
+    for (const host of platformHosts(platformDomain)) hosts.add(host);
 
     const origins = [...hosts].map((host) => `https://${host}`);
 
