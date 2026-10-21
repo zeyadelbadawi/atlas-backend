@@ -22,7 +22,8 @@ export function platformAppHost(
   const base = config?.baseDomain?.toLowerCase();
   if (!base) return undefined;
   const host = (config?.appHost ?? `dashboard.${base}`).toLowerCase();
-  if (!host.endsWith(`.${base}`)) return undefined;
+  // A DNS name is at most 253 characters, the generated default included.
+  if (host.length > 253 || !host.endsWith(`.${base}`)) return undefined;
   const label = host.slice(0, -(base.length + 1));
   return LABEL.test(label) ? host : undefined;
 }

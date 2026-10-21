@@ -634,6 +634,7 @@ const EnvSchema = z.object({
     .string()
     .trim()
     .toLowerCase()
+    .max(253, 'PLATFORM_APP_HOST must not exceed 253 characters')
     .regex(
       /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/,
       'PLATFORM_APP_HOST must be a bare hostname (no scheme, port or trailing dot)',

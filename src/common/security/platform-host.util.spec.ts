@@ -30,6 +30,13 @@ describe('platform hosts (dashboard subdomain move)', () => {
     }
   });
 
+  it('refuses a dashboard host longer than a DNS name allows', () => {
+    const longBase = `${'a'.repeat(60)}.${'b'.repeat(60)}.${'c'.repeat(60)}.${'d'.repeat(59)}.org`;
+    expect(longBase.length).toBeLessThanOrEqual(253);
+    expect(platformAppHost({ baseDomain: longBase })).toBeUndefined();
+    expect(platformHosts({ baseDomain: longBase })).toEqual([longBase]);
+  });
+
   it('has no platform host without a base domain', () => {
     expect(platformAppHost({})).toBeUndefined();
     expect(platformHosts(undefined)).toEqual([]);
