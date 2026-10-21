@@ -66,8 +66,8 @@ const UUID_PATTERN =
 
 /**
  * Successful GETs here are published, tenant-public content: the visitor's
- * own browser may keep them briefly (`PUBLIC_WEBSITE_CACHE`, see
- * `common/http/cache-policy.ts`); errors and the contact POST stay
+ * own browser may keep them but revalidates every time
+ * (`PUBLIC_WEBSITE_CACHE`, see `common/http/cache-policy.ts`); errors and the contact POST stay
  * `no-store`, and the favicon/logo routes set their own.
  */
 @CachePolicy(PUBLIC_WEBSITE_CACHE)

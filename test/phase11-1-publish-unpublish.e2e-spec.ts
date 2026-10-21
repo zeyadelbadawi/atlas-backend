@@ -132,7 +132,19 @@ describe('Phase 11.1 website publish/unpublish (e2e) — P111-PUB-001..014', () 
 
     await publish(academy.id, owner.accessToken).expect(201);
 
-    await request(app.getHttpServer()).get(`/public/websites/${academy.id}`).expect(200);
+    const online = await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}`)
+      .expect(200);
+    // Owner decision (21 Oct 2026): a visitor sees a publish at once. The
+    // browser keeps a copy but revalidates every time; unchanged content
+    // answers 304 from its ETag, with no body.
+    expect(online.headers['cache-control']).toBe('private, no-cache');
+    expect(online.headers.etag).toBeTruthy();
+    const revalidated = await request(app.getHttpServer())
+      .get(`/public/websites/${academy.id}`)
+      .set('If-None-Match', online.headers.etag as string)
+      .expect(304);
+    expect(revalidated.text ?? '').toBe('');
   });
 
   it('P111-PUB-005 — unpublishing actually takes the public website offline', async () => {
