@@ -37,6 +37,35 @@ times3() { # host path [local] — each request bounded, a timeout is a failure
   done
   printf '%-75s%s\n' "$host$path" "$out"
 }
+# Through Cloudflare: where the time goes (DNS, TCP, TLS, first byte, total).
+breakdown3() { # host path
+  local host=$1 path=$2 t
+  printf '%s%s  (dns/connect/tls/ttfb/total)\n' "$host" "$path"
+  for _ in 1 2 3; do
+    if t=$(curl -s -o /dev/null --max-time 15 -w '%{time_namelookup}/%{time_connect}/%{time_appconnect}/%{time_starttransfer}/%{time_total}' "https://$host$path"); then
+      echo "   $t"
+    else echo "   FAIL"; FAILS=$((FAILS + 1)); fi
+  done
+}
+# Request log statistics, numbers only: requests, 5xx, pino errors, and
+# response-time percentiles (pino-http "responseTime", milliseconds).
+request_stats() {
+  local tmp; tmp=$(mktemp) || return 1
+  awk -v out="$tmp" '
+    /"responseTime":/ {
+      n++; m = $0; sub(/.*"responseTime":/, "", m); sub(/[^0-9.].*/, "", m); print m + 0 > out
+      if ($0 ~ /"statusCode":5[0-9][0-9]/) e5++
+    }
+    /"level":50/ { lv50++ }
+    /"level":40/ { lv40++ }
+    END { printf "requests=%d  5xx=%d  level50=%d  level40=%d", n, e5, lv50, lv40 }'
+  sort -n "$tmp" | awk '{ v[NR] = $1 } END {
+    if (NR == 0) { print "  (no request lines)"; exit }
+    i50 = int(NR * 0.50) + 1; i95 = int(NR * 0.95) + 1; i99 = int(NR * 0.99) + 1
+    if (i95 > NR) i95 = NR; if (i99 > NR) i99 = NR
+    printf "  responseTime ms p50=%d p95=%d p99=%d max=%d\n", v[i50], v[i95], v[i99], v[NR] }'
+  rm -f "$tmp"
+}
 # Counts lines matching each pattern in one streaming pass (no log kept in memory).
 count_lines() { # label, then awk regexes
   local label=$1; shift
@@ -71,10 +100,12 @@ times3 "docs.$BASE" / local
 times3 "dashboard.$BASE" /auth/sign-in local
 times3 "$ACADEMY" / local
 section "the same through Cloudflare, from the server"
-times3 "$BASE" /
-times3 "$BASE" /api/v1/public/plans
-times3 "docs.$BASE" /
-times3 "$ACADEMY" /
+breakdown3 "$BASE" /
+breakdown3 "$BASE" /api/v1/public/plans
+breakdown3 "docs.$BASE" /
+breakdown3 "$ACADEMY" /
+section "Cloudflare edge serving this server (colo only)"
+curl -s --max-time 10 "https://$BASE/cdn-cgi/trace" | grep -E '^(colo|http|tls|warp)=' || echo "(trace unavailable)"
 
 section "database: connections by state"
 need psql_q "select coalesce(state,'?'), count(*) from pg_stat_activity group by 1 order by 2 desc"
@@ -83,8 +114,9 @@ need psql_q "select round(extract(epoch from now()-query_start)::numeric,1)||'s 
 section "database: size and cache hit ratio"
 need psql_q "select pg_size_pretty(pg_database_size(current_database())), round(100.0*sum(blks_hit)/nullif(sum(blks_hit)+sum(blks_read),0),2)||'% hit' from pg_stat_database where datname=current_database()"
 
-section "log line counts, last 6 h (text is never printed)"
-dc logs --no-color --since 6h backend 2>&1 | count_lines backend 'error|"level":50' 'warn|"level":40' 'slow|timeout|timed out'
+section "backend requests, last 6 h (numbers only)"
+dc logs --no-color --since 6h backend 2>&1 | request_stats
+section "caddy log, last 6 h (text is never printed)"
 dc logs --no-color --since 6h caddy 2>&1 | count_lines caddy '"level":"error"'
 section "kernel: out-of-memory kills"
 dmesg -T 2>/dev/null | grep -iE 'out of memory|oom-kill|killed process' | tail -5 |
