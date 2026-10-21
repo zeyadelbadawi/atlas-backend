@@ -1,0 +1,49 @@
+name: Performance check
+
+# Read-only production performance snapshot, run on the VPS over the same
+# restricted `deploy` SSH identity as Deploy (deploy/perf-check.sh). It
+# changes nothing and prints non-secret facts only: load, memory, disk,
+# container state, response times on the server and through Cloudflare,
+# database activity counts and log line counts.
+on:
+  workflow_dispatch:
+    inputs:
+      academy:
+        description: Academy subdomain to time (published site)
+        required: false
+        default: german-lectruegbbb
+        type: string
+
+concurrency:
+  group: perf-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run the check on the VPS
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          ACADEMY: ${{ inputs.academy }}
+        run: |
+          set -euo pipefail
+          # Only a DNS label reaches the remote command line.
+          [[ "$ACADEMY" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || { echo "invalid academy subdomain"; exit 1; }
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The script travels over stdin into a temp file (not `bash -s`:
+          # `docker compose exec -T` inside it would read the rest of the
+          # script as its own stdin). Nothing secret is on any command line.
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "f=\$(mktemp); cat > \"\$f\"; bash \"\$f\" ${ACADEMY} </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+            < deploy/perf-check.sh
