@@ -29,7 +29,9 @@ need() { "$@" || { echo "FAIL  ($*) exited $?"; FAILS=$((FAILS + 1)); }; }
 psql_q() { dc exec -T postgres sh -c "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -Atc \"$1\""; }
 times3() { # host path [local] — each request bounded, a timeout is a failure
   local host=$1 path=$2 mode=${3:-} out="" t args=(-s -o /dev/null --max-time 15 -w '%{time_starttransfer}/%{time_total}')
-  [ "$mode" = local ] && args+=(-k --resolve "$host:443:127.0.0.1")
+  # The origin serves publicly trusted ACME certificates (Caddy DNS-01), and
+  # --resolve keeps the real host name for SNI, so the certificate is verified.
+  [ "$mode" = local ] && args+=(--resolve "$host:443:127.0.0.1")
   for _ in 1 2 3; do
     if t=$(curl "${args[@]}" "https://$host$path"); then out+=" $t"; else out+=" FAIL"; FAILS=$((FAILS + 1)); fi
   done
