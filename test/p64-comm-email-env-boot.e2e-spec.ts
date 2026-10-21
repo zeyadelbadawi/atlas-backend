@@ -106,6 +106,16 @@ describe('P64 Communications — email configuration boot contract', () => {
     expect(config.EMAIL_PROVIDERS).not.toContain('stub');
   });
 
+  it('derives PLATFORM_WEB_URL from the dashboard host when it is not set (DL-63)', () => {
+    const config = validateEnv({
+      ...PRODUCTION_BASE,
+      EMAIL_PROVIDERS: 'brevo',
+      BREVO_API_KEY: 'brevo-key',
+      EMAIL_FROM_EMAIL: 'owner@example.com',
+    }) as Record<string, unknown>;
+    expect(config.PLATFORM_WEB_URL).toBe('https://dashboard.atlass.dpdns.org');
+  });
+
   it('an explicit PLATFORM_WEB_URL wins over the domain-derived default', () => {
     const config = validateEnv({
       ...PRODUCTION_BASE,

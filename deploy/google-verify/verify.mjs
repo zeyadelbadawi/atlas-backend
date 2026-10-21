@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PLATFORM = process.env.PLATFORM_HOST || 'atlass.dpdns.org';
+// DL-63 — the platform app's documents are served on the dashboard host.
+const APP_HOST = process.env.APP_HOST || `dashboard.${PLATFORM}`;
 // Local dry run only (never set in the workflow): plain HTTP to a proxy port.
 const SCHEME = process.env.PROBE_SCHEME || 'https';
 const PORT = process.env.PROBE_PORT ? `:${process.env.PROBE_PORT}` : '';
@@ -267,7 +269,7 @@ async function main() {
     info(`sessions minted since the RLS migration: ${f.sessions_since_release}`);
 
     // CSP — ENFORCED on every document (production-readiness pass), with reporting kept on.
-    const docHosts = [PLATFORM, academyHost].filter(Boolean);
+    const docHosts = [APP_HOST, academyHost].filter(Boolean);
     for (const host of docHosts) {
       const res = await fetch(`${SCHEME}://${host}${PORT}/auth/sign-in`, { redirect: 'manual' }).catch(() => null);
       const csp = res?.headers.get('content-security-policy') ?? '';

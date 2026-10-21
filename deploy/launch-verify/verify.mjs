@@ -35,6 +35,8 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MODE = process.env.MODE || 'api';
 const MGMT = process.env.MGMT_HOST || 'atlass.dpdns.org';
+// DL-63 — the platform app's pages are served on the dashboard host.
+const APP_HOST = process.env.APP_HOST || `dashboard.${MGMT}`;
 const MAILBOX = process.env.MAILBOX;
 const RUN = process.env.RUN_TAG || String(Date.now());
 const OUT = process.env.OUT || path.join(here, 'out');
@@ -296,7 +298,7 @@ async function browserMode() {
   {
     const { ctx, p } = await page('management');
     try {
-      await uiSignIn(p, M, mpw, `${ORIGIN(MGMT)}/auth/sign-in`, 'management');
+      await uiSignIn(p, M, mpw, `${ORIGIN(APP_HOST)}/auth/sign-in`, 'management');
       await shot(p, 'management-signed-in');
       check('management sign-in lands in the app', !/\/auth\//.test(new URL(p.url()).pathname), new URL(p.url()).pathname);
     } catch (e) { await shot(p, 'management-failed'); check('management sign-in journey', false, e.message.slice(0, 160)); }
