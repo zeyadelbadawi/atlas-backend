@@ -17,6 +17,7 @@ import {
   Query,
   Req,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
@@ -39,9 +40,16 @@ import { ReorderItemsDto } from '../../course/dto/reorder-items.dto';
 import type { WebsiteConfigurationResponse } from '../dto/website-configuration.contract';
 import type { WebsitePageResponse } from '../dto/website-page.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import {
+  PurgeAcademyEdgeCacheInterceptor,
+  SkipAcademyEdgePurge,
+} from '../../edge-cache/purge-academy-edge-cache.interceptor';
 
 @Controller('academies')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
+// Writes here change what the Academy's public website shows: drop its
+// edge-cached pages once the write has committed (`edge-cache/`).
+@UseInterceptors(PurgeAcademyEdgeCacheInterceptor)
 export class WebsiteController {
   constructor(
     private readonly websiteConfigurationService: WebsiteConfigurationService,
@@ -200,6 +208,7 @@ export class WebsiteController {
   */
   @Post(':id/website/pages/:pageId/editing-session')
   @HttpCode(200)
+  @SkipAcademyEdgePurge()
   async heartbeatEditingSession(
     @Req() request: Request,
     @Param('pageId') pageId: string,
@@ -216,6 +225,7 @@ export class WebsiteController {
 
   @Delete(':id/website/pages/:pageId/editing-session')
   @HttpCode(204)
+  @SkipAcademyEdgePurge()
   async releaseEditingSession(
     @Req() request: Request,
     @Param('pageId') pageId: string,

@@ -292,6 +292,13 @@ export interface CloudflareConfig {
   readonly apiToken?: string;
   readonly zoneId?: string;
   readonly accountId?: string;
+  /**
+   * A token that can only purge this zone's cache (`EdgeCachePurgeService`):
+   * Academy website pages kept at the edge are purged when they change.
+   * Separate from `apiToken` (custom hostnames) so neither holds more than
+   * its job needs. Unset: no purge, edge copies expire on their own.
+   */
+  readonly cachePurgeToken?: string;
 }
 
 /** Phase P12 — Atlas Subscription Billing configuration (master plan §5.7, §16). */
@@ -910,6 +917,7 @@ export default () => {
     apiToken: env.CLOUDFLARE_API_TOKEN || undefined,
     zoneId: env.CLOUDFLARE_ZONE_ID || undefined,
     accountId: env.CLOUDFLARE_ACCOUNT_ID || undefined,
+    cachePurgeToken: env.CLOUDFLARE_CACHE_PURGE_TOKEN || undefined,
   };
 
   const billing: BillingConfig = {
