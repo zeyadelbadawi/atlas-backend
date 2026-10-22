@@ -67,6 +67,32 @@ export async function seedMembership(
   });
 }
 
+/**
+ * Whether the database's reserved-label guard (`atlas_is_reserved_subdomain`,
+ * DL-57) would refuse `label` for containing "atlas": it drops the hyphens
+ * and also reads the label with leetspeak decoded (0→o, 1→l or i, 3→e, 4→a,
+ * 5→s, 7→t). A timestamp-and-random fixture label can spell it by chance —
+ * "…2147145-…" and "…7747-las…" both read "atlas" and failed CI on 22 Oct
+ * 2026.
+ */
+export function spellsAtlas(label: string): boolean {
+  const joined = label.toLowerCase().replace(/-/g, '');
+  const decoded = (one: 'l' | 'i') =>
+    joined.replace(
+      /[013457]/g,
+      (c) => ({ 0: 'o', 1: one, 3: 'e', 4: 'a', 5: 's', 7: 't' })[c]!,
+    );
+  return [joined, decoded('l'), decoded('i')].some((form) => form.includes('atlas'));
+}
+
+/** A unique academy label the reserved-label guard accepts (redrawn when it would spell "atlas"). */
+export function uniqueAcademyLabel(prefix: string): string {
+  for (;;) {
+    const label = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (!spellsAtlas(label)) return label;
+  }
+}
+
 /** P3 — mirrors `seedOrganizationWithOwner`'s rationale exactly, one level down. */
 export async function seedAcademy(
   admin: PrismaClient,
@@ -74,7 +100,7 @@ export async function seedAcademy(
   slugLabel: string,
 ) {
   // W4 — academy names are unique platform-wide (see `seedOrganizationWithOwner`).
-  const unique = `${slugLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const unique = uniqueAcademyLabel(slugLabel);
   return admin.academy.create({
     data: {
       organizationId,
