@@ -87,7 +87,11 @@ import {
   MAX_STEPS_TITLE_LENGTH,
   MIN_COURSE_CATALOG_PAGE_SIZE,
   MIN_COURSE_CATEGORIES,
+  SECTION_ALIGNMENTS,
+  SECTION_BACKGROUNDS,
+  SECTION_SPACINGS,
   SECTION_TYPES,
+  SECTION_WIDTHS,
 } from '../constants/website.constants';
 import {
   DEFAULT_PUBLIC_WEBSITE_LOCALE,
@@ -543,10 +547,28 @@ export function getSectionConfigSchema(
 }
 
 /** One base fields shape (`id`/`enabled`/`visibility`) shared by every section instance branch below — factored out so each branch below is a one-liner, never eleven hand-copied field lists. */
+/**
+ * CMS phase 3 — a section's design: named choices only (see
+ * `SECTION_BACKGROUNDS` and friends), matched by the frontend's
+ * `sectionDesignSchema`. Every key is optional and absent means the theme's
+ * own choice, so every stored section reads as it did.
+ */
+export const sectionDesignSchema = z.object({
+  background: z.enum(SECTION_BACKGROUNDS).optional(),
+  spacing: z.enum(SECTION_SPACINGS).optional(),
+  /** Phones only; absent = the same as `spacing`. */
+  spacingMobile: z.enum(SECTION_SPACINGS).optional(),
+  align: z.enum(SECTION_ALIGNMENTS).optional(),
+  width: z.enum(SECTION_WIDTHS).optional(),
+  /** Phones only: a two-column section stacks its second column first. */
+  reverseOnMobile: z.boolean().optional(),
+});
+
 const sectionInstanceBase = {
   id: z.string().min(1, 'validation:required'),
   enabled: z.boolean(),
   visibility: responsiveVisibilitySchema,
+  design: sectionDesignSchema.optional(),
 };
 
 /**

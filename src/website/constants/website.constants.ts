@@ -122,6 +122,19 @@ export const CTA_STYLES = ['primary', 'secondary', 'link'] as const;
 export const CTA_WHATSAPP_NUMBER_PATTERN = /^\+[1-9]\d{7,14}$/;
 /** A number to call: international (E.164) or a short hotline (3–6 digits, e.g. 19999). */
 export const CTA_PHONE_NUMBER_PATTERN = /^(?:\+[1-9]\d{7,14}|\d{3,6})$/;
+
+/*
+ * CMS phase 3 — a section's design ("Design" in the visual editor): named
+ * choices, never colours or numbers. Each theme draws them with its own,
+ * contrast-checked grounds and rhythm, so a brand colour change still
+ * restyles every section. Absent = the theme's own choice for that section.
+ */
+/** The ground a section sits on: the theme's lightest, its soft band, its brand band, its dark band. */
+export const SECTION_BACKGROUNDS = ['light', 'soft', 'brand', 'dark'] as const;
+/** The space above and below a section, relative to the theme's rhythm. */
+export const SECTION_SPACINGS = ['compact', 'default', 'spacious'] as const;
+export const SECTION_ALIGNMENTS = ['start', 'center'] as const;
+export const SECTION_WIDTHS = ['default', 'wide'] as const;
 export const MAX_STEPS_TITLE_LENGTH = 80;
 export const MAX_STEPS_DESCRIPTION_LENGTH = 240;
 export const MAX_STEP_TITLE_LENGTH = 60;
