@@ -87,6 +87,12 @@ export function spellsAtlas(label: string): boolean {
 
 /** A unique academy label the reserved-label guard accepts (redrawn when it would spell "atlas"). */
 export function uniqueAcademyLabel(prefix: string): string {
+  // No suffix can rescue a prefix that already spells it: fail, never loop.
+  if (spellsAtlas(prefix)) {
+    throw new Error(
+      `academy label prefix "${prefix}" reads as "atlas", which the database refuses`,
+    );
+  }
   for (;;) {
     const label = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (!spellsAtlas(label)) return label;
