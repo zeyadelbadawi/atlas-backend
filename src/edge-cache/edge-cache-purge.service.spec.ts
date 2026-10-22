@@ -8,7 +8,11 @@ import {
   academyEdgeTag,
   hostEdgeTag,
 } from './edge-cache-purge.service';
-import { PurgeAcademyEdgeCacheInterceptor } from './purge-academy-edge-cache.interceptor';
+import {
+  PurgeAcademyEdgeCacheInterceptor,
+  SKIP_ACADEMY_EDGE_PURGE,
+} from './purge-academy-edge-cache.interceptor';
+import { WebsiteController } from '../website/controllers/website.controller';
 
 const ZONE = 'a'.repeat(32);
 const ACADEMY = '11111111-2222-4333-8444-555555555555';
@@ -171,5 +175,30 @@ describe('PurgeAcademyEdgeCacheInterceptor', () => {
     expect(run('POST', { id: ACADEMY }, true).purgeAcademy).not.toHaveBeenCalled();
     expect(run('POST', { id: 'not-a-uuid' }).purgeAcademy).not.toHaveBeenCalled();
     expect(run('POST', {}).purgeAcademy).not.toHaveBeenCalled();
+  });
+});
+
+describe('website draft writes', () => {
+  const skips = (handler: keyof WebsiteController) =>
+    Reflect.getMetadata(SKIP_ACADEMY_EDGE_PURGE, WebsiteController.prototype[handler]) ===
+    true;
+
+  it('do not purge: a page draft is not what a visitor sees', () => {
+    for (const handler of ['createPage', 'updatePage', 'reorderSections'] as const) {
+      expect(skips(handler)).toBe(true);
+    }
+  });
+
+  it('publishing, and anything else that changes the public site, still purges', () => {
+    for (const handler of [
+      'publish',
+      'unpublish',
+      'publishPage',
+      'deletePage',
+      'updateConfiguration',
+      'saveVisualIdentity',
+    ] as const) {
+      expect(skips(handler)).toBe(false);
+    }
   });
 });

@@ -24,10 +24,11 @@ import type { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { EdgeCachePurgeService } from './edge-cache-purge.service';
 
-const SKIP_KEY = 'atlas:skip-academy-edge-purge';
+export const SKIP_ACADEMY_EDGE_PURGE = 'atlas:skip-academy-edge-purge';
 
-/** A write through a decorated controller that changes nothing a visitor sees (an editing-presence heartbeat). */
-export const SkipAcademyEdgePurge = (): MethodDecorator => SetMetadata(SKIP_KEY, true);
+/** A write through a decorated controller that changes nothing a visitor sees (an editing-presence heartbeat, a page's draft). */
+export const SkipAcademyEdgePurge = (): MethodDecorator =>
+  SetMetadata(SKIP_ACADEMY_EDGE_PURGE, true);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -42,7 +43,8 @@ export class PurgeAcademyEdgeCacheInterceptor implements NestInterceptor {
     if (context.getType() !== 'http') return next.handle();
     const request = context.switchToHttp().getRequest<Request>();
     if (request.method === 'GET' || request.method === 'HEAD') return next.handle();
-    if (this.reflector.get<boolean>(SKIP_KEY, context.getHandler())) return next.handle();
+    if (this.reflector.get<boolean>(SKIP_ACADEMY_EDGE_PURGE, context.getHandler()))
+      return next.handle();
     const params = (request.params ?? {}) as Record<string, string | undefined>;
     const academyId = params.academyId ?? params.id;
     if (!academyId || !UUID.test(academyId)) return next.handle();
