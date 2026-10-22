@@ -2954,15 +2954,38 @@ enum ContactSubmissionStatus {
   @@map("contact_submission_status")
 }
 
+/// CMS phase 3d (batch C) — which public form a submission came from: the
+/// Contact section's form, or a "register your interest" section
+/// (`interestForm`). Both arrive through the same endpoint and inbox.
+enum ContactSubmissionKind {
+  contact
+  interest
+
+  @@map("contact_submission_kind")
+}
+
 model ContactSubmission {
-  id        String                  @id @default(uuid())
-  academyId String                  @map("academy_id")
-  academy   Academy                 @relation(fields: [academyId], references: [id], onDelete: Cascade)
-  name      String
-  email     String
-  message   String
-  status    ContactSubmissionStatus @default(new)
-  createdAt DateTime                @default(now()) @map("created_at")
+  id           String                  @id @default(uuid())
+  academyId    String                  @map("academy_id")
+  academy      Academy                 @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  name         String
+  /// Empty for an interest submission whose form did not ask for one.
+  email        String
+  /// Empty for an interest submission sent without a message.
+  message      String
+  status       ContactSubmissionStatus @default(new)
+  createdAt    DateTime                @default(now()) @map("created_at")
+  /// CMS phase 3d (batch C) — every column below is additive; a contact
+  /// message keeps `kind = contact` and leaves the rest empty.
+  kind         ContactSubmissionKind   @default(contact)
+  /// An interest submission's phone, server-normalised (both or neither).
+  phoneE164    String?                 @map("phone_e164") @db.VarChar(16)
+  phoneCountry String?                 @map("phone_country") @db.VarChar(2)
+  /// The option the visitor chose, as the form showed it (the section's
+  /// option label at the time, in the visitor's language).
+  choice       String?                 @db.VarChar(80)
+  /// The choice list's own label at the time ("Grade", "Course").
+  choiceLabel  String?                 @map("choice_label") @db.VarChar(60)
 
   @@index([academyId, status])
   @@map("contact_submissions")

@@ -206,6 +206,12 @@ export const SECTION_TYPES = [
   'video',
   'pricing',
   'countdown',
+  // CMS phase 3d (batch C) — shared by every theme, each with a renderer:
+  // the "register your interest" form (it reaches the academy's Messages
+  // like the contact form), a slim notice strip and a comparison table.
+  'interestForm',
+  'announcementBar',
+  'comparison',
 ] as const;
 
 /**
@@ -270,6 +276,42 @@ export const COUNTDOWN_DEADLINE_PATTERN =
 /** An IANA time zone name (`Africa/Cairo`, `UTC`) — the academy's, for showing the deadline. */
 export const TIME_ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+){0,2}$/;
 export const MAX_TIME_ZONE_LENGTH = 64;
+
+/*
+ * CMS phase 3d (batch C) — the "register your interest" form, the notice
+ * strip and the comparison table. Characters per language, like every limit
+ * above; mirrored exactly by the frontend's `website.constants.ts` and
+ * proven at the boundaries by the parity cases.
+ */
+export const MAX_INTEREST_FORM_DESCRIPTION_LENGTH = 280;
+/** The choice list's own label ("Course", "Grade"). */
+export const MAX_INTEREST_CHOICE_LABEL_LENGTH = 60;
+export const MAX_INTEREST_OPTIONS = 12;
+export const MAX_INTEREST_OPTION_LENGTH = 80;
+export const MAX_INTEREST_SUCCESS_MESSAGE_LENGTH = 200;
+/**
+ * How the form shows one of its optional fields (email, the choice list, a
+ * message): not at all, as optional, or as required. Name and phone are
+ * always shown and required.
+ */
+export const INTEREST_FIELD_MODES = ['hidden', 'optional', 'required'] as const;
+export const MAX_ANNOUNCEMENT_TEXT_LENGTH = 140;
+/**
+ * The notice strip's ground, drawn by each theme from its own palette —
+ * named, never a colour: the brand's own fill, the theme's soft ground or
+ * its dark ground. Every one keeps the text and the button at 4.5:1.
+ */
+export const ANNOUNCEMENT_TONES = ['brand', 'soft', 'dark'] as const;
+export const MAX_COMPARISON_DESCRIPTION_LENGTH = 280;
+export const MIN_COMPARISON_COLUMNS = 2;
+export const MAX_COMPARISON_COLUMNS = 4;
+export const MAX_COMPARISON_ROWS = 15;
+export const MAX_COMPARISON_COLUMN_LABEL_LENGTH = 40;
+export const MAX_COMPARISON_ROW_LABEL_LENGTH = 80;
+/** A short text cell ("Twice a week", "مرتين أسبوعيًا"). */
+export const MAX_COMPARISON_CELL_TEXT_LENGTH = 40;
+/** A cell: ✓ (`yes`), ✗ (`no`) or a short text in both languages. */
+export const COMPARISON_CELL_VALUES = ['yes', 'no', 'text'] as const;
 
 /** `courseSpotlight`: how many syllabus sections it may list — matches the frontend `MIN/MAX_SPOTLIGHT_MODULES`. */
 export const MIN_SPOTLIGHT_MODULES = 1;

@@ -87,6 +87,7 @@ function collectSectionReferences(
       case 'featureSplit':
       case 'whatsappBar':
       case 'countdown':
+      case 'announcementBar': // CMS phase 3d (batch C) — its one button
         addButtons(section.config);
         break;
       case 'pricing':

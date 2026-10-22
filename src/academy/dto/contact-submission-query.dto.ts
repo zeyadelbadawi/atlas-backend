@@ -3,7 +3,8 @@
  * query (page, pageSize ≤ 100, search, sort) plus the filters the Owner's
  * Messages page offers: status and a received-date range.
  *
- * `search` matches name, email or message (case-insensitive). `from`/`to`
+ * `search` matches name, email, message, phone or the chosen option
+ * (case-insensitive). `kind` narrows to one form. `from`/`to`
  * are calendar dates (`YYYY-MM-DD`), inclusive, in UTC.
  */
 import { IsIn, IsOptional, Matches, MaxLength } from 'class-validator';
@@ -18,6 +19,11 @@ export class ContactSubmissionQueryDto extends CollectionQueryDto {
   @IsOptional()
   @IsIn(['new', 'read', 'archived'])
   readonly status?: 'new' | 'read' | 'archived';
+
+  /** CMS phase 3d (batch C) — only Contact form messages, or only "register your interest" submissions. */
+  @IsOptional()
+  @IsIn(['contact', 'interest'])
+  readonly kind?: 'contact' | 'interest';
 
   @IsOptional()
   @Matches(ISO_DATE, { message: 'validation:date' })

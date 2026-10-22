@@ -6915,6 +6915,3016 @@
         }
       },
       "valid": false
+    },
+    {
+      "name": "interestForm with every field",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "optional",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          },
+          {
+            "id": "g2",
+            "label": {
+              "en": "Second secondary",
+              "ar": "الصف الثاني الثانوي"
+            }
+          }
+        ],
+        "description": {
+          "en": "We will call you back.",
+          "ar": "سنتصل بك."
+        },
+        "choiceLabel": {
+          "en": "Grade",
+          "ar": "الصف"
+        },
+        "submitLabel": {
+          "en": "Send",
+          "ar": "أرسل"
+        },
+        "successMessage": {
+          "en": "Thank you, we will call you.",
+          "ar": "شكرًا، سنتصل بك."
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "title.ar",
+        "description.en",
+        "description.ar",
+        "emailField",
+        "choiceField",
+        "choiceLabel.en",
+        "choiceLabel.ar",
+        "options.0.id",
+        "options.0.label.ar",
+        "options.1.id",
+        "options.1.label.en",
+        "messageField",
+        "submitLabel.en",
+        "submitLabel.ar",
+        "successMessage.en",
+        "successMessage.ar"
+      ]
+    },
+    {
+      "name": "interestForm minimal (name and phone only)",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Join us",
+          "ar": ""
+        },
+        "emailField": "hidden",
+        "choiceField": "hidden",
+        "messageField": "hidden",
+        "options": []
+      },
+      "valid": true,
+      "preserves": [
+        "emailField",
+        "choiceField",
+        "messageField"
+      ]
+    },
+    {
+      "name": "interestForm field mode hidden",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "hidden",
+        "choiceField": "hidden",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "emailField",
+        "choiceField",
+        "messageField"
+      ]
+    },
+    {
+      "name": "interestForm field mode optional",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "optional",
+        "messageField": "optional",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "emailField",
+        "choiceField",
+        "messageField"
+      ]
+    },
+    {
+      "name": "interestForm field mode required",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "required",
+        "choiceField": "required",
+        "messageField": "required",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "emailField",
+        "choiceField",
+        "messageField"
+      ]
+    },
+    {
+      "name": "interestForm rejects an unknown field mode",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "shown",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm rejects a missing field mode",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm rejects an empty English title",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "",
+          "ar": "سجّل"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm accepts a legacy string title",
+      "type": "interestForm",
+      "config": {
+        "title": "Register your interest",
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "interestForm accepts 12 options",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "o0",
+            "label": {
+              "en": "Option 0",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o1",
+            "label": {
+              "en": "Option 1",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o2",
+            "label": {
+              "en": "Option 2",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o3",
+            "label": {
+              "en": "Option 3",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o4",
+            "label": {
+              "en": "Option 4",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o5",
+            "label": {
+              "en": "Option 5",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o6",
+            "label": {
+              "en": "Option 6",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o7",
+            "label": {
+              "en": "Option 7",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o8",
+            "label": {
+              "en": "Option 8",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o9",
+            "label": {
+              "en": "Option 9",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o10",
+            "label": {
+              "en": "Option 10",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o11",
+            "label": {
+              "en": "Option 11",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "options.11.id",
+        "options.11.label.en"
+      ]
+    },
+    {
+      "name": "interestForm rejects 13 options",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "o0",
+            "label": {
+              "en": "Option 0",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o1",
+            "label": {
+              "en": "Option 1",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o2",
+            "label": {
+              "en": "Option 2",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o3",
+            "label": {
+              "en": "Option 3",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o4",
+            "label": {
+              "en": "Option 4",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o5",
+            "label": {
+              "en": "Option 5",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o6",
+            "label": {
+              "en": "Option 6",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o7",
+            "label": {
+              "en": "Option 7",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o8",
+            "label": {
+              "en": "Option 8",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o9",
+            "label": {
+              "en": "Option 9",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o10",
+            "label": {
+              "en": "Option 10",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o11",
+            "label": {
+              "en": "Option 11",
+              "ar": ""
+            }
+          },
+          {
+            "id": "o12",
+            "label": {
+              "en": "Option 12",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm option label at 80 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "o1",
+            "label": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": "بببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببب"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "interestForm option label at 81 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "o1",
+            "label": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": "ببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببب"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm rejects an option without English text",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "o1",
+            "label": {
+              "en": "",
+              "ar": "خيار"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm rejects an option without an id",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "",
+            "label": {
+              "en": "Option",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm description at 280 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "interestForm description at 281 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm description Arabic over 280 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "description": {
+          "en": "",
+          "ar": "ببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببب"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm choiceLabel at 60 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "choiceLabel": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "interestForm choiceLabel at 61 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "choiceLabel": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm choiceLabel Arabic over 60 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "choiceLabel": {
+          "en": "",
+          "ar": "ببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببب"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm submitLabel at 40 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "submitLabel": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "interestForm submitLabel at 41 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "submitLabel": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm submitLabel Arabic over 40 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "submitLabel": {
+          "en": "",
+          "ar": "ببببببببببببببببببببببببببببببببببببببببب"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm successMessage at 200 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "successMessage": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "interestForm successMessage at 201 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "successMessage": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "interestForm successMessage Arabic over 200 characters",
+      "type": "interestForm",
+      "config": {
+        "title": {
+          "en": "Register your interest",
+          "ar": "سجّل اهتمامك"
+        },
+        "emailField": "optional",
+        "choiceField": "required",
+        "messageField": "hidden",
+        "options": [
+          {
+            "id": "g1",
+            "label": {
+              "en": "First secondary",
+              "ar": "الصف الأول الثانوي"
+            }
+          }
+        ],
+        "successMessage": {
+          "en": "",
+          "ar": "ببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببب"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "announcementBar with every field",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "brand",
+        "cta": {
+          "label": {
+            "en": "Register now",
+            "ar": "سجّل الآن"
+          },
+          "pageId": "p-join",
+          "style": "secondary"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "text.en",
+        "text.ar",
+        "tone",
+        "cta.label.ar",
+        "cta.pageId",
+        "cta.style"
+      ]
+    },
+    {
+      "name": "announcementBar without a button",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "brand"
+      },
+      "valid": true,
+      "preserves": [
+        "text.ar",
+        "tone"
+      ]
+    },
+    {
+      "name": "announcementBar tone brand",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "brand"
+      },
+      "valid": true,
+      "preserves": [
+        "tone"
+      ]
+    },
+    {
+      "name": "announcementBar tone soft",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "soft"
+      },
+      "valid": true,
+      "preserves": [
+        "tone"
+      ]
+    },
+    {
+      "name": "announcementBar tone dark",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "dark"
+      },
+      "valid": true,
+      "preserves": [
+        "tone"
+      ]
+    },
+    {
+      "name": "announcementBar rejects tone red",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "red"
+      },
+      "valid": false
+    },
+    {
+      "name": "announcementBar rejects tone #ff0000",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "#ff0000"
+      },
+      "valid": false
+    },
+    {
+      "name": "announcementBar rejects tone light",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "light"
+      },
+      "valid": false
+    },
+    {
+      "name": "announcementBar rejects a missing tone",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "announcementBar text at 140 characters",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": "بببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببب"
+        },
+        "tone": "brand"
+      },
+      "valid": true
+    },
+    {
+      "name": "announcementBar text at 141 characters",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": "ببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببب"
+        },
+        "tone": "brand"
+      },
+      "valid": false
+    },
+    {
+      "name": "announcementBar rejects an empty English text",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "",
+          "ar": "مفتوح"
+        },
+        "tone": "brand"
+      },
+      "valid": false
+    },
+    {
+      "name": "announcementBar rejects an unsafe button link",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "brand",
+        "cta": {
+          "label": {
+            "en": "Open",
+            "ar": ""
+          },
+          "url": "javascript:alert(1)"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "announcementBar WhatsApp button",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "brand",
+        "cta": {
+          "label": {
+            "en": "Chat",
+            "ar": "راسلنا"
+          },
+          "whatsapp": "+201001234567",
+          "whatsappMessage": {
+            "en": "Hello",
+            "ar": "مرحبًا"
+          }
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "cta.whatsapp",
+        "cta.whatsappMessage.ar"
+      ]
+    },
+    {
+      "name": "announcementBar hotline button",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "brand",
+        "cta": {
+          "label": {
+            "en": "Call",
+            "ar": "اتصل"
+          },
+          "phone": "19999"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "cta.phone"
+      ]
+    },
+    {
+      "name": "announcementBar sign-up button keeps its target",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "brand",
+        "cta": {
+          "label": {
+            "en": "Join",
+            "ar": ""
+          },
+          "authAction": "signUp"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "cta.authAction"
+      ]
+    },
+    {
+      "name": "announcementBar rejects a button without an English label",
+      "type": "announcementBar",
+      "config": {
+        "text": {
+          "en": "Registration for 2026/2027 is open",
+          "ar": "التسجيل للعام 2026/2027 مفتوح"
+        },
+        "tone": "brand",
+        "cta": {
+          "label": {
+            "en": "",
+            "ar": "انضم"
+          },
+          "pageId": "p1"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison with every field",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          },
+          {
+            "id": "tutor",
+            "label": {
+              "en": "Private tutor",
+              "ar": "مدرس خصوصي"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              },
+              {
+                "column": "tutor",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ],
+        "description": {
+          "en": "A side-by-side look.",
+          "ar": "مقارنة جنبًا إلى جنب."
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "title.ar",
+        "description.en",
+        "description.ar",
+        "columns.0.id",
+        "columns.0.label.ar",
+        "columns.0.highlighted",
+        "columns.2.label.en",
+        "rows.0.id",
+        "rows.0.label.ar",
+        "rows.0.cells.0.column",
+        "rows.0.cells.0.value",
+        "rows.0.cells.1.value",
+        "rows.0.cells.2.column",
+        "rows.1.cells.0.value",
+        "rows.1.cells.0.text.en",
+        "rows.1.cells.0.text.ar",
+        "rows.1.cells.1.text.ar"
+      ]
+    },
+    {
+      "name": "comparison with columns and no rows yet",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": []
+      },
+      "valid": true,
+      "preserves": [
+        "columns.1.label.ar"
+      ]
+    },
+    {
+      "name": "comparison row without cells (dashes)",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": []
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "rows.0.label.en"
+      ]
+    },
+    {
+      "name": "comparison rejects a single column",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          }
+        ],
+        "rows": []
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison accepts 4 columns",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "c0",
+            "label": {
+              "en": "Col 0",
+              "ar": ""
+            }
+          },
+          {
+            "id": "c1",
+            "label": {
+              "en": "Col 1",
+              "ar": ""
+            }
+          },
+          {
+            "id": "c2",
+            "label": {
+              "en": "Col 2",
+              "ar": ""
+            }
+          },
+          {
+            "id": "c3",
+            "label": {
+              "en": "Col 3",
+              "ar": ""
+            }
+          }
+        ],
+        "rows": []
+      },
+      "valid": true,
+      "preserves": [
+        "columns.3.id"
+      ]
+    },
+    {
+      "name": "comparison rejects 5 columns",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "c0",
+            "label": {
+              "en": "Col 0",
+              "ar": ""
+            }
+          },
+          {
+            "id": "c1",
+            "label": {
+              "en": "Col 1",
+              "ar": ""
+            }
+          },
+          {
+            "id": "c2",
+            "label": {
+              "en": "Col 2",
+              "ar": ""
+            }
+          },
+          {
+            "id": "c3",
+            "label": {
+              "en": "Col 3",
+              "ar": ""
+            }
+          },
+          {
+            "id": "c4",
+            "label": {
+              "en": "Col 4",
+              "ar": ""
+            }
+          }
+        ],
+        "rows": []
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison accepts 15 rows",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r0",
+            "label": {
+              "en": "Row 0",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r1",
+            "label": {
+              "en": "Row 1",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Row 2",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r3",
+            "label": {
+              "en": "Row 3",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r4",
+            "label": {
+              "en": "Row 4",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r5",
+            "label": {
+              "en": "Row 5",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r6",
+            "label": {
+              "en": "Row 6",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r7",
+            "label": {
+              "en": "Row 7",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r8",
+            "label": {
+              "en": "Row 8",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r9",
+            "label": {
+              "en": "Row 9",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r10",
+            "label": {
+              "en": "Row 10",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r11",
+            "label": {
+              "en": "Row 11",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r12",
+            "label": {
+              "en": "Row 12",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r13",
+            "label": {
+              "en": "Row 13",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          },
+          {
+            "id": "r14",
+            "label": {
+              "en": "Row 14",
+              "ar": ""
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "rows.14.id",
+        "rows.14.cells.0.value"
+      ]
+    },
+    {
+      "name": "comparison rejects 16 rows",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r0",
+            "label": {
+              "en": "Row 0",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r1",
+            "label": {
+              "en": "Row 1",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Row 2",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r3",
+            "label": {
+              "en": "Row 3",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r4",
+            "label": {
+              "en": "Row 4",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r5",
+            "label": {
+              "en": "Row 5",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r6",
+            "label": {
+              "en": "Row 6",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r7",
+            "label": {
+              "en": "Row 7",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r8",
+            "label": {
+              "en": "Row 8",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r9",
+            "label": {
+              "en": "Row 9",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r10",
+            "label": {
+              "en": "Row 10",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r11",
+            "label": {
+              "en": "Row 11",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r12",
+            "label": {
+              "en": "Row 12",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r13",
+            "label": {
+              "en": "Row 13",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r14",
+            "label": {
+              "en": "Row 14",
+              "ar": ""
+            },
+            "cells": []
+          },
+          {
+            "id": "r15",
+            "label": {
+              "en": "Row 15",
+              "ar": ""
+            },
+            "cells": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison column label at 40 characters",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": "بببببببببببببببببببببببببببببببببببببببب"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "comparison column label at 41 characters",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": "ببببببببببببببببببببببببببببببببببببببببب"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison row label at 80 characters",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": "بببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببب"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "comparison row label at 81 characters",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": "ببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببببب"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison cell text at 40 characters",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "ar": "بببببببببببببببببببببببببببببببببببببببب"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "comparison cell text at 41 characters",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "ar": "ببببببببببببببببببببببببببببببببببببببببب"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison description at 280 characters",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ],
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "comparison description at 281 characters",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ],
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison rejects a text cell without text",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text"
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison rejects a text cell without English text",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison rejects an unknown cell value",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "maybe"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison rejects a cell in a column that does not exist",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "nowhere",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison rejects two cells in one column",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "us",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison rejects a column without an English label",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison rejects an empty English title",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "",
+          "ar": "لماذا"
+        },
+        "columns": [
+          {
+            "id": "us",
+            "label": {
+              "en": "Our academy",
+              "ar": "أكاديميتنا"
+            },
+            "highlighted": true
+          },
+          {
+            "id": "alone",
+            "label": {
+              "en": "Studying alone",
+              "ar": "المذاكرة وحدك"
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "comparison rejects missing columns",
+      "type": "comparison",
+      "config": {
+        "title": {
+          "en": "Why study with us",
+          "ar": "لماذا تدرس معنا"
+        },
+        "rows": [
+          {
+            "id": "r1",
+            "label": {
+              "en": "Weekly live classes",
+              "ar": "حصص مباشرة أسبوعية"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "yes"
+              },
+              {
+                "column": "alone",
+                "value": "no"
+              }
+            ]
+          },
+          {
+            "id": "r2",
+            "label": {
+              "en": "Follow-up",
+              "ar": "المتابعة"
+            },
+            "cells": [
+              {
+                "column": "us",
+                "value": "text",
+                "text": {
+                  "en": "Every week",
+                  "ar": "كل أسبوع"
+                }
+              },
+              {
+                "column": "alone",
+                "value": "text",
+                "text": {
+                  "en": "None",
+                  "ar": "لا يوجد"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
     }
   ]
 }
