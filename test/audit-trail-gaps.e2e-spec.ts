@@ -22,6 +22,7 @@ import {
   seedPlan,
   seedRevenueLedgerEntry,
 } from './utils/db-admin';
+import { slugSuffix } from './utils/slug-suffix';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -194,9 +195,10 @@ describe('B0-ANL-02 audit trail gaps (e2e)', () => {
       await admin.tenantSubscription.create({
         data: { organizationId: org.id, planId: plan.id, status: 'active' },
       });
-      const subdomain = `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        .toLowerCase()
-        .slice(0, 50);
+      const subdomain =
+        `${label}-${slugSuffix()}-${Math.random().toString(36).slice(2, 8)}`
+          .toLowerCase()
+          .slice(0, 50);
       // Seeded without a worker job, so it stays non-terminal until the
       // endpoint under test acts on it.
       const seeded = await admin.provisioningRequest.create({

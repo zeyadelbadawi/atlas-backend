@@ -12,6 +12,7 @@ import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import type { PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — P7 Instructor Operations & Community tables (direct, no guards)', () => {
   let app: INestApplication;
@@ -44,7 +45,7 @@ describe('Row-Level Security — P7 Instructor Operations & Community tables (di
     const org = await admin.organization.create({
       data: {
         name: uniqueName(label),
-        slug: `${label}-${Date.now()}`,
+        slug: `${label}-${slugSuffix()}`,
         ownerUserId: owner.id,
       },
     });
@@ -55,7 +56,7 @@ describe('Row-Level Security — P7 Instructor Operations & Community tables (di
       data: {
         organizationId: org.id,
         name: uniqueName(label),
-        slug: `${label}-${Date.now()}`,
+        slug: `${label}-${slugSuffix()}`,
       },
     });
     // Phase 1 (Extended Scope, dependency A/B) — reproduces the real
@@ -68,7 +69,7 @@ describe('Row-Level Security — P7 Instructor Operations & Community tables (di
       data: {
         academyId: academy.id,
         title: label,
-        slug: `${label}-${Date.now()}`,
+        slug: `${label}-${slugSuffix()}`,
         status: 'published',
         visibility: 'public',
       },
@@ -150,7 +151,7 @@ describe('Row-Level Security — P7 Instructor Operations & Community tables (di
           academyId: academy.id,
           authorId: owner.id,
           title: 'Mine',
-          slug: `rls-blog-author-${Date.now()}`,
+          slug: `rls-blog-author-${slugSuffix()}`,
           content: 'x',
         },
       }),

@@ -18,6 +18,7 @@ import { createAdminPrisma } from './utils/db-admin';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { PlatformZoomService } from '../src/platform/services/platform-zoom.service';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
   let app: INestApplication;
@@ -252,7 +253,7 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
         data: {
           academyId: seeded.academy.id,
           title: 'Rec Course',
-          slug: `rc-${Date.now()}`,
+          slug: `rc-${slugSuffix()}`,
         },
       });
       const session = await admin.liveSession.create({
@@ -292,7 +293,7 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
         data: {
           academyId: seeded.academy.id,
           title: 'Att Course',
-          slug: `ac-${Date.now()}`,
+          slug: `ac-${slugSuffix()}`,
         },
       });
       // ended + reconciled
@@ -360,7 +361,7 @@ describe('Platform Zoom Operations (real Postgres, RLS enforced)', () => {
       const a = await seedAcademy('zops-p2rls-a', 'connected');
       const b = await seedAcademy('zops-p2rls-b', 'connected');
       const course = await admin.course.create({
-        data: { academyId: a.academy.id, title: 'X', slug: `x-${Date.now()}` },
+        data: { academyId: a.academy.id, title: 'X', slug: `x-${slugSuffix()}` },
       });
       const s2 = await admin.liveSession.create({
         data: {

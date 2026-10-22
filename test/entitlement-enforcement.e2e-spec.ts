@@ -28,6 +28,7 @@ import {
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -132,7 +133,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
           academyName: uniqueName('Second Academy'),
-          requestedSubdomain: `second-academy-${Date.now()}`,
+          requestedSubdomain: `second-academy-${slugSuffix()}`,
           idempotencyKey: `second-academy-${Date.now()}`,
         })
         .expect(201);
@@ -170,7 +171,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
           academyName: uniqueName('Within Limit Academy'),
-          requestedSubdomain: `within-limit-${Date.now()}`,
+          requestedSubdomain: `within-limit-${slugSuffix()}`,
           idempotencyKey: `within-limit-${Date.now()}`,
         })
         .expect(201);
@@ -188,7 +189,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
       });
 
       for (let i = 0; i < 3; i += 1) {
-        const slug = `unlimited-academy-${i}-${Date.now()}`;
+        const slug = `unlimited-academy-${i}-${slugSuffix()}`;
         await request(app.getHttpServer())
           .post(`/organizations/${org.id}/provisioning-requests`)
           .set('Authorization', `Bearer ${owner.accessToken}`)
@@ -225,7 +226,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
           academyName: uniqueName('Already Have One'),
-          requestedSubdomain: `already-have-one-${Date.now()}`,
+          requestedSubdomain: `already-have-one-${slugSuffix()}`,
           idempotencyKey: `already-have-one-${Date.now()}`,
         })
         .expect(201);
@@ -235,7 +236,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
           academyName: uniqueName('Via Provisioning'),
-          requestedSubdomain: `ent-prov-${Date.now()}`,
+          requestedSubdomain: `ent-prov-${slugSuffix()}`,
           idempotencyKey: `ent-prov-idem-${Date.now()}`,
         })
         .expect(201);
@@ -302,7 +303,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
           .set('Authorization', `Bearer ${caller.accessToken}`)
           .send({
             academyName: uniqueName(`${role} Attempted Academy`),
-            requestedSubdomain: `${role}-attempt-${Date.now()}`,
+            requestedSubdomain: `${role}-attempt-${slugSuffix()}`,
             idempotencyKey: `${role}-attempt-${Date.now()}`,
           });
         // Refused before any entitlement check — an Academy-level role is
@@ -336,7 +337,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${outsider.accessToken}`)
         .send({
           academyName: uniqueName('Outsider Attempted Academy'),
-          requestedSubdomain: `outsider-attempt-${Date.now()}`,
+          requestedSubdomain: `outsider-attempt-${slugSuffix()}`,
           idempotencyKey: `outsider-attempt-${Date.now()}`,
         })
         .expect(403);
@@ -367,7 +368,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
           title: 'Course One',
-          slug: `course-one-${Date.now()}`,
+          slug: `course-one-${slugSuffix()}`,
           visibility: 'private',
           pricing: { type: 'free' },
         })
@@ -378,7 +379,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
           title: 'Course Two',
-          slug: `course-two-${Date.now()}`,
+          slug: `course-two-${slugSuffix()}`,
           visibility: 'private',
           pricing: { type: 'free' },
         })
@@ -404,7 +405,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
           title: 'Within Limit Course',
-          slug: `within-limit-course-${Date.now()}`,
+          slug: `within-limit-course-${slugSuffix()}`,
           visibility: 'private',
           pricing: { type: 'free' },
         })
@@ -598,7 +599,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
           academyName: uniqueName('No Sub Academy'),
-          requestedSubdomain: `no-sub-academy-${Date.now()}`,
+          requestedSubdomain: `no-sub-academy-${slugSuffix()}`,
           idempotencyKey: `no-sub-academy-${Date.now()}`,
         });
       // The refusal moved from 403 to 409 with the route: provisioning
@@ -636,7 +637,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
           academyName: uniqueName('Expired Org Academy'),
-          requestedSubdomain: `expired-academy-${Date.now()}`,
+          requestedSubdomain: `expired-academy-${slugSuffix()}`,
           idempotencyKey: `expired-academy-${Date.now()}`,
         });
       // 409 via provisioning, where the old direct route returned 403 —
@@ -680,7 +681,7 @@ describe('Entitlement & Plan Enforcement (e2e) — Phase 2', () => {
         .set('Authorization', `Bearer ${owner.accessToken}`)
         .send({
           academyName: uniqueName('Lapsed Trial Academy'),
-          requestedSubdomain: `lapsed-trial-academy-${Date.now()}`,
+          requestedSubdomain: `lapsed-trial-academy-${slugSuffix()}`,
           idempotencyKey: `lapsed-trial-academy-${Date.now()}`,
         });
       // This used to be accepted (201) and refused asynchronously: the

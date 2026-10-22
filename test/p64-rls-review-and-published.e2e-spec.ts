@@ -22,6 +22,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('P64 Phase 1 — RLS with published+public fixtures and the review tier', () => {
   let app: INestApplication;
@@ -54,7 +55,7 @@ describe('P64 Phase 1 — RLS with published+public fixtures and the review tier
         data: {
           id,
           name: uniqueName(label),
-          slug: `${label}-${Date.now()}`,
+          slug: `${label}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -136,7 +137,7 @@ describe('P64 Phase 1 — RLS with published+public fixtures and the review tier
         data: {
           organizationId: org.id,
           name: uniqueName(label),
-          slug: `${label}-${Date.now()}`,
+          slug: `${label}-${slugSuffix()}`,
         },
       });
       for (const [user, role] of [
@@ -158,7 +159,7 @@ describe('P64 Phase 1 — RLS with published+public fixtures and the review tier
         data: {
           academyId: academy.id,
           title: `${label} course`,
-          slug: `${label}-course-${Date.now()}`,
+          slug: `${label}-course-${slugSuffix()}`,
           // The shape the old spec never created.
           status: 'published',
           visibility: 'public',
@@ -168,7 +169,7 @@ describe('P64 Phase 1 — RLS with published+public fixtures and the review tier
         data: {
           academyId: academy.id,
           title: `${label} other`,
-          slug: `${label}-other-${Date.now()}`,
+          slug: `${label}-other-${slugSuffix()}`,
           status: 'published',
           visibility: 'public',
         },
@@ -436,7 +437,7 @@ describe('P64 Phase 1 — RLS with published+public fixtures and the review tier
           data: {
             academyId: w.academy.id,
             title: 'Draft',
-            slug: `draft-${Date.now()}`,
+            slug: `draft-${slugSuffix()}`,
             status: 'draft',
             visibility: 'private',
           },

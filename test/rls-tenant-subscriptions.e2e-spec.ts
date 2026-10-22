@@ -18,6 +18,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — tenant_subscriptions / tenant_add_ons / tenant_usage (direct, no guards)', () => {
   let app: INestApplication;
@@ -51,7 +52,7 @@ describe('Row-Level Security — tenant_subscriptions / tenant_add_ons / tenant_
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -68,7 +69,7 @@ describe('Row-Level Security — tenant_subscriptions / tenant_add_ons / tenant_
     // dimension" design directly (not merely asserting it in a comment).
     return prisma.plan.create({
       data: {
-        key: `${slugLabel}-${Date.now()}`,
+        key: `${slugLabel}-${slugSuffix()}`,
         name: slugLabel,
         limits: {
           academies: 1,

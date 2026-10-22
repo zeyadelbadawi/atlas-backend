@@ -21,6 +21,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { slugSuffix } from './utils/slug-suffix';
 
 const UNSUPPORTED = [{ field: 'currency', messageKey: 'validation:unsupportedCurrency' }];
 const UNSUPPORTED_PRICE = [
@@ -142,7 +143,7 @@ describe('B0-LRN-05 / B0-COM-05 currency allow-list (e2e)', () => {
       .set(auth(token))
       .send({
         title: 'Priced in dollars',
-        slug: `cur-course-${Date.now()}`,
+        slug: `cur-course-${slugSuffix()}`,
         visibility: 'public',
         pricing: { type: 'paid', amount: 10, currency: 'USD' },
       })
@@ -157,7 +158,7 @@ describe('B0-LRN-05 / B0-COM-05 currency allow-list (e2e)', () => {
       .set(auth(token))
       .send({
         title: 'Priced without a currency',
-        slug: `cur-default-${Date.now()}`,
+        slug: `cur-default-${slugSuffix()}`,
         visibility: 'public',
         pricing: { type: 'paid', amount: 250 },
       })
@@ -170,7 +171,7 @@ describe('B0-LRN-05 / B0-COM-05 currency allow-list (e2e)', () => {
       .set(auth(token))
       .send({
         title: 'Free first',
-        slug: `cur-default-free-${Date.now()}`,
+        slug: `cur-default-free-${slugSuffix()}`,
         visibility: 'public',
         pricing: { type: 'free' },
       })
@@ -191,7 +192,7 @@ describe('B0-LRN-05 / B0-COM-05 currency allow-list (e2e)', () => {
       .set(auth(token))
       .send({
         title: 'Legacy academy course',
-        slug: `cur-default-legacy-${Date.now()}`,
+        slug: `cur-default-legacy-${slugSuffix()}`,
         visibility: 'public',
         pricing: { type: 'paid', amount: 40 },
       })

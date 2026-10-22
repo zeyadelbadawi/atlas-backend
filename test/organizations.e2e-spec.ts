@@ -14,6 +14,7 @@ import { createTestApp, uniqueTestEmail, waitForAsync } from './utils/test-app';
 import { createAdminPrisma } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('POST /organizations (e2e) — Phase P19', () => {
   let app: INestApplication;
@@ -304,7 +305,7 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       .set('Authorization', `Bearer ${client.accessToken}`)
       .send({
         academyName: uniqueName('Too Early Academy'),
-        requestedSubdomain: `too-early-${Date.now()}`,
+        requestedSubdomain: `too-early-${slugSuffix()}`,
         idempotencyKey: `too-early-idem-${Date.now()}`,
       });
     expect([402, 403, 409]).toContain(refused.status);
@@ -320,7 +321,7 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       .set('Authorization', `Bearer ${client.accessToken}`)
       .send({
         academyName: uniqueName('Trial Academy'),
-        requestedSubdomain: `trial-prov-${Date.now()}`,
+        requestedSubdomain: `trial-prov-${slugSuffix()}`,
         idempotencyKey: `trial-prov-idem-${Date.now()}`,
       })
       .expect(201);
@@ -348,7 +349,7 @@ describe('POST /organizations (e2e) — Phase P19', () => {
       .set('Authorization', `Bearer ${client.accessToken}`)
       .send({
         academyName: uniqueName('Should Not Provision'),
-        requestedSubdomain: `no-sub-${Date.now()}`,
+        requestedSubdomain: `no-sub-${slugSuffix()}`,
         idempotencyKey: `no-sub-idem-${Date.now()}`,
       })
       .expect(409);

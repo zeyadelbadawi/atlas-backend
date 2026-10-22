@@ -25,6 +25,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — organizations / organization_memberships (direct, no guards)', () => {
   let app: INestApplication;
@@ -61,7 +62,7 @@ describe('Row-Level Security — organizations / organization_memberships (direc
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -104,7 +105,7 @@ describe('Row-Level Security — organizations / organization_memberships (direc
         return tx.organization.create({
           data: {
             name: uniqueName('Attacker Attempt'),
-            slug: `rls-atk1-${Date.now()}`,
+            slug: `rls-atk1-${slugSuffix()}`,
             ownerUserId: victim.id, // attacker-controlled — not the caller.
           },
         });

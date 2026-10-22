@@ -28,6 +28,7 @@ import {
 } from './utils/db-admin';
 import { StubEmailProvider } from '../src/communications/providers/stub-email.provider';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 jest.setTimeout(120000);
 const PASSWORD = 'correct-horse-battery';
@@ -80,7 +81,7 @@ describe('P64 C8 — academy member onboarding (e2e)', () => {
     // Academies are created through PROVISIONING, not a direct POST —
     // the direct route was removed because it skipped subdomain
     // allocation. Poll for the row the worker writes.
-    const slug = `${label}-${Date.now()}`;
+    const slug = `${label}-${slugSuffix()}`;
     await request(app.getHttpServer())
       .post(`/organizations/${org.id}/provisioning-requests`)
       .set('Authorization', `Bearer ${owner.accessToken}`)

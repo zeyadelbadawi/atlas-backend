@@ -36,6 +36,7 @@ import { TenancyContextService } from '../src/tenancy/services/tenancy-context.s
 import { seedAcademy, seedAcademyMember } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -474,7 +475,7 @@ describe('P62 entitlement concurrency (e2e) — P62-CONC-001..006', () => {
       .set('Authorization', `Bearer ${owner.token}`)
       .send({
         academyName: uniqueName('Over Limit'),
-        requestedSubdomain: `p62-adopt-e2e-${Date.now()}`,
+        requestedSubdomain: `p62-adopt-e2e-${slugSuffix()}`,
         idempotencyKey: `p62-adopt-e2e-${Date.now()}`,
       })
       .expect(201);

@@ -13,6 +13,7 @@
  */
 import { PrismaClient, Prisma } from '@prisma/client';
 import { ORGANIZATION_OWNER_PERMISSIONS } from '../../src/tenancy/constants/organization-permissions.constants';
+import { slugSuffix } from './slug-suffix';
 
 export function createAdminPrisma(): PrismaClient {
   const url = process.env.DATABASE_URL;
@@ -29,7 +30,7 @@ export async function seedOrganizationWithOwner(
 ) {
   // W4 — organization names are unique platform-wide; the name carries the
   // same unique suffix as the slug, so fixtures never collide across runs.
-  const unique = `${slugLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const unique = `${slugLabel}-${slugSuffix()}-${Math.random().toString(36).slice(2)}`;
   const org = await admin.organization.create({
     data: {
       name: unique,
@@ -306,7 +307,7 @@ export async function seedCourseCategory(
   academyId: string,
   nameLabel: string,
 ) {
-  const slug = `${nameLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const slug = `${nameLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${slugSuffix()}-${Math.random().toString(36).slice(2)}`;
   return admin.courseCategory.create({
     data: { academyId, name: nameLabel, slug },
   });
@@ -331,7 +332,7 @@ export async function seedCourse(
     requirements?: string[];
   } = {},
 ) {
-  const slug = `${titleLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const slug = `${titleLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${slugSuffix()}-${Math.random().toString(36).slice(2)}`;
   return admin.course.create({
     data: {
       academyId,

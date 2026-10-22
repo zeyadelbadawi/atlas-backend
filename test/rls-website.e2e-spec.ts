@@ -14,6 +14,7 @@ import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import type { PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — website_configurations / website_pages (direct, no guards)', () => {
   let app: INestApplication;
@@ -50,7 +51,7 @@ describe('Row-Level Security — website_configurations / website_pages (direct,
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -67,7 +68,11 @@ describe('Row-Level Security — website_configurations / website_pages (direct,
         where: { id: organizationId },
       });
       const academy = await tx.academy.create({
-        data: { organizationId, name: uniqueName(label), slug: `${label}-${Date.now()}` },
+        data: {
+          organizationId,
+          name: uniqueName(label),
+          slug: `${label}-${slugSuffix()}`,
+        },
       });
       // Phase 1 (Extended Scope, dependency A) — the real `AcademiesService.create`
       // always gives the creator an `owner` `academy_members` row; this

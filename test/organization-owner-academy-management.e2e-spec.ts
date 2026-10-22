@@ -30,6 +30,7 @@ import {
   seedMembership,
   seedOrganizationWithOwner,
 } from './utils/db-admin';
+import { slugSuffix } from './utils/slug-suffix';
 
 interface Caller {
   readonly userId: string;
@@ -145,7 +146,7 @@ describe('Organization owner manages academies without a staff row (e2e)', () =>
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
         title: 'Owner Course',
-        slug: `owner-course-${Date.now()}`,
+        slug: `owner-course-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
       })
