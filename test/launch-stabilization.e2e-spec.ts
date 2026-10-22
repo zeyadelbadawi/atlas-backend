@@ -41,6 +41,7 @@ import {
   hashOpaqueToken,
 } from '../src/identity/utils/opaque-token.util';
 import { uniqueName } from './utils/unique-name';
+import { sessionTokenFrom } from './utils/session-cookie';
 
 jest.setTimeout(120000);
 
@@ -667,6 +668,18 @@ describe('Launch Stabilization — Plan A (e2e)', () => {
       expect(me.body.organizationMemberships).toEqual([]);
       expect(me.body.principalKind).toBe('learner');
       expect(bSession.body.user.organizations).toEqual([]);
+
+      // The user a refresh carries is scoped the same way as /users/me.
+      const refreshed = await http()
+        .post('/auth/refresh')
+        .set('Host', b.host)
+        .send({ refreshToken: sessionTokenFrom(bSession) })
+        .expect(200);
+      expect(
+        refreshed.body.user.academies.map((x: { academyId: string }) => x.academyId),
+      ).toEqual([b.id]);
+      expect(refreshed.body.user.organizations).toEqual([]);
+      expect(refreshed.body.user.organizationMemberships).toEqual([]);
 
       const mgmt = await http().get('/users/me').set(bearer(owner.token)).expect(200);
       expect(
