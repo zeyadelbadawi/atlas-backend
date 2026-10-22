@@ -110,6 +110,18 @@ export const MAX_HERO_TITLE_LENGTH = 70;
 export const MAX_HERO_SUBTITLE_LENGTH = 140;
 export const MAX_HERO_DESCRIPTION_LENGTH = 280;
 export const MAX_CTA_LABEL_LENGTH = 40;
+/** The text a WhatsApp button pre-fills in the visitor's chat. */
+export const MAX_CTA_WHATSAPP_MESSAGE_LENGTH = 300;
+/**
+ * The looks an Owner can give a section button. Absent means the theme's
+ * own look for that position (first button bold, second quieter, third a
+ * text link) — what every button saved before this choice existed shows.
+ */
+export const CTA_STYLES = ['primary', 'secondary', 'link'] as const;
+/** A WhatsApp number, international (E.164): `+`, country code, number — 8 to 15 digits. */
+export const CTA_WHATSAPP_NUMBER_PATTERN = /^\+[1-9]\d{7,14}$/;
+/** A number to call: international (E.164) or a short hotline (3–6 digits, e.g. 19999). */
+export const CTA_PHONE_NUMBER_PATTERN = /^(?:\+[1-9]\d{7,14}|\d{3,6})$/;
 export const MAX_STEPS_TITLE_LENGTH = 80;
 export const MAX_STEPS_DESCRIPTION_LENGTH = 240;
 export const MAX_STEP_TITLE_LENGTH = 60;

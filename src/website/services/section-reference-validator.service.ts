@@ -69,21 +69,26 @@ function collectSectionReferences(
     if (cta?.pageId) pageIds.add(cta.pageId);
   };
 
+  const addButtons = (config: {
+    readonly cta?: Parameters<typeof addCta>[0];
+    readonly secondaryCta?: Parameters<typeof addCta>[0];
+    readonly tertiaryCta?: Parameters<typeof addCta>[0];
+  }) => {
+    addCta(config.cta);
+    addCta(config.secondaryCta);
+    addCta(config.tertiaryCta);
+  };
+
   for (const section of sections) {
     switch (section.type) {
       case 'hero':
-        addCta(section.config.cta);
-        addCta(section.config.secondaryCta);
+      case 'about':
+      case 'cta':
+      case 'featureSplit':
+        addButtons(section.config);
         break;
       case 'featuredCourses':
         (section.config.courseIds ?? []).forEach((id: string) => courseIds.add(id));
-        break;
-      case 'cta':
-        addCta(section.config.cta);
-        addCta(section.config.secondaryCta);
-        break;
-      case 'featureSplit':
-        addCta(section.config.cta);
         break;
       case 'courseSpotlight':
         // Theme 4 plan §6 — the course in focus must be this Academy's own.
