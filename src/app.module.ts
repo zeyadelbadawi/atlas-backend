@@ -77,6 +77,7 @@ import { SearchModule } from './search/search.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { SecurityEventsModule } from './security-events/security-events.module';
 import { SecurityMonitoringModule } from './security-events/security-monitoring.module';
+import { EdgeCacheModule } from './edge-cache/edge-cache.module';
 
 @Module({
   imports: [
@@ -172,6 +173,9 @@ import { SecurityMonitoringModule } from './security-events/security-monitoring.
     // W3 — `@Global()` `security_events` writer (OTP & Security Monitoring),
     // registered beside the other global leaves for the same reason.
     SecurityEventsModule,
+    // `@Global()` — one Cloudflare edge-purge queue for the process
+    // (Academy website pages kept at the edge; `edge-cache/`).
+    EdgeCacheModule,
     CommunicationsModule,
     // W3-compose — Platform Owner "Compose and send" and academy "Messages".
     CommunicationCampaignsModule,

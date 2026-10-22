@@ -720,6 +720,8 @@ const EnvSchema = z.object({
     .regex(/^[0-9a-f]{32}$/i, 'CLOUDFLARE_ZONE_ID must be a 32-character hex zone id')
     .optional(),
   CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
+  // A purge-only token for the zone (edge-cached Academy website pages).
+  CLOUDFLARE_CACHE_PURGE_TOKEN: z.string().min(1).optional(),
 
   // --- Phase P12 — Atlas Subscription Billing (master plan §5.7, §12,
   // §16, §21 P12) ---

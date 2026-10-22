@@ -10,8 +10,9 @@
  * cache's TTL. Kept in Redis next to that cache; if Redis is unreachable
  * the revision reads as 0 and the cache's own TTL still bounds staleness.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { RedisService } from '../../redis/redis.service';
+import { EdgeCachePurgeService } from '../../edge-cache/edge-cache-purge.service';
 
 function revisionKey(academyId: string): string {
   return `public:library-rev:v1:${academyId}`;
@@ -19,7 +20,11 @@ function revisionKey(academyId: string): string {
 
 @Injectable()
 export class WebsiteLibraryRevisionService {
-  constructor(private readonly redisService: RedisService) {}
+  constructor(
+    private readonly redisService: RedisService,
+    // A library edit changes the published pages: their edge copies go too.
+    @Optional() private readonly edgeCachePurgeService?: EdgeCachePurgeService,
+  ) {}
 
   async get(academyId: string): Promise<number> {
     try {
@@ -32,6 +37,7 @@ export class WebsiteLibraryRevisionService {
   }
 
   async bump(academyId: string): Promise<void> {
+    this.edgeCachePurgeService?.purgeAcademy(academyId);
     try {
       await this.redisService.getClient().incr(revisionKey(academyId));
     } catch {

@@ -38,8 +38,9 @@
  * collide (they are, by definition, different keys), so this cannot leak
  * one Academy's identity to a visitor of another Academy's hostname.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { RedisService } from '../../redis/redis.service';
+import { EdgeCachePurgeService } from '../../edge-cache/edge-cache-purge.service';
 
 const HOSTNAME_TTL_SECONDS = 60;
 
@@ -87,7 +88,12 @@ function pagesKey(
 
 @Injectable()
 export class PublicWebsiteCacheService {
-  constructor(private readonly redisService: RedisService) {}
+  constructor(
+    private readonly redisService: RedisService,
+    // The same moments also drop the pages Cloudflare keeps at the edge.
+    // Optional only so unit tests can build this facade with Redis alone.
+    @Optional() private readonly edgeCachePurgeService?: EdgeCachePurgeService,
+  ) {}
 
   async getHostnameResolution<T>(hostname: string): Promise<T | undefined> {
     return this.getJson<T>(hostnameKey(hostname));
@@ -126,9 +132,11 @@ export class PublicWebsiteCacheService {
   /** Called the moment a subscription changes, so a tenant who just paid is served again immediately. */
   async invalidateServingEligibility(organizationId: string): Promise<void> {
     await this.redisService.getClient().del(servingKey(organizationId));
+    await this.edgeCachePurgeService?.purgeOrganization(organizationId);
   }
 
   async invalidateHostnameResolution(hostnames: readonly string[]): Promise<void> {
+    this.edgeCachePurgeService?.purgeHosts(hostnames);
     const keys = hostnames.filter(Boolean).map((hostname) => hostnameKey(hostname));
     if (keys.length === 0) return;
     try {

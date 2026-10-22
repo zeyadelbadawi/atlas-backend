@@ -4,7 +4,16 @@
  * `WebsiteContentController` — `AcademyScopeGuard` resolves
  * `request.academyContext` before any handler runs.
  */
-import { Body, Controller, Delete, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Post,
+  Req,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { ManagementSurfaceGuard } from '../../tenancy/guards/management-surface.guard';
@@ -12,9 +21,13 @@ import { AcademyScopeGuard } from '../../academy/guards/academy-scope.guard';
 import { DomainService } from '../services/domain.service';
 import { AddCustomDomainDto } from '../dto/add-custom-domain.dto';
 import type { AcademyDomainConfigurationResponse } from '../dto/domain.contract';
+import { PurgeAcademyEdgeCacheInterceptor } from '../../edge-cache/purge-academy-edge-cache.interceptor';
 
 @Controller('academies')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
+// Writes here change what the Academy's public website shows: drop its
+// edge-cached pages once the write has committed (`edge-cache/`).
+@UseInterceptors(PurgeAcademyEdgeCacheInterceptor)
 export class DomainController {
   constructor(private readonly domainService: DomainService) {}
 

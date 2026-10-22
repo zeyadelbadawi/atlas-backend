@@ -19,6 +19,7 @@ import {
   Query,
   Req,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
@@ -38,9 +39,13 @@ import type { CourseResponse } from '../dto/course.contract';
 import type { CoursePublishReadinessResponse } from '../services/course-readiness';
 import type { CourseCategoryResponse } from '../dto/course-category.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
+import { PurgeAcademyEdgeCacheInterceptor } from '../../edge-cache/purge-academy-edge-cache.interceptor';
 
 @Controller('academies')
 @UseGuards(JwtAuthGuard, ManagementSurfaceGuard, AcademyScopeGuard)
+// Writes here change what the Academy's public website shows: drop its
+// edge-cached pages once the write has committed (`edge-cache/`).
+@UseInterceptors(PurgeAcademyEdgeCacheInterceptor)
 export class CoursesController {
   constructor(private readonly coursesService: CoursesService) {}
 
