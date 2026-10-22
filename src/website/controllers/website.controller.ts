@@ -153,7 +153,15 @@ export class WebsiteController {
     );
   }
 
+  /*
+    Draft writes: a page's working copy (create, save, reorder) is not what
+    a visitor sees — that is its published copy, which only `publish` /
+    `publishPage` change. So they do not purge the edge cache; the visual
+    editor saves drafts every few seconds, and each would have spent a
+    Cloudflare purge (a handful a minute) on nothing visible.
+  */
   @Post(':id/website/pages')
+  @SkipAcademyEdgePurge()
   async createPage(
     @Req() request: Request,
     @Body() body: CreateWebsitePageDto,
@@ -168,6 +176,7 @@ export class WebsiteController {
   }
 
   @Patch(':id/website/pages/:pageId')
+  @SkipAcademyEdgePurge()
   async updatePage(
     @Req() request: Request,
     @Param('pageId') pageId: string,
@@ -255,6 +264,7 @@ export class WebsiteController {
   }
 
   @Post(':id/website/pages/:pageId/sections/reorder')
+  @SkipAcademyEdgePurge()
   async reorderSections(
     @Req() request: Request,
     @Param('pageId') pageId: string,
