@@ -29,6 +29,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 jest.setTimeout(60000);
 
@@ -150,7 +151,7 @@ describe('Phase 8 — Theme 1 tenant isolation (adversarial)', () => {
       `/organizations/${orgA.id}/provisioning-requests`,
       {
         academyName: uniqueName('P8 Provisioned'),
-        requestedSubdomain: `p8prov${Date.now()}`,
+        requestedSubdomain: `p8prov${slugSuffix()}`,
         idempotencyKey: `p8prov-${Date.now()}`,
       },
     ).expect(201);

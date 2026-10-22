@@ -15,6 +15,7 @@ import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import type { PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — Platform Owner Control Plane (direct, no guards)', () => {
   let app: INestApplication;
@@ -54,7 +55,7 @@ describe('Row-Level Security — Platform Owner Control Plane (direct, no guards
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -71,7 +72,7 @@ describe('Row-Level Security — Platform Owner Control Plane (direct, no guards
         data: {
           organizationId,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
         },
       }),
     );

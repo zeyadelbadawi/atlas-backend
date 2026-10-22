@@ -27,6 +27,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { createAdminPrisma } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 import { extractSubdomainLabel } from '../src/public-website/utils/hostname-normalization.util';
+import { slugSuffix } from './utils/slug-suffix';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -121,7 +122,7 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
   it('P104-SUB-001 — creating an Academy allocates its subdomain', async () => {
     // The regression guard for the whole defect.
     const { token, organizationId } = await seedOwnerWithOrganization('p104-001');
-    const slug = `p104one${Date.now()}`;
+    const slug = `p104one${slugSuffix()}`;
 
     const academy = await createAcademy(token, organizationId, slug);
 
@@ -135,7 +136,7 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
 
   it('P104-SUB-002 — the allocated subdomain resolves to that Academy', async () => {
     const { token, organizationId } = await seedOwnerWithOrganization('p104-002');
-    const slug = `p104two${Date.now()}`;
+    const slug = `p104two${slugSuffix()}`;
     const academy = await createAcademy(token, organizationId, slug);
 
     const resolved = await resolve(slug).expect(200);
@@ -172,7 +173,7 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
     // A public website must be readable by someone who is not signed in —
     // that is the entire point.
     const { token, organizationId } = await seedOwnerWithOrganization('p104-005');
-    const slug = `p104five${Date.now()}`;
+    const slug = `p104five${slugSuffix()}`;
     await createAcademy(token, organizationId, slug);
 
     // No Authorization header anywhere in `resolve`.
@@ -182,7 +183,7 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
 
   it('P104-SUB-006 — the resolution response exposes no private Academy data', async () => {
     const { token, organizationId } = await seedOwnerWithOrganization('p104-006');
-    const slug = `p104six${Date.now()}`;
+    const slug = `p104six${slugSuffix()}`;
     await createAcademy(token, organizationId, slug);
 
     const resolved = await resolve(slug).expect(200);
@@ -210,7 +211,7 @@ describe('Phase 10.4 Academy subdomain resolution (e2e) — P104-SUB-001..008', 
 
   it('P104-SUB-009 — an unpublished Academy resolves with its theme and public colours only', async () => {
     const { token, organizationId } = await seedOwnerWithOrganization('p104-009');
-    const slug = `p104nine${Date.now()}`;
+    const slug = `p104nine${slugSuffix()}`;
     const academy = await createAcademy(token, organizationId, slug);
     // The configuration row is created on the website surface's first read.
     await request(app.getHttpServer())

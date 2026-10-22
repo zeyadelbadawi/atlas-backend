@@ -13,6 +13,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — course_categories / courses / course_instructors / course_sections / course_lessons (direct, no guards)', () => {
   let app: INestApplication;
@@ -46,7 +47,7 @@ describe('Row-Level Security — course_categories / courses / course_instructor
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -63,7 +64,7 @@ describe('Row-Level Security — course_categories / courses / course_instructor
         data: {
           organizationId,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
         },
       }),
     );
@@ -76,7 +77,7 @@ describe('Row-Level Security — course_categories / courses / course_instructor
   ) {
     return tenancyContext.runInTenantContext(organizationId, (tx) =>
       tx.course.create({
-        data: { academyId, title: slugLabel, slug: `${slugLabel}-${Date.now()}` },
+        data: { academyId, title: slugLabel, slug: `${slugLabel}-${slugSuffix()}` },
       }),
     );
   }
@@ -168,7 +169,7 @@ describe('Row-Level Security — course_categories / courses / course_instructor
           data: {
             academyId: academy2.id,
             title: 'Attacker Course',
-            slug: `rls-atk-course-${Date.now()}`,
+            slug: `rls-atk-course-${slugSuffix()}`,
           },
         }),
       ),

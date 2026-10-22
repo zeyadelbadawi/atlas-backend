@@ -21,6 +21,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { slugSuffix } from './utils/slug-suffix';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -87,7 +88,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       owner.userId,
       'course-crud-academy',
     );
-    const slug = `course-crud-${Date.now()}`;
+    const slug = `course-crud-${slugSuffix()}`;
 
     const created = await request(app.getHttpServer())
       .post(`/academies/${academy.id}/courses`)
@@ -204,7 +205,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
         title: 'Paid Course',
-        slug: `course-pricing-${Date.now()}`,
+        slug: `course-pricing-${slugSuffix()}`,
         visibility: 'public',
         pricing: { type: 'paid', amount: 29.99, currency: 'EGP' },
       })
@@ -245,7 +246,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       owner.userId,
       'course-dup-slug-academy',
     );
-    const slug = `dup-slug-${Date.now()}`;
+    const slug = `dup-slug-${slugSuffix()}`;
 
     await request(app.getHttpServer())
       .post(`/academies/${academy.id}/courses`)
@@ -280,7 +281,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       owner.userId,
       'course-cross-slug-b',
     );
-    const slug = `shared-slug-${Date.now()}`;
+    const slug = `shared-slug-${slugSuffix()}`;
 
     await request(app.getHttpServer())
       .post(`/academies/${academyA.id}/courses`)
@@ -349,7 +350,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       .post(`/academies/${academy.id}/courses`)
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
-        slug: `course-missing-${Date.now()}`,
+        slug: `course-missing-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
       });
@@ -490,7 +491,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       owner.userId,
       'course-catmeta-academy',
     );
-    const slug = `course-catmeta-${Date.now()}`;
+    const slug = `course-catmeta-${slugSuffix()}`;
 
     const created = await request(app.getHttpServer())
       .post(`/academies/${academy.id}/courses`)
@@ -540,7 +541,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       owner.userId,
       'course-catmeta-upd-academy',
     );
-    const slug = `course-catmeta-upd-${Date.now()}`;
+    const slug = `course-catmeta-upd-${slugSuffix()}`;
 
     const created = await request(app.getHttpServer())
       .post(`/academies/${academy.id}/courses`)
@@ -608,7 +609,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
         title: 'Bad Level',
-        slug: `course-catmeta-val-${Date.now()}`,
+        slug: `course-catmeta-val-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
         level: 'expert',
@@ -620,7 +621,7 @@ describe('Course Management (e2e) — functional/contract', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
         title: 'Bad Language',
-        slug: `course-catmeta-val2-${Date.now()}`,
+        slug: `course-catmeta-val2-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
         language: 'x'.repeat(80),

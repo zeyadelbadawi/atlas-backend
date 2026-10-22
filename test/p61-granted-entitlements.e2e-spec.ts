@@ -40,6 +40,7 @@ import {
   seedTenantSubscription,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { slugSuffix } from './utils/slug-suffix';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -449,7 +450,7 @@ describe('P61 granted entitlements (e2e) — P61-GRANT-001..018', () => {
       .set('Authorization', `Bearer ${owner.token}`)
       .send({
         title: 'P61 granted course',
-        slug: `p61-granted-${Date.now()}`,
+        slug: `p61-granted-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
       })

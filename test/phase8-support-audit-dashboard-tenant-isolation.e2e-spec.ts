@@ -42,6 +42,7 @@ import {
   PROVISIONING_STEP_ORDER,
 } from '../src/provisioning/dto/provisioning.constants';
 import { ORGANIZATION_MANAGER_PERMISSIONS } from '../src/tenancy/constants/organization-permissions.constants';
+import { slugSuffix } from './utils/slug-suffix';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -163,7 +164,7 @@ describe('Phase 8 support/audit/dashboard tenant isolation (e2e) — P8-TENANT-0
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
         title: 'P8T003 A',
-        slug: `p8t003-a-${Date.now()}`,
+        slug: `p8t003-a-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
       })
@@ -173,7 +174,7 @@ describe('Phase 8 support/audit/dashboard tenant isolation (e2e) — P8-TENANT-0
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
         title: 'P8T003 B SECRET',
-        slug: `p8t003-b-${Date.now()}`,
+        slug: `p8t003-b-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
       })
@@ -414,7 +415,7 @@ describe('Phase 8 support/audit/dashboard tenant isolation (e2e) — P8-TENANT-0
       .set('Authorization', `Bearer ${manager.accessToken}`)
       .send({
         title: 'P8T008 Managed course',
-        slug: `p8t008-${Date.now()}`,
+        slug: `p8t008-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
       })
@@ -445,7 +446,7 @@ describe('Phase 8 support/audit/dashboard tenant isolation (e2e) — P8-TENANT-0
       .set(auth)
       .send({
         title: 'P8T009 Course',
-        slug: `p8t009-${Date.now()}`,
+        slug: `p8t009-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
       })
@@ -542,7 +543,7 @@ describe('Phase 8 support/audit/dashboard tenant isolation (e2e) — P8-TENANT-0
           status: 'failed',
           currentStepKey: 'subdomain',
           requestedAcademyName: 'P8T010 Academy',
-          requestedSubdomain: `p8t010-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          requestedSubdomain: `p8t010-${slugSuffix()}-${Math.random().toString(36).slice(2)}`,
           idempotencyKey: `p8t010-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           attemptCount,
         },

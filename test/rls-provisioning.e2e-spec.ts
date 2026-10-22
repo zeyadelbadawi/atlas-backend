@@ -14,6 +14,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — Provisioning (provisioning_requests/provisioning_steps, direct, no guards)', () => {
   let app: INestApplication;
@@ -50,7 +51,7 @@ describe('Row-Level Security — Provisioning (provisioning_requests/provisionin
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -72,7 +73,7 @@ describe('Row-Level Security — Provisioning (provisioning_requests/provisionin
           organizationId,
           requestedByUserId,
           requestedAcademyName: slugLabel,
-          requestedSubdomain: `${slugLabel}-${Date.now()}`.slice(0, 50),
+          requestedSubdomain: `${slugLabel}-${slugSuffix()}`.slice(0, 50),
           idempotencyKey: `rls-pr-${randomUUID()}`,
         },
       }),
@@ -173,7 +174,7 @@ describe('Row-Level Security — Provisioning (provisioning_requests/provisionin
               organizationId: org2.id,
               requestedByUserId: owner2.id,
               requestedAcademyName: 'mismatched',
-              requestedSubdomain: `rls-pr-badinsert-${Date.now()}`,
+              requestedSubdomain: `rls-pr-badinsert-${slugSuffix()}`,
               idempotencyKey: `rls-pr-badinsert-${randomUUID()}`,
             },
           }),
@@ -316,7 +317,7 @@ describe('Row-Level Security — Provisioning (provisioning_requests/provisionin
           data: {
             organizationId: org.id,
             name: uniqueName('rls-sit'),
-            slug: `rls-sit-${Date.now()}`,
+            slug: `rls-sit-${slugSuffix()}`,
           },
         }),
       );
@@ -334,7 +335,7 @@ describe('Row-Level Security — Provisioning (provisioning_requests/provisionin
           },
         }),
       );
-      const subdomain = `rls-sit-check-${Date.now()}`;
+      const subdomain = `rls-sit-check-${slugSuffix()}`;
 
       const before = await prisma.$queryRaw<{ subdomain_is_taken: boolean }[]>`
         SELECT subdomain_is_taken(${subdomain}) AS subdomain_is_taken

@@ -30,6 +30,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — academies / academy_members (direct, no guards)', () => {
   let app: INestApplication;
@@ -64,7 +65,7 @@ describe('Row-Level Security — academies / academy_members (direct, no guards)
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -86,7 +87,7 @@ describe('Row-Level Security — academies / academy_members (direct, no guards)
         data: {
           organizationId,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
         },
       });
       await tx.academyMember.create({
@@ -176,7 +177,7 @@ describe('Row-Level Security — academies / academy_members (direct, no guards)
           data: {
             organizationId: org2.id, // attacker-controlled — not the active context.
             name: uniqueName('Attacker Academy'),
-            slug: `rls-atk-academy-${Date.now()}`,
+            slug: `rls-atk-academy-${slugSuffix()}`,
           },
         }),
       ),
