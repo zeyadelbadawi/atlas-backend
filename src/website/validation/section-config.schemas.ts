@@ -207,7 +207,9 @@ export type ValidatedLocalizedText = z.infer<typeof localizedTextFieldSchema>;
  * save of a generated page dropped it and the "Sign up" button lost its
  * target and vanished from the public site. `whatsapp`/`phone` are stored
  * as numbers, never as a URL: the renderer builds the `wa.me`/`tel:` link,
- * so nothing a tenant types becomes an `href` unchecked. `style` absent
+ * so nothing a tenant types becomes an `href` unchecked. Empty is a button
+ * whose number is not typed yet (like an empty `url`): it saves, and the
+ * public site leaves it out until it has one. `style` absent
  * means the theme's own look for the button's position.
  */
 const websiteCtaSchema = z.object({
@@ -224,12 +226,14 @@ const websiteCtaSchema = z.object({
   whatsapp: z
     .string()
     .regex(CTA_WHATSAPP_NUMBER_PATTERN, 'validation:invalidWhatsappNumber')
-    .optional(),
+    .optional()
+    .or(z.literal('')),
   whatsappMessage: localizedOptional(MAX_CTA_WHATSAPP_MESSAGE_LENGTH).optional(),
   phone: z
     .string()
     .regex(CTA_PHONE_NUMBER_PATTERN, 'validation:invalidCallNumber')
-    .optional(),
+    .optional()
+    .or(z.literal('')),
   style: z.enum(CTA_STYLES).optional(),
 });
 

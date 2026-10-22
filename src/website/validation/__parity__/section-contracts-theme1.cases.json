@@ -2374,6 +2374,35 @@
         "tertiaryCta.authAction",
         "tertiaryCta.style"
       ]
+    },
+    {
+      "name": "a WhatsApp button whose number is not typed yet still saves",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Chat",
+            "ar": ""
+          },
+          "whatsapp": ""
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "Call",
+            "ar": ""
+          },
+          "phone": ""
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "cta.whatsapp",
+        "secondaryCta.phone"
+      ]
     }
   ]
 }
