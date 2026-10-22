@@ -181,7 +181,45 @@ export const SECTION_TYPES = [
   // Theme 4 plan §6 (frontend repo, Reports/THEME_4_RIWAQ_PLAN.md) — one real
   // course's outcomes and syllabus; shared by every theme with a base renderer.
   'courseSpotlight',
+  // CMS phase 3d (batch A) — shared by every theme, each with a base renderer.
+  'whatsappBar',
+  'video',
+  'pricing',
+  'countdown',
 ] as const;
+
+/*
+ * CMS phase 3d (batch A) — the "Talk to us" bar, the click-to-play video,
+ * pricing plans and the registration countdown. Characters per language,
+ * like every limit above; mirrored exactly by the frontend's
+ * `website.constants.ts` and proven at the boundaries by the parity cases.
+ */
+export const MAX_WHATSAPP_BAR_TITLE_LENGTH = 80;
+export const MAX_WHATSAPP_BAR_DESCRIPTION_LENGTH = 200;
+export const MAX_VIDEO_DESCRIPTION_LENGTH = 280;
+export const MAX_VIDEO_CAPTION_LENGTH = 200;
+/** A YouTube video id: exactly 11 characters of YouTube's own alphabet. */
+export const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+export const MIN_PRICING_PLANS = 1;
+export const MAX_PRICING_PLANS = 4;
+export const MAX_PRICING_FEATURES = 10;
+export const MAX_PRICING_DESCRIPTION_LENGTH = 280;
+export const MAX_PRICING_PLAN_NAME_LENGTH = 40;
+/** Free text, e.g. "450 ج.م" or "Free". */
+export const MAX_PRICING_PRICE_LENGTH = 24;
+export const MAX_PRICING_PERIOD_LENGTH = 30;
+export const MAX_PRICING_PLAN_DESCRIPTION_LENGTH = 160;
+export const MAX_PRICING_FEATURE_LENGTH = 80;
+export const MAX_PRICING_BADGE_LENGTH = 24;
+export const MAX_COUNTDOWN_TITLE_LENGTH = 80;
+export const MAX_COUNTDOWN_DESCRIPTION_LENGTH = 240;
+export const MAX_COUNTDOWN_ENDED_MESSAGE_LENGTH = 160;
+/** An ISO 8601 date and time WITH its offset (`2026-11-05T23:59:00+02:00`). */
+export const COUNTDOWN_DEADLINE_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(Z|[+-](\d{2}):(\d{2}))$/;
+/** An IANA time zone name (`Africa/Cairo`, `UTC`) — the academy's, for showing the deadline. */
+export const TIME_ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+){0,2}$/;
+export const MAX_TIME_ZONE_LENGTH = 64;
 
 /** `courseSpotlight`: how many syllabus sections it may list — matches the frontend `MIN/MAX_SPOTLIGHT_MODULES`. */
 export const MIN_SPOTLIGHT_MODULES = 1;

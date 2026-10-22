@@ -85,7 +85,13 @@ function collectSectionReferences(
       case 'about':
       case 'cta':
       case 'featureSplit':
+      case 'whatsappBar':
+      case 'countdown':
         addButtons(section.config);
+        break;
+      case 'pricing':
+        // CMS phase 3d — each plan's one button.
+        section.config.plans.forEach((plan) => addCta(plan.cta));
         break;
       case 'featuredCourses':
         (section.config.courseIds ?? []).forEach((id: string) => courseIds.add(id));

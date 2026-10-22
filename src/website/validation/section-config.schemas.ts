@@ -88,6 +88,25 @@ import {
   MIN_COURSE_CATALOG_PAGE_SIZE,
   MIN_COURSE_CATEGORIES,
   SECTION_TYPES,
+  MAX_COUNTDOWN_DESCRIPTION_LENGTH,
+  MAX_COUNTDOWN_ENDED_MESSAGE_LENGTH,
+  MAX_COUNTDOWN_TITLE_LENGTH,
+  MAX_PRICING_BADGE_LENGTH,
+  MAX_PRICING_DESCRIPTION_LENGTH,
+  MAX_PRICING_FEATURE_LENGTH,
+  MAX_PRICING_FEATURES,
+  MAX_PRICING_PERIOD_LENGTH,
+  MAX_PRICING_PLAN_DESCRIPTION_LENGTH,
+  MAX_PRICING_PLAN_NAME_LENGTH,
+  MAX_PRICING_PLANS,
+  MAX_PRICING_PRICE_LENGTH,
+  MAX_TIME_ZONE_LENGTH,
+  MAX_VIDEO_CAPTION_LENGTH,
+  MAX_VIDEO_DESCRIPTION_LENGTH,
+  MAX_WHATSAPP_BAR_DESCRIPTION_LENGTH,
+  MAX_WHATSAPP_BAR_TITLE_LENGTH,
+  MIN_PRICING_PLANS,
+  TIME_ZONE_PATTERN,
 } from '../constants/website.constants';
 import {
   DEFAULT_PUBLIC_WEBSITE_LOCALE,
@@ -95,6 +114,11 @@ import {
 } from '../constants/locale.constants';
 import { isAllowedImageValue } from './image-value.util';
 import { isSafeExternalUrl } from './url-safety.util';
+import {
+  isCountdownDeadlineOrEmpty,
+  isYouTubeVideoIdOrEmpty,
+  normalizeYouTubeVideoInput,
+} from './section-media-values.util';
 
 export const sectionTypeSchema = z.enum(SECTION_TYPES);
 
@@ -514,6 +538,96 @@ export const courseSpotlightSectionSchema = z.object({
   cta: websiteCtaSchema.optional(),
 });
 
+/*
+ * CMS phase 3d (batch A) — four sections shared by every theme. Each one
+ * mirrors the frontend's identically named schema field for field; the
+ * parity cases prove it, including that every field survives the parse.
+ */
+
+/** A "Talk to us" strip: a short line and up to three buttons (WhatsApp, a call, a page). */
+export const whatsappBarSectionSchema = z.object({
+  title: localizedRequired(MAX_WHATSAPP_BAR_TITLE_LENGTH),
+  description: localizedOptional(MAX_WHATSAPP_BAR_DESCRIPTION_LENGTH).optional(),
+  cta: websiteCtaSchema,
+  secondaryCta: websiteCtaSchema.optional(),
+  tertiaryCta: websiteCtaSchema.optional(),
+});
+
+/**
+ * A YouTube video that loads only when the visitor presses play. A pasted
+ * link in any common form is reduced to its 11-character id
+ * (`normalizeYouTubeVideoInput`); only the id is stored, and the public site
+ * builds every YouTube address from it. Empty is a video not chosen yet: it
+ * saves, and the public site leaves the section out until it has one.
+ */
+export const videoSectionSchema = z.object({
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_VIDEO_DESCRIPTION_LENGTH).optional(),
+  videoId: z.preprocess(
+    normalizeYouTubeVideoInput,
+    z.string().refine(isYouTubeVideoIdOrEmpty, {
+      message: 'validation:invalidYouTubeVideo',
+    }),
+  ),
+  /** An uploaded poster instead of YouTube's own thumbnail. */
+  poster: imageValueSchema.optional(),
+  caption: localizedOptional(MAX_VIDEO_CAPTION_LENGTH).optional(),
+});
+
+const pricingFeatureSchema = z.object({
+  id: z.string(),
+  text: localizedRequired(MAX_PRICING_FEATURE_LENGTH),
+  /** ✓ when the plan includes it, ✗ when it does not. */
+  included: z.boolean(),
+});
+
+const pricingPlanSchema = z.object({
+  id: z.string(),
+  name: localizedRequired(MAX_PRICING_PLAN_NAME_LENGTH),
+  /** Free text in each language ("450 ج.م", "Free") — never a number the site formats. */
+  price: localizedRequired(MAX_PRICING_PRICE_LENGTH),
+  period: localizedOptional(MAX_PRICING_PERIOD_LENGTH).optional(),
+  description: localizedOptional(MAX_PRICING_PLAN_DESCRIPTION_LENGTH).optional(),
+  features: z.array(pricingFeatureSchema).max(MAX_PRICING_FEATURES),
+  /** The "most popular" plan; the editor keeps it to one. */
+  highlighted: z.boolean().optional(),
+  badge: localizedOptional(MAX_PRICING_BADGE_LENGTH).optional(),
+  /** The plan's one button — the same targets as any section button (checked by `SectionReferenceValidatorService`). */
+  cta: websiteCtaSchema.optional(),
+});
+
+/** Plans or packages (monthly, per term): one to four. */
+export const pricingSectionSchema = z.object({
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_PRICING_DESCRIPTION_LENGTH).optional(),
+  plans: z.array(pricingPlanSchema).min(MIN_PRICING_PLANS).max(MAX_PRICING_PLANS),
+});
+
+/**
+ * A countdown to a registration deadline. `deadline` is an ISO date and
+ * time with its offset (the moment); `timeZone` is the academy's IANA zone
+ * the deadline was chosen in, so the site can say it in that zone. Empty is
+ * a deadline not chosen yet: it saves, and the public site leaves the
+ * section out until it has one.
+ */
+export const countdownSectionSchema = z.object({
+  title: localizedRequired(MAX_COUNTDOWN_TITLE_LENGTH),
+  description: localizedOptional(MAX_COUNTDOWN_DESCRIPTION_LENGTH).optional(),
+  deadline: z.string().refine(isCountdownDeadlineOrEmpty, {
+    message: 'validation:invalidDeadline',
+  }),
+  timeZone: z
+    .string()
+    .max(MAX_TIME_ZONE_LENGTH, 'validation:maxLength')
+    .regex(TIME_ZONE_PATTERN, 'validation:invalid')
+    .optional(),
+  /** Shown instead of the countdown once the deadline has passed. */
+  endedMessage: localizedOptional(MAX_COUNTDOWN_ENDED_MESSAGE_LENGTH).optional(),
+  cta: websiteCtaSchema.optional(),
+  secondaryCta: websiteCtaSchema.optional(),
+  tertiaryCta: websiteCtaSchema.optional(),
+});
+
 /** Matches the frontend's `SECTION_SCHEMAS` map exactly — one schema per `SectionType`, `satisfies Record<SectionType, ZodTypeAny>`. */
 const SECTION_CONFIG_SCHEMAS = {
   hero: heroSectionSchema,
@@ -533,6 +647,10 @@ const SECTION_CONFIG_SCHEMAS = {
   steps: stepsSectionSchema,
   featureSplit: featureSplitSectionSchema,
   courseSpotlight: courseSpotlightSectionSchema,
+  whatsappBar: whatsappBarSectionSchema,
+  video: videoSectionSchema,
+  pricing: pricingSectionSchema,
+  countdown: countdownSectionSchema,
 } satisfies Record<(typeof SECTION_TYPES)[number], z.ZodTypeAny>;
 
 /** Resolves the right Zod schema for a section type — matches `getSectionConfigSchema`. */
@@ -637,6 +755,26 @@ export const sectionInstanceSchema = z.discriminatedUnion('type', [
     ...sectionInstanceBase,
     type: z.literal('courseSpotlight'),
     config: courseSpotlightSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('whatsappBar'),
+    config: whatsappBarSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('video'),
+    config: videoSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('pricing'),
+    config: pricingSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('countdown'),
+    config: countdownSectionSchema,
   }),
 ]);
 

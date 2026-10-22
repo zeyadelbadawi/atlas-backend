@@ -87,3 +87,37 @@ describe('SectionReferenceValidatorService — section buttons', () => {
     ).toEqual(['courseId:other-course']);
   });
 });
+
+describe('SectionReferenceValidatorService — CMS phase 3d sections', () => {
+  it('checks every button of a WhatsApp bar and a countdown', async () => {
+    expect(
+      await violations([
+        section('whatsappBar', {
+          cta: { label, whatsapp: '+201001234567' },
+          secondaryCta: { label, pageId: 'gone' },
+          tertiaryCta: { label, courseId: 'own-course' },
+        }),
+        section('countdown', {
+          deadline: '',
+          cta: { label, pageId: 'home' },
+          tertiaryCta: { label, courseId: 'other-course' },
+        }),
+      ]),
+    ).toEqual(['courseId:other-course', 'pageId:gone']);
+  });
+
+  it('checks the button of every pricing plan', async () => {
+    expect(
+      await violations([
+        section('pricing', {
+          plans: [
+            { id: 'a', features: [], cta: { label, pageId: 'home' } },
+            { id: 'b', features: [] },
+            { id: 'c', features: [], cta: { label, courseId: 'other-course' } },
+            { id: 'd', features: [], cta: { label, pageId: 'missing' } },
+          ],
+        }),
+      ]),
+    ).toEqual(['courseId:other-course', 'pageId:missing']);
+  });
+});

@@ -5,6 +5,8 @@
  * mirror, so the editor can never accept what the API rejects (or the
  * reverse). A case's `preserves` paths must come out of the parse exactly as
  * they went in: a key the schema does not declare is silently stripped.
+ * Its `normalizes` paths must come out as the value given (a YouTube link
+ * is stored as its video id).
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -17,6 +19,8 @@ interface ParityCase {
   readonly config: unknown;
   readonly valid: boolean;
   readonly preserves?: readonly string[];
+  /** Dotted paths and the value the parse must produce there (a YouTube link becomes its id). */
+  readonly normalizes?: Readonly<Record<string, unknown>>;
 }
 
 function at(value: unknown, path: string): unknown {
@@ -46,6 +50,9 @@ describe('section contracts — parity cases', () => {
     for (const path of parityCase.preserves ?? []) {
       expect(at(result.data, path)).toEqual(at(parityCase.config, path));
       expect(at(parityCase.config, path)).toBeDefined();
+    }
+    for (const [path, value] of Object.entries(parityCase.normalizes ?? {})) {
+      expect(at(result.data, path)).toEqual(value);
     }
   });
 });
