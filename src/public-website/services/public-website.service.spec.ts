@@ -415,6 +415,62 @@ describe('PublicWebsiteService.getPublishedPages — content library', () => {
     ]);
   });
 
+  it('never sends a sample result or schedule row to visitors (CMS phase 3d)', async () => {
+    const { service, cacheService } = build({
+      pages: [
+        page([
+          {
+            id: 'results-1',
+            type: 'results',
+            config: {
+              title: { en: 'Our top students', ar: '' },
+              items: [
+                {
+                  id: 'sample-1',
+                  studentName: 'Sample',
+                  result: { en: '99%', ar: '' },
+                  sample: true,
+                },
+                {
+                  id: 'real-1',
+                  studentName: 'Mariam',
+                  result: { en: '98%', ar: '' },
+                  top: true,
+                },
+              ],
+            },
+          },
+          {
+            id: 'schedule-1',
+            type: 'schedule',
+            config: {
+              title: { en: 'Timetable', ar: '' },
+              items: [
+                {
+                  id: 'row-1',
+                  day: 'sat',
+                  start: '16:00',
+                  end: '17:00',
+                  title: { en: 'Math', ar: '' },
+                  sample: true,
+                },
+              ],
+            },
+          },
+        ]),
+      ],
+    });
+
+    const [result] = (await service.getPublishedPages(ACADEMY_ID))!;
+    const [results, schedule] = result.sections as {
+      config: { items: { id: string }[] };
+    }[];
+    expect(results.config.items.map((item) => item.id)).toEqual(['real-1']);
+    expect(schedule.config.items).toEqual([]);
+    // What is cached is the stripped payload, not the stored one.
+    expect(JSON.stringify(cacheService.setPages.mock.calls[0])).not.toContain('sample');
+  });
+
   it('caches under the Academy’s library revision, and a hit skips the database', async () => {
     const { service, cacheService, websitePagesRepository } = build({
       pages: [page([])],

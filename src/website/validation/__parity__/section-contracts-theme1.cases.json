@@ -2403,6 +2403,1922 @@
         "cta.whatsapp",
         "secondaryCta.phone"
       ]
+    },
+    {
+      "name": "logos with a linked logo keeps every field",
+      "type": "logos",
+      "config": {
+        "title": {
+          "en": "Accredited by",
+          "ar": "معتمدون من"
+        },
+        "description": {
+          "en": "Our partners",
+          "ar": "شركاؤنا"
+        },
+        "items": [
+          {
+            "id": "l1",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            },
+            "url": "https://moe.gov.eg"
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "description.ar",
+        "items.0.image",
+        "items.0.alt.ar",
+        "items.0.url"
+      ]
+    },
+    {
+      "name": "a logo without a link saves",
+      "type": "logos",
+      "config": {
+        "title": {
+          "en": "Partners",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "l1",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            },
+            "url": ""
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "items.0.url"
+      ]
+    },
+    {
+      "name": "a logo needs its image",
+      "type": "logos",
+      "config": {
+        "title": {
+          "en": "Partners",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "l1",
+            "image": "",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a logo needs alt text",
+      "type": "logos",
+      "config": {
+        "title": {
+          "en": "Partners",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "l1",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a logo link must be a safe web address",
+      "type": "logos",
+      "config": {
+        "title": {
+          "en": "Partners",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "l1",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            },
+            "url": "javascript:alert(1)"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a logo image must be an allowed image value",
+      "type": "logos",
+      "config": {
+        "title": {
+          "en": "Partners",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "l1",
+            "image": "javascript:alert(1)",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "logos at 12",
+      "type": "logos",
+      "config": {
+        "title": {
+          "en": "Partners",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "l0",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l1",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l2",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l3",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l4",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l5",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l6",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l7",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l8",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l9",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l10",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l11",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "logos over 12",
+      "type": "logos",
+      "config": {
+        "title": {
+          "en": "Partners",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "l0",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l1",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l2",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l3",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l4",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l5",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l6",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l7",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l8",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l9",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l10",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l11",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          },
+          {
+            "id": "l12",
+            "image": "/api/v1/public/media/academy-1/logo.png",
+            "alt": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "logos need a title",
+      "type": "logos",
+      "config": {
+        "title": {
+          "en": "",
+          "ar": ""
+        },
+        "items": []
+      },
+      "valid": false
+    },
+    {
+      "name": "map keeps address, note and query",
+      "type": "map",
+      "config": {
+        "title": {
+          "en": "Visit us",
+          "ar": "زورونا"
+        },
+        "address": {
+          "en": "12 Tahrir St.\nDokki, Giza",
+          "ar": "١٢ شارع التحرير\nالدقي، الجيزة"
+        },
+        "note": {
+          "en": "Next to Dokki metro",
+          "ar": "بجوار مترو الدقي"
+        },
+        "query": "30.0384,31.2122"
+      },
+      "valid": true,
+      "preserves": [
+        "address.en",
+        "address.ar",
+        "note.ar",
+        "query"
+      ]
+    },
+    {
+      "name": "map without a query saves (the address is used)",
+      "type": "map",
+      "config": {
+        "title": {
+          "en": "Visit us",
+          "ar": ""
+        },
+        "address": {
+          "en": "12 Tahrir St.",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "map needs an address",
+      "type": "map",
+      "config": {
+        "title": {
+          "en": "Visit us",
+          "ar": ""
+        },
+        "address": {
+          "en": "",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "map address at 300",
+      "type": "map",
+      "config": {
+        "title": {
+          "en": "Visit us",
+          "ar": ""
+        },
+        "address": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "map address over 300",
+      "type": "map",
+      "config": {
+        "title": {
+          "en": "Visit us",
+          "ar": ""
+        },
+        "address": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "map note over 140",
+      "type": "map",
+      "config": {
+        "title": {
+          "en": "Visit us",
+          "ar": ""
+        },
+        "address": {
+          "en": "Cairo",
+          "ar": ""
+        },
+        "note": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "map query over 200",
+      "type": "map",
+      "config": {
+        "title": {
+          "en": "Visit us",
+          "ar": ""
+        },
+        "address": {
+          "en": "Cairo",
+          "ar": ""
+        },
+        "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "valid": false
+    },
+    {
+      "name": "schedule keeps every row field",
+      "type": "schedule",
+      "config": {
+        "title": {
+          "en": "Weekly schedule",
+          "ar": "جدول الحصص"
+        },
+        "description": {
+          "en": "Every week",
+          "ar": "كل أسبوع"
+        },
+        "items": [
+          {
+            "id": "r1",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            },
+            "teacher": {
+              "en": "Mr. Hany",
+              "ar": "أ. هاني"
+            },
+            "location": {
+              "en": "Hall 2",
+              "ar": "قاعة ٢"
+            },
+            "sample": true
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "items.0.day",
+        "items.0.start",
+        "items.0.end",
+        "items.0.title.ar",
+        "items.0.teacher.ar",
+        "items.0.location.ar",
+        "items.0.sample"
+      ]
+    },
+    {
+      "name": "schedule day outside the week is refused",
+      "type": "schedule",
+      "config": {
+        "title": {
+          "en": "Schedule",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "r1",
+            "day": "funday",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "schedule time must be HH:MM",
+      "type": "schedule",
+      "config": {
+        "title": {
+          "en": "Schedule",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "r1",
+            "day": "sat",
+            "start": "4pm",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "schedule time 24:00 is refused",
+      "type": "schedule",
+      "config": {
+        "title": {
+          "en": "Schedule",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "r1",
+            "day": "sat",
+            "start": "16:00",
+            "end": "24:00",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "schedule end must be after start",
+      "type": "schedule",
+      "config": {
+        "title": {
+          "en": "Schedule",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "r1",
+            "day": "sat",
+            "start": "18:00",
+            "end": "17:00",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "schedule end equal to start is refused",
+      "type": "schedule",
+      "config": {
+        "title": {
+          "en": "Schedule",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "r1",
+            "day": "sat",
+            "start": "18:00",
+            "end": "18:00",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "schedule row needs a title",
+      "type": "schedule",
+      "config": {
+        "title": {
+          "en": "Schedule",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "r1",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "schedule at 30 rows",
+      "type": "schedule",
+      "config": {
+        "title": {
+          "en": "Schedule",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "r0",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r1",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r2",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r3",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r4",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r5",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r6",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r7",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r8",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r9",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r10",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r11",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r12",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r13",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r14",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r15",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r16",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r17",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r18",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r19",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r20",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r21",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r22",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r23",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r24",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r25",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r26",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r27",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r28",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r29",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "schedule over 30 rows",
+      "type": "schedule",
+      "config": {
+        "title": {
+          "en": "Schedule",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "r0",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r1",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r2",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r3",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r4",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r5",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r6",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r7",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r8",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r9",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r10",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r11",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r12",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r13",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r14",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r15",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r16",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r17",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r18",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r19",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r20",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r21",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r22",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r23",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r24",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r25",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r26",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r27",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r28",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r29",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          },
+          {
+            "id": "r30",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "schedule teacher over 60",
+      "type": "schedule",
+      "config": {
+        "title": {
+          "en": "Schedule",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "r1",
+            "day": "sat",
+            "start": "16:00",
+            "end": "17:30",
+            "title": {
+              "en": "Math — Grade 3",
+              "ar": "رياضيات — الصف الثالث"
+            },
+            "teacher": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "results keep every entry field, sample and top included",
+      "type": "results",
+      "config": {
+        "title": {
+          "en": "Our top students",
+          "ar": "أوائلنا"
+        },
+        "description": {
+          "en": "Class of 2025",
+          "ar": "دفعة ٢٠٢٥"
+        },
+        "items": [
+          {
+            "id": "x1",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            },
+            "detail": {
+              "en": "Thanaweya Amma 2025",
+              "ar": "الثانوية العامة ٢٠٢٥"
+            },
+            "photo": "/api/v1/public/media/academy-1/logo.png",
+            "photoAlt": {
+              "en": "Mariam smiling",
+              "ar": "مريم مبتسمة"
+            },
+            "top": true,
+            "sample": true
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "items.0.studentName",
+        "items.0.result.ar",
+        "items.0.detail.ar",
+        "items.0.photo",
+        "items.0.photoAlt.ar",
+        "items.0.top",
+        "items.0.sample"
+      ]
+    },
+    {
+      "name": "a result needs the student name",
+      "type": "results",
+      "config": {
+        "title": {
+          "en": "Results",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "x1",
+            "studentName": "",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a result needs its result",
+      "type": "results",
+      "config": {
+        "title": {
+          "en": "Results",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "x1",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a result at 40 characters",
+      "type": "results",
+      "config": {
+        "title": {
+          "en": "Results",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "x1",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "a result over 40 characters",
+      "type": "results",
+      "config": {
+        "title": {
+          "en": "Results",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "x1",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a result photo must be an allowed image value",
+      "type": "results",
+      "config": {
+        "title": {
+          "en": "Results",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "x1",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            },
+            "photo": "data:text/html;base64,PHNjcmlwdD4="
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "results at 24",
+      "type": "results",
+      "config": {
+        "title": {
+          "en": "Results",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "x0",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x1",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x2",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x3",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x4",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x5",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x6",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x7",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x8",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x9",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x10",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x11",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x12",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x13",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x14",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x15",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x16",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x17",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x18",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x19",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x20",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x21",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x22",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x23",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "results over 24",
+      "type": "results",
+      "config": {
+        "title": {
+          "en": "Results",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "x0",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x1",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x2",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x3",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x4",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x5",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x6",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x7",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x8",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x9",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x10",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x11",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x12",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x13",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x14",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x15",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x16",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x17",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x18",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x19",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x20",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x21",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x22",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x23",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          },
+          {
+            "id": "x24",
+            "studentName": "Mariam Adel",
+            "result": {
+              "en": "98%",
+              "ar": "٩٨٪"
+            }
+          }
+        ]
+      },
+      "valid": false
     }
   ]
 }

@@ -144,6 +144,77 @@ describe('sectionInstanceArraySchema — page-level composition', () => {
     expect(result.success).toBe(false);
   });
 
+  it('accepts the CMS phase 3d sections on a page (logos, map, schedule, results)', () => {
+    const lt = (en: string) => ({ en, ar: '' });
+    const result = sectionInstanceArraySchema.safeParse([
+      {
+        id: 'l',
+        type: 'logos',
+        enabled: true,
+        visibility,
+        config: { title: lt('Partners'), items: [] },
+      },
+      {
+        id: 'm',
+        type: 'map',
+        enabled: true,
+        visibility,
+        config: { title: lt('Visit us'), address: lt('12 Tahrir St.') },
+      },
+      {
+        id: 's',
+        type: 'schedule',
+        enabled: true,
+        visibility,
+        config: {
+          title: lt('Timetable'),
+          items: [
+            { id: 'r', day: 'fri', start: '09:00', end: '10:30', title: lt('Physics') },
+          ],
+        },
+      },
+      {
+        id: 'r',
+        type: 'results',
+        enabled: true,
+        visibility,
+        config: {
+          title: lt('Top students'),
+          items: [{ id: 'x', studentName: 'Omar', result: lt('First in Egypt') }],
+        },
+      },
+    ]);
+    expect(result.success).toBe(true);
+  });
+
+  it('points a schedule row ending before it starts at its end time', () => {
+    const result = sectionInstanceArraySchema.safeParse([
+      {
+        id: 's',
+        type: 'schedule',
+        enabled: true,
+        visibility,
+        config: {
+          title: { en: 'Timetable', ar: '' },
+          items: [
+            {
+              id: 'r',
+              day: 'sat',
+              start: '18:00',
+              end: '17:00',
+              title: { en: 'Math', ar: '' },
+            },
+          ],
+        },
+      },
+    ]);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]).toMatchObject({
+      message: 'validation:endAfterStart',
+      path: [0, 'config', 'items', 0, 'end'],
+    });
+  });
+
   it('rejects the whole array if any one section is malformed', () => {
     const result = sectionInstanceArraySchema.safeParse([
       heroInstance({ id: 'a' }),

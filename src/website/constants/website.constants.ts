@@ -194,7 +194,44 @@ export const SECTION_TYPES = [
   // Theme 4 plan §6 (frontend repo, Reports/THEME_4_RIWAQ_PLAN.md) — one real
   // course's outcomes and syllabus; shared by every theme with a base renderer.
   'courseSpotlight',
+  // CMS phase 3d (batch B) — shared by every theme, each with a renderer:
+  // partner/accreditation logos, where the academy is, the class timetable
+  // and student results.
+  'logos',
+  'map',
+  'schedule',
+  'results',
 ] as const;
+
+/**
+ * CMS phase 3d (batch B) limits — match the frontend `website.constants.ts`
+ * exactly (the parity cases prove both schemas agree at each boundary).
+ *
+ * | Field                          | Limit |
+ * | ------------------------------ | ----- |
+ * | logos per section              | 12    |
+ * | map address (multi-line)       | 300   |
+ * | map note                       | 140   |
+ * | map query (address or lat,lng) | 200   |
+ * | schedule rows                  | 30    |
+ * | schedule row title             | 80    |
+ * | schedule teacher / location    | 60    |
+ * | results per section            | 24    |
+ * | a result ("98%", "الأول …")    | 40    |
+ */
+export const MAX_LOGOS = 12;
+export const MAX_MAP_ADDRESS_LENGTH = 300;
+export const MAX_MAP_NOTE_LENGTH = 140;
+export const MAX_MAP_QUERY_LENGTH = 200;
+export const MAX_SCHEDULE_ROWS = 30;
+export const MAX_SCHEDULE_ROW_TITLE_LENGTH = 80;
+export const MAX_SCHEDULE_ROW_DETAIL_LENGTH = 60;
+export const MAX_RESULTS = 24;
+export const MAX_RESULT_VALUE_LENGTH = 40;
+/** The days a schedule row may fall on, in the order an Egyptian week runs (Saturday first). */
+export const SCHEDULE_DAYS = ['sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri'] as const;
+/** A 24-hour clock time, `HH:MM` (what `<input type="time">` gives). */
+export const SCHEDULE_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 /** `courseSpotlight`: how many syllabus sections it may list — matches the frontend `MIN/MAX_SPOTLIGHT_MODULES`. */
 export const MIN_SPOTLIGHT_MODULES = 1;
