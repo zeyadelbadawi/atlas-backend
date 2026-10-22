@@ -49,6 +49,23 @@ describe('POST /auth/refresh (e2e)', () => {
     await app.close();
   });
 
+  it('carries the current user, exactly as GET /users/me answers with the new token', async () => {
+    const email = uniqueTestEmail('refresh-user');
+    const { refreshToken } = await signUpAndSignIn(app, email);
+
+    const response = await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken })
+      .expect(200);
+
+    const me = await request(app.getHttpServer())
+      .get('/users/me')
+      .set('Authorization', `Bearer ${response.body.accessToken}`)
+      .expect(200);
+    expect(response.body.user).toEqual(me.body);
+    expect(response.body.user.email).toBe(email);
+  });
+
   it('rotates a valid refresh token: old is revoked, new one works, new tokens differ', async () => {
     const email = uniqueTestEmail('refresh-ok');
     const { refreshToken } = await signUpAndSignIn(app, email);

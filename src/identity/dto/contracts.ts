@@ -157,6 +157,13 @@ export interface TokenRefreshResponseContract {
   readonly accessToken: string;
   readonly refreshToken?: string;
   readonly expiresIn: number;
+  /**
+   * The signed-in person, exactly as `GET /users/me` would answer with the
+   * new access token — so a page restoring its session needs one round trip,
+   * not two. Absent when it could not be read; the client then asks
+   * `/users/me` itself. Never part of the stored lost-response replay.
+   */
+  readonly user?: CurrentUserResponse;
 }
 
 /**

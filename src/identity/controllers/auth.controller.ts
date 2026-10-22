@@ -9,6 +9,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Param,
   Post,
   Req,
@@ -20,6 +21,11 @@ import { Throttle } from '@nestjs/throttler';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
+import { UsersService } from '../services/users.service';
+import { AccessTokenService } from '../services/access-token.service';
+import { SessionSurfaceService } from '../services/session-surface.service';
+import { scopeCurrentUserToSession } from '../dto/contracts';
+import type { CurrentUserResponse } from '../dto/contracts';
 import { RegisterDto } from '../dto/register.dto';
 import { AcademyJoinDto } from '../dto/academy-join.dto';
 import { SignInDto } from '../dto/sign-in.dto';
@@ -114,9 +120,14 @@ export function sessionContextWithDeviceCookie(
 
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
+    private readonly usersService: UsersService,
+    private readonly accessTokenService: AccessTokenService,
+    private readonly sessionSurfaceService: SessionSurfaceService,
   ) {}
 
   /** DL-63 — the session is gone: drop the session cookie and the signed-in hint together. */
@@ -226,12 +237,13 @@ export class AuthController {
     if (!presented) {
       throw new UnauthorizedException({ messageKey: 'errors.auth.invalidRefreshToken' });
     }
+    let tokens: TokenRefreshResponseContract;
     try {
       // Re-read on every refresh so `lastUsedAt` tracks genuine session
       // activity rather than only the original sign-in.
       // U-14d / OD-21 — the transport is the server's own observation, never
       // the client's claim: only a cookie refresh can recover a lost response.
-      return await this.authService.refresh(presented, {
+      tokens = await this.authService.refresh(presented, {
         ...sessionContext(request),
         refreshChannel: fromCookie ? 'cookie' : 'body',
       });
@@ -243,6 +255,34 @@ export class AuthController {
         this.endBrowserSession(request, response);
       }
       throw error;
+    }
+    // Outside the try above: the session has already rotated, so a failure
+    // to read the profile must never clear the new cookie.
+    const user = await this.currentUserFor(tokens.accessToken);
+    return user ? { ...tokens, user } : tokens;
+  }
+
+  /**
+   * `GET /users/me` for a just-issued access token — the same projection and
+   * the same academy-session scoping (A5), read with the token's own claims.
+   * Best effort: `undefined` sends the client to `/users/me` as before.
+   */
+  private async currentUserFor(
+    accessToken: string,
+  ): Promise<CurrentUserResponse | undefined> {
+    try {
+      const claims = this.accessTokenService.verify(accessToken);
+      const session = await this.sessionSurfaceService.contextOf(claims.sid, claims.sub);
+      return scopeCurrentUserToSession(await this.usersService.getCurrent(claims.sub), {
+        surface: session?.surface ?? null,
+        academyId: session?.academyId ?? null,
+      });
+    } catch (error) {
+      this.logger.warn(
+        { error: error instanceof Error ? error.message : error },
+        'Could not attach the current user to a refresh; the client reads /users/me.',
+      );
+      return undefined;
     }
   }
 
