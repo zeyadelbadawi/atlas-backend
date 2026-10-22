@@ -72,7 +72,16 @@ import {
   MAX_HERO_HIGHLIGHTS,
   MAX_HERO_SUBTITLE_LENGTH,
   MAX_HERO_TITLE_LENGTH,
+  MAX_LOGOS,
   MAX_LONG_TEXT,
+  MAX_MAP_ADDRESS_LENGTH,
+  MAX_MAP_NOTE_LENGTH,
+  MAX_MAP_QUERY_LENGTH,
+  MAX_RESULT_VALUE_LENGTH,
+  MAX_RESULTS,
+  MAX_SCHEDULE_ROW_DETAIL_LENGTH,
+  MAX_SCHEDULE_ROW_TITLE_LENGTH,
+  MAX_SCHEDULE_ROWS,
   MAX_SECTION_ITEMS,
   MAX_SECTION_STEPS,
   MAX_SHORT_TEXT,
@@ -87,6 +96,8 @@ import {
   MAX_STEPS_TITLE_LENGTH,
   MIN_COURSE_CATALOG_PAGE_SIZE,
   MIN_COURSE_CATEGORIES,
+  SCHEDULE_DAYS,
+  SCHEDULE_TIME_PATTERN,
   SECTION_TYPES,
 } from '../constants/website.constants';
 import {
@@ -514,6 +525,107 @@ export const courseSpotlightSectionSchema = z.object({
   cta: websiteCtaSchema.optional(),
 });
 
+/**
+ * A plain web address a tenant typed (a logo's link) — exactly the section
+ * button's `url` rule: a real URL whose scheme `isSafeExternalUrl` allows,
+ * or empty (no link).
+ */
+const optionalSafeUrlSchema = z
+  .string()
+  .url('validation:invalidUrl')
+  .refine(isSafeExternalUrl, { message: 'validation:invalidUrl' })
+  .optional()
+  .or(z.literal(''));
+
+const logoItemSchema = z.object({
+  id: z.string(),
+  /** Required: a logo without its image is not a logo. Same image rule as every image field. */
+  image: imageValueSchema.pipe(z.string().min(1, 'validation:required')),
+  /** The partner's name as a screen reader announces it (and the link's name when linked). */
+  alt: localizedRequired(MAX_SHORT_TEXT),
+  url: optionalSafeUrlSchema,
+});
+
+/** CMS phase 3d — partner / accreditation logos: a calm wrapping grid, never a marquee. */
+export const logosSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(logoItemSchema).max(MAX_LOGOS),
+});
+
+/**
+ * CMS phase 3d — where the academy is. `address` is the visible card
+ * (multi-line); `query` (an address or `lat,lng`) feeds the map and the
+ * directions link and falls back to the address when empty. It is never
+ * an `href` itself: the renderer encodes it into a fixed Google Maps URL.
+ */
+export const mapSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  address: localizedRequired(MAX_MAP_ADDRESS_LENGTH),
+  note: localizedOptional(MAX_MAP_NOTE_LENGTH).optional(),
+  query: z.string().max(MAX_MAP_QUERY_LENGTH, 'validation:maxLength').optional(),
+});
+
+const scheduleTimeSchema = z
+  .string()
+  .regex(SCHEDULE_TIME_PATTERN, 'validation:invalidTime');
+
+const scheduleRowSchema = z
+  .object({
+    id: z.string(),
+    day: z.enum(SCHEDULE_DAYS),
+    start: scheduleTimeSchema,
+    end: scheduleTimeSchema,
+    /** The course or group meeting at that time. */
+    title: localizedRequired(MAX_SCHEDULE_ROW_TITLE_LENGTH),
+    teacher: localizedOptional(MAX_SCHEDULE_ROW_DETAIL_LENGTH).optional(),
+    location: localizedOptional(MAX_SCHEDULE_ROW_DETAIL_LENGTH).optional(),
+    /** Starter row for preview only — never public (see `sample-content.util.ts`). */
+    sample: z.boolean().optional(),
+  })
+  // `HH:MM` compares correctly as text.
+  .refine((row) => row.end > row.start, {
+    message: 'validation:endAfterStart',
+    path: ['end'],
+  });
+
+/** CMS phase 3d — a weekly timetable, shown by day (Saturday first). */
+export const scheduleSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(scheduleRowSchema).max(MAX_SCHEDULE_ROWS),
+});
+
+const resultItemSchema = z.object({
+  id: z.string(),
+  /** A proper name — not translated, like `testimonial.authorName`. */
+  studentName: z
+    .string()
+    .min(1, 'validation:required')
+    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
+  /** The achievement itself ("98%", "الأول على الجمهورية"). */
+  result: localizedRequired(MAX_RESULT_VALUE_LENGTH),
+  /** Grade, year or exam ("Thanaweya Amma 2025"). */
+  detail: localizedOptional(MAX_SHORT_TEXT).optional(),
+  photo: imageValueSchema.optional(),
+  photoAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
+  /** Marks a top achiever (drawn with a badge, never by colour alone). */
+  top: z.boolean().optional(),
+  /**
+   * Starter content for preview/design only — exactly the testimonials'
+   * rule: the public pages payload strips it, publish warns about it, and
+   * only the Owner's explicit "This is a real result" clears it.
+   */
+  sample: z.boolean().optional(),
+});
+
+/** CMS phase 3d — student results and achievements ("أوائل"). */
+export const resultsSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(resultItemSchema).max(MAX_RESULTS),
+});
+
 /** Matches the frontend's `SECTION_SCHEMAS` map exactly — one schema per `SectionType`, `satisfies Record<SectionType, ZodTypeAny>`. */
 const SECTION_CONFIG_SCHEMAS = {
   hero: heroSectionSchema,
@@ -533,6 +645,10 @@ const SECTION_CONFIG_SCHEMAS = {
   steps: stepsSectionSchema,
   featureSplit: featureSplitSectionSchema,
   courseSpotlight: courseSpotlightSectionSchema,
+  logos: logosSectionSchema,
+  map: mapSectionSchema,
+  schedule: scheduleSectionSchema,
+  results: resultsSectionSchema,
 } satisfies Record<(typeof SECTION_TYPES)[number], z.ZodTypeAny>;
 
 /** Resolves the right Zod schema for a section type — matches `getSectionConfigSchema`. */
@@ -637,6 +753,22 @@ export const sectionInstanceSchema = z.discriminatedUnion('type', [
     ...sectionInstanceBase,
     type: z.literal('courseSpotlight'),
     config: courseSpotlightSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('logos'),
+    config: logosSectionSchema,
+  }),
+  z.object({ ...sectionInstanceBase, type: z.literal('map'), config: mapSectionSchema }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('schedule'),
+    config: scheduleSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('results'),
+    config: resultsSectionSchema,
   }),
 ]);
 
