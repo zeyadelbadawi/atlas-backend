@@ -1,5 +1,5 @@
 {
-  "description": "Theme 1 plan §D.2 section-contract parity cases. Byte-identical in atlas (src/features/website/schemas/__parity__) and atlas-backend (src/website/validation/__parity__); both schema suites must return `valid` for every case. A case's optional `preserves` lists dotted paths that must survive the parse unchanged (a key the schema does not declare is silently stripped, which is how a section button's sign-up target was once lost on save).",
+  "description": "Theme 1 plan §D.2 section-contract parity cases. Byte-identical in atlas (src/features/website/schemas/__parity__) and atlas-backend (src/website/validation/__parity__); both schema suites must return `valid` for every case. A case's optional `preserves` lists dotted paths that must survive the parse unchanged (a key the schema does not declare is silently stripped, which is how a section button's sign-up target was once lost on save). A case's optional `normalizes` maps dotted paths to the value the parse must produce (a YouTube link is stored as its video id).",
   "cases": [
     {
       "name": "legacy hero",
@@ -4317,6 +4317,2602 @@
             }
           }
         ]
+      },
+      "valid": false
+    },
+    {
+      "name": "whatsappBar with three buttons",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "Questions? Talk to us",
+          "ar": "لديك سؤال؟ تحدث إلينا"
+        },
+        "description": {
+          "en": "We answer every day from 10 to 10.",
+          "ar": "نرد يوميًا من العاشرة صباحًا حتى العاشرة مساءً."
+        },
+        "cta": {
+          "label": {
+            "en": "Chat on WhatsApp",
+            "ar": "راسلنا على واتساب"
+          },
+          "whatsapp": "+201001234567",
+          "whatsappMessage": {
+            "en": "Hello",
+            "ar": "مرحبًا"
+          }
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "Call us",
+            "ar": "اتصل بنا"
+          },
+          "phone": "19999",
+          "style": "secondary"
+        },
+        "tertiaryCta": {
+          "label": {
+            "en": "Visit us",
+            "ar": "زرنا"
+          },
+          "pageId": "p-contact",
+          "style": "link"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "title.en",
+        "title.ar",
+        "description.en",
+        "description.ar",
+        "cta.whatsapp",
+        "cta.whatsappMessage.ar",
+        "secondaryCta.phone",
+        "secondaryCta.style",
+        "tertiaryCta.pageId",
+        "tertiaryCta.style"
+      ]
+    },
+    {
+      "name": "whatsappBar minimal",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "Talk to us",
+          "ar": "تحدث إلينا"
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "whatsappBar needs a button",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "Talk to us",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "whatsappBar needs a title",
+      "type": "whatsappBar",
+      "config": {
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "whatsappBar English title may not be empty",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "",
+          "ar": "تحدث إلينا"
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "whatsappBar button whose number is not typed yet still saves",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "Talk to us",
+          "ar": "تحدث إلينا"
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": ""
+          },
+          "whatsapp": ""
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "cta.whatsapp"
+      ]
+    },
+    {
+      "name": "whatsappBar WhatsApp number must be international",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "Talk to us",
+          "ar": "تحدث إلينا"
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": ""
+          },
+          "whatsapp": "01001234567"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: whatsappBar.title en 80 chars (cap 80)",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: whatsappBar.title en 81 chars (cap 80)",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: whatsappBar.title ar 80 chars (cap 80)",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: whatsappBar.title ar 81 chars (cap 80)",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: whatsappBar.description en 200 chars (cap 200)",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "Talk to us",
+          "ar": "تحدث إلينا"
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        },
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: whatsappBar.description en 201 chars (cap 200)",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "Talk to us",
+          "ar": "تحدث إلينا"
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        },
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: whatsappBar.description ar 200 chars (cap 200)",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "Talk to us",
+          "ar": "تحدث إلينا"
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        },
+        "description": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: whatsappBar.description ar 201 chars (cap 200)",
+      "type": "whatsappBar",
+      "config": {
+        "title": {
+          "en": "Talk to us",
+          "ar": "تحدث إلينا"
+        },
+        "cta": {
+          "label": {
+            "en": "WhatsApp",
+            "ar": "واتساب"
+          },
+          "whatsapp": "+201001234567"
+        },
+        "description": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "video with every field",
+      "type": "video",
+      "config": {
+        "title": {
+          "en": "A minute inside our classroom",
+          "ar": "دقيقة داخل فصولنا"
+        },
+        "description": {
+          "en": "See how a lesson runs.",
+          "ar": "شاهد كيف يسير الدرس."
+        },
+        "videoId": "dQw4w9WgXcQ",
+        "poster": "https://cdn.example/poster.webp",
+        "caption": {
+          "en": "Filmed in our Nasr City branch",
+          "ar": "صُوّر في فرع مدينة نصر"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "title.ar",
+        "description.en",
+        "videoId",
+        "poster",
+        "caption.en",
+        "caption.ar"
+      ]
+    },
+    {
+      "name": "video not chosen yet still saves",
+      "type": "video",
+      "config": {
+        "videoId": ""
+      },
+      "valid": true,
+      "preserves": [
+        "videoId"
+      ]
+    },
+    {
+      "name": "video watch link is stored as its id",
+      "type": "video",
+      "config": {
+        "videoId": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s"
+      },
+      "valid": true,
+      "normalizes": {
+        "videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "video short youtu.be link is stored as its id",
+      "type": "video",
+      "config": {
+        "videoId": "https://youtu.be/dQw4w9WgXcQ?si=abc123"
+      },
+      "valid": true,
+      "normalizes": {
+        "videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "video Shorts link is stored as its id",
+      "type": "video",
+      "config": {
+        "videoId": "https://www.youtube.com/shorts/dQw4w9WgXcQ"
+      },
+      "valid": true,
+      "normalizes": {
+        "videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "video embed link is stored as its id",
+      "type": "video",
+      "config": {
+        "videoId": "https://www.youtube.com/embed/dQw4w9WgXcQ?start=10"
+      },
+      "valid": true,
+      "normalizes": {
+        "videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "video privacy-enhanced embed link is stored as its id",
+      "type": "video",
+      "config": {
+        "videoId": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"
+      },
+      "valid": true,
+      "normalizes": {
+        "videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "video mobile link is stored as its id",
+      "type": "video",
+      "config": {
+        "videoId": "https://m.youtube.com/watch?v=dQw4w9WgXcQ"
+      },
+      "valid": true,
+      "normalizes": {
+        "videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "video live link is stored as its id",
+      "type": "video",
+      "config": {
+        "videoId": "https://www.youtube.com/live/dQw4w9WgXcQ"
+      },
+      "valid": true,
+      "normalizes": {
+        "videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "video link without https is stored as its id",
+      "type": "video",
+      "config": {
+        "videoId": "youtube.com/watch?v=dQw4w9WgXcQ"
+      },
+      "valid": true,
+      "normalizes": {
+        "videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "video link with spaces around it is stored as its id",
+      "type": "video",
+      "config": {
+        "videoId": "  https://youtu.be/dQw4w9WgXcQ  "
+      },
+      "valid": true,
+      "normalizes": {
+        "videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "video Vimeo link is refused",
+      "type": "video",
+      "config": {
+        "videoId": "https://vimeo.com/123456789"
+      },
+      "valid": false
+    },
+    {
+      "name": "video YouTube channel link is refused",
+      "type": "video",
+      "config": {
+        "videoId": "https://www.youtube.com/@atlasacademy"
+      },
+      "valid": false
+    },
+    {
+      "name": "video YouTube watch link without a video is refused",
+      "type": "video",
+      "config": {
+        "videoId": "https://www.youtube.com/watch?list=PL123"
+      },
+      "valid": false
+    },
+    {
+      "name": "video embed link with a 12-character id is refused",
+      "type": "video",
+      "config": {
+        "videoId": "https://www.youtube.com/embed/ABCDEFGHIJKL"
+      },
+      "valid": false
+    },
+    {
+      "name": "video look-alike host is refused",
+      "type": "video",
+      "config": {
+        "videoId": "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "video javascript address is refused",
+      "type": "video",
+      "config": {
+        "videoId": "javascript:alert(\"dQw4w9WgXcQ\")"
+      },
+      "valid": false
+    },
+    {
+      "name": "video 10-character id is refused",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXc"
+      },
+      "valid": false
+    },
+    {
+      "name": "video id with a forbidden character is refused",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgX$Q"
+      },
+      "valid": false
+    },
+    {
+      "name": "video needs a videoId key",
+      "type": "video",
+      "config": {
+        "title": {
+          "en": "Watch",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "video unsafe poster is refused",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "poster": "javascript:alert(1)"
+      },
+      "valid": false
+    },
+    {
+      "name": "video poster from the media library",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "poster": "/api/v1/public/media/academies/a/poster.webp"
+      },
+      "valid": true,
+      "preserves": [
+        "poster"
+      ]
+    },
+    {
+      "name": "limit: video.title en 100 chars (cap 100)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: video.title en 101 chars (cap 100)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: video.title ar 100 chars (cap 100)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "title": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: video.title ar 101 chars (cap 100)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "title": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: video.description en 280 chars (cap 280)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: video.description en 281 chars (cap 280)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: video.description ar 280 chars (cap 280)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "description": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: video.description ar 281 chars (cap 280)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "description": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: video.caption en 200 chars (cap 200)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "caption": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: video.caption en 201 chars (cap 200)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "caption": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: video.caption ar 200 chars (cap 200)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "caption": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: video.caption ar 201 chars (cap 200)",
+      "type": "video",
+      "config": {
+        "videoId": "dQw4w9WgXcQ",
+        "caption": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "pricing with every field",
+      "type": "pricing",
+      "config": {
+        "title": {
+          "en": "Plans and prices",
+          "ar": "الباقات والأسعار"
+        },
+        "description": {
+          "en": "Pay monthly or per term.",
+          "ar": "ادفع شهريًا أو لكل ترم."
+        },
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [
+              {
+                "id": "f1",
+                "text": {
+                  "en": "Weekly live class",
+                  "ar": "حصة مباشرة أسبوعية"
+                },
+                "included": true
+              },
+              {
+                "id": "f2",
+                "text": {
+                  "en": "Printed notes",
+                  "ar": "مذكرات مطبوعة"
+                },
+                "included": false
+              }
+            ],
+            "period": {
+              "en": "per month",
+              "ar": "شهريًا"
+            },
+            "description": {
+              "en": "One subject",
+              "ar": "مادة واحدة"
+            },
+            "cta": {
+              "label": {
+                "en": "Join",
+                "ar": "اشترك"
+              },
+              "whatsapp": "+201001234567"
+            }
+          },
+          {
+            "id": "plan-2",
+            "name": {
+              "en": "Plan 2",
+              "ar": "الباقة 2"
+            },
+            "price": {
+              "en": "Free",
+              "ar": "مجانًا"
+            },
+            "features": [],
+            "highlighted": true,
+            "badge": {
+              "en": "Most popular",
+              "ar": "الأكثر طلبًا"
+            },
+            "cta": {
+              "label": {
+                "en": "Start",
+                "ar": "ابدأ"
+              },
+              "pageId": "p-signup",
+              "style": "primary"
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "title.ar",
+        "description.en",
+        "plans.0.name.ar",
+        "plans.0.price.ar",
+        "plans.0.period.en",
+        "plans.0.period.ar",
+        "plans.0.description.en",
+        "plans.0.features.0.text.ar",
+        "plans.0.features.0.included",
+        "plans.0.features.1.included",
+        "plans.0.features.1.id",
+        "plans.0.cta.whatsapp",
+        "plans.1.price.ar",
+        "plans.1.highlighted",
+        "plans.1.badge.ar",
+        "plans.1.cta.pageId",
+        "plans.1.cta.style",
+        "plans.1.id"
+      ]
+    },
+    {
+      "name": "pricing minimal",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "pricing needs a plan",
+      "type": "pricing",
+      "config": {
+        "plans": []
+      },
+      "valid": false
+    },
+    {
+      "name": "pricing four plans",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          },
+          {
+            "id": "plan-2",
+            "name": {
+              "en": "Plan 2",
+              "ar": "الباقة 2"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          },
+          {
+            "id": "plan-3",
+            "name": {
+              "en": "Plan 3",
+              "ar": "الباقة 3"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          },
+          {
+            "id": "plan-4",
+            "name": {
+              "en": "Plan 4",
+              "ar": "الباقة 4"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "pricing five plans is too many",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          },
+          {
+            "id": "plan-2",
+            "name": {
+              "en": "Plan 2",
+              "ar": "الباقة 2"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          },
+          {
+            "id": "plan-3",
+            "name": {
+              "en": "Plan 3",
+              "ar": "الباقة 3"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          },
+          {
+            "id": "plan-4",
+            "name": {
+              "en": "Plan 4",
+              "ar": "الباقة 4"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          },
+          {
+            "id": "plan-5",
+            "name": {
+              "en": "Plan 5",
+              "ar": "الباقة 5"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "pricing plan with ten features",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [
+              {
+                "id": "f0",
+                "text": {
+                  "en": "Feature 0",
+                  "ar": ""
+                },
+                "included": true
+              },
+              {
+                "id": "f1",
+                "text": {
+                  "en": "Feature 1",
+                  "ar": ""
+                },
+                "included": false
+              },
+              {
+                "id": "f2",
+                "text": {
+                  "en": "Feature 2",
+                  "ar": ""
+                },
+                "included": true
+              },
+              {
+                "id": "f3",
+                "text": {
+                  "en": "Feature 3",
+                  "ar": ""
+                },
+                "included": false
+              },
+              {
+                "id": "f4",
+                "text": {
+                  "en": "Feature 4",
+                  "ar": ""
+                },
+                "included": true
+              },
+              {
+                "id": "f5",
+                "text": {
+                  "en": "Feature 5",
+                  "ar": ""
+                },
+                "included": false
+              },
+              {
+                "id": "f6",
+                "text": {
+                  "en": "Feature 6",
+                  "ar": ""
+                },
+                "included": true
+              },
+              {
+                "id": "f7",
+                "text": {
+                  "en": "Feature 7",
+                  "ar": ""
+                },
+                "included": false
+              },
+              {
+                "id": "f8",
+                "text": {
+                  "en": "Feature 8",
+                  "ar": ""
+                },
+                "included": true
+              },
+              {
+                "id": "f9",
+                "text": {
+                  "en": "Feature 9",
+                  "ar": ""
+                },
+                "included": false
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "pricing plan with eleven features is too many",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [
+              {
+                "id": "f0",
+                "text": {
+                  "en": "Feature 0",
+                  "ar": ""
+                },
+                "included": true
+              },
+              {
+                "id": "f1",
+                "text": {
+                  "en": "Feature 1",
+                  "ar": ""
+                },
+                "included": false
+              },
+              {
+                "id": "f2",
+                "text": {
+                  "en": "Feature 2",
+                  "ar": ""
+                },
+                "included": true
+              },
+              {
+                "id": "f3",
+                "text": {
+                  "en": "Feature 3",
+                  "ar": ""
+                },
+                "included": false
+              },
+              {
+                "id": "f4",
+                "text": {
+                  "en": "Feature 4",
+                  "ar": ""
+                },
+                "included": true
+              },
+              {
+                "id": "f5",
+                "text": {
+                  "en": "Feature 5",
+                  "ar": ""
+                },
+                "included": false
+              },
+              {
+                "id": "f6",
+                "text": {
+                  "en": "Feature 6",
+                  "ar": ""
+                },
+                "included": true
+              },
+              {
+                "id": "f7",
+                "text": {
+                  "en": "Feature 7",
+                  "ar": ""
+                },
+                "included": false
+              },
+              {
+                "id": "f8",
+                "text": {
+                  "en": "Feature 8",
+                  "ar": ""
+                },
+                "included": true
+              },
+              {
+                "id": "f9",
+                "text": {
+                  "en": "Feature 9",
+                  "ar": ""
+                },
+                "included": false
+              },
+              {
+                "id": "f10",
+                "text": {
+                  "en": "Feature 10",
+                  "ar": ""
+                },
+                "included": true
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "pricing plan needs a name",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "pricing plan needs a price",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "",
+              "ar": ""
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "pricing feature needs text",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [
+              {
+                "id": "f",
+                "text": {
+                  "en": "",
+                  "ar": ""
+                },
+                "included": true
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "pricing feature needs its included flag",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [
+              {
+                "id": "f",
+                "text": {
+                  "en": "Notes",
+                  "ar": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "pricing plan button with an unsafe address is refused",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "cta": {
+              "label": {
+                "en": "Go",
+                "ar": ""
+              },
+              "url": "javascript:alert(1)"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "pricing plan button needs a label",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "cta": {
+              "label": {
+                "en": "",
+                "ar": ""
+              },
+              "pageId": "p"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.title en 100 chars (cap 100)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ],
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.title en 101 chars (cap 100)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ],
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.title ar 100 chars (cap 100)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ],
+        "title": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.title ar 101 chars (cap 100)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ],
+        "title": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.description en 280 chars (cap 280)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ],
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.description en 281 chars (cap 280)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ],
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.description ar 280 chars (cap 280)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ],
+        "description": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.description ar 281 chars (cap 280)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ],
+        "description": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.name en 40 chars (cap 40)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.name en 41 chars (cap 40)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.name ar 40 chars (cap 40)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "x",
+              "ar": "عععععععععععععععععععععععععععععععععععععععع"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.name ar 41 chars (cap 40)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "x",
+              "ar": "ععععععععععععععععععععععععععععععععععععععععع"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.price en 24 chars (cap 24)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.price en 25 chars (cap 24)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.price ar 24 chars (cap 24)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "x",
+              "ar": "عععععععععععععععععععععععع"
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.price ar 25 chars (cap 24)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "x",
+              "ar": "ععععععععععععععععععععععععع"
+            },
+            "features": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.period en 30 chars (cap 30)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "period": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.period en 31 chars (cap 30)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "period": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.period ar 30 chars (cap 30)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "period": {
+              "en": "x",
+              "ar": "عععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.period ar 31 chars (cap 30)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "period": {
+              "en": "x",
+              "ar": "ععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.description en 160 chars (cap 160)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "description": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.description en 161 chars (cap 160)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "description": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.description ar 160 chars (cap 160)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "description": {
+              "en": "x",
+              "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.description ar 161 chars (cap 160)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "description": {
+              "en": "x",
+              "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.badge en 24 chars (cap 24)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "badge": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.badge en 25 chars (cap 24)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "badge": {
+              "en": "aaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.badge ar 24 chars (cap 24)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "badge": {
+              "en": "x",
+              "ar": "عععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.badge ar 25 chars (cap 24)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [],
+            "badge": {
+              "en": "x",
+              "ar": "ععععععععععععععععععععععععع"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.features.0.text en 80 chars (cap 80)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [
+              {
+                "id": "f",
+                "text": {
+                  "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "ar": ""
+                },
+                "included": true
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.features.0.text en 81 chars (cap 80)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [
+              {
+                "id": "f",
+                "text": {
+                  "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "ar": ""
+                },
+                "included": true
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: pricing.plans.0.features.0.text ar 80 chars (cap 80)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [
+              {
+                "id": "f",
+                "text": {
+                  "en": "x",
+                  "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+                },
+                "included": true
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: pricing.plans.0.features.0.text ar 81 chars (cap 80)",
+      "type": "pricing",
+      "config": {
+        "plans": [
+          {
+            "id": "plan-1",
+            "name": {
+              "en": "Plan 1",
+              "ar": "الباقة 1"
+            },
+            "price": {
+              "en": "450 EGP",
+              "ar": "450 ج.م"
+            },
+            "features": [
+              {
+                "id": "f",
+                "text": {
+                  "en": "x",
+                  "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+                },
+                "included": true
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown with every field",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "description": {
+          "en": "Book your seat for the new term.",
+          "ar": "احجز مقعدك في الترم الجديد."
+        },
+        "timeZone": "Africa/Cairo",
+        "endedMessage": {
+          "en": "Registration has closed. Message us to join the waiting list.",
+          "ar": "أُغلق التسجيل. راسلنا للانضمام إلى قائمة الانتظار."
+        },
+        "cta": {
+          "label": {
+            "en": "Book on WhatsApp",
+            "ar": "احجز عبر واتساب"
+          },
+          "whatsapp": "+201001234567"
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "See the plans",
+            "ar": "اطّلع على الباقات"
+          },
+          "pageId": "p-pricing"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "deadline",
+        "timeZone",
+        "description.ar",
+        "endedMessage.en",
+        "endedMessage.ar",
+        "cta.whatsapp",
+        "secondaryCta.pageId"
+      ]
+    },
+    {
+      "name": "countdown deadline not chosen yet still saves",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": ""
+      },
+      "valid": true,
+      "preserves": [
+        "deadline"
+      ]
+    },
+    {
+      "name": "countdown deadline in UTC",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T21:59:00Z"
+      },
+      "valid": true,
+      "preserves": [
+        "deadline"
+      ]
+    },
+    {
+      "name": "countdown deadline without seconds",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59+02:00"
+      },
+      "valid": true,
+      "preserves": [
+        "deadline"
+      ]
+    },
+    {
+      "name": "countdown deadline with milliseconds",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00.000+02:00"
+      },
+      "valid": true,
+      "preserves": [
+        "deadline"
+      ]
+    },
+    {
+      "name": "countdown deadline on 29 February of a leap year",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2028-02-29T12:00:00+02:00"
+      },
+      "valid": true,
+      "preserves": [
+        "deadline"
+      ]
+    },
+    {
+      "name": "countdown deadline with a negative offset",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T08:00:00-05:00"
+      },
+      "valid": true,
+      "preserves": [
+        "deadline"
+      ]
+    },
+    {
+      "name": "countdown deadline without an offset is refused",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00"
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown deadline as a date only is refused",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05"
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown deadline on 30 February is refused",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-02-30T12:00:00+02:00"
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown deadline on 29 February of a common year is refused",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2027-02-29T12:00:00+02:00"
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown deadline at hour 24 is refused",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T24:00:00+02:00"
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown deadline with an offset beyond 14 hours is refused",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+15:00"
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown deadline in another format is refused",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "05/11/2026 23:59"
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown deadline as words is refused",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "next Thursday"
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown needs a deadline key",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown needs a title",
+      "type": "countdown",
+      "config": {
+        "deadline": "2026-11-05T23:59:00+02:00"
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown time zone must be a zone name",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "timeZone": "Cairo time!"
+      },
+      "valid": false
+    },
+    {
+      "name": "countdown UTC time zone",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "timeZone": "UTC"
+      },
+      "valid": true,
+      "preserves": [
+        "timeZone"
+      ]
+    },
+    {
+      "name": "countdown three-part time zone",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "timeZone": "America/Argentina/Buenos_Aires"
+      },
+      "valid": true,
+      "preserves": [
+        "timeZone"
+      ]
+    },
+    {
+      "name": "countdown button with an unsafe address is refused",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "tertiaryCta": {
+          "label": {
+            "en": "Go",
+            "ar": ""
+          },
+          "url": "javascript:alert(1)"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: countdown.title en 80 chars (cap 80)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        },
+        "deadline": "2026-11-05T23:59:00+02:00"
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: countdown.title en 81 chars (cap 80)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        },
+        "deadline": "2026-11-05T23:59:00+02:00"
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: countdown.title ar 80 chars (cap 80)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00"
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: countdown.title ar 81 chars (cap 80)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00"
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: countdown.description en 240 chars (cap 240)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: countdown.description en 241 chars (cap 240)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "description": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: countdown.description ar 240 chars (cap 240)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "description": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: countdown.description ar 241 chars (cap 240)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "description": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: countdown.endedMessage en 160 chars (cap 160)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "endedMessage": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: countdown.endedMessage en 161 chars (cap 160)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "endedMessage": {
+          "en": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ar": ""
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "limit: countdown.endedMessage ar 160 chars (cap 160)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "endedMessage": {
+          "en": "x",
+          "ar": "عععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "limit: countdown.endedMessage ar 161 chars (cap 160)",
+      "type": "countdown",
+      "config": {
+        "title": {
+          "en": "Registration closes soon",
+          "ar": "التسجيل يُغلق قريبًا"
+        },
+        "deadline": "2026-11-05T23:59:00+02:00",
+        "endedMessage": {
+          "en": "x",
+          "ar": "ععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععععع"
+        }
       },
       "valid": false
     }
