@@ -1,5 +1,5 @@
 {
-  "description": "Theme 1 plan §D.2 section-contract parity cases. Byte-identical in atlas (src/features/website/schemas/__parity__) and atlas-backend (src/website/validation/__parity__); both schema suites must return `valid` for every case.",
+  "description": "Theme 1 plan §D.2 section-contract parity cases. Byte-identical in atlas (src/features/website/schemas/__parity__) and atlas-backend (src/website/validation/__parity__); both schema suites must return `valid` for every case. A case's optional `preserves` lists dotted paths that must survive the parse unchanged (a key the schema does not declare is silently stripped, which is how a section button's sign-up target was once lost on save).",
   "cases": [
     {
       "name": "legacy hero",
@@ -2042,6 +2042,367 @@
         }
       },
       "valid": false
+    },
+    {
+      "name": "a section button keeps its sign-up target",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Sign up",
+            "ar": "أنشئ حسابًا"
+          },
+          "authAction": "signUp"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "cta.authAction"
+      ]
+    },
+    {
+      "name": "a sign-in/sign-up target outside the list is refused",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Go",
+            "ar": ""
+          },
+          "authAction": "admin"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "hero with three buttons: WhatsApp, a hotline and a styled link",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Chat with us",
+            "ar": "كلّمنا واتساب"
+          },
+          "whatsapp": "+201001234567",
+          "whatsappMessage": {
+            "en": "I'd like to ask about a course",
+            "ar": "عايز أسأل عن كورس"
+          }
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "Call us",
+            "ar": "اتصل بينا"
+          },
+          "phone": "19999",
+          "style": "secondary"
+        },
+        "tertiaryCta": {
+          "label": {
+            "en": "Our story",
+            "ar": ""
+          },
+          "url": "https://example.com/story",
+          "style": "link"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "cta.whatsapp",
+        "cta.whatsappMessage.ar",
+        "secondaryCta.phone",
+        "secondaryCta.style",
+        "tertiaryCta.url",
+        "tertiaryCta.style"
+      ]
+    },
+    {
+      "name": "a call button takes an international number",
+      "type": "cta",
+      "config": {
+        "title": {
+          "en": "Join",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Call",
+            "ar": ""
+          },
+          "phone": "+20233334444"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "cta.phone"
+      ]
+    },
+    {
+      "name": "a WhatsApp number must be international",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Chat",
+            "ar": ""
+          },
+          "whatsapp": "01001234567"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "a WhatsApp number is digits only",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Chat",
+            "ar": ""
+          },
+          "whatsapp": "+20 100 123 4567"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "a call number cannot carry letters",
+      "type": "cta",
+      "config": {
+        "title": {
+          "en": "Join",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Call",
+            "ar": ""
+          },
+          "phone": "call-me"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "a WhatsApp message over 300 characters is refused",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Chat",
+            "ar": ""
+          },
+          "whatsapp": "+201001234567",
+          "whatsappMessage": {
+            "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "ar": ""
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "a button style outside the list is refused",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Go",
+            "ar": ""
+          },
+          "pageId": "p1",
+          "style": "huge"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "about with buttons",
+      "type": "about",
+      "config": {
+        "title": {
+          "en": "About",
+          "ar": ""
+        },
+        "body": {
+          "en": "We teach.",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Courses",
+            "ar": ""
+          },
+          "pageId": "p1"
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "Chat",
+            "ar": ""
+          },
+          "whatsapp": "+966501234567"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "cta.pageId",
+        "secondaryCta.whatsapp"
+      ]
+    },
+    {
+      "name": "about button needs a label",
+      "type": "about",
+      "config": {
+        "title": {
+          "en": "About",
+          "ar": ""
+        },
+        "body": {
+          "en": "We teach.",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "",
+            "ar": ""
+          },
+          "pageId": "p1"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "feature split with three buttons",
+      "type": "featureSplit",
+      "config": {
+        "title": {
+          "en": "Why us",
+          "ar": ""
+        },
+        "imagePosition": "start",
+        "items": [],
+        "cta": {
+          "label": {
+            "en": "Start",
+            "ar": ""
+          },
+          "pageId": "p1"
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "Call",
+            "ar": ""
+          },
+          "phone": "16000"
+        },
+        "tertiaryCta": {
+          "label": {
+            "en": "Chat",
+            "ar": ""
+          },
+          "whatsapp": "+201001234567",
+          "style": "primary"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "secondaryCta.phone",
+        "tertiaryCta.style"
+      ]
+    },
+    {
+      "name": "CTA banner with a third button",
+      "type": "cta",
+      "config": {
+        "title": {
+          "en": "Join",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Start",
+            "ar": ""
+          },
+          "pageId": "p1"
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "Courses",
+            "ar": ""
+          },
+          "courseId": "c1"
+        },
+        "tertiaryCta": {
+          "label": {
+            "en": "Sign in",
+            "ar": ""
+          },
+          "authAction": "signIn",
+          "style": "link"
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "tertiaryCta.authAction",
+        "tertiaryCta.style"
+      ]
+    },
+    {
+      "name": "a WhatsApp button whose number is not typed yet still saves",
+      "type": "hero",
+      "config": {
+        "title": {
+          "en": "Learn",
+          "ar": ""
+        },
+        "cta": {
+          "label": {
+            "en": "Chat",
+            "ar": ""
+          },
+          "whatsapp": ""
+        },
+        "secondaryCta": {
+          "label": {
+            "en": "Call",
+            "ar": ""
+          },
+          "phone": ""
+        }
+      },
+      "valid": true,
+      "preserves": [
+        "cta.whatsapp",
+        "secondaryCta.phone"
+      ]
     }
   ]
 }
