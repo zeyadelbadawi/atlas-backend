@@ -71,6 +71,35 @@ describe('sectionInstanceSchema — discriminated union boundary', () => {
     expect(sectionInstanceSchema.safeParse(instance).success).toBe(false);
   });
 
+  it('keeps a section’s design (CMS phase 3), named choices only', () => {
+    const design = {
+      background: 'dark',
+      spacing: 'compact',
+      spacingMobile: 'spacious',
+      align: 'center',
+      width: 'wide',
+      reverseOnMobile: true,
+    };
+    const result = sectionInstanceSchema.safeParse(heroInstance({ design }));
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.design).toEqual(design);
+  });
+
+  it('a section without a design is still valid', () => {
+    const result = sectionInstanceSchema.safeParse(heroInstance());
+    expect(result.success && result.data.design).toBeUndefined();
+  });
+
+  it.each([
+    [{ background: '#ff0000' }],
+    [{ spacing: '12px' }],
+    [{ align: 'right' }],
+    [{ width: 'full-bleed' }],
+    [{ reverseOnMobile: 'yes' }],
+  ])('refuses a design value outside the named choices: %o', (design) => {
+    expect(sectionInstanceSchema.safeParse(heroInstance({ design })).success).toBe(false);
+  });
+
   it('rejects a section with a non-boolean `enabled`', () => {
     const result = sectionInstanceSchema.safeParse(heroInstance({ enabled: 'yes' }));
     expect(result.success).toBe(false);
