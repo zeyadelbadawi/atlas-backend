@@ -35,6 +35,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { slugSuffix } from './utils/slug-suffix';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -365,7 +366,7 @@ describe('P60 platform course console (e2e) — P60-COURSE-001..014', () => {
       .set(tenantAuth)
       .send({
         title: 'P60 Created Course',
-        slug: `p60-created-${Date.now()}`,
+        slug: `p60-created-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
       })

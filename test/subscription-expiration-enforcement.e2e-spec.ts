@@ -30,6 +30,7 @@ import {
   seedPlan,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { slugSuffix } from './utils/slug-suffix';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -193,7 +194,7 @@ describe('Subscription expiration enforcement (e2e)', () => {
       .send({
         academyId: academy.id,
         title: 'Before expiry',
-        slug: `before-expiry-${Date.now()}`,
+        slug: `before-expiry-${slugSuffix()}`,
         content: 'Hello.',
       })
       .expect(201);

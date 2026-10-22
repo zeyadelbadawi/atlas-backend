@@ -39,6 +39,7 @@ import {
   ORGANIZATION_INSTRUCTOR_PERMISSIONS,
   ORGANIZATION_MANAGER_PERMISSIONS,
 } from '../src/tenancy/constants/organization-permissions.constants';
+import { slugSuffix } from './utils/slug-suffix';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -140,7 +141,7 @@ describe('Phase 9 instructor/student/analytics authorization (e2e) — P9-AUTH-0
       .set('Authorization', `Bearer ${instructor.accessToken}`)
       .send({
         title: 'P9 instructor post',
-        slug: `p9a003-${Date.now()}`,
+        slug: `p9a003-${slugSuffix()}`,
         content: 'Should never be created.',
       });
     expect(response.status).toBe(403);

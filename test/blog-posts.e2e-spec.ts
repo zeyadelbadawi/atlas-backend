@@ -14,6 +14,7 @@ import {
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 import { SubscriptionSweepService } from '../src/plans/services/subscription-sweep.service';
+import { slugSuffix } from './utils/slug-suffix';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -63,7 +64,7 @@ describe('Blog Posts (e2e)', () => {
 
   it('academy staff create, update, publish, and delete their own post; a user with no staff role anywhere cannot create one', async () => {
     const { staff } = await seedAcademyStaff('blog-crud');
-    const slug = `blog-crud-${Date.now()}`;
+    const slug = `blog-crud-${slugSuffix()}`;
 
     const created = await request(app.getHttpServer())
       .post('/blog-posts')
@@ -95,7 +96,7 @@ describe('Blog Posts (e2e)', () => {
     await request(app.getHttpServer())
       .post('/blog-posts')
       .set('Authorization', `Bearer ${noRole.accessToken}`)
-      .send({ title: 'Should fail', slug: `should-fail-${Date.now()}`, content: 'x' })
+      .send({ title: 'Should fail', slug: `should-fail-${slugSuffix()}`, content: 'x' })
       .expect(403);
   });
 
@@ -107,7 +108,7 @@ describe('Blog Posts (e2e)', () => {
     const created = await request(app.getHttpServer())
       .post('/blog-posts')
       .set('Authorization', `Bearer ${staff.accessToken}`)
-      .send({ title: 'Owned', slug: `owned-${Date.now()}`, content: 'Mine.' })
+      .send({ title: 'Owned', slug: `owned-${slugSuffix()}`, content: 'Mine.' })
       .expect(201);
     await request(app.getHttpServer())
       .post(`/blog-posts/${created.body.id}/publish`)
@@ -142,7 +143,7 @@ describe('Blog Posts (e2e)', () => {
     const created = await request(app.getHttpServer())
       .post('/blog-posts')
       .set('Authorization', `Bearer ${staff.accessToken}`)
-      .send({ title: 'Draft Post', slug: `draft-post-${Date.now()}`, content: 'x' })
+      .send({ title: 'Draft Post', slug: `draft-post-${slugSuffix()}`, content: 'x' })
       .expect(201);
 
     const beforePublish = await request(app.getHttpServer())
@@ -182,7 +183,7 @@ describe('Blog Posts (e2e)', () => {
     const ambiguous = await request(app.getHttpServer())
       .post('/blog-posts')
       .set('Authorization', `Bearer ${staff.accessToken}`)
-      .send({ title: 'No Academy', slug: `no-academy-${Date.now()}`, content: 'x' })
+      .send({ title: 'No Academy', slug: `no-academy-${slugSuffix()}`, content: 'x' })
       .expect(400);
     expect(ambiguous.body.error.messageKey).toBe('errors.blog.ambiguousAcademy');
 
@@ -192,7 +193,7 @@ describe('Blog Posts (e2e)', () => {
       .set('Authorization', `Bearer ${staff.accessToken}`)
       .send({
         title: 'Academy A Post',
-        slug: `academy-a-post-${Date.now()}`,
+        slug: `academy-a-post-${slugSuffix()}`,
         content: 'x',
         academyId: academyA.id,
       })
@@ -204,7 +205,7 @@ describe('Blog Posts (e2e)', () => {
       .set('Authorization', `Bearer ${staff.accessToken}`)
       .send({
         title: 'Academy B Post',
-        slug: `academy-b-post-${Date.now()}`,
+        slug: `academy-b-post-${slugSuffix()}`,
         content: 'x',
         academyId: academyB.id,
       })
@@ -232,7 +233,7 @@ describe('Blog Posts (e2e)', () => {
       .set('Authorization', `Bearer ${staff.accessToken}`)
       .send({
         title: 'Hijack Attempt',
-        slug: `hijack-attempt-${Date.now()}`,
+        slug: `hijack-attempt-${slugSuffix()}`,
         content: 'x',
         academyId: foreignAcademy.id,
       })
@@ -252,7 +253,7 @@ describe('Blog Posts (e2e)', () => {
       .set('Authorization', `Bearer ${staff.accessToken}`)
       .send({
         title: 'Scheduled Post',
-        slug: `blog-schedule-create-${Date.now()}`,
+        slug: `blog-schedule-create-${slugSuffix()}`,
         content: 'Coming soon.',
         scheduledAt: future,
         metaTitle: 'A great meta title',
@@ -272,7 +273,7 @@ describe('Blog Posts (e2e)', () => {
       .set('Authorization', `Bearer ${staff.accessToken}`)
       .send({
         title: 'Backdated',
-        slug: `blog-schedule-backdated-${Date.now()}`,
+        slug: `blog-schedule-backdated-${slugSuffix()}`,
         content: 'x',
         scheduledAt: past,
       })
@@ -290,7 +291,7 @@ describe('Blog Posts (e2e)', () => {
       .set('Authorization', `Bearer ${staff.accessToken}`)
       .send({
         title: 'Due Soon',
-        slug: `blog-sweep-due-${Date.now()}`,
+        slug: `blog-sweep-due-${slugSuffix()}`,
         content: 'x',
         scheduledAt: soon,
       })
@@ -301,7 +302,7 @@ describe('Blog Posts (e2e)', () => {
       .set('Authorization', `Bearer ${staff.accessToken}`)
       .send({
         title: 'Not Due Yet',
-        slug: `blog-sweep-not-due-${Date.now()}`,
+        slug: `blog-sweep-not-due-${slugSuffix()}`,
         content: 'x',
         scheduledAt: farFuture,
       })

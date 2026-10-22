@@ -16,6 +16,7 @@ import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import type { PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — subdomain_allocations / domain_connections (direct, no guards)', () => {
   let app: INestApplication;
@@ -52,7 +53,7 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -69,7 +70,11 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
         where: { id: organizationId },
       });
       const academy = await tx.academy.create({
-        data: { organizationId, name: uniqueName(label), slug: `${label}-${Date.now()}` },
+        data: {
+          organizationId,
+          name: uniqueName(label),
+          slug: `${label}-${slugSuffix()}`,
+        },
       });
       // Phase 1 (Extended Scope, dependency A) — reproduces the real
       // `AcademiesService.create`'s auto-granted owner membership, which
@@ -251,7 +256,7 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
         tx.subdomainAllocation.create({
           data: {
             academyId: victimAcademy.id,
-            subdomain: `hijack-${Date.now()}`,
+            subdomain: `hijack-${slugSuffix()}`,
             status: 'assigned',
           },
         }),
@@ -334,7 +339,7 @@ describe('Row-Level Security — subdomain_allocations / domain_connections (dir
         tx.subdomainAllocation.create({
           data: {
             academyId: academy.id,
-            subdomain: `nodelete-${Date.now()}`,
+            subdomain: `nodelete-${slugSuffix()}`,
             status: 'assigned',
           },
         }),

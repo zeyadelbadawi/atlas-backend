@@ -18,6 +18,7 @@ import {
   seedCourse,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { slugSuffix } from './utils/slug-suffix';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -111,7 +112,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
     const response = await request(app.getHttpServer())
       .post('/academies')
       .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ name: 'No Org', slug: `no-org-${Date.now()}` });
+      .send({ name: 'No Org', slug: `no-org-${slugSuffix()}` });
     expect(response.status).toBe(404);
   });
 
@@ -144,7 +145,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
     const org = await seedOrganizationWithOwner(admin, user.userId, 'academy-crud-org');
     // Provisioning is entitlement-gated (see above).
     await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
-    const slug = `academy-crud-${Date.now()}`;
+    const slug = `academy-crud-${slugSuffix()}`;
     // W4 — academy names are unique platform-wide; the e2e DB persists.
     const crudName = uniqueName('CRUD Academy');
     const renamedName = uniqueName('Renamed Academy');
@@ -309,7 +310,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
     // Provisioning is entitlement-gated, so the organization needs a
     // real subscription before it can create an Academy.
     await seedActiveSubscriptionForOrg(admin, org.id, org.slug);
-    const slug = `dup-slug-${Date.now()}`;
+    const slug = `dup-slug-${slugSuffix()}`;
 
     expect((await provisionAcademy(user.accessToken, org.id, slug)).status).toBe(201);
 
@@ -350,7 +351,7 @@ describe('Academy Management (e2e) — functional/contract', () => {
     // Provisioning is entitlement-gated, so the organization needs a
     // real subscription before it can create an Academy.
     await seedActiveSubscriptionForOrg(admin, firstOrg.id, firstOrg.slug);
-    const slug = `cross-org-dup-slug-${Date.now()}`;
+    const slug = `cross-org-dup-slug-${slugSuffix()}`;
 
     await request(app.getHttpServer())
       .post(`/organizations/${firstOrg.id}/provisioning-requests`)

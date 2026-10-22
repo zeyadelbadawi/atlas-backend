@@ -55,6 +55,7 @@ import type {
 } from '../src/identity/services/email-provider.interface';
 import { GRACE_PERIOD_MS } from '../src/plans/queue/subscription-sweep.types';
 import { LIFECYCLE_STEP_MAX_LATENESS_MS } from '../src/plans/utils/lifecycle-steps.util';
+import { slugSuffix } from './utils/slug-suffix';
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
@@ -514,7 +515,7 @@ describe('P64 C5 — tenant lifecycle sequences (e2e, fake clock)', () => {
         data: {
           academyId: academy.id,
           title: 'A real course',
-          slug: `t5-course-${Date.now()}`,
+          slug: `t5-course-${slugSuffix()}`,
           status: 'draft',
           visibility: 'private',
           pricingType: 'free',

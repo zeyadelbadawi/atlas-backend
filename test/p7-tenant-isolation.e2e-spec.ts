@@ -23,6 +23,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { slugSuffix } from './utils/slug-suffix';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -145,7 +146,7 @@ describe('Instructor Operations & Community tenant isolation (e2e) — P7-TENANT
     const post = await request(app.getHttpServer())
       .post('/blog-posts')
       .set('Authorization', `Bearer ${owner.accessToken}`)
-      .send({ title: 'Org A post', slug: `t7-004-${Date.now()}`, content: 'x' })
+      .send({ title: 'Org A post', slug: `t7-004-${slugSuffix()}`, content: 'x' })
       .expect(201);
     await request(app.getHttpServer())
       .post(`/blog-posts/${post.body.id}/publish`)

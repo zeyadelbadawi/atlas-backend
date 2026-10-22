@@ -27,6 +27,7 @@ import {
   seedQuiz,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { slugSuffix } from './utils/slug-suffix';
 
 async function signUpAndSignIn(
   app: INestApplication,
@@ -310,7 +311,7 @@ describe('Course wizard — readiness, idempotent create, quiz contract (e2e)', 
     const key = `w6-key-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const body = {
       title: 'Idempotent Course',
-      slug: `idem-${Date.now()}`,
+      slug: `idem-${slugSuffix()}`,
       visibility: 'private',
       pricing: { type: 'free' },
       idempotencyKey: key,
@@ -354,7 +355,7 @@ describe('Course wizard — readiness, idempotent create, quiz contract (e2e)', 
     const key = `w6-race-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const body = {
       title: 'Raced Course',
-      slug: `raced-${Date.now()}`,
+      slug: `raced-${slugSuffix()}`,
       visibility: 'private',
       pricing: { type: 'free' },
       idempotencyKey: key,
@@ -380,7 +381,7 @@ describe('Course wizard — readiness, idempotent create, quiz contract (e2e)', 
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
         title: 'Owner Course',
-        slug: `owner-${Date.now()}`,
+        slug: `owner-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
         idempotencyKey: key,
@@ -395,7 +396,7 @@ describe('Course wizard — readiness, idempotent create, quiz contract (e2e)', 
       .set('Authorization', `Bearer ${manager.accessToken}`)
       .send({
         title: 'Manager Course',
-        slug: `manager-${Date.now()}`,
+        slug: `manager-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
         idempotencyKey: key,
@@ -408,7 +409,7 @@ describe('Course wizard — readiness, idempotent create, quiz contract (e2e)', 
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
         title: 'Bad Key',
-        slug: `bad-key-${Date.now()}`,
+        slug: `bad-key-${slugSuffix()}`,
         visibility: 'private',
         pricing: { type: 'free' },
         idempotencyKey: 'has spaces!',

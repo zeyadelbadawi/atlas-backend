@@ -22,6 +22,7 @@ import {
   seedTenantSubscription,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import { slugSuffix } from './utils/slug-suffix';
 
 jest.setTimeout(30000);
 
@@ -250,7 +251,7 @@ describe('Platform Owner Control Plane — P15 (e2e)', () => {
       const org = await seedOrganizationWithOwner(admin, tenantOwner.userId, 'audit-org');
       await seedActiveSubscriptionForOrg(admin, org.id, 'audit-org');
       const academyName = `Audited Academy ${Date.now()}`;
-      const slug = `audited-academy-${Date.now()}`;
+      const slug = `audited-academy-${slugSuffix()}`;
 
       // Academy Provisioning is the ONLY creation path — the direct
       // `POST /academies` route was removed in Phase 10.6 because it

@@ -15,6 +15,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_entries/academy_payouts/course_order_refunds, direct, no guards)', () => {
   let app: INestApplication;
@@ -51,7 +52,7 @@ describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_e
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -68,7 +69,7 @@ describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_e
         data: {
           organizationId,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
         },
       }),
     );
@@ -84,7 +85,7 @@ describe('Row-Level Security — Course Commerce (course_orders/revenue_ledger_e
         data: {
           academyId,
           title: slugLabel,
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           status: 'published',
           visibility: 'public',
           pricingType: 'paid',

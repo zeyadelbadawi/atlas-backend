@@ -19,6 +19,7 @@ import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — billing (checkouts/payments/*, direct, no guards)', () => {
   let app: INestApplication;
@@ -59,7 +60,7 @@ describe('Row-Level Security — billing (checkouts/payments/*, direct, no guard
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -73,7 +74,7 @@ describe('Row-Level Security — billing (checkouts/payments/*, direct, no guard
   async function createPlan(slugLabel: string) {
     return prisma.plan.create({
       data: {
-        key: `${slugLabel}-${Date.now()}`,
+        key: `${slugLabel}-${slugSuffix()}`,
         name: slugLabel,
         limits: {
           academies: 1,

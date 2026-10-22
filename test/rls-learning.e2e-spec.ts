@@ -16,6 +16,7 @@ import { PrismaService } from '../src/database/prisma.service';
 import { TenancyContextService } from '../src/tenancy/services/tenancy-context.service';
 import type { PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 describe('Row-Level Security — P6 Student Learning tables (direct, no guards)', () => {
   let app: INestApplication;
@@ -53,7 +54,7 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
         data: {
           id,
           name: uniqueName(slugLabel),
-          slug: `${slugLabel}-${Date.now()}`,
+          slug: `${slugLabel}-${slugSuffix()}`,
           ownerUserId: ownerId,
         },
       });
@@ -72,7 +73,7 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
         data: {
           organizationId: org.id,
           name: uniqueName(label),
-          slug: `${label}-${Date.now()}`,
+          slug: `${label}-${slugSuffix()}`,
         },
       }),
     );
@@ -81,7 +82,7 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
         data: {
           academyId: academy.id,
           title: label,
-          slug: `${label}-${Date.now()}`,
+          slug: `${label}-${slugSuffix()}`,
           status: 'published',
           visibility: 'public',
         },
@@ -272,7 +273,7 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
         data: {
           organizationId: org.id,
           name: uniqueName('rls-discovery-draft'),
-          slug: `rls-discovery-draft-${Date.now()}`,
+          slug: `rls-discovery-draft-${slugSuffix()}`,
         },
       }),
     );
@@ -281,7 +282,7 @@ describe('Row-Level Security — P6 Student Learning tables (direct, no guards)'
         data: {
           academyId: academy.id,
           title: 'Draft',
-          slug: `rls-discovery-draft-c-${Date.now()}`,
+          slug: `rls-discovery-draft-c-${slugSuffix()}`,
           status: 'draft',
           visibility: 'public',
         },

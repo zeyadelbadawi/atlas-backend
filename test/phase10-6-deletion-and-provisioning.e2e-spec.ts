@@ -29,6 +29,7 @@ import { deletionCodeFor } from './utils/account-deletion';
 import { createAdminPrisma } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -331,7 +332,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
 
   it('P106-DEL-010 — an owner deleting their account archives their academies', async () => {
     const owner = await seedOwner('p106-010');
-    const slug = `p106ten${Date.now()}`;
+    const slug = `p106ten${slugSuffix()}`;
     const provisioned = await provisionAcademy(owner.token, owner.organizationId, slug);
     expect(provisioned.academyId).toBeTruthy();
     // Live first — which also caches the hostname resolution for 60 s.
@@ -377,7 +378,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
       .send({
         organizationId: owner.organizationId,
         name: 'Bypass Academy',
-        slug: `bypass${Date.now()}`,
+        slug: `bypass${slugSuffix()}`,
       });
 
     expect(response.status).toBe(404);
@@ -385,7 +386,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
 
   it('P106-DEL-012 — provisioning creates the Academy AND its subdomain allocation', async () => {
     const owner = await seedOwner('p106-012');
-    const slug = `p106twelve${Date.now()}`;
+    const slug = `p106twelve${slugSuffix()}`;
 
     const provisioned = await provisionAcademy(owner.token, owner.organizationId, slug);
     expect(provisioned.academyId).toBeTruthy();
@@ -400,7 +401,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
 
   it('P106-DEL-013 — a provisioned Academy resolves publicly', async () => {
     const owner = await seedOwner('p106-013');
-    const slug = `p106thirteen${Date.now()}`;
+    const slug = `p106thirteen${slugSuffix()}`;
     await provisionAcademy(owner.token, owner.organizationId, slug);
 
     const resolved = await request(app.getHttpServer())
@@ -418,7 +419,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
       .set('Authorization', `Bearer ${outsider.token}`)
       .send({
         academyName: uniqueName('Cross tenant'),
-        requestedSubdomain: `x${Date.now()}`,
+        requestedSubdomain: `x${slugSuffix()}`,
         idempotencyKey: `cross-${Date.now()}`,
       });
 
@@ -431,7 +432,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
       .post(`/organizations/${owner.organizationId}/provisioning-requests`)
       .send({
         academyName: uniqueName('Anon'),
-        requestedSubdomain: `y${Date.now()}`,
+        requestedSubdomain: `y${slugSuffix()}`,
         idempotencyKey: `anon-${Date.now()}`,
       })
       .expect(401);
@@ -441,7 +442,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
 
   it('P106-DEL-016 — deleting an Academy takes its public website offline', async () => {
     const owner = await seedOwner('p106-016');
-    const slug = `p106sixteen${Date.now()}`;
+    const slug = `p106sixteen${slugSuffix()}`;
     const provisioned = await provisionAcademy(owner.token, owner.organizationId, slug);
 
     // Live first.
@@ -499,7 +500,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
 
   it('P106-DEL-018 — a non-owner cannot delete an Academy', async () => {
     const owner = await seedOwner('p106-018');
-    const slug = `p106eighteen${Date.now()}`;
+    const slug = `p106eighteen${slugSuffix()}`;
     const provisioned = await provisionAcademy(owner.token, owner.organizationId, slug);
 
     const outsider = await signUp('p106-018-outsider');
@@ -517,7 +518,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
 
   it('P106-DEL-019 — an unauthenticated caller cannot delete an Academy', async () => {
     const owner = await seedOwner('p106-019');
-    const slug = `p106nineteen${Date.now()}`;
+    const slug = `p106nineteen${slugSuffix()}`;
     const provisioned = await provisionAcademy(owner.token, owner.organizationId, slug);
 
     await request(app.getHttpServer())
@@ -554,7 +555,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
 
   it('P106-DEL-021 — deleting with a reason records it and archives the Academy', async () => {
     const owner = await seedOwner('p106-021');
-    const slug = `p106twentyone${Date.now()}`;
+    const slug = `p106twentyone${slugSuffix()}`;
     const provisioned = await provisionAcademy(owner.token, owner.organizationId, slug);
 
     await request(app.getHttpServer())
@@ -584,7 +585,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
 
   it('P106-DEL-022 — deletion without confirmation is refused and changes nothing', async () => {
     const owner = await seedOwner('p106-022');
-    const slug = `p106twentytwo${Date.now()}`;
+    const slug = `p106twentytwo${slugSuffix()}`;
     const provisioned = await provisionAcademy(owner.token, owner.organizationId, slug);
 
     for (const body of [{}, { confirm: false }, { reason: 'other' }]) {
@@ -610,7 +611,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     // accepted arbitrary strings would make the field useless and would
     // also accept whatever a caller chose to put there.
     const owner = await seedOwner('p106-023');
-    const slug = `p106twentythree${Date.now()}`;
+    const slug = `p106twentythree${slugSuffix()}`;
     const provisioned = await provisionAcademy(owner.token, owner.organizationId, slug);
 
     await request(app.getHttpServer())
@@ -630,7 +631,7 @@ describe('Phase 10.6 deletion & provisioning (e2e) — P106-DEL-001..020', () =>
     // authorization. An outsider must be refused here exactly as they are
     // refused by `DELETE /academies/:id` in P106-DEL-018.
     const owner = await seedOwner('p106-024');
-    const slug = `p106twentyfour${Date.now()}`;
+    const slug = `p106twentyfour${slugSuffix()}`;
     const provisioned = await provisionAcademy(owner.token, owner.organizationId, slug);
     const outsider = await signUp('p106-024-outsider');
 

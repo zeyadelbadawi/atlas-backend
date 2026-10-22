@@ -18,6 +18,7 @@ import {
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
 import { uniqueName } from './utils/unique-name';
+import { slugSuffix } from './utils/slug-suffix';
 
 jest.setTimeout(30000);
 
@@ -184,7 +185,7 @@ describe('Platform Owner Control Plane — tenant isolation & audit coverage (e2
         data: {
           organizationId: orgB.id,
           name: uniqueName('g8-academy-b'),
-          slug: `g8-academy-b-${Date.now()}`,
+          slug: `g8-academy-b-${slugSuffix()}`,
         },
       });
 
@@ -246,7 +247,7 @@ describe('Platform Owner Control Plane — tenant isolation & audit coverage (e2
       // unreachable public websites. The assertion is unchanged in
       // substance: the BUSINESS MUTATION writes the audit entry, not an
       // audit endpoint. Only the way an Academy gets created has moved.
-      const slug = `h2-academy-${Date.now()}`;
+      const slug = `h2-academy-${slugSuffix()}`;
       await request(app.getHttpServer())
         .post(`/organizations/${org.id}/provisioning-requests`)
         .set('Authorization', `Bearer ${tenantOwner.accessToken}`)

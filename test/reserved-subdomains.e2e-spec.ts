@@ -18,6 +18,7 @@ import {
   seedOrganizationWithOwner,
 } from './utils/db-admin';
 import { isReservedSubdomain } from '../src/provisioning/dto/provisioning.constants';
+import { slugSuffix } from './utils/slug-suffix';
 
 /** Labels the two implementations must agree on (reserved and free). */
 const SAMPLES = [
@@ -140,7 +141,7 @@ describe('Reserved platform subdomains (e2e) — DL-57', () => {
 
   it('an ordinary teacher label stays available', async () => {
     const { owner } = await arrangeOwner('rsv-avail-free');
-    const subdomain = `learn-english-${Date.now()}`;
+    const subdomain = `learn-english-${slugSuffix()}`;
     const res = await request(app.getHttpServer())
       .get('/subdomains/availability')
       .query({ subdomain })
