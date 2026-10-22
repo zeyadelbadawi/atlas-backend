@@ -132,7 +132,9 @@ export class PublicWebsiteCacheService {
   /** Called the moment a subscription changes, so a tenant who just paid is served again immediately. */
   async invalidateServingEligibility(organizationId: string): Promise<void> {
     await this.redisService.getClient().del(servingKey(organizationId));
-    await this.edgeCachePurgeService?.purgeOrganization(organizationId);
+    // Not awaited: a payment approval must not wait on listing the
+    // tenant's academies (`purgeOrganization` never rejects).
+    void this.edgeCachePurgeService?.purgeOrganization(organizationId);
   }
 
   async invalidateHostnameResolution(hostnames: readonly string[]): Promise<void> {
