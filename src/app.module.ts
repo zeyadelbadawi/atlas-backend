@@ -65,6 +65,7 @@ import { ProvisioningModule } from './provisioning/provisioning.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { PlatformModule } from './platform/platform.module';
 import { PlatformContactModule } from './platform-contact/platform-contact.module';
+import { FoundingModule } from './founding/founding.module';
 import { ForensicWatermarkModule } from './forensic-watermark/forensic-watermark.module';
 import { CustomerRequestsModule } from './customer-requests/customer-requests.module';
 import { PrivacyRequestsModule } from './privacy-requests/privacy-requests.module';
@@ -214,6 +215,7 @@ import { EdgeCacheModule } from './edge-cache/edge-cache.module';
     PlatformModule,
     // TASK 7 — Atlas marketing contact form + Platform Owner inbox.
     PlatformContactModule,
+    FoundingModule,
     // Mandatory forensic video watermark (docs/FORENSIC_WATERMARK.md).
     ForensicWatermarkModule,
     CustomerRequestsModule,

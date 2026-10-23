@@ -28,6 +28,7 @@ import { TenantUsageRecomputeProducer } from '../queue/tenant-usage-recompute.pr
 import { TenantUsageSweepCursorRepository } from '../repositories/tenant-usage-sweep-cursor.repository';
 import { AnnouncementsService } from '../../community/services/announcements.service';
 import { BlogPostsRepository } from '../../community/repositories/blog-posts.repository';
+import { FoundingNoticeService } from '../../founding/services/founding-notice.service';
 import { SUBSCRIPTION_SWEEP_QUERY_PAGE_SIZE } from '../queue/subscription-sweep.types';
 
 type OrgIdRow = { id: string };
@@ -101,6 +102,10 @@ describe('SubscriptionSweepService — Phase 4.6 cursor persistence', () => {
         { provide: TenantUsageSweepCursorRepository, useValue: sweepCursorRepository },
         { provide: AnnouncementsService, useValue: announcementsService },
         { provide: BlogPostsRepository, useValue: blogPostsRepository },
+        {
+          provide: FoundingNoticeService,
+          useValue: { run: jest.fn().mockResolvedValue({ ended: 0, noticesSent: 0 }) },
+        },
         // P64 C5 — the lifecycle sequences ride the same tick. Stubbed for
         // the same reason the two content publishers above are: this
         // file covers the CURSOR control flow only. Its own behaviour is

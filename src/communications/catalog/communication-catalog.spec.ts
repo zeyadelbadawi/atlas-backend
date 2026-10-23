@@ -352,6 +352,15 @@ const EXPECTED_DEDUPE: Record<
     values: { planVersion: '7' },
     expected: `lifecycle_subscription_price_change:${ENTITY_ID}:7`,
   },
+  // B2 — once per renewal; once per Platform Owner send.
+  'lifecycle.founding.renewal_price_notice': {
+    values: { periodEndAt: PERIOD_END_AT },
+    expected: `founding_renewal_price:${ENTITY_ID}:${PERIOD_END_AT}`,
+  },
+  'platform.founding.message': {
+    values: { sendId: 'send-1' },
+    expected: `founding_message:${ENTITY_ID}:send-1`,
+  },
   'lifecycle.subscription.cancelled': {
     values: { anchorAt: PERIOD_END_AT },
     expected: `lifecycle_subscription_cancelled:${ENTITY_ID}:${PERIOD_END_AT}`,

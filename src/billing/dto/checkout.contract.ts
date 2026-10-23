@@ -16,6 +16,11 @@ export interface CheckoutSnapshotResponse {
   readonly displayName: string;
   readonly price: MoneyResponse;
   readonly capturedAt: string;
+  /**
+   * B2 — present when `price` is the organization's Founding Academy locked
+   * annual price instead of the catalog price (decided server-side).
+   */
+  readonly founding?: { readonly lockEndsAt: string };
 }
 
 export interface CheckoutResponse {

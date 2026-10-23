@@ -293,6 +293,13 @@ writer stores.
 | `observability.synthetic_alert.resolved` | platform | platform | no | — |
 | `platform.contact_submission.status_changed` | platform | platform | no | status, previousStatus |
 | `platform.contact_submission.deleted` | platform | platform | no | status |
+| `platform.founding.created` | platform | platform | no | organizationId, seatNumber, planKey, lockedAmount, lockedCurrency, lockStartsAt, lockEndsAt, sourceContactSubmissionId |
+| `platform.founding.updated` | platform | platform | no | organizationId, changedFields, conciergeHoursUsed |
+| `platform.founding.plan_changed` | platform | platform | no | organizationId, fromPlanKey, toPlanKey, previousAmount, lockedAmount, lockedCurrency |
+| `platform.founding.revoked` | platform | platform | no | organizationId, seatNumber, reason |
+| `platform.founding.ended` | platform | platform | no | organizationId, seatNumber, lockEndsAt |
+| `platform.founding.emailed` | platform | platform | no | organizationId, sendId, audience, recipientCount |
+| `platform.founding.renewal_price_notice_sent` | platform | platform | no | organizationId, periodEndAt, renewalAmount, lockedAmount, currency |
 | `platform.watermark.looked_up` | security | platform | no | found, surface, accountLinked (target label = the looked-up code; never the name, email or phone it revealed) |
 | `platform.campaign.sent` | platform | platform | no | audienceType, channels, recipientCount, mailCount, inAppCount |
 | `academy.message.sent` | academy | academy | yes | audienceType, channels, recipientCount, mailCount, inAppCount |
