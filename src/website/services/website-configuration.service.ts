@@ -30,10 +30,12 @@
  */
 import { resolveBrandUpdate } from '../brand/brand-palette-update';
 import { WebsitePagesRepository } from '../repositories/website-pages.repository';
+import { WebsitePageVersionsRepository } from '../repositories/website-page-versions.repository';
 import {
   collectSampleContent,
   type SampleContentEntry,
 } from '../utils/sample-content.util';
+import { isDeepStrictEqual } from 'node:util';
 import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
 import { STALE_RESOURCE_VERSION_CODE } from '../../concurrency/errors/stale-resource-version.exception';
 import { Prisma } from '@prisma/client';
@@ -84,6 +86,20 @@ const CONFIGURATION_AREAS = ['brand', 'seo', 'navigation', 'header', 'footer'] a
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
 
+/**
+ * CMS phase 4 — who may lock or unlock the header, footer and navigation.
+ * Narrower than `MANAGING_ROLES` on purpose: a lock a Manager could lift
+ * would protect nothing from the Manager. Same tier as the Academy
+ * activity log (`ACTIVITY_LOG_ROLES` in `AcademiesService`).
+ */
+const CHROME_LOCK_ROLES = new Set(['owner', 'administrator']);
+
+/** The site-wide areas the chrome lock freezes. */
+const CHROME_AREAS = ['navigation', 'header', 'footer'] as const;
+
+export const WEBSITE_CHROME_LOCKED_CODE = 'website_chrome_locked';
+export const WEBSITE_CHROME_LOCK_FORBIDDEN_CODE = 'website_chrome_lock_forbidden';
+
 /** The publish response: the configuration plus the sample-content warning (§D.4). Additive — older clients ignore it. */
 export type PublishWebsiteResponse = WebsiteConfigurationResponse & {
   readonly sampleContent: readonly SampleContentEntry[];
@@ -101,6 +117,7 @@ export class WebsiteConfigurationService {
     private readonly academiesRepository: AcademiesRepository,
     private readonly academiesService: AcademiesService,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly websitePageVersionsRepository: WebsitePageVersionsRepository,
   ) {}
 
   /**
@@ -183,6 +200,7 @@ export class WebsiteConfigurationService {
   ): Promise<WebsiteConfigurationResponse> {
     return {
       ...toWebsiteConfigurationResponse(configuration),
+      chromeLocked: configuration.chromeLocked,
       unpublishedChanges: {
         configuration: hasUnpublishedConfigurationChanges(configuration),
         pages: await this.websitePagesRepository.countWithUnpublishedChanges(
@@ -278,6 +296,36 @@ export class WebsiteConfigurationService {
           );
         }
 
+        // CMS phase 4 — the chrome lock. Toggling it is owner/administrator
+        // only; while it is on (and this save does not lift it), a save that
+        // would CHANGE the navigation, header or footer is refused. Sending
+        // them unchanged is fine, so a form that posts everything still works.
+        if (
+          payload.chromeLocked !== undefined &&
+          payload.chromeLocked !== current.chromeLocked
+        ) {
+          if (!CHROME_LOCK_ROLES.has(role)) {
+            throw new ForbiddenException({
+              code: WEBSITE_CHROME_LOCK_FORBIDDEN_CODE,
+              messageKey: 'errors.website.chromeLockForbidden',
+            });
+          }
+          data.chromeLocked = payload.chromeLocked;
+        }
+        if (current.chromeLocked && data.chromeLocked !== false) {
+          const lockedAreas = CHROME_AREAS.filter(
+            (area) =>
+              data[area] !== undefined && !isDeepStrictEqual(data[area], current[area]),
+          );
+          if (lockedAreas.length > 0) {
+            throw new ConflictException({
+              code: WEBSITE_CHROME_LOCKED_CODE,
+              messageKey: 'errors.website.chromeLocked',
+              details: { areas: lockedAreas.join(',') },
+            });
+          }
+        }
+
         await this.sectionReferenceValidatorService.validateConfigurationReferences(
           tx,
           academyId,
@@ -323,11 +371,17 @@ export class WebsiteConfigurationService {
             ...(data.defaultLocale !== undefined
               ? { defaultLocale: current.defaultLocale }
               : {}),
+            ...(data.chromeLocked !== undefined
+              ? { chromeLocked: current.chromeLocked }
+              : {}),
           },
           after: {
             ...(data.themeKey !== undefined ? { themeKey: updated.themeKey } : {}),
             ...(data.defaultLocale !== undefined
               ? { defaultLocale: updated.defaultLocale }
+              : {}),
+            ...(data.chromeLocked !== undefined
+              ? { chromeLocked: updated.chromeLocked }
               : {}),
           },
         });
@@ -518,6 +572,13 @@ export class WebsiteConfigurationService {
         // copy and the site-wide settings become what visitors see. The
         // `configVersion` bump changes every public cache key (Redis and the
         // SSR render cache), so the new content is served on the next request.
+        // CMS phase 4 — history first: a `published` version of every page
+        // whose working copy is about to go live with changes.
+        await this.websitePageVersionsRepository.recordPublishedForAcademy(
+          tx,
+          academyId,
+          userId,
+        );
         await this.websitePagesRepository.publish(tx, academyId);
         const updated = await this.websiteConfigurationRepository.update(tx, academyId, {
           status: 'published',

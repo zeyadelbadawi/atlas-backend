@@ -35,10 +35,15 @@ import { PublishWebsitePageDto } from '../dto/publish-website-page.dto';
 import { SaveVisualIdentityDto } from '../dto/save-visual-identity.dto';
 import type { AcademyResponse } from '../../academy/dto/academy.contract';
 import { UpdateWebsitePageDto } from '../dto/update-website-page.dto';
+import { RestoreWebsitePageVersionDto } from '../dto/restore-website-page-version.dto';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import { ReorderItemsDto } from '../../course/dto/reorder-items.dto';
 import type { WebsiteConfigurationResponse } from '../dto/website-configuration.contract';
-import type { WebsitePageResponse } from '../dto/website-page.contract';
+import type {
+  WebsitePageResponse,
+  WebsitePageVersionResponse,
+  WebsitePageVersionSummaryResponse,
+} from '../dto/website-page.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import {
   PurgeAcademyEdgeCacheInterceptor,
@@ -205,6 +210,58 @@ export class WebsiteController {
       organizationId,
       request.authContext!.userId,
       pageId,
+      body?.expectedVersion,
+    );
+  }
+
+  /** CMS phase 4 — the page's history, newest first, without content. */
+  @Get(':id/website/pages/:pageId/versions')
+  async listPageVersions(
+    @Req() request: Request,
+    @Param('pageId') pageId: string,
+  ): Promise<{ readonly items: readonly WebsitePageVersionSummaryResponse[] }> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.websitePagesService.listVersions(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      pageId,
+    );
+  }
+
+  @Get(':id/website/pages/:pageId/versions/:versionId')
+  async getPageVersion(
+    @Req() request: Request,
+    @Param('pageId') pageId: string,
+    @Param('versionId') versionId: string,
+  ): Promise<WebsitePageVersionResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.websitePagesService.getVersion(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      pageId,
+      versionId,
+    );
+  }
+
+  /** Copies a version into the page's draft; a draft write, so no edge purge. */
+  @Post(':id/website/pages/:pageId/versions/:versionId/restore')
+  @HttpCode(200)
+  @SkipAcademyEdgePurge()
+  async restorePageVersion(
+    @Req() request: Request,
+    @Param('pageId') pageId: string,
+    @Param('versionId') versionId: string,
+    @Body() body: RestoreWebsitePageVersionDto,
+  ): Promise<WebsitePageResponse> {
+    const { academyId, organizationId } = request.academyContext!;
+    return this.websitePagesService.restoreVersion(
+      academyId,
+      organizationId,
+      request.authContext!.userId,
+      pageId,
+      versionId,
       body?.expectedVersion,
     );
   }

@@ -771,6 +771,7 @@ describe('custom section (CMS phase 3c) on a page', () => {
     expect(issues).toEqual(
       expect.arrayContaining([
         ['0.config.columns.0.elements.0.cta.url', 'validation:invalidUrl'],
+        ['0.config.columns', 'validation:customColumnCount'],
       ]),
     );
   });

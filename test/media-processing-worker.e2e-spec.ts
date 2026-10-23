@@ -6,7 +6,10 @@
  * genuine processing failure never touches the original asset row —
  * mirrors `tenant-usage-recompute-worker.e2e-spec.ts`'s exact pattern.
  */
+import { randomUUID } from 'node:crypto';
 import { INestApplication } from '@nestjs/common';
+import request from 'supertest';
+import sharp from 'sharp';
 import {
   createAdminPrisma,
   seedAcademy,
@@ -157,5 +160,77 @@ describe('media-processing worker (e2e) — real BullMQ/Redis', () => {
     expect(row.url).toBe(asset.url);
     expect(row.width).toBeNull();
     expect(row.height).toBeNull();
+  });
+
+  it('CMS phase 4 — a public JPEG gets AVIF/WebP variants, served by width and format with a fallback', async () => {
+    const { academy, org } = await seedManagedAcademy('media-worker-variants');
+    const name = randomUUID();
+    const key = `academies/${academy.id}/${name}.jpg`;
+    const original = await sharp({
+      create: { width: 1200, height: 600, channels: 3, background: '#2a6' },
+    })
+      .jpeg()
+      .toBuffer();
+    const { url } = await storageProvider.putObject(key, original, 'image/jpeg');
+    const asset = await admin.mediaAsset.create({
+      data: {
+        academyId: academy.id,
+        type: 'image',
+        fileName: 'photo.jpg',
+        storageKey: key,
+        url,
+        mimeType: 'image/jpeg',
+        sizeBytes: BigInt(original.length),
+      },
+    });
+    const path = `/public/media/academies/${academy.id}/${name}.jpg`;
+
+    // Before the worker has run: the original, briefly cached — never a 404.
+    const early = await request(app.getHttpServer())
+      .get(`${path}?w=480&f=avif`)
+      .expect(200);
+    expect(early.headers['content-type']).toBe('image/jpeg');
+    expect(early.headers['cache-control']).toBe('public, max-age=300');
+
+    await producer.enqueue(asset.id, academy.id, org.id);
+    const processed = await waitForAsync(
+      () =>
+        admin.mediaAsset
+          .findUnique({ where: { id: asset.id } })
+          .then((row) => (row?.variants !== null ? (row ?? undefined) : undefined)),
+      { timeoutMs: 15000 },
+    );
+    expect(
+      (processed.variants as { width: number; format: string }[]).map(
+        (variant) => `${variant.width}.${variant.format}`,
+      ),
+    ).toEqual(['480.avif', '480.webp', '960.avif', '960.webp', '1200.avif', '1200.webp']);
+    expect(processed.width).toBe(1200);
+
+    const avif = await request(app.getHttpServer())
+      .get(`${path}?w=500&f=avif`)
+      .buffer(true)
+      .parse((res, done) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => done(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+    expect(avif.headers['content-type']).toBe('image/avif');
+    expect(avif.headers['cache-control']).toBe('public, max-age=3600');
+    expect((await sharp(avif.body as Buffer).metadata()).width).toBe(960);
+
+    const webp = await request(app.getHttpServer())
+      .get(`${path}?w=1600&f=webp`)
+      .expect(200);
+    expect(webp.headers['content-type']).toBe('image/webp');
+
+    // The original is untouched and still served as before.
+    const plain = await request(app.getHttpServer()).get(path).expect(200);
+    expect(plain.headers['content-type']).toBe('image/jpeg');
+    expect(Number(plain.headers['content-length'])).toBe(original.length);
+
+    await request(app.getHttpServer()).get(`${path}?w=480&f=png`).expect(400);
+    await request(app.getHttpServer()).get(`${path}?w=480`).expect(400);
   });
 });

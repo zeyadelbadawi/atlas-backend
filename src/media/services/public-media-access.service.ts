@@ -40,6 +40,12 @@ import { toMediaAssetUrl } from '../dto/media-asset.contract';
 
 export type PublicMediaAccess = 'branding' | 'public' | 'signed-only';
 
+/** What the route needs to serve a key: how it may be served, and (CMS phase 4) its stored variants. */
+export interface PublicMediaResolution {
+  readonly access: PublicMediaAccess;
+  readonly variants: Prisma.JsonValue | null;
+}
+
 @Injectable()
 export class PublicMediaAccessService {
   constructor(
@@ -52,6 +58,14 @@ export class PublicMediaAccessService {
     academyId: string,
     storageKey: string,
   ): Promise<PublicMediaAccess | null> {
+    return (await this.resolveWithVariants(academyId, storageKey))?.access ?? null;
+  }
+
+  /** `resolve`, plus the asset's `variants` from the same row read. */
+  async resolveWithVariants(
+    academyId: string,
+    storageKey: string,
+  ): Promise<PublicMediaResolution | null> {
     const organizationId =
       await this.academyStudentsRepository.resolveOrganizationId(academyId);
     if (!organizationId) return null;
@@ -66,6 +80,7 @@ export class PublicMediaAccessService {
           provider: true,
           deletedAt: true,
           uploadedByUserId: true,
+          variants: true,
         },
       });
       if (
@@ -92,8 +107,12 @@ export class PublicMediaAccessService {
         toMediaAssetUrl(storageKey),
         asset.url,
       ]);
-      if (branding) return 'branding';
-      return restricted ? 'signed-only' : 'public';
+      const access: PublicMediaAccess = branding
+        ? 'branding'
+        : restricted
+          ? 'signed-only'
+          : 'public';
+      return { access, variants: asset.variants };
     });
   }
 

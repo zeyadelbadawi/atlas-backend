@@ -1,5 +1,8 @@
 /** `WebsitePage` response contract — matches `website.types.ts` field-for-field. The frontend has no separate list/detail shape (`getPages`/`getPage` both resolve to `WebsitePage`), so this one projection backs both. */
-import type { WebsitePage as PrismaWebsitePage } from '@prisma/client';
+import type {
+  WebsitePage as PrismaWebsitePage,
+  WebsitePageVersion as PrismaWebsitePageVersion,
+} from '@prisma/client';
 
 export interface WebsitePageResponse {
   readonly id: string;
@@ -46,5 +49,65 @@ export function toManagedWebsitePageResponse(
     ...toWebsitePageResponse(page),
     publishedAt: page.publishedAt?.toISOString(),
     hasUnpublishedChanges: page.publishedVersion !== page.version,
+  };
+}
+
+/**
+ * CMS phase 4 — one entry of a page's history (`GET …/pages/:pageId/versions`).
+ * `kind`: `published` (what went live at a publish), `draft_snapshot` (the
+ * working copy before an editing session, at most one per 10 minutes) or
+ * `restore_backup` (the working copy a restore replaced).
+ */
+export interface WebsitePageVersionSummaryResponse {
+  readonly id: string;
+  readonly pageId: string;
+  readonly kind: PrismaWebsitePageVersion['kind'];
+  readonly title: string;
+  readonly slug: string;
+  readonly visible: boolean;
+  /** The page `version` this copy was taken from. */
+  readonly sourceVersion: number;
+  readonly createdAt: string;
+  /** Who caused it; null when unknown or the account is gone. */
+  readonly createdBy: { readonly id: string; readonly name: string } | null;
+}
+
+/** One version with its content (`GET …/versions/:versionId`), for a preview. */
+export interface WebsitePageVersionResponse extends WebsitePageVersionSummaryResponse {
+  readonly seo: Record<string, unknown>;
+  readonly sections: readonly unknown[];
+}
+
+export function toWebsitePageVersionSummaryResponse(
+  version: Omit<PrismaWebsitePageVersion, 'seo' | 'sections'> & {
+    readonly createdByName: string | null;
+  },
+): WebsitePageVersionSummaryResponse {
+  return {
+    id: version.id,
+    pageId: version.pageId,
+    kind: version.kind,
+    title: version.title,
+    slug: version.slug,
+    visible: version.visible,
+    sourceVersion: version.sourceVersion,
+    createdAt: version.createdAt.toISOString(),
+    createdBy:
+      version.createdById && version.createdByName !== null
+        ? { id: version.createdById, name: version.createdByName }
+        : null,
+  };
+}
+
+export function toWebsitePageVersionResponse(
+  version: PrismaWebsitePageVersion & { readonly createdBy: { name: string } | null },
+): WebsitePageVersionResponse {
+  return {
+    ...toWebsitePageVersionSummaryResponse({
+      ...version,
+      createdByName: version.createdBy?.name ?? null,
+    }),
+    seo: version.seo as Record<string, unknown>,
+    sections: version.sections as unknown[],
   };
 }

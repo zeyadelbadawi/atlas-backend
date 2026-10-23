@@ -41,6 +41,19 @@
  *     paths, served `private, no-store`;
  *   - no row / not public / purged → 404.
  *
+ * RESPONSIVE VARIANTS (CMS phase 4). `?w=<width>&f=<avif|webp>` serves the
+ * stored variant of that format at least `w` pixels wide (else the widest
+ * stored), with its own `Content-Type` and the same Cache-Control as the
+ * original. Variants are immutable bytes at deterministic keys, and the
+ * query string is part of Cloudflare's default (Standard) cache key, so
+ * every `w`/`f` pair is its own cache entry and none collides with the
+ * original. An asset with no such variant yet (uploaded before the
+ * backfill, or still in the worker) gets the ORIGINAL bytes and type —
+ * never a 404 — cached only `FALLBACK_CACHE_CONTROL`, so the edge picks up
+ * the variant once it exists instead of pinning the original for a year.
+ * Only those two values are accepted (anything else is a 400), which also
+ * keeps junk query strings from multiplying cache entries.
+ *
  * ONE ROW READ PER REQUEST (plus the published-or-not lookups), which the
  * edge cache absorbs for everything anonymous. Archived assets keep
  * serving on purpose: archiving means "hide it from the library", and
@@ -67,6 +80,14 @@ import {
   type PublicMediaAccess,
 } from '../services/public-media-access.service';
 import { PublicMediaLinkSigner } from '../services/public-media-link.signer';
+import {
+  IMAGE_VARIANT_CONTENT_TYPES,
+  IMAGE_VARIANT_FORMATS,
+  imageVariantKey,
+  parseImageVariants,
+  pickImageVariant,
+  type ImageVariantFormat,
+} from '../utils/image-variants.util';
 
 /** A v4 UUID, which is what both the academy id and every generated object name are. */
 const UUID_PATTERN =
@@ -86,6 +107,12 @@ const CACHE_CONTROL: Readonly<Record<PublicMediaAccess | 'signed', string>> = {
   'signed-only': 'private, no-store',
   signed: 'private, no-store',
 };
+
+/** A variant was asked for but none is stored yet: short, so the edge refetches once it is. */
+const FALLBACK_CACHE_CONTROL = 'public, max-age=300';
+
+/** The largest `w` accepted — far above any stored variant, small enough to stay a bounded cache key space. */
+const MAX_VARIANT_WIDTH = 4096;
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   jpg: 'image/jpeg',
@@ -119,6 +146,8 @@ export class PublicMediaController {
     @Param('fileName') fileName: string,
     @Query('exp') exp: string | undefined,
     @Query('sig') sig: string | undefined,
+    @Query('w') w: string | undefined,
+    @Query('f') f: string | undefined,
     @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {
@@ -133,6 +162,7 @@ export class PublicMediaController {
     }
 
     const key = `academies/${academyId}/${name}.${extension}`;
+    const variantRequest = parseVariantRequest(w, f);
 
     // W1 — decided from the asset's row, never from the key alone. A
     // signed link must be valid for exactly this key; an anonymous request
@@ -142,24 +172,55 @@ export class PublicMediaController {
     if (signed && !this.links.verify(key, exp, sig)) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
-    const access = await this.access.resolve(academyId, key);
+    const resolution = await this.access.resolveWithVariants(academyId, key);
+    const access = resolution?.access;
     if (!access || (access === 'signed-only' && !signed)) {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
 
-    let body: Buffer;
-    try {
-      body = await this.storage.getObject(key);
-    } catch {
-      // A missing object is a 404, not a 500 — a stale reference to an
-      // asset that no longer exists is an ordinary condition, and leaking
-      // the storage error would say more about the backend than a public
-      // caller should learn.
-      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    let body: Buffer | undefined;
+    let servedType = contentType;
+    let fallback = false;
+    if (variantRequest) {
+      const variant = pickImageVariant(
+        parseImageVariants(resolution.variants),
+        variantRequest.format,
+        variantRequest.width,
+      );
+      if (variant) {
+        try {
+          body = await this.storage.getObject(
+            imageVariantKey(key, variant.width, variant.format),
+          );
+          servedType = IMAGE_VARIANT_CONTENT_TYPES[variant.format];
+        } catch {
+          // A listed variant that cannot be read: serve the original below.
+        }
+      }
+      fallback = body === undefined;
     }
 
-    response.setHeader('Cache-Control', CACHE_CONTROL[signed ? 'signed' : access]);
-    response.setHeader('Content-Type', contentType);
+    if (body === undefined) {
+      try {
+        body = await this.storage.getObject(key);
+      } catch {
+        // A missing object is a 404, not a 500 — a stale reference to an
+        // asset that no longer exists is an ordinary condition, and leaking
+        // the storage error would say more about the backend than a public
+        // caller should learn.
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+    }
+
+    response.setHeader(
+      'Cache-Control',
+      signed
+        ? CACHE_CONTROL.signed
+        : fallback
+          ? FALLBACK_CACHE_CONTROL
+          : CACHE_CONTROL[access],
+    );
+    response.setHeader('Content-Type', servedType);
     // Belt and braces for a route that returns caller-influenced bytes:
     // stops a browser from re-interpreting a stored file as something
     // other than the type declared above.
@@ -194,6 +255,27 @@ export class PublicMediaController {
     response.setHeader('Content-Length', body.byteLength);
     response.status(200).end(body);
   }
+}
+
+/**
+ * `?w=&f=` → the variant asked for; absent (both missing) → `null`. A
+ * malformed or partial pair is a 400, so arbitrary query strings cannot
+ * fan out into edge cache entries.
+ */
+export function parseVariantRequest(
+  w: string | undefined,
+  f: string | undefined,
+): { width: number; format: ImageVariantFormat } | null {
+  if (w === undefined && f === undefined) return null;
+  const width = typeof w === 'string' && /^[1-9]\d{0,4}$/.test(w) ? Number(w) : NaN;
+  if (
+    !(width <= MAX_VARIANT_WIDTH) ||
+    typeof f !== 'string' ||
+    !(IMAGE_VARIANT_FORMATS as readonly string[]).includes(f)
+  ) {
+    throw new BadRequestException({ messageKey: 'errors.validation.failed' });
+  }
+  return { width, format: f as ImageVariantFormat };
 }
 
 /** Splits on the LAST dot, so a name containing dots cannot smuggle an extension. */

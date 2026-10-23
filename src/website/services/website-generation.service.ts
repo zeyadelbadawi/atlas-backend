@@ -453,7 +453,14 @@ export class WebsiteGenerationService {
       tx,
       academyId,
     );
-    if (!configuration || (configuration.navigation as unknown[]).length > 0) return;
+    // CMS phase 4 — a locked header/footer/navigation is never filled in.
+    if (
+      !configuration ||
+      configuration.chromeLocked ||
+      (configuration.navigation as unknown[]).length > 0
+    ) {
+      return;
+    }
 
     const navPages: readonly WebsiteTemplateCorePageType[] = [
       'about',
@@ -495,7 +502,7 @@ export class WebsiteGenerationService {
       tx,
       academyId,
     );
-    if (!configuration) return;
+    if (!configuration || configuration.chromeLocked) return;
 
     const footer = configuration.footer as {
       groups: unknown[];

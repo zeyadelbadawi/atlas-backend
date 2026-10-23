@@ -45,6 +45,10 @@ import {
   type MediaStorageProvider,
 } from '../../media/storage/media-storage.interface';
 import { HOSTED_VIDEO_PROVIDERS } from '../../media/video/hosted-video-providers';
+import {
+  imageVariantKey,
+  parseImageVariants,
+} from '../../media/utils/image-variants.util';
 import { PLANS_CLOCK, type Clock } from '../../plans/utils/clock';
 import type {
   CommunicationsConfig,
@@ -181,6 +185,7 @@ export class ArchivedMediaPurgeService {
             access: true,
             fileName: true,
             sizeBytes: true,
+            variants: true,
             academy: { select: { status: true, archivedAt: true } },
           },
         });
@@ -264,6 +269,7 @@ export class ArchivedMediaPurgeService {
     readonly providerId: string | null;
     readonly storageKey: string;
     readonly access: string;
+    readonly variants: Prisma.JsonValue | null;
   }): Promise<void> {
     if ((HOSTED_VIDEO_PROVIDERS as readonly string[]).includes(asset.provider)) {
       await this.deletion.destroyAndVerify(
@@ -280,6 +286,13 @@ export class ArchivedMediaPurgeService {
         );
       }
       return;
+    }
+    // CMS phase 4 — the responsive variants go with the original (derived
+    // keys; deleting a missing key is a no-op, so a retry is harmless).
+    for (const variant of parseImageVariants(asset.variants)) {
+      await this.publicStorage.deleteObject(
+        imageVariantKey(asset.storageKey, variant.width, variant.format),
+      );
     }
     await this.publicStorage.deleteObject(asset.storageKey);
     if (await this.publicStorage.objectExists(asset.storageKey)) {

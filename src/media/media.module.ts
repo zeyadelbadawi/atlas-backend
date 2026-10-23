@@ -70,6 +70,7 @@ import { MEDIA_STORAGE_PROVIDER } from './storage/media-storage.interface';
 import { R2StorageProvider } from './storage/r2-media-storage.provider';
 import { MediaProcessingProducer } from './queue/media-processing.producer';
 import { MediaProcessingProcessor } from './queue/media-processing.processor';
+import { ImageVariantsService } from './services/image-variants.service';
 import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
 
 @Module({
@@ -99,6 +100,8 @@ import { MEDIA_PROCESSING_QUEUE } from './queue/media-processing.types';
     { provide: MEDIA_STORAGE_PROVIDER, useClass: R2StorageProvider },
     MediaProcessingProducer,
     MediaProcessingProcessor,
+    // CMS phase 4 — responsive AVIF/WebP variants of public images.
+    ImageVariantsService,
     // P64 Phase 2.
     ProtectedMediaStorage,
     ProtectedMediaService,
