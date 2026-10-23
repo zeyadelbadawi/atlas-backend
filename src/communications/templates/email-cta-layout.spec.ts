@@ -32,7 +32,7 @@ describe('email layout — call to action', () => {
     '%s: the button cell is coloured and its link fills it',
     (locale) => {
       const html = render(locale);
-      const cell = /<td [^>]*bgcolor="#111827"[^>]*>(.*?)<\/td>/.exec(html);
+      const cell = /<td [^>]*bgcolor="#1B3A8C"[^>]*>(.*?)<\/td>/.exec(html);
       expect(cell).not.toBeNull();
       const link = /<a [^>]*>/.exec(cell![1])?.[0] ?? '';
       expect(link).toContain(`href="${ESCAPED}"`);

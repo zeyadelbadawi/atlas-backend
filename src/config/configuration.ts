@@ -436,6 +436,13 @@ export interface CommunicationsConfig {
   /** The platform's display name in email branding; reuses `EMAIL_FROM_NAME`. */
   readonly platformName: string;
   /**
+   * B2 — the public marketing site (`MARKETING_SITE_URL`) and help center
+   * (`HELP_CENTER_URL`) the email signature links to; the platform logo is
+   * a static file on the marketing site. Absent → the production sites.
+   */
+  readonly marketingSiteUrl?: string;
+  readonly helpCenterUrl?: string;
+  /**
    * P64 C5 — whether the tenant lifecycle sequences (§26 T1–T6, §27
    * S1–S10) evaluate and send. `off` by default; `dry_run` records what
    * it would have sent. See `FLAG_LIFECYCLE_SEQUENCES_MODE`.
@@ -986,6 +993,8 @@ export default () => {
     platformWebUrl: (env.PLATFORM_WEB_URL || 'http://localhost:3001').replace(/\/+$/, ''),
     unsubscribeTokenKeyHex: env.UNSUBSCRIBE_TOKEN_KEY || undefined,
     platformName: env.EMAIL_FROM_NAME ?? 'Atlas',
+    marketingSiteUrl: env.MARKETING_SITE_URL || undefined,
+    helpCenterUrl: env.HELP_CENTER_URL || undefined,
     // Defaults to `off` — see `FLAG_LIFECYCLE_SEQUENCES_MODE`.
     lifecycleSequencesMode: (env.FLAG_LIFECYCLE_SEQUENCES_MODE ??
       'off') as LifecycleSequencesMode,

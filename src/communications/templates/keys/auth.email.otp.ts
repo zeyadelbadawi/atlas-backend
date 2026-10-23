@@ -19,6 +19,8 @@
  * to carry. It tells the reader the only thing that is actually true and
  * actionable: nobody is in the account yet, and a password change is the
  * fix — never "click here to secure your account", which is a link.
+ * B2: for the same reason the platform signature prints without its
+ * website / help center / contact links here.
  */
 import { defineLocale, str } from '../layout';
 import type { CommunicationTemplate } from '../layout';
@@ -32,6 +34,7 @@ export const template: CommunicationTemplate = {
     subject: (_values, ctx) =>
       `Your ${ctx.branding.academyName ?? ctx.branding.platformName} sign-in code`,
     preheader: () => 'Use this code to finish signing in.',
+    signatureWithoutLinks: true,
     paragraphs: (values, ctx) => [
       `Your ${ctx.branding.academyName ?? ctx.branding.platformName} sign-in code is:`,
       str(values, 'code'),
@@ -43,6 +46,7 @@ export const template: CommunicationTemplate = {
     subject: (_values, ctx) =>
       `رمز تسجيل الدخول إلى ${ctx.branding.academyName ?? ctx.branding.platformName}`,
     preheader: () => 'استخدم هذا الرمز لإكمال تسجيل الدخول.',
+    signatureWithoutLinks: true,
     paragraphs: (values, ctx) => [
       `رمز تسجيل الدخول إلى ${ctx.branding.academyName ?? ctx.branding.platformName}:`,
       str(values, 'code'),

@@ -37,14 +37,20 @@ export interface ResolvedBranding {
 @Injectable()
 export class CommunicationBrandingService {
   private readonly platformName: string;
+  private readonly siteUrls: { siteUrl?: string; helpCenterUrl?: string };
 
   constructor(
     configService: ConfigService,
     private readonly links: LinkBuilderService,
     private readonly emailLogo: EmailLogoService,
   ) {
-    this.platformName =
-      configService.getOrThrow<CommunicationsConfig>('communications').platformName;
+    const config = configService.getOrThrow<CommunicationsConfig>('communications');
+    this.platformName = config.platformName;
+    // B2 — only set when configured, so the layout's production defaults apply otherwise.
+    this.siteUrls = {
+      ...(config.marketingSiteUrl ? { siteUrl: config.marketingSiteUrl } : {}),
+      ...(config.helpCenterUrl ? { helpCenterUrl: config.helpCenterUrl } : {}),
+    };
   }
 
   platform(): ResolvedBranding {
@@ -52,6 +58,7 @@ export class CommunicationBrandingService {
       branding: {
         platformName: this.platformName,
         platformUrl: this.links.platform('/'),
+        ...this.siteUrls,
       },
       host: null,
       academyLanguage: null,
@@ -116,6 +123,7 @@ export class CommunicationBrandingService {
         academyHost: host ?? undefined,
         platformName: this.platformName,
         platformUrl: this.links.platform('/'),
+        ...this.siteUrls,
       },
       host,
       credentialHost,

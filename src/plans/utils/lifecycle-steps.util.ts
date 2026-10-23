@@ -119,6 +119,13 @@ export const RENEWAL_FINAL_LEAD_MS = 24 * HOUR_MS;
  * notice comes before the 7-day and 1-day reminders.
  */
 export const ANNUAL_RENEWAL_LEAD_MS = 30 * DAY_MS;
+/**
+ * B2 — a paid period this long gets the 30-day reminder even when its
+ * `billingCycle` is not recorded as `yearly` (a period set by hand, a
+ * gifted extension, or a multi-year Founding price-lock period). Half a
+ * year: no monthly period comes near it, and every annual one clears it.
+ */
+export const ANNUAL_LIKE_PERIOD_MIN_MS = 180 * DAY_MS;
 /** §27 S6 — one day before the grace window closes. */
 export const GRACE_ENDING_LEAD_MS = 24 * HOUR_MS;
 /** §27 S10 — "+7 d / +30 d only (a paying customer already knows the product)". */
@@ -288,8 +295,13 @@ export interface LifecycleEvaluationInput {
    * so T2a can tell a 14-day trial from a 3-day one. Absent → no T2a.
    */
   readonly trialStartedAt?: Date | null;
-  /** B0-MSG-05 — the paid period's cycle; only `yearly` gets S3a. */
+  /** B0-MSG-05 — the paid period's cycle; `yearly` gets S3a. */
   readonly billingCycle?: 'monthly' | 'yearly' | null;
+  /**
+   * B2 — the current paid period's start. A period of at least
+   * `ANNUAL_LIKE_PERIOD_MIN_MS` gets S3a whatever its recorded cycle.
+   */
+  readonly currentPeriodStart?: Date | null;
   /**
    * B0-MSG-05 part 3 — the organisation's signup instant. The A1–A3
    * clock and the anchor of all four activation steps: it never moves, so
@@ -307,6 +319,25 @@ function isWithinWindow(step: LifecycleStepId, dueAt: Date, now: Date): boolean 
       ? ACTIVATION_FIRST_PROOF_WINDOW_MS
       : LIFECYCLE_STEP_MAX_LATENESS_MS;
   return lateness >= 0 && lateness <= horizon;
+}
+
+/**
+ * B2 — whether this paid period is long enough to need a month's notice:
+ * a recorded `yearly` cycle, or (whatever the recorded cycle) a period of
+ * at least half a year — which also covers a 24-month Founding price-lock
+ * period, renewed one annual period at a time or prepaid in one.
+ */
+export function isAnnualLikePeriod(
+  input: Pick<LifecycleEvaluationInput, 'billingCycle' | 'currentPeriodStart'>,
+  currentPeriodEnd: Date,
+): boolean {
+  if (input.billingCycle === 'yearly') return true;
+  const start = input.currentPeriodStart;
+  return (
+    start !== null &&
+    start !== undefined &&
+    currentPeriodEnd.getTime() - start.getTime() >= ANNUAL_LIKE_PERIOD_MIN_MS
+  );
 }
 
 function offset(from: Date, ms: number): Date {
@@ -364,8 +395,10 @@ export function evaluateLifecycleSteps(
     // "your trial ends tomorrow" arriving after it already ended.
     if (effective === 'trialing' && !anyCancellationRecorded) {
       // T2a — only for a trial at least a week long, measured from its
-      // own start; without a known start there is no T2a.
-      const trialStartedAt = input.trialStartedAt;
+      // own start. B2: a trial with no redemption row (the signup trial of
+      // an older account) started with the organisation, so its signup
+      // instant stands in; with neither known there is no T2a.
+      const trialStartedAt = input.trialStartedAt ?? input.organizationCreatedAt ?? null;
       if (
         trialStartedAt &&
         trialEndsAt.getTime() - trialStartedAt.getTime() >= TRIAL_ENDING_3D_MIN_TRIAL_MS
@@ -432,7 +465,7 @@ export function evaluateLifecycleSteps(
   // `currentPeriodEnd` forward, so the old anchor stops being due and the
   // new one is not due yet.
   if (effective === 'active' && currentPeriodEnd && !subscription.cancelAtPeriodEnd) {
-    if (input.billingCycle === 'yearly') {
+    if (isAnnualLikePeriod(input, currentPeriodEnd)) {
       push(
         'subscription_renewal_30d',
         'subscription',
