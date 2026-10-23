@@ -17,6 +17,8 @@
 import type { TenantSubscription } from '@prisma/client';
 import {
   ACTIVATION_FIRST_PROOF_WINDOW_MS,
+  ANNUAL_LIKE_PERIOD_MIN_MS,
+  isAnnualLikePeriod,
   LIFECYCLE_SHORT_NOTICE_LATENESS_MS,
   LIFECYCLE_STEP_MAX_LATENESS_MS,
   evaluateLifecycleSteps,
@@ -831,5 +833,168 @@ describe('lifecycle sequence evaluator (§26 trial, §27 subscription)', () => {
         ),
       ).toEqual({ phase: 'active', origin: null, anchorAt: null });
     });
+  });
+});
+
+describe('B2 — every step, timed for a 14-day trial and for monthly and annual periods', () => {
+  /**
+   * The first sweep tick (15-minute cadence) at which each step is due,
+   * as an offset from `origin`, plus how many ticks it stays due. Every
+   * step must fire on exactly one dedupe key, at its designed time.
+   */
+  function timeline(
+    evaluation: LifecycleEvaluationInput,
+    origin: Date,
+    from: Date,
+    to: Date,
+  ): Map<LifecycleStepId, { firstAt: number; anchors: Set<string> }> {
+    const out = new Map<LifecycleStepId, { firstAt: number; anchors: Set<string> }>();
+    for (let t = from.getTime(); t <= to.getTime(); t += TICK) {
+      for (const step of evaluateLifecycleSteps(evaluation, new Date(t))) {
+        const seen = out.get(step.step);
+        if (seen) seen.anchors.add(step.anchorAt.toISOString());
+        else
+          out.set(step.step, {
+            firstAt: t - origin.getTime(),
+            anchors: new Set([step.anchorAt.toISOString()]),
+          });
+      }
+    }
+    return out;
+  }
+
+  const SIGNUP = new Date('2026-11-02T08:00:00.000Z');
+  const TRIAL_END_14 = new Date(SIGNUP.getTime() + 14 * DAY);
+
+  it('a 14-day trial that is never converted: A1 +1 d, A2 +2 d, A3 +4 d, T2a −3 d, T2 −1 d, T3 at expiry, T4 +3 d, T5 +14 d, T6 +45 d', () => {
+    const trial: LifecycleEvaluationInput = {
+      // Left `trialing`: expiry is derived from the clock, as the sweep would.
+      subscription: subscription({ status: 'trialing', trialEndsAt: TRIAL_END_14 }),
+      trialCancelledAt: null,
+      paidCancelledAt: null,
+      trialStartedAt: SIGNUP,
+      organizationCreatedAt: SIGNUP,
+    };
+    const steps = timeline(
+      trial,
+      SIGNUP,
+      SIGNUP,
+      new Date(TRIAL_END_14.getTime() + 60 * DAY),
+    );
+    const at = (step: LifecycleStepId) => steps.get(step)?.firstAt;
+    expect(at('activation_no_academy')).toBe(1 * DAY);
+    expect(at('activation_site_unpublished')).toBe(2 * DAY);
+    expect(at('activation_payments_and_course')).toBe(4 * DAY);
+    expect(at('activation_first_proof')).toBe(0); // gated by the facts check
+    expect(at('trial_ending_3d')).toBe(11 * DAY);
+    expect(at('trial_ending_soon')).toBe(13 * DAY);
+    expect(at('trial_expired')).toBe(14 * DAY);
+    expect(at('trial_followup_3d')).toBe(17 * DAY);
+    expect(at('trial_followup_14d')).toBe(28 * DAY);
+    expect(at('trial_reactivation_45d')).toBe(59 * DAY);
+    // One dedupe anchor per step: the sweep sends each of them once.
+    for (const [, seen] of steps) expect(seen.anchors.size).toBe(1);
+    expect([...steps.keys()].some((s) => s.startsWith('subscription_'))).toBe(false);
+  });
+
+  it('T2a also reaches a signup trial that has no redemption row (the signup instant stands in)', () => {
+    const trial: LifecycleEvaluationInput = {
+      subscription: subscription({ status: 'trialing', trialEndsAt: TRIAL_END_14 }),
+      trialCancelledAt: null,
+      paidCancelledAt: null,
+      trialStartedAt: null,
+      organizationCreatedAt: SIGNUP,
+    };
+    expect(stepsAt(trial, new Date(TRIAL_END_14.getTime() - 3 * DAY))).toContain(
+      'trial_ending_3d',
+    );
+    // …but a 3-day trial still never gets it.
+    const short: LifecycleEvaluationInput = {
+      ...trial,
+      subscription: subscription({
+        status: 'trialing',
+        trialEndsAt: new Date(SIGNUP.getTime() + 3 * DAY),
+      }),
+    };
+    expect(stepsAt(short, SIGNUP)).not.toContain('trial_ending_3d');
+  });
+
+  const MONTH_START = new Date('2026-12-01T12:00:00.000Z');
+  const MONTH_END = new Date('2026-12-31T12:00:00.000Z');
+
+  it('a monthly period: S3 −7 d, S4 −1 d, S5 at period end, S6 a day before grace ends, S7 at grace end, S10 +7 d / +30 d — no 30-day reminder', () => {
+    const paid: LifecycleEvaluationInput = {
+      subscription: subscription({ status: 'active', currentPeriodEnd: MONTH_END }),
+      trialCancelledAt: null,
+      paidCancelledAt: null,
+      billingCycle: 'monthly',
+      currentPeriodStart: MONTH_START,
+    };
+    const graceEnd = MONTH_END.getTime() + GRACE_PERIOD_MS;
+    const steps = timeline(paid, MONTH_END, MONTH_START, new Date(graceEnd + 40 * DAY));
+    const at = (step: LifecycleStepId) => steps.get(step)?.firstAt;
+    expect(at('subscription_renewal_30d')).toBeUndefined();
+    expect(at('subscription_renewal_due')).toBe(-7 * DAY);
+    expect(at('subscription_renewal_tomorrow')).toBe(-1 * DAY);
+    expect(at('subscription_grace_started')).toBe(0);
+    expect(at('subscription_grace_ending')).toBe(GRACE_PERIOD_MS - DAY);
+    expect(at('subscription_expired')).toBe(GRACE_PERIOD_MS);
+    expect(at('subscription_followup_7d')).toBe(GRACE_PERIOD_MS + 7 * DAY);
+    expect(at('subscription_followup_30d')).toBe(GRACE_PERIOD_MS + 30 * DAY);
+    for (const [, seen] of steps) expect(seen.anchors.size).toBe(1);
+  });
+
+  it('an annual period (incl. a Founding price-lock year): S3a −30 d, then S3 −7 d and S4 −1 d', () => {
+    const yearEnd = new Date('2027-12-01T12:00:00.000Z');
+    const annual: LifecycleEvaluationInput = {
+      subscription: subscription({ status: 'active', currentPeriodEnd: yearEnd }),
+      trialCancelledAt: null,
+      paidCancelledAt: null,
+      billingCycle: 'yearly',
+      currentPeriodStart: new Date('2026-12-01T12:00:00.000Z'),
+    };
+    const steps = timeline(
+      annual,
+      yearEnd,
+      new Date(yearEnd.getTime() - 40 * DAY),
+      new Date(yearEnd.getTime() - 1),
+    );
+    expect([...steps.entries()].map(([step, seen]) => [step, seen.firstAt])).toEqual([
+      ['subscription_renewal_30d', -30 * DAY],
+      ['subscription_renewal_due', -7 * DAY],
+      ['subscription_renewal_tomorrow', -1 * DAY],
+    ]);
+  });
+
+  it('a period of half a year or more gets the 30-day reminder even when its cycle is not recorded as yearly (24-month price lock, hand-set periods)', () => {
+    const end = new Date('2028-12-01T12:00:00.000Z');
+    const long: LifecycleEvaluationInput = {
+      subscription: subscription({ status: 'active', currentPeriodEnd: end }),
+      trialCancelledAt: null,
+      paidCancelledAt: null,
+      billingCycle: null,
+      currentPeriodStart: new Date('2026-12-01T12:00:00.000Z'),
+    };
+    expect(stepsAt(long, new Date(end.getTime() - 30 * DAY))).toEqual([
+      'subscription_renewal_30d',
+    ]);
+    expect(
+      isAnnualLikePeriod(
+        { billingCycle: 'monthly', currentPeriodStart: MONTH_START },
+        MONTH_END,
+      ),
+    ).toBe(false);
+    expect(
+      isAnnualLikePeriod({ billingCycle: null, currentPeriodStart: null }, end),
+    ).toBe(false);
+    expect(
+      isAnnualLikePeriod(
+        {
+          billingCycle: 'monthly',
+          currentPeriodStart: new Date(end.getTime() - ANNUAL_LIKE_PERIOD_MIN_MS),
+        },
+        end,
+      ),
+    ).toBe(true);
   });
 });

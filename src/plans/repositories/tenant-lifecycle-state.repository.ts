@@ -24,6 +24,7 @@ import {
   ACTIVATION_FIRST_PROOF_WINDOW_MS,
   ACTIVATION_PAYMENTS_AND_COURSE_MS,
   ANNUAL_RENEWAL_LEAD_MS,
+  ANNUAL_LIKE_PERIOD_MIN_MS,
   LIFECYCLE_STEP_MAX_LATENESS_MS,
   RENEWAL_REMINDER_LEAD_MS,
   TRIAL_ENDING_3D_LEAD_MS,
@@ -144,11 +145,22 @@ export class TenantLifecycleStateRepository {
             status: 'active',
             currentPeriodEnd: { lte: new Date(at + RENEWAL_REMINDER_LEAD_MS) },
           },
-          // S3a (B0-MSG-05) — yearly periods, from 30 days out.
+          // S3a (B0-MSG-05) — yearly periods, from 30 days out. B2: also a
+          // period of half a year or more whatever its recorded cycle
+          // (`isAnnualLikePeriod`). Such a period ending within 30 days
+          // started at least 150 days ago, which keeps every monthly row
+          // out of this clause.
           {
             status: 'active',
-            billingCycle: 'yearly',
             currentPeriodEnd: { lte: new Date(at + ANNUAL_RENEWAL_LEAD_MS) },
+            OR: [
+              { billingCycle: 'yearly' },
+              {
+                currentPeriodStart: {
+                  lte: new Date(at + ANNUAL_RENEWAL_LEAD_MS - ANNUAL_LIKE_PERIOD_MIN_MS),
+                },
+              },
+            ],
           },
           // S5/S6/S7 — anywhere inside or just past the grace window.
           {

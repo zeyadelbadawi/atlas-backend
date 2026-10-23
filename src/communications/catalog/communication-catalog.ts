@@ -95,6 +95,15 @@ export interface CommunicationCatalogEntry {
   readonly dedupe: (context: CommunicationRuleContext) => string | null;
   /** Minimum seconds between two emails of this key to the same person. 0 = none. */
   readonly cooldownSeconds: number;
+  /**
+   * B2 — how long after the row was written its EMAIL is still true. A
+   * short-notice reminder ("your trial ends tomorrow") that was deferred
+   * past a provider-quota reset would arrive after the moment it warns
+   * about; past this age the email half is settled as suppressed
+   * (`stale`) and the in-app notification, already shown, stands alone.
+   * Absent = the email is never too old to send.
+   */
+  readonly emailStaleAfterSeconds?: number;
   /** Which language wins when the person has not chosen one. */
   readonly locale: 'user' | 'academy' | 'platform';
   /** Which brand and host the email renders under. */
@@ -1591,6 +1600,8 @@ const CATALOG = {
     dedupe: ({ entity, values }) =>
       lifecycleKey('trial_ending_3d', entity.id, str(values, 'anchorAt')),
     cooldownSeconds: 0,
+    // B2 — a day late, "3 days" is wrong.
+    emailStaleAfterSeconds: 24 * 60 * 60,
     locale: 'user',
     branding: 'platform',
     template: 'lifecycle.trial.ending_in_3_days',
@@ -1608,6 +1619,8 @@ const CATALOG = {
     dedupe: ({ entity, values }) =>
       lifecycleKey('trial_ending_soon', entity.id, str(values, 'anchorAt')),
     cooldownSeconds: 0,
+    // B2 — "tomorrow" must still be true.
+    emailStaleAfterSeconds: 12 * 60 * 60,
     locale: 'user',
     branding: 'platform',
     template: 'lifecycle.trial.ending_soon',
@@ -1784,6 +1797,8 @@ const CATALOG = {
     dedupe: ({ entity, values }) =>
       lifecycleKey('subscription_renewal_tomorrow', entity.id, str(values, 'anchorAt')),
     cooldownSeconds: 0,
+    // B2 — "tomorrow" must still be true.
+    emailStaleAfterSeconds: 12 * 60 * 60,
     locale: 'user',
     branding: 'platform',
     template: 'lifecycle.subscription.renewal_tomorrow',
@@ -1819,6 +1834,8 @@ const CATALOG = {
     dedupe: ({ entity, values }) =>
       lifecycleKey('subscription_grace_ending', entity.id, str(values, 'anchorAt')),
     cooldownSeconds: 0,
+    // B2 — "tomorrow" must still be true.
+    emailStaleAfterSeconds: 12 * 60 * 60,
     locale: 'user',
     branding: 'platform',
     template: 'lifecycle.subscription.grace_ending',

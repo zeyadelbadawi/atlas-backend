@@ -7,8 +7,18 @@
  * and monthly budget:
  *
  *   security + transactional   100 %   (may use the whole budget)
- *   lifecycle                   85 %
- *   engagement + operational    70 %
+ *   operational                 80 %   (alerts that ask someone to act)
+ *   lifecycle                   70 %   (trial/renewal/activation mail)
+ *   engagement                  60 %   (announcements, the bulk risk)
+ *
+ * B2 (B0-MSG-01) — with every lifecycle sequence on and the free Brevo
+ * tier (~300/day), the non-critical classes together can never take more
+ * than 80 % of the day: the last 20 % (60 emails on 300) is reserved for
+ * sign-in codes, password and credential links, payment decisions and
+ * other security/transactional mail. Over-line mail is not dropped: the
+ * dispatcher defers it to the reset (next UTC day) and the recovery sweep
+ * re-enqueues it; a short-notice reminder that would arrive after the
+ * moment it warns about is settled in-app only (`emailStaleAfterSeconds`).
  *
  * Counters (`comm:quota:{provider}:d:{yyyymmdd}` / `:m:{yyyymm}`, UTC) are
  * incremented on an ACCEPTED send only (`recordAccepted`), never on a
@@ -53,9 +63,9 @@ export type QuotaDecision =
 const CATEGORY_LINE: Readonly<Record<EmailCategory, number>> = {
   security: 1,
   transactional: 1,
-  lifecycle: 0.85,
-  engagement: 0.7,
-  operational: 0.7,
+  operational: 0.8,
+  lifecycle: 0.7,
+  engagement: 0.6,
 };
 
 const DAY_TTL_SECONDS = 3 * 24 * 60 * 60;
