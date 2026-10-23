@@ -265,6 +265,25 @@ runs:
         # B0-OPS-08 — the media object backup (atlas-media-backup-*.timer).
         scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
           deploy/media-backup.sh "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/media-backup.sh"
+        # B0-OPS-05 — the restore-drill function library (runbook Appendix A,
+        # verbatim; its SHA-256 is pinned in src/config/restore-drill-lib.spec.ts).
+        # DELIVERED ONLY: an operator SOURCES it during a drill; nothing here
+        # or in deploy.sh ever executes it. Directory 0700, file 0600 (the
+        # runbook's `umask 077`), owned by the deploy user. Written to a temp
+        # name and moved into place, so a drill never sources a half-copied
+        # file. Best-effort: a failure here warns and never fails a deploy.
+        if ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+             "${DEPLOY_USER}@${DEPLOY_HOST}" "install -d -m 0700 /opt/atlas/restore-drill" \
+           && scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+             deploy/restore-drill/restore-drill-lib.sh \
+             "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/atlas/restore-drill/.restore-drill-lib.sh.new" \
+           && ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+             "${DEPLOY_USER}@${DEPLOY_HOST}" \
+             "chmod 0600 /opt/atlas/restore-drill/.restore-drill-lib.sh.new && mv -f /opt/atlas/restore-drill/.restore-drill-lib.sh.new /opt/atlas/restore-drill/restore-drill-lib.sh && sha256sum /opt/atlas/restore-drill/restore-drill-lib.sh"; then
+          :
+        else
+          echo "::warning::restore-drill library not delivered to /opt/atlas/restore-drill (deploy continues)"
+        fi
         # Alert routing — monitoring configs (no secrets in them; the secret
         # files are written on the host by deploy.sh from /opt/atlas/.env).
         ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
