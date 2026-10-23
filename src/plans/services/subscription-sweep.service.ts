@@ -79,6 +79,7 @@
  * succeeds — a retried fetch reruns with the exact same `cursor`, so it
  * can never skip or double-enqueue an organization.
  */
+import { FoundingNoticeService } from '../../founding/services/founding-notice.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -167,6 +168,8 @@ export class SubscriptionSweepService {
     // Phase 6 — see this class's own doc comment, responsibility 3.
     private readonly announcementsService: AnnouncementsService,
     private readonly blogPostsRepository: BlogPostsRepository,
+    // B2 — Founding Academies: ended locks and renewal price notices.
+    private readonly foundingNoticeService: FoundingNoticeService,
   ) {}
 
   async run(): Promise<void> {
@@ -196,6 +199,17 @@ export class SubscriptionSweepService {
       this.logger.error(
         { error: error instanceof Error ? error.message : String(error) },
         'Lifecycle sequence evaluation failed; the rest of the sweep continues.',
+      );
+    }
+
+    // B2 — contained like the lifecycle step: a founding failure must not
+    // cost the tick its expiry enforcement or usage recomputation.
+    try {
+      await this.foundingNoticeService.run();
+    } catch (error) {
+      this.logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Founding Academies sweep step failed; the rest of the sweep continues.',
       );
     }
 

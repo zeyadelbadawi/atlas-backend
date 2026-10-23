@@ -40,6 +40,13 @@
  * system insert policies `CommunicationService.emit` relies on) — the
  * same precedent `TenantLifecycleService` follows.
  */
+import {
+  catalogAnnualPrice,
+  expectedPurchasePeriodStart,
+  foundingPriceFor,
+  toFoundingLock,
+  type FoundingLock,
+} from '../../founding/founding-lock';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -139,9 +146,33 @@ export class PlanChangeNoticeService {
       );
       if (page.length === 0) break;
 
+      // B2 — a Founding Academy whose next renewal is still inside its
+      // price lock does not pay the edited price: its notice may only be
+      // about limits. Read the page's memberships once.
+      const locks = await this.tenancyContextService.runInUserContext(
+        platformOwnerId,
+        (tx) =>
+          tx.foundingMembership.findMany({
+            where: {
+              organizationId: { in: page.map((row) => row.organizationId) },
+              status: 'active',
+            },
+          }),
+      );
+      const lockByOrganization = new Map(
+        locks.map((row) => [row.organizationId, toFoundingLock(row)]),
+      );
+
       for (const row of page as SubscriberRow[]) {
         try {
-          const outcome = await this.noticeOne(platformOwnerId, row, before, after, now);
+          const outcome = await this.noticeOne(
+            platformOwnerId,
+            row,
+            before,
+            after,
+            now,
+            lockByOrganization.get(row.organizationId) ?? null,
+          );
           if (outcome === 'notified') notified += 1;
           else if (outcome === 'cleared') cleared += 1;
           else unchanged += 1;
@@ -183,8 +214,26 @@ export class PlanChangeNoticeService {
     before: PlanChangeSnapshot,
     after: PlanChangeSnapshot,
     now: Date,
+    lock: FoundingLock | null = null,
   ): Promise<'notified' | 'cleared' | 'unchanged'> {
     const scheduled = row.scheduledPlanId === after.id;
+    const cycle = renewalCycleFor(row.billingCycle, after.pricing);
+    const lockedPrice = foundingPriceFor(lock, {
+      planId: after.id,
+      billingCycle: cycle,
+      periodStart: expectedPurchasePeriodStart(row, now),
+      catalog: catalogAnnualPrice(after.pricing),
+    });
+    // The renewal price this customer will actually be charged, before and
+    // after the edit: the locked price on both sides while the lock covers
+    // their next renewal, so only a limit change can produce a notice.
+    const lockedPricing = lockedPrice
+      ? {
+          amount: lockedPrice.amount,
+          currency: lockedPrice.currency,
+          billingCycle: 'yearly',
+        }
+      : null;
     // What the subscriber holds for the plan they renew into. A row with
     // no recorded grant follows the live catalog, so a limit edit has
     // ALREADY reached it — there is no future limit change to announce.
@@ -195,9 +244,9 @@ export class PlanChangeNoticeService {
     const notice = buildPriceChangeNotice({
       planId: after.id,
       planVersion: after.version,
-      billingCycle: renewalCycleFor(row.billingCycle, after.pricing),
-      previousPricing: before.pricing,
-      nextPricing: after.pricing,
+      billingCycle: cycle,
+      previousPricing: lockedPricing ?? before.pricing,
+      nextPricing: lockedPricing ?? after.pricing,
       currentLimits,
       nextLimits: after.limits,
       pending,

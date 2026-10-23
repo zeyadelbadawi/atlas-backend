@@ -1294,6 +1294,67 @@ export const AUDIT_EVENT_DEFINITIONS = [
     false,
     ['status'],
   ),
+  // B2 — Founding Academies (`FoundingMembershipsService`). Platform
+  // Owner records: seat, plan key, locked amount and dates, never the
+  // owner's contact details or an email's subject/body.
+  ev('platform.founding.created', 'platform', 'founding_membership', 'platform', false, [
+    'organizationId',
+    'seatNumber',
+    'planKey',
+    'lockedAmount',
+    'lockedCurrency',
+    'lockStartsAt',
+    'lockEndsAt',
+    'sourceContactSubmissionId',
+  ]),
+  ev(
+    'platform.founding.updated',
+    'platform',
+    'founding_membership',
+    'platform',
+    false,
+    ['organizationId', 'changedFields', 'conciergeHoursUsed'],
+    ['notes', 'conciergeHoursUsed'],
+  ),
+  ev(
+    'platform.founding.plan_changed',
+    'platform',
+    'founding_membership',
+    'platform',
+    false,
+    [
+      'organizationId',
+      'fromPlanKey',
+      'toPlanKey',
+      'previousAmount',
+      'lockedAmount',
+      'lockedCurrency',
+    ],
+  ),
+  ev('platform.founding.revoked', 'platform', 'founding_membership', 'platform', false, [
+    'organizationId',
+    'seatNumber',
+    'reason',
+  ]),
+  ev('platform.founding.ended', 'platform', 'founding_membership', 'platform', false, [
+    'organizationId',
+    'seatNumber',
+    'lockEndsAt',
+  ]),
+  ev('platform.founding.emailed', 'platform', 'founding_membership', 'platform', false, [
+    'organizationId',
+    'sendId',
+    'audience',
+    'recipientCount',
+  ]),
+  ev(
+    'platform.founding.renewal_price_notice_sent',
+    'platform',
+    'founding_membership',
+    'platform',
+    false,
+    ['organizationId', 'periodEndAt', 'renewalAmount', 'lockedAmount', 'currency'],
+  ),
   // B0-SUP-04 — the daily enquiry retention run (FLAG_CONTACT_RETENTION_MODE=on).
   // One row per run that deleted anything: the count and the period only.
   ev(

@@ -23,6 +23,7 @@
  * both trial expiry and the usage-recompute safety net — see that
  * scheduler's own doc comment for why this is ONE mechanism, not two).
  */
+import { FoundingNoticeService } from '../founding/services/founding-notice.service';
 import { Module } from '@nestjs/common';
 import { VideoTierService } from './services/video-tier.service';
 import { BullModule } from '@nestjs/bullmq';
@@ -104,6 +105,8 @@ import { SUBSCRIPTION_SWEEP_QUEUE } from './queue/subscription-sweep.types';
     OrganizationsController,
   ],
   providers: [
+    // B2 — the Founding Academies step of the subscription sweep.
+    FoundingNoticeService,
     // B0-BIL-13 — plan limit warnings after each usage recompute.
     UsageLimitWarningService,
     // P64 Phase 2 (D10) — plan family → entitled video security tier.

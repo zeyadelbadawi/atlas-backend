@@ -102,6 +102,8 @@ import { template as lifecycleSubscriptionExpired } from './keys/lifecycle.subsc
 import { template as lifecycleSubscriptionCancelScheduled } from './keys/lifecycle.subscription.cancel_scheduled';
 import { template as lifecycleSubscriptionCancelled } from './keys/lifecycle.subscription.cancelled';
 import { template as lifecycleSubscriptionPriceChangeNotice } from './keys/lifecycle.subscription.price_change_notice';
+import { template as lifecycleFoundingRenewalPriceNotice } from './keys/lifecycle.founding.renewal_price_notice';
+import { template as platformFoundingMessage } from './keys/platform.founding.message';
 import { template as lifecycleSubscriptionFollowup7d } from './keys/lifecycle.subscription.followup_7d';
 import { template as lifecycleSubscriptionFollowup30d } from './keys/lifecycle.subscription.followup_30d';
 // B0-MSG-05 part 3 — activation steps A1–A4.
@@ -199,6 +201,8 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'lifecycle.subscription.cancel_scheduled': lifecycleSubscriptionCancelScheduled,
   'lifecycle.subscription.cancelled': lifecycleSubscriptionCancelled,
   'lifecycle.subscription.price_change_notice': lifecycleSubscriptionPriceChangeNotice,
+  'lifecycle.founding.renewal_price_notice': lifecycleFoundingRenewalPriceNotice,
+  'platform.founding.message': platformFoundingMessage,
   'lifecycle.subscription.followup_7d': lifecycleSubscriptionFollowup7d,
   'lifecycle.subscription.followup_30d': lifecycleSubscriptionFollowup30d,
   'lifecycle.activation.no_academy': lifecycleActivationNoAcademy,
