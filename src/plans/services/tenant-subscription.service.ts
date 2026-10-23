@@ -303,6 +303,7 @@ function describeFounding(
     planId: lock.planId,
     billingCycle: 'yearly',
     periodStart,
+    catalog: catalogAnnualPrice(lockedPlanPricing),
   });
   const price = locked ?? catalogAnnualPrice(lockedPlanPricing);
   return {

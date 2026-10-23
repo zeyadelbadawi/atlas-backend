@@ -35,6 +35,7 @@ import { parseOrThrow } from '../../common/validation/zod-violations.util';
 import { toMinorUnits } from '../utils/money.util';
 import {
   expectedPurchasePeriodStart,
+  catalogAnnualPrice,
   foundingPriceFor,
   readFoundingMembership,
 } from '../../founding/founding-lock';
@@ -126,6 +127,7 @@ export class CheckoutService {
             planId: target.id,
             billingCycle: snapshot.billingCycle,
             periodStart: expectedPurchasePeriodStart(current, now),
+            catalog: catalogAnnualPrice(target.pricing),
           });
         if (founding && lock) {
           snapshot = {

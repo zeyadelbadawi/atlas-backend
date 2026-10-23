@@ -41,6 +41,7 @@
  * same precedent `TenantLifecycleService` follows.
  */
 import {
+  catalogAnnualPrice,
   expectedPurchasePeriodStart,
   foundingPriceFor,
   toFoundingLock,
@@ -221,6 +222,7 @@ export class PlanChangeNoticeService {
       planId: after.id,
       billingCycle: cycle,
       periodStart: expectedPurchasePeriodStart(row, now),
+      catalog: catalogAnnualPrice(after.pricing),
     });
     // The renewal price this customer will actually be charged, before and
     // after the edit: the locked price on both sides while the lock covers

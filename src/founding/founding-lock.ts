@@ -83,12 +83,26 @@ export function foundingPriceFor(
     readonly planId: string;
     readonly billingCycle: SubscriptionBillingCycle | null | undefined;
     readonly periodStart: Date;
+    /**
+     * The live catalog's annual price for this plan. A lock protects
+     * against increases only: when the catalog is lower (same currency),
+     * the member pays the catalog price, never more than everyone else.
+     */
+    readonly catalog?: FoundingPrice | null;
   },
 ): FoundingPrice | null {
   if (!lock || lock.status !== 'active') return null;
   if (purchase.planId !== lock.planId) return null;
   if (purchase.billingCycle !== 'yearly') return null;
   if (purchase.periodStart.getTime() >= lock.lockEndsAt.getTime()) return null;
+  const catalog = purchase.catalog;
+  if (
+    catalog &&
+    catalog.currency === lock.lockedCurrency &&
+    catalog.amount < lock.lockedAmount
+  ) {
+    return { amount: catalog.amount, currency: catalog.currency };
+  }
   return { amount: lock.lockedAmount, currency: lock.lockedCurrency };
 }
 

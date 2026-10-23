@@ -929,6 +929,7 @@ export class FoundingMembershipsService {
       planId: row.planId,
       billingCycle: 'yearly',
       periodStart,
+      catalog: catalogAnnualPrice(row.plan.pricing),
     });
     const price = locked ?? catalogAnnualPrice(row.plan.pricing);
     if (!price) return undefined;

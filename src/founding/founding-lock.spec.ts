@@ -41,6 +41,26 @@ describe('founding lock pricing (B2)', () => {
     ).toEqual({ amount: 27900, currency: 'EGP' });
   });
 
+  it('never charges a member more than the catalog when the catalog price drops', () => {
+    const purchase = {
+      planId: 'growth-id',
+      billingCycle: 'yearly' as const,
+      periodStart: START,
+    };
+    expect(
+      foundingPriceFor(LOCK, {
+        ...purchase,
+        catalog: { amount: 25000, currency: 'EGP' },
+      }),
+    ).toEqual({ amount: 25000, currency: 'EGP' });
+    expect(
+      foundingPriceFor(LOCK, {
+        ...purchase,
+        catalog: { amount: 30000, currency: 'EGP' },
+      }),
+    ).toEqual({ amount: 27900, currency: 'EGP' });
+  });
+
   it('returns to the catalog for a renewal starting at or after the lock end', () => {
     const purchase = { planId: 'growth-id', billingCycle: 'yearly' as const };
     expect(
