@@ -140,3 +140,65 @@ describe('SectionReferenceValidatorService — CMS phase 3d (batch C)', () => {
     ).toEqual(['pageId:gone']);
   });
 });
+
+describe('SectionReferenceValidatorService — CMS phase 3c (custom section)', () => {
+  it('checks every button of every button element, in every column', async () => {
+    expect(
+      await violations([
+        section('custom', {
+          layout: 'three',
+          columns: [
+            {
+              id: 'c1',
+              elements: [
+                { id: 'h', kind: 'heading', level: 'h2', text: label },
+                {
+                  id: 'b1',
+                  kind: 'button',
+                  cta: { label, pageId: 'home' },
+                  secondaryCta: { label, courseId: 'other-course' },
+                },
+              ],
+            },
+            { id: 'c2', elements: [] },
+            {
+              id: 'c3',
+              elements: [
+                { id: 'd', kind: 'divider' },
+                {
+                  id: 'b2',
+                  kind: 'button',
+                  cta: { label, courseId: 'own-course' },
+                  tertiaryCta: { label, pageId: 'gone' },
+                },
+              ],
+            },
+          ],
+        }),
+      ]),
+    ).toEqual(['courseId:other-course', 'pageId:gone']);
+  });
+
+  it('accepts a custom section whose buttons are this Academy’s own', async () => {
+    expect(
+      await violations([
+        section('custom', {
+          layout: 'one',
+          columns: [
+            {
+              id: 'c1',
+              elements: [
+                {
+                  id: 'b',
+                  kind: 'button',
+                  cta: { label, pageId: 'home' },
+                  secondaryCta: { label, whatsapp: '+201001234567' },
+                },
+              ],
+            },
+          ],
+        }),
+      ]),
+    ).toEqual([]);
+  });
+});

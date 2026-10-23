@@ -113,6 +113,14 @@ function collectSectionReferences(
           testimonialEntryIds.add(id),
         );
         break;
+      case 'custom':
+        // CMS phase 3c — every button element's buttons, in every column.
+        section.config.columns.forEach((column) =>
+          column.elements.forEach((element) => {
+            if (element.kind === 'button') addButtons(element);
+          }),
+        );
+        break;
       default:
         break;
     }
