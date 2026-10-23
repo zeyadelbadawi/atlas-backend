@@ -3378,6 +3378,10 @@ model MediaAsset {
   sizeBytes  BigInt           @map("size_bytes")
   width      Int?
   height     Int?
+  /// CMS phase 4 — the responsive AVIF/WebP copies stored next to the
+  /// original: `[{width, height, format, sizeBytes}]`, keys derived from
+  /// `storageKey` (`image-variants.util.ts`). Null = not generated (yet).
+  variants   Json?
   createdAt  DateTime         @default(now()) @map("created_at")
   updatedAt  DateTime         @updatedAt @map("updated_at")
 

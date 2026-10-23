@@ -18,6 +18,11 @@
  * all, so a failure here can never destroy the asset itself (master plan
  * §12: "original stays queryable even if thumbnailing fails").
  *
+ * CMS phase 4 — a public JPEG/PNG/WebP also gets its responsive AVIF/WebP
+ * variants (`ImageVariantsService`), after the dimensions and strictly
+ * best-effort: a variant failure is logged, never re-thrown, so it can
+ * neither fail nor retry this job, and the original keeps serving.
+ *
  * No thumbnail file is generated — see this module's own thumbnail-design
  * note in `media.module.ts`'s doc comment for why: the real frontend
  * contract (`MediaAssetSummary`) has no thumbnail-url field at all, only
@@ -31,6 +36,7 @@ import sharp from 'sharp';
 import type { Job } from 'bullmq';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { MediaAssetsRepository } from '../repositories/media-assets.repository';
+import { ImageVariantsService } from '../services/image-variants.service';
 import { MEDIA_STORAGE_PROVIDER } from '../storage/media-storage.interface';
 import type { MediaStorageProvider } from '../storage/media-storage.interface';
 import {
@@ -47,6 +53,7 @@ export class MediaProcessingProcessor extends WorkerHost {
     private readonly mediaAssetsRepository: MediaAssetsRepository,
     @Inject(MEDIA_STORAGE_PROVIDER)
     private readonly storageProvider: MediaStorageProvider,
+    private readonly imageVariantsService: ImageVariantsService,
   ) {
     super();
   }
@@ -82,5 +89,7 @@ export class MediaProcessingProcessor extends WorkerHost {
     await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
       this.mediaAssetsRepository.update(tx, mediaAssetId, { width, height }),
     );
+
+    await this.imageVariantsService.generateForAsset(asset, organizationId, bytes);
   }
 }

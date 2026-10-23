@@ -20,6 +20,7 @@
  *   - an academy archived with no `archivedAt` (the pre-D5-2 deletion
  *     path) is never purged — the safe direction for legacy rows.
  */
+import { imageVariantKey } from '../src/media/utils/image-variants.util';
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { createTestApp } from './utils/test-app';
@@ -262,6 +263,24 @@ describe('Archived-media purge — 30-day grace (e2e)', () => {
       data: { videoAssetId: referenced.id },
     });
     const orphan = await publicAsset(t.academyId, 'archived');
+    // CMS phase 4 — its responsive variants go with it.
+    const variantKeys = [480, 960].map((width) =>
+      imageVariantKey(orphan.storageKey, width, 'avif'),
+    );
+    for (const variantKey of variantKeys) {
+      await publicStorage.putObject(variantKey, Buffer.from('avif'), 'image/avif');
+    }
+    await admin.mediaAsset.update({
+      where: { id: orphan.id },
+      data: {
+        variants: [480, 960].map((width) => ({
+          width,
+          height: width,
+          format: 'avif',
+          sizeBytes: 4,
+        })),
+      },
+    });
     await ageAsset(orphan.id, 45);
 
     expect(await candidates()).not.toContain(active.id);
@@ -277,6 +296,9 @@ describe('Archived-media purge — 30-day grace (e2e)', () => {
       await purge.purgeAsset({ assetId: orphan.id, organizationId: t.organizationId }),
     ).toBe('purged');
     expect(await publicStorage.objectExists(orphan.storageKey)).toBe(false);
+    for (const variantKey of variantKeys) {
+      expect(await publicStorage.objectExists(variantKey)).toBe(false);
+    }
     expect(
       (await admin.mediaAsset.findUniqueOrThrow({ where: { id: active.id } })).status,
     ).toBe('active');
