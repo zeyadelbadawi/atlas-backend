@@ -447,8 +447,56 @@ finish_with_record() {
 # the host and `--rollback` still works with the registry unreachable.
 # Postgres, Redis and monitoring images are never touched. Best effort: a
 # failure to remove an image is reported and never fails the deploy.
+#
+# 23 Oct 2026: the disk filled again (120 images, 30 GB). Docker's
+# containerd image store drops BOTH names of an image once its tag moves to
+# a newer one (see local_image_ref), so an old application image has no
+# repository left to recognise it by and was never pruned. The deploy now
+# keeps a ledger of the image IDs its own application services ran
+# (`remember_app_images`): an image with no name is an application image
+# only if the ledger says so. Nothing outside the ledger is ever inferred to
+# be ours, so Postgres, Redis, monitoring, aws-cli or any image this script
+# did not run itself can never be removed by it.
+APP_IMAGE_LEDGER="$ATLAS_DIR/.app-images"
+# The services whose images the ledger tracks. A fixed list of its own:
+# APP_SERVICES (below) is the deploy's selection and is empty until
+# resolve_app_services runs, after some of the prunes.
+APP_IMAGE_SERVICES="backend caddy ssr"
+
+# Adds the image IDs this host's application containers use, and those the
+# rollback records name, to the ledger. Best effort: never fails the deploy.
+remember_app_images() {
+  local service cid image digest ref record ids=""
+  for service in $APP_IMAGE_SERVICES; do
+    for cid in $(docker compose ps -aq "$service" 2>/dev/null || true); do
+      image=$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)
+      case "$image" in sha256:*) ids="$ids $image" ;; esac
+    done
+  done
+  for record in "$ATLAS_DIR/.last-good" "$ATLAS_DIR/.last-good.1" "$ATLAS_DIR/.last-good.2" "$ATLAS_DIR/.last-good.3"; do
+    [ -f "$record" ] || continue
+    for digest in $(sed -n 's/^\(BACKEND\|CADDY\|SSR\)_IMAGE=//p' "$record"); do
+      ref=$(local_image_ref "$digest") || continue
+      image=$(docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true)
+      case "$image" in sha256:*) ids="$ids $image" ;; esac
+    done
+  done
+  [ -n "$ids" ] || return 0
+  { [ -f "$APP_IMAGE_LEDGER" ] && cat "$APP_IMAGE_LEDGER"; printf '%s\n' $ids; } \
+    | grep -E '^sha256:[0-9a-f]{64}$' | sort -u > "$APP_IMAGE_LEDGER.tmp" 2>/dev/null \
+    && mv "$APP_IMAGE_LEDGER.tmp" "$APP_IMAGE_LEDGER" \
+    || { rm -f "$APP_IMAGE_LEDGER.tmp"; echo "WARNING: could not update $APP_IMAGE_LEDGER." >&2; }
+  return 0
+}
+
+# Whether the ledger names this image ID as one an application service ran.
+in_app_ledger() {
+  [ -f "$APP_IMAGE_LEDGER" ] && grep -qxF "$1" "$APP_IMAGE_LEDGER"
+}
+
 prune_app_images() {
   local keep="" id refs ref repo removed=0 failed=0 digest record
+  remember_app_images
   for id in $(docker ps -aq 2>/dev/null); do
     keep="$keep $(docker inspect --format '{{.Image}}' "$id" 2>/dev/null || true)"
   done
@@ -471,6 +519,10 @@ prune_app_images() {
           repo=$(image_repository "$ref"); break ;;
       esac
     done
+    # No name at all left (containerd store): ours only if the ledger says
+    # an application service ran it. An image that still carries any other
+    # name is never removed through the ledger (`rm -f` would drop that name).
+    if [ -z "$repo" ] && [ -z "$refs" ] && in_app_ledger "$id"; then repo="(ledger)"; fi
     [ -n "$repo" ] || continue
     if docker image rm -f "$id" >/dev/null 2>&1; then
       removed=$((removed + 1))
@@ -478,6 +530,17 @@ prune_app_images() {
       failed=$((failed + 1))
     fi
   done
+  # The ledger keeps only images this host still has, so it never grows.
+  # Rewritten only from a successful listing: if Docker cannot answer, the
+  # ledger is left as it is rather than emptied.
+  local present
+  if [ -f "$APP_IMAGE_LEDGER" ] && present=$(docker image ls -aq --no-trunc 2>/dev/null); then
+    while IFS= read -r id; do
+      if printf '%s\n' "$present" | grep -qxF -- "$id"; then printf '%s\n' "$id"; fi
+    done < "$APP_IMAGE_LEDGER" > "$APP_IMAGE_LEDGER.tmp" 2>/dev/null \
+      && mv "$APP_IMAGE_LEDGER.tmp" "$APP_IMAGE_LEDGER" \
+      || rm -f "$APP_IMAGE_LEDGER.tmp"
+  fi
   echo "==> Pruned $removed unused application image(s) (kept: running containers and .last-good)."
   [ "$failed" = 0 ] || echo "WARNING: $failed unused application image(s) could not be removed." >&2
   return 0
