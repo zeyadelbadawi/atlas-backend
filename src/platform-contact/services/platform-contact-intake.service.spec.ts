@@ -28,6 +28,7 @@ function build(
     insert?: jest.Mock;
     owner?: boolean;
     stillExists?: boolean;
+    leadCapture?: Record<string, unknown>;
   } = {},
 ) {
   const redisSet = options.redisSet ?? jest.fn().mockResolvedValue('OK');
@@ -58,7 +59,10 @@ function build(
     } as unknown as UsersRepository,
     { emit, enqueueAfterCommit } as unknown as CommunicationService,
     {
-      getOrThrow: () => ({ jwtAccessSecret: 'test-secret-value' }),
+      getOrThrow: (key: string) =>
+        key === 'leadCapture' && options.leadCapture
+          ? options.leadCapture
+          : { jwtAccessSecret: 'test-secret-value' },
     } as unknown as ConfigService,
   );
   return { service, insert, redisSet, redisDel, emit, enqueueAfterCommit, tenancy };
@@ -84,6 +88,41 @@ describe('PlatformContactIntakeService', () => {
     });
     expect(enqueueAfterCommit).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    ['sales', true],
+    ['founding', true],
+    ['partnership', false],
+  ] as const)(
+    'keeps the qualification answers for topic %s only when it is a qualified topic (%s)',
+    async (topic, kept) => {
+      const { service, insert } = build({
+        leadCapture: { contactConsentMode: 'on', attributionCaptureMode: 'off' },
+      });
+      await service.submit(
+        payload({
+          topic,
+          requesterRole: 'academy_owner',
+          studentBand: '50_200',
+          preferredChannel: 'whatsapp',
+        }),
+        {},
+        NOW,
+      );
+      const row = insert.mock.calls[0][1];
+      if (kept) {
+        expect(row).toMatchObject({
+          topic,
+          requesterRole: 'academy_owner',
+          studentBand: '50_200',
+          preferredChannel: 'whatsapp',
+        });
+      } else {
+        expect(row.requesterRole).toBeUndefined();
+        expect(row.studentBand).toBeUndefined();
+      }
+    },
+  );
 
   it('discards a honeypot hit with the ordinary answer and stores nothing', async () => {
     const { service, insert, redisSet } = build();

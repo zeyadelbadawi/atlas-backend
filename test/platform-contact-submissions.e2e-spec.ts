@@ -418,6 +418,29 @@ describe('Platform contact submissions (e2e)', () => {
   // ---------------------------------------------------------------------
 
   describe('owner inbox', () => {
+    it('files a Founding Academies application under its own topic filter', async () => {
+      const tag = randomUUID().slice(0, 8);
+      const founding = await storedEnquiry({
+        organizationName: `Founding-${tag}`,
+        topic: 'founding',
+        sourcePath: '/founding',
+      });
+      const sales = await storedEnquiry({
+        organizationName: `Founding-${tag}`,
+        topic: 'sales',
+      });
+      expect(founding.topic).toBe('founding');
+
+      const byTopic = await http()
+        .get('/platform/contact-submissions')
+        .query({ search: `founding-${tag}`, topic: 'founding' })
+        .set(bearer(ownerToken))
+        .expect(200);
+      expect(byTopic.body.items.map((i: { id: string }) => i.id)).toEqual([founding.id]);
+      expect(byTopic.body.items[0].topic).toBe('founding');
+      expect(byTopic.body.items.map((i: { id: string }) => i.id)).not.toContain(sales.id);
+    });
+
     it('lists with search, filters and pagination, and returns summary counts', async () => {
       const tag = randomUUID().slice(0, 8);
       const a = await storedEnquiry({
