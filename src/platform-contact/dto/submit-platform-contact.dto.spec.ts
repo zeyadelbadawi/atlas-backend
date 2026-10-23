@@ -103,6 +103,10 @@ describe('SubmitPlatformContactDto', () => {
     ).resolves.toEqual([]);
   });
 
+  it('accepts the founding topic (B2 Founding Academies)', async () => {
+    await expect(errorsFor({ ...valid, topic: 'founding' })).resolves.toEqual([]);
+  });
+
   it('rejects an unknown topic and a missing topic', async () => {
     await expect(errorsFor({ ...valid, topic: 'billing' })).resolves.toEqual(['topic']);
     await expect(errorsFor({ ...valid, topic: undefined })).resolves.toEqual(['topic']);

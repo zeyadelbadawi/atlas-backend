@@ -157,7 +157,7 @@ export class SubmitPlatformContactDto {
   @IsBoolean()
   readonly marketingConsent?: boolean;
 
-  /** Sales qualification — kept only for `topic = sales`. */
+  /** Sales qualification — kept only for `PLATFORM_CONTACT_QUALIFIED_TOPICS` (sales, founding). */
   @IsOptional()
   @IsIn(PLATFORM_CONTACT_REQUESTER_ROLES)
   readonly requesterRole?: (typeof PLATFORM_CONTACT_REQUESTER_ROLES)[number];

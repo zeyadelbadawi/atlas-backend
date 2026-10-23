@@ -16,6 +16,7 @@ const TOPIC_EN: Record<string, string> = {
   support: 'Support',
   partnership: 'Partnership',
   other: 'Other',
+  founding: 'Founding Academies',
 };
 
 const TOPIC_AR: Record<string, string> = {
@@ -23,6 +24,7 @@ const TOPIC_AR: Record<string, string> = {
   support: 'الدعم',
   partnership: 'الشراكات',
   other: 'أخرى',
+  founding: 'الأكاديميات المؤسِّسة',
 };
 
 function topic(labels: Record<string, string>, raw: string): string {
@@ -30,7 +32,7 @@ function topic(labels: Record<string, string>, raw: string): string {
 }
 
 export const template: CommunicationTemplate = {
-  version: '2',
+  version: '3',
   en: defineLocale({
     subject: (v) =>
       `New contact enquiry (${topic(TOPIC_EN, str(v, 'topic'))}) from ${str(v, 'name')}`,
