@@ -122,6 +122,21 @@ import {
   MAX_WHATSAPP_BAR_TITLE_LENGTH,
   MIN_PRICING_PLANS,
   TIME_ZONE_PATTERN,
+  CERTIFICATE_YEAR_PATTERN,
+  MAX_CERTIFICATES,
+  MAX_DOWNLOAD_DESCRIPTION_LENGTH,
+  MAX_DOWNLOAD_FILE_SIZE_LENGTH,
+  MAX_DOWNLOAD_FILE_TYPE_LENGTH,
+  MAX_DOWNLOAD_TITLE_LENGTH,
+  MAX_DOWNLOAD_URL_LENGTH,
+  MAX_DOWNLOADS,
+  MAX_TIMELINE_MILESTONE_DESCRIPTION_LENGTH,
+  MAX_TIMELINE_MILESTONE_TITLE_LENGTH,
+  MAX_TIMELINE_MILESTONES,
+  MAX_TIMELINE_PERIOD_LENGTH,
+  MAX_VIDEO_TESTIMONIAL_QUOTE_LENGTH,
+  MAX_VIDEO_TESTIMONIAL_ROLE_LENGTH,
+  MAX_VIDEO_TESTIMONIALS,
 } from '../constants/website.constants';
 import {
   DEFAULT_PUBLIC_WEBSITE_LOCALE,
@@ -131,6 +146,7 @@ import { isAllowedImageValue } from './image-value.util';
 import { isSafeExternalUrl } from './url-safety.util';
 import {
   isCountdownDeadlineOrEmpty,
+  isDownloadLinkOrEmpty,
   isYouTubeVideoIdOrEmpty,
   normalizeYouTubeVideoInput,
 } from './section-media-values.util';
@@ -744,6 +760,122 @@ export const countdownSectionSchema = z.object({
   tertiaryCta: websiteCtaSchema.optional(),
 });
 
+/*
+ * CMS phase 3d (batch D) — four sections shared by every theme, each
+ * mirroring the frontend's identically named schema field for field (the
+ * parity cases prove it, including that every field survives the parse).
+ */
+
+/** A YouTube link in any common form, stored as its 11-character id; empty is a video not chosen yet. */
+const youTubeVideoIdSchema = z.preprocess(
+  normalizeYouTubeVideoInput,
+  z.string().refine(isYouTubeVideoIdOrEmpty, {
+    message: 'validation:invalidYouTubeVideo',
+  }),
+);
+
+const timelineMilestoneSchema = z.object({
+  id: z.string(),
+  title: localizedRequired(MAX_TIMELINE_MILESTONE_TITLE_LENGTH),
+  /** "Sept–Oct", "Term 1" — shown with the milestone, never parsed as a date. */
+  period: localizedOptional(MAX_TIMELINE_PERIOD_LENGTH).optional(),
+  description: localizedOptional(MAX_TIMELINE_MILESTONE_DESCRIPTION_LENGTH).optional(),
+  /** One of the features' curated icons, or empty (the milestone's number is shown). */
+  icon: z
+    .enum(FEATURE_ICON_OPTIONS as [string, ...string[]])
+    .optional()
+    .or(z.literal('')),
+});
+
+/** A learning path ("Term 1 → Term 2 → Final revision"): an ordered list of milestones. */
+export const timelineSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(timelineMilestoneSchema).max(MAX_TIMELINE_MILESTONES),
+});
+
+const videoTestimonialItemSchema = z.object({
+  id: z.string(),
+  /** Empty saves (a starter review); the public site leaves an item without a video out. */
+  videoId: youTubeVideoIdSchema,
+  /** A proper name — not translated, like `testimonial.authorName`. */
+  name: z
+    .string()
+    .min(1, 'validation:required')
+    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
+  /** "Parent of a Grade 12 student". */
+  role: localizedRequired(MAX_VIDEO_TESTIMONIAL_ROLE_LENGTH),
+  quote: localizedOptional(MAX_VIDEO_TESTIMONIAL_QUOTE_LENGTH).optional(),
+  /** An uploaded poster instead of YouTube's own thumbnail. */
+  poster: imageValueSchema.optional(),
+  /**
+   * Starter content for preview only — exactly the testimonials' rule: the
+   * public pages payload strips it, publish warns about it, and only the
+   * Owner's explicit "This is a real review" clears it.
+   */
+  sample: z.boolean().optional(),
+});
+
+/** Student and parent video reviews: a grid of click-to-play videos. */
+export const videoTestimonialsSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(videoTestimonialItemSchema).max(MAX_VIDEO_TESTIMONIALS),
+});
+
+const downloadItemSchema = z.object({
+  id: z.string(),
+  title: localizedRequired(MAX_DOWNLOAD_TITLE_LENGTH),
+  description: localizedOptional(MAX_DOWNLOAD_DESCRIPTION_LENGTH).optional(),
+  /**
+   * A media-library file (`/api/v1/public/media/…`) or an http(s) address
+   * `isSafeExternalUrl` allows (`isDownloadLinkOrEmpty`). Empty saves; the
+   * public site leaves the item out until it has a link.
+   */
+  url: z
+    .string()
+    .max(MAX_DOWNLOAD_URL_LENGTH, 'validation:maxLength')
+    .refine(isDownloadLinkOrEmpty, { message: 'validation:invalidDownloadLink' }),
+  /** "PDF"; empty → read from the link's file extension. */
+  fileType: z
+    .string()
+    .max(MAX_DOWNLOAD_FILE_TYPE_LENGTH, 'validation:maxLength')
+    .optional(),
+  /** "2.4 MB". */
+  fileSize: z
+    .string()
+    .max(MAX_DOWNLOAD_FILE_SIZE_LENGTH, 'validation:maxLength')
+    .optional(),
+});
+
+/** Downloadable resources (PDF notes, revision sheets). */
+export const downloadsSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(downloadItemSchema).max(MAX_DOWNLOADS),
+});
+
+const certificateItemSchema = z.object({
+  id: z.string(),
+  /** Required: a certificate without its image is not one. Same image rule as every image field. */
+  image: imageValueSchema.pipe(z.string().min(1, 'validation:required')),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  issuer: localizedOptional(MAX_SHORT_TEXT).optional(),
+  /** Four digits ("2025"), or empty. */
+  year: z
+    .string()
+    .regex(CERTIFICATE_YEAR_PATTERN, 'validation:invalidYear')
+    .optional()
+    .or(z.literal('')),
+});
+
+/** Certificates and accreditations: framed images with captions. */
+export const certificatesSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(certificateItemSchema).max(MAX_CERTIFICATES),
+});
+
 /** Matches the frontend's `SECTION_SCHEMAS` map exactly — one schema per `SectionType`, `satisfies Record<SectionType, ZodTypeAny>`. */
 const SECTION_CONFIG_SCHEMAS = {
   hero: heroSectionSchema,
@@ -771,6 +903,10 @@ const SECTION_CONFIG_SCHEMAS = {
   video: videoSectionSchema,
   pricing: pricingSectionSchema,
   countdown: countdownSectionSchema,
+  timeline: timelineSectionSchema,
+  videoTestimonials: videoTestimonialsSectionSchema,
+  downloads: downloadsSectionSchema,
+  certificates: certificatesSectionSchema,
 } satisfies Record<(typeof SECTION_TYPES)[number], z.ZodTypeAny>;
 
 /** Resolves the right Zod schema for a section type — matches `getSectionConfigSchema`. */
@@ -929,6 +1065,26 @@ export const sectionInstanceSchema = z.discriminatedUnion('type', [
     ...sectionInstanceBase,
     type: z.literal('countdown'),
     config: countdownSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('timeline'),
+    config: timelineSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('videoTestimonials'),
+    config: videoTestimonialsSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('downloads'),
+    config: downloadsSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('certificates'),
+    config: certificatesSectionSchema,
   }),
 ]);
 

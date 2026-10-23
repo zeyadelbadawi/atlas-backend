@@ -6915,6 +6915,2058 @@
         }
       },
       "valid": false
+    },
+    {
+      "name": "timeline keeps every milestone field",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Your path to the final exam",
+          "ar": "طريقك إلى الامتحان النهائي"
+        },
+        "description": {
+          "en": "One year, three stages.",
+          "ar": "عام واحد وثلاث مراحل."
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            },
+            "period": {
+              "en": "Sept–Oct",
+              "ar": "سبتمبر – أكتوبر"
+            },
+            "description": {
+              "en": "Foundations and the first unit.",
+              "ar": "الأساسيات والوحدة الأولى."
+            },
+            "icon": "BookOpen"
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "title.ar",
+        "description.ar",
+        "items.0.title.ar",
+        "items.0.period.ar",
+        "items.0.description.ar",
+        "items.0.icon"
+      ]
+    },
+    {
+      "name": "a timeline milestone without an icon saves",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Path",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            },
+            "icon": ""
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "items.0.icon"
+      ]
+    },
+    {
+      "name": "a timeline milestone needs a title",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Path",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a timeline icon must be one of the curated icons",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Path",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            },
+            "icon": "Skull"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a timeline needs a title",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "",
+          "ar": ""
+        },
+        "items": []
+      },
+      "valid": false
+    },
+    {
+      "name": "timeline milestone title at 80",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Path",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "timeline milestone title over 80",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Path",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "timeline period at 40",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Path",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            },
+            "period": {
+              "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "timeline period over 40",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Path",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            },
+            "period": {
+              "en": "",
+              "ar": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "timeline milestone description over 240",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Path",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            },
+            "description": {
+              "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "timeline at 12 milestones",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Path",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m1",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m2",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m3",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m4",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m5",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m6",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m7",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m8",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m9",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m10",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m11",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "timeline over 12 milestones",
+      "type": "timeline",
+      "config": {
+        "title": {
+          "en": "Path",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "m0",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m1",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m2",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m3",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m4",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m5",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m6",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m7",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m8",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m9",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m10",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m11",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          },
+          {
+            "id": "m12",
+            "title": {
+              "en": "Term 1",
+              "ar": "الترم الأول"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "video reviews keep every field, sample included",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Hear it from our students",
+          "ar": "اسمعها من طلابنا"
+        },
+        "description": {
+          "en": "Real reviews.",
+          "ar": "آراء حقيقية."
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            },
+            "quote": {
+              "en": "He finally enjoys physics.",
+              "ar": "أصبح يحب الفيزياء أخيرًا."
+            },
+            "poster": "/api/v1/public/media/academy-1/poster.webp",
+            "sample": true
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "title.ar",
+        "description.ar",
+        "items.0.videoId",
+        "items.0.name",
+        "items.0.role.ar",
+        "items.0.quote.ar",
+        "items.0.poster",
+        "items.0.sample"
+      ]
+    },
+    {
+      "name": "a video review link is stored as its id",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5s",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v1",
+            "videoId": "youtu.be/dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "normalizes": {
+        "items.0.videoId": "dQw4w9WgXcQ",
+        "items.1.videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "a video review without a video yet saves",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            },
+            "sample": true
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "items.0.videoId"
+      ]
+    },
+    {
+      "name": "a video review link must be a YouTube video",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "https://vimeo.com/123456",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a video review needs the person’s name",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a video review needs the role",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a video review role over 80",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a video review quote at 200",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            },
+            "quote": {
+              "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "a video review quote over 200",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            },
+            "quote": {
+              "en": "",
+              "ar": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a video review poster must be an allowed image value",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            },
+            "poster": "javascript:alert(1)"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "video reviews at 9",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v1",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v2",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v3",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v4",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v5",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v6",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v7",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v8",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "video reviews over 9",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "Reviews",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "v0",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v1",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v2",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v3",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v4",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v5",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v6",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v7",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v8",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          },
+          {
+            "id": "v9",
+            "videoId": "dQw4w9WgXcQ",
+            "name": "Mona Hassan",
+            "role": {
+              "en": "Parent of a Grade 12 student",
+              "ar": "وليّة أمر طالب في الصف الثالث الثانوي"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "video reviews need a title",
+      "type": "videoTestimonials",
+      "config": {
+        "title": {
+          "en": "",
+          "ar": ""
+        },
+        "items": []
+      },
+      "valid": false
+    },
+    {
+      "name": "downloads keep every field",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes and revision sheets",
+          "ar": "المذكرات وملخصات المراجعة"
+        },
+        "description": {
+          "en": "Free to download.",
+          "ar": "متاحة للتحميل مجانًا."
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf",
+            "description": {
+              "en": "Units 1–3",
+              "ar": "الوحدات من ١ إلى ٣"
+            },
+            "fileType": "PDF",
+            "fileSize": "2.4 MB"
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "title.ar",
+        "description.ar",
+        "items.0.title.ar",
+        "items.0.description.ar",
+        "items.0.url",
+        "items.0.fileType",
+        "items.0.fileSize"
+      ]
+    },
+    {
+      "name": "a download may link to a safe web address",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "https://drive.google.com/file/d/abc123/view"
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "items.0.url"
+      ]
+    },
+    {
+      "name": "a download without a link yet saves",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": ""
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "items.0.url"
+      ]
+    },
+    {
+      "name": "a download link must not be a script",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "javascript:alert(1)"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a download link must not be inline data",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "data:application/pdf;base64,JVBERi0="
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a download link is not an email address",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "mailto:office@example.com"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a download link is not a relative path outside the media library",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/admin/export.pdf"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a download link may not climb out of the media library",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/../secret.pdf"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a download needs a title",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "",
+              "ar": ""
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a download title over 100",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "ar": ""
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a download description over 200",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf",
+            "description": {
+              "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a download file type at 12",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf",
+            "fileType": "xxxxxxxxxxxx"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "a download file type over 12",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf",
+            "fileType": "xxxxxxxxxxxxx"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a download size over 16",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf",
+            "fileSize": "xxxxxxxxxxxxxxxxx"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a download link over 2048 characters",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "https://example.com/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "downloads at 20",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d1",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d2",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d3",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d4",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d5",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d6",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d7",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d8",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d9",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d10",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d11",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d12",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d13",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d14",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d15",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d16",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d17",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d18",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d19",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "downloads over 20",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "Notes",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "d0",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d1",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d2",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d3",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d4",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d5",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d6",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d7",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d8",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d9",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d10",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d11",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d12",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d13",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d14",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d15",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d16",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d17",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d18",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d19",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          },
+          {
+            "id": "d20",
+            "title": {
+              "en": "Term 1 revision sheet",
+              "ar": "ملخص مراجعة الترم الأول"
+            },
+            "url": "/api/v1/public/media/academies/a1/notes.pdf"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "downloads need a title",
+      "type": "downloads",
+      "config": {
+        "title": {
+          "en": "",
+          "ar": ""
+        },
+        "items": []
+      },
+      "valid": false
+    },
+    {
+      "name": "certificates keep every field",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "Certificates and accreditations",
+          "ar": "الشهادات والاعتمادات"
+        },
+        "description": {
+          "en": "Awarded to the academy.",
+          "ar": "حصلت عليها الأكاديمية."
+        },
+        "items": [
+          {
+            "id": "c0",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            },
+            "issuer": {
+              "en": "Ministry of Education",
+              "ar": "وزارة التربية والتعليم"
+            },
+            "year": "2025"
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "title.ar",
+        "description.ar",
+        "items.0.image",
+        "items.0.title.ar",
+        "items.0.issuer.ar",
+        "items.0.year"
+      ]
+    },
+    {
+      "name": "a certificate without a year saves",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "Certificates",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "c0",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            },
+            "year": ""
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "items.0.year"
+      ]
+    },
+    {
+      "name": "a certificate needs its image",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "Certificates",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "c0",
+            "image": "",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a certificate image must be an allowed image value",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "Certificates",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "c0",
+            "image": "javascript:alert(1)",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a certificate needs a title",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "Certificates",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "c0",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a certificate year is four digits",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "Certificates",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "c0",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            },
+            "year": "25"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a certificate year is a real year",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "Certificates",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "c0",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            },
+            "year": "3025"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "a certificate issuer over 100",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "Certificates",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "c0",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            },
+            "issuer": {
+              "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "ar": ""
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "certificates at 12",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "Certificates",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "c0",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c1",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c2",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c3",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c4",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c5",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c6",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c7",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c8",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c9",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c10",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c11",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "certificates over 12",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "Certificates",
+          "ar": ""
+        },
+        "items": [
+          {
+            "id": "c0",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c1",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c2",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c3",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c4",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c5",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c6",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c7",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c8",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c9",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c10",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c11",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          },
+          {
+            "id": "c12",
+            "image": "/api/v1/public/media/academies/a1/iso.png",
+            "title": {
+              "en": "ISO 9001 quality certificate",
+              "ar": "شهادة الجودة ISO 9001"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "certificates need a title",
+      "type": "certificates",
+      "config": {
+        "title": {
+          "en": "",
+          "ar": ""
+        },
+        "items": []
+      },
+      "valid": false
     }
   ]
 }

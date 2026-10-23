@@ -215,6 +215,124 @@ describe('sectionInstanceArraySchema — page-level composition', () => {
     });
   });
 
+  it('accepts the CMS phase 3d batch D sections on a page (timeline, video reviews, downloads, certificates)', () => {
+    const lt = (en: string) => ({ en, ar: '' });
+    const result = sectionInstanceArraySchema.safeParse([
+      {
+        id: 't',
+        type: 'timeline',
+        enabled: true,
+        visibility,
+        config: {
+          title: lt('Your path'),
+          items: [
+            { id: 'm', title: lt('Term 1'), period: lt('Sept–Oct'), icon: 'BookOpen' },
+          ],
+        },
+      },
+      {
+        id: 'v',
+        type: 'videoTestimonials',
+        enabled: true,
+        visibility,
+        config: {
+          title: lt('Reviews'),
+          items: [
+            {
+              id: 'r',
+              videoId: 'https://youtu.be/dQw4w9WgXcQ',
+              name: 'Mona',
+              role: lt('Parent'),
+            },
+          ],
+        },
+      },
+      {
+        id: 'd',
+        type: 'downloads',
+        enabled: true,
+        visibility,
+        config: {
+          title: lt('Notes'),
+          items: [
+            {
+              id: 'f',
+              title: lt('Sheet'),
+              url: '/api/v1/public/media/academies/a/b.pdf',
+            },
+          ],
+        },
+      },
+      {
+        id: 'c',
+        type: 'certificates',
+        enabled: true,
+        visibility,
+        config: {
+          title: lt('Certificates'),
+          items: [
+            {
+              id: 'x',
+              image: '/api/v1/public/media/academies/a/c.png',
+              title: lt('ISO 9001'),
+            },
+          ],
+        },
+      },
+    ]);
+    expect(result.success).toBe(true);
+    const sections = result.data as { config: { items: Record<string, unknown>[] } }[];
+    // The video link is stored as its id, like the video section's.
+    expect(sections[1].config.items[0].videoId).toBe('dQw4w9WgXcQ');
+  });
+
+  it('names an unsafe download link and a malformed certificate year', () => {
+    const result = sectionInstanceArraySchema.safeParse([
+      {
+        id: 'd',
+        type: 'downloads',
+        enabled: true,
+        visibility,
+        config: {
+          title: { en: 'Notes', ar: '' },
+          items: [
+            { id: 'f', title: { en: 'Sheet', ar: '' }, url: 'javascript:alert(1)' },
+          ],
+        },
+      },
+      {
+        id: 'c',
+        type: 'certificates',
+        enabled: true,
+        visibility,
+        config: {
+          title: { en: 'Certificates', ar: '' },
+          items: [
+            {
+              id: 'x',
+              image: '/api/v1/public/media/academies/a/c.png',
+              title: { en: 'ISO', ar: '' },
+              year: '20255',
+            },
+          ],
+        },
+      },
+    ]);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: 'validation:invalidDownloadLink',
+          path: [0, 'config', 'items', 0, 'url'],
+        }),
+        expect.objectContaining({
+          message: 'validation:invalidYear',
+          path: [1, 'config', 'items', 0, 'year'],
+        }),
+      ]),
+    );
+  });
+
   it('rejects the whole array if any one section is malformed', () => {
     const result = sectionInstanceArraySchema.safeParse([
       heroInstance({ id: 'a' }),

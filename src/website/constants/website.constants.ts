@@ -206,6 +206,13 @@ export const SECTION_TYPES = [
   'video',
   'pricing',
   'countdown',
+  // CMS phase 3d (batch D) — shared by every theme, each with a renderer: a
+  // learning path, student/parent video reviews, downloadable resources and
+  // certificates/accreditations.
+  'timeline',
+  'videoTestimonials',
+  'downloads',
+  'certificates',
 ] as const;
 
 /**
@@ -270,6 +277,34 @@ export const COUNTDOWN_DEADLINE_PATTERN =
 /** An IANA time zone name (`Africa/Cairo`, `UTC`) — the academy's, for showing the deadline. */
 export const TIME_ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+){0,2}$/;
 export const MAX_TIME_ZONE_LENGTH = 64;
+
+/*
+ * CMS phase 3d (batch D) — the learning path, video reviews, downloads and
+ * certificates. Characters per language, like every limit above; mirrored
+ * exactly by the frontend's `website.constants.ts` and proven at the
+ * boundaries by the parity cases.
+ */
+export const MAX_TIMELINE_MILESTONES = 12;
+export const MAX_TIMELINE_MILESTONE_TITLE_LENGTH = 80;
+/** "Sept–Oct", "Term 1". */
+export const MAX_TIMELINE_PERIOD_LENGTH = 40;
+export const MAX_TIMELINE_MILESTONE_DESCRIPTION_LENGTH = 240;
+export const MAX_VIDEO_TESTIMONIALS = 9;
+/** "Parent of a Grade 12 student". */
+export const MAX_VIDEO_TESTIMONIAL_ROLE_LENGTH = 80;
+/** A short pull quote under the video. */
+export const MAX_VIDEO_TESTIMONIAL_QUOTE_LENGTH = 200;
+export const MAX_DOWNLOADS = 20;
+export const MAX_DOWNLOAD_TITLE_LENGTH = 100;
+export const MAX_DOWNLOAD_DESCRIPTION_LENGTH = 200;
+export const MAX_DOWNLOAD_URL_LENGTH = 2048;
+/** "PDF", "DOCX". */
+export const MAX_DOWNLOAD_FILE_TYPE_LENGTH = 12;
+/** "2.4 MB". */
+export const MAX_DOWNLOAD_FILE_SIZE_LENGTH = 16;
+export const MAX_CERTIFICATES = 12;
+/** A four-digit year from 1900 to 2099 ("2025"). */
+export const CERTIFICATE_YEAR_PATTERN = /^(?:19|20)\d{2}$/;
 
 /** `courseSpotlight`: how many syllabus sections it may list — matches the frontend `MIN/MAX_SPOTLIGHT_MODULES`. */
 export const MIN_SPOTLIGHT_MODULES = 1;
