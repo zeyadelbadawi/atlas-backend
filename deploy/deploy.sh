@@ -458,13 +458,16 @@ finish_with_record() {
 # be ours, so Postgres, Redis, monitoring, aws-cli or any image this script
 # did not run itself can never be removed by it.
 APP_IMAGE_LEDGER="$ATLAS_DIR/.app-images"
-APP_SERVICES="backend caddy ssr"
+# The services whose images the ledger tracks. A fixed list of its own:
+# APP_SERVICES (below) is the deploy's selection and is empty until
+# resolve_app_services runs, after some of the prunes.
+APP_IMAGE_SERVICES="backend caddy ssr"
 
 # Adds the image IDs this host's application containers use, and those the
 # rollback records name, to the ledger. Best effort: never fails the deploy.
 remember_app_images() {
   local service cid image digest ref record ids=""
-  for service in $APP_SERVICES; do
+  for service in $APP_IMAGE_SERVICES; do
     for cid in $(docker compose ps -aq "$service" 2>/dev/null || true); do
       image=$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)
       case "$image" in sha256:*) ids="$ids $image" ;; esac
@@ -516,9 +519,10 @@ prune_app_images() {
           repo=$(image_repository "$ref"); break ;;
       esac
     done
-    # No application name left (containerd store): ours only if the ledger
-    # says an application service ran it.
-    if [ -z "$repo" ] && in_app_ledger "$id"; then repo="(ledger)"; fi
+    # No name at all left (containerd store): ours only if the ledger says
+    # an application service ran it. An image that still carries any other
+    # name is never removed through the ledger (`rm -f` would drop that name).
+    if [ -z "$repo" ] && [ -z "$refs" ] && in_app_ledger "$id"; then repo="(ledger)"; fi
     [ -n "$repo" ] || continue
     if docker image rm -f "$id" >/dev/null 2>&1; then
       removed=$((removed + 1))
@@ -527,9 +531,12 @@ prune_app_images() {
     fi
   done
   # The ledger keeps only images this host still has, so it never grows.
-  if [ -f "$APP_IMAGE_LEDGER" ]; then
+  # Rewritten only from a successful listing: if Docker cannot answer, the
+  # ledger is left as it is rather than emptied.
+  local present
+  if [ -f "$APP_IMAGE_LEDGER" ] && present=$(docker image ls -aq --no-trunc 2>/dev/null); then
     while IFS= read -r id; do
-      if docker image inspect "$id" >/dev/null 2>&1; then printf '%s\n' "$id"; fi
+      if printf '%s\n' "$present" | grep -qxF -- "$id"; then printf '%s\n' "$id"; fi
     done < "$APP_IMAGE_LEDGER" > "$APP_IMAGE_LEDGER.tmp" 2>/dev/null \
       && mv "$APP_IMAGE_LEDGER.tmp" "$APP_IMAGE_LEDGER" \
       || rm -f "$APP_IMAGE_LEDGER.tmp"
